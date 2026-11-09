@@ -2133,7 +2133,7 @@ export interface paths {
         };
         /**
          * Get instance metrics
-         * @description Returns instance-wide counters, how much memory, CPU and disk this server uses, and process uptime. Requires `instance.read`; the counters include records outside your content permissions.
+         * @description Returns instance-wide counters, how much memory, CPU and disk this server uses, and process uptime. The counters are counted when you ask. Requires `instance.read`; the counters include records outside your content permissions.
          */
         get: operations["getInstanceMetrics"];
         put?: never;
@@ -5895,6 +5895,9 @@ export interface components {
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
+                    /** @description The same whole seconds as `Retry-After`. */
+                    retry_after?: number;
+                } & {
                     [key: string]: unknown;
                 };
             };
@@ -6637,13 +6640,7 @@ export interface components {
         "X-Request-ID": string;
         /** @description The machine-readable error code, identical to `error.code` in the body and drawn from the same enum the response schema lists. Read it rather than matching on `error.message`, which is prose written for a person and may be reworded. Present on every error the server renders, including one served from an idempotency record. */
         "X-Error-Code": string;
-        /** @description How many requests this credential may make against this path group in the current window. Sent on every response, not only refusals, so a client can pace itself before it is refused. A second window bounds what one credential spends across every path group together, and a refusal from that one carries this trio unchanged, so a 429 may arrive with requests apparently left. Absent entirely on a deployment that does not enable rate limiting, along with the rest of the `X-RateLimit-*` trio. */
-        "X-RateLimit-Limit": number;
-        /** @description Requests left in this path group's window for this credential, floored at 0. A 429 from that window is the one that reads 0; a 429 from the credential-wide window described above can read more. */
-        "X-RateLimit-Remaining": number;
-        /** @description Unix time in seconds at which the current window ends and `X-RateLimit-Remaining` returns to `X-RateLimit-Limit`. */
-        "X-RateLimit-Reset": number;
-        /** @description Seconds to wait before retrying, sent with the rate limiter's refusal. Derived from the time left in the window rather than a fixed backoff, so a client that honors it needs no backoff of its own. */
+        /** @description Whole seconds to wait before retrying, sent with a rate limit's refusal. Rounded up from the time left until the latest end among the limits that are spent, and never fewer than 1, so a client that honors it needs no backoff of its own. */
         "Retry-After": number;
         /** @description Sent as `true` when this response was served from the record of an earlier request carrying the same `Idempotency-Key`, rather than by performing the write. It is only ever sent on a replay and only with that value, so its absence means the write was performed. The status and body are the first attempt's, which is why the header can arrive on an error: a recorded 409 replays as a 409. Read a replayed response exactly as the original would have been read: the header says where the answer came from, not that anything went wrong. */
         "Idempotency-Replayed": "true";
@@ -6702,9 +6699,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
@@ -6720,9 +6714,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -6735,9 +6726,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -6753,9 +6741,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
@@ -6769,9 +6754,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -6784,9 +6766,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -6800,9 +6779,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -6815,9 +6791,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -6830,9 +6803,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -6905,9 +6875,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
@@ -6920,9 +6887,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
@@ -6942,9 +6906,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -6958,9 +6919,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -6977,9 +6935,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -6996,9 +6951,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -7019,9 +6971,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -7050,9 +6999,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -7066,9 +7012,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
@@ -7083,9 +7026,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -7099,9 +7039,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -7115,9 +7052,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -7151,9 +7085,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
@@ -7169,9 +7100,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -7184,9 +7112,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -7199,9 +7124,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
@@ -7215,9 +7137,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
@@ -7231,9 +7150,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -7246,9 +7162,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -7262,9 +7175,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -7277,9 +7187,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -7292,9 +7199,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -7329,9 +7233,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
@@ -7348,9 +7249,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -7364,9 +7262,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -7379,9 +7274,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -7397,9 +7289,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -7416,9 +7305,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -7447,9 +7333,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -7463,9 +7346,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
@@ -7480,9 +7360,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -7496,9 +7373,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -7512,9 +7386,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -7586,9 +7457,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
@@ -7617,9 +7485,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -7633,9 +7498,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -7652,9 +7514,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -7672,9 +7531,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -7694,9 +7550,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -7725,9 +7578,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -7741,9 +7591,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
@@ -7758,9 +7605,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -7774,9 +7618,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -7790,9 +7631,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -7832,9 +7670,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -7851,9 +7686,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -7866,9 +7698,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -7881,9 +7710,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -7896,9 +7722,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -7911,9 +7734,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -7938,9 +7758,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -7954,9 +7771,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -7969,9 +7783,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -7984,9 +7795,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -8032,9 +7840,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
@@ -8052,9 +7857,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -8068,9 +7870,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -8083,9 +7882,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -8098,9 +7894,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -8114,9 +7907,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -8145,9 +7935,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -8161,9 +7948,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
@@ -8178,9 +7962,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -8194,9 +7975,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -8210,9 +7988,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -8245,9 +8020,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
@@ -8264,9 +8036,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -8280,9 +8049,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -8295,9 +8061,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -8310,9 +8073,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -8326,9 +8086,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -8357,9 +8114,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -8373,9 +8127,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
@@ -8390,9 +8141,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -8406,9 +8154,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -8422,9 +8167,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -8460,9 +8202,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
@@ -8479,9 +8218,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -8495,9 +8231,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -8513,9 +8246,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -8528,9 +8258,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -8547,9 +8274,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -8578,9 +8302,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -8594,9 +8315,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
@@ -8611,9 +8329,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -8627,9 +8342,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -8643,9 +8355,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -8691,9 +8400,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
@@ -8712,9 +8418,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -8728,9 +8431,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -8743,9 +8443,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -8761,9 +8458,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -8777,9 +8471,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -8808,9 +8499,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -8824,9 +8512,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
@@ -8841,9 +8526,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -8857,9 +8539,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -8873,9 +8552,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -8908,9 +8584,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -8925,9 +8598,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -8940,9 +8610,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -8955,9 +8622,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -8970,9 +8634,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -8985,9 +8646,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -9001,9 +8659,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9016,9 +8671,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9031,9 +8683,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9077,9 +8726,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -9101,9 +8747,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9116,9 +8759,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9131,9 +8771,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9146,9 +8783,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9173,9 +8807,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -9189,9 +8820,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9204,9 +8832,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9219,9 +8844,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9255,9 +8877,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -9282,9 +8901,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9297,9 +8913,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9312,9 +8925,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9327,9 +8937,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9354,9 +8961,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -9370,9 +8974,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9385,9 +8986,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9400,9 +8998,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9440,9 +9035,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
@@ -9466,9 +9058,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9481,9 +9070,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9496,9 +9082,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
@@ -9512,9 +9095,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9539,9 +9119,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -9555,9 +9132,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9570,9 +9144,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9585,9 +9156,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9661,9 +9229,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -9680,9 +9245,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9695,9 +9257,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9714,9 +9273,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9729,9 +9285,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9744,9 +9297,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9771,9 +9321,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -9787,9 +9334,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9802,9 +9346,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9817,9 +9358,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9870,9 +9408,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -9889,9 +9424,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9904,9 +9436,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9922,9 +9451,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9937,9 +9463,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -9953,9 +9476,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9968,9 +9488,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -9983,9 +9500,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10018,9 +9532,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -10047,9 +9558,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10062,9 +9570,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10077,9 +9582,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10092,9 +9594,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -10108,9 +9607,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10123,9 +9619,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10138,9 +9631,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10171,9 +9661,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -10189,9 +9676,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10204,9 +9688,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10219,9 +9700,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10234,9 +9712,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -10250,9 +9725,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10265,9 +9737,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10280,9 +9749,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10324,9 +9790,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -10345,9 +9808,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10360,9 +9820,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10378,9 +9835,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10393,9 +9847,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10420,9 +9871,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -10436,9 +9884,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10451,9 +9896,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10466,9 +9908,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10501,9 +9940,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -10515,9 +9951,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10530,9 +9963,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10545,9 +9975,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10560,9 +9987,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -10576,9 +10000,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10591,9 +10012,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10606,9 +10024,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10641,9 +10056,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -10660,9 +10072,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10675,9 +10084,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10690,9 +10096,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10705,9 +10108,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10720,9 +10120,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10747,9 +10144,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -10763,9 +10157,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10778,9 +10169,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10793,9 +10181,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10828,9 +10213,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -10847,9 +10229,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10862,9 +10241,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10877,9 +10253,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10892,9 +10265,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10907,9 +10277,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10934,9 +10301,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -10950,9 +10314,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10965,9 +10326,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -10980,9 +10338,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11015,9 +10370,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -11034,9 +10386,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11049,9 +10398,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11064,9 +10410,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11079,9 +10422,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11094,9 +10434,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11121,9 +10458,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -11137,9 +10471,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11152,9 +10483,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11167,9 +10495,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11199,9 +10524,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -11235,9 +10557,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11250,9 +10569,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11265,9 +10581,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11280,9 +10593,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11307,9 +10617,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -11323,9 +10630,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11338,9 +10642,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11353,9 +10654,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11450,9 +10748,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
@@ -11465,9 +10760,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
@@ -11486,9 +10778,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -11502,9 +10791,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11521,9 +10807,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11536,9 +10819,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -11567,9 +10847,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -11583,9 +10860,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
@@ -11600,9 +10874,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -11616,9 +10887,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -11632,9 +10900,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -11662,9 +10927,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -11676,9 +10938,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11691,9 +10950,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11706,9 +10962,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11721,9 +10974,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11736,9 +10986,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -11752,9 +10999,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11767,9 +11011,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11782,9 +11023,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11814,9 +11052,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -11828,9 +11063,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11843,9 +11075,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11858,9 +11087,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11873,9 +11099,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11888,9 +11111,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11915,9 +11135,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -11931,9 +11148,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11946,9 +11160,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11961,9 +11172,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -11990,9 +11198,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -12007,9 +11212,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -12022,9 +11224,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -12037,9 +11236,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -12052,9 +11248,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -12067,9 +11260,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -12083,9 +11273,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -12098,9 +11285,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -12113,9 +11297,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -12157,9 +11338,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
@@ -12175,9 +11353,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -12191,9 +11366,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -12206,9 +11378,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -12221,9 +11390,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -12237,9 +11403,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -12268,9 +11431,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -12284,9 +11444,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
@@ -12301,9 +11458,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -12317,9 +11471,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -12333,9 +11484,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -12378,9 +11526,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
@@ -12397,9 +11542,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -12413,9 +11555,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -12428,9 +11567,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -12443,9 +11579,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -12459,9 +11592,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -12490,9 +11620,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -12506,9 +11633,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
@@ -12523,9 +11647,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -12539,9 +11660,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -12555,9 +11673,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -12595,9 +11710,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
@@ -12613,9 +11725,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -12629,9 +11738,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -12644,9 +11750,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -12659,9 +11762,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -12675,9 +11775,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -12706,9 +11803,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -12722,9 +11816,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
@@ -12739,9 +11830,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -12755,9 +11843,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -12771,9 +11856,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -12798,9 +11880,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -12812,9 +11891,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -12827,9 +11903,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -12842,9 +11915,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -12857,9 +11927,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -12873,9 +11940,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -12888,9 +11952,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -12903,9 +11964,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -12934,9 +11992,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -12956,9 +12011,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -12971,9 +12023,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -12989,9 +12038,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -13004,9 +12050,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -13019,9 +12062,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -13035,9 +12075,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -13050,9 +12087,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -13065,9 +12099,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -13107,9 +12138,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
@@ -13126,9 +12154,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -13142,9 +12167,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -13160,9 +12182,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -13175,9 +12194,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -13191,9 +12207,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -13222,9 +12235,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -13238,9 +12248,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
@@ -13255,9 +12262,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -13271,9 +12275,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -13287,9 +12288,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -13324,9 +12322,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
@@ -13342,9 +12337,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -13358,9 +12350,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -13376,9 +12365,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -13391,9 +12377,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -13407,9 +12390,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -13438,9 +12418,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -13454,9 +12431,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
@@ -13471,9 +12445,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -13487,9 +12458,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -13503,9 +12471,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -13533,9 +12498,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -13550,9 +12512,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -13565,9 +12524,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -13580,9 +12536,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -13595,9 +12548,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -13610,9 +12560,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -13626,9 +12573,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -13641,9 +12585,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -13656,9 +12597,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -13696,9 +12634,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
@@ -13711,9 +12646,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -13726,9 +12658,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -13741,9 +12670,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
@@ -13757,9 +12683,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -13772,9 +12695,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -13788,9 +12708,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -13803,9 +12720,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -13818,9 +12732,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -13869,9 +12780,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
@@ -13888,9 +12796,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
@@ -13908,9 +12813,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -13924,9 +12826,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -13942,9 +12841,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -13960,9 +12856,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -13979,9 +12872,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -14010,9 +12900,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -14026,9 +12913,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
@@ -14043,9 +12927,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -14059,9 +12940,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -14075,9 +12953,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -14108,9 +12983,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
@@ -14123,9 +12995,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -14138,9 +13007,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -14153,9 +13019,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
@@ -14169,9 +13032,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
@@ -14185,9 +13045,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -14200,9 +13057,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -14216,9 +13070,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -14231,9 +13082,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -14246,9 +13094,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -14283,9 +13128,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
@@ -14298,9 +13140,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -14314,9 +13153,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -14332,9 +13168,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -14347,9 +13180,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -14363,9 +13193,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -14394,9 +13221,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -14410,9 +13234,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
@@ -14427,9 +13248,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -14443,9 +13261,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -14459,9 +13274,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -14509,9 +13321,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
@@ -14529,9 +13338,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -14545,9 +13351,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -14563,9 +13366,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -14582,9 +13382,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -14598,9 +13395,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -14629,9 +13423,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -14645,9 +13436,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
@@ -14662,9 +13450,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -14678,9 +13463,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -14694,9 +13476,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -14755,9 +13534,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -14774,9 +13550,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -14789,9 +13562,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -14807,9 +13577,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -14822,9 +13589,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -14837,9 +13601,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -14864,9 +13625,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -14880,9 +13638,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -14895,9 +13650,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -14910,9 +13662,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -14949,9 +13698,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
@@ -14967,9 +13713,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -14982,9 +13725,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -14997,9 +13737,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
@@ -15013,9 +13750,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
@@ -15029,9 +13763,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15044,9 +13775,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -15060,9 +13788,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15075,9 +13800,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15090,9 +13812,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15126,9 +13845,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -15143,9 +13859,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15158,9 +13871,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15173,9 +13883,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15188,9 +13895,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15203,9 +13907,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -15219,9 +13920,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15234,9 +13932,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15249,9 +13944,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15308,9 +14000,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -15326,9 +14015,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15341,9 +14027,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15359,9 +14042,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15374,9 +14054,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -15390,9 +14067,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15405,9 +14079,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15420,9 +14091,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15449,9 +14117,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
@@ -15464,9 +14129,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15479,9 +14141,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15494,9 +14153,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15509,9 +14165,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -15525,9 +14178,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15540,9 +14190,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15555,9 +14202,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15588,9 +14232,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -15608,9 +14249,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15623,9 +14261,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15641,9 +14276,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15659,9 +14291,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15686,9 +14315,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15701,9 +14327,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -15717,9 +14340,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15732,9 +14352,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15747,9 +14364,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15776,9 +14390,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -15790,9 +14401,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15805,9 +14413,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15820,9 +14425,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15835,9 +14437,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15850,9 +14449,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -15866,9 +14462,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15881,9 +14474,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15896,9 +14486,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15932,9 +14519,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -15952,9 +14536,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15967,9 +14548,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -15986,9 +14564,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16001,9 +14576,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16016,9 +14588,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16043,9 +14612,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16058,9 +14624,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -16074,9 +14637,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16089,9 +14649,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16104,9 +14661,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16139,9 +14693,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -16153,9 +14704,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16168,9 +14716,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16187,9 +14732,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16202,9 +14744,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16220,9 +14759,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16247,9 +14783,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16262,9 +14795,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -16278,9 +14808,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16293,9 +14820,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16308,9 +14832,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16353,9 +14874,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -16367,9 +14885,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -16385,9 +14900,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16400,9 +14912,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16418,9 +14927,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16433,9 +14939,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16448,9 +14951,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16475,9 +14975,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -16491,9 +14988,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16506,9 +15000,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16521,9 +15012,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16554,9 +15042,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -16574,9 +15059,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16589,9 +15071,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16604,9 +15083,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16631,9 +15107,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16646,9 +15119,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -16662,9 +15132,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16677,9 +15144,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16692,9 +15156,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16728,9 +15189,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -16745,9 +15203,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16760,9 +15215,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16778,9 +15230,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16793,9 +15242,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16808,9 +15254,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16835,9 +15278,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -16851,9 +15291,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16866,9 +15303,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16881,9 +15315,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16913,9 +15344,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -16927,9 +15355,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16942,9 +15367,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16960,9 +15382,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16975,9 +15394,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -16990,9 +15406,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17017,9 +15430,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -17033,9 +15443,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17048,9 +15455,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17063,9 +15467,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17092,9 +15493,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
@@ -17107,9 +15505,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17122,9 +15517,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17137,9 +15529,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17152,9 +15541,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -17168,9 +15554,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17183,9 +15566,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17198,9 +15578,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17231,9 +15608,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -17245,9 +15619,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -17263,9 +15634,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17278,9 +15646,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17296,9 +15661,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17311,9 +15673,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17326,9 +15685,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17353,9 +15709,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -17369,9 +15722,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17384,9 +15734,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17399,9 +15746,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17434,9 +15778,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -17448,9 +15789,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17463,9 +15801,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17481,9 +15816,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17496,9 +15828,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17511,9 +15840,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17538,9 +15864,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -17554,9 +15877,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17569,9 +15889,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17584,9 +15901,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17618,9 +15932,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -17639,9 +15950,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17654,9 +15962,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17669,9 +15974,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17684,9 +15986,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17699,9 +15998,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17714,9 +16010,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -17730,9 +16023,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17748,9 +16038,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17763,9 +16050,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17792,9 +16076,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     /** @description Always `attachment; filename="<hex>"`, whatever the type: the bytes are a file to save, never a page to render. */
                     "Content-Disposition"?: string;
                     /** @description Always `sandbox; default-src 'none'`, so bytes a browser renders anyway run in an opaque origin with nothing loaded. */
@@ -17814,9 +16095,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     /** @description Always `attachment; filename="<hex>"`, whatever the type: the bytes are a file to save, never a page to render. */
                     "Content-Disposition"?: string;
                     /** @description Always `sandbox; default-src 'none'`, so bytes a browser renders anyway run in an opaque origin with nothing loaded. */
@@ -17838,9 +16116,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17853,9 +16128,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17868,9 +16140,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17883,9 +16152,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17898,9 +16164,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     /** @description `bytes *\/<size>`: the blob's size, so the caller can ask again within it. */
                     "Content-Range"?: string;
@@ -17915,9 +16178,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -17931,9 +16191,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17949,9 +16206,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17964,9 +16218,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -17996,9 +16247,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -18015,9 +16263,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18030,9 +16275,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18045,9 +16287,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18060,9 +16299,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18075,9 +16311,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -18091,9 +16324,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18106,9 +16336,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18121,9 +16348,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18150,9 +16374,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -18164,9 +16385,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18179,9 +16397,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18194,9 +16409,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18209,9 +16421,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18224,9 +16433,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -18240,9 +16446,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18255,9 +16458,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18270,9 +16470,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18304,9 +16501,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -18318,9 +16512,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18333,9 +16524,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18348,9 +16536,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18366,9 +16551,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18381,9 +16563,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18396,9 +16575,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -18412,9 +16588,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18430,9 +16603,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18445,9 +16615,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18471,9 +16638,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -18485,9 +16649,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18500,9 +16661,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18515,9 +16673,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18530,9 +16685,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -18546,9 +16698,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18561,9 +16710,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18576,9 +16722,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18602,9 +16745,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -18616,9 +16756,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18631,9 +16768,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18646,9 +16780,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18661,9 +16792,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -18677,9 +16805,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18692,9 +16817,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18707,9 +16829,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18751,9 +16870,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -18781,9 +16897,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18796,9 +16909,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18811,9 +16921,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18826,9 +16933,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18841,9 +16945,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -18857,9 +16958,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18875,9 +16973,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18890,9 +16985,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18916,9 +17008,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -18930,9 +17019,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18945,9 +17031,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18960,9 +17043,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -18975,9 +17055,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -18991,9 +17068,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19006,9 +17080,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19021,9 +17092,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19063,9 +17131,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -19080,9 +17145,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19095,9 +17157,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19110,9 +17169,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19125,9 +17181,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19152,9 +17205,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -19168,9 +17218,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19183,9 +17230,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19198,9 +17242,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19227,9 +17268,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -19241,9 +17279,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19256,9 +17291,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19271,9 +17303,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19286,9 +17315,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19301,9 +17327,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -19317,9 +17340,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19332,9 +17352,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19347,9 +17364,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19379,9 +17393,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -19393,9 +17404,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19408,9 +17416,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19423,9 +17428,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19438,9 +17440,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19453,9 +17452,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19480,9 +17476,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -19496,9 +17489,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19511,9 +17501,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19526,9 +17513,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19571,9 +17555,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -19585,9 +17566,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19600,9 +17578,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19615,9 +17590,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19630,9 +17602,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19645,9 +17614,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19672,9 +17638,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -19688,9 +17651,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19703,9 +17663,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19718,9 +17675,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19752,9 +17706,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -19766,9 +17717,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19781,9 +17729,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19796,9 +17741,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19811,9 +17753,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19826,9 +17765,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -19842,9 +17778,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19857,9 +17790,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19872,9 +17802,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19906,9 +17833,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -19920,9 +17844,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19935,9 +17856,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19950,9 +17868,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19965,9 +17880,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -19980,9 +17892,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -20007,9 +17916,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -20023,9 +17929,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -20038,9 +17941,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -20053,9 +17953,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -20084,9 +17981,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -20098,9 +17992,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -20113,9 +18004,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -20128,9 +18016,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -20143,9 +18028,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -20159,9 +18041,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -20174,9 +18053,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -20189,9 +18065,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -20246,9 +18119,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
@@ -20266,9 +18136,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -20282,9 +18149,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -20297,9 +18161,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -20312,9 +18173,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -20343,9 +18201,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -20359,9 +18214,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
@@ -20376,9 +18228,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -20392,9 +18241,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -20408,9 +18254,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -20471,9 +18314,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
@@ -20493,9 +18333,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -20509,9 +18346,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -20524,9 +18358,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -20539,9 +18370,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -20558,9 +18386,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -20589,9 +18414,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -20605,9 +18427,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
@@ -20622,9 +18441,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -20638,9 +18454,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -20654,9 +18467,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -20689,9 +18499,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
@@ -20708,9 +18515,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -20724,9 +18528,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -20739,9 +18540,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -20754,9 +18552,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -20770,9 +18565,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -20801,9 +18593,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -20817,9 +18606,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
@@ -20834,9 +18620,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -20850,9 +18633,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -20866,9 +18646,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -20896,9 +18673,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -20950,9 +18724,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -20965,9 +18736,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -20980,9 +18748,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -20995,9 +18760,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -21010,9 +18772,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -21026,9 +18785,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -21041,9 +18797,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -21056,9 +18809,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -21092,9 +18842,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -21117,9 +18864,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -21132,9 +18876,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -21150,9 +18891,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -21165,9 +18903,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -21180,9 +18915,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -21207,9 +18939,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -21223,9 +18952,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -21238,9 +18964,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -21253,9 +18976,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -21295,9 +19015,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
@@ -21314,9 +19031,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -21330,9 +19044,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -21345,9 +19056,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -21360,9 +19068,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -21391,9 +19096,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -21407,9 +19109,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
@@ -21424,9 +19123,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -21440,9 +19136,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -21456,9 +19149,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -21491,9 +19181,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -21509,9 +19196,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -21524,9 +19208,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -21542,9 +19223,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -21557,9 +19235,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -21572,9 +19247,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -21588,9 +19260,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -21603,9 +19272,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -21618,9 +19284,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -21652,9 +19315,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
@@ -21670,9 +19330,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -21686,9 +19343,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -21701,9 +19355,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -21716,9 +19367,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -21732,9 +19380,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -21763,9 +19408,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -21779,9 +19421,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
@@ -21796,9 +19435,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -21812,9 +19448,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -21828,9 +19461,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -21877,9 +19507,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
@@ -21898,9 +19525,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -21914,9 +19538,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -21929,9 +19550,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -21944,9 +19562,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -21963,9 +19578,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -21994,9 +19606,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -22010,9 +19619,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
@@ -22027,9 +19633,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -22043,9 +19646,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -22059,9 +19659,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
@@ -22086,9 +19683,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -22100,9 +19694,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22115,9 +19706,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22130,9 +19718,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -22146,9 +19731,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22161,9 +19743,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22176,9 +19755,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22216,9 +19792,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -22230,9 +19803,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -22247,9 +19817,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22262,9 +19829,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22277,9 +19841,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22292,9 +19853,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22319,9 +19877,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -22335,9 +19890,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22350,9 +19902,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22365,9 +19914,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22394,9 +19940,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -22408,9 +19951,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22423,9 +19963,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22438,9 +19975,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22453,9 +19987,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -22469,9 +20000,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22484,9 +20012,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22499,9 +20024,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22531,9 +20053,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -22545,9 +20064,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22560,9 +20076,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22575,9 +20088,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22590,9 +20100,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22605,9 +20112,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22632,9 +20136,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -22648,9 +20149,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22663,9 +20161,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22678,9 +20173,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22710,9 +20202,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -22727,9 +20216,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22742,9 +20228,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22757,9 +20240,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22772,9 +20252,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22787,9 +20264,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22814,9 +20288,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -22830,9 +20301,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22845,9 +20313,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22860,9 +20325,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22894,9 +20356,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -22908,9 +20367,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22923,9 +20379,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22938,9 +20391,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22953,9 +20403,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -22969,9 +20416,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22984,9 +20428,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -22999,9 +20440,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23049,9 +20487,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -23066,9 +20501,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23081,9 +20513,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23096,9 +20525,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23111,9 +20537,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23126,9 +20549,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23153,9 +20573,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -23169,9 +20586,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23184,9 +20598,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23199,9 +20610,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23238,9 +20646,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -23262,9 +20667,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23277,9 +20679,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23292,9 +20691,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23307,9 +20703,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23322,9 +20715,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23349,9 +20739,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -23365,9 +20752,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23380,9 +20764,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23395,9 +20776,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23430,9 +20808,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -23447,9 +20822,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23462,9 +20834,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23477,9 +20846,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23492,9 +20858,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23507,9 +20870,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23534,9 +20894,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -23550,9 +20907,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23565,9 +20919,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23580,9 +20931,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23609,9 +20957,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -23623,9 +20968,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23638,9 +20980,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23653,9 +20992,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23668,9 +21004,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23683,9 +21016,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -23699,9 +21029,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23714,9 +21041,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23729,9 +21053,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23773,9 +21094,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -23798,9 +21116,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23813,9 +21128,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23828,9 +21140,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23843,9 +21152,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23858,9 +21164,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23885,9 +21188,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -23901,9 +21201,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23916,9 +21213,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23931,9 +21225,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23963,9 +21254,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -23977,9 +21265,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -23992,9 +21277,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24007,9 +21289,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24022,9 +21301,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24037,9 +21313,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24064,9 +21337,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -24080,9 +21350,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24095,9 +21362,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24110,9 +21374,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24146,9 +21407,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -24160,9 +21418,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24175,9 +21430,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24190,9 +21442,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24205,9 +21454,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24220,9 +21466,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -24236,9 +21479,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24251,9 +21491,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24266,9 +21503,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24318,9 +21552,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -24342,9 +21573,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24357,9 +21585,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24372,9 +21597,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24387,9 +21609,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24402,9 +21621,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24429,9 +21645,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -24445,9 +21658,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24460,9 +21670,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24475,9 +21682,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24514,9 +21718,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -24534,9 +21735,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24549,9 +21747,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24564,9 +21759,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24579,9 +21771,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24594,9 +21783,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24621,9 +21807,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -24637,9 +21820,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24652,9 +21832,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24667,9 +21844,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24696,9 +21870,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -24710,9 +21881,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24725,9 +21893,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24740,9 +21905,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24755,9 +21917,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24770,9 +21929,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -24786,9 +21942,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24801,9 +21954,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24816,9 +21966,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24857,9 +22004,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -24871,9 +22015,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24886,9 +22027,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24901,9 +22039,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24916,9 +22051,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24931,9 +22063,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24958,9 +22087,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -24974,9 +22100,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -24989,9 +22112,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25004,9 +22124,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25038,9 +22155,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -25052,9 +22166,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25067,9 +22178,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25082,9 +22190,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25100,9 +22205,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25115,9 +22217,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25142,9 +22241,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -25158,9 +22254,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25173,9 +22266,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25188,9 +22278,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25226,9 +22313,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -25240,9 +22324,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25255,9 +22336,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25270,9 +22348,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25285,9 +22360,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25300,9 +22372,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -25316,9 +22385,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25331,9 +22397,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25346,9 +22409,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25377,9 +22437,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -25391,9 +22448,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25406,9 +22460,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25421,9 +22472,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25439,9 +22487,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25454,9 +22499,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -25470,9 +22512,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25485,9 +22524,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25500,9 +22536,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25544,9 +22577,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -25564,9 +22594,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25579,9 +22606,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25594,9 +22618,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25612,9 +22633,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25627,9 +22645,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25654,9 +22669,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -25670,9 +22682,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25685,9 +22694,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25700,9 +22706,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25726,9 +22729,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -25740,9 +22740,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25755,9 +22752,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25770,9 +22764,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -25786,9 +22777,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25801,9 +22789,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25816,9 +22801,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25845,9 +22827,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -25862,9 +22841,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25877,9 +22853,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25892,9 +22865,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25907,9 +22877,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -25923,9 +22890,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25938,9 +22902,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -25953,9 +22914,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26000,9 +22958,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -26018,9 +22973,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26033,9 +22985,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26048,9 +22997,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26063,9 +23009,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26090,9 +23033,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -26106,9 +23046,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26121,9 +23058,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26136,9 +23070,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26162,9 +23093,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -26176,9 +23104,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26191,9 +23116,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26206,9 +23128,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26221,9 +23140,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -26237,9 +23153,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26252,9 +23165,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26267,9 +23177,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26330,9 +23237,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -26347,9 +23251,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26362,9 +23263,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26377,9 +23275,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26392,9 +23287,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26419,9 +23311,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -26435,9 +23324,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26450,9 +23336,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26465,9 +23348,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26494,9 +23374,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
@@ -26509,9 +23386,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26524,9 +23398,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26539,9 +23410,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
@@ -26555,9 +23423,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26570,9 +23435,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -26586,9 +23448,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26601,9 +23460,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26616,9 +23472,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26648,9 +23501,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -26662,9 +23512,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26677,9 +23524,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26692,9 +23536,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26707,9 +23548,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26722,9 +23560,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26749,9 +23584,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -26765,9 +23597,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26780,9 +23609,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26795,9 +23621,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26864,9 +23687,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -26881,9 +23701,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26896,9 +23713,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26911,9 +23725,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26926,9 +23737,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26941,9 +23749,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26968,9 +23773,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -26984,9 +23786,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -26999,9 +23798,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27014,9 +23810,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27044,9 +23837,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -27108,9 +23898,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27134,9 +23921,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -27171,9 +23955,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -27193,9 +23974,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -27209,9 +23987,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27235,9 +24010,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -27249,9 +24021,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27264,9 +24033,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27279,9 +24045,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27294,9 +24057,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -27310,9 +24070,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27325,9 +24082,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27340,9 +24094,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27372,9 +24123,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content?: never;
@@ -27384,9 +24132,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27399,9 +24144,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27414,9 +24156,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27429,9 +24168,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27456,9 +24192,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -27472,9 +24205,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27487,9 +24217,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27502,9 +24229,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27540,9 +24264,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -27557,9 +24278,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27572,9 +24290,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27587,9 +24302,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27602,9 +24314,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27617,9 +24326,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27644,9 +24350,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -27660,9 +24363,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27675,9 +24375,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27690,9 +24387,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27716,9 +24410,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -27730,9 +24421,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27745,9 +24433,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27760,9 +24445,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27775,9 +24457,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27790,9 +24469,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -27806,9 +24482,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27821,9 +24494,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -27836,9 +24506,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28005,9 +24672,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -28019,9 +24683,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28034,9 +24695,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28049,9 +24707,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28064,9 +24719,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28079,9 +24731,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28106,9 +24755,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -28122,9 +24768,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28137,9 +24780,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28152,9 +24792,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28178,9 +24815,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -28205,9 +24839,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28220,9 +24851,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28235,9 +24863,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28250,9 +24875,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -28266,9 +24888,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28281,9 +24900,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28296,9 +24912,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28334,9 +24947,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -28348,9 +24958,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28363,9 +24970,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28378,9 +24982,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28393,9 +24994,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28408,9 +25006,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28435,9 +25030,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -28451,9 +25043,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28466,9 +25055,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28481,9 +25067,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28507,9 +25090,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     /** @description The quoted SHA-256 of the picture's bytes. */
                     ETag?: string;
                     [name: string]: unknown;
@@ -28525,9 +25105,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     /** @description The quoted SHA-256 of the picture's bytes. */
                     ETag?: string;
                     [name: string]: unknown;
@@ -28539,9 +25116,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28554,9 +25128,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28569,9 +25140,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28584,9 +25152,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28599,9 +25164,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -28615,9 +25177,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28630,9 +25189,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28645,9 +25201,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28679,9 +25232,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -28693,9 +25243,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28708,9 +25255,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28723,9 +25267,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28738,9 +25279,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28753,9 +25291,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28780,9 +25315,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -28796,9 +25328,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28811,9 +25340,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28826,9 +25352,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28860,9 +25383,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -28874,9 +25394,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28889,9 +25406,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28904,9 +25418,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28919,9 +25430,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28934,9 +25442,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28961,9 +25466,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -28977,9 +25479,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -28992,9 +25491,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29007,9 +25503,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29033,9 +25526,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -29047,9 +25537,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29062,9 +25549,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29077,9 +25561,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29092,9 +25573,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -29108,9 +25586,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29123,9 +25598,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29138,9 +25610,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29173,9 +25642,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -29187,9 +25653,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29202,9 +25665,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29217,9 +25677,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29232,9 +25689,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29247,9 +25701,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29274,9 +25725,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -29290,9 +25738,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29305,9 +25750,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29320,9 +25762,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29362,9 +25801,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -29379,9 +25815,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29394,9 +25827,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29409,9 +25839,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29424,9 +25851,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29439,9 +25863,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29466,9 +25887,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -29482,9 +25900,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29497,9 +25912,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29512,9 +25924,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29538,9 +25947,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -29552,9 +25958,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29567,9 +25970,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29582,9 +25982,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29597,9 +25994,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -29613,9 +26007,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29628,9 +26019,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29643,9 +26031,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29675,9 +26060,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -29689,9 +26071,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29704,9 +26083,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29719,9 +26095,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29734,9 +26107,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29749,9 +26119,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29776,9 +26143,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -29792,9 +26156,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29807,9 +26168,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29822,9 +26180,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29861,9 +26216,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -29875,9 +26227,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29890,9 +26239,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29905,9 +26251,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29920,9 +26263,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29935,9 +26275,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29962,9 +26299,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -29978,9 +26312,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -29993,9 +26324,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30008,9 +26336,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30080,9 +26405,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -30094,9 +26416,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30109,9 +26428,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30124,9 +26440,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -30140,9 +26453,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30155,9 +26465,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30170,9 +26477,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30196,9 +26500,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -30210,9 +26511,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30225,9 +26523,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30240,9 +26535,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30255,9 +26547,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -30271,9 +26560,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30286,9 +26572,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30301,9 +26584,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30379,9 +26659,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -30396,9 +26673,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30411,9 +26685,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30426,9 +26697,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30444,9 +26712,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30471,9 +26736,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -30487,9 +26749,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30502,9 +26761,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30517,9 +26773,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30595,9 +26848,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -30612,9 +26862,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30627,9 +26874,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30642,9 +26886,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30660,9 +26901,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30687,9 +26925,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -30703,9 +26938,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30718,9 +26950,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30733,9 +26962,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30759,9 +26985,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -30773,9 +26996,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30788,9 +27008,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30803,9 +27020,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30818,9 +27032,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -30834,9 +27045,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30864,9 +27072,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -30878,9 +27083,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30893,9 +27095,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30908,9 +27107,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -30935,9 +27131,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -30951,9 +27144,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31035,9 +27225,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -31049,9 +27236,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31064,9 +27248,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31079,9 +27260,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31094,9 +27272,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -31110,9 +27285,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31125,9 +27297,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31140,9 +27309,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31166,9 +27332,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -31208,10 +27371,6 @@ export interface operations {
                             memory_rss_bytes: number | null;
                             /** @description The most memory the process has held in RAM, in bytes. `null` if it can't be read. */
                             memory_rss_peak_bytes: number | null;
-                            /** @description Memory the JavaScript engine uses for live objects, in bytes. `null` if it can't be read. */
-                            heap_used_bytes: number | null;
-                            /** @description Memory the JavaScript engine has reserved, in bytes. `null` if it can't be read. */
-                            heap_total_bytes: number | null;
                             /** @description CPU seconds the process has spent on its own work since it started. `null` if it can't be read. */
                             cpu_user_seconds: number | null;
                             /** @description CPU seconds the process has spent in the operating system since it started. `null` if it can't be read. */
@@ -31223,7 +27382,7 @@ export interface operations {
                             database_bytes: number | null;
                             /** @description Size of the database's write-ahead log file, in bytes. 0 when there is none. `null` if it can't be read. */
                             wal_bytes: number | null;
-                            /** @description Row counts of the largest tables, as of `counted_at`. `null` if a count can't be read, and all `null` until the first count finishes. */
+                            /** @description Row counts of the largest tables, counted when the request is read. `null` if a count can't be read. */
                             rows: {
                                 /** @description Number of items. */
                                 items: number | null;
@@ -31234,11 +27393,7 @@ export interface operations {
                                 /** @description Number of audit log entries. */
                                 audit_log: number | null;
                             };
-                            /** @description When the row counts were taken, in UTC. `null` until the first count finishes. A request never counts: when there is no count or it is over an hour old, Marfa starts one in the background. */
-                            counted_at: string | null;
                         };
-                        /** @description When the item, blob, type, key and webhook counters were collected, in UTC. They are reused for up to a minute. The `process` and `storage` blocks are read on each request. */
-                        cached_at: string;
                     };
                 };
             };
@@ -31247,9 +27402,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31262,9 +27414,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31277,9 +27426,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31292,9 +27438,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -31308,9 +27451,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31323,9 +27463,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31338,9 +27475,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31383,9 +27517,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -31397,9 +27528,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31412,9 +27540,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31427,9 +27552,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31442,9 +27564,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -31458,9 +27577,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31473,9 +27589,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31488,9 +27601,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31514,9 +27624,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -31528,9 +27635,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31543,9 +27647,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31558,9 +27659,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31573,9 +27671,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -31589,9 +27684,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31604,9 +27696,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31619,9 +27708,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31651,9 +27737,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -31665,9 +27748,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31680,9 +27760,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31695,9 +27772,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31710,9 +27784,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31725,9 +27796,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31752,9 +27820,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -31768,9 +27833,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31783,9 +27845,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31798,9 +27857,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31839,9 +27895,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -31857,9 +27910,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31872,9 +27922,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31887,9 +27934,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31902,9 +27946,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31917,9 +27958,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -31933,9 +27971,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31952,9 +27987,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -31967,9 +27999,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -32001,9 +28030,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -32060,9 +28086,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -32075,9 +28098,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -32090,9 +28110,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -32105,9 +28122,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -32123,9 +28137,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -32150,9 +28161,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
@@ -32166,9 +28174,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -32184,9 +28189,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
@@ -32199,9 +28201,6 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
-                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
-                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     [name: string]: unknown;
                 };
