@@ -123,21 +123,54 @@ impl LocalTransport {
     }
 }
 
+fn deadline(timeout: Option<std::time::Duration>) -> Option<std::time::Instant> {
+    timeout.map(|timeout| std::time::Instant::now() + timeout)
+}
+
+/// What is left of a deadline, so a read or write that a signal interrupted
+/// and is tried again never waits longer than the timeout it was given.
+fn remaining(deadline: Option<std::time::Instant>) -> std::io::Result<Option<std::time::Duration>> {
+    deadline
+        .map(|deadline| {
+            deadline
+                .checked_duration_since(std::time::Instant::now())
+                .filter(|left| !left.is_zero())
+                .ok_or(std::io::ErrorKind::TimedOut.into())
+        })
+        .transpose()
+}
+
 impl Transport for LocalTransport {
     fn buffers(&mut self) -> &mut dyn Buffers {
         &mut self.buffers
     }
     fn transmit_output(&mut self, amount: usize, timeout: NextTimeout) -> Result<(), ureq::Error> {
-        self.stream
-            .set_write_timeout(timeout.for_write().not_zero().map(|t| *t))?;
-        self.stream.write_all(&self.buffers.output()[..amount])?;
+        let deadline = deadline(timeout.for_write().not_zero().map(|t| *t));
+        let mut sent = 0;
+        while sent < amount {
+            self.stream.set_write_timeout(remaining(deadline)?)?;
+            match self.stream.write(&self.buffers.output()[sent..amount]) {
+                Ok(0) => return Err(std::io::Error::from(std::io::ErrorKind::WriteZero).into()),
+                Ok(written) => sent += written,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
         Ok(())
     }
     fn await_input(&mut self, timeout: NextTimeout) -> Result<bool, ureq::Error> {
-        self.set_read_timeout(timeout.for_read().not_zero().map(|t| *t))?;
-        let amount = self.stream.read(self.buffers.input_append_buf())?;
-        self.buffers.input_appended(amount);
-        Ok(amount > 0)
+        let deadline = deadline(timeout.for_read().not_zero().map(|t| *t));
+        loop {
+            self.set_read_timeout(remaining(deadline)?)?;
+            match self.stream.read(self.buffers.input_append_buf()) {
+                Ok(amount) => {
+                    self.buffers.input_appended(amount);
+                    return Ok(amount > 0);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
     }
     fn is_open(&mut self) -> bool {
         false
@@ -422,6 +455,102 @@ mod tests {
             "{error}"
         );
         assert!(transport.buffers.input().is_empty());
+    }
+
+    extern "C" fn ignore_signal(_: libc::c_int) {}
+
+    /// Sends SIGUSR1 to `reader` every 10 ms until `stop` is set. The handler
+    /// is installed without SA_RESTART, so a read blocked in the kernel fails
+    /// with EINTR, as one does when a child process exits.
+    fn interrupt(
+        reader: libc::pthread_t,
+        stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> std::thread::JoinHandle<()> {
+        // SAFETY: the action is zeroed, then given a handler that does nothing.
+        unsafe {
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = ignore_signal as extern "C" fn(libc::c_int) as usize;
+            libc::sigemptyset(&mut action.sa_mask);
+            assert_eq!(
+                libc::sigaction(libc::SIGUSR1, &action, std::ptr::null_mut()),
+                0
+            );
+        }
+        std::thread::spawn(move || {
+            while !stop.load(std::sync::atomic::Ordering::SeqCst) {
+                // SAFETY: the reader thread outlives this one, which is joined first.
+                unsafe { libc::pthread_kill(reader, libc::SIGUSR1) };
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        })
+    }
+
+    #[test]
+    fn local_transport_keeps_reading_after_a_signal_interrupts_the_read() {
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        let reading = std::thread::spawn(move || {
+            let mut transport = LocalTransport {
+                stream,
+                buffers: LazyBuffers::new(1024, 1024),
+            };
+            let timeout = NextTimeout {
+                after: std::time::Duration::from_secs(10).into(),
+                reason: ureq::Timeout::RecvResponse,
+                ..NextTimeout::default()
+            };
+            let got = transport.await_input(timeout);
+            (
+                got.map_err(|error| error.to_string()),
+                transport.buffers.input().to_vec(),
+            )
+        });
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let signalling = interrupt(
+            std::os::unix::thread::JoinHandleExt::as_pthread_t(&reading),
+            stop.clone(),
+        );
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        peer.write_all(b"answer").unwrap();
+        let (got, input) = reading.join().unwrap();
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        signalling.join().unwrap();
+        assert_eq!(got, Ok(true));
+        assert_eq!(input, b"answer");
+    }
+
+    #[test]
+    fn a_read_that_signals_keep_interrupting_still_ends_at_its_timeout() {
+        let (stream, _peer) = UnixStream::pair().unwrap();
+        let reading = std::thread::spawn(move || {
+            let mut transport = LocalTransport {
+                stream,
+                buffers: LazyBuffers::new(1024, 1024),
+            };
+            let started = std::time::Instant::now();
+            let error = transport.await_input(NextTimeout {
+                after: std::time::Duration::from_millis(300).into(),
+                reason: ureq::Timeout::RecvResponse,
+                ..NextTimeout::default()
+            });
+            (error, started.elapsed())
+        });
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let signalling = interrupt(
+            std::os::unix::thread::JoinHandleExt::as_pthread_t(&reading),
+            stop.clone(),
+        );
+        let (error, elapsed) = reading.join().unwrap();
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        signalling.join().unwrap();
+        assert!(
+            matches!(error, Err(ureq::Error::Io(ref io)) if matches!(io.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut)),
+            "{error:?}"
+        );
+        assert!(
+            elapsed >= std::time::Duration::from_millis(250),
+            "{elapsed:?}"
+        );
+        assert!(elapsed < std::time::Duration::from_secs(2), "{elapsed:?}");
     }
 
     #[test]
