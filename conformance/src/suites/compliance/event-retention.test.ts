@@ -42,9 +42,8 @@ interface Instance {
 }
 
 /**
- * A server of its own whose two retention jobs are not due: each has run once
- * and its next run is out of reach, so the run the fixture asks for is the
- * only one however far the clock moves.
+ * A server of its own whose scheduler runs no job (`QUIET_SCHEDULE`), so the
+ * run the fixture asks for is the only one however far the clock moves.
  */
 async function instance(label: string): Promise<Instance> {
   const server = await bootFreshServer(label, QUIET_SCHEDULE);
