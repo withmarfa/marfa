@@ -196,10 +196,9 @@ async fn hold(app: &Arc<App>, store: &str, name: &str, files: Vec<String>) -> Re
     Ok(())
 }
 
-/// Forgets every backup but those of `store` in `kept`, and each hold no backup left covers.
+/// Forgets the backups of `store` not in `kept`, and each of its holds no backup left covers.
+/// Another bucket's backups and holds wait for that bucket's own thinning.
 fn release(tx: &Transaction<'_>, store: &str, kept: &HashSet<String>) -> Result<()> {
-    tx.prepare_cached("DELETE FROM backups WHERE store_id <> ?1")?
-        .execute([store])?;
     let recorded: Vec<(i64, String)> = tx
         .prepare_cached("SELECT seq, name FROM backups WHERE store_id = ?1")?
         .query_map([store], |row| Ok((row.get(0)?, row.get(1)?)))?
@@ -211,7 +210,7 @@ fn release(tx: &Transaction<'_>, store: &str, kept: &HashSet<String>) -> Result<
         }
     }
     tx.prepare_cached(
-        "DELETE FROM backup_files WHERE (last_seq IS NOT NULL OR store_id <> ?1) \
+        "DELETE FROM backup_files WHERE store_id = ?1 AND last_seq IS NOT NULL \
          AND NOT EXISTS (SELECT 1 FROM backups b WHERE b.store_id = backup_files.store_id \
          AND b.seq >= backup_files.first_seq \
          AND (backup_files.last_seq IS NULL OR b.seq <= backup_files.last_seq))",
@@ -653,8 +652,12 @@ mod tests {
     }
 
     fn held_of(tx: &Transaction<'_>, hashes: &[&Hash]) -> Vec<char> {
+        held_in(tx, BUCKET, hashes)
+    }
+
+    fn held_in(tx: &Transaction<'_>, store: &str, hashes: &[&Hash]) -> Vec<char> {
         let asked: Vec<Hash> = hashes.iter().map(|hash| (*hash).clone()).collect();
-        let held = held(tx, BUCKET, &asked).unwrap();
+        let held = held(tx, store, &asked).unwrap();
         let mut letters: Vec<char> = held
             .iter()
             .map(|hash| hash.hex().chars().next().unwrap())
@@ -704,7 +707,7 @@ mod tests {
     }
 
     #[test]
-    fn a_backup_never_put_and_another_buckets_backups_hold_nothing_after_a_thinning() {
+    fn a_backup_never_put_holds_nothing_and_another_bucket_keeps_its_holds_after_a_thinning() {
         let mut conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(MIGRATIONS[0].sql).unwrap();
         let tx = conn.transaction().unwrap();
@@ -718,18 +721,37 @@ mod tests {
 
         release(&tx, BUCKET, &kept(&["2.tar"])).unwrap();
         assert_eq!(held_of(&tx, &[&a, &b]), ['b']);
+        assert_eq!(held_in(&tx, "earlier bucket", &[&a, &b]), ['a']);
         let names: Vec<String> = tx
-            .prepare("SELECT store_id || '/' || name FROM backups")
+            .prepare("SELECT store_id || '/' || name FROM backups ORDER BY seq")
             .unwrap()
             .query_map([], |row| row.get(0))
             .unwrap()
             .map(|row| row.unwrap())
             .collect();
-        assert_eq!(names, ["bucket/2.tar"]);
+        assert_eq!(names, ["earlier bucket/0.tar", "bucket/2.tar"]);
         let rows: i64 = tx
             .query_row("SELECT COUNT(*) FROM backup_files", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(rows, 1);
+        assert_eq!(rows, 2);
+    }
+
+    #[test]
+    fn a_file_held_in_one_bucket_stays_held_across_another_buckets_thinning() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        let tx = conn.transaction().unwrap();
+        let x = hash('a');
+        registered(&tx, &[&x]);
+
+        hold(&tx, "bucket A", "a1.tar", &files(&[&x])).unwrap();
+        release(&tx, "bucket A", &kept(&["a1.tar"])).unwrap();
+        hold(&tx, "bucket B", "b1.tar", &[]).unwrap();
+        release(&tx, "bucket B", &kept(&["b1.tar"])).unwrap();
+        hold(&tx, "bucket A", "a2.tar", &[]).unwrap();
+        release(&tx, "bucket A", &kept(&["a1.tar", "a2.tar"])).unwrap();
+
+        assert_eq!(held_in(&tx, "bucket A", &[&x]), ['a']);
     }
 
     #[test]
