@@ -7,7 +7,7 @@ mod send;
 mod spool;
 mod tar;
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
@@ -101,6 +101,8 @@ struct InstanceNeed {
     permissions: Vec<Permission>,
     /// For each source a line names, the types of the carried rows behind it.
     sources: BTreeMap<String, BTreeSet<String>>,
+    /// The type and source of each row a line names.
+    rows: BTreeSet<(String, String)>,
 }
 
 impl InstanceNeed {
@@ -284,7 +286,7 @@ fn select(
         .iter()
         .map(|(_, held)| held.item_id.as_str())
         .collect();
-    let mut carried_ids: HashSet<String> = HashSet::new();
+    let mut carried_ids: HashMap<String, (String, String)> = HashMap::new();
     let mut carried_sources: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut digests: BTreeSet<String> = BTreeSet::new();
     let mut file_refs: BTreeSet<String> = BTreeSet::new();
@@ -312,7 +314,7 @@ fn select(
                 need.types.extend(row.mark_type.iter().cloned());
             })?;
             if agreed.contains(row.id.as_str()) {
-                carried_ids.insert(row.id.clone());
+                carried_ids.insert(row.id.clone(), (row.type_id.clone(), row.source.clone()));
             }
             carried_sources
                 .entry(row.source)
@@ -401,6 +403,7 @@ fn select(
                 for (source, types) in need.sources {
                     open.sources.entry(source).or_default().extend(types);
                 }
+                open.rows.extend(need.rows);
             })?;
         }
         Ok(())
@@ -489,15 +492,20 @@ fn select(
     count("connector_state_count", &mut instance, documents)?;
     let kept = agreements
         .into_iter()
-        .filter(|(_, held)| carried_ids.contains(&held.item_id))
-        .map(|(source, held)| {
+        .filter_map(|(source, held)| {
+            let row = carried_ids.get(&held.item_id)?.clone();
+            Some((source, held, row))
+        })
+        .map(|(source, held, row)| {
             let line = print(&json!({ "connector_agreement": {
                 "source": source,
                 "item_id": held.item_id,
                 "waiting": held.waiting,
                 "record": held.record,
             } }))?;
-            Ok((line, needing(Some(Permission::ConnectorsManage))))
+            let mut need = needing(Some(Permission::ConnectorsManage));
+            need.rows.insert(row);
+            Ok((line, need))
         })
         .collect::<Result<_>>()?;
     count("connector_agreement_count", &mut instance, kept)?;

@@ -328,6 +328,92 @@ async fn narrowed_during_selection(narrowed: Value) -> Taken {
     take(opened.await.unwrap(), Duration::ZERO).await
 }
 
+/// An archive carrying a connector agreement for a note, whose key is narrowed to
+/// `type_permissions` while its selection is held.
+async fn agreement_narrowed(type_permissions: Value) -> Taken {
+    let instance = Arc::new(Instance::start().await);
+    let (status, feed) = instance
+        .local(
+            Method::POST,
+            "/keys",
+            Some(json!({
+                "label": "feed", "source": "feed", "permissions": [],
+                "type_permissions": { "*": "write" },
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{feed}");
+    let feed = feed["key"].as_str().unwrap().to_string();
+    let public = instance.public.clone();
+    let as_feed = async |method: Method, path: &str, body: Value| {
+        let (status, answer) = instance
+            .send(&public, Some(&feed), method, path, Some(body))
+            .await;
+        assert!(status.is_success(), "{path}: {answer}");
+        answer
+    };
+    let note = as_feed(
+        Method::POST,
+        "/items",
+        json!({ "type": "core.note", "properties": { "title": "agreed" } }),
+    )
+    .await;
+    let note = note["id"]
+        .as_str()
+        .or_else(|| note["item"]["id"].as_str())
+        .unwrap()
+        .to_string();
+    let connector = as_feed(Method::POST, "/connectors", json!({ "name": "feed" })).await;
+    let connector = connector["id"].as_str().unwrap().to_string();
+    let path = |tail: &str| format!("/connectors/{connector}/{tail}");
+    as_feed(Method::POST, &path("hold"), json!({ "process": "worker" })).await;
+    as_feed(
+        Method::POST,
+        &path("agreements"),
+        json!({ "process": "worker",
+                "set": [{ "item_id": note, "waiting": false, "record": { "etag": "a" } }] }),
+    )
+    .await;
+    let (id, key) = instance.mint(json!(["connectors.manage"])).await;
+    instance
+        .app
+        .faults
+        .set("hold:export-page", Some("1"))
+        .unwrap();
+    let opened = {
+        let instance = instance.clone();
+        tokio::spawn(async move { instance.export(&key, "archive").await })
+    };
+    instance.when_held().await;
+    let (status, answer) = instance
+        .local(
+            Method::PATCH,
+            &format!("/keys/{id}"),
+            Some(json!({ "type_permissions": type_permissions })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    instance.app.faults.clear(Some("hold:export-page"));
+    take(opened.await.unwrap(), Duration::ZERO).await
+}
+
+#[tokio::test]
+async fn an_archive_whose_key_loses_the_row_an_agreement_names_stops_before_the_agreement() {
+    let witness = agreement_narrowed(json!({ "core.note": "read" })).await;
+    assert!(!witness.failed);
+    assert!(tar_ends(&witness.bytes));
+
+    let cut = agreement_narrowed(json!({ "core.file": "read" })).await;
+    assert!(cut.failed);
+    let next_entry = b"items.ndjson.gz";
+    assert!(
+        !cut.bytes
+            .windows(next_entry.len())
+            .any(|held| held == next_entry),
+        "the agreement for a note the key no longer reads was sent whole"
+    );
+}
+
 #[tokio::test]
 async fn an_archive_whose_key_loses_the_settings_it_carries_ends_with_an_error() {
     let witness = narrowed_during_selection(json!(["config.manage"])).await;

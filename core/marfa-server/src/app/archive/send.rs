@@ -225,6 +225,9 @@ fn instance_need(need: &InstanceNeed) -> Box<dyn Fn(&Reader<'_, '_>) -> bool + S
                         && caller.lists(&read.catalog.rules, type_id, source)
                 })
             })
+            && need.rows.iter().all(|(type_id, source)| {
+                caller.may_read_type(type_id) && caller.lists(&read.catalog.rules, type_id, source)
+            })
     })
 }
 
