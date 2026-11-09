@@ -144,9 +144,7 @@ describe("a time the server keeps", () => {
             .prepare("UPDATE api_keys SET expires_at = ? WHERE id = ?")
             .run(value, id),
         );
-      expect(
-        (await send(server, "/keys/current", { key })).status,
-      ).toBe(200);
+      expect((await send(server, "/keys/current", { key })).status).toBe(200);
 
       for (const damaged of ["soon", "4070908800000", "2099-01-01T00:00:00Z"]) {
         expiring(damaged);
@@ -156,9 +154,7 @@ describe("a time the server keeps", () => {
       }
 
       expiring("2099-01-01T00:00:00.000Z");
-      expect(
-        (await send(server, "/keys/current", { key })).status,
-      ).toBe(200);
+      expect((await send(server, "/keys/current", { key })).status).toBe(200);
     },
     FRESH_SERVER_TIMEOUT_MS,
   );
