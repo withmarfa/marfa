@@ -13,8 +13,6 @@ import {
   movedClock,
   type Moment,
   playOut,
-  QUIET_SCHEDULE,
-  quiet,
 } from "../../utils/moved-clock.js";
 
 /**
@@ -34,16 +32,16 @@ let serial = 0;
 beforeAll(
   async () => {
     server = await bootFreshServer("inbound-retention", {
-      // Far enough off that no pass but the ones this file asks for runs, as
-      // the clock moves.
-      ...QUIET_SCHEDULE,
+      // A poll interval at the setting's ceiling means the scheduler claims
+      // nothing, so the pass a case asks for is the only one. Quieting the
+      // job's own interval is not enough: a case moves the clock past a year,
+      // the longest interval, and the scheduler would then run the pass
+      // itself between the clock's last move and the case's own run.
+      MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: "3600000",
       // Room for a body past the 32 MiB a pass removes at most.
       MARFA_INBOUND_MAX_BYTES: String(40 * 1024 * 1024),
     });
     clock = movedClock(server);
-    // The first run puts the job's next one at the end of that interval, where
-    // its first run would otherwise be thirty seconds after the boot.
-    await quiet(server, ["inbound-delivery-cleanup"]);
   },
   2 * FRESH_SERVER_TIMEOUT_MS + 60_000,
 );

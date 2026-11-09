@@ -1,7 +1,7 @@
 import { TEST_OWNER as OWNER } from "../../utils/target.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import { controlRequest } from "../../utils/control-request.js";
+import { controlRequest, localFetch } from "../../utils/control-request.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -65,7 +65,6 @@ interface SignIn {
   id: string;
   kind: string;
   name: string;
-  current: boolean;
   created_at: string;
   last_used_at: string;
   expires_at: string;
@@ -114,50 +113,58 @@ function cookieMaxAge(response: Response, cookie: string): number | undefined {
 
 const COOKIE_SECONDS = 400 * 24 * 3600;
 
-function list(browser: Browser): Promise<Response> {
-  return fetch(`${server.apiUrl}/owner/sign-ins`, {
+/** A request on the session, at a door it counts on: the passkey page's list. */
+function use(browser: Browser): Promise<Response> {
+  return fetch(`${server.apiUrl}/owner/passkeys`, {
     headers: { cookie: browser.cookie },
   });
 }
 
-async function signIns(browser: Browser): Promise<SignIn[]> {
-  const response = await list(browser);
+function answered(
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<Response> {
+  return localFetch(server.controlSocket, `${server.apiUrl}${path}`, {
+    method,
+    ...(body === undefined
+      ? {}
+      : {
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+  });
+}
+
+async function listText(): Promise<string> {
+  return JSON.stringify((await local("GET", "/owner/sign-ins")).body);
+}
+
+async function signIns(): Promise<SignIn[]> {
+  const response = await local("GET", "/owner/sign-ins");
   expect(response.status).toBe(200);
-  const body = (await response.json()) as { data: SignIn[] };
+  const body = response.body as unknown as { data: SignIn[] };
   await expectMatchesSchema("GET", "/owner/sign-ins", 200, body);
   return body.data;
 }
 
 async function idOf(browser: Browser): Promise<string> {
-  const own = (await signIns(browser)).find((row) => row.current);
-  expect(own, "the listing marked no session current").toBeDefined();
+  const own = (await signIns()).find(
+    (row) => row.kind === "browser" && row.user_agent === browser.userAgent,
+  );
+  expect(own, "the listing holds no session of that browser").toBeDefined();
   return own!.id;
 }
 
-function end(browser: Browser, id: string, query = ""): Promise<Response> {
-  return fetch(
-    `${server.apiUrl}/owner/sign-ins/${encodeURIComponent(id)}${query}`,
-    {
-      method: "DELETE",
-      headers: { cookie: browser.cookie, origin },
-    },
+function end(id: string, query = ""): Promise<Response> {
+  return answered(
+    "DELETE",
+    `/owner/sign-ins/${encodeURIComponent(id)}${query}`,
   );
 }
 
-function rename(
-  browser: Browser,
-  id: string,
-  body: unknown,
-): Promise<Response> {
-  return fetch(`${server.apiUrl}/owner/sign-ins/${encodeURIComponent(id)}`, {
-    method: "PATCH",
-    headers: {
-      cookie: browser.cookie,
-      origin,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
+function rename(id: string, body: unknown): Promise<Response> {
+  return answered("PATCH", `/owner/sign-ins/${encodeURIComponent(id)}`, body);
 }
 
 /** The private local command's request, which carries no credential. */
@@ -228,8 +235,8 @@ async function mintAsApp(
 }
 
 /** The id of the app `name` names in the listing. */
-async function appId(browser: Browser, name: string): Promise<string> {
-  const row = (await signIns(browser)).find(
+async function appId(name: string): Promise<string> {
+  const row = (await signIns()).find(
     (r) => r.kind === "app" && r.name === name,
   );
   expect(row, `no app named ${name}`).toBeDefined();
@@ -286,10 +293,10 @@ async function refresh(
 
 /** Waits for the listing to show `id` with a last use, which is written
  *  after the request that made it answers. */
-async function listedWithUse(browser: Browser, id: string): Promise<SignIn> {
+async function listedWithUse(id: string): Promise<SignIn> {
   const deadline = Date.now() + 10 * SECOND;
   for (;;) {
-    const row = (await signIns(browser)).find((r) => r.id === id);
+    const row = (await signIns()).find((r) => r.id === id);
     if (row?.last_used_at || Date.now() > deadline) {
       expect(row, `${id} is not listed`).toBeDefined();
       return row!;
@@ -298,15 +305,12 @@ async function listedWithUse(browser: Browser, id: string): Promise<SignIn> {
   }
 }
 
-/** What the sign-in library says of the browser's session: `null` for none. */
-async function session(
-  browser: Browser,
-): Promise<{ session: Record<string, unknown> } | null> {
-  const response = await fetch(`${server.apiUrl}/auth/get-session`, {
-    headers: { cookie: browser.cookie },
-  });
-  expect(response.status).toBe(200);
-  return (await response.json()) as { session: Record<string, unknown> } | null;
+/** Whether the browser's session lives, which uses it. */
+async function session(browser: Browser): Promise<object | null> {
+  const response = await use(browser);
+  await response.body?.cancel();
+  expect([200, 401]).toContain(response.status);
+  return response.status === 200 ? {} : null;
 }
 
 /** The time the server reads. */
@@ -319,15 +323,12 @@ async function pass(ms: number): Promise<void> {
   await server.advanceClock(ms);
 }
 
-/** A session's last use and expiry in whole seconds, as another session's
+/** A session's last use and expiry in whole seconds, as the local command's
  *  listing shows them, so reading them does not use the session. */
 async function stored(
   id: string,
-  observer?: Browser,
 ): Promise<{ updated_at: number; expires_at: number }> {
-  const row = (await signIns(observer ?? (await signIn()))).find(
-    (r) => r.id === id,
-  );
+  const row = (await signIns()).find((r) => r.id === id);
   expect(row, `session ${id} is not listed`).toBeDefined();
   return {
     updated_at: Math.floor(Date.parse(row!.last_used_at) / 1000),
@@ -336,30 +337,27 @@ async function stored(
 }
 
 describe("the owner's sign-ins", () => {
-  it("lists every live browser session of the owner, marking the one that asks", async () => {
+  it("lists every live browser session of the owner", async () => {
     const first = await signIn();
     const second = await signIn();
-    const rows = await signIns(first);
+    const rows = await signIns();
     const firstId = await idOf(first);
     const secondId = await idOf(second);
     const mine = rows.find((row) => row.id === firstId);
     const other = rows.find((row) => row.id === secondId);
     expect(mine).toMatchObject({
       kind: "browser",
-      current: true,
       ip_address: first.address,
       user_agent: first.userAgent,
     });
     expect(other).toMatchObject({
       kind: "browser",
-      current: false,
       ip_address: second.address,
       user_agent: second.userAgent,
     });
     for (const row of [mine!, other!]) {
       expect(Object.keys(row).sort()).toEqual([
         "created_at",
-        "current",
         "expires_at",
         "id",
         "ip_address",
@@ -372,17 +370,14 @@ describe("the owner's sign-ins", () => {
       for (const at of [row.created_at, row.last_used_at, row.expires_at])
         expect(Number.isNaN(Date.parse(at))).toBe(false);
     }
-    expect(rows.filter((row) => row.current)).toHaveLength(1);
   });
 
-  it("carries no session's token, which the sign-in library's own answer does", async () => {
+  it("carries no session's token, which the browser's cookie holds", async () => {
     const browser = await signIn();
-    // The witness: the token is there to leak, in the library's answer.
-    const own = await session(browser);
-    const sessionToken = own?.session.token;
-    expect(typeof sessionToken).toBe("string");
-    const text = await (await list(browser)).text();
-    expect(text).not.toContain(sessionToken as string);
+    // The witness: the session the cookie names is live and listed.
+    expect(await session(browser)).not.toBeNull();
+    await idOf(browser);
+    const text = await listText();
     expect(text).not.toContain(
       decodeURIComponent(browser.cookie.slice(browser.cookie.indexOf("=") + 1)),
     );
@@ -484,31 +479,12 @@ describe("the owner's sign-ins", () => {
     }
   });
 
-  it("answers the private local command every browser session, marking none current, and ends one for it", async () => {
-    const browser = await signIn();
-    const id = await idOf(browser);
-    const listed = await controlRequest(
-      server.controlSocket,
-      "/owner/sign-ins",
-    );
-    expect(listed.status).toBe(200);
-    const rows = (listed.body as { data: SignIn[] }).data;
-    expect(rows.map((row) => row.id)).toContain(id);
-    expect(rows.every((row) => !row.current)).toBe(true);
-    const ended = await controlRequest(
-      server.controlSocket,
-      `/owner/sign-ins/${id}`,
-      { method: "DELETE" },
-    );
-    expect(ended.status).toBe(200);
-    expect(await session(browser)).toBeNull();
-  });
-
   it("names a browser from the browser it reports", async () => {
     const safari = await signIn(
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
     );
-    const own = (await signIns(safari)).find((row) => row.current)!;
+    const safariId = await idOf(safari);
+    const own = (await signIns()).find((row) => row.id === safariId)!;
     expect(own.name).toBe("Safari on macOS");
   });
 });
@@ -521,7 +497,7 @@ describe("every sign-in", () => {
     expect(await itemsStatus(server, signedIn.accessToken)).toBe(200);
     expect(await itemsStatus(server, minted.key)).toBe(200);
 
-    const rows = await signIns(browser);
+    const rows = await signIns();
     const appRow = rows.find(
       (row) =>
         row.kind === "app" && row.name === "Marfa app on the test machine",
@@ -531,13 +507,11 @@ describe("every sign-in", () => {
     expect(keyRow).toMatchObject({
       kind: "key",
       name: "listed key",
-      current: false,
       ip_address: null,
       user_agent: null,
       expires_at: null,
     });
     expect(appRow).toMatchObject({
-      current: false,
       ip_address: null,
       user_agent: null,
       expires_at: new Date(
@@ -545,11 +519,9 @@ describe("every sign-in", () => {
           365 * 86_400_000,
       ).toISOString(),
     });
-    expect(rows.some((row) => row.kind === "browser" && row.current)).toBe(
-      true,
-    );
+    expect(rows.some((row) => row.kind === "browser")).toBe(true);
     for (const id of [appRow!.id, minted.id]) {
-      const used = await listedWithUse(browser, id);
+      const used = await listedWithUse(id);
       expect(Number.isNaN(Date.parse(used.last_used_at))).toBe(false);
     }
     // Oldest first, across every kind.
@@ -564,7 +536,7 @@ describe("every sign-in", () => {
     // The witness: each credential is real and works.
     expect(await itemsStatus(server, signedIn.accessToken)).toBe(200);
     expect(await itemsStatus(server, minted.key)).toBe(200);
-    const text = await (await list(browser)).text();
+    const text = await listText();
     expect(text).toContain(minted.id);
     for (const secret of [
       minted.key,
@@ -575,7 +547,6 @@ describe("every sign-in", () => {
   });
 
   it("lists no key past its expires_at", async () => {
-    const browser = await signIn();
     const minted = await local("POST", "/keys", {
       label: "short-lived key",
       source: "owner-sign-ins-short-lived",
@@ -584,29 +555,24 @@ describe("every sign-in", () => {
     expect(minted.status, JSON.stringify(minted.body)).toBe(201);
     const id = minted.body.id as string;
     // The witness: the key is listed while it lives.
-    expect((await signIns(browser)).map((row) => row.id)).toContain(id);
-    // Short of the five minutes after which the browser's sign-in is no longer
-    // recent enough to end one.
+    expect((await signIns()).map((row) => row.id)).toContain(id);
     await pass(2 * MINUTE);
-    expect((await signIns(browser)).map((row) => row.id)).not.toContain(id);
-    const ended = await end(browser, id);
+    expect((await signIns()).map((row) => row.id)).not.toContain(id);
+    const ended = await end(id);
     expect(ended.status).toBe(404);
     expect(ended.headers.get("x-error-code")).toBe("sign_in_not_found");
   });
 
   it("lists no revoked key", async () => {
-    const browser = await signIn();
     const minted = await mintKey("revoked key");
     // The witness: the key is listed while it lives.
-    expect((await signIns(browser)).map((row) => row.id)).toContain(minted.id);
+    expect((await signIns()).map((row) => row.id)).toContain(minted.id);
     const revoked = await fetch(`${server.apiUrl}/keys/${minted.id}`, {
       method: "DELETE",
       headers: { authorization: `Bearer ${server.managementKey}` },
     });
     expect(revoked.status).toBe(200);
-    expect((await signIns(browser)).map((row) => row.id)).not.toContain(
-      minted.id,
-    );
+    expect((await signIns()).map((row) => row.id)).not.toContain(minted.id);
   });
 
   it("lists, renames and ends a sign-in through the local command", async () => {
@@ -618,8 +584,6 @@ describe("every sign-in", () => {
     const rows = listed.body.data as SignIn[];
     expect(rows.map((row) => row.id)).toContain(minted.id);
     expect(rows.map((row) => row.id)).toContain(await idOf(browser));
-    // The local command is no browser, so no sign-in sent its request.
-    expect(rows.filter((row) => row.current)).toEqual([]);
 
     const renamed = await local("PATCH", `/owner/sign-ins/${minted.id}`, {
       name: "renamed locally",
@@ -641,10 +605,10 @@ describe("renaming a sign-in", () => {
   it("gives an app the owner's own name, which the listing shows", async () => {
     const browser = await signIn();
     const signedIn = await approveApp(browser, "marfa");
-    const id = (await signIns(browser)).find(
+    const id = (await signIns()).find(
       (row) => row.kind === "app" && row.name === "marfa",
     )!.id;
-    const response = await rename(browser, id, {
+    const response = await rename(id, {
       name: "  Marfa app on the studio laptop  ",
     });
     expect(response.status).toBe(200);
@@ -654,9 +618,8 @@ describe("renaming a sign-in", () => {
       id,
       kind: "app",
       name: "Marfa app on the studio laptop",
-      current: false,
     });
-    expect((await signIns(browser)).find((row) => row.id === id)?.name).toBe(
+    expect((await signIns()).find((row) => row.id === id)?.name).toBe(
       "Marfa app on the studio laptop",
     );
     // A name is not access: the app is still signed in.
@@ -664,9 +627,8 @@ describe("renaming a sign-in", () => {
   });
 
   it("gives a key a new label", async () => {
-    const browser = await signIn();
     const minted = await mintKey("old label");
-    const response = await rename(browser, minted.id, { name: "new label" });
+    const response = await rename(minted.id, { name: "new label" });
     expect(response.status).toBe(200);
     const keys = await fetch(`${server.apiUrl}/keys`, {
       headers: { authorization: `Bearer ${server.managementKey}` },
@@ -684,15 +646,14 @@ describe("renaming a sign-in", () => {
     const id = await idOf(other);
     await pass(8 * DAY);
     // The browser that asks signs in after, so it is a recent sign-in.
-    const browser = await signIn();
-    const response = await rename(browser, id, { name: "too late" });
+    const response = await rename(id, { name: "too late" });
     expect(response.status).toBe(404);
     expect(response.headers.get("x-error-code")).toBe("sign_in_not_found");
   });
 
   it("refuses to rename a browser 400 validation_error", async () => {
     const browser = await signIn();
-    const response = await rename(browser, await idOf(browser), {
+    const response = await rename(await idOf(browser), {
       name: "my browser",
     });
     expect(response.status).toBe(400);
@@ -700,7 +661,6 @@ describe("renaming a sign-in", () => {
   });
 
   it("refuses an empty, overlong, unprintable or missing name and another field 400", async () => {
-    const browser = await signIn();
     const minted = await mintKey("kept label");
     for (const [body, code] of [
       [{ name: "   " }, "validation_error"],
@@ -711,37 +671,24 @@ describe("renaming a sign-in", () => {
       [{ name: "ok", label: "no" }, "validation_error"],
       [{}, "missing_required_field"],
     ] as const) {
-      const response = await rename(browser, minted.id, body);
+      const response = await rename(minted.id, body);
       expect(response.status, JSON.stringify(body)).toBe(400);
       expect(response.headers.get("x-error-code")).toBe(code);
     }
     // The witness: a name the door takes renames it.
-    expect(
-      (await rename(browser, minted.id, { name: "x".repeat(200) })).status,
-    ).toBe(200);
+    expect((await rename(minted.id, { name: "x".repeat(200) })).status).toBe(
+      200,
+    );
   });
 
   it("answers 404 sign_in_not_found for an ended sign-in and an id no sign-in has", async () => {
-    const browser = await signIn();
     const minted = await mintKey("ended before rename");
-    expect((await end(browser, minted.id)).status).toBe(200);
+    expect((await end(minted.id)).status).toBe(200);
     for (const id of [minted.id, "no-such-sign-in"]) {
-      const response = await rename(browser, id, { name: "anything" });
+      const response = await rename(id, { name: "anything" });
       expect(response.status, id).toBe(404);
       expect(response.headers.get("x-error-code")).toBe("sign_in_not_found");
     }
-  });
-
-  it("refuses a browser that signed in more than five minutes ago 403, and renames nothing", async () => {
-    const stale = await signIn();
-    const minted = await mintKey("stale rename");
-    await pass(6 * MINUTE);
-    const refused = await rename(stale, minted.id, { name: "renamed" });
-    expect(refused.status).toBe(403);
-    expect(refused.headers.get("x-error-code")).toBe("forbidden");
-    expect(
-      (await signIns(stale)).find((row) => row.id === minted.id)?.name,
-    ).toBe("stale rename");
   });
 });
 
@@ -750,66 +697,34 @@ describe("ending a sign-in", () => {
     const ended = await signIn();
     const kept = await signIn();
     const id = await idOf(ended);
-    const response = await end(kept, id);
+    const response = await end(id);
     expect(response.status).toBe(200);
     const body: unknown = await response.json();
     expect(body).toEqual({ ok: true });
     await expectMatchesSchema("DELETE", "/owner/sign-ins/{id}", 200, body);
 
     expect(await session(ended)).toBeNull();
-    const refused = await list(ended);
+    const refused = await use(ended);
     expect(refused.status).toBe(401);
     expect(await session(kept)).not.toBeNull();
-    expect((await signIns(kept)).map((row) => row.id)).not.toContain(id);
+    expect((await signIns()).map((row) => row.id)).not.toContain(id);
   });
 
   it("answers 404 sign_in_not_found for a session already ended and an id no session has", async () => {
     const ended = await signIn();
-    const kept = await signIn();
     const id = await idOf(ended);
-    expect((await end(kept, id)).status).toBe(200);
+    expect((await end(id)).status).toBe(200);
     for (const unknown of [id, "no-such-session"]) {
-      const again = await end(kept, unknown);
+      const again = await end(unknown);
       expect(again.status, unknown).toBe(404);
       expect(again.headers.get("x-error-code")).toBe("sign_in_not_found");
     }
   });
 
-  it("clears the cookie of the session that ends itself", async () => {
-    const browser = await signIn();
-    const response = await end(browser, await idOf(browser));
-    expect(response.status).toBe(200);
-    const name = browser.cookie.slice(0, browser.cookie.indexOf("="));
-    expect(
-      response.headers
-        .getSetCookie()
-        .some(
-          (line) => line.startsWith(`${name}=;`) && /max-age=0/i.test(line),
-        ),
-    ).toBe(true);
-    // The cookie is cleared, not also sent again for the session it ended.
-    expect(cookieMaxAge(response, browser.cookie)).toBeUndefined();
-    expect(await session(browser)).toBeNull();
-  });
-
-  it("refuses a browser that signed in more than five minutes ago 403, and ends nothing", async () => {
-    const stale = await signIn();
-    await pass(6 * MINUTE);
-    const target = await signIn();
-    const targetId = await idOf(target);
-    const refused = await end(stale, targetId);
-    expect(refused.status).toBe(403);
-    expect(refused.headers.get("x-error-code")).toBe("forbidden");
-    expect(await session(target)).not.toBeNull();
-    // The witness: a browser that signed in just now ends it.
-    expect((await end(target, targetId)).status).toBe(200);
-  });
-
   it("is in the audit log when it answers", async () => {
     const ended = await signIn();
-    const kept = await signIn();
     const id = await idOf(ended);
-    expect((await end(kept, id)).status).toBe(200);
+    expect((await end(id)).status).toBe(200);
     const page = await new MarfaClient({
       baseUrl: server.apiUrl,
       apiKey: server.managementKey,
@@ -826,7 +741,7 @@ describe("a name a sign-in cannot be shown by", () => {
     const signedIn = await approveApp(browser, hostile);
     // The witness: a printable name is what the listing shows for an app.
     const plain = await approveApp(browser, "printable app");
-    const text = await (await list(browser)).text();
+    const text = await listText();
     const rows = (JSON.parse(text) as { data: SignIn[] }).data;
     expect(rows.some((r) => r.name === "printable app")).toBe(true);
     expect(rows.some((r) => r.name === signedIn.clientId)).toBe(true);
@@ -835,11 +750,10 @@ describe("a name a sign-in cannot be shown by", () => {
   });
 
   it("names a key by its id when its label holds a bidirectional override or is too long", async () => {
-    const browser = await signIn();
     const reversed = await mintKey("invoice\u202efdp.exe");
     const long = await mintKey("y".repeat(201));
     const fine = await mintKey("printable key");
-    const rows = await signIns(browser);
+    const rows = await signIns();
     expect(rows.find((r) => r.id === reversed.id)?.name).toBe(reversed.id);
     expect(rows.find((r) => r.id === long.id)?.name).toBe(long.id);
     expect(rows.find((r) => r.id === fine.id)?.name).toBe("printable key");
@@ -852,14 +766,14 @@ describe("the keys an app minted", () => {
     const signedIn = await approveApp(browser, "app that mints");
     const minted = await mintAsApp(signedIn, "minted by an app");
     const own = await mintKey("minted by the owner");
-    const id = await appId(browser, "app that mints");
-    const rows = await signIns(browser);
+    const id = await appId("app that mints");
+    const rows = await signIns();
     expect(rows.find((r) => r.id === minted.id)?.minted_by).toBe(id);
     expect(rows.find((r) => r.id === own.id)?.minted_by).toBeNull();
     expect(rows.find((r) => r.id === id)?.minted_by).toBeNull();
-    expect((await end(browser, id)).status).toBe(200);
+    expect((await end(id)).status).toBe(200);
     expect(
-      (await signIns(browser)).find((r) => r.id === minted.id)?.minted_by,
+      (await signIns()).find((r) => r.id === minted.id)?.minted_by,
     ).toBeNull();
   });
 
@@ -867,9 +781,7 @@ describe("the keys an app minted", () => {
     const browser = await signIn();
     const signedIn = await approveApp(browser, "app ended alone");
     const minted = await mintAsApp(signedIn, "key outliving its app");
-    expect(
-      (await end(browser, await appId(browser, "app ended alone"))).status,
-    ).toBe(200);
+    expect((await end(await appId("app ended alone"))).status).toBe(200);
     expect(await itemsStatus(server, signedIn.accessToken)).toBe(401);
     expect(await itemsStatus(server, minted.key)).toBe(200);
   });
@@ -882,8 +794,7 @@ describe("the keys an app minted", () => {
     // The witness: the minted key works before the end.
     expect(await itemsStatus(server, minted.key)).toBe(200);
     const response = await end(
-      browser,
-      await appId(browser, "app ended with its keys"),
+      await appId("app ended with its keys"),
       "?revoke_keys=true",
     );
     expect(response.status).toBe(200);
@@ -896,22 +807,21 @@ describe("the keys an app minted", () => {
     expect(await itemsStatus(server, signedIn.accessToken)).toBe(401);
     expect(await itemsStatus(server, minted.key)).toBe(401);
     expect(await itemsStatus(server, other.key)).toBe(200);
-    expect((await signIns(browser)).map((r) => r.id)).not.toContain(minted.id);
+    expect((await signIns()).map((r) => r.id)).not.toContain(minted.id);
   });
 
   it("refuses revoke_keys on a browser and a key 400, and ends neither", async () => {
-    const browser = await signIn();
     const other = await signIn();
     const minted = await mintKey("key asked to revoke keys");
     for (const id of [await idOf(other), minted.id]) {
-      const refused = await end(browser, id, "?revoke_keys=true");
+      const refused = await end(id, "?revoke_keys=true");
       expect(refused.status, id).toBe(400);
       expect(refused.headers.get("x-error-code")).toBe("validation_error");
     }
     expect(await session(other)).not.toBeNull();
     expect(await itemsStatus(server, minted.key)).toBe(200);
     // An id no sign-in has is still unknown.
-    const unknown = await end(browser, "no-such-sign-in", "?revoke_keys=true");
+    const unknown = await end("no-such-sign-in", "?revoke_keys=true");
     expect(unknown.status).toBe(404);
   });
 });
@@ -922,13 +832,13 @@ describe("ending an app or a key", () => {
     const ended = await approveApp(browser, "app to end");
     const kept = await approveApp(browser, "app to keep");
     const key = await mintKey("key beside the ended app");
-    const id = (await signIns(browser)).find(
+    const id = (await signIns()).find(
       (row) => row.kind === "app" && row.name === "app to end",
     )!.id;
     // The witness: the app's access and refresh both work before it ends.
     expect(await itemsStatus(server, ended.accessToken)).toBe(200);
 
-    const response = await end(browser, id);
+    const response = await end(id);
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true });
 
@@ -936,7 +846,7 @@ describe("ending an app or a key", () => {
     const renewed = await refresh(ended);
     expect(renewed.status).toBe(400);
     expect(renewed.error).toBe("invalid_grant");
-    expect((await signIns(browser)).map((row) => row.id)).not.toContain(id);
+    expect((await signIns()).map((row) => row.id)).not.toContain(id);
 
     expect(await itemsStatus(server, kept.accessToken)).toBe(200);
     const keptRenewed = await refresh(kept);
@@ -951,7 +861,7 @@ describe("ending an app or a key", () => {
     const kept = await mintKey("key to keep");
     const app = await approveApp(browser, "app beside the ended key");
     expect(await itemsStatus(server, ended.key)).toBe(200);
-    expect((await end(browser, ended.id)).status).toBe(200);
+    expect((await end(ended.id)).status).toBe(200);
     expect(await itemsStatus(server, ended.key)).toBe(401);
     expect(await itemsStatus(server, kept.key)).toBe(200);
     expect(await itemsStatus(server, app.accessToken)).toBe(200);
@@ -962,33 +872,15 @@ describe("ending an app or a key", () => {
     const browser = await signIn();
     await approveApp(browser, "app ended twice");
     const minted = await mintKey("key ended twice");
-    const appId = (await signIns(browser)).find(
+    const appId = (await signIns()).find(
       (row) => row.kind === "app" && row.name === "app ended twice",
     )!.id;
     for (const id of [appId, minted.id]) {
-      expect((await end(browser, id)).status, id).toBe(200);
-      const again = await end(browser, id);
+      expect((await end(id)).status, id).toBe(200);
+      const again = await end(id);
       expect(again.status, id).toBe(404);
       expect(again.headers.get("x-error-code")).toBe("sign_in_not_found");
     }
-  });
-
-  it("refuses a browser that signed in more than five minutes ago 403, and ends no app or key", async () => {
-    const stale = await signIn();
-    const signedIn = await approveApp(stale, "app a stale browser asks about");
-    const minted = await mintKey("key a stale browser asks about");
-    const appId = (await signIns(stale)).find(
-      (row) =>
-        row.kind === "app" && row.name === "app a stale browser asks about",
-    )!.id;
-    await pass(6 * MINUTE);
-    for (const id of [appId, minted.id]) {
-      const refused = await end(stale, id);
-      expect(refused.status, id).toBe(403);
-      expect(refused.headers.get("x-error-code")).toBe("forbidden");
-    }
-    expect(await itemsStatus(server, signedIn.accessToken)).toBe(200);
-    expect(await itemsStatus(server, minted.key)).toBe(200);
   });
 
   it("leaves every version the app and the key wrote as it was", async () => {
@@ -1001,11 +893,11 @@ describe("ending an app or a key", () => {
     // The witness: each wrote a version there is to keep.
     for (const page of before)
       expect((page as { data: unknown[] }).data.length).toBeGreaterThan(0);
-    const appId = (await signIns(browser)).find(
+    const appId = (await signIns()).find(
       (row) => row.kind === "app" && row.name === "app that wrote",
     )!.id;
-    expect((await end(browser, appId)).status).toBe(200);
-    expect((await end(browser, minted.id)).status).toBe(200);
+    expect((await end(appId)).status).toBe(200);
+    expect((await end(minted.id)).status).toBe(200);
     expect([await versionsOf(byApp), await versionsOf(byKey)]).toEqual(before);
   });
 
@@ -1013,11 +905,11 @@ describe("ending an app or a key", () => {
     const browser = await signIn();
     const signedIn = await approveApp(browser, "app the audit names");
     const minted = await mintKey("key the audit names");
-    const appId = (await signIns(browser)).find(
+    const appId = (await signIns()).find(
       (row) => row.kind === "app" && row.name === "app the audit names",
     )!.id;
-    expect((await end(browser, appId)).status).toBe(200);
-    expect((await end(browser, minted.id)).status).toBe(200);
+    expect((await end(appId)).status).toBe(200);
+    expect((await end(minted.id)).status).toBe(200);
     const audit = new MarfaClient({
       baseUrl: server.apiUrl,
       apiKey: server.managementKey,
@@ -1044,14 +936,14 @@ describe("a browser session's idle week", () => {
     // a request 23 hours on would leave it alone.
     await pass(23 * HOUR);
     const before = Math.floor(serverNow() / 1000);
-    const response = await list(browser);
+    const response = await use(browser);
     expect(response.status).toBe(200);
     const after = Math.ceil(serverNow() / 1000);
     const row = await stored(id);
     expect(row.updated_at).toBeGreaterThanOrEqual(before);
     expect(row.updated_at).toBeLessThanOrEqual(after);
     expect(row.expires_at - row.updated_at).toBe(7 * 24 * 3600 + 60);
-    const listed = (await signIns(browser)).find((r) => r.id === id)!;
+    const listed = (await signIns()).find((r) => r.id === id)!;
     expect(Date.parse(listed.last_used_at) / 1000).toBe(row.updated_at);
     expect(Date.parse(listed.expires_at) / 1000).toBe(row.expires_at);
   });
@@ -1059,7 +951,8 @@ describe("a browser session's idle week", () => {
   it("gives a new session a week and a minute, and its cookie 400 days", async () => {
     const browser = await signIn();
     expect(browser.maxAge).toBe(COOKIE_SECONDS);
-    const own = (await signIns(browser)).find((row) => row.current)!;
+    const ownId = await idOf(browser);
+    const own = (await signIns()).find((row) => row.id === ownId)!;
     expect(
       (Date.parse(own.expires_at) - Date.parse(own.created_at)) / 1000,
     ).toBe(7 * 24 * 3600 + 60);
@@ -1069,17 +962,17 @@ describe("a browser session's idle week", () => {
     const browser = await signIn();
     const id = await idOf(browser);
     await pass(2 * MINUTE);
-    const missing = await fetch(
-      `${server.apiUrl}/items/019537a0-7b80-7000-8000-000000000000`,
-      { headers: { cookie: browser.cookie } },
-    );
+    const missing = await fetch(`${server.apiUrl}/owner/passkeys/absent`, {
+      method: "DELETE",
+      headers: { cookie: browser.cookie, origin },
+    });
     expect(missing.status).toBe(404);
     expect(cookieMaxAge(missing, browser.cookie)).toBe(COOKIE_SECONDS);
     expect((await stored(id)).updated_at).toBeGreaterThan(
       Math.floor((serverNow() - MINUTE) / 1000),
     );
     await pass(2 * MINUTE);
-    const listed = await list(browser);
+    const listed = await use(browser);
     expect(listed.status).toBe(200);
     expect(cookieMaxAge(listed, browser.cookie)).toBe(COOKIE_SECONDS);
   });
@@ -1091,7 +984,7 @@ describe("a browser session's idle week", () => {
     const recorded = (await stored(id)).updated_at;
     await server.setFault("fail:session-use");
     try {
-      const admitted = await list(browser);
+      const admitted = await use(browser);
       expect(admitted.status).toBe(200);
       expect(cookieMaxAge(admitted, browser.cookie)).toBeUndefined();
       expect(
@@ -1102,13 +995,14 @@ describe("a browser session's idle week", () => {
       await server.clearFault();
     }
     expect((await stored(id)).updated_at).toBe(recorded);
-    const next = await list(browser);
+    const next = await use(browser);
     expect(next.status).toBe(200);
     expect(cookieMaxAge(next, browser.cookie)).toBe(COOKIE_SECONDS);
     expect((await stored(id)).updated_at).toBeGreaterThan(recorded);
   }, 30_000);
 
   it("keeps a sign-in not to be remembered on a cookie with no Max-Age, and its idle week on the server", async () => {
+    const earlier = new Set((await signIns()).map((row) => row.id));
     addresses += 1;
     const response = await fetch(`${server.apiUrl}/auth/sign-in/email`, {
       method: "POST",
@@ -1135,15 +1029,17 @@ describe("a browser session's idle week", () => {
       maxAge: Number.NaN,
     };
     const session = line!.split(";")[0]!;
-    const id = await idOf(browser);
-    const created = (await signIns(browser)).find((row) => row.id === id)!;
+    const id = (await signIns()).find(
+      (row) => row.kind === "browser" && !earlier.has(row.id),
+    )!.id;
+    const created = (await signIns()).find((row) => row.id === id)!;
     expect(
       (Date.parse(created.expires_at) - Date.parse(created.created_at)) / 1000,
     ).toBe(7 * 24 * 3600 + 60);
 
     await pass(2 * MINUTE);
     const before = Math.floor(serverNow() / 1000);
-    const used = await list(browser);
+    const used = await use(browser);
     expect(used.status).toBe(200);
     expect(cookieMaxAge(used, session)).toBeUndefined();
     expect(
@@ -1159,7 +1055,7 @@ describe("a browser session's idle week", () => {
     const id = await idOf(browser);
     await pass(30 * SECOND);
     const recorded = (await stored(id)).updated_at;
-    const response = await list(browser);
+    const response = await use(browser);
     expect(response.status).toBe(200);
     expect((await stored(id)).updated_at).toBe(recorded);
     expect(response.headers.getSetCookie()).toEqual([]);
@@ -1169,17 +1065,16 @@ describe("a browser session's idle week", () => {
     const browser = await signIn();
     await pass(WEEK - 2 * MINUTE);
     expect(await session(browser)).not.toBeNull();
-    expect((await list(browser)).status).toBe(200);
+    expect((await use(browser)).status).toBe(200);
   });
 
   it("refuses a session unused for a week and a minute", async () => {
     const browser = await signIn();
     const id = await idOf(browser);
     await pass(WEEK + MINUTE + 5 * SECOND);
-    const kept = await signIn();
     expect(await session(browser)).toBeNull();
-    expect((await list(browser)).status).toBe(401);
-    expect((await signIns(kept)).map((row) => row.id)).not.toContain(id);
+    expect((await use(browser)).status).toBe(401);
+    expect((await signIns()).map((row) => row.id)).not.toContain(id);
   });
 
   it("through going unused for a week leaves every app connected", async () => {
@@ -1215,19 +1110,18 @@ describe("a restart", () => {
     const ended = await signIn();
     const liveId = await idOf(live);
     const endedId = await idOf(ended);
-    expect((await end(live, endedId)).status).toBe(200);
+    expect((await end(endedId)).status).toBe(200);
     const endedApp = await approveApp(live, "app ended before a restart");
     const endedKey = await mintKey("key ended before a restart");
-    const appId = (await signIns(live)).find(
+    const appId = (await signIns()).find(
       (row) => row.kind === "app" && row.name === "app ended before a restart",
     )!.id;
-    expect((await end(live, appId)).status).toBe(200);
-    expect((await end(live, endedKey.id)).status).toBe(200);
+    expect((await end(appId)).status).toBe(200);
+    expect((await end(endedKey.id)).status).toBe(200);
     // A use is recorded once a minute, so the listing after the restart is
     // one only if a minute has passed since these.
     await pass(2 * MINUTE);
-    const watcher = await signIn();
-    const before = await stored(liveId, watcher);
+    const before = await stored(liveId);
 
     await server.restart();
 
@@ -1236,9 +1130,10 @@ describe("a restart", () => {
     expect(await itemsStatus(server, endedApp.accessToken)).toBe(401);
     expect((await refresh(endedApp)).status).toBe(400);
     expect(await itemsStatus(server, endedKey.key)).toBe(401);
-    expect(await stored(liveId, watcher)).toEqual(before);
-    const listed = (await signIns(live)).find((row) => row.id === liveId)!;
-    // That listing was itself a use, recorded after the restart.
+    expect(await stored(liveId)).toEqual(before);
+    expect((await use(live)).status).toBe(200);
+    const listed = (await signIns()).find((row) => row.id === liveId)!;
+    // The session's use after the restart is recorded.
     expect(Date.parse(listed.last_used_at)).toBeGreaterThan(
       before.updated_at * 1000,
     );

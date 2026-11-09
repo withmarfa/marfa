@@ -154,7 +154,7 @@ pub async fn issue_code(app: &App, caller: &Caller) -> Result<(String, String)> 
     let issued = generation.clone();
     app.write(caller, "instance.setup_code.issued", move |unit| {
         if !matches!(unit.caller, Caller::Server) {
-            unit.caller.require_direct()?;
+            unit.caller.require_local()?;
         }
         require_unclaimed(unit.tx())?;
         unit.tx().execute("DELETE FROM setup_proof", [])?;
@@ -183,7 +183,7 @@ pub async fn issue_ticket(app: &App, caller: &Caller) -> Result<(String, Stamp)>
     let clock = app.clock.clone();
     let expires_at = app
         .write(caller, "instance.setup_ticket.issued", move |unit| {
-            unit.caller.require_direct()?;
+            unit.caller.require_local()?;
             require_unclaimed(unit.tx())?;
             let now = clock.instant();
             drop_expired(unit.tx(), now)?;

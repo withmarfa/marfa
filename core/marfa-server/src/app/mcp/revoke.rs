@@ -64,7 +64,6 @@ pub async fn confirmed(
     let signer = app.mcp.signer.clone();
     let token = token.to_string();
     app.write(caller, keys::REVOKED, move |unit| {
-        unit.caller.require_recent(&unit.at)?;
         unit.caller.require_key_door()?;
         let now_ms = unit.instant.ms();
         if parsed.expires_at_ms <= now_ms {

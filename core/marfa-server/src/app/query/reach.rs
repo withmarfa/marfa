@@ -47,10 +47,10 @@ impl Reach {
             if !caller.may_read_type(&type_id) {
                 continue;
             }
-            match caller.listed_sources(&catalog.rules, &type_id) {
+            match caller.levers()?.listed_sources(&catalog.rules, &type_id) {
                 None => reach.open.push(type_id),
                 Some(sources) => {
-                    reach.sources = sources;
+                    reach.sources = sources.to_vec();
                     reach.held.push(type_id);
                 }
             }

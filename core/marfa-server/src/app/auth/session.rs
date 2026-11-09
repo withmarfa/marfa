@@ -385,25 +385,6 @@ pub async fn sign_out(app: &App, caller: &Caller, visit: Visit) -> Result<()> {
     }
 }
 
-/// Ends the owner's other sessions, or all of them, which only a recent
-/// sign-in may ask.
-pub async fn end_many(app: &App, caller: &Caller, keep_own: bool, visit: Visit) -> Result<()> {
-    app.write(caller, ENDED, move |unit| {
-        unit.caller.require_recent(&unit.at)?;
-        let session = unit.caller.session().ok_or_else(unauthorized)?;
-        let keeping = keep_own.then_some(session.id.as_str());
-        end_all(
-            unit.tx(),
-            &unit.at,
-            &unit.caller,
-            &visit,
-            &session.user_id,
-            keeping,
-        )
-    })
-    .await
-}
-
 #[cfg(test)]
 mod tests {
     use rusqlite::Connection;

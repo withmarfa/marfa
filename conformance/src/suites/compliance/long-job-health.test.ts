@@ -24,7 +24,6 @@ import {
   writerOf,
 } from "../../utils/moved-clock.js";
 import { DISK_ONLY } from "../../utils/own-blob-server.js";
-import { TEST_OWNER } from "../../utils/target.js";
 
 /**
  * `GET /health` answered while each long job runs, between two of its steps,
@@ -64,9 +63,7 @@ const working = (): MarfaClient => writerOf(server);
 function owner(): MarfaClient {
   return new MarfaClient({
     baseUrl: server.apiUrl,
-    ownerCookie: server.ownerCookie,
-    ownerCredentials: TEST_OWNER,
-    ownerSessionFile: `${server.stateDir}/owner-session.json`,
+    controlSocket: server.controlSocket,
   });
 }
 

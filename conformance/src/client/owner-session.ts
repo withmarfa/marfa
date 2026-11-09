@@ -1,93 +1,22 @@
-import { randomUUID } from "node:crypto";
-import {
-  mkdir,
-  readFile,
-  rename,
-  rmdir,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
-
-export interface SharedOwnerSession {
-  baseUrl: string;
-  cookie: string;
-}
-
-/** Serialize real sign-ins across Vitest workers sharing one launched instance. */
-export async function withOwnerSession<T>(
-  path: string,
-  use: (
-    session: SharedOwnerSession,
-    save: (cookie: string) => Promise<void>,
-  ) => Promise<T>,
-): Promise<T> {
-  const lock = `${path}.lock`;
-  const deadline = Date.now() + 30_000;
-  for (;;) {
-    try {
-      await mkdir(lock, { mode: 0o700 });
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      if (Date.now() >= deadline)
-        throw new Error("Timed out waiting for the shared owner session lock");
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-  }
-  try {
-    const session = JSON.parse(
-      await readFile(path, "utf8"),
-    ) as SharedOwnerSession;
-    return await use(session, async (cookie) => {
-      await writeOwnerSession(path, { baseUrl: session.baseUrl, cookie });
-    });
-  } finally {
-    await rmdir(lock);
-  }
-}
-
-export async function writeOwnerSession(
-  path: string,
-  session: SharedOwnerSession,
-): Promise<void> {
-  const temporary = `${path}.${randomUUID()}.tmp`;
-  try {
-    await writeFile(temporary, JSON.stringify(session), {
-      mode: 0o600,
-      flag: "wx",
-    });
-    await rename(temporary, path);
-  } finally {
-    await unlink(temporary).catch((error: NodeJS.ErrnoException) => {
-      if (error.code !== "ENOENT") throw error;
-    });
-  }
-}
-
-/** Reuse only a session the server still accepts with a recent authentication. */
+/**
+ * The owner's session cookie for the sign-in pages' fixtures: the one given,
+ * while the passkey page, a door the session counts on, still admits it, or
+ * a fresh password sign-in.
+ */
 export async function authenticateOwner(
   baseUrl: string,
   cookie: string | undefined,
   credentials: { email: string; password: string },
-  serverNow: () => number = Date.now,
-): Promise<{ cookie: string; authenticatedAt: number }> {
+): Promise<string> {
   if (cookie) {
-    const current = await fetch(`${baseUrl}/auth/get-session`, {
-      headers: { cookie, origin: new URL(baseUrl).origin },
+    const current = await fetch(`${baseUrl}/owner/passkeys`, {
+      headers: { cookie },
     });
-    if (!current.ok && current.status !== 401 && current.status !== 403)
-      throw new Error(`Owner session lookup answered ${current.status}`);
-    if (current.ok) {
-      const session = (await current.json()) as {
-        session?: { createdAt: string };
-      } | null;
-      const authenticatedAt =
-        Date.parse(session?.session?.createdAt ?? "") || 0;
-      const age = serverNow() - authenticatedAt;
-      if (age >= 0 && age < 240_000) return { cookie, authenticatedAt };
-    }
+    await current.body?.cancel();
+    if (current.ok) return cookie;
+    if (current.status !== 401)
+      throw new Error(`Owner session check answered ${current.status}`);
   }
-  const authenticatedAt = serverNow();
   const response = await fetch(`${baseUrl}/auth/sign-in/email`, {
     method: "POST",
     headers: {
@@ -97,11 +26,11 @@ export async function authenticateOwner(
     body: JSON.stringify(credentials),
   });
   if (!response.ok)
-    throw new Error(`Owner reauthentication answered ${response.status}`);
-  const nextCookie = response.headers
+    throw new Error(`Owner sign-in answered ${response.status}`);
+  const next = response.headers
     .getSetCookie()
     .find((value) => value.startsWith("marfa.auth.session_token="))
     ?.split(";")[0];
-  if (!nextCookie) throw new Error("Owner reauthentication set no cookie");
-  return { cookie: nextCookie, authenticatedAt };
+  if (!next) throw new Error("Owner sign-in set no cookie");
+  return next;
 }

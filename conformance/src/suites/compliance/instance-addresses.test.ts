@@ -133,7 +133,15 @@ describe("the addresses and the sign-in address in force", () => {
 
 describe("the sign-in address", () => {
   it("is always among the addresses, whether or not the list names it", async () => {
-    const moved = await call("owner", "PATCH", "/config", {
+    const session = await call("owner", "PATCH", "/config", {
+      sign_in_address: SIGN_IN,
+      confirm_sign_in_address_change: true,
+    });
+    expect(session.status).toBe(401);
+    expect(session.body.error.code).toBe("unauthorized");
+    expect(await config()).not.toHaveProperty("sign_in_address");
+    // The witness: the private socket moves the same address.
+    const moved = await call("socket", "PATCH", "/config", {
       sign_in_address: SIGN_IN,
       confirm_sign_in_address_change: true,
     });

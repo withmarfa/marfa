@@ -284,7 +284,7 @@ pub async fn queue(
         }
         let types = super::items::types_of(read.tx, &ids)?;
         let selected = super::items::selected(read.tx, &ids)?;
-        Ok((selected, read.caller.source_filter_form(), types))
+        Ok((selected, read.caller.levers()?.source_filter_form(), types))
     })
     .await?;
     let needs = move |claim: &Claim| {
@@ -318,7 +318,7 @@ pub async fn queue(
             if purge {
                 unit.caller.require(super::access::Permission::ItemsPurge)?;
             }
-            if unit.caller.source_filter_form() != form {
+            if unit.caller.levers()?.source_filter_form() != form {
                 return Err(selection_moved());
             }
             let body = enqueue(unit, &queued, &selected)?;

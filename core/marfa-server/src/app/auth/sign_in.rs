@@ -2,11 +2,11 @@
 //! writer, then acts in one transaction that finds the password as it was checked.
 
 use rusqlite::Transaction;
-use serde_json::{Value, json};
+use serde_json::json;
 
 use super::limits::{self, too_many_passwords};
 use super::owner::{self, Owner};
-use super::password::{self, Checked};
+use super::password::Checked;
 use super::session::{self, New, Opened};
 use super::{Note, Visit, note};
 use crate::app::App;
@@ -17,8 +17,6 @@ use crate::db::Write;
 
 pub(super) const SIGNED_IN: &str = "auth.sign_in.success";
 pub(super) const SIGN_IN_FAILED: &str = "auth.sign_in.failed";
-const CHANGED: &str = "owner.password.changed";
-const CHANGE_FAILED: &str = "owner.password.change_failed";
 const INVALID: &str = "invalid_credentials";
 const TOO_MANY: &str = "too_many_attempts";
 
@@ -234,95 +232,4 @@ pub async fn confirm(app: &App, caller: &Caller, password: String, visit: Visit)
         Ok(opened)
     })
     .await
-}
-
-async fn refused_change(
-    app: &App,
-    caller: &Caller,
-    owner_id: &str,
-    reason: &str,
-    visit: &Visit,
-) -> Result<()> {
-    let owner_id = owner_id.to_string();
-    let details: Value = json!({ "reason": reason });
-    let visit = visit.clone();
-    app.write(caller, CHANGE_FAILED, move |unit| {
-        note(
-            unit.tx(),
-            &unit.at,
-            Some(&unit.caller),
-            &visit,
-            Note {
-                action: CHANGE_FAILED,
-                resource_type: "owner",
-                resource_id: &owner_id,
-                details: Some(details),
-            },
-        )
-    })
-    .await
-}
-
-pub async fn change_password(
-    app: &App,
-    caller: &Caller,
-    current: String,
-    new: String,
-    visit: Visit,
-) -> Result<()> {
-    let session = caller.session().ok_or_else(unauthorized)?.clone();
-    let owner = owner::find(app).await?.ok_or_else(unauthorized)?;
-    if let Some(wait) = count(app, &owner.email, &visit).await? {
-        refused_change(app, caller, &owner.id, TOO_MANY, &visit).await?;
-        return Err(too_many_passwords(wait));
-    }
-    password::check_new(&new)?;
-    let Some(proven) = prove(app, &owner.email, current).await? else {
-        refused_change(app, caller, &owner.id, INVALID, &visit).await?;
-        return Err(Refusal::new(
-            Code::Unauthorized,
-            "The current password is not right.",
-        ));
-    };
-    let hash = app.passwords.hash(new).await?;
-    let audited = visit.clone();
-    let changed = app
-        .write(caller, CHANGED, move |unit| {
-            let tx = unit.tx();
-            if !proven.stands(tx, &unit.at)? {
-                return Ok(false);
-            }
-            owner::set_password(tx, &proven.owner.id, &hash, unit.instant)?;
-            session::end_all(
-                tx,
-                &unit.at,
-                &unit.caller,
-                &audited,
-                &proven.owner.id,
-                Some(&session.id),
-            )?;
-            limits::clear_account(tx, &proven.owner.email)?;
-            note(
-                tx,
-                &unit.at,
-                Some(&unit.caller),
-                &audited,
-                Note {
-                    action: CHANGED,
-                    resource_type: "owner",
-                    resource_id: &proven.owner.id,
-                    details: None,
-                },
-            )?;
-            Ok(true)
-        })
-        .await?;
-    if changed {
-        return Ok(());
-    }
-    refused_change(app, caller, &owner.id, INVALID, &visit).await?;
-    Err(Refusal::new(
-        Code::Unauthorized,
-        "The current password is not right.",
-    ))
 }

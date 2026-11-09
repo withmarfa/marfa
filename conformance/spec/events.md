@@ -903,7 +903,7 @@ When the server lists or gets a subscription, the server MUST include its maker'
 
 When private local authority requests redelivery, the server MUST apply the same live subscription, maker and retention checks as a request by the subscription's maker.
 
-**Reason:** direct authority can request another attempt, but cannot restore the maker's revoked access or send content the maker can no longer read.
+**Reason:** local authority can request another attempt, but cannot restore the maker's revoked access or send content the maker can no longer read.
 
 **Tests:** `compliance/webhooks-owner.test.ts › retries a failed delivery through local authority without exposing its frame`.
 
@@ -985,6 +985,26 @@ If `POST /webhooks` carries a top-level body key the operation does not declare,
 
 **Tests:** `compliance/undeclared-body-keys.test.ts › refuses %j as undeclared, naming each key, and writes nothing`.
 
+### `events/webhook-cap`
+
+If a key, or an app's grant, already holds 100 subscriptions and sends `POST /webhooks`, then the server MUST answer `409 conflict` with `details.reason` `webhook_cap` and `details.cap` `100`.
+
+**Reason:** every subscription is an event the server must queue and send, so the number one credential holds is bounded. A caller told the cap can delete one it no longer needs.
+
+**Tests:** `compliance/webhooks-owner.test.ts › refuses the 101st subscription of a key or an app with 409 conflict naming the cap, and accepts one again once one is deleted`.
+
+### `events/webhook-cap-own`
+
+The server MUST count toward the cap of `events/webhook-cap` only the subscriptions the requesting key, or the requesting app's grant, registered.
+
+**Tests:** `compliance/webhooks-owner.test.ts › refuses the 101st subscription of a key or an app with 409 conflict naming the cap, and accepts one again once one is deleted`.
+
+### `events/webhook-cap-frees`
+
+When a key or an app deletes a subscription it registered, the server MUST accept the next `POST /webhooks` from that key or app that the cap alone would have refused.
+
+**Tests:** `compliance/webhooks-owner.test.ts › refuses the 101st subscription of a key or an app with 409 conflict naming the cap, and accepts one again once one is deleted`.
+
 ### `events/webhook-refused-keeps`
 
 If `PATCH /webhooks/{id}` is refused, then the server MUST leave the subscription's stored `url`, `events` and `type_filter` as they were.
@@ -1043,7 +1063,7 @@ If a credential without `webhooks.manage` sends a request to a webhook operation
 
 ### `events/webhook-unauthenticated`
 
-If a request to a webhook operation carries neither a credential nor direct owner or local authority, then the server MUST answer `401 unauthorized`.
+If a request to a webhook operation carries neither a credential nor local authority, then the server MUST answer `401 unauthorized`.
 
 **Tests:** `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`, `compliance/webhooks.test.ts › refuses every door without a credential`.
 
@@ -1665,6 +1685,28 @@ While other subscriptions have receivers that do not answer, the server MUST sta
 
 **Tests:** `compliance/webhook-delivery.test.ts › delivers promptly while eight other subscriptions never answer`.
 
+### `events/delivery-maker-share`
+
+While a subscription of another maker has a delivery due, the server MUST NOT hold more than 8 delivery attempts in flight for the subscriptions of one maker.
+
+**Reason:** a maker's receivers that answer slowly or never would otherwise take every slot the server has for attempts and delay every other maker's deliveries by the time an attempt takes to end.
+
+**Tests:** `compliance/webhook-delivery.test.ts › holds at most eight attempts of one maker in flight while another maker's delivery is due`.
+
+### `events/delivery-maker-free`
+
+While no subscription of another maker has a delivery due, the server MUST attempt the due deliveries of one maker's subscriptions beyond 8 at once.
+
+**Reason:** the share of `events/delivery-maker-share` protects a maker from the others and does not hold a maker back when no other maker waits.
+
+**Tests:** `compliance/webhook-delivery.test.ts › lets a maker no other maker waits behind hold more than eight attempts in flight`.
+
+### `events/delivery-maker-isolation`
+
+While the subscriptions of one maker have receivers that do not answer, the server MUST start a due delivery of another maker's subscription without waiting for those attempts to finish.
+
+**Tests:** `compliance/webhook-delivery.test.ts › delivers promptly to a second maker while one maker's subscriptions never answer`.
+
 ## The audit log
 
 `GET /audit` lists what the server recorded about the writes the events above announce, and about the exports it accepts.
@@ -1769,7 +1811,7 @@ When a cancellation of a bulk-action job changes nothing, the server MUST NOT re
 
 ### `events/audit-housekeeping-run`
 
-When a caller authorized by `instance.maintain` or direct owner or local authority runs a housekeeping job with `POST /housekeeping/{name}/run`, the server MUST NOT record an audit entry for the request.
+When a caller authorized by `instance.maintain` or local authority runs a housekeeping job with `POST /housekeeping/{name}/run`, the server MUST NOT record an audit entry for the request.
 
 **Tests:** `compliance/audit-jobs.test.ts › is not written to by POST /housekeeping/{name}/run, which runs a job the manager named`.
 
@@ -1780,12 +1822,6 @@ When the server accepts an export, the server MUST record an `export.run` entry 
 **Reason:** an export is a bulk extraction of the instance, so the record exists whether or not the stream that follows completes.
 
 **Tests:** `compliance/audit.test.ts › records export.run before the export's stream begins, and none for an export it refuses`.
-
-### `events/owner-export-actor`
-
-When the server accepts an export through an owner browser session, the server MUST attribute its `export.run` audit entry to `owner:<session ID>`.
-
-**Tests:** `compliance/owner-item-read.test.ts › refuses an invalid bearer with an owner cookie and attributes owner exports`.
 
 ### `events/audit-export-refused`
 
@@ -1811,7 +1847,7 @@ The server MUST filter `GET /audit` by `action`, `resource_type` and `resource_i
 
 The server MUST filter `GET /audit` by `kind`, which sorts every entry into one of `access`, `data`, `settings` or `housekeeping` from its `action`, so that each entry is of exactly one kind.
 
-**Reason:** `kind` is the console's Activity filter. `access` holds sign-ins, accounts, keys, folders and the owner's profile; `settings` holds configuration, webhooks and connectors; `housekeeping` holds what Marfa does on its own; `data` holds the rest.
+**Reason:** `kind` lets a reader ask for one area of activity at a time. `access` holds sign-ins, accounts, keys, folders and the owner's profile; `settings` holds configuration, webhooks and connectors; `housekeeping` holds what Marfa does on its own; `data` holds the rest.
 
 **Tests:** `compliance/audit.test.ts › sorts entries by kind, each into exactly one`.
 

@@ -113,9 +113,11 @@ where
 
 impl Reader<'_, '_> {
     /// Whether the item belongs to the inventory the credential's source filter leaves it.
-    fn lists(&self, row: &Item) -> bool {
-        self.caller
-            .lists(&self.catalog.rules, &row.type_id, &row.source)
+    fn lists(&self, row: &Item) -> Result<bool> {
+        Ok(self
+            .caller
+            .levers()?
+            .lists(&self.catalog.rules, &row.type_id, &row.source))
     }
 
     fn row(&self, id: &str) -> Result<Item> {
@@ -205,7 +207,7 @@ fn neighbors_of(read: &Reader<'_, '_>, far_ends: &[String]) -> Result<String> {
             continue;
         }
         let listed = if read.certified {
-            format!(",\"listed\":{}", read.lists(&row))
+            format!(",\"listed\":{}", read.lists(&row)?)
         } else {
             String::new()
         };
@@ -263,7 +265,7 @@ pub async fn detail(app: &App, caller: &Caller, id: String, include: Detail) -> 
             String::new()
         };
         let listed = if read.certified {
-            format!(",\"listed\":{}", read.lists(&row))
+            format!(",\"listed\":{}", read.lists(&row)?)
         } else {
             String::new()
         };
@@ -362,8 +364,8 @@ pub async fn bulk_get(
         let also = if read.certified {
             let listed: Vec<String> = visible
                 .iter()
-                .map(|row| read.lists(row).to_string())
-                .collect();
+                .map(|row| read.lists(row).map(|listed| listed.to_string()))
+                .collect::<Result<_>>()?;
             format!("{also},\"listed\":[{}]", listed.join(","))
         } else {
             also
@@ -438,7 +440,10 @@ pub async fn titles(app: &App, caller: &Caller, names: Vec<String>) -> Result<St
                     for row in batch {
                         if super::is_system(&row.type_id)
                             || !read.caller.may_read_type(&row.type_id)
-                            || !read.caller.lists(rules, &row.type_id, &row.source)
+                            || !read
+                                .caller
+                                .levers()?
+                                .lists(rules, &row.type_id, &row.source)
                         {
                             continue;
                         }
@@ -507,7 +512,9 @@ pub(crate) fn readable_tags(read: &Reader<'_, '_>) -> Result<Vec<(String, i64)>>
     let rules = &read.catalog.rules;
     let mut counts: BTreeMap<String, i64> = BTreeMap::new();
     for (tag, type_id, source, count) in rows::active_tags(read.tx)? {
-        if read.caller.may_read_type(&type_id) && read.caller.lists(rules, &type_id, &source) {
+        if read.caller.may_read_type(&type_id)
+            && read.caller.levers()?.lists(rules, &type_id, &source)
+        {
             *counts.entry(tag).or_default() += count;
         }
     }
@@ -648,7 +655,7 @@ impl Reader<'_, '_> {
             .transpose()?;
         let batch_size = batch_size(
             listing.limit,
-            !q.is_empty() || self.caller.filters_sources(),
+            !q.is_empty() || self.caller.levers()?.filters_sources(),
         );
         let mut page = Vec::new();
         'filling: loop {
@@ -666,6 +673,7 @@ impl Reader<'_, '_> {
             for row in batch {
                 if self
                     .caller
+                    .levers()?
                     .lists(&self.catalog.rules, &row.type_id, &row.source)
                     && (q.is_empty()
                         || name_of(self.tx, &self.catalog, &row)?

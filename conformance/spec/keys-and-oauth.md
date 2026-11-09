@@ -35,11 +35,11 @@ When a credential holding named permissions and no content map reads or writes i
 
 ### `keys-and-oauth/direct-mint-everything`
 
-When direct owner or local authority mints a key from a body naming no permission, map or `sources`, the server MUST give the key all twelve permissions, `*: write` in each of the five maps and no claimed source.
+When local authority mints a key from a body naming no permission, map or `sources`, the server MUST give the key all twelve permissions, `*: write` in each of the five maps and no claimed source.
 
 **Reason:** The owner holds no ceiling of their own, so a key minted with nothing named holds everything a key can.
 
-**Tests:** `compliance/key-management.test.ts › the direct owner issues an ordinary key without a caller ceiling`.
+**Tests:** `compliance/key-management.test.ts › the local command issues an ordinary key without a caller ceiling`.
 
 ### `keys-and-oauth/type-write-includes-read`
 
@@ -201,7 +201,7 @@ When a key's extension map has an entry for a namespace, the server MUST grant t
 
 When `POST /keys` mints a key, the server MUST answer `201` with the key's `id`, its plaintext `key`, its `label`, its `permissions`, its claimed `sources`, its five maps and its `created_at`.
 
-**Tests:** `compliance/key-management.test.ts › key creation response includes expected fields`, `› every key answer carries its permissions and its maps, empty where it holds nothing`, `› the direct owner issues an ordinary key without a caller ceiling`.
+**Tests:** `compliance/key-management.test.ts › key creation response includes expected fields`, `› every key answer carries its permissions and its maps, empty where it holds nothing`, `› the local command issues an ordinary key without a caller ceiling`.
 
 ### `keys-and-oauth/mint-whole-set`
 
@@ -267,7 +267,7 @@ When several mints name one unused `source` as their own at once, the server MUS
 
 ### `keys-and-oauth/mint-permission`
 
-If a caller holding neither `keys.mint` nor direct owner or local authority sends `POST /keys`, then the server MUST answer `403 forbidden` with `details.required_scope` naming `keys.mint`.
+If a caller holding neither `keys.mint` nor local authority sends `POST /keys`, then the server MUST answer `403 forbidden` with `details.required_scope` naming `keys.mint`.
 
 **Reason:** `keys.manage` lists, narrows and revokes keys across the instance, and minting a new credential is a different power.
 
@@ -275,17 +275,9 @@ If a caller holding neither `keys.mint` nor direct owner or local authority send
 
 ### `keys-and-oauth/key-operations-permission`
 
-If a caller holding none of `keys.mint`, `keys.manage` and direct owner or local authority lists, updates or revokes keys, then the server MUST answer `403 forbidden` with `details.required_scope` naming `keys.mint`.
+If a caller holding none of `keys.mint`, `keys.manage` and local authority lists, updates or revokes keys, then the server MUST answer `403 forbidden` with `details.required_scope` naming `keys.mint`.
 
 **Tests:** `compliance/key-management.test.ts › list keys requires keys.mint`, `› revoke key requires keys.mint`, `compliance/keys-update.test.ts › refuses a caller without keys.mint`.
-
-### `keys-and-oauth/mint-recent`
-
-If the browser session sending `POST /keys` signed in more than five minutes ago, then the server MUST answer `403 forbidden`.
-
-**Reason:** A browser left signed in, or a copied cookie, cannot give itself a new credential without the password.
-
-**Tests:** `compliance/recent-sign-in-consent.test.ts › refuses a session that signed in more than five minutes ago 403 and mints no key, and a fresh session mints it`.
 
 ### `keys-and-oauth/mint-invalid-level`
 
@@ -300,14 +292,6 @@ If a key body names a map level the map does not take, then the server MUST answ
 When `PATCH /keys/{id}` names `label`, `default_tier`, `sources` or a permission family, the server MUST replace each field it names and leave each field it does not name as it was.
 
 **Tests:** `compliance/keys-update.test.ts › updates the label and the maps in place, never the source`, `compliance/claimed-sources.test.ts › answers a key's claims on the mint, the listing and the update`.
-
-### `keys-and-oauth/update-recent`
-
-If the browser session sending `PATCH /keys/{id}` signed in more than five minutes ago, then the server MUST answer `403 forbidden`.
-
-**Reason:** A key's label, sources and permissions decide what it can do, so changing them needs the same recent sign-in as minting (`keys-and-oauth/mint-recent`) and revoking (`keys-and-oauth/revoke-recent`).
-
-**Tests:** `compliance/recent-sign-in-consent.test.ts › refuses a session that signed in more than five minutes ago 403 and changes nothing, and a fresh session changes the key`.
 
 ### `keys-and-oauth/update-empty-family`
 
@@ -339,7 +323,7 @@ If a working key's update gives a key a permission, or a type, edge, metadata or
 
 ### `keys-and-oauth/manage-narrows-only`
 
-If a caller holding `keys.manage`, and not direct owner or local authority, updates a key to hold a permission, map entry or claimed source the key does not already hold, then the server MUST answer `403 forbidden`.
+If a caller holding `keys.manage`, and not local authority, updates a key to hold a permission, map entry or claimed source the key does not already hold, then the server MUST answer `403 forbidden`.
 
 **Reason:** `keys.manage` reaches every key so that it can take access away, and a power to add access to any key would be a power to mint.
 
@@ -357,7 +341,7 @@ If an update would give a key an app made a permission, map entry or claimed sou
 
 If `PATCH /keys/{id}` names `narrow_only: true` and would give the key a permission, map entry or claimed source the key does not hold, then the server MUST answer `403 forbidden`, whoever the caller is.
 
-**Reason:** The owner console's key page offers a key less access and never more. It builds its choices from the key as it was when the page opened, so an update sent from a page opened before another change, or edited by hand, must not lift what the key holds now.
+**Reason:** A caller narrowing access may have read the key before another change. The update must not restore access the key has since lost.
 
 **Tests:** `compliance/keys-update.test.ts › refuses an update that widens a key when it names narrow_only`.
 
@@ -411,25 +395,11 @@ When a key has been revoked, the server MUST answer the next request bearing it 
 
 ### `keys-and-oauth/revoke-twice`
 
-When `DELETE /keys/{id}` names a key that is already revoked, the server MUST answer `404 api_key_not_found`, with a message saying it was already revoked only to a caller holding `keys.manage` or direct owner or local authority.
+When `DELETE /keys/{id}` names a key that is already revoked, the server MUST answer `404 api_key_not_found`, with a message saying it was already revoked only to a caller holding `keys.manage` or local authority.
 
 **Reason:** A revoked key's reach cannot be measured, so a caller acting through `keys.mint` is told what it would be told of a key it never reached.
 
 **Tests:** `compliance/key-reach.test.ts › answers a second revoke as an unknown key, and tells keys.manage the key was already revoked`.
-
-### `keys-and-oauth/revoke-recent`
-
-If the browser session asking `DELETE /keys/{id}` signed in more than five minutes ago, then the server MUST answer `403 forbidden`.
-
-**Reason:** A browser left signed in, or a copied cookie, cannot end the keys the owner relies on without the password.
-
-**Tests:** `compliance/recent-sign-in-consent.test.ts › refuses a session that signed in more than five minutes ago 403 and leaves the key working, and a fresh session revokes it`.
-
-### `keys-and-oauth/revoke-credential-recent`
-
-When a key holding `keys.manage` sends `DELETE /keys/{id}`, the server MUST revoke the key whatever the age of the owner's browser sessions.
-
-**Tests:** `compliance/recent-sign-in-consent.test.ts › revokes for a key holding keys.manage whatever the age of the owner's sessions`.
 
 ### `keys-and-oauth/last-used-new`
 
@@ -647,7 +617,7 @@ If a key that has an `expires_at` and does not hold `keys.manage` sends `PATCH /
 
 ### `keys-and-oauth/expiry-manage-narrows`
 
-If a caller holding `keys.manage`, and not direct owner or local authority, sends `PATCH /keys/{id}` for a key that has an `expires_at`, naming an `expires_at` later than it or `null`, then the server MUST answer `403 forbidden`.
+If a caller holding `keys.manage`, and not local authority, sends `PATCH /keys/{id}` for a key that has an `expires_at`, naming an `expires_at` later than it or `null`, then the server MUST answer `403 forbidden`.
 
 **Reason:** `keys-and-oauth/manage-narrows-only` holds for a key's life as for its reach: a longer life is more access.
 
@@ -663,7 +633,7 @@ If `PATCH /keys/{id}` is sent for a key an app made that has an `expires_at`, na
 
 ### `keys-and-oauth/expiry-owner-free`
 
-When direct owner or local authority sends `PATCH /keys/{id}` naming a later `expires_at`, or `null`, for a key no app made, the server MUST replace the key's `expires_at` with it.
+When local authority sends `PATCH /keys/{id}` naming a later `expires_at`, or `null`, for a key no app made, the server MUST replace the key's `expires_at` with it.
 
 **Tests:** `compliance/key-expiry.test.ts › lengthens or clears the expiry of a key that no app made`.
 
@@ -671,7 +641,7 @@ When direct owner or local authority sends `PATCH /keys/{id}` naming a later `ex
 
 If `PATCH /keys/{id}` names `narrow_only: true` for a key that has an `expires_at`, naming an `expires_at` later than it or `null`, then the server MUST answer `403 forbidden` and leave the key as it was, whoever the caller is.
 
-**Reason:** `keys-and-oauth/update-narrow-only` holds for a key's life as for its reach: the owner console's key page offers a key less, and a page opened before another change must not lengthen what the key has now.
+**Reason:** `keys-and-oauth/update-narrow-only` holds for a key's life as for its reach: an update based on an earlier read must not lengthen the key's current life.
 
 **Tests:** `compliance/key-expiry.test.ts › is shortened or given when the key has none, and refused a later expiry or none`.
 
@@ -775,7 +745,7 @@ Where a key does not carry a lever, the server MUST hold that key's writes to th
 
 ### `keys-and-oauth/levers-permission`
 
-If a caller holding neither `config.manage` nor direct owner or local authority mints or updates a key with a body naming `enforcement_override`, then the server MUST answer `403 forbidden` with `details.required_scope` naming `config.manage`.
+If a caller holding neither `config.manage` nor local authority mints or updates a key with a body naming `enforcement_override`, then the server MUST answer `403 forbidden` with `details.required_scope` naming `config.manage`.
 
 **Reason:** A key's levers can be looser than the instance's, so setting them is a change to how the instance is enforced, which only a caller that may change the instance's own levers makes.
 
@@ -783,7 +753,7 @@ If a caller holding neither `config.manage` nor direct owner or local authority 
 
 ### `keys-and-oauth/levers-permission-unchanged`
 
-If a caller holding neither `config.manage` nor direct owner or local authority mints or updates a key with a body naming `enforcement_override`, then the server MUST create no key and change none.
+If a caller holding neither `config.manage` nor local authority mints or updates a key with a body naming `enforcement_override`, then the server MUST create no key and change none.
 
 **Tests:** `compliance/schema-enforcement.test.ts › refuses a mint or an update naming levers to a caller without config.manage`, `› an app holding config.manage sets a key's levers looser than the instance's, and one without it is refused`.
 
@@ -865,7 +835,7 @@ If a working key's mint or update claims a source other than the caller's own `s
 
 ### `keys-and-oauth/claims-direct`
 
-When direct owner or local authority mints a key, or updates a key no app made, the server MUST grant any source outside the reserved prefix.
+When local authority mints a key, or updates a key no app made, the server MUST grant any source outside the reserved prefix.
 
 **Tests:** `compliance/claimed-sources.test.ts › refuses a mint or an update claiming a source its caller does not hold`, `› grants a source under any other prefix, connector: included`.
 
@@ -999,7 +969,7 @@ When a credential sends `PATCH /source` naming its own `source` or a source it c
 
 ### `keys-and-oauth/source-set-manage`
 
-When a credential holding `keys.manage`, or direct owner or local authority, sends `PATCH /source` naming any source, the server MUST set the name and mark the body gives.
+When a credential holding `keys.manage`, or local authority, sends `PATCH /source` naming any source, the server MUST set the name and mark the body gives.
 
 **Tests:** `compliance/source-names.test.ts › lets a key set its own source and one it claims, and refuses another without keys.manage`.
 
@@ -1045,7 +1015,7 @@ If `PATCH /source` sends a `mark` that `types/icon-name` refuses as a type's ico
 
 ### `keys-and-oauth/source-list-manage`
 
-When a credential holding `keys.manage`, or direct owner or local authority, sends `GET /sources`, the server MUST answer every source the instance holds: those of its items in any state, those with a name or mark, and those its keys hold as their own or claim, whatever types the credential reads.
+When a credential holding `keys.manage`, or local authority, sends `GET /sources`, the server MUST answer every source the instance holds: those of its items in any state, those with a name or mark, and those its keys hold as their own or claim, whatever types the credential reads.
 
 **Reason:** `GET /source` answers any source to such a credential, so the list says the same.
 
@@ -1097,7 +1067,7 @@ When a caller acting through `keys.mint` updates or revokes a key within its rea
 
 ### `keys-and-oauth/reach-manage`
 
-When a caller holding `keys.manage` or direct owner or local authority lists, narrows or revokes keys, the server MUST reach every key.
+When a caller holding `keys.manage` or local authority lists, narrows or revokes keys, the server MUST reach every key.
 
 **Tests:** `compliance/key-reach.test.ts › a minter cannot reach a management key beyond its permissions; the owner can`, `compliance/keys-update.test.ts › only narrows a key for a caller acting through keys.manage`.
 
@@ -1645,22 +1615,6 @@ Where a request names `instance.maintain`, `schema.write` or `items.purge`, the 
 
 **Tests:** `compliance/approval-screens.test.ts › marks the permissions that delete for good, and no other, on both pages`, `› says under Full access that a power can't be undone only where the request names one, on both pages`.
 
-### `keys-and-oauth/approval-powers-words`
-
-The server MUST describe each of the twelve permissions in the same words on the consent screen, the device approval page and the Create key page.
-
-**Reason:** The same grant reads the same wherever a person decides on it, so a power read once is recognized everywhere.
-
-**Tests:** `compliance/approval-screens.test.ts › describes each permission in the same words on both pages and on the key form`.
-
-### `keys-and-oauth/manage-powers-marked`
-
-Where the Create key page offers `instance.maintain`, `schema.write` or `items.purge`, the server MUST mark each as unable to be undone.
-
-**Reason:** `keys-and-oauth/approval-powers-marked` holds for the approval pages, and a key holds the same powers.
-
-**Tests:** `compliance/approval-screens.test.ts › marks the permissions that delete for good on the key form, and no other`.
-
 ### `keys-and-oauth/approval-held-shown`
 
 While an app holds consent, the server MUST show on the consent screen and the device approval page what the app holds, apart from what the request newly asks for.
@@ -1795,9 +1749,9 @@ When the consent screen or the device approval page shows a row it names itself,
 
 The server MUST name the levels of access on the consent screen and the device approval page as "Read and edit", "Read only" and "No access", and each of the twelve permissions by the title in `GLOSSARY.md`, "Access words".
 
-**Reason:** Access reads the same wherever a person meets it: on these pages, on a key's page, on an app's page and in the CLI's output (`keys-and-oauth/access-words-cli`). The words are kept in `GLOSSARY.md`, one description of access in the server builds every page that shows it, and `ci/access-words.test.ts` holds the glossary's tables to the server's words and the CLI's, which no fixture here can reach.
+**Reason:** Access reads the same wherever a person meets it: on these pages and in the CLI's output (`keys-and-oauth/access-words-cli`). The words are kept in `GLOSSARY.md`, one description of access in the server builds every page that shows it, and `ci/access-words.test.ts` holds the glossary's tables to the server's words and the CLI's, which no fixture here can reach.
 
-**Tests:** `compliance/approval-screens.test.ts › offers a type asked at both levels as one control on both pages`, `› describes each permission in the same words on both pages and on the key form`.
+**Tests:** `compliance/approval-screens.test.ts › offers a type asked at both levels as one control on both pages`, `› describes each permission in the same words on both pages`.
 
 ### `keys-and-oauth/access-words-cli`
 
@@ -2091,9 +2045,9 @@ When `GET /auth/grants` lists a grant, the server MUST report `kind` as `cli` fo
 
 ### `keys-and-oauth/grant-narrow-authority`
 
-When a caller sends `PATCH /auth/grants/{id}`, the server MUST require a direct owner sign-in within five minutes or private machine authority.
+If a request other than the private local command's sends `PATCH /auth/grants/{id}`, then the server MUST refuse it, `401 unauthorized` where it carries no credential and `403 forbidden` where it carries one.
 
-**Tests:** `compliance/auth-grants.test.ts › requires direct owner authority and reports an unknown grant`, `compliance/recent-sign-in-consent.test.ts › refuses a session that signed in more than five minutes ago 403 and leaves the app as it was, and a fresh session narrows it`.
+**Tests:** `compliance/auth-grants.test.ts › requires the local command and reports an unknown grant`.
 
 ### `keys-and-oauth/grant-narrow-ceiling`
 
@@ -2133,7 +2087,7 @@ When `PATCH /auth/grants/{id}` succeeds, the server MUST answer `200` with the r
 
 If `PATCH /auth/grants/{id}` names no live app grant of the owner, then the server MUST answer `404 oauth_grant_not_found`.
 
-**Tests:** `compliance/auth-grants.test.ts › requires direct owner authority and reports an unknown grant`.
+**Tests:** `compliance/auth-grants.test.ts › requires the local command and reports an unknown grant`.
 
 ### `keys-and-oauth/grants-permission`
 
@@ -2151,7 +2105,7 @@ If a request with no credential sends `GET /auth/grants`, then the server MUST a
 
 ### `keys-and-oauth/grant-revoke-answer`
 
-When a caller holding `grants.manage` revokes a grant at `DELETE /auth/grants/{id}`, the server MUST answer `204`, unless `keys-and-oauth/grant-revoke-recent` refuses it.
+When a caller holding `grants.manage` revokes a grant at `DELETE /auth/grants/{id}`, the server MUST answer `204`.
 
 **Tests:** `compliance/auth-grants.test.ts › ends the app's tokens and the person's consent, and leaves the keys it minted working`, `compliance/oauth-refusals.test.ts › answers 404 oauth_grant_not_found for an id that is no app's grant, and revokes one that is`.
 
@@ -2182,20 +2136,6 @@ When a grant is revoked with `revoke_keys=1`, the server MUST also revoke every 
 If `DELETE /auth/grants/{id}` names an id that is no app's grant, then the server MUST answer `404 oauth_grant_not_found`.
 
 **Tests:** `compliance/oauth-refusals.test.ts › answers 404 oauth_grant_not_found for an id that is no app's grant, and revokes one that is`.
-
-### `keys-and-oauth/grant-revoke-recent`
-
-If the browser session asking `DELETE /auth/grants/{id}` signed in more than five minutes ago, then the server MUST answer `403 forbidden`.
-
-**Reason:** A browser left signed in, or a copied cookie, cannot end an app's access without the password.
-
-**Tests:** `compliance/recent-sign-in-consent.test.ts › refuses a session that signed in more than five minutes ago 403 and leaves the app working, and a fresh session revokes it`.
-
-### `keys-and-oauth/grant-revoke-credential`
-
-When a credential holding `grants.manage` sends `DELETE /auth/grants/{id}`, the server MUST revoke the grant whatever the age of the owner's browser sessions.
-
-**Tests:** `compliance/recent-sign-in-consent.test.ts › revokes for a key holding grants.manage whatever the age of the owner's sessions`.
 
 ### `keys-and-oauth/app-rate-window`
 
@@ -2501,23 +2441,9 @@ The server MUST count an IPv6 address by its /64 for the password sign-in limits
 
 **Tests:** `compliance/sign-in-limits.test.ts › counts an IPv6 address as its /64`.
 
-### `keys-and-oauth/password-change-counted`
-
-The server MUST count each password change from an address as a password sign-in attempt at the owner's account, for `keys-and-oauth/sign-in-address-limit` and `keys-and-oauth/sign-in-account-limit`.
-
-**Reason:** A password change checks the current password as a sign-in does, so a guess counts the same wherever it is made.
-
-**Tests:** `compliance/sign-in-library-routes.test.ts › holds the current password to the sign-in limits and records each refusal`.
-
-### `keys-and-oauth/password-change-limit`
-
-If a sign-in limit holds an address at the owner's account, then the server MUST answer that address's password change `429` with `Retry-After`, before it judges the current password.
-
-**Tests:** `compliance/sign-in-library-routes.test.ts › holds the current password to the sign-in limits and records each refusal`.
-
 ### `keys-and-oauth/device-lookup-address-limit`
 
-If one address has made ten device code lookups without direct owner browser authority in fifteen minutes, across the entry form, the consent screen and its decision, then the server MUST redirect its next lookup without that authority with `error=too_many_attempts` before the code is looked up.
+If one address has made ten device code lookups without the owner's live browser session in fifteen minutes, across the entry form, the consent screen and its decision, then the server MUST redirect its next lookup without that authority with `error=too_many_attempts` before the code is looked up.
 
 **Tests:** `compliance/sign-in-surface.test.ts › limits anonymous device code entry per address and owner consent per owner`.
 
@@ -2559,7 +2485,7 @@ The server MUST say, on the page where a device code is typed, that codes end af
 
 ### `keys-and-oauth/device-lookup-instance-limit`
 
-If every address together has made a hundred counted device code lookups without direct owner browser authority in fifteen minutes, then the server MUST redirect the next lookup without that authority from any address with `error=too_many_attempts` before the code is looked up.
+If every address together has made a hundred counted device code lookups without the owner's live browser session in fifteen minutes, then the server MUST redirect the next lookup without that authority from any address with `error=too_many_attempts` before the code is looked up.
 
 **Reason:** A sweep tries each code once, so a count per code never fires. A lookup one address makes past its own limit is not counted here.
 
@@ -2567,7 +2493,7 @@ If every address together has made a hundred counted device code lookups without
 
 ### `keys-and-oauth/device-lookup-owner-lane`
 
-When a caller with a verified, live browser session of the claimed owner acting as direct owner authority looks a device code up on the entry form, the consent screen or its decision, the server MUST count the lookup in an owner lane independent of the anonymous address and instance limits.
+When a caller with a verified, live browser session of the claimed owner looks a device code up on the entry form, the consent screen or its decision, the server MUST count the lookup in an owner lane independent of the anonymous address and instance limits.
 
 **Reason:** Anonymous callers cannot close the owner's device approval path by spending its address or instance allowance.
 
@@ -2595,7 +2521,7 @@ If a device code lookup carries only an unverified, expired or revoked owner coo
 
 ### `keys-and-oauth/device-lookup-owner-concurrent`
 
-When concurrent device code lookups use direct owner browser authority, the server MUST admit no more lookups than remain in the owner's fifteen-minute allowance.
+When concurrent device code lookups use the owner's live browser session, the server MUST admit no more lookups than remain in the owner's fifteen-minute allowance.
 
 **Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes, and keeps the budget after restart`.
 
@@ -2619,7 +2545,7 @@ The sign-in surface is served through a library that offers more routes than Mar
 
 If a request names a path under `/auth/` that the sign-in surface does not serve, with or without a trailing slash, then the server MUST answer `404 not_found`.
 
-**Reason:** Of the library's routes, the surface serves password sign-in and sign-out, the browser session and its revocations, the owner's password change, the OAuth protocol routes, the device code request, and the discovery and error documents. Every other one, such as profile and account editing, social and email flows, session and account listings, a password check and a signed session token, answers as a path nothing serves.
+**Reason:** Of the library's routes, the surface serves password sign-in and sign-out, the confirmation of a recent sign-in, passkey sign-in and registration, the OAuth protocol routes, the device code request, and the discovery and error documents. Every other one, such as profile and account editing, social and email flows, the browser session's own reads and revocations, a password change, session and account listings, a password check and a signed session token, answers as a path nothing serves.
 
 **Tests:** `compliance/sign-in-library-routes.test.ts › answer 404 not_found on every path no Marfa client uses, either spelling, to a signed-in owner`.
 
@@ -2767,19 +2693,19 @@ When the consent screen or the device approval page offers a grant of one type, 
 
 ## The owner's sign-ins
 
-A sign-in is one way the owner's Marfa can be reached: a browser session of the owner, an app the owner approved, or a live key. The owner lists every sign-in at `GET /owner/sign-ins`, renames an app or a key at `PATCH /owner/sign-ins/{id}`, and ends any one at `DELETE /owner/sign-ins/{id}`, from a browser or through the private local command.
+A sign-in is one way the owner's Marfa can be reached: a browser session of the owner, an app the owner approved, or a live key. The owner lists every sign-in at `GET /owner/sign-ins`, renames an app or a key at `PATCH /owner/sign-ins/{id}`, and ends any one at `DELETE /owner/sign-ins/{id}`, through the private local command.
 
 ### `keys-and-oauth/sign-ins-list`
 
-When the owner's browser session or the private local command asks `GET /owner/sign-ins`, the server MUST answer `200` with every live browser session of the owner with `kind` `browser`, every live app grant of the owner with `kind` `app`, and every live key with `kind` `key`.
+When the private local command asks `GET /owner/sign-ins`, the server MUST answer `200` with every live browser session of the owner with `kind` `browser`, every live app grant of the owner with `kind` `app`, and every live key with `kind` `key`.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › lists every live browser session of the owner, marking the one that asks`, `› lists every app and key beside the browsers, each with a name, a kind and its last use`, `› lists, renames and ends a sign-in through the local command`.
+**Tests:** `compliance/owner-sign-ins.test.ts › lists every live browser session of the owner`, `› lists every app and key beside the browsers, each with a name, a kind and its last use`, `› lists, renames and ends a sign-in through the local command`.
 
 ### `keys-and-oauth/sign-ins-fields`
 
-When `GET /owner/sign-ins` answers, the server MUST give each sign-in its `id`, `kind`, `name`, `current`, `created_at`, `last_used_at`, `expires_at`, `ip_address`, `user_agent` and `minted_by`, and no other field.
+When `GET /owner/sign-ins` answers, the server MUST give each sign-in its `id`, `kind`, `name`, `created_at`, `last_used_at`, `expires_at`, `ip_address`, `user_agent` and `minted_by`, and no other field.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › lists every live browser session of the owner, marking the one that asks`, `› lists every app and key beside the browsers, each with a name, a kind and its last use`.
+**Tests:** `compliance/owner-sign-ins.test.ts › lists every live browser session of the owner`, `› lists every app and key beside the browsers, each with a name, a kind and its last use`.
 
 ### `keys-and-oauth/sign-ins-app-expiry`
 
@@ -2837,19 +2763,13 @@ When `GET /owner/sign-ins` lists an app or a key with a recorded use, the server
 
 **Tests:** `compliance/owner-sign-ins.test.ts › lists every app and key beside the browsers, each with a name, a kind and its last use`.
 
-### `keys-and-oauth/sign-ins-current`
-
-When `GET /owner/sign-ins` answers, the server MUST give `current` `true` to the browser session that asked and `false` to every other sign-in.
-
-**Tests:** `compliance/owner-sign-ins.test.ts › lists every live browser session of the owner, marking the one that asks`, `› lists every app and key beside the browsers, each with a name, a kind and its last use`, `› lists, renames and ends a sign-in through the local command`.
-
 ### `keys-and-oauth/sign-ins-no-token`
 
 The server MUST NOT carry a browser session's token or cookie value in an answer of `GET /owner/sign-ins`.
 
 **Reason:** Whoever holds the token is signed in as that browser.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › carries no session's token, which the sign-in library's own answer does`.
+**Tests:** `compliance/owner-sign-ins.test.ts › carries no session's token, which the browser's cookie holds`.
 
 ### `keys-and-oauth/sign-ins-no-credential`
 
@@ -2867,23 +2787,17 @@ The server MUST NOT list a key that is revoked or past its `expires_at` at `GET 
 
 ### `keys-and-oauth/sign-ins-browser-only`
 
-If a request to `GET /owner/sign-ins`, `PATCH /owner/sign-ins/{id}` or `DELETE /owner/sign-ins/{id}` carries a key or an app's access token, then the server MUST answer `403 forbidden`, whether or not it also carries the owner's cookie.
+If a request to `GET /owner/sign-ins`, `PATCH /owner/sign-ins/{id}` or `DELETE /owner/sign-ins/{id}` carries a key or an app's access token, then the server MUST answer `403 forbidden`.
 
-**Reason:** These doors reach every sign-in, the owner's browsers included, and a key or an app that could end them could leave itself the only way in. A key or an app acts on other keys and apps only at `/keys` and `/auth/grants`, within the permissions it holds. The owner's browser session and the private local command hold the right to every sign-in.
+**Reason:** These doors reach every sign-in, the owner's browsers included, and a key or an app that could end them could leave itself the only way in. A key or an app acts on other keys and apps only at `/keys` and `/auth/grants`, within the permissions it holds. The private local command holds the right to every sign-in.
 
 **Tests:** `compliance/owner-sign-ins.test.ts › refuses a key and an app's token 403, and no credential 401`.
 
-### `keys-and-oauth/sign-ins-local`
-
-When the private local command asks `GET /owner/sign-ins`, the server MUST answer every live sign-in of the owner, each with `current` `false`.
-
-**Tests:** `compliance/owner-sign-ins.test.ts › answers the private local command every browser session, marking none current, and ends one for it`, `› lists, renames and ends a sign-in through the local command`.
-
 ### `keys-and-oauth/sign-in-end`
 
-When the owner's browser session or the private local command asks `DELETE /owner/sign-ins/{id}` naming a live sign-in of the owner, the server MUST answer `200` with `ok` `true`.
+When the private local command asks `DELETE /owner/sign-ins/{id}` naming a live sign-in of the owner, the server MUST answer `200` with `ok` `true`.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › ends that browser's session, whose next request is refused, and leaves the other signed in`, `› answers the private local command every browser session, marking none current, and ends one for it`, `› ends an app at once: its next request is refused and its refresh token is dead, and nothing else is`, `› ends a key at once, and leaves every other sign-in`, `› lists, renames and ends a sign-in through the local command`.
+**Tests:** `compliance/owner-sign-ins.test.ts › ends that browser's session, whose next request is refused, and leaves the other signed in`, `› ends an app at once: its next request is refused and its refresh token is dead, and nothing else is`, `› ends a key at once, and leaves every other sign-in`, `› lists, renames and ends a sign-in through the local command`.
 
 ### `keys-and-oauth/sign-in-end-refused`
 
@@ -2945,12 +2859,6 @@ When `DELETE /owner/sign-ins/{id}` ends an app or a key, the server MUST keep ev
 
 **Tests:** `compliance/owner-sign-ins.test.ts › leaves every version the app and the key wrote as it was`.
 
-### `keys-and-oauth/sign-in-end-cookie`
-
-When `DELETE /owner/sign-ins/{id}` ends the session that asked, the server MUST clear that browser's session cookie.
-
-**Tests:** `compliance/owner-sign-ins.test.ts › clears the cookie of the session that ends itself`.
-
 ### `keys-and-oauth/sign-in-end-unknown`
 
 If `DELETE /owner/sign-ins/{id}` names no live sign-in of the owner, then the server MUST answer `404 sign_in_not_found`.
@@ -2958,22 +2866,6 @@ If `DELETE /owner/sign-ins/{id}` names no live sign-in of the owner, then the se
 **Reason:** A sign-in that already ended answers the same as one that never existed, so the second of two ends of one sign-in says that nothing ended.
 
 **Tests:** `compliance/owner-sign-ins.test.ts › answers 404 sign_in_not_found for a session already ended and an id no session has`, `› answers 404 sign_in_not_found to the second end of an app and of a key`, `› lists no key past its expires_at`.
-
-### `keys-and-oauth/sign-in-end-recent`
-
-If the browser session asking `DELETE /owner/sign-ins/{id}` signed in more than five minutes ago and `{id}` names a sign-in other than that session, then the server MUST answer `403 forbidden`.
-
-**Reason:** A browser left signed in, or a copied cookie, cannot end the owner's other sign-ins without the password.
-
-**Tests:** `compliance/owner-sign-ins.test.ts › refuses a browser that signed in more than five minutes ago 403, and ends nothing`, `› refuses a browser that signed in more than five minutes ago 403, and ends no app or key`, `compliance/confirm-sign-in.test.ts › lets a stale browser session sign itself out in one request, and ends another only with a recent one`.
-
-### `keys-and-oauth/sign-in-end-self`
-
-When the browser session asking `DELETE /owner/sign-ins/{id}` names its own session and does not set `revoke_keys` to `true`, the server MUST end it whatever the session's age.
-
-**Reason:** Ending the browser's own sign-in only gives up authority, so it needs no recent sign-in, and a page does not ask the owner to confirm it's them first. A confirmation would replace the session the request names.
-
-**Tests:** `compliance/confirm-sign-in.test.ts › lets a stale browser session sign itself out in one request, and ends another only with a recent one`.
 
 ### `keys-and-oauth/sign-in-end-restart`
 
@@ -2983,7 +2875,7 @@ When the server restarts, the server MUST keep refusing every app and key that `
 
 ### `keys-and-oauth/sign-in-rename`
 
-When the owner's browser session or the private local command asks `PATCH /owner/sign-ins/{id}` naming a live app or key of the owner, the server MUST answer `200` with the sign-in, whose `name` is the `name` the request gave with the spaces at each end removed.
+When the private local command asks `PATCH /owner/sign-ins/{id}` naming a live app or key of the owner, the server MUST answer `200` with the sign-in, whose `name` is the `name` the request gave with the spaces at each end removed.
 
 **Tests:** `compliance/owner-sign-ins.test.ts › gives an app the owner's own name, which the listing shows`, `› lists, renames and ends a sign-in through the local command`.
 
@@ -3024,14 +2916,6 @@ If the body of `PATCH /owner/sign-ins/{id}` has no `name`, then the server MUST 
 If `PATCH /owner/sign-ins/{id}` names no live sign-in of the owner, then the server MUST answer `404 sign_in_not_found`.
 
 **Tests:** `compliance/owner-sign-ins.test.ts › answers 404 sign_in_not_found for an ended sign-in and an id no sign-in has`, `› answers 404 sign_in_not_found to the rename of a browser session that has expired`.
-
-### `keys-and-oauth/sign-in-rename-recent`
-
-If the browser session asking `PATCH /owner/sign-ins/{id}` signed in more than five minutes ago, then the server MUST answer `403 forbidden`.
-
-**Reason:** A key's label is changed under the same rule at `PATCH /keys/{id}`, and one rule holds for every sign-in.
-
-**Tests:** `compliance/owner-sign-ins.test.ts › refuses a browser that signed in more than five minutes ago 403, and renames nothing`, `› gives a key a new label`.
 
 ## A browser session's idle week
 
@@ -3081,7 +2965,7 @@ When the server records a use of a browser session signed in to be remembered, t
 
 **Reason:** A session in use for longer than 400 days keeps its cookie. An answer that refuses the request still records the use, a `401` means the session ended while the request was in flight, and an answer that ends the session clears its cookie instead.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › sends the cookie again for 400 days when it records a use, in a refusal too`, `› clears the cookie of the session that ends itself`, `› keeps a sign-in not to be remembered on a cookie with no Max-Age, and its idle week on the server`.
+**Tests:** `compliance/owner-sign-ins.test.ts › sends the cookie again for 400 days when it records a use, in a refusal too`, `› keeps a sign-in not to be remembered on a cookie with no Max-Age, and its idle week on the server`.
 
 ### `keys-and-oauth/session-use-unwritten`
 
@@ -3117,7 +3001,7 @@ When the server restarts, the server MUST keep each live browser session's `last
 
 ## Browser sessions and apps
 
-A browser session ends by sign-out, by the owner ending it, by ending the other or every session, by a password change that keeps the current session, by local password recovery, or by going unused for a week.
+A browser session ends by sign-out, by the owner ending it, by local password recovery, or by going unused for a week.
 
 ### `keys-and-oauth/app-outlives-browser`
 
@@ -3125,13 +3009,13 @@ When a person's browser session ends, the server MUST keep valid every access to
 
 **Reason:** An app is not the browser that approved it, and an app with no refresh grant has no way back in. Only a revocation of the grant ends an app's access.
 
-**Tests:** `compliance/browser-sessions.test.ts › through browser sign-out leaves every app connected`, `› through ending one session leaves every app connected`, `› through ending the other sessions leaves every app connected`, `› through ending every session leaves every app connected`, `› through a password change that ends the other sessions leaves every app connected`, `› local recovery revokes browser sessions and keeps apps connected`, `compliance/owner-sign-ins.test.ts › through going unused for a week leaves every app connected`.
+**Tests:** `compliance/browser-sessions.test.ts › through browser sign-out leaves every app connected`, `› through ending one session leaves every app connected`, `› local recovery revokes browser sessions and keeps apps connected`, `compliance/owner-sign-ins.test.ts › through going unused for a week leaves every app connected`.
 
 ### `keys-and-oauth/refresh-outlives-browser`
 
 When a person's browser session ends, the server MUST answer the exchange of a refresh token an app holds for that person `200` with tokens that are valid.
 
-**Tests:** `compliance/browser-sessions.test.ts › through browser sign-out leaves every app connected`, `› through ending one session leaves every app connected`, `› through ending the other sessions leaves every app connected`, `› through ending every session leaves every app connected`, `› through a password change that ends the other sessions leaves every app connected`, `› local recovery revokes browser sessions and keeps apps connected`, `compliance/owner-sign-ins.test.ts › through going unused for a week leaves every app connected`.
+**Tests:** `compliance/browser-sessions.test.ts › through browser sign-out leaves every app connected`, `› through ending one session leaves every app connected`, `› local recovery revokes browser sessions and keeps apps connected`, `compliance/owner-sign-ins.test.ts › through going unused for a week leaves every app connected`.
 
 ### `keys-and-oauth/consent-outlives-browser`
 
@@ -3139,7 +3023,7 @@ When a person's browser session ends, the server MUST keep the person's consent 
 
 **Reason:** Consent is the person's decision about the app and not about the browser they made it in.
 
-**Tests:** `compliance/browser-sessions.test.ts › through browser sign-out leaves every app connected`, `› through ending one session leaves every app connected`, `› through ending the other sessions leaves every app connected`, `› through ending every session leaves every app connected`, `› through a password change that ends the other sessions leaves every app connected`, `› local recovery revokes browser sessions and keeps apps connected`.
+**Tests:** `compliance/browser-sessions.test.ts › through browser sign-out leaves every app connected`, `› through ending one session leaves every app connected`, `› local recovery revokes browser sessions and keeps apps connected`.
 
 ### `keys-and-oauth/app-outlives-restart`
 
@@ -3227,12 +3111,6 @@ When a password sign-in answers `200`, the server MUST already hold its audit re
 
 **Tests:** `compliance/credential-audit.test.ts › is in the audit log when a password sign-in answers`.
 
-### `keys-and-oauth/audit-password-change`
-
-When the owner's password change answers `200`, the server MUST already hold its audit record, readable at `GET /audit`.
-
-**Tests:** `compliance/credential-audit.test.ts › is in the audit log when a password change answers`.
-
 ### `keys-and-oauth/audit-device-approval`
 
 When a person's approval of a device code answers, the server MUST already hold the audit record of the grant it made, readable at `GET /audit`.
@@ -3258,12 +3136,6 @@ When `DELETE /owner/sign-ins/{id}` answers `200`, the server MUST already hold t
 When the server refuses a password sign-in, the server MUST already hold the audit record of the failure, readable at `GET /audit`.
 
 **Tests:** `compliance/credential-audit.test.ts › is in the audit log when the refusal of a failed sign-in answers`.
-
-### `keys-and-oauth/audit-failed-password-change`
-
-When the server refuses the owner's password change for its current password or for a sign-in limit, the server MUST already hold the audit record of the refusal, readable at `GET /audit`.
-
-**Tests:** `compliance/sign-in-library-routes.test.ts › holds the current password to the sign-in limits and records each refusal`.
 
 ### `keys-and-oauth/audit-refresh-replay`
 

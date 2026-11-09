@@ -37,6 +37,8 @@ const CANCEL_UNREAD: &str = "The credential the subscription belongs to may not 
 const CANCEL_CREDENTIAL: &str = "The credential the subscription belongs to no longer stands or no longer holds webhooks.manage.";
 const CANCEL_UNREADABLE: &str = "The event could not be read, so it was not sent.";
 
+/// Subscriptions one key, or one app's grant, may hold at once.
+pub const MAX_PER_MAKER: i64 = 100;
 const SECRET_BYTES: usize = 32;
 const CURSOR_SCOPE: &str = "webhook-deliveries";
 
@@ -206,6 +208,16 @@ pub async fn create(app: &App, caller: &Caller, request: Create) -> Result<Value
 pub fn insert_new(unit: &Unit<'_, '_>, request: Create) -> Result<Subscription> {
     let maker = unit.caller.webhook_maker()?;
     let tx = unit.tx();
+    if store::count(tx, &maker)? >= MAX_PER_MAKER {
+        return Err(Refusal::new(
+            Code::Conflict,
+            format!(
+                "A key or app holds at most {MAX_PER_MAKER} webhooks. Delete one to register another."
+            ),
+        )
+        .with_detail("reason", "webhook_cap")
+        .with_detail("cap", MAX_PER_MAKER));
+    }
     let secret = match request.secret {
         Some(secret) => secret,
         None => generated_secret()?,

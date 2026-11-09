@@ -4,7 +4,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { controlRequest } from "../../utils/control-request.js";
+import { controlRequest, localFetch } from "../../utils/control-request.js";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import {
@@ -35,6 +35,13 @@ import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
  */
 
 const LIMIT = 3;
+
+/** The shared target's private local socket, for the doors only it reads. */
+function socket(): string {
+  const path = process.env.MARFA_CONTROL_SOCKET;
+  expect(path, "MARFA_CONTROL_SOCKET is required").toBeTruthy();
+  return path!;
+}
 
 type Page = { data: { id?: string }[]; next_cursor: string | null };
 type Read = (page: { limit: number; cursor?: string }) => Promise<Page>;
@@ -115,14 +122,10 @@ async function trashSummaryPage(): Promise<Read> {
   const query = `last-page-trash-${ctx.runId}`;
   const ids = await notes(LIMIT, query);
   for (const id of ids) expect((await client.deleteItem(id)).ok).toBe(true);
-  const cookie = process.env.MARFA_OWNER_COOKIE;
-  expect(cookie, "MARFA_OWNER_COOKIE is required").toBeTruthy();
   return async ({ limit, cursor }) => {
     const params = new URLSearchParams({ q: query, limit: String(limit) });
     if (cursor) params.set("cursor", cursor);
-    const response = await fetch(`${apiUrl}/trash?${params}`, {
-      headers: { cookie: cookie! },
-    });
+    const response = await localFetch(socket(), `${apiUrl}/trash?${params}`);
     expect(response.status).toBe(200);
     const body = (await response.json()) as Page;
     expect(body.data.every((row) => ids.includes(row.id!))).toBe(true);
@@ -166,8 +169,6 @@ const seeds: Record<string, () => Promise<Read>> = {
   "GET /items/summaries": async () => {
     const name = `fullsummary${ctx.runId.replace(/[^a-z0-9]/gi, "")}`;
     const ids = await notes(LIMIT, name);
-    const owner = process.env.MARFA_OWNER_COOKIE;
-    expect(owner, "MARFA_OWNER_COOKIE is required").toBeTruthy();
     return async (page) => {
       const query = new URLSearchParams({
         type: "core.note",
@@ -175,12 +176,10 @@ const seeds: Record<string, () => Promise<Read>> = {
         limit: String(page.limit),
         ...(page.cursor === undefined ? {} : { cursor: page.cursor }),
       });
-      const response = await fetch(`${apiUrl}/items/summaries?${query}`, {
-        headers: {
-          cookie: owner!,
-          origin: new URL(apiUrl).origin,
-        },
-      });
+      const response = await localFetch(
+        socket(),
+        `${apiUrl}/items/summaries?${query}`,
+      );
       expect(response.status).toBe(200);
       const body = (await response.json()) as Page;
       expect(body.data.every((row) => ids.includes(row.id!))).toBe(true);

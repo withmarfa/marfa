@@ -82,7 +82,7 @@ When a credential calls `/mcp/admin`, the server MUST list to it the tools `/mcp
 
 The server MUST NOT list at any MCP endpoint a tool that purges items, exports the instance, restores a backup, claims the instance, changes the instance's settings, manages the owner, passkeys or sign-ins, manages file storage or runs housekeeping.
 
-**Reason:** each of these can lose what the owner keeps or lock the owner out, and the owner does them in the console, not through an agent.
+**Reason:** each of these can lose what the owner keeps or lock the owner out, and the owner does them from the command line, not through an agent.
 
 **Tests:** `compliance/mcp.test.ts › lists every admin tool at /mcp/admin to a credential that holds every permission and reaches no type`, `› lists the six tools and every schema tool at /mcp/schema to a credential that may use each`.
 

@@ -1024,34 +1024,33 @@ describe("the sign-in routes", () => {
     ]);
   });
 
-  it.each([
-    ["/auth/owner/keys/00000000-0000-4000-8000-000000000000", 404],
-    ["/auth/owner/keys/00000000-0000-4000-8000-000000000000/copy", 302],
-  ])("holds %s to the route template that answers it", (path, status) => {
-    const template = path.endsWith("/copy")
-      ? "GET /auth/owner/keys/{id}/copy"
-      : "GET /auth/owner/keys/{id}";
-    const line = { method: "GET", transport: "http", route: "/auth/owner/*" };
+  it("holds a path under a catch-all mount to the sign-in route it names", () => {
+    const line = {
+      method: "POST",
+      transport: "http",
+      route: "/auth/*",
+      path: "/auth/sign-out",
+    };
     const report = reportStatuses(
-      parseRequestLines(JSON.stringify({ ...line, path, status })),
+      parseRequestLines(JSON.stringify({ ...line, status: 200 })),
       documentDeclaring([200]),
     );
     expect(report.undeclared).toEqual([]);
-    // Witness: a status the template does not declare is reported under the template.
+    // Witness: a status the route does not declare is reported under it.
     const invalid = reportStatuses(
-      parseRequestLines(JSON.stringify({ ...line, path, status: 418 })),
+      parseRequestLines(JSON.stringify({ ...line, status: 418 })),
       documentDeclaring([200]),
     );
     expect(invalid.undeclared.map((entry) => entry.operation)).toEqual([
-      template,
+      "POST /auth/sign-out",
     ]);
-    // A path with no template stays named by its path.
+    // A path no sign-in route names stays named by its path.
     const other = reportStatuses(
       parseRequestLines(
-        JSON.stringify({ ...line, path: "/auth/owner/other/1", status }),
+        JSON.stringify({ ...line, path: "/auth/other/1", status: 200 }),
       ),
       documentDeclaring([200]),
     );
-    expect([...other.unpublished.keys()]).toEqual(["GET /auth/owner/other/1"]);
+    expect([...other.unpublished.keys()]).toEqual(["POST /auth/other/1"]);
   });
 });

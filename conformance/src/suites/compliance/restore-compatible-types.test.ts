@@ -114,7 +114,7 @@ describe("compatible type archives", () => {
         const bytes = new Uint8Array(await exported.arrayBuffer());
         const owner = new MarfaClient({
           baseUrl: destination.apiUrl,
-          ownerCookie: destination.ownerCookie,
+          controlSocket: destination.controlSocket,
         });
         const restored = await owner.restoreArchive(bytes);
         expect(restored.status, JSON.stringify(restored.error)).toBe(200);
@@ -167,7 +167,7 @@ describe("compatible type archives", () => {
       try {
         const owner = new MarfaClient({
           baseUrl: destination.apiUrl,
-          ownerCookie: destination.ownerCookie,
+          controlSocket: destination.controlSocket,
         });
         const worker = new MarfaClient({
           baseUrl: destination.apiUrl,
@@ -263,7 +263,7 @@ describe("compatible type archives", () => {
         });
         const owner = new MarfaClient({
           baseUrl: destination.apiUrl,
-          ownerCookie: destination.ownerCookie,
+          controlSocket: destination.controlSocket,
         });
         const existing = {
           id: parent,
@@ -323,7 +323,7 @@ describe("compatible type archives", () => {
       try {
         const owner = new MarfaClient({
           baseUrl: destination.apiUrl,
-          ownerCookie: destination.ownerCookie,
+          controlSocket: destination.controlSocket,
         });
         const worker = new MarfaClient({
           baseUrl: destination.apiUrl,

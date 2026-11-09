@@ -14,7 +14,7 @@ use crate::http::body::JsonBody;
 use crate::http::named_instance;
 
 pub async fn read(State(app): State<Arc<App>>, caller: Caller) -> Answer {
-    caller.require_direct()?;
+    caller.require_local()?;
     let found = owner::find(&app).await?.ok_or_else(owner::not_found)?;
     Ok(json_answer(
         StatusCode::OK,
@@ -51,7 +51,7 @@ pub async fn update(
     visit: Visit,
     body: JsonBody,
 ) -> Answer {
-    caller.require_direct()?;
+    caller.require_local()?;
     let body = body.object(&UPDATE_FIELDS).await?;
     let change = Update::from_body(&body)?;
     let found = owner::update(&app, &caller, change, visit).await?;

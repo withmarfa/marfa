@@ -247,13 +247,8 @@ fn listing(answer: &Value) -> String {
                 "" => "never used".to_string(),
                 at => format!("last used {at}"),
             };
-            let current = if row.get("current").and_then(Value::as_bool) == Some(true) {
-                " (this browser)"
-            } else {
-                ""
-            };
             format!(
-                "{}  {:7}  {}  {used}{current}",
+                "{}  {:7}  {}  {used}",
                 text("id"),
                 text("kind"),
                 text("name")
@@ -271,16 +266,16 @@ mod tests {
     fn a_listing_names_each_sign_in_on_a_line() {
         let answer = json!({
             "data": [
-                {"id": "s1", "kind": "browser", "name": "Safari on macOS", "current": true,
+                {"id": "s1", "kind": "browser", "name": "Safari on macOS",
                  "last_used_at": "2026-10-10T09:00:00.000Z"},
-                {"id": "g1", "kind": "app", "name": "marfa on studio", "current": false,
+                {"id": "g1", "kind": "app", "name": "marfa on studio",
                  "last_used_at": null},
             ],
             "next_cursor": null,
         });
         assert_eq!(
             listing(&answer),
-            "s1  browser  Safari on macOS  last used 2026-10-10T09:00:00.000Z (this browser)\n\
+            "s1  browser  Safari on macOS  last used 2026-10-10T09:00:00.000Z\n\
              g1  app      marfa on studio  never used"
         );
         assert_eq!(
@@ -418,7 +413,7 @@ mod tests {
             "data": [
                 {"id": "g1", "kind": "app",
                  "name": "marfa\r\u{1b}[2Kk1  key  trusted\u{202e}",
-                 "current": false, "last_used_at": null},
+                 "last_used_at": null},
             ],
             "next_cursor": null,
         });

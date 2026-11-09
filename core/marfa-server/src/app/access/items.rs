@@ -1,4 +1,3 @@
-use marfa_rules::catalog::Catalog as Rules;
 use serde_json::json;
 
 use super::levers::Holding;
@@ -137,44 +136,13 @@ impl Caller {
     }
 
     /// The server's own work answers to no lever: a job that could not see a row could never clear it.
-    pub(super) fn holding(&self) -> &Holding {
+    pub fn levers(&self) -> Result<&Holding> {
         const NOTHING: &Holding = &Holding::NOTHING;
         match self {
             Caller::Local(standing) => standing.holding(),
             Caller::Owner(session) => session.standing.holding(),
             Caller::Key(key) | Caller::App { key, .. } => key.standing.holding(),
-            Caller::Server => NOTHING,
+            Caller::Server => Ok(NOTHING),
         }
-    }
-
-    pub fn strict_on(&self, type_id: &str) -> bool {
-        self.holding().strict_on(type_id)
-    }
-
-    pub fn allowed_sources(&self, type_id: &str) -> Option<Vec<String>> {
-        self.holding()
-            .allowed_sources(type_id)
-            .map(<[String]>::to_vec)
-    }
-
-    pub fn listed_sources(&self, rules: &Rules, type_id: &str) -> Option<Vec<String>> {
-        self.holding()
-            .listed_sources(rules, type_id)
-            .map(<[String]>::to_vec)
-    }
-
-    pub fn filters_sources(&self) -> bool {
-        self.holding().filters_sources()
-    }
-
-    /// The source filter in one spelling for one effect, to tell whether it moved.
-    pub fn source_filter_form(&self) -> serde_json::Value {
-        self.holding().source_filter_form()
-    }
-
-    pub fn lists(&self, rules: &Rules, type_id: &str, source: &str) -> bool {
-        self.holding()
-            .listed_sources(rules, type_id)
-            .is_none_or(|sources| sources.iter().any(|held| held == source))
     }
 }
