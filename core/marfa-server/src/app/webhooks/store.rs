@@ -136,6 +136,19 @@ pub fn turns(tx: &Transaction<'_>, maker: &Maker) -> Result<i64> {
         .unwrap_or(0))
 }
 
+/// How many subscriptions `maker` holds now.
+pub fn count(tx: &Transaction<'_>, maker: &Maker) -> Result<i64> {
+    let (column, id) = match maker {
+        Maker::Key(id) => ("key_id", id),
+        Maker::Grant(id) => ("grant_id", id),
+    };
+    Ok(tx.query_row(
+        &format!("SELECT COUNT(*) FROM webhooks WHERE {column} = ?1"),
+        [id],
+        |row| row.get(0),
+    )?)
+}
+
 pub fn delete_for_grant(tx: &Transaction<'_>, grant_id: &str) -> Result<usize> {
     Ok(tx.execute("DELETE FROM webhooks WHERE grant_id = ?1", [grant_id])?)
 }
@@ -348,46 +361,109 @@ pub fn page(
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
-/// One due delivery per idle subscription, oldest wait first within each subscription.
-pub fn due(tx: &Transaction<'_>, now_ms: i64, busy: &[i64], limit: usize) -> Result<Vec<i64>> {
+/// A subscription's maker as one text, the same for every subscription the maker holds.
+const MAKER: &str = "SELECT id, CASE WHEN key_id IS NOT NULL THEN 'key:' || key_id \
+     ELSE 'grant:' || grant_id END AS maker FROM webhooks";
+
+/// A delivery that has fallen due, and the maker whose share its attempt takes.
+pub struct Due {
+    pub seq: i64,
+    pub maker: String,
+}
+
+/// One due delivery per idle subscription; a maker passes its share only while no other maker has one due.
+pub fn due(
+    tx: &Transaction<'_>,
+    now_ms: i64,
+    busy: &[i64],
+    holding: &[String],
+    share: usize,
+    limit: usize,
+) -> Result<Vec<Due>> {
     let busy =
         serde_json::to_string(busy).map_err(|_| Refusal::internal("a list did not print"))?;
-    let mut statement = tx.prepare_cached(
-        "SELECT seq FROM (SELECT seq, due_at, ROW_NUMBER() OVER \
-         (PARTITION BY webhook_id ORDER BY due_at, seq) AS turn \
-         FROM webhook_deliveries WHERE status = 'pending' AND due_at <= ?1 \
-         AND webhook_id NOT IN (SELECT webhook_id FROM webhook_deliveries \
-         WHERE seq IN (SELECT value FROM json_each(?2)))) WHERE turn = 1 ORDER BY due_at, seq LIMIT ?3",
-    )?;
+    let holding =
+        serde_json::to_string(holding).map_err(|_| Refusal::internal("a list did not print"))?;
+    let mut statement = tx.prepare_cached(&format!(
+        "WITH due AS (SELECT d.seq, d.webhook_id, d.due_at, m.maker \
+         FROM webhook_deliveries d JOIN ({MAKER}) m ON m.id = d.webhook_id \
+         WHERE d.status = 'pending' AND d.due_at <= ?1), \
+         heads AS (SELECT seq, due_at, maker, ROW_NUMBER() OVER \
+         (PARTITION BY maker ORDER BY due_at, seq) AS place \
+         FROM (SELECT seq, due_at, maker, ROW_NUMBER() OVER \
+         (PARTITION BY webhook_id ORDER BY due_at, seq) AS turn FROM due \
+         WHERE webhook_id NOT IN (SELECT webhook_id FROM webhook_deliveries \
+         WHERE seq IN (SELECT value FROM json_each(?2)))) WHERE turn = 1), \
+         shared AS (SELECT seq, due_at, maker, place, ?4 - (SELECT COUNT(*) FROM json_each(?3) \
+         WHERE value = heads.maker) AS room FROM heads) \
+         SELECT seq, maker FROM shared WHERE place <= room \
+         OR NOT EXISTS (SELECT 1 FROM due WHERE due.maker <> shared.maker) \
+         ORDER BY place > room, due_at, seq LIMIT ?5"
+    ))?;
+    let share = i64::try_from(share).unwrap_or(i64::MAX);
     let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-    let rows = statement.query_map(params![now_ms, busy, limit], |row| row.get(0))?;
+    let rows = statement.query_map(params![now_ms, busy, holding, share, limit], |row| {
+        Ok(Due {
+            seq: row.get(0)?,
+            maker: row.get(1)?,
+        })
+    })?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
-/// When the next pending delivery not being attempted is due.
-pub fn next_due(tx: &Transaction<'_>, busy: &[i64]) -> Result<Option<i64>> {
+/// When the next pending delivery is due, leaving out those being attempted and the `full` makers' own.
+pub fn next_due(tx: &Transaction<'_>, busy: &[i64], full: &[String]) -> Result<Option<i64>> {
     let busy =
         serde_json::to_string(busy).map_err(|_| Refusal::internal("a list did not print"))?;
+    let full =
+        serde_json::to_string(full).map_err(|_| Refusal::internal("a list did not print"))?;
     Ok(tx.query_row(
-        "SELECT MIN(due_at) FROM webhook_deliveries WHERE status = 'pending' \
-         AND webhook_id NOT IN (SELECT webhook_id FROM webhook_deliveries \
-         WHERE seq IN (SELECT value FROM json_each(?1)))",
-        [busy],
+        &format!(
+            "SELECT MIN(d.due_at) FROM webhook_deliveries d JOIN ({MAKER}) m ON m.id = d.webhook_id \
+             WHERE d.status = 'pending' \
+             AND d.webhook_id NOT IN (SELECT webhook_id FROM webhook_deliveries \
+             WHERE seq IN (SELECT value FROM json_each(?1))) \
+             AND m.maker NOT IN (SELECT value FROM json_each(?2))"
+        ),
+        params![busy, full],
         |row| row.get(0),
     )?)
 }
 
 #[test]
-fn due_takes_one_turn_per_subscription_and_excludes_busy_subscriptions() {
+fn due_takes_one_turn_per_subscription_and_shares_attempts_between_makers() {
     let mut db = rusqlite::Connection::open_in_memory().unwrap();
     let tx = db.transaction().unwrap();
-    tx.execute_batch("CREATE TABLE webhook_deliveries (seq INTEGER, webhook_id TEXT, status TEXT, due_at INTEGER);
-        INSERT INTO webhook_deliveries VALUES (1, 'a', 'pending', 0), (2, 'a', 'pending', 0),
-        (3, 'b', 'pending', 0), (4, 'c', 'pending', 5);").unwrap();
-    assert_eq!(due(&tx, 0, &[], 10).unwrap(), vec![1, 3]);
-    assert_eq!(due(&tx, 0, &[], 1).unwrap(), vec![1]);
-    assert_eq!(due(&tx, 0, &[1], 10).unwrap(), vec![3]);
-    assert_eq!(next_due(&tx, &[1, 3]).unwrap(), Some(5));
+    tx.execute_batch(
+        "CREATE TABLE webhooks (id TEXT, key_id TEXT, grant_id TEXT);
+         CREATE TABLE webhook_deliveries (seq INTEGER, webhook_id TEXT, status TEXT, due_at INTEGER);
+         INSERT INTO webhooks VALUES ('a', 'k1', NULL), ('b', 'k1', NULL), ('c', 'k1', NULL),
+         ('d', NULL, 'g1');
+         INSERT INTO webhook_deliveries VALUES (1, 'a', 'pending', 0), (2, 'a', 'pending', 0),
+         (3, 'b', 'pending', 0), (4, 'c', 'pending', 5), (5, 'd', 'pending', 1);",
+    )
+    .unwrap();
+    let seqs = |found: Vec<Due>| found.into_iter().map(|due| due.seq).collect::<Vec<_>>();
+    assert_eq!(seqs(due(&tx, 1, &[], &[], 8, 10).unwrap()), vec![1, 3, 5]);
+    assert_eq!(seqs(due(&tx, 1, &[], &[], 8, 1).unwrap()), vec![1]);
+    assert_eq!(seqs(due(&tx, 1, &[1], &[], 8, 10).unwrap()), vec![3, 5]);
+    assert_eq!(seqs(due(&tx, 1, &[], &[], 1, 10).unwrap()), vec![1, 5]);
+    let held = ["key:k1".to_string()];
+    assert_eq!(seqs(due(&tx, 1, &[], &held, 1, 10).unwrap()), vec![5]);
+    assert_eq!(seqs(due(&tx, 1, &[], &held, 2, 10).unwrap()), vec![1, 5]);
+    assert_eq!(
+        seqs(due(&tx, 0, &[], &[], 1, 10).unwrap()),
+        vec![1, 3],
+        "a maker no other maker waits behind may pass its share"
+    );
+    assert_eq!(
+        seqs(due(&tx, 1, &[1, 3], &held, 1, 10).unwrap()),
+        vec![5],
+        "the busy subscriptions of another maker keep the share"
+    );
+    assert_eq!(next_due(&tx, &[1, 3], &[]).unwrap(), Some(1));
+    assert_eq!(next_due(&tx, &[1, 3], &held).unwrap(), Some(1));
+    assert_eq!(next_due(&tx, &[1, 3, 5], &held).unwrap(), None);
 }
 
 /// Preserves earlier attempts and leaves settled deliveries unchanged.

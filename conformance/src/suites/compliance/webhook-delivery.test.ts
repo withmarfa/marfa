@@ -78,6 +78,131 @@ it("delivers promptly while eight other subscriptions never answer", async () =>
   }
 });
 
+/** A receiver that takes every request and never answers; `received` counts them. */
+async function stallingReceiver(): Promise<{
+  server: Server;
+  port: number;
+  received: () => number;
+}> {
+  let received = 0;
+  const server = createServer((req) => {
+    req.resume();
+    received++;
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string")
+    throw new Error("no receiver port");
+  return { server, port: address.port, received: () => received };
+}
+
+const reads = { type_permissions: { "*": "read" } };
+
+/** Removes the subscriptions a test made, so none keeps attempting a receiver that is gone. */
+async function removeAll(
+  made: { id: string; client: MarfaClient }[],
+): Promise<void> {
+  for (const hook of made) await hook.client.deleteWebhook(hook.id);
+}
+
+async function closeStalled(server: Server): Promise<void> {
+  server.closeAllConnections();
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+}
+
+it("delivers promptly to a second maker while one maker's subscriptions never answer", async () => {
+  const stalled = await stallingReceiver();
+  const slow = await keyWith("slow-maker", reads);
+  const other = await keyWith("other-maker", reads);
+  const made: { id: string; client: MarfaClient }[] = [];
+  try {
+    for (let i = 0; i < 70; i++) {
+      const hook = await slow.client.createWebhook({
+        url: `http://127.0.0.1:${stalled.port}/${i}`,
+        events: ["item.created"],
+      });
+      expect(hook.status).toBe(201);
+      made.push({ id: hook.data.id, client: slow.client });
+    }
+    const hook = await other.client.createWebhook({
+      url: receiver.hookUrl("other-maker"),
+      events: ["item.created"],
+    });
+    expect(hook.status).toBe(201);
+    made.push({ id: hook.data.id, client: other.client });
+    await makeNote("other-maker");
+    await waitFor(
+      "the second maker's delivery beside a maker whose receiver never answers",
+      async () => receiver.received.find((r) => r.path === "/hook/other-maker"),
+      5_000,
+    );
+  } finally {
+    await removeAll(made);
+    await closeStalled(stalled.server);
+  }
+});
+
+it("holds at most eight attempts of one maker in flight while another maker's delivery is due", async () => {
+  const stalled = await stallingReceiver();
+  const alsoStalled = await stallingReceiver();
+  const slow = await keyWith("share-slow-maker", reads);
+  const other = await keyWith("share-other-maker", reads);
+  const made: { id: string; client: MarfaClient }[] = [];
+  try {
+    for (let i = 0; i < 70; i++) {
+      const hook = await slow.client.createWebhook({
+        url: `http://127.0.0.1:${stalled.port}/${i}`,
+        events: ["item.created"],
+      });
+      expect(hook.status).toBe(201);
+      made.push({ id: hook.data.id, client: slow.client });
+    }
+    const hook = await other.client.createWebhook({
+      url: `http://127.0.0.1:${alsoStalled.port}/other`,
+      events: ["item.created"],
+    });
+    expect(hook.status).toBe(201);
+    made.push({ id: hook.data.id, client: other.client });
+    await makeNote("share");
+    await waitFor(
+      "the second maker's delivery to be attempted",
+      async () => (alsoStalled.received() === 1 ? true : undefined),
+      5_000,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(stalled.received()).toBe(8);
+  } finally {
+    await removeAll(made);
+    await closeStalled(stalled.server);
+    await closeStalled(alsoStalled.server);
+  }
+});
+
+it("lets a maker no other maker waits behind hold more than eight attempts in flight", async () => {
+  const stalled = await stallingReceiver();
+  const slow = await keyWith("alone-slow-maker", reads);
+  const made: { id: string; client: MarfaClient }[] = [];
+  try {
+    for (let i = 0; i < 12; i++) {
+      const hook = await slow.client.createWebhook({
+        url: `http://127.0.0.1:${stalled.port}/${i}`,
+        events: ["item.created"],
+      });
+      expect(hook.status).toBe(201);
+      made.push({ id: hook.data.id, client: slow.client });
+    }
+    await makeNote("alone");
+    await waitFor(
+      "all twelve of the maker's subscriptions to be attempted",
+      async () => (stalled.received() === 12 ? true : undefined),
+      5_000,
+    );
+  } finally {
+    await removeAll(made);
+    await closeStalled(stalled.server);
+  }
+});
+
 beforeAll(async () => {
   ({ ctx, client, apiUrl } = await createTestContext(
     "compliance",
