@@ -124,8 +124,7 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
     };
     let mut response = provenance::within(origin, next.run(request)).await;
     if upload && !body.is_whole() {
-        // An upload has no size cap, so its unread rest is dropped with the connection, not
-        // read and thrown away.
+        // An upload refused before its body was read drops the body with the connection.
         response
             .headers_mut()
             .insert(header::CONNECTION, HeaderValue::from_static("close"));
