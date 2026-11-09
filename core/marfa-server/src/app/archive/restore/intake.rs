@@ -30,8 +30,8 @@ fn invalid(message: impl Into<String>) -> Refusal {
     Refusal::validation(message.into())
 }
 
-fn registered_twice(id: &str) -> Refusal {
-    invalid(format!("The archive registers {id} more than once.")).with_detail("type_id", id)
+fn registered_twice(field: &str, id: &str) -> Refusal {
+    invalid(format!("The archive registers {id} more than once.")).with_detail(field, id)
 }
 
 fn damaged_schema(message: impl Into<String>) -> Refusal {
@@ -251,7 +251,7 @@ impl Rows {
                 if let Some(id) = body.get("id").and_then(Value::as_str)
                     && !self.type_ids.insert(id.to_string())
                 {
-                    return Err(registered_twice(id));
+                    return Err(registered_twice("type_id", id));
                 }
                 registrations.types.push(types::write::Archived {
                     definition: body.clone(),
@@ -270,7 +270,7 @@ impl Rows {
                 if let Some(id) = definition.get("id").and_then(Value::as_str)
                     && !self.edge_type_ids.insert(id.to_string())
                 {
-                    return Err(registered_twice(id));
+                    return Err(registered_twice("edge_type", id));
                 }
                 registrations.edge_types.push(definition.clone());
             }
