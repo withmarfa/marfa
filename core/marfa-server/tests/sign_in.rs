@@ -532,7 +532,7 @@ async fn the_sweep_removes_a_setup_proof_past_its_end_and_keeps_the_code() {
     };
     assert_eq!(proofs().await, (2, 1));
     app.clock.advance(6 * 60_000).unwrap();
-    let path = "/housekeeping/auth-session-cleanup/run";
+    let path = "/housekeeping/credential-cleanup/run";
     let swept = send(router.clone(), post(path, &json!({}))).await;
     assert_eq!(swept.status, StatusCode::OK);
     assert_eq!(proofs().await, (1, 0));

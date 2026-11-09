@@ -26,6 +26,7 @@ mod housekeeping;
 mod items;
 mod jobs;
 mod keys;
+mod limit;
 pub mod listening;
 mod listing;
 mod lookup;
@@ -330,6 +331,7 @@ fn finished(routes: Routes, app: Arc<App>, listener: Declaration) -> Router {
         .route_layer(from_fn_with_state(app.clone(), body::checked))
         .route_layer(from_fn_with_state(app.clone(), conditional::judged))
         .route_layer(from_fn_with_state(judging, named_instance::judged))
+        .route_layer(from_fn_with_state(app.clone(), limit::requests))
         .route_layer(from_fn(remember_route))
         .fallback(unmatched)
         .layer(CatchPanicLayer::custom(panicked))

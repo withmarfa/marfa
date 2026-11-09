@@ -25,14 +25,8 @@ fn wrong_credentials() -> Refusal {
     Refusal::new(Code::Unauthorized, "Invalid email or password.")
 }
 
-async fn count(app: &App, email: &str, visit: &Visit) -> Result<Option<i64>> {
-    let lanes = limits::password_lanes(email, visit.address);
-    let clock = app.clock.clone();
-    app.db
-        .write(Write::own(), move |tx| {
-            limits::admit(tx, clock.now_ms(), &lanes)
-        })
-        .await
+fn count(app: &App, email: &str, visit: &Visit) -> Option<i64> {
+    limits::admit(app, &limits::password_lanes(email, visit.address))
 }
 
 struct Proven {
@@ -124,7 +118,7 @@ pub async fn with_password(
     visit: Visit,
 ) -> Result<Opened> {
     let email = limits::account_key(&email);
-    if let Some(wait) = count(app, &email, &visit).await? {
+    if let Some(wait) = count(app, &email, &visit) {
         refused_sign_in(app, &email, TOO_MANY, &visit).await?;
         return Err(too_many_passwords(wait));
     }
@@ -188,7 +182,7 @@ pub async fn with_password(
 pub async fn confirm(app: &App, caller: &Caller, password: String, visit: Visit) -> Result<Opened> {
     let session = caller.session().ok_or_else(unauthorized)?.clone();
     let owner = owner::find(app).await?.ok_or_else(unauthorized)?;
-    if let Some(wait) = count(app, &owner.email, &visit).await? {
+    if let Some(wait) = count(app, &owner.email, &visit) {
         return Err(too_many_passwords(wait));
     }
     let proven = prove(app, &owner.email, password)
@@ -271,7 +265,7 @@ pub async fn change_password(
 ) -> Result<()> {
     let session = caller.session().ok_or_else(unauthorized)?.clone();
     let owner = owner::find(app).await?.ok_or_else(unauthorized)?;
-    if let Some(wait) = count(app, &owner.email, &visit).await? {
+    if let Some(wait) = count(app, &owner.email, &visit) {
         refused_change(app, caller, &owner.id, TOO_MANY, &visit).await?;
         return Err(too_many_passwords(wait));
     }
@@ -300,7 +294,6 @@ pub async fn change_password(
                 &proven.owner.id,
                 Some(&session.id),
             )?;
-            limits::clear_account(tx, &proven.owner.email)?;
             note(
                 tx,
                 &unit.at,
@@ -317,6 +310,7 @@ pub async fn change_password(
         })
         .await?;
     if changed {
+        limits::clear_account(&app.limiter, &owner.email);
         return Ok(());
     }
     refused_change(app, caller, &owner.id, INVALID, &visit).await?;

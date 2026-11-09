@@ -8,15 +8,12 @@ use rusqlite::Transaction;
 use serde_json::json;
 
 use super::super::access::Caller;
-use super::super::auth::limits;
 use super::super::keys::reap;
 use super::super::refusal::Result;
-use super::super::{App, audit, events, idempotency, webhooks};
+use super::super::{App, audit, events, idempotency, oauth, webhooks};
 use super::{DAY_MS, HOUR_MS, Report, Run, cutoff};
 use crate::db::Write;
-use crate::settings::registry::{
-    AUDIT_RETENTION_DAYS, EVENT_LOG_RETENTION_HOURS, RATE_LIMIT_WINDOW_MS, Setting,
-};
+use crate::settings::registry::{AUDIT_RETENTION_DAYS, EVENT_LOG_RETENTION_HOURS, Setting};
 
 const BATCH: i64 = 1_000;
 
@@ -101,25 +98,6 @@ pub async fn audit(app: Arc<App>, run: Run) -> Result<Report> {
     })
 }
 
-async fn ended_windows(app: &Arc<App>) -> Result<i64> {
-    let now_ms = app.clock.now_ms();
-    app.db
-        .write(Write::own(), move |tx| {
-            limits::remove_expired(tx, now_ms, BATCH)
-        })
-        .await
-}
-
-pub async fn rate_limit(app: Arc<App>, run: Run) -> Result<Report> {
-    let window_ms = app.settings.live().get(RATE_LIMIT_WINDOW_MS);
-    let swept = app.key_limit.sweep(app.clock.now_ms(), window_ms);
-    let (deleted, done) = drain(&run, BATCH, || ended_windows(&app)).await?;
-    Ok(Report {
-        result: json!({ "deleted": i64::try_from(swept).unwrap_or(i64::MAX) + deleted }),
-        again: !done,
-    })
-}
-
 async fn reap_batch(app: &Arc<App>) -> Result<i64> {
     let before = app.clock.stamp_ago(reap::KEPT_DAYS * DAY_MS);
     let seen = before.clone();
@@ -136,10 +114,39 @@ async fn reap_batch(app: &Arc<App>) -> Result<i64> {
     .await
 }
 
-pub async fn revoked_keys(app: Arc<App>, run: Run) -> Result<Report> {
-    let (deleted, done) = drain(&run, BATCH, || reap_batch(&app)).await?;
+async fn revoked_keys(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
+    drain(run, BATCH, || reap_batch(app)).await
+}
+
+#[derive(Default)]
+struct Tally {
+    deleted: i64,
+    retired: i64,
+}
+
+impl Tally {
+    fn deleted(&mut self, (count, done): (i64, bool)) -> bool {
+        self.deleted += count;
+        done
+    }
+
+    fn retired(&mut self, (count, done): (i64, bool)) -> bool {
+        self.retired += count;
+        done
+    }
+}
+
+/// One run for everything that ends a sign-in: a grant is retired before the purge looks for
+/// withdrawn ones, and a client is removed only after the grants that kept it.
+pub async fn credentials(app: Arc<App>, run: Run) -> Result<Report> {
+    let mut tally = Tally::default();
+    let done = tally.deleted(oauth::sweep::sweep_expired(&app, &run).await?)
+        && tally.retired(oauth::sweep::retire_idle_grants(&app, &run).await?)
+        && tally.deleted(oauth::sweep::purge_withdrawn_grants(&app, &run).await?)
+        && tally.deleted(oauth::sweep::remove_idle_clients(&app, &run).await?)
+        && tally.deleted(revoked_keys(&app, &run).await?);
     Ok(Report {
-        result: json!({ "deleted": deleted }),
+        result: json!({ "deleted": tally.deleted, "retired": tally.retired }),
         again: !done,
     })
 }

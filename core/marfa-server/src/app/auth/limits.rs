@@ -1,15 +1,12 @@
-//! Attempt limits are held in the database so a restart keeps them. Each is a fixed window
-//! opened by its first attempt.
+//! The lanes an attempt at a sign-in door is counted in. Each is a fixed window on the one
+//! limiter.
 
 use std::net::IpAddr;
 
-use chrono::{DateTime, SecondsFormat, Utc};
-use rusqlite::{OptionalExtension, Transaction, params};
-
 use super::owner::MAX_EMAIL_CHARS;
 use crate::app::App;
+use crate::app::limiter::{Lane, Limiter, retry_seconds};
 use crate::app::refusal::{Code, Refusal, Result};
-use crate::db::Write;
 use crate::settings::registry::RATE_LIMIT_ENABLED;
 
 const MINUTE_MS: i64 = 60_000;
@@ -28,14 +25,6 @@ const DEVICE_CODE_ADDRESS: &str = "device-code-address";
 const PASSKEY_ADDRESS: &str = "passkey-challenge-address";
 const ALL: &str = "all";
 const NO_ADDRESS: &str = "unknown";
-
-#[derive(Clone, Debug)]
-pub struct Lane {
-    family: &'static str,
-    key: String,
-    limit: i64,
-    window_ms: i64,
-}
 
 fn bucket(address: Option<IpAddr>) -> String {
     let Some(address) = address else {
@@ -62,227 +51,94 @@ pub(super) fn account_key(email: &str) -> String {
 pub fn password_lanes(email: &str, address: Option<IpAddr>) -> [Lane; 3] {
     let account = account_key(email);
     [
-        Lane {
-            family: ADDRESS,
-            key: bucket(address),
-            limit: 30,
-            window_ms: 15 * MINUTE_MS,
-        },
-        Lane {
-            family: ACCOUNT_ADDRESS,
-            key: format!("{account}|{}", bucket(address)),
-            limit: 10,
-            window_ms: 15 * MINUTE_MS,
-        },
-        Lane {
-            family: ACCOUNT,
-            key: account,
-            limit: 100,
-            window_ms: 60 * MINUTE_MS,
-        },
+        Lane::new(ADDRESS, bucket(address), 30, 15 * MINUTE_MS),
+        Lane::new(
+            ACCOUNT_ADDRESS,
+            format!("{account}|{}", bucket(address)),
+            10,
+            15 * MINUTE_MS,
+        ),
+        Lane::new(ACCOUNT, account, 100, 60 * MINUTE_MS),
     ]
 }
 
 pub fn setup_code_lanes(address: Option<IpAddr>) -> [Lane; 1] {
-    [Lane {
-        family: SETUP_ADDRESS,
-        key: bucket(address),
-        limit: 10,
-        window_ms: 15 * MINUTE_MS,
-    }]
+    [Lane::new(
+        SETUP_ADDRESS,
+        bucket(address),
+        10,
+        15 * MINUTE_MS,
+    )]
 }
 
 pub fn device_lookup_lanes(address: Option<IpAddr>) -> [Lane; 2] {
     [
-        Lane {
-            family: DEVICE_ADDRESS,
-            key: bucket(address),
-            limit: 10,
-            window_ms: 15 * MINUTE_MS,
-        },
-        Lane {
-            family: DEVICE_INSTANCE,
-            key: ALL.to_string(),
-            limit: 100,
-            window_ms: 15 * MINUTE_MS,
-        },
+        Lane::new(DEVICE_ADDRESS, bucket(address), 10, 15 * MINUTE_MS),
+        Lane::new(DEVICE_INSTANCE, ALL.to_string(), 100, 15 * MINUTE_MS),
     ]
 }
 
 pub fn device_owner_lanes(user_id: &str, instance_limit: Option<i64>) -> [Lane; 2] {
     [
-        Lane {
-            family: DEVICE_OWNER,
-            key: user_id.to_string(),
-            limit: 10,
-            window_ms: 15 * MINUTE_MS,
-        },
-        Lane {
-            family: DEVICE_OWNER_INSTANCE,
-            key: ALL.to_string(),
-            limit: instance_limit.unwrap_or(100),
-            window_ms: 15 * MINUTE_MS,
-        },
+        Lane::new(DEVICE_OWNER, user_id.to_string(), 10, 15 * MINUTE_MS),
+        Lane::new(
+            DEVICE_OWNER_INSTANCE,
+            ALL.to_string(),
+            instance_limit
+                .and_then(|limit| u64::try_from(limit).ok())
+                .unwrap_or(100),
+            15 * MINUTE_MS,
+        ),
     ]
 }
 
 pub fn document_lanes(address: Option<IpAddr>) -> [Lane; 2] {
     [
-        Lane {
-            family: DOCUMENT_ADDRESS,
-            key: bucket(address),
-            limit: 10,
-            window_ms: MINUTE_MS,
-        },
-        Lane {
-            family: DOCUMENT_INSTANCE,
-            key: ALL.to_string(),
-            limit: 30,
-            window_ms: MINUTE_MS,
-        },
+        Lane::new(DOCUMENT_ADDRESS, bucket(address), 10, MINUTE_MS),
+        Lane::new(DOCUMENT_INSTANCE, ALL.to_string(), 30, MINUTE_MS),
     ]
 }
 
 pub fn register_lanes(address: Option<IpAddr>) -> [Lane; 1] {
-    [Lane {
-        family: REGISTER_ADDRESS,
-        key: bucket(address),
-        limit: 10,
-        window_ms: MINUTE_MS,
-    }]
+    [Lane::new(REGISTER_ADDRESS, bucket(address), 10, MINUTE_MS)]
 }
 
 pub fn passkey_challenge_lanes(address: Option<IpAddr>) -> [Lane; 1] {
-    [Lane {
-        family: PASSKEY_ADDRESS,
-        key: bucket(address),
-        limit: 30,
-        window_ms: MINUTE_MS,
-    }]
+    [Lane::new(PASSKEY_ADDRESS, bucket(address), 30, MINUTE_MS)]
 }
 
 pub fn device_code_lanes(address: Option<IpAddr>) -> [Lane; 1] {
-    [Lane {
-        family: DEVICE_CODE_ADDRESS,
-        key: bucket(address),
-        limit: 30,
-        window_ms: MINUTE_MS,
-    }]
+    [Lane::new(
+        DEVICE_CODE_ADDRESS,
+        bucket(address),
+        30,
+        MINUTE_MS,
+    )]
 }
 
-pub async fn hold_to(app: &App, lanes: [Lane; 1], message: &'static str) -> Result<()> {
+/// The milliseconds to wait when the attempt is refused.
+pub fn admit(app: &App, lanes: &[Lane]) -> Option<i64> {
+    app.limiter.admit(app.clock.now_ms(), lanes)
+}
+
+/// For the doors a switch can turn the limiter off for.
+pub fn hold_to(app: &App, lanes: [Lane; 1], message: &'static str) -> Result<()> {
     if !app.settings.live().get(RATE_LIMIT_ENABLED) {
         return Ok(());
     }
-    let now = app.clock.now_ms();
-    let wait = app
-        .db
-        .write(Write::own(), move |tx| admit(tx, now, &lanes))
-        .await?;
-    wait.map_or(Ok(()), |wait| Err(spent(message, wait)))
+    admit(app, &lanes).map_or(Ok(()), |wait| Err(spent(message, wait)))
 }
 
-fn stamp(ms: i64) -> String {
-    DateTime::<Utc>::from_timestamp_millis(ms)
-        .unwrap_or_default()
-        .to_rfc3339_opts(SecondsFormat::Millis, true)
-}
-
-fn read(tx: &Transaction<'_>, lane: &Lane, now_ms: i64) -> Result<Option<(i64, i64)>> {
-    let row: Option<(i64, String)> = tx
-        .query_row(
-            "SELECT count, expires_at FROM rate_limit_windows \
-             WHERE family = ?1 AND window_key = ?2",
-            params![lane.family, lane.key],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()?;
-    Ok(row.and_then(|(count, expires_at)| {
-        let end = DateTime::parse_from_rfc3339(&expires_at)
-            .ok()?
-            .timestamp_millis();
-        (end > now_ms).then_some((count, end))
-    }))
-}
-
-pub fn remove_expired(tx: &Transaction<'_>, now_ms: i64, batch: i64) -> Result<i64> {
-    let count = tx.execute(
-        "DELETE FROM rate_limit_windows WHERE (family, window_key) IN ( \
-         SELECT family, window_key FROM rate_limit_windows WHERE expires_at <= ?1 LIMIT ?2)",
-        params![stamp(now_ms), batch],
-    )?;
-    Ok(i64::try_from(count).unwrap_or(i64::MAX))
-}
-
-/// An attempt stops at the first lane that refuses it, so that lane's excess never reaches
-/// the next. The wait runs to the latest end among the lanes the next attempt would meet spent.
-pub fn admit(tx: &Transaction<'_>, now_ms: i64, lanes: &[Lane]) -> Result<Option<i64>> {
-    tx.execute(
-        "DELETE FROM rate_limit_windows WHERE expires_at <= ?1 AND family IN \
-         (?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
-        params![
-            stamp(now_ms),
-            ADDRESS,
-            ACCOUNT_ADDRESS,
-            ACCOUNT,
-            SETUP_ADDRESS,
-            DEVICE_ADDRESS,
-            DEVICE_INSTANCE,
-            DEVICE_OWNER,
-            DEVICE_OWNER_INSTANCE,
-            DOCUMENT_ADDRESS,
-            DOCUMENT_INSTANCE,
-            REGISTER_ADDRESS,
-            DEVICE_CODE_ADDRESS,
-            PASSKEY_ADDRESS,
-        ],
-    )?;
-    let mut refused = false;
-    let mut end = None;
-    for lane in lanes {
-        let found = read(tx, lane, now_ms)?;
-        let (count, lane_end) = if refused {
-            found.unwrap_or((0, now_ms))
-        } else {
-            let (count, lane_end) = found.unwrap_or((0, now_ms + lane.window_ms));
-            tx.execute(
-                "INSERT INTO rate_limit_windows (family, window_key, count, expires_at) \
-                 VALUES (?1, ?2, ?3, ?4) ON CONFLICT (family, window_key) \
-                 DO UPDATE SET count = excluded.count, expires_at = excluded.expires_at",
-                params![lane.family, lane.key, count + 1, stamp(lane_end)],
-            )?;
-            refused = count + 1 > lane.limit;
-            (count + 1, lane_end)
-        };
-        if count >= lane.limit {
-            end = end.max(Some(lane_end));
-        }
-    }
-    Ok(if refused {
-        end.map(|end| end - now_ms)
-    } else {
-        None
-    })
-}
-
-pub fn clear_account(tx: &Transaction<'_>, email: &str) -> Result<()> {
+/// A password change or a recovery starts the account's counts afresh.
+pub fn clear_account(limiter: &Limiter, email: &str) {
     let account = account_key(email);
-    tx.execute(
-        "DELETE FROM rate_limit_windows WHERE family = ?1 AND window_key = ?2",
-        params![ACCOUNT, account],
-    )?;
     let prefix = format!("{account}|");
-    tx.execute(
-        "DELETE FROM rate_limit_windows WHERE family = ?1 \
-         AND substr(window_key, 1, length(?2)) = ?2",
-        params![ACCOUNT_ADDRESS, prefix],
-    )?;
-    Ok(())
+    limiter.forget(ACCOUNT, |key| key == account);
+    limiter.forget(ACCOUNT_ADDRESS, |key| key.starts_with(&prefix));
 }
 
 pub fn spent(message: &'static str, wait_ms: i64) -> Refusal {
-    let seconds = ((wait_ms + 999) / 1000).max(1);
-    Refusal::new(Code::RateLimited, message).with_detail("retry_after", seconds)
+    Refusal::new(Code::RateLimited, message).with_detail("retry_after", retry_seconds(wait_ms))
 }
 
 pub fn too_many_passwords(wait_ms: i64) -> Refusal {
@@ -292,87 +148,58 @@ pub fn too_many_passwords(wait_ms: i64) -> Refusal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::Connection;
-
-    fn database() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(include_str!("../../db/migrations/0001_baseline.sql"))
-            .unwrap();
-        conn
-    }
-
-    fn attempt(conn: &mut Connection, now: i64, lanes: &[Lane]) -> Option<i64> {
-        let tx = conn.transaction().unwrap();
-        let wait = admit(&tx, now, lanes).unwrap();
-        tx.commit().unwrap();
-        wait
+    fn attempt(limiter: &Limiter, now: i64, lanes: &[Lane]) -> Option<i64> {
+        limiter.admit(now, lanes)
     }
 
     #[test]
     fn an_address_past_its_limit_leaves_the_account_count_alone() {
-        let mut conn = database();
+        let limiter = Limiter::default();
         let lanes = password_lanes("a@example.test", "203.0.113.1".parse().ok());
         for _ in 0..10 {
-            assert_eq!(attempt(&mut conn, 0, &lanes), None);
+            assert_eq!(attempt(&limiter, 0, &lanes), None);
         }
         assert_eq!(
-            attempt(&mut conn, 1_000, &lanes),
+            attempt(&limiter, 1_000, &lanes),
             Some(15 * MINUTE_MS - 1_000)
         );
-        let tx = conn.transaction().unwrap();
-        assert_eq!(read(&tx, &lanes[2], 1_000).unwrap().unwrap().0, 10);
+        let account = [lanes[2].clone()];
+        let left = (0..).take_while(|_| attempt(&limiter, 1_000, &account).is_none());
+        assert_eq!(left.count(), 90);
     }
 
     #[test]
     fn one_address_runs_out_of_emails_to_try() {
-        let mut conn = database();
+        let limiter = Limiter::default();
         let address = "203.0.113.1".parse().ok();
         for n in 0..30 {
             let lanes = password_lanes(&format!("{n}@example.test"), address);
-            assert_eq!(attempt(&mut conn, 0, &lanes), None);
+            assert_eq!(attempt(&limiter, 0, &lanes), None);
         }
         let next = password_lanes("next@example.test", address);
         assert_eq!(
-            attempt(&mut conn, 1_000, &next),
+            attempt(&limiter, 1_000, &next),
             Some(15 * MINUTE_MS - 1_000)
         );
-        let tx = conn.transaction().unwrap();
-        assert!(read(&tx, &next[1], 1_000).unwrap().is_none());
-        assert!(read(&tx, &next[2], 1_000).unwrap().is_none());
-        tx.commit().unwrap();
         let elsewhere = password_lanes("next@example.test", "203.0.113.2".parse().ok());
-        assert_eq!(attempt(&mut conn, 1_000, &elsewhere), None);
-        assert_eq!(attempt(&mut conn, 15 * MINUTE_MS, &next), None);
+        assert_eq!(attempt(&limiter, 1_000, &elsewhere), None);
+        assert_eq!(attempt(&limiter, 15 * MINUTE_MS, &next), None);
     }
 
     #[test]
     fn a_window_counts_afresh_once_it_ends() {
-        let mut conn = database();
+        let limiter = Limiter::default();
         let lanes = setup_code_lanes(None);
         for _ in 0..11 {
-            attempt(&mut conn, 0, &lanes);
+            attempt(&limiter, 0, &lanes);
         }
-        assert!(attempt(&mut conn, 15 * MINUTE_MS - 1, &lanes).is_some());
-        assert_eq!(attempt(&mut conn, 15 * MINUTE_MS, &lanes), None);
-    }
-
-    #[test]
-    fn the_wait_runs_to_the_latest_spent_lane() {
-        let mut conn = database();
-        let one = password_lanes("a@example.test", "203.0.113.1".parse().ok());
-        let tx = conn.transaction().unwrap();
-        tx.execute(
-            "INSERT INTO rate_limit_windows VALUES (?1, ?2, 100, ?3)",
-            params![ACCOUNT, "a@example.test", stamp(50 * MINUTE_MS)],
-        )
-        .unwrap();
-        tx.commit().unwrap();
-        assert_eq!(attempt(&mut conn, 0, &one), Some(50 * MINUTE_MS));
+        assert!(attempt(&limiter, 15 * MINUTE_MS - 1, &lanes).is_some());
+        assert_eq!(attempt(&limiter, 15 * MINUTE_MS, &lanes), None);
     }
 
     #[test]
     fn an_app_door_holds_one_address_and_not_the_next() {
-        let mut conn = database();
+        let limiter = Limiter::default();
         type Door = fn(Option<IpAddr>) -> [Lane; 1];
         let doors: [(Door, usize); 3] = [
             (register_lanes, 10),
@@ -382,12 +209,12 @@ mod tests {
         for (lanes, limit) in doors {
             let one = lanes("203.0.113.1".parse().ok());
             for _ in 0..limit {
-                assert_eq!(attempt(&mut conn, 0, &one), None);
+                assert_eq!(attempt(&limiter, 0, &one), None);
             }
-            assert_eq!(attempt(&mut conn, 1_000, &one), Some(MINUTE_MS - 1_000));
+            assert_eq!(attempt(&limiter, 1_000, &one), Some(MINUTE_MS - 1_000));
             let next = lanes("203.0.113.2".parse().ok());
-            assert_eq!(attempt(&mut conn, 1_000, &next), None);
-            assert_eq!(attempt(&mut conn, MINUTE_MS, &one), None);
+            assert_eq!(attempt(&limiter, 1_000, &next), None);
+            assert_eq!(attempt(&limiter, MINUTE_MS, &one), None);
         }
     }
 
@@ -402,15 +229,29 @@ mod tests {
 
     #[test]
     fn a_cleared_account_loses_only_its_own_counts() {
-        let mut conn = database();
+        let limiter = Limiter::default();
         let mine = password_lanes("a@example.test", None);
         let other = password_lanes("aa@example.test", None);
-        attempt(&mut conn, 0, &mine);
-        attempt(&mut conn, 0, &other);
-        let tx = conn.transaction().unwrap();
-        clear_account(&tx, "A@example.test").unwrap();
-        assert!(read(&tx, &mine[1], 0).unwrap().is_none());
-        assert!(read(&tx, &mine[2], 0).unwrap().is_none());
-        assert!(read(&tx, &other[1], 0).unwrap().is_some());
+        for lanes in [&mine, &other] {
+            for _ in 0..10 {
+                attempt(&limiter, 0, lanes);
+            }
+        }
+        clear_account(&limiter, "A@example.test");
+        assert_eq!(attempt(&limiter, 1, &mine[1..]), None);
+        assert!(attempt(&limiter, 1, &other[1..]).is_some());
+    }
+
+    #[test]
+    fn the_wait_is_whole_seconds_rounded_up_and_never_under_one() {
+        let seconds = |wait_ms| {
+            spent("x", wait_ms).details.unwrap()["retry_after"]
+                .as_i64()
+                .unwrap()
+        };
+        assert_eq!(seconds(1), 1);
+        assert_eq!(seconds(1_000), 1);
+        assert_eq!(seconds(1_001), 2);
+        assert_eq!(seconds(15 * MINUTE_MS), 900);
     }
 }

@@ -23,6 +23,7 @@ pub mod instance;
 pub mod items;
 pub mod jobs;
 pub mod keys;
+pub mod limiter;
 pub mod mcp;
 pub mod oauth;
 pub mod occurrences;
@@ -57,7 +58,8 @@ use clock::Clock;
 use faults::Faults;
 use health::Health;
 use housekeeping::Housekeeping;
-use keys::{Limiter, Usage};
+use keys::Usage;
+use limiter::Limiter;
 use query::Secret;
 
 const READERS: usize = 4;
@@ -70,7 +72,7 @@ pub struct App {
     pub instance_id: String,
     pub health: Health,
     pub usage: Usage,
-    pub key_limit: Limiter,
+    pub limiter: Limiter,
     pub passwords: Passwords,
     pub housekeeping: Housekeeping,
     pub webhooks: webhooks::Webhooks,
@@ -148,7 +150,7 @@ impl App {
             stop: watch::channel(false).0,
             health: Health::default(),
             usage: Usage::default(),
-            key_limit: Limiter::default(),
+            limiter: Limiter::default(),
             passwords: Passwords::default(),
             housekeeping: Housekeeping::default(),
             webhooks: webhooks::Webhooks::default(),

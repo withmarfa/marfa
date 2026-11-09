@@ -25,8 +25,7 @@ pub async fn register(
         app,
         register_lanes(visit.address),
         "Too many apps registered. Try again later.",
-    )
-    .await?;
+    )?;
     let allowed = Registries::of(&app.catalog_handle().load()).allowed();
     let registration = match parse_registration(body, &allowed) {
         Ok(registration) => registration,
