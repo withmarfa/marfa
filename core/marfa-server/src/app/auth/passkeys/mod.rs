@@ -25,10 +25,10 @@ use super::owner::{self, Owner, checked_name};
 use super::session::{self, New, Opened};
 use super::sign_in::{SIGN_IN_FAILED, SIGNED_IN};
 use super::{Note, Visit, carries_sessions, note};
-use crate::app::clock::Stamp;
 use crate::app::App;
 use crate::app::access::{Caller, unauthorized};
 use crate::app::addresses::Address;
+use crate::app::clock::Stamp;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::db::Write;
 

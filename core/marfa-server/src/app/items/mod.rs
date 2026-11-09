@@ -28,10 +28,7 @@ pub use read::{
     Caption, Detail, Listing, Many, Selector, bin, bin_selection, bulk_get, captions, detail,
     extension, extensions, history, lookup, metadata, summaries, tag_counts, titles, trash_preview,
 };
-pub(crate) use read::{
-    Reader, listed, listed_rows, readable_tags, reading,
-    reading_under,
-};
+pub(crate) use read::{Reader, listed, listed_rows, readable_tags, reading, reading_under};
 pub(crate) use write::settle_late_part;
 
 const UNTITLED: &str = "Untitled";

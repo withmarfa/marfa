@@ -9,9 +9,9 @@ use super::owner::{self, Owner};
 use super::password::{self, Checked};
 use super::session::{self, New, Opened};
 use super::{Note, Visit, note};
-use crate::app::clock::Stamp;
 use crate::app::App;
 use crate::app::access::{Caller, unauthorized};
+use crate::app::clock::Stamp;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::db::Write;
 

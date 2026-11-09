@@ -4,10 +4,10 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use rusqlite::{OptionalExtension, Transaction};
 
-use crate::app::clock::Stamp;
 use super::store;
 use crate::app::access::{Axis, Level};
 use crate::app::catalog::Snapshot;
+use crate::app::clock::Stamp;
 use crate::app::keys;
 use crate::app::refusal::Result;
 
@@ -41,7 +41,11 @@ impl Registry {
                 .into_iter()
                 .filter(|name| Axis::Type.level(map, name) == Level::Write)
                 .collect();
-            let until = key.expires_at.as_deref().map(|at| Stamp::read(at).map(Stamp::ms)).transpose()?;
+            let until = key
+                .expires_at
+                .as_deref()
+                .map(|at| Stamp::read(at).map(Stamp::ms))
+                .transpose()?;
             let reached: HashSet<&String> = std::iter::once(&key.source)
                 .chain(&key.grants.sources)
                 .collect();

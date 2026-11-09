@@ -361,7 +361,9 @@ pub fn due(tx: &Transaction<'_>, now_ms: i64, busy: &[i64], limit: usize) -> Res
          WHERE seq IN (SELECT value FROM json_each(?2)))) WHERE turn = 1 ORDER BY due_at, seq LIMIT ?3",
     )?;
     let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-    let rows = statement.query_map(params![Stamp::from_ms(now_ms)?, busy, limit], |row| row.get(0))?;
+    let rows = statement.query_map(params![Stamp::from_ms(now_ms)?, busy, limit], |row| {
+        row.get(0)
+    })?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
@@ -399,8 +401,11 @@ fn due_takes_one_turn_per_subscription_and_excludes_busy_subscriptions() {
 fn a_due_time_that_does_not_read_is_refused() {
     let mut db = rusqlite::Connection::open_in_memory().unwrap();
     let tx = db.transaction().unwrap();
-    tx.execute_batch("CREATE TABLE webhook_deliveries (seq INTEGER, webhook_id TEXT, status TEXT, due_at TEXT);
-        INSERT INTO webhook_deliveries VALUES (1, 'a', 'pending', 'soon');").unwrap();
+    tx.execute_batch(
+        "CREATE TABLE webhook_deliveries (seq INTEGER, webhook_id TEXT, status TEXT, due_at TEXT);
+        INSERT INTO webhook_deliveries VALUES (1, 'a', 'pending', 'soon');",
+    )
+    .unwrap();
     assert!(next_due(&tx, &[]).is_err());
 }
 

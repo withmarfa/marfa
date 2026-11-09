@@ -9,7 +9,6 @@ use super::grant::{self, DEVICE_SOURCE, GRANT_CREATED, GRANT_WRITE};
 use super::offer::{self, Decision, Offer, Post, Request};
 use super::scope::{OFFLINE_ACCESS, Registries, ScopeSet, narrow, needs_recent_sign_in};
 use super::store::{self, DeviceCode, DeviceStatus};
-use crate::app::clock::Stamp;
 use super::token::{Form, credential_refused};
 use super::tokens::{new_device_code, new_user_code, normalize_user_code};
 use super::{Answered, DEVICE_CODE_SECONDS, DEVICE_INTERVAL_SECONDS, MS_PER_SECOND, Problem};
@@ -21,6 +20,7 @@ use crate::app::auth::limits::{
     admit, device_code_lanes, device_lookup_lanes, device_owner_lanes, hold_to,
 };
 use crate::app::catalog::{self, Snapshot};
+use crate::app::clock::Stamp;
 use crate::app::faults::DEVICE_OWNER_INSTANCE_LANE;
 use crate::app::keys::digest_of;
 use crate::app::refusal::{Code as RefusalCode, Refusal, Result};

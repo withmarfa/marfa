@@ -8,8 +8,6 @@ use marfa_rules::names;
 use rusqlite::Transaction;
 use serde_json::{Value, json};
 
-use crate::app::clock::Stamp;
-use crate::app::housekeeping::DAY_MS;
 use super::plan::{self, Act, Asked, Gate};
 use super::{
     Item, Keys, check_keys, extensions_text, metadata_for, name_of, not_found, rows, summary_of,
@@ -19,9 +17,11 @@ use crate::app::App;
 use crate::app::access::reach::Demand;
 use crate::app::access::{Caller, Level};
 use crate::app::catalog::{self, Catalog, Snapshot};
+use crate::app::clock::Stamp;
 use crate::app::connectors::{ReadOnly, read_only};
 use crate::app::edges::{self, Reach};
 use crate::app::faults::{Faults, HOLD_READ_HYDRATION, HOLD_READ_SNAPSHOT};
+use crate::app::housekeeping::DAY_MS;
 use crate::app::query::{Secret, bad_cursor};
 use crate::app::refusal::Result;
 use crate::settings::registry::TRASH_RETENTION_DAYS;
@@ -332,7 +332,13 @@ pub async fn bulk_get(
         let mut metadata = Vec::new();
         for row in &visible {
             let mut text = if include.edges {
-                row.hydrated(read.tx, &read.read_only, &read.caller, &read.catalog, &read.cursors)?
+                row.hydrated(
+                    read.tx,
+                    &read.read_only,
+                    &read.caller,
+                    &read.catalog,
+                    &read.cursors,
+                )?
             } else {
                 row.answered(&read.read_only, &read.caller)?
             };
@@ -376,7 +382,13 @@ pub(crate) fn listed_rows(
         .iter()
         .map(|row| {
             let mut text = if include.edges {
-                row.hydrated(read.tx, &read.read_only, &read.caller, &read.catalog, &read.cursors)?
+                row.hydrated(
+                    read.tx,
+                    &read.read_only,
+                    &read.caller,
+                    &read.catalog,
+                    &read.cursors,
+                )?
             } else {
                 row.answered(&read.read_only, &read.caller)?
             };
@@ -696,7 +708,9 @@ fn eligible_at(trashed_at: Option<&str>, retention_days: u64) -> Result<Option<S
     let (Some(trashed_at), true) = (trashed_at, retention_days > 0) else {
         return Ok(None);
     };
-    let kept = i64::try_from(retention_days).unwrap_or(i64::MAX).saturating_mul(DAY_MS);
+    let kept = i64::try_from(retention_days)
+        .unwrap_or(i64::MAX)
+        .saturating_mul(DAY_MS);
     Ok(Some(Stamp::read(trashed_at)?.plus_ms(kept)?.text()))
 }
 
@@ -802,7 +816,13 @@ pub async fn lookup(
                 continue;
             }
             data.push(if edges {
-                row.hydrated(read.tx, &read.read_only, &read.caller, &read.catalog, &read.cursors)?
+                row.hydrated(
+                    read.tx,
+                    &read.read_only,
+                    &read.caller,
+                    &read.catalog,
+                    &read.cursors,
+                )?
             } else {
                 row.answered(&read.read_only, &read.caller)?
             });

@@ -1,11 +1,11 @@
 use rusqlite::Transaction;
 use serde_json::{Value, json};
 
-use crate::app::clock::Stamp;
 use super::addresses::{Address, Addresses};
 use super::auth::{passkeys, session};
 use super::oauth::grants;
 use super::refusal::Result;
+use crate::app::clock::Stamp;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Consequence {

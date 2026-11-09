@@ -120,9 +120,7 @@ pub async fn list(app: &App, caller: &Caller) -> Result<Vec<SignIn>> {
             for key in keys::all_live(tx, &at)? {
                 found.push(key_of(&key, &apps)?);
             }
-            found.sort_by(|left, right| {
-                (left.created, &left.id).cmp(&(right.created, &right.id))
-            });
+            found.sort_by(|left, right| (left.created, &left.id).cmp(&(right.created, &right.id)));
             Ok(found)
         })
         .await

@@ -870,7 +870,7 @@ CREATE TABLE IF NOT EXISTS enrichment_files (
     signature TEXT NOT NULL DEFAULT '',
     -- The limit that stopped an over-limit file, and what it was then.
     capped_by TEXT CHECK (capped_by IN ('blob', 'inflated', 'memory', 'fixed')),
-    capped_at INTEGER,
+    cap INTEGER,
     -- A skipped file offered once more because a field a read fills was cleared; the refusal stays.
     refill INTEGER NOT NULL DEFAULT 0 CHECK (refill IN (0, 1)),
     updated_at TEXT NOT NULL,
@@ -878,7 +878,7 @@ CREATE TABLE IF NOT EXISTS enrichment_files (
     CHECK (refill = 0 OR state = 'skipped'),
     CHECK ((state = 'skipped') = (reason IS NOT NULL)),
     CHECK ((reason IS 'over_limit') = (capped_by IS NOT NULL)),
-    CHECK ((capped_by IS NULL) = (capped_at IS NULL))
+    CHECK ((capped_by IS NULL) = (cap IS NULL))
 ) STRICT, WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS enrichment_files_state ON enrichment_files (state, attempts);

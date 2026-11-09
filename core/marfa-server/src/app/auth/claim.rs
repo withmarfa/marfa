@@ -9,8 +9,8 @@ use subtle::ConstantTimeEq;
 use super::limits::{self, spent};
 use super::owner::{self, Details, Owner};
 use super::{Note, Visit, note, password};
-use crate::app::clock::Stamp;
 use crate::app::access::Caller;
+use crate::app::clock::Stamp;
 use crate::app::keys::digest_of;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::{App, instance};
@@ -405,7 +405,11 @@ mod tests {
         add(&tx, "code", CODE, "g", None).unwrap();
         let now = at(NOW);
         for (digest, holds_now) in [("before", false), ("end", false), ("after", true)] {
-            assert_eq!(holds(&tx, TICKET, digest, now).unwrap(), holds_now, "{digest}");
+            assert_eq!(
+                holds(&tx, TICKET, digest, now).unwrap(),
+                holds_now,
+                "{digest}"
+            );
         }
         assert!(holds(&tx, CODE, "code", now).unwrap());
         drop_expired(&tx, now).unwrap();

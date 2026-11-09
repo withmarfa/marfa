@@ -5,9 +5,9 @@ use std::net::IpAddr;
 
 use rusqlite::{OptionalExtension, Transaction, params};
 
-use crate::app::clock::Stamp;
 use super::owner::MAX_EMAIL_CHARS;
 use crate::app::App;
+use crate::app::clock::Stamp;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::db::Write;
 use crate::settings::registry::RATE_LIMIT_ENABLED;
@@ -354,7 +354,11 @@ mod tests {
         let tx = conn.transaction().unwrap();
         tx.execute(
             "INSERT INTO rate_limit_windows VALUES (?1, ?2, 100, ?3)",
-            params![ACCOUNT, "a@example.test", Stamp::from_ms(50 * MINUTE_MS).unwrap()],
+            params![
+                ACCOUNT,
+                "a@example.test",
+                Stamp::from_ms(50 * MINUTE_MS).unwrap()
+            ],
         )
         .unwrap();
         tx.commit().unwrap();

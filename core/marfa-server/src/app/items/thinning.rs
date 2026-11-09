@@ -9,7 +9,6 @@ use marfa_rules::schema::resolve;
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 
-use crate::app::clock::Stamp;
 use super::super::access::Caller;
 use super::super::blobs::references;
 use super::super::catalog::{self, Catalog, Snapshot};
@@ -18,6 +17,7 @@ use super::super::housekeeping::{DAY_MS, Report, Run};
 use super::super::refusal::Result;
 use super::super::unit::Unit;
 use super::super::{App, stored};
+use crate::app::clock::Stamp;
 use crate::settings::registry::{
     VERSION_DAILY_SNAPSHOT_DAYS, VERSION_MAX_VERSIONS, VERSION_RECENT_DAYS,
     VERSION_WEEKLY_SNAPSHOT_DAYS,

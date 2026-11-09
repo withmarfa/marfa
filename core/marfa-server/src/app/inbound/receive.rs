@@ -5,11 +5,11 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use sha2::{Digest, Sha256};
 
-use crate::app::clock::Stamp;
 use super::super::App;
 use super::super::faults::FAIL_INBOUND_RECEIPT;
 use super::super::refusal::{Code, Refusal, Result};
 use super::store;
+use crate::app::clock::Stamp;
 use crate::db::{Write, io_refusal};
 use crate::settings::Snapshot;
 use crate::settings::registry::{

@@ -9,12 +9,12 @@ use std::sync::Arc;
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 use serde_json::{Map, Value, json};
 
-use crate::app::clock::Stamp;
 use super::App;
 use super::access::{Axis, Caller, Change, Grants, OwnLevers, Permission, Standing};
 use super::items::reading;
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
+use crate::app::clock::Stamp;
 pub use limit::Limiter;
 pub use request::{MINT_FIELDS, Mint, UPDATE_FIELDS, Update};
 pub use secret::hash as digest_of;
@@ -119,7 +119,9 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Key> {
         standing: Standing::default(),
         created_at: row.get::<_, Stamp>("created_at")?.text(),
         expires_at: row.get::<_, Option<Stamp>>("expires_at")?.map(Stamp::text),
-        last_used_at: row.get::<_, Option<Stamp>>("last_used_at")?.map(Stamp::text),
+        last_used_at: row
+            .get::<_, Option<Stamp>>("last_used_at")?
+            .map(Stamp::text),
     })
 }
 

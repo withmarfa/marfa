@@ -5,7 +5,6 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Map, Value, json};
 
-use crate::app::clock::Stamp;
 use super::origin;
 use super::sign_in::{refuse_elsewhere, signed_in};
 use super::{
@@ -14,6 +13,7 @@ use super::{
 use crate::app::access::Caller;
 use crate::app::auth::passkeys::{self, Adding, Assertion, Begun, Listed};
 use crate::app::auth::{Visit, form_origins, owner};
+use crate::app::clock::Stamp;
 use crate::app::refusal::Refusal;
 use crate::app::{App, instance};
 use crate::http::answer::{Answer, json_answer};

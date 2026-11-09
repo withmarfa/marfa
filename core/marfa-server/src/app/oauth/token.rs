@@ -439,9 +439,12 @@ async fn by_device_code(
                 "This device code has expired.",
             )));
         }
-        let waited = code
-            .last_polled_at
-            .is_none_or(|last| now.ms() >= last.ms().saturating_add(code.interval_seconds * MS_PER_SECOND));
+        let waited = code.last_polled_at.is_none_or(|last| {
+            now.ms()
+                >= last
+                    .ms()
+                    .saturating_add(code.interval_seconds * MS_PER_SECOND)
+        });
         store::note_device_poll(tx, &digest, now)?;
         if !waited {
             return Ok(Err(Problem::new("slow_down", "Poll less often.")));

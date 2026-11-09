@@ -178,8 +178,11 @@ mod tests {
             let mut db = database();
             let tx = db.transaction().unwrap();
             let token = issued(&tx);
-            tx.execute("UPDATE auth_passkey_challenge SET expires_at = ?1", [stored])
-                .unwrap();
+            tx.execute(
+                "UPDATE auth_passkey_challenge SET expires_at = ?1",
+                [stored],
+            )
+            .unwrap();
             let refused = take(&tx, SALT, Some(&token), Purpose::Prove, at(NOW)).err();
             assert!(refused.is_some(), "{stored}");
         }

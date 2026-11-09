@@ -28,7 +28,13 @@ struct Reply {
     text: String,
 }
 
-async fn send(router: &Router, token: Option<&str>, method: Method, path: &str, body: Option<Value>) -> Reply {
+async fn send(
+    router: &Router,
+    token: Option<&str>,
+    method: Method,
+    path: &str,
+    body: Option<Value>,
+) -> Reply {
     let mut builder = Request::builder().method(method).uri(path);
     if let Some(token) = token {
         builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
@@ -103,7 +109,13 @@ impl Instance {
 
     /// The owner's listings on the private socket, and the rest with the key.
     async fn list(&self, path: &str) -> Reply {
-        let local = ["/items/summaries", "/trash", "/folders", "/audit", "/connectors/"];
+        let local = [
+            "/items/summaries",
+            "/trash",
+            "/folders",
+            "/audit",
+            "/connectors/",
+        ];
         let keyed = !local.iter().any(|door| path.starts_with(door));
         let token = keyed.then_some(self.key.as_str());
         let router = if keyed { &self.public } else { &self.control };
@@ -117,11 +129,16 @@ impl Instance {
 }
 
 fn id_in(made: &Value) -> String {
-    [&made["id"], &made["item"]["id"], &made["view"]["id"], &made["webhook"]["id"]]
-        .into_iter()
-        .find_map(Value::as_str)
-        .unwrap_or_else(|| panic!("no id in {made}"))
-        .to_string()
+    [
+        &made["id"],
+        &made["item"]["id"],
+        &made["view"]["id"],
+        &made["webhook"]["id"],
+    ]
+    .into_iter()
+    .find_map(Value::as_str)
+    .unwrap_or_else(|| panic!("no id in {made}"))
+    .to_string()
 }
 
 fn with_cursor(path: &str, cursor: &str) -> String {
@@ -139,7 +156,9 @@ async fn every_listing_refuses_a_cursor_another_listing_issued() {
     let first = &notes[0];
     for version in 1..3 {
         let body = json!({ "properties": { "body": format!("findable again {version}") }, "version": version });
-        instance.write(Method::PATCH, &format!("/items/{first}"), body).await;
+        instance
+            .write(Method::PATCH, &format!("/items/{first}"), body)
+            .await;
     }
     for target in &notes[1..] {
         let edge = json!({ "source_id": first, "target_id": target, "edge_type": "about" });
@@ -155,9 +174,17 @@ async fn every_listing_refuses_a_cursor_another_listing_issued() {
         assert_eq!(moved.status, StatusCode::OK, "{}", moved.text);
     }
     for title in ["one", "two"] {
-        instance.write(Method::POST, "/folders", json!({ "title": title, "include": [] })).await;
+        instance
+            .write(
+                Method::POST,
+                "/folders",
+                json!({ "title": title, "include": [] }),
+            )
+            .await;
     }
-    let view = instance.write(Method::POST, "/views", json!({ "title": "every note" })).await;
+    let view = instance
+        .write(Method::POST, "/views", json!({ "title": "every note" }))
+        .await;
     let view = id_in(&view);
     let hook = json!({ "url": "http://127.0.0.1:9/hook", "events": ["item.created"] });
     let hook = instance.write(Method::POST, "/webhooks", hook).await;
@@ -185,7 +212,12 @@ async fn every_listing_refuses_a_cursor_another_listing_issued() {
             .unwrap_or_else(|| panic!("{name} gave no cursor: {}", page.text))
             .to_string();
         let next = instance.list(&with_cursor(path, &cursor)).await;
-        assert_eq!(next.status, StatusCode::OK, "{name} continues: {}", next.text);
+        assert_eq!(
+            next.status,
+            StatusCode::OK,
+            "{name} continues: {}",
+            next.text
+        );
         issued.push((*name, cursor));
     }
 
@@ -194,8 +226,14 @@ async fn every_listing_refuses_a_cursor_another_listing_issued() {
         ("bin selection", "/trash/empty".to_string()),
         ("deliveries", format!("/webhooks/{hook}/deliveries?limit=1")),
         ("runs", format!("/connectors/{ABSENT}/runs?limit=1")),
-        ("agreements", format!("/connectors/{ABSENT}/agreements?limit=1")),
-        ("inbound", format!("/connectors/{ABSENT}/deliveries?limit=1")),
+        (
+            "agreements",
+            format!("/connectors/{ABSENT}/agreements?limit=1"),
+        ),
+        (
+            "inbound",
+            format!("/connectors/{ABSENT}/deliveries?limit=1"),
+        ),
     ]);
     let mut taken = Vec::new();
     for (name, path) in &taking {
@@ -209,8 +247,17 @@ async fn every_listing_refuses_a_cursor_another_listing_issued() {
                 refused.body["error"]["code"].as_str(),
                 refused.body["error"]["details"]["field"].as_str(),
             );
-            if answer != (StatusCode::BAD_REQUEST, Some("validation_error"), Some("cursor")) {
-                taken.push(format!("{name} given a cursor from {from}: {}", refused.text));
+            if answer
+                != (
+                    StatusCode::BAD_REQUEST,
+                    Some("validation_error"),
+                    Some("cursor"),
+                )
+            {
+                taken.push(format!(
+                    "{name} given a cursor from {from}: {}",
+                    refused.text
+                ));
             }
         }
     }

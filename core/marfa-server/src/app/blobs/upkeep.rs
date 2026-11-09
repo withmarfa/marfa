@@ -497,7 +497,11 @@ fn purgeable(tx: &rusqlite::Transaction<'_>, app: &App) -> Result<Vec<Hash>> {
         return Ok(Vec::new());
     }
     let grace = stored::deciding(tx, &seeds, BLOB_CLEANUP_GRACE_MS)?;
-    match app.clock.instant().earlier_by(i64::try_from(grace).unwrap_or(i64::MAX)) {
+    match app
+        .clock
+        .instant()
+        .earlier_by(i64::try_from(grace).unwrap_or(i64::MAX))
+    {
         Some(cutoff) => rows::purge_candidates(tx, &cutoff.text()),
         None => Ok(Vec::new()),
     }

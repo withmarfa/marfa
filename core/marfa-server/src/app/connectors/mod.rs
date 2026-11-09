@@ -10,7 +10,6 @@ use std::time::Duration;
 use rusqlite::Transaction;
 use serde_json::{Map, Value, json};
 
-use crate::app::clock::Stamp;
 use super::App;
 use super::access::Caller;
 use super::faults::HOLD_CONNECTOR_WRITE;
@@ -19,6 +18,7 @@ use super::items;
 use super::query::bad_cursor;
 use super::refusal::{Code, Refusal, Result};
 use super::stored;
+use crate::app::clock::Stamp;
 use crate::settings::registry::CONNECTOR_HOLD_MS;
 pub use read_only::{ReadOnly, Registry};
 pub use request::{Batch, Lookup, Register, Replace, Run, Take, released};

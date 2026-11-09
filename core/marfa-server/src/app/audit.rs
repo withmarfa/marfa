@@ -298,5 +298,4 @@ mod tests {
             assert_eq!(kind_of(action), kind, "{action}");
         }
     }
-
 }

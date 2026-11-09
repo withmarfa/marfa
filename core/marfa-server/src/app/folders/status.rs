@@ -8,11 +8,11 @@ use super::inventory::shown;
 use super::report::{MOST, Report};
 use crate::app::App;
 use crate::app::access::Caller;
+use crate::app::clock::Stamp;
 use crate::app::faults::{FAIL_FOLDER_STATUS_REPORT, HOLD_FOLDER_STATUS_READ};
 use crate::app::items::{parsed, readable_of, reading};
 use crate::app::keys;
 use crate::app::oauth::grants;
-use crate::app::clock::Stamp;
 use crate::app::refusal::{Code, Refusal, Result};
 
 const ACTION: &str = "folder.status";

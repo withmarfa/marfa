@@ -197,7 +197,10 @@ impl Stamp {
     /// `None` once no stored time can be that early, so a cutoff there keeps everything.
     pub fn earlier_by(self, ms: i64) -> Option<Stamp> {
         let at = self.ms().saturating_sub(ms);
-        (at >= FIRST_MS).then(|| DateTime::from_timestamp_millis(at)).flatten().map(Stamp)
+        (at >= FIRST_MS)
+            .then(|| DateTime::from_timestamp_millis(at))
+            .flatten()
+            .map(Stamp)
     }
 }
 
@@ -208,7 +211,10 @@ impl fmt::Display for Stamp {
 }
 
 impl serde::Serialize for Stamp {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
         serializer.serialize_str(&self.text())
     }
 }
@@ -281,8 +287,14 @@ mod tests {
 
     #[test]
     fn holds_the_years_0000_to_9999_and_refuses_the_rest() {
-        assert_eq!(Stamp::from_ms(FIRST_MS).unwrap().text(), "0000-01-01T00:00:00.000Z");
-        assert_eq!(Stamp::from_ms(LAST_MS).unwrap().text(), "9999-12-31T23:59:59.999Z");
+        assert_eq!(
+            Stamp::from_ms(FIRST_MS).unwrap().text(),
+            "0000-01-01T00:00:00.000Z"
+        );
+        assert_eq!(
+            Stamp::from_ms(LAST_MS).unwrap().text(),
+            "9999-12-31T23:59:59.999Z"
+        );
         assert!(Stamp::from_ms(FIRST_MS - 1).is_err());
         assert!(Stamp::from_ms(LAST_MS + 1).is_err());
         assert!(Stamp::from_ms(LAST_MS).unwrap().plus_ms(1).is_err());

@@ -115,7 +115,12 @@ pub fn client(tx: &Connection, id: &str) -> Result<Option<Client>> {
 }
 
 /// Replaces any copy already there, which keeps its first date and when it was last offered.
-pub fn put_client(tx: &Connection, id: &str, registration: &Registration, now: Stamp) -> Result<()> {
+pub fn put_client(
+    tx: &Connection,
+    id: &str,
+    registration: &Registration,
+    now: Stamp,
+) -> Result<()> {
     let words = |list: Vec<&'static str>| Value::from(list).to_string();
     tx.execute(
         "INSERT INTO auth_oauth_client (client_id, auth_method, application_type, redirect_uris, \
@@ -431,7 +436,12 @@ pub fn remove_consent(tx: &Connection, client_id: &str, user_id: &str) -> Result
     Ok(())
 }
 
-pub fn note_consent_used(tx: &Connection, client_id: &str, user_id: &str, now: Stamp) -> Result<()> {
+pub fn note_consent_used(
+    tx: &Connection,
+    client_id: &str,
+    user_id: &str,
+    now: Stamp,
+) -> Result<()> {
     tx.execute(
         "UPDATE auth_oauth_consent SET last_used_at = ?3 \
          WHERE client_id = ?1 AND user_id = ?2 AND withdrawn_at IS NULL",

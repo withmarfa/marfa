@@ -35,7 +35,9 @@ fn cutoff_of(tx: &Transaction<'_>, app: &App, retention: Setting<u64>) -> Result
     if days == 0 {
         return Ok(None);
     }
-    let kept = i64::try_from(days).unwrap_or(i64::MAX).saturating_mul(MS_PER_DAY);
+    let kept = i64::try_from(days)
+        .unwrap_or(i64::MAX)
+        .saturating_mul(MS_PER_DAY);
     Ok(app.clock.instant().earlier_by(kept))
 }
 

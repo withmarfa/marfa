@@ -7,11 +7,11 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use crate::app::clock::Stamp;
 use super::connectors::{self, Reason};
 use super::faults::{FAIL_ATTENTION, HOLD_ATTENTION};
 use super::refusal::Result;
 use super::{App, folders, health, housekeeping, keys};
+use crate::app::clock::Stamp;
 
 const CHECK_WAIT: Duration = Duration::from_secs(3);
 const SOON_MS: i64 = 7 * housekeeping::DAY_MS;

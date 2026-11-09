@@ -38,7 +38,11 @@ impl Usage {
 }
 
 pub fn note(app: &Arc<App>, key: &Key) {
-    let cutoff = app.clock.instant().earlier_by(COALESCE_MS).map(|at| at.text());
+    let cutoff = app
+        .clock
+        .instant()
+        .earlier_by(COALESCE_MS)
+        .map(|at| at.text());
     let due = key
         .last_used_at
         .as_ref()
