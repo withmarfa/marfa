@@ -470,7 +470,7 @@ marfa sign-ins end [OPTIONS] <ID>
 
 ### marfa sign-ins end-all
 
-End every sign-in of the chosen kinds at once, except the ones named with --keep. With no --kind it ends every browser. It ends them one at a time, carries on past one it cannot end, and says how many it ended. Needs direct local authority (--socket).
+End every sign-in of the chosen kinds at once, except the ones named with --keep. With no --kind it ends every browser. It refuses, ending nothing, when a --keep names no sign-in. It ends them one at a time, carries on past one it cannot end, says how many it ended and names each one it could not. Needs direct local authority (--socket).
 
 ```text
 marfa sign-ins end-all [OPTIONS]

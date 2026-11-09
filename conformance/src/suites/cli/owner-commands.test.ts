@@ -34,6 +34,22 @@ it("ends every browser sign-in at once, sparing a named one and leaving apps and
   const others = (await kinds()).filter((row) => row.kind !== "browser");
   expect(others.length).toBeGreaterThan(0);
 
+  // A misspelled --keep ends nothing; the same call with the right id ends the others.
+  const misspelled = await local.refused([
+    "sign-ins",
+    "end-all",
+    "--keep",
+    `${browsers[0]!.id}-nosuch`,
+  ]);
+  expect(misspelled.code).toBe(1);
+  expect(misspelled.envelope.error.server?.code).toBe("validation_error");
+  expect(misspelled.envelope.error.message).toContain(
+    `${browsers[0]!.id}-nosuch`,
+  );
+  expect((await kinds()).filter((row) => row.kind === "browser")).toHaveLength(
+    browsers.length,
+  );
+
   const kept = await local.json<{ ended: number }>([
     "sign-ins",
     "end-all",

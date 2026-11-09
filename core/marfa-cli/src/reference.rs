@@ -62,10 +62,7 @@ const OWNER_TASKS: &[(&str, &[&str])] = &[
     ),
     ("Rename a sign-in", &["sign-ins rename"]),
     ("End one sign-in", &["sign-ins end"]),
-    (
-        "End every sign-in of a kind at once",
-        &["sign-ins end-all"],
-    ),
+    ("End every sign-in of a kind at once", &["sign-ins end-all"]),
     (
         "List, narrow and disconnect a connected app",
         &["apps list", "apps narrow", "apps disconnect"],
