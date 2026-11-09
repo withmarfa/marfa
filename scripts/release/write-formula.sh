@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
-# Write the Homebrew formula for the `marfa` command line and `marfa-server` of
-# one release to standard output, from the release's checksum file
-# (`write-checksums.sh` writes it). Refuses a version that is not three
-# numbers, and a checksum file that lacks an archive, names it twice, or gives
-# it anything but 64 lowercase hexadecimal digits.
+# Writes the Homebrew formula for one release to standard output, from its checksum file.
 #
 #   write-formula.sh <version> <checksum file>
 set -euo pipefail
@@ -16,7 +12,6 @@ if ! [[ "$version" =~ ^(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*)){2}$ ]]; then
   exit 1
 fi
 
-# The hash of one archive, which must be on exactly one line.
 hash_of() {
   local archive="$1" lines
   lines=$(awk -v name="$archive" '$2 == name' "$checksums")

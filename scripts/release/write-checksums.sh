@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
-# Write one checksum file for the command line archives of a release, in the
-# `sha256sum` format (`<hash>  <file>`), so `sha256sum -c` and
-# `shasum -a 256 -c` verify them where they sit. Then check what was written
-# against the files.
+# Writes a `sha256sum`-format checksum file for the archives, then verifies it.
 #
 #   write-checksums.sh <checksum file> <archive>...   (run in the folder)
 set -euo pipefail

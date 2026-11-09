@@ -1,7 +1,5 @@
-//! `marfa server run`: the server as a child of this process, which is what a
-//! service runs. It passes a stop on to the child and leaves with the child's
-//! status. A server that refused its database is not run again, because a
-//! supervisor that restarts it meets the same refusal each time.
+//! `marfa server run`: the server as a child of this process, which a service runs.
+//! A server that refused its database is not run again: a restart meets the same refusal.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -54,10 +52,7 @@ fn forward_stops() {
     }
 }
 
-/// Asks the kernel to send the child SIGTERM when this process ends, however
-/// it ends, so that a killed `run` leaves no server behind. macOS has no such
-/// request; there the service manager's clean-up of the job's process group
-/// does it.
+/// macOS has no parent-death signal; there the service manager's clean-up of the process group stops the child.
 #[cfg(target_os = "linux")]
 fn die_with_the_parent(command: &mut Command) {
     let parent = std::process::id() as libc::pid_t;
@@ -100,9 +95,7 @@ fn version_of(server: &Path) -> Result<String, CliError> {
         })
 }
 
-/// The server this `marfa` runs: the one beside it. Refused when
-/// it is another release, because the two share a database and a socket and
-/// are released together.
+/// The server beside this `marfa`; another release is refused because the two share a database and a socket.
 pub fn locate() -> Result<PathBuf, CliError> {
     let exe = std::fs::canonicalize(std::env::current_exe()?)?;
     let server = native::find_server(&exe).ok_or_else(|| {
@@ -193,10 +186,7 @@ pub fn run(dir: &DirArgs) -> Result<(), CliError> {
     if let Sink::File(_) = &sink {
         command.stdout(Stdio::piped()).stderr(Stdio::piped());
     }
-    // The server stays in this process's group, so that a service manager's
-    // clean-up of the group reaches it however this process ended; a stop
-    // typed at a terminal reaches both, which a server takes twice without
-    // harm. On Linux the kernel also stops it when this process is gone.
+    // The server stays in this process's group so a service manager's clean-up reaches it.
     die_with_the_parent(&mut command);
     forward_stops();
     let mut child = command.spawn().map_err(|error| {

@@ -1,10 +1,7 @@
 //! `marfa server`: a Marfa server on this machine, run natively or in Docker.
 //!
-//! The install is a folder holding `.env` (name, release, port, runtime, how
-//! the server is reached) and `marfa.env` (what the server reads: its secrets
-//! and how it trusts a proxy). A Docker install also holds a Compose file that
-//! is the same for every install. Every command works from those files, so
-//! running one again changes only what is not already as asked.
+//! The install is a folder holding `.env` (name, release, port, runtime, how the
+//! server is reached) and `marfa.env` (the server's secrets and proxy trust).
 
 mod account;
 pub(crate) mod address;
@@ -507,9 +504,7 @@ fn checked_release(release: &str) -> Result<String, CliError> {
     })
 }
 
-/// The address devices sign in at, written the way the server reads it. A
-/// device signs in over https only, so this takes no `http` address, which the
-/// server also takes for its own machine.
+/// Devices sign in over https only, so an `http` address, which the server takes for its own machine, is refused.
 fn public_address(raw: &str) -> Result<String, CliError> {
     if url::Url::parse(raw).is_ok_and(|url| url.scheme() != "https") {
         return Err(CliError::Usage(format!(
@@ -519,11 +514,8 @@ fn public_address(raw: &str) -> Result<String, CliError> {
     address::normalise(raw)
 }
 
-/// Which caller address the server believes, for how it is reached. A proxy
-/// on this machine reaches a native server from the loopback, and a container
-/// from its network's gateway, so that is the range it is. Cloudflare's edge
-/// overwrites a header with the caller's address, which is exact where the
-/// range is not.
+/// A proxy reaches a native server from the loopback and a container from its
+/// network's gateway; Cloudflare's edge overwrites a header with the exact caller.
 fn proxy_trust(
     runtime: Runtime,
     access: Access,
@@ -563,10 +555,7 @@ fn cidr_contains(range: &str, network: &str) -> bool {
     range_bits <= network_bits && (range_address & mask) == (network_address & mask)
 }
 
-/// What a settings file that something else owns lacks for this install. It
-/// names settings, never their values, which can be secrets. `network` is
-/// what the trusted proxy range must contain, and `of` says what it is the
-/// range of.
+/// Names settings, never their values, which can be secrets.
 fn external_problems(settings: &EnvFile, access: Access, network: &str, of: &str) -> Vec<String> {
     let mut problems = Vec::new();
     for secret in names::SECRETS {
@@ -603,9 +592,7 @@ fn external_problems(settings: &EnvFile, access: Access, network: &str, of: &str
     problems
 }
 
-/// Whether nothing listens on `port` on any address: macOS lets a bind to
-/// the loopback address succeed beside a listener on every address, and the
-/// container's port would then fail to publish.
+/// macOS lets a loopback bind succeed beside a listener on every address, which would fail to publish.
 fn port_is_free(port: u16) -> std::io::Result<()> {
     std::net::TcpListener::bind(("127.0.0.1", port))?;
     std::net::TcpListener::bind(("0.0.0.0", port))?;

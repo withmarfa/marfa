@@ -1,6 +1,5 @@
-//! Questions asked on the terminal. Nothing is asked when `--yes` is given or
-//! standard input is not a terminal: the flag or the default answers instead,
-//! and a question with neither is refused with the flag that answers it.
+//! Questions asked on the terminal. With `--yes` or no terminal the flag or default
+//! answers, and a question with neither is refused.
 
 use std::io::{self, BufRead, IsTerminal, Write};
 

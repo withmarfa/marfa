@@ -1,8 +1,6 @@
-//! The server as a systemd service on Linux: a user unit in the person's own
-//! account, kept running at boot by lingering, or, when root installs it, a
-//! system unit that runs as the `marfa` account. `MARFA_AUTOSTART_ROOT` names
-//! a directory in place of the root of the file system, with the tools to run
-//! in its `bin`, as for `folders autostart`.
+//! The server as a systemd service on Linux: a user unit, or a system unit run as the
+//! `marfa` account under root. `MARFA_AUTOSTART_ROOT` stands in for the file system's
+//! root, with the tools to run in its `bin`, as for `folders autostart`.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -221,9 +219,7 @@ pub fn installed(scope: Scope, name: &str) -> bool {
     file(scope, name).is_ok_and(|path| path.exists())
 }
 
-/// Writes the unit, loads it and starts it, and has it start at boot when
-/// `at_boot`. A service already running on the same unit is left running.
-/// Whether the unit changed.
+/// A service already running on the same unit is left running. Returns whether the unit changed.
 pub fn on(unit: &Unit, at_boot: bool, trace: bool) -> Result<bool, CliError> {
     let path = file(unit.scope, &unit.name)?;
     if let Some(folder) = path.parent() {
@@ -320,10 +316,7 @@ pub fn linger(trace: bool) -> Result<Linger, CliError> {
     })
 }
 
-/// The last lines the service logged, for a person who finds it down. A user
-/// service's lines are in the system journal, which only some accounts may
-/// read, and in the account's own journal, which a machine that keeps its
-/// journal in memory does not have, so each is tried.
+/// A user service's lines may be in the system journal or the account's own, so each is tried.
 pub fn log_tail(scope: Scope, name: &str, lines: usize, since: Option<u64>) -> String {
     let unit = service(name);
     let selections: Vec<Vec<String>> = match scope {

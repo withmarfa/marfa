@@ -544,7 +544,9 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
                 if !out.json {
                     started.say_unconfirmed(port);
                 }
-                folder.keep_applied(&mut dotenv, &applied, kept.dotenv)?;
+                if started.confirmed() {
+                    folder.keep_applied(&mut dotenv, &applied, kept.dotenv)?;
+                }
             }
         }
         _ => {
@@ -564,9 +566,7 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
                 let loaded = launchd::Agent::for_docker(&name, &folder.dir)
                     .and_then(|agent| launchd::on(&agent, !out.json));
                 if let Err(error) = loaded {
-                    // The server is up, so the link below still matters most.
-                    // The choice is recorded as off, so a run again tries
-                    // again only when asked.
+                    // The server is up; recording the choice as off retries only when asked.
                     autostart = false;
                     autostart_failed = Some(error.to_string());
                     // The plist is written before launchd is asked to load
@@ -603,9 +603,7 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
             name: &name,
         },
     };
-    // The server's address moves only when this run asked for another: a new
-    // install, an address given, or a change of how the server is reached. A
-    // local server in a container is reached only at its published port, so
+    // A local server in a container is reached only at its published port, so
     // that address is always put back.
     let asked_to_move = existing.is_none()
         || args.address.is_some()
@@ -898,10 +896,7 @@ pub(super) struct Claim {
     pub expires_at: Option<String>,
 }
 
-/// Brings the sign-in address the server holds to the one this install wants,
-/// then reads whether the instance is claimed and, if not, makes the link that
-/// claims it. The address is first, because the link is at the address the
-/// server holds.
+/// The address is settled first, because the claim link is at the address the server holds.
 fn claim_state(
     control: &Control,
     want: address::Want,
@@ -973,9 +968,7 @@ fn boot_notes(
     }
 }
 
-/// What decides whether the container comes back after a restart of the
-/// machine: Docker's restart policy brings it back whenever the engine starts,
-/// so the engine's own start is the part worth saying.
+/// Docker's restart policy brings the container back whenever the engine starts.
 fn docker_boot_notes(autostart: bool) -> Vec<String> {
     if autostart {
         return vec!["It starts when you log in, starting Docker first if it is not running, and again after a failure. `marfa server status` shows it.".into()];

@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Pack the two programs and their licence notice into a release archive: the
-# three files, flat, with nothing else. `check-archive.sh` then unpacks it and
-# runs what came out.
+# Packs the two programs and their notice into a flat release archive.
 #
 #   pack-programs.sh <folder holding marfa, marfa-server and NOTICES.txt> <archive>
 set -euo pipefail

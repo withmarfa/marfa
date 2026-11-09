@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
-# Lay out the build context of `deploy/Dockerfile` from the release's own Linux
-# archives, so the image holds the bytes a person downloads: `amd64/` from the
-# x86_64 archive and `arm64/` from the aarch64 one, each with `marfa`,
-# `marfa-server` and `NOTICES.txt`.
+# Lays out `deploy/Dockerfile`'s context from the release's Linux archives: `amd64/` and `arm64/`.
 #
 #   image-context.sh <folder holding the archives> <version> <context folder>
 set -euo pipefail

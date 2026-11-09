@@ -103,11 +103,12 @@ fn upgrade_native(
             started.say_unconfirmed(state.port);
         }
         dotenv.set("MARFA_RELEASE", &target)?;
-        folder.keep_applied(
-            dotenv,
-            &folder.applied(state.port, &target)?,
-            files::kept_for(state.manager).dotenv,
-        )?;
+        let kept = files::kept_for(state.manager).dotenv;
+        if started.confirmed() {
+            folder.keep_applied(dotenv, &folder.applied(state.port, &target)?, kept)?;
+        } else {
+            folder.forget_applied(dotenv, kept)?;
+        }
     }
     let update = database_update(&service.log_tail(200));
     let copy_note = update.as_ref().map(|update| {
@@ -501,10 +502,7 @@ pub fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
 
 // ---- uninstall ----------------------------------------------------------
 
-/// Whether the data folder is the one this install made: the install folder
-/// still passes the check an install makes before it writes anything there
-/// (its owner, its mode and what it holds), and `data` is a folder of its own,
-/// not a link to somewhere else. Removing it takes nothing else.
+/// `data` must be a folder of its own, not a link to somewhere else.
 fn own_data(folder: &Folder, state: &State) -> Result<(), CliError> {
     let data = native::Layout::new(&folder.dir).data();
     files::admit_folder(
@@ -575,10 +573,7 @@ pub fn uninstall(args: UninstallArgs, out: &Printer) -> Result<(), CliError> {
             service.off()?;
         }
         None => {
-            // The Compose file is written first if it is gone, so that `down`
-            // has a project to take down; a container that is still there
-            // after it is removed by name, and one that cannot be removed
-            // fails the command.
+            // `down` needs the Compose file, so a missing one is written first.
             write_compose(&folder, &steps)?;
             docker.compose(&folder.dir, &["down"], false)?;
             docker.remove_container(&state.name)?;
@@ -607,9 +602,7 @@ pub fn uninstall(args: UninstallArgs, out: &Printer) -> Result<(), CliError> {
             Runtime::Docker => {
                 names.push(files::COMPOSE);
                 docker.remove_volume(&volume)?;
-                // A proxy of the person's may have joined the network. The
-                // data is gone either way, so that is said and not made a
-                // failure.
+                // A proxy of the person's may have joined the network.
                 if let Err(error) = docker.remove_network(&net) {
                     eprintln!("The Docker network {net} stays: {error}");
                 }

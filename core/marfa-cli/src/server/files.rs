@@ -89,10 +89,8 @@ impl Perms {
     };
 }
 
-/// The files the installer keeps. When root installs a server that runs as the
-/// `marfa` account, root owns every one of them and the account reads only
-/// what it must: the account can write nowhere but `data/`, so nothing it
-/// plants beside them is ever followed by root.
+/// The files the installer keeps. Under a root install the account can write only
+/// `data/`, so root never follows anything it plants beside them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Kept {
     pub settings: Perms,
@@ -207,11 +205,8 @@ pub fn settle_path(path: &Path, perms: Perms) -> Result<(), CliError> {
     })
 }
 
-/// Writes `content` to `path` when it differs, through a temporary file in the
-/// same folder, so a stop part-way leaves the old file whole. The file has its
-/// owner and mode before it holds a byte, and a link is never followed or
-/// replaced. Whether the content changed is the answer; the owner and mode are
-/// set either way.
+/// The file has its owner and mode before it holds a byte, and a link is never
+/// followed or replaced. Owner and mode are set whether or not the content changed.
 pub fn write_if_changed(path: &Path, content: &str, perms: Perms) -> Result<bool, CliError> {
     if read_regular(path)?.is_some_and(|existing| existing == content) {
         settle_path(path, perms)?;
@@ -242,9 +237,7 @@ pub fn write_if_changed(path: &Path, content: &str, perms: Perms) -> Result<bool
     Ok(true)
 }
 
-/// Whether `name` in the install folder is something a first install may
-/// find: what an earlier run of this command left, or a restored settings
-/// file or data folder.
+/// Whether a first install may find `name`: an earlier run's file, or a restored one.
 fn is_ours(name: &str) -> bool {
     matches!(name, DOTENV | SETTINGS | UNCONFIRMED | "data")
         || (name.ends_with(".tmp")
@@ -405,11 +398,8 @@ fn check_parents(dir: &Path, trusted: u32) -> Result<(), CliError> {
     Ok(())
 }
 
-/// Makes the folder a root install keeps (root's, group `marfa`, no access for
-/// anyone else), below folders only root can change, and its `data` folder,
-/// which is the account's alone. Root changes only what it made or checked
-/// itself, through descriptors: nothing inside `data` is touched, because the
-/// account controls it.
+/// Root changes only what it made or checked itself, through descriptors, and
+/// touches nothing inside `data`, which the account controls.
 pub fn prepare_root_folder(dir: &Path, account: Identity) -> Result<(), CliError> {
     check_parents(dir, 0)?;
     if let Some(parent) = dir.parent() {

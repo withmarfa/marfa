@@ -1,9 +1,4 @@
-/**
- * The release carries `marfa` and `marfa-server` for three platforms, each as
- * its own archive, with one checksum file. It is published only when every
- * archive built, and each archive's programs have been unpacked and run, the
- * Linux ones on their own architecture.
- */
+// Exercises the release's archives and the checks on them.
 import {
   chmodSync,
   mkdirSync,

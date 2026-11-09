@@ -1,13 +1,7 @@
 #!/usr/bin/env bash
-# Unpack a release archive and run what came out: the archive is only as good
-# as the programs a person extracts from it. Refuses an archive that holds
-# anything but `marfa`, `marfa-server` and `NOTICES.txt`, or whose programs do
-# not report the version. With --boot, starts `marfa-server` as well and waits
-# for it to answer (`boot-server.sh`).
+# Unpacks a release archive and runs its programs, so it needs the archive's architecture.
 #
 #   check-archive.sh <archive> <version> [--boot]
-#
-# It runs the programs, so it runs on the architecture the archive is for.
 set -euo pipefail
 
 archive="$1"

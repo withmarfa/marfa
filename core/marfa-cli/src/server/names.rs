@@ -14,7 +14,5 @@ pub const PROXY_HEADER: &str = "MARFA_TRUSTED_PROXY_HEADER";
 /// The two secrets, made once.
 pub const SECRETS: [&str; 2] = [KEY_SALT, AUTH_SECRET];
 
-/// The settings the install folder decides for a native server. `run` sets
-/// them from the folder and `.env`, and `install` refuses a settings file that
-/// sets one, because the data, the socket and the port are the folder's.
+/// `install` refuses a settings file that sets one, because the folder decides them.
 pub const FOLDER_DECIDED: [&str; 5] = [PORT, LISTEN_HOST, DATABASE_PATH, BLOB_PATH, CONTROL_SOCKET];

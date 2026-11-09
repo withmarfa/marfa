@@ -113,10 +113,7 @@ fn primary_members(gid: u32) -> Vec<String> {
     names
 }
 
-/// Whether the group can be the account's own: named like the account, and
-/// with nobody else in it. The unit runs the server in the group by that name,
-/// and the install keeps its secrets readable by the account's primary group,
-/// so any other member would read them.
+/// The install keeps its secrets readable by the account's primary group, so any other member would read them.
 fn judge_group(group: Option<(String, Vec<String>)>) -> Result<(), CliError> {
     let Some((name, members)) = group else {
         return Err(CliError::Usage(format!(
@@ -143,9 +140,7 @@ fn judge_group(group: Option<(String, Vec<String>)>) -> Result<(), CliError> {
     )))
 }
 
-/// Refuses an existing account whose primary group is not a group of its own
-/// named like it. Nothing to check where the account is still to be made: it
-/// is made with a group of its own.
+/// Refuses an existing account whose primary group is not its own.
 pub fn check_group() -> Result<(), CliError> {
     match lookup(NAME) {
         Some(identity) => judge_group(group_of(identity.gid)),
