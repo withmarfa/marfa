@@ -144,6 +144,7 @@ pub enum ErrorCode {
     InvalidClientMetadata,
     InvalidRedirectUri,
     InvalidScope,
+    InvalidTarget,
     InvalidToken,
 }
 
@@ -153,6 +154,7 @@ impl ErrorCode {
             ErrorCode::InvalidClientMetadata => "invalid_client_metadata",
             ErrorCode::InvalidRedirectUri => "invalid_redirect_uri",
             ErrorCode::InvalidScope => "invalid_scope",
+            ErrorCode::InvalidTarget => "invalid_target",
             ErrorCode::InvalidToken => "invalid_token",
         }
     }
@@ -240,16 +242,9 @@ fn texts<'a>(object: &'a Map<String, Value>, name: &str) -> Reading<Option<Vec<&
 fn auth_method(object: &Map<String, Value>) -> Reading<AuthMethod> {
     match text(object, "token_endpoint_auth_method")? {
         None | Some("none") => Ok(AuthMethod::None),
-        Some("private_key_jwt") => Err(RegistrationError::metadata(
-            "This server does not support private_key_jwt.",
-        )),
-        Some(method @ ("client_secret_basic" | "client_secret_post")) => {
-            Err(RegistrationError::metadata(format!(
-                "This server registers public clients only, so {method} is not available."
-            )))
-        }
         Some(method) => Err(RegistrationError::metadata(format!(
-            "token_endpoint_auth_method {method} is not one this server supports."
+            "token_endpoint_auth_method {method} is not available: this server registers public \
+             clients only, with none."
         ))),
     }
 }
@@ -417,14 +412,32 @@ fn web_uri(object: &Map<String, Value>, name: &str) -> Reading<Option<String>> {
     Ok(Some(uri.to_string()))
 }
 
-/// Backchannel logout fields are never read, so they are neither stored nor answered; nor is
-/// anything else not named here.
+/// RFC 8707 section 2; the token request supplies the audience.
+fn check_resources(object: &Map<String, Value>) -> Reading<()> {
+    for resource in texts(object, "resources")?.unwrap_or_default() {
+        let absolute = redirect::is_plain(resource)
+            && Url::parse(resource).is_ok_and(|url| url.fragment().is_none());
+        if !absolute {
+            return Err(RegistrationError {
+                error: ErrorCode::InvalidTarget,
+                description: "Each resource must be an absolute URI without a fragment."
+                    .to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// RFC 7591 section 2 requires ignoring unsupported metadata.
 pub(super) fn read(
     object: &Map<String, Value>,
     source: Source,
     allowed: &ScopeSet,
 ) -> Reading<Registration> {
     let token_endpoint_auth_method = auth_method(object)?;
+    if source == Source::Registration {
+        check_resources(object)?;
+    }
     let grants = grant_types(object, source)?;
     let response_types = response_types(object, source, &grants)?;
     let uris = redirect_uris(object)?;
@@ -560,6 +573,44 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_metadata_registers_and_is_not_answered() {
+        let mut body = device();
+        for (name, value) in [
+            ("dpop_bound_access_tokens", json!(true)),
+            ("subject_type", json!("pairwise")),
+            ("software_statement", json!("a.b.c")),
+            ("resources", json!(["https://resource.example/"])),
+        ] {
+            body = with(body, name, value);
+        }
+        let answer = register(body).expect("registered").to_json();
+        for name in [
+            "dpop_bound_access_tokens",
+            "subject_type",
+            "software_statement",
+            "resources",
+        ] {
+            assert!(!answer.contains_key(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_resource_is_an_absolute_uri_without_a_fragment() {
+        for resource in [
+            "not-a-uri",
+            "/relative",
+            "https://a.example/#part",
+            " https://a.example/",
+            "",
+        ] {
+            let error = refused(with(device(), "resources", json!([resource])));
+            assert_eq!(error.error, ErrorCode::InvalidTarget, "{resource:?}");
+        }
+        let error = refused(with(device(), "resources", json!("https://a.example/")));
+        assert_eq!(error.error, ErrorCode::InvalidClientMetadata);
+    }
+
+    #[test]
     fn a_body_that_is_not_an_object_is_an_rfc_error() {
         for body in [&b"not json"[..], b"", b"[]", b"1", b"null", &[0xff, 0xfe]] {
             let error = parse_registration(body, &allowed()).expect_err("refused");
@@ -687,11 +738,11 @@ mod tests {
         let body = with(
             web(),
             "scope",
-            json!("core.note:write core.note:read core.note:write  openid"),
+            json!("core.note:write core.note:read core.note:write  notes"),
         );
         assert_eq!(
             register(body).expect("registered").scope.to_text(),
-            "core.note:write core.note:read openid"
+            "core.note:write core.note:read notes"
         );
     }
 

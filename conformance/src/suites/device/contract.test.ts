@@ -1127,6 +1127,7 @@ const invocations: Record<string, () => string[]> = {
   login: () => ["--no-browser", "--print-token"],
   "owner show": () => [],
   "owner picture": () => [],
+  "profile show": () => [],
   "profile update": () => ["--name", "Profile"],
   "apps list": () => [],
   "apps disconnect": () => [ID],

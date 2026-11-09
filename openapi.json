@@ -9508,51 +9508,14 @@
             "type": "string",
             "description": "The software's version. Leave it out if there is none."
           },
-          "software_statement": {
-            "type": "string",
-            "description": "A signed software statement. Leave it out to register without one."
-          },
-          "post_logout_redirect_uris": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "format": "uri"
-            },
-            "minItems": 1,
-            "description": "Addresses the app may return to after sign-out. Leave it out if there are none."
-          },
           "token_endpoint_auth_method": {
             "type": "string",
             "minLength": 1,
-            "default": "client_secret_basic",
-            "description": "`none` is public, `client_secret_basic` uses HTTP Basic and `client_secret_post` sends the secret in the body. Other methods, including `private_key_jwt`, are refused with `invalid_client_metadata`.",
+            "default": "none",
+            "description": "`none`: the client is public and proves itself with PKCE. Any other method is refused with `invalid_client_metadata`.",
             "enum": [
-              "none",
-              "client_secret_basic",
-              "client_secret_post"
+              "none"
             ]
-          },
-          "jwks": {
-            "type": "object",
-            "properties": {
-              "keys": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "additionalProperties": {}
-                },
-                "minItems": 1,
-                "description": "The client's public JSON Web Keys, including any extension members."
-              }
-            },
-            "required": [
-              "keys"
-            ],
-            "description": "The client's public JSON Web Key Set. Leave it out if the client has none."
-          },
-          "jwks_uri": {
-            "type": "string",
-            "description": "The URL of the client's public JSON Web Key Set. Leave it out if the client has none."
           },
           "grant_types": {
             "type": "array",
@@ -9581,26 +9544,15 @@
             ],
             "description": "`web` or `native`, which decides the redirect URIs the client may use. Defaults to `web`."
           },
-          "subject_type": {
-            "type": "string",
-            "enum": [
-              "public"
-            ],
-            "description": "`public` for public subject identifiers. Leave it out to use public identifiers. `pairwise` is refused with `invalid_client_metadata`."
-          },
-          "dpop_bound_access_tokens": {
-            "type": "boolean",
-            "description": "`true` to bind the client's access tokens to DPoP proofs. Leave it out for tokens without that binding."
-          },
           "resources": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Resource identifiers to register the client for. Leave it out for the instance's default resources."
+            "description": "Resource identifiers, each an absolute URI without a fragment; any other value is refused with `invalid_target`. Marfa doesn't register them or return them: a token request names its own `resource`."
           }
         },
-        "description": "An OAuth client: its app metadata and the grants it uses."
+        "description": "An OAuth client: its app metadata and the grants it uses. Marfa ignores metadata it doesn't support and leaves it out of the answer."
       },
       "StreamCapacityExhaustedOrWriteContentionRefusal": {
         "type": "object",
@@ -52585,7 +52537,7 @@
         },
         "responses": {
           "201": {
-            "description": "Returns the registered client, with its `client_id` and, unless it's a public client, its `client_secret`.",
+            "description": "Returns the registered client, with its `client_id`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -52638,49 +52590,12 @@
                       "type": "string",
                       "description": "Version identifier for the software_id"
                     },
-                    "software_statement": {
-                      "type": "string",
-                      "description": "JWT containing metadata values about the client software as claims"
-                    },
-                    "post_logout_redirect_uris": {
-                      "type": "array",
-                      "items": {
-                        "type": "string",
-                        "format": "uri"
-                      },
-                      "description": "List of allowed logout redirect uris"
-                    },
                     "token_endpoint_auth_method": {
                       "type": "string",
-                      "description": "How the client proves itself at the token endpoint.",
+                      "description": "How the client proves itself at the token endpoint: `none`, for a public client.",
                       "enum": [
-                        "none",
-                        "client_secret_basic",
-                        "client_secret_post"
+                        "none"
                       ]
-                    },
-                    "jwks": {
-                      "description": "The client's public JSON Web Key Set, as registered.",
-                      "type": "object",
-                      "properties": {
-                        "keys": {
-                          "minItems": 1,
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "additionalProperties": {}
-                          },
-                          "description": "The client's public JSON Web Keys, including any extension members."
-                        }
-                      },
-                      "required": [
-                        "keys"
-                      ],
-                      "additionalProperties": false
-                    },
-                    "jwks_uri": {
-                      "description": "The URL of the client's public JSON Web Key Set, as registered.",
-                      "type": "string"
                     },
                     "grant_types": {
                       "type": "array",
@@ -52707,36 +52622,9 @@
                         "native"
                       ]
                     },
-                    "subject_type": {
-                      "description": "`public` for public subject identifiers.",
-                      "type": "string",
-                      "enum": [
-                        "public"
-                      ]
-                    },
-                    "dpop_bound_access_tokens": {
-                      "description": "`true` if the client always uses DPoP for its token requests.",
-                      "type": "boolean"
-                    },
-                    "resources": {
-                      "type": "array",
-                      "items": {
-                        "type": "string",
-                        "format": "uri"
-                      },
-                      "description": "Final resource identifiers linked to the registered client"
-                    },
                     "client_id": {
                       "type": "string",
                       "description": "Unique identifier for the client."
-                    },
-                    "client_secret": {
-                      "type": "string",
-                      "description": "The secret the client proves itself with at the token endpoint. Absent for a public client."
-                    },
-                    "client_secret_expires_at": {
-                      "type": "number",
-                      "description": "When the secret expires, in seconds since the Unix epoch, or `0` if it doesn't."
                     },
                     "user_id": {
                       "type": "string",
@@ -52776,7 +52664,7 @@
             }
           },
           "400": {
-            "description": "- `invalid_client_metadata`: client metadata is invalid.\n- `invalid_redirect_uri`: a redirect URI is invalid, or there are more than 10.\n- `invalid_scope`: a scope is not allowed.\n- `invalid_target`: a resource is invalid.\n- `invalid_software_statement`: a software statement is invalid.\n\nThese errors use RFC 7591. An unknown query parameter gets Marfa's `validation_error` instead.",
+            "description": "- `invalid_client_metadata`: client metadata is invalid.\n- `invalid_redirect_uri`: a redirect URI is invalid, or there are more than 10.\n- `invalid_scope`: a scope is not allowed.\n- `invalid_target`: a resource is invalid.\n\nThese errors use RFC 7591. An unknown query parameter gets Marfa's `validation_error` instead.",
             "content": {
               "application/json": {
                 "schema": {
@@ -52793,8 +52681,7 @@
                             "invalid_client_metadata",
                             "invalid_redirect_uri",
                             "invalid_scope",
-                            "invalid_target",
-                            "invalid_software_statement"
+                            "invalid_target"
                           ],
                           "description": "The OAuth error code."
                         },
@@ -54872,6 +54759,282 @@
       }
     },
     "/profile": {
+      "get": {
+        "operationId": "getProfile",
+        "tags": [
+          "Owner"
+        ],
+        "summary": "Get the owner's profile",
+        "description": "Returns the fields of the owner's profile that your credential can read: `name`, `email` and `avatar`, each only with profile read permission for that field. A field you can't read is left out, so a credential that can read none gets an empty object.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The profile fields you can read.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "description": "The owner's name. Present with `profile.name:read`."
+                    },
+                    "email": {
+                      "type": "string",
+                      "format": "email",
+                      "description": "The owner's sign-in email address. Present with `profile.email:read`."
+                    },
+                    "avatar": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "format": "uri",
+                      "description": "The address of the owner's picture, or `null` when there is none. Present with `profile.avatar:read`."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "description": "The owner's profile, as far as your credential can read it."
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              }
+            }
+          },
+          "400": {
+            "description": "- `validation_error`: the query has a parameter this endpoint doesn't take.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "404": {
+            "description": "The owner is unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerNotFoundRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "503": {
+            "description": "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteContentionRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "507": {
+            "description": "`insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsufficientStorageRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "operationId": "updateProfile",
         "tags": [
@@ -62793,6 +62956,7 @@
         "createOwner",
         "getOwner",
         "updateOwner",
+        "getProfile",
         "updateProfile",
         "replaceOwnerPicture",
         "replaceProfilePicture",

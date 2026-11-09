@@ -1056,7 +1056,6 @@ describe("a query key no door declares", () => {
     for (const path of [
       "/.well-known/oauth-protected-resource",
       "/.well-known/oauth-protected-resource/mcp",
-      "/auth/.well-known/openid-configuration",
       "/auth/.well-known/oauth-authorization-server",
       "/auth/sign-in",
       "/auth/device",

@@ -1165,25 +1165,19 @@ The server MUST serve its authorization server metadata at `/.well-known/oauth-a
 
 ### `keys-and-oauth/discovery-spellings`
 
-The server MUST serve the same authorization server metadata at `/auth/.well-known/oauth-authorization-server`, and one OpenID configuration with the same `issuer` at both `/.well-known/openid-configuration/auth` and `/auth/.well-known/openid-configuration`.
+The server MUST serve at `/auth/.well-known/oauth-authorization-server` the same authorization server metadata it serves at `/.well-known/oauth-authorization-server/auth`.
 
-**Tests:** `compliance/oauth.test.ts › serves each discovery document under both of its spellings, alike`.
+**Tests:** `compliance/oauth.test.ts › serves the authorization server metadata under both of its spellings, alike`.
 
 ### `keys-and-oauth/discovery-endpoints`
 
-The server MUST name in its OpenID configuration the authorization, token, registration, revocation, introspection, userinfo, end-session and device authorization endpoints and the key set, each under the issuer.
+The server MUST name in its authorization server metadata the authorization, token, registration, revocation and device authorization endpoints, each under the issuer.
 
 **Tests:** `compliance/oauth.test.ts › names every endpoint under the issuer, and serves the code, refresh and device grants and no other`.
 
 ### `keys-and-oauth/discovery-grants`
 
 The server MUST advertise exactly the authorization code, refresh token and device code grants in `grant_types_supported`.
-
-**Tests:** `compliance/oauth.test.ts › names every endpoint under the issuer, and serves the code, refresh and device grants and no other`.
-
-### `keys-and-oauth/jwks`
-
-The server MUST answer `jwks_uri` with a key set holding at least one key.
 
 **Tests:** `compliance/oauth.test.ts › names every endpoint under the issuer, and serves the code, refresh and device grants and no other`.
 
@@ -1211,19 +1205,11 @@ When the server serves the protected resource metadata of `/mcp/schema` or `/mcp
 
 ### `keys-and-oauth/discovery-metadata-documents`
 
-The server MUST advertise `client_id_metadata_document_supported` as `true` in both its OAuth authorization server metadata and its OpenID configuration.
+The server MUST advertise `client_id_metadata_document_supported` as `true` in its authorization server metadata.
 
 **Reason:** An MCP client names itself by a client ID metadata document only when the server advertises that it accepts one, and otherwise falls back to registration.
 
-**Tests:** `compliance/oauth.test.ts › advertises client ID metadata documents beside public clients in both discovery documents`.
-
-### `keys-and-oauth/no-backchannel-advertised`
-
-The server MUST advertise `backchannel_logout_supported` and `backchannel_logout_session_supported` as `false` in its discovery documents.
-
-**Reason:** An app's tokens end with neither a browser session nor a notification of one, so a document that promised a notification would promise one that never arrives.
-
-**Tests:** `compliance/browser-sessions.test.ts › advertises no back-channel logout, since no app is notified of a browser ending`.
+**Tests:** `compliance/oauth.test.ts › advertises client ID metadata documents beside public clients`.
 
 ## Registration
 
@@ -1233,23 +1219,39 @@ When a client registers at `POST /auth/oauth2/register`, which takes no credenti
 
 **Tests:** `compliance/oauth.test.ts › registers a native client dynamically and issues a client_id`, `compliance/oauth-registration-schema.test.ts › describes the public metadata registration accepts and echoes`.
 
+### `keys-and-oauth/register-unsupported-metadata`
+
+When client metadata at `POST /auth/oauth2/register` holds a member the server does not support, such as `dpop_bound_access_tokens`, `subject_type`, `software_statement` or `resources`, the server MUST answer `201` without that member.
+
+**Reason:** RFC 7591 section 2 has a server ignore metadata it does not understand, and section 3.1.1 a software statement it does not support, and an answer without the member tells the client it was not honored.
+
+**Tests:** `compliance/oauth-registration-schema.test.ts › registers a client whose metadata the server does not support, and leaves that metadata out of its answer`.
+
+### `keys-and-oauth/register-resource-uri`
+
+If client metadata at `POST /auth/oauth2/register` names in `resources` a value that is not an absolute URI without a fragment, then the server MUST answer `400 invalid_target`.
+
+**Reason:** RFC 8707 section 2 holds a resource indicator to an absolute URI with no fragment.
+
+**Tests:** `compliance/oauth-registration-schema.test.ts › describes the refusal of a resource that is not an absolute URI`.
+
 ### `keys-and-oauth/register-auth-methods`
 
-When valid client metadata at `POST /auth/oauth2/register` names `token_endpoint_auth_method` as `none`, `client_secret_basic` or `client_secret_post`, or omits it for the default `client_secret_basic`, the server MUST register the client with that method.
+When valid client metadata at `POST /auth/oauth2/register` names `token_endpoint_auth_method` as `none` or leaves it out, the server MUST register the client with `none`.
 
-**Tests:** `compliance/oauth-client-auth-methods.test.ts › registers none, client_secret_basic and client_secret_post, defaulting to client_secret_basic`.
+**Tests:** `compliance/oauth-client-auth-methods.test.ts › registers a public client, the method a registration names or leaves out`.
 
-### `keys-and-oauth/register-private-key-jwt`
+### `keys-and-oauth/register-other-auth-method`
 
-If client metadata at `POST /auth/oauth2/register` names `token_endpoint_auth_method` as `private_key_jwt`, then the server MUST answer `400 invalid_client_metadata` with an `error_description` naming `private_key_jwt`.
+If client metadata at `POST /auth/oauth2/register` names a `token_endpoint_auth_method` other than `none`, then the server MUST answer `400 invalid_client_metadata` with an `error_description` naming that method.
 
-**Reason:** The instance does not support client assertion authentication, so registration refuses the method before an app relies on it.
+**Reason:** An app proves itself at each sign-in with PKCE and holds no secret, so registration refuses any other method before an app relies on it.
 
-**Tests:** `compliance/oauth-client-auth-methods.test.ts › refuses private_key_jwt with inline keys, remote keys or no keys`.
+**Tests:** `compliance/oauth-client-auth-methods.test.ts › refuses every method but none, naming the method`.
 
 ### `keys-and-oauth/discovery-auth-methods`
 
-The server MUST advertise `none`, `client_secret_basic` and `client_secret_post` as its token and revocation authentication methods, and `client_secret_basic` and `client_secret_post` as its introspection authentication methods, in both its OAuth authorization server metadata and OpenID configuration.
+The server MUST advertise `none` as its only token and revocation authentication method in its authorization server metadata.
 
 **Tests:** `compliance/oauth-client-auth-methods.test.ts › advertises only the client authentication methods it accepts`.
 
@@ -1413,11 +1415,11 @@ When a person declines on the consent screen, the server MUST send the browser t
 
 ### `keys-and-oauth/consent-nothing-denies`
 
-Where a request names a scope other than `openid` and `offline_access` that the app's standing consent does not cover, when a person approves on the consent screen with none of those scopes chosen, or with types chosen in place of all data and none of them turned on, and the post does not name `access` as `full` (`keys-and-oauth/approval-full-grants-request`), the server MUST send the browser to the request's redirect URI with `error=access_denied`, the request's `state` and no code.
+Where a request names a scope other than `offline_access` that the app's standing consent does not cover, when a person approves on the consent screen with none of those scopes chosen, or with types chosen in place of all data and none of them turned on, and the post does not name `access` as `full` (`keys-and-oauth/approval-full-grants-request`), the server MUST send the browser to the request's redirect URI with `error=access_denied`, the request's `state` and no code.
 
-**Reason:** Approving with everything turned off is declining, so the app is told what declining tells it, and no consent is recorded for an app that can do nothing with it. What a post carries without a choice is not a choice: `openid` and `offline_access`, and every scope the app holds when the approval commits. An app that comes back and has everything newly asked turned off is denied, and keeps what it holds. A request that names nothing else offers nothing to turn off, and approving it is a yes.
+**Reason:** Approving with everything turned off is declining, so the app is told what declining tells it, and no consent is recorded for an app that can do nothing with it. What a post carries without a choice is not a choice: `offline_access`, and every scope the app holds when the approval commits. An app that comes back and has everything newly asked turned off is denied, and keeps what it holds. A request that names nothing else offers nothing to turn off, and approving it is a yes.
 
-**Tests:** `compliance/approval-screens.test.ts › answers an approval with nothing chosen as access_denied, as declining is answered`, `› answers an approval with everything newly asked turned off as access_denied for an app that already holds access, on the consent screen`, `› approves a request that names only openid and offline_access, which offers nothing to turn off`, `› answers choosing types with none turned on as access_denied, as declining is answered, on both pages`, `› denies and keeps what an app holds when it asks again for all data and nothing new is chosen`.
+**Tests:** `compliance/approval-screens.test.ts › answers an approval with nothing chosen as access_denied, as declining is answered`, `› answers an approval with everything newly asked turned off as access_denied for an app that already holds access, on the consent screen`, `› approves a request that names only offline_access, which offers nothing to turn off`, `› answers choosing types with none turned on as access_denied, as declining is answered, on both pages`, `› denies and keeps what an app holds when it asks again for all data and nothing new is chosen`.
 
 ### `keys-and-oauth/consent-ticked`
 
@@ -1519,7 +1521,7 @@ When a signed-in person's authorization request naming `prompt=none` names only 
 
 ### `keys-and-oauth/consent-older-reads`
 
-When a browser session that signed in more than five minutes ago accepts on the consent screen with only scopes that read (`<type>:read` for an item type or a pattern of types, `edge.<type>:read` for an edge type or a pattern of edge types, `metadata:read`, `metadata.<sub-resource>:read`, `content:read`, `profile:read`, `profile.<row>:read`, `openid`, `profile`, `email` and `offline_access`), the server MUST send the browser to the redirect URI with a code.
+When a browser session that signed in more than five minutes ago accepts on the consent screen with only scopes that read (`<type>:read` for an item type or a pattern of types, `edge.<type>:read` for an edge type or a pattern of edge types, `metadata:read`, `metadata.<sub-resource>:read`, `content:read`, `profile:read`, `profile.<row>:read` and `offline_access`), the server MUST send the browser to the redirect URI with a code.
 
 **Reason:** Reading what the person already keeps is not a power over the instance, so a browser left signed in is trusted with it. Every write and every one of the twelve permissions is left out, and so is any scope this build cannot read.
 
@@ -1559,7 +1561,7 @@ The consent screen at `/auth/authorize` and the device approval page at `/auth/d
 
 ### `keys-and-oauth/approval-full-access`
 
-Where a request names a scope other than `openid` and `offline_access` that the app's standing consent does not cover, the server MUST offer, on the consent screen and the device approval page, the access choices Full access and Choose access as a form field named `access` with the values `full` and `choose`, with Full access selected.
+Where a request names a scope other than `offline_access` that the app's standing consent does not cover, the server MUST offer, on the consent screen and the device approval page, the access choices Full access and Choose access as a form field named `access` with the values `full` and `choose`, with Full access selected.
 
 **Reason:** Most people want to give an app what it asked for. Full access says so in one choice, and Choose access keeps every control for the person who wants less. A request that names nothing else offers nothing to choose, so it carries no `access` field. Nor does a request whose every scope the app's standing consent already covers.
 
@@ -1865,9 +1867,9 @@ If an app exchanges a code with a verifier that does not match its challenge, th
 
 ### `keys-and-oauth/code-verifier-missing`
 
-If an app exchanges a code issued with a challenge and sends no verifier, then the server MUST answer `400 invalid_request`, whether or not the app authenticates with a secret.
+If an app exchanges a code issued with a challenge and sends no verifier, then the server MUST answer `400 invalid_request`.
 
-**Tests:** `compliance/oauth-authorize.test.ts › refuses a code issued with a challenge and exchanged with no verifier 400 invalid_request, whether or not the app sends a secret`.
+**Tests:** `compliance/oauth-authorize.test.ts › refuses a code issued with a challenge and exchanged with no verifier 400 invalid_request`.
 
 ### `keys-and-oauth/code-needs-browser`
 
@@ -1888,6 +1890,14 @@ If a request to `POST /auth/oauth2/token` carries no proof of the client, then t
 If a request to `POST /auth/oauth2/token` names a grant type the server does not serve, then the server MUST answer `400 unsupported_grant_type`.
 
 **Tests:** `compliance/oauth.test.ts › refuses a grant type it does not support`.
+
+### `keys-and-oauth/client-credential-refused`
+
+If a request to `POST /auth/oauth2/token`, `POST /auth/device/code` or `POST /auth/oauth2/revoke` carries an `Authorization` header, or a `client_secret`, `client_assertion` or `client_assertion_type` field, empty or not, then the server MUST answer `401 invalid_client`, whatever else the request holds or lacks.
+
+**Reason:** Every client is public and proves itself with its code verifier or its device code, so a credential of the client's own is one no registered client holds, and each door refuses it the same way.
+
+**Tests:** `compliance/oauth-client-auth-methods.test.ts › refuses a client that presents a credential of its own 401 invalid_client, at the device code, token and revocation doors`, `› refuses a client credential before it judges what the request lacks, at the device code, token and revocation doors`.
 
 ## Refresh tokens
 
@@ -2019,7 +2029,7 @@ If a tool call to an MCP endpoint the server serves carries an app's access toke
 
 **Tests:** `compliance/oauth-tokens.test.ts › answers a tool call naming a type nothing registered with the tool's error, not a challenge`, `compliance/oauth-tokens.test.ts › answers a name in a namespace nothing grants with the tool's error, not a challenge`.
 
-## Revocation and introspection
+## Revocation
 
 ### `keys-and-oauth/revoke-answer-ok`
 
@@ -2053,50 +2063,6 @@ If a revocation names no token, then the server MUST answer `400 invalid_request
 
 **Tests:** `compliance/oauth.test.ts › answers 200 to revoking a token it does not hold, and 400 to a revocation naming no token`.
 
-### `keys-and-oauth/introspect-active`
-
-When a client authenticating with its secret introspects its own live access token, the server MUST answer `200` with `active: true`, the client's `client_id` and the token's `scope`.
-
-**Tests:** `compliance/oauth-tokens.test.ts › answers a client its own live access token as active, with its scope, and a revoked one as inactive`.
-
-### `keys-and-oauth/introspect-inactive`
-
-When a client authenticating with its secret introspects a token that has ended, the server MUST answer `200` with only `active: false`.
-
-**Tests:** `compliance/oauth-tokens.test.ts › answers a client its own live access token as active, with its scope, and a revoked one as inactive`.
-
-### `keys-and-oauth/introspect-no-secret`
-
-If a client that sends no secret asks `POST /auth/oauth2/introspect`, then the server MUST answer `401 invalid_client`.
-
-**Tests:** `compliance/oauth-tokens.test.ts › refuses a client that sends no secret 401 invalid_client`.
-
-## Userinfo
-
-### `keys-and-oauth/userinfo-subject`
-
-When an access token holding `openid` asks `GET /auth/oauth2/userinfo`, the server MUST answer `200` with the person's `sub`.
-
-**Tests:** `compliance/oauth-tokens.test.ts › answers the person's subject, and the email only to a token holding email`.
-
-### `keys-and-oauth/userinfo-email`
-
-When an access token asks `GET /auth/oauth2/userinfo`, the server MUST answer the person's `email` only if the token holds `email` or a profile scope that reads it.
-
-**Tests:** `compliance/oauth-tokens.test.ts › answers the person's subject, and the email only to a token holding email`.
-
-### `keys-and-oauth/userinfo-no-openid`
-
-If an access token without `openid` asks `GET /auth/oauth2/userinfo`, then the server MUST answer `400 invalid_scope`.
-
-**Tests:** `compliance/oauth-tokens.test.ts › refuses a token without openid 400 invalid_scope, and a request with no token 401`.
-
-### `keys-and-oauth/userinfo-no-token`
-
-If a request with no access token asks `GET /auth/oauth2/userinfo`, then the server MUST answer `401`.
-
-**Tests:** `compliance/oauth-tokens.test.ts › refuses a token without openid 400 invalid_scope, and a request with no token 401`.
-
 ## Grants
 
 `grants.manage` lists and revokes the apps a person approved.
@@ -2129,7 +2095,7 @@ When a caller sends `PATCH /auth/grants/{id}`, the server MUST require a direct 
 
 ### `keys-and-oauth/grant-narrow-ceiling`
 
-When the owner sends `PATCH /auth/grants/{id}` with `scopes` and `expected_scopes`, the server MUST refuse `403 forbidden` if the resulting type, link, metadata, profile, permission or identity scope set exceeds the live grant's effective access.
+When the owner sends `PATCH /auth/grants/{id}` with `scopes` and `expected_scopes`, the server MUST refuse `403 forbidden` if the resulting type, link, metadata, profile or permission scope set exceeds the live grant's effective access.
 
 **Reason:** Removing an overriding entry can widen a wildcard, so the comparison is of effective access rather than literal membership.
 
@@ -2267,7 +2233,7 @@ The server MUST NOT answer any request with `Access-Control-Allow-Credentials`.
 
 ### `keys-and-oauth/discovery-every-origin`
 
-When a request carries an `Origin`, the server MUST answer `GET /.well-known/oauth-authorization-server/auth`, `GET /.well-known/openid-configuration/auth`, `GET /auth/.well-known/oauth-authorization-server`, `GET /auth/.well-known/openid-configuration`, `GET /.well-known/oauth-protected-resource` and the protected resource metadata of each MCP endpoint, `GET /.well-known/oauth-protected-resource/mcp`, `/mcp/schema` and `/mcp/admin`, with `Access-Control-Allow-Origin: *`.
+When a request carries an `Origin`, the server MUST answer `GET /.well-known/oauth-authorization-server/auth`, `GET /auth/.well-known/oauth-authorization-server`, `GET /.well-known/oauth-protected-resource` and the protected resource metadata of each MCP endpoint, `GET /.well-known/oauth-protected-resource/mcp`, `/mcp/schema` and `/mcp/admin`, with `Access-Control-Allow-Origin: *`.
 
 **Reason:** A page that is not yet approved has to find the endpoints before it can ask for approval, and these documents take no credential and say nothing that belongs to the owner.
 
@@ -2373,11 +2339,11 @@ When a client polls with a device code the person denied, the server MUST answer
 
 ### `keys-and-oauth/device-nothing-denies`
 
-Where a device code names a scope other than `openid` and `offline_access` that the app's standing consent does not cover, when a person approves it with none of those scopes chosen and the post does not name `access` as `full`, the server MUST deny the code, so that the next poll of it is answered `400 access_denied`.
+Where a device code names a scope other than `offline_access` that the app's standing consent does not cover, when a person approves it with none of those scopes chosen and the post does not name `access` as `full`, the server MUST deny the code, so that the next poll of it is answered `400 access_denied`.
 
 **Reason:** The same rule as `keys-and-oauth/consent-nothing-denies`, so a request is answered the same way on either page.
 
-**Tests:** `compliance/approval-screens.test.ts › denies a device code approved with nothing chosen`, `› denies a device code approved with everything newly asked turned off by an app that already holds access, on the device approval page`, `› approves a request that names only openid and offline_access, which offers nothing to turn off`.
+**Tests:** `compliance/approval-screens.test.ts › denies a device code approved with nothing chosen`, `› denies a device code approved with everything newly asked turned off by an app that already holds access, on the device approval page`, `› approves a request that names only offline_access, which offers nothing to turn off`.
 
 ### `keys-and-oauth/device-expired`
 
@@ -2651,17 +2617,9 @@ The sign-in surface is served through a library that offers more routes than Mar
 
 If a request names a path under `/auth/` that the sign-in surface does not serve, with or without a trailing slash, then the server MUST answer `404 not_found`.
 
-**Reason:** Of the library's routes, the surface serves password sign-in and sign-out, the browser session and its revocations, the owner's password change, `/auth/jwks`, the OAuth protocol routes, the device code request, and the discovery and error documents. Every other one, such as profile and account editing, social and email flows, session and account listings, a password check and a signed session token, answers as a path nothing serves.
+**Reason:** Of the library's routes, the surface serves password sign-in and sign-out, the browser session and its revocations, the owner's password change, the OAuth protocol routes, the device code request, and the discovery and error documents. Every other one, such as profile and account editing, social and email flows, session and account listings, a password check and a signed session token, answers as a path nothing serves.
 
 **Tests:** `compliance/sign-in-library-routes.test.ts › answer 404 not_found on every path no Marfa client uses, either spelling, to a signed-in owner`.
-
-### `keys-and-oauth/session-no-token`
-
-When `GET /auth/get-session` answers a signed-in browser, the server MUST NOT send a `set-auth-jwt` header.
-
-**Reason:** The key set at `/auth/jwks` signs ID tokens and nothing else.
-
-**Tests:** `compliance/sign-in-library-routes.test.ts › answer the browser session with no signed token`.
 
 ### `keys-and-oauth/library-origin`
 
@@ -2679,7 +2637,7 @@ When the consent screen names an app, the server MUST show a caution that Marfa 
 
 **Reason:** Registration needs no credential, so any program can pick any name.
 
-**Tests:** `compliance/unverified-apps.test.ts › is shown with the caution on the consent page, whether or not it authenticates with a secret`.
+**Tests:** `compliance/unverified-apps.test.ts › is shown with the caution on the consent page`.
 
 ### `keys-and-oauth/caution-device`
 
@@ -2687,15 +2645,7 @@ When the device approval page names an app, the server MUST show a caution that 
 
 **Reason:** The device flow is where a code from a stranger is likeliest to be typed in, and a caution on one page and not the other leaves the second as the way round the first.
 
-**Tests:** `compliance/unverified-apps.test.ts › is shown with the caution on the device approval page, whether or not it authenticates with a secret`.
-
-### `keys-and-oauth/caution-secret`
-
-The server MUST show the unverified-app caution for an app that authenticates with a secret as for one that does not.
-
-**Reason:** An app that authenticates with a secret registered itself under a name it chose, as any other app did.
-
-**Tests:** `compliance/unverified-apps.test.ts › is shown with the caution on the consent page, whether or not it authenticates with a secret`, `› is shown with the caution on the device approval page, whether or not it authenticates with a secret`, `› is shown with the caution on the sign-in page, whether or not it authenticates with a secret`.
+**Tests:** `compliance/unverified-apps.test.ts › is shown with the caution on the device approval page`.
 
 ### `keys-and-oauth/consent-names-page`
 
@@ -2747,7 +2697,7 @@ When the sign-in page names an app, the server MUST show the unverified-app caut
 
 **Reason:** The name is as unvetted on the page before the sign-in as on the page after it.
 
-**Tests:** `compliance/sign-in-surface.test.ts › names the app an authorization sent the person for, and no app for a link edited after signing`, `compliance/unverified-apps.test.ts › is shown with the caution on the sign-in page, whether or not it authenticates with a secret`.
+**Tests:** `compliance/sign-in-surface.test.ts › names the app an authorization sent the person for, and no app for a link edited after signing`, `compliance/unverified-apps.test.ts › is shown with the caution on the sign-in page`.
 
 ### `keys-and-oauth/sign-in-unsigned-no-app`
 
@@ -2790,18 +2740,6 @@ If the consent screen receives an authorization whose signature the instance did
 If the consent screen receives an authorization the instance signed whose window has closed, then the server MUST answer the page saying the request has expired.
 
 **Tests:** `compliance/sign-in-surface.test.ts › tells a link whose window has closed that the request has expired`.
-
-### `keys-and-oauth/end-session-page`
-
-When a request naming `text/html` in `Accept` before any `application/json` asks `GET /auth/oauth2/end-session` with no session and no `id_token_hint`, the server MUST answer `200` with an HTML page saying the person is signed out.
-
-**Tests:** `compliance/sign-in-surface.test.ts › shows a browser at end-session with no session a page, and a program the provider's JSON`.
-
-### `keys-and-oauth/end-session-json`
-
-When a request that does not name `text/html` before `application/json` asks `GET /auth/oauth2/end-session` with no session, the server MUST answer `400` with the provider's JSON refusal.
-
-**Tests:** `compliance/sign-in-surface.test.ts › shows a browser at end-session with no session a page, and a program the provider's JSON`.
 
 ### `keys-and-oauth/same-words`
 
@@ -3177,7 +3115,7 @@ When the server restarts, the server MUST keep each live browser session's `last
 
 ## Browser sessions and apps
 
-A browser session ends by sign-out, by the owner ending it, by ending the other or every session, by a password change that keeps the current session, by local password recovery, by the provider's end-session once confirmed, or by going unused for a week.
+A browser session ends by sign-out, by the owner ending it, by ending the other or every session, by a password change that keeps the current session, by local password recovery, or by going unused for a week.
 
 ### `keys-and-oauth/app-outlives-browser`
 
@@ -3185,13 +3123,13 @@ When a person's browser session ends, the server MUST keep valid every access to
 
 **Reason:** An app is not the browser that approved it, and an app with no refresh grant has no way back in. Only a revocation of the grant ends an app's access.
 
-**Tests:** `compliance/browser-sessions.test.ts › through browser sign-out leaves every app connected`, `› through ending one session leaves every app connected`, `› through ending the other sessions leaves every app connected`, `› through ending every session leaves every app connected`, `› through the provider's end-session, once confirmed, leaves every app connected`, `› through a password change that ends the other sessions leaves every app connected`, `› local recovery revokes browser sessions and keeps apps connected`, `compliance/owner-sign-ins.test.ts › through going unused for a week leaves every app connected`.
+**Tests:** `compliance/browser-sessions.test.ts › through browser sign-out leaves every app connected`, `› through ending one session leaves every app connected`, `› through ending the other sessions leaves every app connected`, `› through ending every session leaves every app connected`, `› through a password change that ends the other sessions leaves every app connected`, `› local recovery revokes browser sessions and keeps apps connected`, `compliance/owner-sign-ins.test.ts › through going unused for a week leaves every app connected`.
 
 ### `keys-and-oauth/refresh-outlives-browser`
 
 When a person's browser session ends, the server MUST answer the exchange of a refresh token an app holds for that person `200` with tokens that are valid.
 
-**Tests:** `compliance/browser-sessions.test.ts › through browser sign-out leaves every app connected`, `› through ending one session leaves every app connected`, `› through ending the other sessions leaves every app connected`, `› through ending every session leaves every app connected`, `› through the provider's end-session, once confirmed, leaves every app connected`, `› through a password change that ends the other sessions leaves every app connected`, `› local recovery revokes browser sessions and keeps apps connected`, `compliance/owner-sign-ins.test.ts › through going unused for a week leaves every app connected`.
+**Tests:** `compliance/browser-sessions.test.ts › through browser sign-out leaves every app connected`, `› through ending one session leaves every app connected`, `› through ending the other sessions leaves every app connected`, `› through ending every session leaves every app connected`, `› through a password change that ends the other sessions leaves every app connected`, `› local recovery revokes browser sessions and keeps apps connected`, `compliance/owner-sign-ins.test.ts › through going unused for a week leaves every app connected`.
 
 ### `keys-and-oauth/consent-outlives-browser`
 
@@ -3199,7 +3137,7 @@ When a person's browser session ends, the server MUST keep the person's consent 
 
 **Reason:** Consent is the person's decision about the app and not about the browser they made it in.
 
-**Tests:** `compliance/browser-sessions.test.ts › through browser sign-out leaves every app connected`, `› through ending one session leaves every app connected`, `› through ending the other sessions leaves every app connected`, `› through ending every session leaves every app connected`, `› through the provider's end-session, once confirmed, leaves every app connected`, `› through a password change that ends the other sessions leaves every app connected`, `› local recovery revokes browser sessions and keeps apps connected`.
+**Tests:** `compliance/browser-sessions.test.ts › through browser sign-out leaves every app connected`, `› through ending one session leaves every app connected`, `› through ending the other sessions leaves every app connected`, `› through ending every session leaves every app connected`, `› through a password change that ends the other sessions leaves every app connected`, `› local recovery revokes browser sessions and keeps apps connected`.
 
 ### `keys-and-oauth/app-outlives-restart`
 

@@ -212,7 +212,7 @@ fn owner_item_doors() -> Routes {
 fn profile_doors() -> Routes {
     Doors::new()
         .route("/owner/picture", get(profile::read).put(profile::put_owner))
-        .route("/profile", patch(profile::update))
+        .route("/profile", get(profile::read_own).patch(profile::update))
         .route("/profile/picture", put(profile::put_profile))
 }
 
