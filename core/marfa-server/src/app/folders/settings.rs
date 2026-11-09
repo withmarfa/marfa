@@ -220,9 +220,7 @@ fn check_threshold(settings: &Map<String, Value>, name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Judges the lists a request sends before its write is queued: compiling takes
-/// milliseconds that no other write should wait for, and depends on nothing
-/// the writer holds.
+/// Compile patterns before queueing the write to avoid blocking other writers.
 pub async fn compile_patterns(settings: &Map<String, Value>) -> Result<Patterns> {
     check_patterns(settings, "include")?;
     check_patterns(settings, "ignore")?;
