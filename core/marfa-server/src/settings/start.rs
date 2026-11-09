@@ -322,7 +322,7 @@ impl Fixed {
             .unwrap_or(1_024) as usize;
         let max_connections_per_address = reader
             .whole("MARFA_MAX_CONNECTIONS_PER_ADDRESS", 1, rule::MILLION)
-            .unwrap_or(128) as usize;
+            .unwrap_or(256) as usize;
         let given = Given {
             key_salt: reader.secret("MARFA_KEY_SALT", 1),
             auth_secret: reader.secret("MARFA_AUTH_SECRET", MIN_AUTH_SECRET),

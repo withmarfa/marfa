@@ -335,7 +335,7 @@ mod tests {
     fn the_connection_caps_start_at_their_defaults_and_refuse_a_value_outside_their_rule() {
         let start = opened(&[]).start;
         assert_eq!(start.max_connections, 1_024);
-        assert_eq!(start.max_connections_per_address, 128);
+        assert_eq!(start.max_connections_per_address, 256);
         assert_eq!(
             refused(&[
                 ("MARFA_MAX_CONNECTIONS", "0"),

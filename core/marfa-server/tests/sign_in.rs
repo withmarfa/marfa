@@ -174,16 +174,18 @@ async fn a_sign_in_whose_commit_is_unknown_sets_no_cookie_and_can_be_made_again(
 }
 
 #[tokio::test]
-async fn a_restart_inside_a_window_keeps_what_it_counted() {
+async fn a_restart_starts_every_count_afresh() {
     let instance = Instance::claimed().await;
     for _ in 0..10 {
         let wrong = instance.sign_in("not the password").await;
         assert_eq!(wrong.status, StatusCode::UNAUTHORIZED);
     }
-    let instance = instance.restarted().await;
     let held = instance.sign_in(PASSWORD).await;
     assert_eq!(held.status, StatusCode::TOO_MANY_REQUESTS);
     assert!(held.headers.contains_key(header::RETRY_AFTER));
+
+    let instance = instance.restarted().await;
+    assert!(instance.sign_in(PASSWORD).await.cookie().is_some());
 }
 
 #[tokio::test]
