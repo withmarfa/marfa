@@ -183,20 +183,22 @@ fn item_doors(app: Arc<App>) -> Routes {
         .admitting(app, Admission::Mapped)
 }
 
-fn folder_doors(app: Arc<App>) -> Routes {
-    let settings = Doors::new()
+fn folder_setting_doors(app: Arc<App>) -> Routes {
+    Doors::new()
         .route("/folders", post(folders::create))
         .route("/folders/{id}", patch(folders::update))
         .route("/folders/{id}/revoke", post(folders::revoke))
-        .admitting(app.clone(), Admission::Mapped);
-    let status = Doors::new()
+        .admitting(app, Admission::Mapped)
+}
+
+fn folder_status_doors(app: Arc<App>) -> Routes {
+    Doors::new()
         .route("/folders", get(folders::inventory))
         .route(
             "/folders/{id}/status",
             put(folders::report).get(folders::status),
         )
-        .admitting(app, Admission::Presented);
-    settings.merge(status)
+        .admitting(app, Admission::Presented)
 }
 
 fn blob_doors() -> Routes {
@@ -291,7 +293,8 @@ fn shared(app: Arc<App>) -> Routes {
         .merge(key_doors(app.clone()))
         .merge(webhook_doors(app.clone()))
         .merge(item_doors(app.clone()))
-        .merge(folder_doors(app.clone()))
+        .merge(folder_setting_doors(app.clone()))
+        .merge(folder_status_doors(app.clone()))
         .merge(blob_doors())
         .merge(connector_doors(app.clone()))
         .merge(overview_doors(app.clone()))

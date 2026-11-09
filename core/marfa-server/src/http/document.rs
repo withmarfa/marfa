@@ -12,7 +12,10 @@ use tower::ServiceExt;
 
 use super::doors::Doors;
 use super::root::DOCUMENT;
-use super::{control, control_doors, count_doors, item_doors, overview_doors, public_doors};
+use super::{
+    control, control_doors, count_doors, folder_setting_doors, item_doors, overview_doors,
+    public_doors,
+};
 use crate::app::App;
 use crate::settings::{Environment, Settings};
 
@@ -212,6 +215,10 @@ const OPEN: &[&str] = &["GET /", "GET /health", "POST /owner"];
 /// The doors behind a type map are not listed: `content` finds them.
 const REFUSES_LOCAL: &[(&str, &str)] = &[
     (
+        "PUT /folders/{id}/status",
+        "a report is kept under the sign-in that sent it",
+    ),
+    (
         "GET /keys/current",
         "describes the key that sent the request",
     ),
@@ -319,6 +326,7 @@ async fn served() -> Served {
             routes(item_doors(app.clone())),
             routes(overview_doors(app.clone())),
             routes(count_doors(app.clone())),
+            routes(folder_setting_doors(app.clone())),
         ]
         .into_iter()
         .flatten()
