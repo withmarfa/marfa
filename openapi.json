@@ -1095,7 +1095,30 @@
           },
           "settings_rewritten": {
             "type": "boolean",
-            "description": "On a type move, `true` if Marfa rewrote `settings` to name the new type. `false` if an item of the old type remains, counted in `remaining` or `remaining_hidden`, or a setting has a `reason`: Marfa then rewrote none of them. Absent otherwise."
+            "description": "On a type move, `true` if Marfa rewrote `settings` to name the new type. `false` if an item of the old type remains, a setting has a `reason`, or `settings_error` names a refusal; then none was rewritten. Absent otherwise."
+          },
+          "settings_error": {
+            "type": "object",
+            "description": "On a type move, why Marfa rewrote none of `settings` once no item of the old type remained: the new type is gone, or a folder or view would refuse its rewrite. Change the setting or register the type, then run the move again. Absent otherwise.",
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "A machine-readable code for the refusal. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the refusal for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the refusal, as the setting's own operation gives it."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ]
           }
         },
         "required": [
@@ -5433,44 +5456,6 @@
           "id"
         ],
         "description": "A key or app whose type map names a type outright."
-      },
-      "BulkCapExceededOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "type": "string",
-                "enum": [
-                  "bulk_cap_exceeded",
-                  "missing_required_field",
-                  "unknown_type",
-                  "validation_error"
-                ],
-                "description": "A machine-readable code for the error. Use it in your logic."
-              },
-              "message": {
-                "type": "string",
-                "description": "A description of the error for a person to read. It can change, so don't match on it."
-              },
-              "details": {
-                "type": "object",
-                "additionalProperties": {},
-                "description": "More about the error, such as the field it concerns. Each code defines its own details."
-              }
-            },
-            "required": [
-              "code",
-              "message"
-            ],
-            "description": "What went wrong."
-          }
-        },
-        "required": [
-          "error"
-        ],
-        "description": "An error response."
       },
       "CoreTypeImmutableOrTypeNotPermittedRefusal": {
         "type": "object",
@@ -30812,11 +30797,11 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `to` is missing.\n- `validation_error`: `to` is malformed or names the type itself.\n- `unknown_type`: no type has the identifier `to`.\n- `bulk_cap_exceeded`: the type holds over 50,000 items.",
+            "description": "- `missing_required_field`: `to` is missing.\n- `validation_error`: `to` is malformed or names the type itself.\n- `unknown_type`: no type has the identifier `to`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BulkCapExceededOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"
+                  "$ref": "#/components/schemas/MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"
                 }
               }
             },

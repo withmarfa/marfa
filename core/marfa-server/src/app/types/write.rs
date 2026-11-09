@@ -17,7 +17,7 @@ use crate::app::instance;
 use crate::app::items;
 use crate::app::refusal::{Code, Refusal, Result};
 
-fn not_found(id: &str) -> Refusal {
+pub(super) fn not_found(id: &str) -> Refusal {
     Refusal::new(Code::TypeNotFound, format!("Type \"{id}\" not found"))
 }
 
@@ -354,15 +354,17 @@ pub async fn delete(app: &App, caller: &Caller, id: String, force: bool) -> Resu
             return Err(dependents_refusal(broken));
         }
         let held = items::count_of_type(unit.tx(), &id)?;
-        if held > 0 && !force {
+        let settings = super::moving::naming(unit.tx(), caller, &id)?;
+        let named = settings.as_array().is_some_and(|named| !named.is_empty());
+        if (held > 0 || named) && !force {
             return Err(Refusal::new(
                 Code::TypeInUse,
                 format!(
-                    "Type \"{id}\" still has {held} item(s). Move them to another type, or delete with ?force=true to keep them unregistered."
+                    "Type \"{id}\" still has {held} item(s), or a folder, view or webhook names it. Move its items to another type, which rewrites those settings, or delete with ?force=true to keep the items and settings as they are."
                 ),
             )
             .with_detail("item_count", held)
-            .with_detail("settings", json!([])));
+            .with_detail("settings", settings));
         }
         unit.tx().execute("DELETE FROM types WHERE id = ?1", [&id])?;
         catalog::raise(unit.tx())?;

@@ -190,14 +190,10 @@ const NOT_YET_SERVED: &[&str] = &[
     "GET /connectors/{id}/deliveries/{delivery_id}/body",
     "GET /connectors/{id}/endpoints",
     "GET /export",
-    "GET /items/bulk-actions/jobs/{id}",
     "GET /metrics",
     "POST /connectors/{id}/deliveries/handled",
     "POST /connectors/{id}/endpoints",
-    "POST /items/bulk-actions",
-    "POST /items/bulk-actions/jobs/{id}/cancel",
     "POST /restore",
-    "POST /types/{id}/move",
 ];
 
 const METHODS: [&str; 8] = [
