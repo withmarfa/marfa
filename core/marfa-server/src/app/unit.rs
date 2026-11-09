@@ -56,8 +56,7 @@ impl<'c> Unit<'_, 'c> {
         }
     }
 
-    /// A setting as the table stands in this transaction, so a change committed while the write
-    /// waited is seen.
+    /// Read from this transaction's rows, so a change committed while the write waited is seen.
     pub fn setting<T: Kind>(&self, setting: Setting<T>) -> Result<T> {
         Ok(Settled::resolve(&self.seeds, &stored::rows(self.tx)?, 0).get(setting))
     }
