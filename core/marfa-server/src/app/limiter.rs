@@ -3,9 +3,8 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
 
-/// Most windows held at once. A key the table has no room for is counted in the lanes that
-/// already hold it, so a flood of new addresses cannot grow the table or lift a limit that
-/// was already counting.
+/// Most keys held at once. A key the table has no room for is counted in one window its
+/// family shares, so the table stays bounded and no key goes uncounted.
 const MAX_WINDOWS: usize = 100_000;
 const PRUNE_ABOVE: usize = 1_024;
 const PRUNE_EVERY_MS: i64 = 1_000;
@@ -44,9 +43,12 @@ impl Lane {
     }
 }
 
-/// What `Retry-After` and `retry_after` hold: whole seconds, rounded up, never fewer than one.
+/// What `Retry-After` and `retry_after` hold: whole seconds, rounded up, from one to a day.
 pub fn retry_seconds(wait_ms: i64) -> i64 {
-    wait_ms.saturating_add(999).div_euclid(1000).max(1)
+    wait_ms
+        .saturating_add(999)
+        .div_euclid(1000)
+        .clamp(1, 86_400)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -56,34 +58,48 @@ struct Window {
 }
 
 #[derive(Debug, Default)]
+struct Family {
+    keys: HashMap<String, Window>,
+    overflow: Option<Window>,
+}
+
+#[derive(Debug, Default)]
 struct Windows {
-    families: HashMap<&'static str, HashMap<String, Window>>,
+    families: HashMap<&'static str, Family>,
     held: usize,
     pruned_ms: i64,
 }
 
 impl Windows {
-    fn live(&self, lane: &Lane, now_ms: i64) -> Option<Window> {
-        self.families
-            .get(lane.family)?
-            .get(&lane.key)
-            .copied()
-            .filter(|window| window.ends_ms > now_ms)
+    fn full(&self) -> bool {
+        self.held >= MAX_WINDOWS
     }
 
-    /// Whether the window was recorded.
-    fn record(&mut self, lane: &Lane, window: Window) -> bool {
+    fn live(&self, lane: &Lane, now_ms: i64) -> Option<Window> {
+        let family = self.families.get(lane.family)?;
+        match family.keys.get(&lane.key) {
+            Some(window) => Some(*window),
+            None if self.full() => family.overflow,
+            None => None,
+        }
+        .filter(|window| window.ends_ms > now_ms)
+    }
+
+    fn record(&mut self, lane: &Lane, window: Window) {
+        let full = self.full();
         let family = self.families.entry(lane.family).or_default();
-        if let Some(held) = family.get_mut(&lane.key) {
+        if let Some(held) = family.keys.get_mut(&lane.key) {
             *held = window;
-            return true;
+        } else if full {
+            family.overflow = Some(window);
+        } else {
+            family.keys.insert(lane.key.clone(), window);
+            self.held += 1;
         }
-        if self.held >= MAX_WINDOWS {
-            return false;
-        }
-        family.insert(lane.key.clone(), window);
-        self.held += 1;
-        true
+    }
+
+    fn count(&mut self) {
+        self.held = self.families.values().map(|family| family.keys.len()).sum();
     }
 
     fn prune(&mut self, now_ms: i64) {
@@ -91,9 +107,10 @@ impl Windows {
             return;
         }
         for family in self.families.values_mut() {
-            family.retain(|_, window| window.ends_ms > now_ms);
+            family.keys.retain(|_, window| window.ends_ms > now_ms);
+            family.overflow = family.overflow.filter(|window| window.ends_ms > now_ms);
         }
-        self.held = self.families.values().map(HashMap::len).sum();
+        self.count();
         self.pruned_ms = now_ms;
     }
 }
@@ -139,9 +156,9 @@ impl Limiter {
     pub fn forget(&self, family: &'static str, matches: impl Fn(&str) -> bool) {
         let mut windows = self.windows.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(held) = windows.families.get_mut(family) {
-            held.retain(|key, _| !matches(key));
+            held.keys.retain(|key, _| !matches(key));
         }
-        windows.held = windows.families.values().map(HashMap::len).sum();
+        windows.count();
     }
 }
 
@@ -200,6 +217,18 @@ mod tests {
     }
 
     #[test]
+    fn a_clock_moved_back_never_asks_for_more_than_a_day() {
+        let limiter = Limiter::default();
+        let one = [lane("a", "x", 1)];
+        let later = 30 * 24 * 60 * MINUTE;
+        assert_eq!(limiter.admit(later, &one), None);
+        let wait = limiter.admit(0, &one).unwrap();
+        assert_eq!(retry_seconds(wait), 86_400);
+        assert_eq!(retry_seconds(i64::MAX), 86_400);
+        assert_eq!(retry_seconds(-5_000), 1);
+    }
+
+    #[test]
     fn a_window_changes_length_only_when_a_new_one_opens() {
         let limiter = Limiter::default();
         assert_eq!(limiter.admit(0, &[lane("a", "x", 1)]), None);
@@ -230,7 +259,7 @@ mod tests {
     }
 
     #[test]
-    fn a_full_table_still_counts_the_keys_it_holds_and_records_no_more() {
+    fn a_full_table_counts_the_keys_it_holds_and_every_other_key_in_one_window() {
         let limiter = Limiter::default();
         {
             let mut windows = limiter.windows.lock().unwrap();
@@ -240,7 +269,7 @@ mod tests {
             };
             let family = windows.families.entry("a").or_default();
             for n in 0..MAX_WINDOWS {
-                family.insert(n.to_string(), live);
+                family.keys.insert(n.to_string(), live);
             }
             windows.held = MAX_WINDOWS;
         }
@@ -249,7 +278,13 @@ mod tests {
         assert!(limiter.admit(2, &known).is_some());
         let stranger = [lane("a", "stranger", 1)];
         assert_eq!(limiter.admit(3, &stranger), None);
-        assert_eq!(limiter.admit(4, &stranger), None);
+        assert_eq!(limiter.admit(4, &stranger), Some(MINUTE - 1));
+        assert_eq!(
+            limiter.admit(4, &[lane("a", "another", 1)]),
+            Some(MINUTE - 1)
+        );
+        assert_eq!(limiter.admit(4, &[lane("b", "another", 1)]), None);
         assert_eq!(limiter.windows.lock().unwrap().held, MAX_WINDOWS);
+        assert_eq!(limiter.admit(MINUTE + 3, &stranger), None);
     }
 }

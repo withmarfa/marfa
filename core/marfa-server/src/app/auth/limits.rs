@@ -26,6 +26,8 @@ const DEVICE_CODE_ADDRESS: &str = "device-code-address";
 const PASSKEY_ADDRESS: &str = "passkey-challenge-address";
 const ALL: &str = "all";
 const NO_ADDRESS: &str = "unknown";
+/// Not an email the owner can hold, so it never meets the owner's own count.
+const OTHER_EMAILS: &str = "*";
 
 fn bucket(address: Option<IpAddr>) -> String {
     let Some(address) = address else {
@@ -46,8 +48,14 @@ pub(super) fn account_key(email: &str) -> String {
         .collect()
 }
 
-pub fn password_lanes(email: &str, address: Option<IpAddr>) -> [Lane; 3] {
+/// Only the owner's own email has account lanes of its own; every other email shares one.
+pub fn password_lanes(email: &str, owner: Option<&str>, address: Option<IpAddr>) -> [Lane; 3] {
     let account = account_key(email);
+    let account = if owner.map(account_key).as_deref() == Some(account.as_str()) {
+        account
+    } else {
+        OTHER_EMAILS.to_string()
+    };
     [
         Lane::new(ADDRESS, bucket(address), 30, 15 * MINUTE_MS),
         Lane::new(
@@ -146,6 +154,8 @@ pub fn too_many_passwords(wait_ms: i64) -> Refusal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    const OWNER: Option<&str> = Some("a@example.test");
+
     fn attempt(limiter: &Limiter, now: i64, lanes: &[Lane]) -> Option<i64> {
         limiter.admit(now, lanes)
     }
@@ -153,7 +163,7 @@ mod tests {
     #[test]
     fn an_address_past_its_limit_leaves_the_account_count_alone() {
         let limiter = Limiter::default();
-        let lanes = password_lanes("a@example.test", "203.0.113.1".parse().ok());
+        let lanes = password_lanes("a@example.test", OWNER, "203.0.113.1".parse().ok());
         for _ in 0..10 {
             assert_eq!(attempt(&limiter, 0, &lanes), None);
         }
@@ -171,17 +181,62 @@ mod tests {
         let limiter = Limiter::default();
         let address = "203.0.113.1".parse().ok();
         for n in 0..30 {
-            let lanes = password_lanes(&format!("{n}@example.test"), address);
+            let lanes = password_lanes(
+                &format!("{n}@example.test"),
+                Some(&format!("{n}@example.test")),
+                address,
+            );
             assert_eq!(attempt(&limiter, 0, &lanes), None);
         }
-        let next = password_lanes("next@example.test", address);
+        let next = password_lanes("next@example.test", Some("next@example.test"), address);
         assert_eq!(
             attempt(&limiter, 1_000, &next),
             Some(15 * MINUTE_MS - 1_000)
         );
-        let elsewhere = password_lanes("next@example.test", "203.0.113.2".parse().ok());
+        let elsewhere = password_lanes(
+            "next@example.test",
+            Some("next@example.test"),
+            "203.0.113.2".parse().ok(),
+        );
         assert_eq!(attempt(&limiter, 1_000, &elsewhere), None);
         assert_eq!(attempt(&limiter, 15 * MINUTE_MS, &next), None);
+    }
+
+    #[test]
+    fn every_email_but_the_owners_shares_one_count() {
+        let limiter = Limiter::default();
+        let address = "203.0.113.1".parse().ok();
+        for n in 0..10 {
+            let lanes = password_lanes(&format!("{n}@example.test"), OWNER, address);
+            assert_eq!(attempt(&limiter, 0, &lanes), None);
+        }
+        let stranger = password_lanes("next@example.test", OWNER, address);
+        assert!(attempt(&limiter, 1, &stranger).is_some());
+        let owner = password_lanes(" A@Example.test ", OWNER, address);
+        assert_eq!(attempt(&limiter, 1, &owner), None);
+        let unclaimed = password_lanes("a@example.test", None, address);
+        assert!(attempt(&limiter, 1, &unclaimed).is_some());
+    }
+
+    #[test]
+    fn a_full_table_still_bounds_attempts_at_the_owner_from_fresh_addresses() {
+        let limiter = Limiter::default();
+        let v6 = |n: u32| -> Option<IpAddr> {
+            format!("2001:db8:{:x}:{:x}::1", n >> 16, n & 0xffff)
+                .parse()
+                .ok()
+        };
+        for n in 0..60_000 {
+            let lanes = password_lanes(&format!("{n}@example.test"), OWNER, v6(n));
+            attempt(&limiter, 0, &lanes);
+        }
+        let admitted = (60_000..61_000)
+            .filter(|n| {
+                let lanes = password_lanes("a@example.test", OWNER, v6(*n));
+                attempt(&limiter, 1, &lanes).is_none()
+            })
+            .count();
+        assert!(admitted <= 30, "{admitted} attempts admitted");
     }
 
     #[test]
@@ -228,8 +283,8 @@ mod tests {
     #[test]
     fn a_cleared_account_loses_only_its_own_counts() {
         let limiter = Limiter::default();
-        let mine = password_lanes("a@example.test", None);
-        let other = password_lanes("aa@example.test", None);
+        let mine = password_lanes("a@example.test", OWNER, None);
+        let other = password_lanes("aa@example.test", Some("aa@example.test"), None);
         for lanes in [&mine, &other] {
             for _ in 0..10 {
                 attempt(&limiter, 0, lanes);

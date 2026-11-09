@@ -25,8 +25,8 @@ fn wrong_credentials() -> Refusal {
     Refusal::new(Code::Unauthorized, "Invalid email or password.")
 }
 
-fn count(app: &App, email: &str, visit: &Visit) -> Option<i64> {
-    limits::admit(app, &limits::password_lanes(email, visit.address))
+fn count(app: &App, email: &str, owner: Option<&str>, visit: &Visit) -> Option<i64> {
+    limits::admit(app, &limits::password_lanes(email, owner, visit.address))
 }
 
 struct Proven {
@@ -118,7 +118,8 @@ pub async fn with_password(
     visit: Visit,
 ) -> Result<Opened> {
     let email = limits::account_key(&email);
-    if let Some(wait) = count(app, &email, &visit) {
+    let owner = owner::find(app).await?.map(|owner| owner.email);
+    if let Some(wait) = count(app, &email, owner.as_deref(), &visit) {
         refused_sign_in(app, &email, TOO_MANY, &visit).await?;
         return Err(too_many_passwords(wait));
     }
@@ -182,7 +183,7 @@ pub async fn with_password(
 pub async fn confirm(app: &App, caller: &Caller, password: String, visit: Visit) -> Result<Opened> {
     let session = caller.session().ok_or_else(unauthorized)?.clone();
     let owner = owner::find(app).await?.ok_or_else(unauthorized)?;
-    if let Some(wait) = count(app, &owner.email, &visit) {
+    if let Some(wait) = count(app, &owner.email, Some(&owner.email), &visit) {
         return Err(too_many_passwords(wait));
     }
     let proven = prove(app, &owner.email, password)
@@ -265,7 +266,7 @@ pub async fn change_password(
 ) -> Result<()> {
     let session = caller.session().ok_or_else(unauthorized)?.clone();
     let owner = owner::find(app).await?.ok_or_else(unauthorized)?;
-    if let Some(wait) = count(app, &owner.email, &visit) {
+    if let Some(wait) = count(app, &owner.email, Some(&owner.email), &visit) {
         refused_change(app, caller, &owner.id, TOO_MANY, &visit).await?;
         return Err(too_many_passwords(wait));
     }
