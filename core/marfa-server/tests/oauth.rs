@@ -18,8 +18,14 @@ use marfa_server::app::refusal::Code;
 use marfa_server::app::{App, housekeeping};
 use marfa_server::db::Write;
 use marfa_server::http::{control, public};
+use marfa_server::settings::registry::{
+    DCR_CLIENT_RETENTION_DAYS, GRANT_INACTIVITY_DAYS, REVOKED_GRANT_RETENTION_DAYS,
+};
 use marfa_server::settings::{Environment, Settings};
 use serde_json::{Value, json};
+use support::{commit_unpublished, remove_unpublished};
+
+mod support;
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use tower::ServiceExt;
@@ -1245,6 +1251,68 @@ async fn an_idle_grant_retires_then_goes_and_its_client_can_follow() {
 }
 
 #[tokio::test]
+async fn a_purged_grant_takes_the_folder_reports_it_made() {
+    let instance = Instance::signed_in().await;
+    let scope = "system.folder:read offline_access";
+    let client = instance.register(scope).await;
+    let issued = instance.tokens(&client, scope).await;
+    let body = json!({
+        "label": "folders",
+        "source": "folders",
+        "type_permissions": { "system.folder": "write" },
+    });
+    let minted = send(control(instance.app.clone()), post_json("/keys", &body)).await;
+    assert_eq!(minted.status, StatusCode::CREATED, "{}", minted.text);
+    let key = text_at(&minted.json(), "key").to_string();
+    let made = Request::builder()
+        .method(Method::POST)
+        .uri("/folders")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::AUTHORIZATION, format!("Bearer {key}"))
+        .body(Body::from(json!({ "title": "Copies" }).to_string()))
+        .unwrap();
+    let made = instance.send(made).await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.text);
+    let folder = text_at(&made.json()["item"], "id").to_string();
+    let report = json!({
+        "folder_store_id": "copy",
+        "sequence": 1,
+        "last_success_at": null,
+        "pending_uploads": 0,
+        "pending_downloads": 0,
+        "paused_removals": 0,
+        "first_sync_waiting": false,
+        "problems": [],
+    });
+    let report = Request::builder()
+        .method(Method::PUT)
+        .uri(format!("/folders/{folder}/status"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(
+            header::AUTHORIZATION,
+            format!("Bearer {}", text_at(&issued, "access_token")),
+        )
+        .body(Body::from(report.to_string()))
+        .unwrap();
+    let reported = instance.send(report).await;
+    assert_eq!(reported.status, StatusCode::OK, "{}", reported.text);
+    let reports = "SELECT count(*) FROM folder_status WHERE sign_in_kind = 'app'";
+    assert_eq!(instance.count(reports).await, 1);
+
+    let grant = instance.grant_of(&client).await;
+    assert_eq!(
+        instance.end_grant(&grant).await.status,
+        StatusCode::NO_CONTENT
+    );
+    instance.app.clock.advance(89 * DAY_MS).unwrap();
+    assert_eq!(swept(&instance.app, "revoked-grant-purge").await, 0);
+    assert_eq!(instance.count(reports).await, 1);
+    instance.app.clock.advance(2 * DAY_MS).unwrap();
+    assert_eq!(swept(&instance.app, "revoked-grant-purge").await, 1);
+    assert_eq!(instance.count(reports).await, 0);
+}
+
+#[tokio::test]
 async fn a_grant_in_use_is_not_idle() {
     let instance = Instance::signed_in().await;
     let client = instance.register(OFFLINE_NOTES).await;
@@ -1256,6 +1324,104 @@ async fn a_grant_in_use_is_not_idle() {
     assert_eq!(renewed.status, StatusCode::OK, "{}", renewed.text);
     instance.app.clock.advance(350 * DAY_MS).unwrap();
     assert_eq!(swept(&instance.app, "grant-inactivity-retirement").await, 0);
+}
+
+#[tokio::test]
+async fn the_sweeps_keep_what_a_retention_committed_before_it_is_live_keeps() {
+    let instance = Instance::signed_in().await;
+    let app = &instance.app;
+    let idle = instance.register(OFFLINE_NOTES).await;
+    instance.tokens(&idle, OFFLINE_NOTES).await;
+    let revoked = instance.register(OFFLINE_NOTES).await;
+    let issued = instance.tokens(&revoked, OFFLINE_NOTES).await;
+    instance
+        .revoke(&revoked, text_at(&issued, "refresh_token"))
+        .await;
+    instance.register(NOTES).await;
+    app.clock.advance(366 * DAY_MS).unwrap();
+
+    let mut taken = Vec::new();
+    for (job, write, key) in [
+        (
+            "grant-inactivity-retirement",
+            "auth.grant.retired",
+            "grant_inactivity_days",
+        ),
+        (
+            "revoked-grant-purge",
+            "auth.grants.purged",
+            "revoked_grant_retention_days",
+        ),
+    ] {
+        app.faults.set("hold:write", Some(write)).unwrap();
+        let running = app.clone();
+        let run = tokio::spawn(async move { swept(&running, job).await });
+        instance.when_held().await;
+        commit_unpublished(app, key, "0").await;
+        app.faults.clear(Some("hold:write"));
+        taken.push(run.await.unwrap());
+    }
+    commit_unpublished(app, "dcr_client_retention_days", "0").await;
+    let live = app.settings.live();
+    assert_eq!(live.get(GRANT_INACTIVITY_DAYS), 365);
+    assert_eq!(live.get(REVOKED_GRANT_RETENTION_DAYS), 90);
+    assert_eq!(live.get(DCR_CLIENT_RETENTION_DAYS), 1);
+    taken.push(swept(app, "dcr-client-cleanup").await);
+    assert_eq!(taken, [0, 0, 0]);
+    let standing = "SELECT count(*) FROM auth_oauth_consent WHERE withdrawn_at IS NULL";
+    assert_eq!(instance.count(standing).await, 1);
+    let withdrawn = "SELECT count(*) FROM auth_oauth_consent WHERE withdrawn_at IS NOT NULL";
+    assert_eq!(instance.count(withdrawn).await, 1);
+    let clients = "SELECT count(*) FROM auth_oauth_client";
+    assert_eq!(instance.count(clients).await, 3);
+}
+
+#[tokio::test]
+async fn a_retention_that_does_not_read_ends_each_sweep_in_error_and_deletes_nothing() {
+    let instance = Instance::signed_in().await;
+    let app = &instance.app;
+    let idle = instance.register(OFFLINE_NOTES).await;
+    instance.tokens(&idle, OFFLINE_NOTES).await;
+    let revoked = instance.register(OFFLINE_NOTES).await;
+    let issued = instance.tokens(&revoked, OFFLINE_NOTES).await;
+    instance
+        .revoke(&revoked, text_at(&issued, "refresh_token"))
+        .await;
+    instance.register(NOTES).await;
+    app.clock.advance(366 * DAY_MS).unwrap();
+    let rows = [
+        "SELECT count(*) FROM auth_oauth_consent WHERE withdrawn_at IS NULL",
+        "SELECT count(*) FROM auth_oauth_consent WHERE withdrawn_at IS NOT NULL",
+        "SELECT count(*) FROM auth_oauth_client",
+    ];
+    let mut before = Vec::new();
+    for sql in rows {
+        before.push(instance.count(sql).await);
+    }
+
+    let sweeps = [
+        ("grant-inactivity-retirement", "grant_inactivity_days"),
+        ("revoked-grant-purge", "revoked_grant_retention_days"),
+        ("dcr-client-cleanup", "dcr_client_retention_days"),
+    ];
+    for (job, key) in sweeps {
+        commit_unpublished(app, key, "soon").await;
+        let ended = housekeeping::run_now(app, job).await.unwrap();
+        assert_eq!(ended.outcome, "error", "{job}");
+        assert!(ended.error.unwrap().contains(key), "{job}");
+    }
+    let mut kept = Vec::new();
+    for sql in rows {
+        kept.push(instance.count(sql).await);
+    }
+    assert_eq!(kept, before);
+
+    let mut taken = Vec::new();
+    for (job, key) in sweeps {
+        remove_unpublished(app, key).await;
+        taken.push(swept(app, job).await);
+    }
+    assert!(taken.iter().all(|count| *count > 0), "{taken:?}");
 }
 
 #[tokio::test]

@@ -351,6 +351,14 @@ If `MARFA_EVENT_LOG_RETENTION_HOURS` holds a value that is neither empty nor an 
 
 **Tests:** `compliance/housekeeping-settings.test.ts › refuses MARFA_EVENT_LOG_RETENTION_HOURS outside 0 through 876000, and names the setting`, `› starts with each setting empty, and with each at its smallest`.
 
+### `housekeeping/unreadable-setting-deletes-nothing`
+
+If the stored value of a setting that decides what a housekeeping job deletes is outside the values that setting accepts, then the server MUST end that job's run with `outcome` `error` without deleting anything the setting decides.
+
+**Reason:** a hand edit or a release that narrows a setting's bounds can leave a value the server cannot read, and a run that fell back to the default could delete what the stored value keeps, such as items in the bin under a longer `trash_retention_days`. A setting with no stored value still takes its default.
+
+**Tests:** `compliance/unreadable-deletion-settings.test.ts › ends a trash-purge run in error and purges nothing, and purges on the seeded retention once the row is gone`, `› ends a version-thinning run in error and thins nothing, and thins on the seeded maximum once the row is gone`, `compliance/blob-store-settings.test.ts › ends a blob-orphans run in error and purges nothing while blob_cleanup_grace_ms does not read, and purges on the seeded grace once the row is gone`.
+
 ## Version thinning
 
 The `version-thinning` job removes an item's older snapshots by its type's `version_policy` (`types/version-policy-values`).

@@ -40264,7 +40264,7 @@
           "Folders"
         ],
         "summary": "Report a folder status",
-        "description": "Reports your sign-in's status for one folder copy, replacing its earlier report, and returns the latest accepted sequence and receipt time. An equal or older sequence leaves the stored report unchanged.",
+        "description": "Reports your sign-in's status for one folder copy and returns the latest accepted sequence and receipt time. An equal or older sequence changes nothing. A sign-in keeps at most 16 copies of a folder; a new copy past that replaces its oldest.",
         "security": [
           {
             "bearerAuth": []
@@ -40637,7 +40637,7 @@
           "Folders"
         ],
         "summary": "Get a folder status",
-        "description": "Returns the latest folder-copy reports grouped by sign-in, with receipt ages and totals from sign-ins that still stand. Historical reports remain visible.",
+        "description": "Returns the latest folder-copy reports grouped by sign-in, with receipt ages and totals from sign-ins that still stand. A sign-in's reports stay as history until its key or app grant is removed.",
         "security": [
           {
             "bearerAuth": []
@@ -51195,7 +51195,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't hold `keys.mint` and aren't the local command; the body names a permission, map entry or source you don't hold, or a `source` another key claims that you can't grant; it names an `expires_at` later than your own key's; or it names `enforcement_override` and you don't hold `config.manage`. `details.required_scope` or `details.source` names what you lack.",
+            "description": "- `forbidden`: you lack `keys.mint` and aren't the local command; the body names a permission, map entry or source you don't hold, a `source` another key claims that you can't grant, an own `source` a connector holds without `keys.manage`, an `expires_at` past your key's, or `enforcement_override` without `config.manage`. `details.required_scope` and `details.source` name what you lack.",
             "content": {
               "application/json": {
                 "schema": {

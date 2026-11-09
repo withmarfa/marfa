@@ -2,6 +2,7 @@
 
 pub mod confirm;
 pub mod fetch;
+pub mod moving;
 pub mod revoke;
 pub mod trash;
 pub mod webhook;

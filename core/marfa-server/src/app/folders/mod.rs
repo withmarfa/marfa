@@ -7,7 +7,9 @@ mod status;
 
 pub use inventory::{Page, list};
 pub use report::Report;
-pub use settings::{Patterns, SETTINGS, check, compile_patterns, judge, refuse_null, undeclared};
+pub use settings::{
+    Patterns, SETTINGS, check, check_stored, compile_patterns, judge, refuse_null, undeclared,
+};
 pub use status::{Concern, concerns, read, report};
 
 pub const FOLDER_TYPE: &str = "system.folder";

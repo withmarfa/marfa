@@ -7,6 +7,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { storeSettingRow } from "../../utils/instance-database.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import {
   bytesOf,
@@ -81,6 +82,84 @@ describe("a minimum of copies above the default", () => {
         "s3",
       ]);
       expect((await operator.downloadBlob(upload.data.hash)).status).toBe(200);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+});
+
+describe("a stored setting that decides a deletion and does not read", () => {
+  it(
+    "refuses a drop 500 while blob_min_copies does not read, ahead of the minimum's 409, and keeps the copy",
+    async () => {
+      const { server, operator, working } = await boot(
+        "blob-store-unreadable-minimum",
+        ownObjectStore(),
+      );
+      const upload = await working.uploadBlob(
+        bytesOf("two copies, and a minimum that does not read", 100),
+        "text/plain",
+      );
+      expect(upload.status).toBe(201);
+      const hash = upload.data.hash;
+      await whenCopied(operator, [hash]);
+      const stores = await operator.listBlobStores();
+      const disk = stores.data.data.find((store) => store.kind === "disk")!;
+      const kinds = async () =>
+        (await operator.listBlobCopies(hash)).data.data
+          .map((row) => row.kind)
+          .sort();
+
+      storeSettingRow(server.sqlitePath, "blob_min_copies", "many");
+      const refused = await operator.deleteBlobCopy(hash, disk.id);
+      expect(refused.status).toBe(500);
+      expect(refused.error?.error.code).toBe("internal_error");
+      expect(await kinds()).toEqual(["disk", "s3"]);
+
+      storeSettingRow(server.sqlitePath, "blob_min_copies", null);
+      const dropped = await operator.deleteBlobCopy(hash, disk.id);
+      expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
+      expect(await kinds()).toEqual(["s3"]);
+
+      // The last copy: a minimum that reads refuses it 409.
+      const s3 = stores.data.data.find((store) => store.kind === "s3")!;
+      storeSettingRow(server.sqlitePath, "blob_min_copies", "many");
+      const first = await operator.deleteBlobCopy(hash, s3.id);
+      expect(first.status).toBe(500);
+      storeSettingRow(server.sqlitePath, "blob_min_copies", null);
+      const below = await operator.deleteBlobCopy(hash, s3.id);
+      expect(below.status).toBe(409);
+      expect(below.error?.error.code).toBe("copies_below_minimum");
+      expect(await kinds()).toEqual(["s3"]);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "ends a blob-orphans run in error and purges nothing while blob_cleanup_grace_ms does not read, and purges on the seeded grace once the row is gone",
+    async () => {
+      const { server, operator, working } = await boot(
+        "blob-store-unreadable-grace",
+        { ...DISK_ONLY, MARFA_BLOB_CLEANUP_GRACE_MS: "0" },
+      );
+      const upload = await working.uploadBlob(
+        bytesOf("nothing names these bytes, and the grace does not read", 100),
+        "text/plain",
+      );
+      expect(upload.status).toBe(201);
+      const hash = upload.data.hash;
+      const first = await runJob(operator, "blob-orphans");
+      expect(first.result).toEqual({ reported: 1, purged: 0 });
+
+      storeSettingRow(server.sqlitePath, "blob_cleanup_grace_ms", "soon");
+      const refused = await operator.runHousekeeping("blob-orphans");
+      expect(refused.status, JSON.stringify(refused.error)).toBe(200);
+      expect(refused.data.outcome).toBe("error");
+      expect((await operator.downloadBlob(hash)).status).toBe(200);
+
+      storeSettingRow(server.sqlitePath, "blob_cleanup_grace_ms", null);
+      const purged = await runJob(operator, "blob-orphans");
+      expect(purged.result).toEqual({ reported: 0, purged: 1 });
+      expect((await operator.downloadBlob(hash)).status).toBe(404);
     },
     FRESH_SERVER_TIMEOUT_MS,
   );

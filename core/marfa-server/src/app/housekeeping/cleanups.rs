@@ -48,7 +48,7 @@ async fn expire(
     let live = app.clone();
     app.db
         .write(Write::own(), move |tx| {
-            match cutoff(&live, retention, unit_ms) {
+            match cutoff(tx, &live, retention, unit_ms)? {
                 Some(before) => remove(tx, &before, BATCH),
                 None => Ok(0),
             }

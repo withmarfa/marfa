@@ -17,6 +17,9 @@ use crate::app::refusal::{Code, Refusal, Result};
 
 const ACTION: &str = "folder.status";
 
+/// The copies of one folder that one sign-in keeps a report for.
+pub const MOST_COPIES: i64 = 16;
+
 struct Copy {
     folder_store_id: String,
     sequence: i64,
@@ -60,6 +63,13 @@ fn problems_json(problems: &[(String, i64)]) -> Value {
     )
 }
 
+fn no_sign_in() -> Refusal {
+    Refusal::new(
+        Code::Forbidden,
+        "Only a key or an app grant has a sign-in to report under.",
+    )
+}
+
 /// A repeated or older sequence preserves the receipt time too.
 pub async fn report(
     app: &App,
@@ -72,14 +82,13 @@ pub async fn report(
         let tx = unit.tx();
         unit.caller.require_reach()?;
         readable_of(tx, &unit.caller, &folder_id, FOLDER_TYPE)?;
-        let by = match unit.caller.writer() {
-            Some(by) if by.kind != "local" => by,
-            _ => {
-                return Err(Refusal::new(
-                    Code::Forbidden,
-                    "A local command has no sign-in to report under.",
-                ));
-            }
+        let Some(by) = unit.caller.writer() else {
+            return Err(no_sign_in());
+        };
+        let (key_id, grant_id) = match by.kind.as_str() {
+            "key" => (Some(by.id.as_str()), None),
+            "app" => (None, Some(by.id.as_str())),
+            _ => return Err(no_sign_in()),
         };
         let held: Option<(i64, String)> = tx
             .query_row(
@@ -94,13 +103,23 @@ pub async fn report(
                 (false, sequence, received_at)
             }
             _ => {
+                if held.is_none() {
+                    tx.execute(
+                        "DELETE FROM folder_status WHERE folder_id = ?1 AND sign_in_kind = ?2 \
+                         AND sign_in_id = ?3 AND folder_store_id IN ( \
+                         SELECT folder_store_id FROM folder_status WHERE folder_id = ?1 \
+                         AND sign_in_kind = ?2 AND sign_in_id = ?3 \
+                         ORDER BY received_at DESC, folder_store_id LIMIT -1 OFFSET ?4)",
+                        params![folder_id, by.kind, by.id, MOST_COPIES - 1],
+                    )?;
+                }
                 let problems: Vec<(String, i64)> = report
                     .problems
                     .iter()
                     .map(|(code, count)| ((*code).to_string(), *count))
                     .collect();
                 tx.execute(
-                    "INSERT INTO folder_status (folder_id, sign_in_kind, sign_in_id, \
+                    "INSERT INTO folder_status (folder_id, key_id, grant_id, \
                      sign_in_name, folder_store_id, sequence, received_at, last_success_at, \
                      pending_uploads, pending_downloads, paused_removals, first_sync_waiting, \
                      problems) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) \
@@ -110,8 +129,8 @@ pub async fn report(
                      paused_removals = ?11, first_sync_waiting = ?12, problems = ?13",
                     params![
                         folder_id,
-                        by.kind,
-                        by.id,
+                        key_id,
+                        grant_id,
                         by.name,
                         report.folder_store_id,
                         report.sequence,
