@@ -814,7 +814,7 @@ Where an instance keeps a reserve of free space, if a recently authenticated dir
 
 Where an instance keeps a reserve of free space, if an entry of the archive in a `POST /restore` takes the volume that holds the disk store's folder below the reserve as it is read, then the server MUST answer `507 insufficient_storage`.
 
-**Reason:** a compressed archive says nothing of the size it expands to, so a body that fits can still inflate past the volume.
+**Reason:** a body need not say how long it is, and the volume can fill while it arrives, so the room is judged as each part is written as well as before the first.
 
 **Tests:** `compliance/disk-space-faults.test.ts › is answered 507 insufficient_storage and writes no row and no blob when an entry would take the volume inside the reserve`, `› is taken once the volume has the room, which is the witness for the refusal above`.
 

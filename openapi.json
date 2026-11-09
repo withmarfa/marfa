@@ -62208,7 +62208,7 @@
         },
         "responses": {
           "200": {
-            "description": "Returns the counts. Items and edges keep their IDs, versions and dates, and items keep their tags, extensions and history. Marfa restores an edge, and an item of a type you registered, as archived, even if its type now refuses it or is gone. Marfa leaves an existing item as it is when an archived one has its ID, natural key or link, and sets a setting, type icon, source name or connector state only where the instance has none. An archive holds no sign-in, keys, apps, webhooks or tombstones.",
+            "description": "Returns the counts. Items and edges keep their IDs, versions, dates and history, even if their type now refuses them or is gone. An item whose ID, natural key or link is taken is left as it is, and a setting, icon, source name or connector state is set only where none is. An archive holds no sign-in, keys, apps, webhooks or tombstones.",
             "content": {
               "application/json": {
                 "schema": {
@@ -62371,7 +62371,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: the body isn't a valid archive, lacks one of its four files (`details.entries`), repeats an entry, is at another version, has an invalid row, or has a file over 64 MiB.\n- `invalid_properties`: a `core` or `system` item breaks its type or its schedule can't unfold, or `strict_mode` refuses a property.\n- `invalid_schema`: an archived type is invalid or has an unknown key.\n- `inheritance_violation`: an archived type reshapes an inherited field.\n- `property_shadows_field`: an archived type has a field named like one every item has.",
+            "description": "- `validation_error`: the body isn't an archive, lacks or repeats an entry, is at another version, has an invalid row, or a line over 64 MiB.\n- `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.\n- `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.",
             "content": {
               "application/json": {
                 "schema": {

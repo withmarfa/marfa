@@ -184,6 +184,7 @@ impl App {
             let settings = app.clone();
             let written = app
                 .write(&caller, "restore_archive", move |unit| {
+                    let began = std::time::Instant::now();
                     unit.caller.require_direct()?;
                     unit.caller.require_recent(&started_at)?;
                     unit.fanning(false, |unit| {
@@ -326,6 +327,12 @@ impl App {
                             .then(|| stored::stage(tx, &settings))
                             .transpose()?;
                         faults.hold_writing(HOLD_RESTORE_COMMIT);
+                        tracing::info!(
+                            held_ms = began.elapsed().as_millis() as u64,
+                            imported,
+                            edges = edges.added,
+                            "A restore wrote its archive"
+                        );
                         Ok((answer, staged))
                     })
                 })
