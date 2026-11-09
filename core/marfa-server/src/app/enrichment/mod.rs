@@ -1,6 +1,5 @@
 mod queue;
 
-use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,7 +11,7 @@ use serde_json::json;
 
 use super::App;
 use super::access::Caller;
-use super::blobs::{Blob, Hash};
+use super::blobs::{Blob, Hash, Opened};
 use super::catalog::{self, Snapshot};
 use super::housekeeping::{Report, Run};
 use super::items::write::{Enriched, Offer, Offered, Written, apply_enrichment, offer};
@@ -319,13 +318,17 @@ async fn settle(app: &Arc<App>, plan: &Plan, seq: i64, hash: &Hash, fate: Fate) 
 
 /// The reading itself, on a thread of its own: the file is read in a process of its own too.
 async fn read_blocking(
-    file: File,
+    file: Opened,
     mime: String,
     options: Options,
 ) -> Result<std::result::Result<Reading, Unread>> {
-    tokio::task::spawn_blocking(move || marfa_enrichment::read(&file, &mime, &options))
-        .await
-        .map_err(blocked)
+    tokio::task::spawn_blocking(move || {
+        let read = marfa_enrichment::read(file.file(), &mime, &options);
+        file.close();
+        read
+    })
+    .await
+    .map_err(blocked)
 }
 
 /// One file. An `Err` is a fault of the server's own, and ends the run.
@@ -342,7 +345,7 @@ async fn one(app: &Arc<App>, plan: &Plan, seq: i64, stored: &str) -> Result<Coun
         return Ok(Count::None);
     };
     let held = app.open_held(&hash).await;
-    let (file, blob): (File, Blob) = match held {
+    let (file, blob): (Opened, Blob) = match held {
         Ok(Some(found)) => found,
         Ok(None) => return settle(app, plan, seq, &hash, Fate::Untried).await,
         Err(_) => return settle(app, plan, seq, &hash, Fate::Retry).await,
@@ -420,7 +423,7 @@ mod tests {
         (dir, App::start(settings).await.unwrap())
     }
 
-    async fn upload(app: &App, bytes: &[u8]) -> String {
+    async fn upload(app: &Arc<App>, bytes: &[u8]) -> String {
         let caller = Caller::local();
         let mut intake = app
             .begin_upload(Some(bytes.len() as u64), "text/plain".into())
@@ -438,7 +441,7 @@ mod tests {
         }
     }
 
-    async fn file(app: &App, bytes: &[u8]) -> (String, Hash) {
+    async fn file(app: &Arc<App>, bytes: &[u8]) -> (String, Hash) {
         let hash = upload(app, bytes).await;
         let put = Put {
             type_id: "core.file".into(),

@@ -284,7 +284,15 @@ When a request other than `OPTIONS` names a path no operation serves, and is nei
 
 When a request other than `OPTIONS` names a method no operation serves on a path that another method serves, and is not a `GET` or `POST` under `/auth/`, which the sign-in library answers, the server MUST answer `404 not_found` and not `405`.
 
-**Tests:** `compliance/unmatched-paths.test.ts › answers a method no door serves on a path another method serves 404 not_found, not 405`, `› answers a PATCH to an item's metadata 404 not_found, under an Idempotency-Key it then keeps no record of, and writes nothing`.
+**Tests:** `compliance/unmatched-paths.test.ts › answers a method no door serves on a path another method serves 404 not_found, not 405`, `› answers a PATCH to an item's metadata 404 not_found, under an Idempotency-Key it then keeps no record of, and writes nothing`, `› answers a method no door serves 404 not_found whatever instance it names`.
+
+### `errors/unmatched-options`
+
+When an `OPTIONS` request is not a preflight that `keys-and-oauth/page-origin-allowed`, `keys-and-oauth/origin-configured` or `keys-and-oauth/register-preflight` answers, the server MUST answer `404 not_found`.
+
+**Reason:** no operation takes `OPTIONS`, so a `204` to any other would say one does. A browser reads a preflight without `Access-Control-Allow-Origin` as a refusal whatever its status.
+
+**Tests:** `compliance/unmatched-paths.test.ts › answers an OPTIONS that no preflight rule answers 404 not_found, whether it names an origin nobody approved or none`.
 
 ### `errors/unmatched-reach`
 

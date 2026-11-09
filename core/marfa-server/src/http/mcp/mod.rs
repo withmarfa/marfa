@@ -26,19 +26,20 @@ use crate::app::refusal::{Code, Refusal};
 use results::{Outcome, Stop, call_result};
 use rpc::{Call, Entry, Era, Reply};
 
-const PATH: &str = "/mcp";
+use tools::Group;
 
 /// What a client is told about the server in its first message, at most 512 characters.
-const INSTRUCTIONS: &str = "Marfa is the person's own data store. Find and read with marfa_find and marfa_get, save with marfa_create (text, or a file by web address), change with marfa_update, and delete with marfa_delete. Read an item before changing it and send the version you read. marfa_delete only previews first: show the person what would go to the trash and ask before you confirm.";
+const INSTRUCTIONS: &str = "Marfa is the person's own data store. Call marfa_overview first. Find and read with marfa_find and marfa_get, save with marfa_create (text, or a file by web address), change with marfa_update, and delete with marfa_delete. Read an item before changing it and send the version you read. marfa_delete and marfa_revoke_key only preview first: show the person what would change and ask before you confirm.";
 
 const SERVER_NAME: &str = "marfa";
 const SERVER_TITLE: &str = "Marfa";
 const SERVER_INFO_KEY: &str = "io.modelcontextprotocol/serverInfo";
 
-fn resource_metadata(app: &App) -> String {
+fn resource_metadata(app: &App, group: Group) -> String {
     format!(
-        "{}/.well-known/oauth-protected-resource{PATH}",
-        app.addresses().sign_in().origin()
+        "{}/.well-known/oauth-protected-resource{}",
+        app.addresses().sign_in().origin(),
+        group.path()
     )
 }
 
@@ -49,10 +50,13 @@ fn challenged(mut response: Response, challenge: &str) -> Response {
     response
 }
 
-fn unauthenticated(app: &App) -> Response {
+fn unauthenticated(app: &App, group: Group) -> Response {
     challenged(
         refusal_answer(&unauthorized()),
-        &format!("Bearer resource_metadata=\"{}\"", resource_metadata(app)),
+        &format!(
+            "Bearer resource_metadata=\"{}\"",
+            resource_metadata(app, group)
+        ),
     )
 }
 
@@ -90,8 +94,8 @@ fn server_info() -> Value {
     })
 }
 
-fn capabilities(caller: &Caller) -> Value {
-    if tools::any_offered(caller) {
+fn capabilities(caller: &Caller, group: Group) -> Value {
+    if tools::any_offered(caller, group) {
         json!({ "tools": {} })
     } else {
         json!({})
@@ -106,23 +110,23 @@ fn complete(era: Era, mut result: Map<String, Value>) -> Value {
     Value::Object(result)
 }
 
-fn initialize(caller: &Caller, call: &Call) -> Value {
+fn initialize(caller: &Caller, group: Group, call: &Call) -> Value {
     let asked = call.params.get("protocolVersion").and_then(Value::as_str);
     let version = asked
         .filter(|version| rpc::LEGACY.contains(version))
         .unwrap_or(rpc::LEGACY[0]);
     json!({
         "protocolVersion": version,
-        "capabilities": capabilities(caller),
+        "capabilities": capabilities(caller, group),
         "serverInfo": server_info(),
         "instructions": INSTRUCTIONS,
     })
 }
 
-fn discover(caller: &Caller) -> Value {
+fn discover(caller: &Caller, group: Group) -> Value {
     let mut result = Map::new();
     result.insert("supportedVersions".into(), json!([rpc::MODERN]));
-    result.insert("capabilities".into(), capabilities(caller));
+    result.insert("capabilities".into(), capabilities(caller, group));
     result.insert("instructions".into(), INSTRUCTIONS.into());
     result.insert("ttlMs".into(), 0.into());
     result.insert("cacheScope".into(), "private".into());
@@ -130,9 +134,9 @@ fn discover(caller: &Caller) -> Value {
     complete(Era::Modern, result)
 }
 
-fn listing(era: Era, caller: &Caller) -> Value {
+fn listing(era: Era, caller: &Caller, group: Group) -> Value {
     let mut result = Map::new();
-    result.insert("tools".into(), Value::Array(tools::listing(caller)));
+    result.insert("tools".into(), Value::Array(tools::listing(caller, group)));
     if era == Era::Modern {
         result.insert("ttlMs".into(), 0.into());
         result.insert("cacheScope".into(), "private".into());
@@ -162,7 +166,7 @@ fn missing_scope(app: &App, stop: &Stop) -> Option<String> {
         .then_some(scope)
 }
 
-fn step_up(app: &App, scope: &str, stop: &Stop) -> Response {
+fn step_up(app: &App, group: Group, scope: &str, stop: &Stop) -> Response {
     let refusal = stop.refusal.clone().unwrap_or_else(|| {
         Refusal::new(
             Code::Forbidden,
@@ -173,7 +177,7 @@ fn step_up(app: &App, scope: &str, stop: &Stop) -> Response {
         refusal_answer(&refusal),
         &format!(
             "Bearer error=\"insufficient_scope\", scope=\"{scope}\", resource_metadata=\"{}\"",
-            resource_metadata(app)
+            resource_metadata(app, group)
         ),
     )
 }
@@ -190,7 +194,7 @@ fn faulted(mut response: Response, stop: &Stop) -> Response {
     response
 }
 
-async fn tool_call(app: &Arc<App>, caller: &Caller, call: Call) -> Response {
+async fn tool_call(app: &Arc<App>, caller: &Caller, group: Group, call: Call) -> Response {
     let Call {
         id,
         params,
@@ -214,8 +218,11 @@ async fn tool_call(app: &Arc<App>, caller: &Caller, call: Call) -> Response {
             .into_response();
         }
     };
-    let Some(outcome): Option<Outcome> =
-        provenance::through("mcp", tools::call(app, caller, name, arguments, exact)).await
+    let Some(outcome): Option<Outcome> = provenance::through(
+        "mcp",
+        tools::call(app, caller, group, name, arguments, exact),
+    )
+    .await
     else {
         return Reply::in_band(id, rpc::INVALID_PARAMS, format!("Unknown tool: {name}"))
             .into_response();
@@ -224,7 +231,7 @@ async fn tool_call(app: &Arc<App>, caller: &Caller, call: Call) -> Response {
         && !stop.wrote
         && let Some(scope) = missing_scope(app, stop)
     {
-        return step_up(app, &scope, stop);
+        return step_up(app, group, &scope, stop);
     }
     let mut result = match call_result(&outcome) {
         Value::Object(result) => result,
@@ -240,13 +247,15 @@ async fn tool_call(app: &Arc<App>, caller: &Caller, call: Call) -> Response {
     }
 }
 
-async fn answer(app: &Arc<App>, caller: &Caller, call: Call) -> Response {
+async fn answer(app: &Arc<App>, caller: &Caller, group: Group, call: Call) -> Response {
     let reply = match (call.era, call.method.as_str()) {
         (_, "ping") => Reply::result(call.id, complete(call.era, Map::new())),
-        (Era::Legacy, "initialize") => Reply::result(call.id.clone(), initialize(caller, &call)),
-        (Era::Modern, "server/discover") => Reply::result(call.id, discover(caller)),
-        (era, "tools/list") => Reply::result(call.id, listing(era, caller)),
-        (_, "tools/call") => return tool_call(app, caller, call).await,
+        (Era::Legacy, "initialize") => {
+            Reply::result(call.id.clone(), initialize(caller, group, &call))
+        }
+        (Era::Modern, "server/discover") => Reply::result(call.id, discover(caller, group)),
+        (era, "tools/list") => Reply::result(call.id, listing(era, caller, group)),
+        (_, "tools/call") => return tool_call(app, caller, group, call).await,
         _ => Reply::in_band(
             call.id,
             rpc::METHOD_NOT_FOUND,
@@ -256,14 +265,14 @@ async fn answer(app: &Arc<App>, caller: &Caller, call: Call) -> Response {
     reply.into_response()
 }
 
-async fn post(State(app): State<Arc<App>>, request: Request) -> Response {
+async fn post(app: Arc<App>, group: Group, request: Request) -> Response {
     let (mut parts, body) = request.into_parts();
     if !origin_allowed(&app, &parts.headers).await {
         return foreign_origin();
     }
     let caller = match identify(&mut parts, &app).await {
         Ok(Some(caller @ (Caller::Key(_) | Caller::App { .. }))) => caller,
-        Ok(_) => return unauthenticated(&app),
+        Ok(_) => return unauthenticated(&app, group),
         Err(refusal) => return refusal_answer(&refusal),
     };
     if let Err(refusal) = query::only(&parts.uri, &[]) {
@@ -288,7 +297,7 @@ async fn post(State(app): State<Arc<App>>, request: Request) -> Response {
             *accepted.status_mut() = StatusCode::ACCEPTED;
             accepted
         }
-        Entry::Call(call) => answer(&app, &caller, call).await,
+        Entry::Call(call) => answer(&app, &caller, group, call).await,
     }
 }
 
@@ -321,9 +330,36 @@ async fn only_post() -> Response {
     response
 }
 
+async fn post_items(State(app): State<Arc<App>>, request: Request) -> Response {
+    post(app, Group::Items, request).await
+}
+
+async fn post_schema(State(app): State<Arc<App>>, request: Request) -> Response {
+    post(app, Group::Schema, request).await
+}
+
+async fn post_admin(State(app): State<Arc<App>>, request: Request) -> Response {
+    post(app, Group::Admin, request).await
+}
+
 pub fn doors() -> super::Routes {
     use super::doors::{Doors, post as post_to};
-    Doors::new().route(PATH, post_to(post).get(only_post).delete(only_post))
+    Doors::new()
+        .route(
+            Group::Items.path(),
+            post_to(post_items).get(only_post).delete(only_post),
+        )
+        .refusing(axum::http::Method::DELETE, Group::Items.path())
+        .route(
+            Group::Schema.path(),
+            post_to(post_schema).get(only_post).delete(only_post),
+        )
+        .refusing(axum::http::Method::DELETE, Group::Schema.path())
+        .route(
+            Group::Admin.path(),
+            post_to(post_admin).get(only_post).delete(only_post),
+        )
+        .refusing(axum::http::Method::DELETE, Group::Admin.path())
 }
 
 #[cfg(test)]

@@ -334,8 +334,11 @@ fn exact_numbers(body: &[u8]) -> Result<(), Refusal> {
     let Ok(text) = std::str::from_utf8(body) else {
         return Ok(());
     };
-    integers::refuse_inexact_integers_under(text, &["params", "arguments", "properties"])
-        .map_err(ruled)
+    for bag in ["properties", "items"] {
+        integers::refuse_inexact_integers_under(text, &["params", "arguments", bag])
+            .map_err(ruled)?;
+    }
+    Ok(())
 }
 
 fn unsupported(id: Value, requested: Option<&str>) -> Reply {

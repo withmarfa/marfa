@@ -412,7 +412,7 @@ fn web_uri(object: &Map<String, Value>, name: &str) -> Reading<Option<String>> {
     Ok(Some(uri.to_string()))
 }
 
-/// RFC 8707 resources are validated here; each token request sets its own audience.
+/// RFC 8707 section 2; the token request supplies the audience.
 fn check_resources(object: &Map<String, Value>) -> Reading<()> {
     for resource in texts(object, "resources")?.unwrap_or_default() {
         let absolute = redirect::is_plain(resource)

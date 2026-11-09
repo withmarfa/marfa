@@ -64,6 +64,19 @@ pub async fn set_fault(State(app): State<Arc<App>>, body: JsonBody) -> Answer {
 }
 
 #[derive(Deserialize)]
+pub struct Inspecting {
+    hash: Option<String>,
+}
+
+pub async fn inspect_stores(
+    State(app): State<Arc<App>>,
+    Query(inspecting): Query<Inspecting>,
+) -> Answer {
+    let found = app.inspect_stores(inspecting.hash.as_deref()).await?;
+    Ok(json_answer(StatusCode::OK, &found))
+}
+
+#[derive(Deserialize)]
 pub struct Clearing {
     name: Option<String>,
 }

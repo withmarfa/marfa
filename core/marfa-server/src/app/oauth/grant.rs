@@ -12,6 +12,7 @@ use crate::app::catalog::Catalog;
 use crate::app::items::write::{Change, Put, Update, apply_server_own};
 use crate::app::refusal::{Refusal, Result};
 use crate::app::unit::Unit;
+use crate::app::webhooks;
 
 const TYPE: &str = "system.connection";
 pub(super) const CONSENT_SOURCE: &str = "marfa/oauth2/consent";
@@ -216,6 +217,7 @@ pub(super) fn end(
     };
     store::end_grant_credentials(tx, client_id, user_id, now)?;
     store::withdraw_consent(tx, client_id, user_id, now)?;
+    webhooks::forget_grant(tx, &consent.grant_id)?;
     if let Some(version) = version_of(unit, &consent.grant_id)? {
         update_item(
             unit,

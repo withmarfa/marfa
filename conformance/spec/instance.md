@@ -152,7 +152,7 @@ When a write names `X-Marfa-Instance-Id` and meets more than one of the answers 
 
 **Reason:** a write sent to another instance is refused for that alone, so the refusal says nothing about the body, the rows it names or the credential's reach there.
 
-**Tests:** `compliance/instance-header.test.ts › answers 401, or 400 to a body nested too deep, before it judges the header, and judges it before the write's own refusals`, `› keeps no refusal under an Idempotency-Key, and replays the first answer whatever instance the repeat names`.
+**Tests:** `compliance/instance-header.test.ts › answers 401, or 400 to a body nested too deep, before it judges the header, and judges it before the write's own refusals`, `› keeps no refusal under an Idempotency-Key, and replays the first answer whatever instance the repeat names`, `› refuses another instance on a conditional read before it judges the read's reach`.
 
 ### `instance/write-instance-not-recorded`
 
@@ -802,9 +802,9 @@ When the server has sent the `stream_incomplete` frame on a stream because it is
 
 ### `instance/stop-waits-for-work`
 
-When the server is stopped, the server MUST let the bulk action and the housekeeping runs in flight, the webhook deliveries among them, finish before it closes its storage, unless a run outlives the stop's wait for it.
+When the server is stopped, the server MUST let the bulk action, the housekeeping runs and the webhook delivery attempts in flight finish before it closes its storage, unless one outlives the stop's wait for it.
 
-**Reason:** a run cut off mid-write leaves its record unwritten.
+**Reason:** a run or an attempt cut off mid-write leaves its record unwritten. An attempt the stop's wait cuts off stays `pending` and is made again after the next start.
 
 **Tests:** `compliance/stop-waits-for-work.test.ts › lets the bulk action and the housekeeping run finish before the storage closes, and exits 0`, `compliance/stop-webhook.test.ts › records a webhook delivery released by shutdown before closing storage`.
 

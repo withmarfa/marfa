@@ -422,7 +422,7 @@ async fn a_shipped_file_missing_tables_and_holding_no_rows_is_completed() {
         .await;
     Connection::open(&place.file)
         .unwrap()
-        .execute_batch("DROP TABLE items; DROP TABLE audit_log;")
+        .execute_batch("DELETE FROM webhook_position; DROP TABLE items; DROP TABLE audit_log;")
         .unwrap();
 
     Db::open(&options(&place.file, MIGRATIONS), Arc::default())

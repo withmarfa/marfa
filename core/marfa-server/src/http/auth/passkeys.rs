@@ -19,6 +19,7 @@ use crate::app::{App, instance};
 use crate::http::answer::{Answer, json_answer};
 use crate::http::body::JsonBody;
 use crate::http::caller::OnPage;
+use crate::http::named_instance;
 use crate::http::pages::{self, OwnerPasskey, OwnerPasskeys};
 
 const REGISTRATION_FIELDS: [&str; 2] = ["name", "response"];
@@ -123,13 +124,16 @@ pub async fn list(State(app): State<Arc<App>>, OnPage(caller): OnPage) -> Answer
     ))
 }
 
+/// The owner's session is no credential to the instance header's layer, so this door judges it.
 pub async fn rename(
     State(app): State<Arc<App>>,
     Path(id): Path<String>,
+    headers: HeaderMap,
     OnPage(caller): OnPage,
     body: JsonBody,
 ) -> Answer {
     let caller = caller.ok_or_else(unauthorized)?;
+    named_instance::judge(&app, &headers)?;
     let body = body.object(&RENAME_FIELDS).await?;
     let name = text_field(&body, "name")?;
     let renamed = passkeys::rename(&app, &caller, id, name).await?;
@@ -139,9 +143,11 @@ pub async fn rename(
 pub async fn remove(
     State(app): State<Arc<App>>,
     Path(id): Path<String>,
+    headers: HeaderMap,
     OnPage(caller): OnPage,
 ) -> Answer {
     let caller = caller.ok_or_else(unauthorized)?;
+    named_instance::judge(&app, &headers)?;
     passkeys::remove(&app, &caller, id).await?;
     Ok(json_answer(StatusCode::OK, &json!({ "ok": true })))
 }

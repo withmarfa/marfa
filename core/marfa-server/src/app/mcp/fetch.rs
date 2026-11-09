@@ -1,7 +1,7 @@
 //! Fetches untrusted URLs through public, pinned addresses without redirects.
 
 use std::io::Read;
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -9,12 +9,13 @@ use sha2::{Digest, Sha256};
 use tokio::runtime::Handle;
 use ureq::Agent;
 use ureq::unversioned::transport::DefaultConnector;
-use url::{Host, Url};
+use url::Url;
 
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::blobs::{Blob, DEFAULT_TYPE};
-use crate::app::oauth::metadata_document::{Lookup, Pinned, SystemLookup, is_public};
+use crate::app::oauth::metadata_document::Pinned;
+use crate::app::outbound::{self, Reach};
 use crate::app::provenance;
 use crate::app::refusal::Refusal;
 use crate::settings::registry::{
@@ -29,7 +30,6 @@ pub const PER_WINDOW: u64 = 30;
 
 const CHUNK: usize = 64 * 1024;
 const MAX_HEADER_BYTES: usize = 16 * 1024;
-const LOOKUP_LIMIT: Duration = Duration::from_secs(5);
 const MOST_ADDRESSES: usize = 16;
 const MAX_FILE_NAME: usize = 200;
 
@@ -138,36 +138,17 @@ fn checked(raw: &str) -> Result<Url, Reason> {
 }
 
 /// Every DNS answer must be public; only checked addresses may be reached.
-fn resolved(app: &App, url: &Url) -> Result<Vec<SocketAddr>, Reason> {
+fn resolved(app: &App, handle: &Handle, url: &Url) -> Result<Vec<SocketAddr>, Reason> {
     let port = url.port_or_known_default().ok_or(Reason::BadUrl)?;
-    let (judged, reached): (Vec<IpAddr>, Vec<IpAddr>) = match url.host() {
-        Some(Host::Ipv4(v4)) => (vec![IpAddr::V4(v4)], vec![IpAddr::V4(v4)]),
-        Some(Host::Ipv6(v6)) => (vec![IpAddr::V6(v6)], vec![IpAddr::V6(v6)]),
-        Some(Host::Domain(name)) => match app.faults.resolve(name) {
-            Some(scripted) => (scripted.judged, scripted.reached),
-            None => {
-                let looked = SystemLookup {
-                    limit: LOOKUP_LIMIT,
-                }
-                .lookup(name, port)
-                .map_err(|_| Reason::Unreachable)?;
-                let ips: Vec<IpAddr> = looked.iter().map(SocketAddr::ip).collect();
-                (ips.clone(), ips)
-            }
-        },
-        None => return Err(Reason::BadUrl),
-    };
-    if judged.is_empty() || reached.is_empty() {
-        return Err(Reason::Unreachable);
+    match handle.block_on(outbound::reach(&app.faults, url, false)) {
+        Reach::Targets(targets) => Ok(targets
+            .into_iter()
+            .take(MOST_ADDRESSES)
+            .map(|target| SocketAddr::new(target.connected, port))
+            .collect()),
+        Reach::Unresolved => Err(Reason::Unreachable),
+        Reach::NotPublic => Err(Reason::NotPublic),
     }
-    if !judged.iter().all(|address| is_public(*address)) {
-        return Err(Reason::NotPublic);
-    }
-    Ok(reached
-        .into_iter()
-        .take(MOST_ADDRESSES)
-        .map(|address| SocketAddr::new(address, port))
-        .collect())
 }
 
 /// The name the host gives the file, with no directory in it.
@@ -206,14 +187,14 @@ struct Limits {
 
 /// Runs on a blocking thread: the body is read there, and handed to the store a chunk at a time.
 fn stream(
-    app: &App,
+    app: &Arc<App>,
     handle: &Handle,
     caller: &Caller,
     url: &Url,
     mime_hint: Option<String>,
     limits: &Limits,
 ) -> Result<Fetched, Failed> {
-    let addresses = resolved(app, url).map_err(Failed::Not)?;
+    let addresses = resolved(app, handle, url).map_err(Failed::Not)?;
     let started = Instant::now();
     let config = Agent::config_builder()
         .proxy(None)

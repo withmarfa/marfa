@@ -5,7 +5,8 @@ mod expiry;
 use rusqlite::{Row, ToSql, Transaction, params, params_from_iter};
 use serde_json::{Map, Value};
 
-use super::access::Caller;
+use super::App;
+use super::access::{Caller, Permission};
 use super::refusal::{Refusal, Result};
 
 pub use expiry::expire;
@@ -58,6 +59,7 @@ pub struct Entry<'a> {
     pub action: &'a str,
     pub resource_type: &'a str,
     pub resource_id: Option<&'a str>,
+    /// `None` is recorded as an empty object, which is what an entry with nothing more to say answers.
     pub details: Option<Value>,
 }
 
@@ -85,7 +87,10 @@ pub fn record_from(
             entry.resource_type,
             entry.resource_id,
             client_ip,
-            entry.details.map(|details| details.to_string()),
+            entry
+                .details
+                .unwrap_or_else(|| Value::Object(Map::new()))
+                .to_string(),
         ],
     )?;
     Ok(())
@@ -255,6 +260,22 @@ pub fn page(tx: &Transaction<'_>, filter: &Filter) -> Result<(Vec<Value>, Option
         .then(|| rows.last().map(|(_, cursor)| cursor.clone()))
         .flatten();
     Ok((rows.into_iter().map(|(entry, _)| entry).collect(), next))
+}
+
+/// A page of the log, read for a credential that holds `audit.read` on the state the read sees.
+pub async fn list(
+    app: &App,
+    caller: &Caller,
+    filter: Filter,
+) -> Result<(Vec<Value>, Option<String>)> {
+    let caller = caller.clone();
+    let at = app.clock.stamp();
+    app.db
+        .read(move |tx| {
+            caller.current(tx, &at)?.require(Permission::AuditRead)?;
+            page(tx, &filter)
+        })
+        .await
 }
 
 #[cfg(test)]

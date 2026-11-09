@@ -11,6 +11,7 @@ use crate::app::auth::Visit;
 use crate::app::auth::owner::{self, UPDATE_FIELDS, Update};
 use crate::http::answer::{Answer, json_answer};
 use crate::http::body::JsonBody;
+use crate::http::named_instance;
 
 pub async fn read(State(app): State<Arc<App>>, caller: Caller) -> Answer {
     caller.require_local()?;
@@ -28,6 +29,7 @@ pub async fn claim(
     body: JsonBody,
 ) -> Answer {
     admit_claim(&app, &headers, &visit).await?;
+    named_instance::judge(&app, &headers)?;
     let fields = body.open_object().await?;
     let (found, session) = make_claim(&app, &headers, visit, fields).await?;
     let mut answer = json_answer(

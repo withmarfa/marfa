@@ -5644,50 +5644,20 @@
           "scan": {
             "type": "object",
             "properties": {
-              "events_read": {
-                "type": "integer",
-                "description": "How many event items this request read. It grows with the size of the calendar more than with the window."
-              },
-              "occurrences": {
-                "type": "integer",
-                "description": "How many occurrences `data` holds."
-              },
-              "max_occurrences": {
-                "type": "integer",
-                "description": "The most occurrences a window may hold; a window with more is refused. Compare it with `occurrences` to see a calendar approaching it."
-              },
               "series_errors": {
                 "type": "integer",
                 "description": "How many failures Marfa found in the recurrence rules this request read, as entries of `series_errors`, including any the list leaves out. It covers only the event types read, so `0` says nothing of the rest."
               },
-              "max_series_errors": {
-                "type": "integer",
-                "description": "The most entries `series_errors` holds. Past it, the list stops and `series_errors_truncated` is `true`; the read still succeeds."
-              },
-              "unproductive_iterations": {
-                "type": "integer",
-                "description": "How many rule iterations this request spent on expansions that returned no occurrence, such as a rule that ended before the window. A rule that fails before it iterates adds nothing here."
-              },
-              "max_unproductive_iterations": {
-                "type": "integer",
-                "description": "The most `unproductive_iterations` a request spends before it stops expanding. Iterations that return occurrences don't count, so a busy calendar doesn't reach it."
-              },
               "series_unexpanded": {
                 "type": "integer",
-                "description": "How many series didn't finish expanding: stopped by their own bound, and listed in `series_errors`, or never reached once `max_unproductive_iterations` was spent. Above `0`, `expansion_incomplete` is `true`."
+                "description": "How many series didn't finish expanding: stopped by their own bound, and listed in `series_errors`, or never reached once the series that produced nothing had used up the request's share of work. Above `0`, `expansion_incomplete` is `true`."
               }
             },
             "required": [
-              "events_read",
-              "occurrences",
-              "max_occurrences",
               "series_errors",
-              "max_series_errors",
-              "unproductive_iterations",
-              "max_unproductive_iterations",
               "series_unexpanded"
             ],
-            "description": "What this read cost, and the limits that would stop it."
+            "description": "How many rules Marfa couldn't apply or finish."
           },
           "series_errors": {
             "type": "array",
@@ -5712,7 +5682,7 @@
           },
           "series_errors_truncated": {
             "type": "boolean",
-            "description": "`true` when `series_errors` stops at `scan.max_series_errors` entries and leaves failures out. `scan.series_errors` has the total. Absent otherwise."
+            "description": "`true` when `series_errors` stops at 500 entries and leaves failures out. `scan.series_errors` has the total. Absent otherwise."
           },
           "expansion_incomplete": {
             "type": "boolean",
@@ -5725,7 +5695,7 @@
           "window",
           "scan"
         ],
-        "description": "The occurrences in a time window, with what reading them cost and any rules Marfa couldn't apply."
+        "description": "The occurrences in a time window, with any rules Marfa couldn't apply."
       },
       "Occurrence": {
         "type": "object",
@@ -9669,7 +9639,7 @@
               "string",
               "null"
             ],
-            "description": "The type, with its subtypes, or the pattern whose item events Marfa sends. Absent when Marfa sends item events of every type. Edge events aren't filtered."
+            "description": "The type, with its subtypes, or the pattern whose item events Marfa sends. `null` when Marfa sends item events of every type. Edge events aren't filtered."
           },
           "secret": {
             "type": "string",
@@ -9692,6 +9662,7 @@
           "id",
           "url",
           "events",
+          "type_filter",
           "secret",
           "active",
           "created_at",
@@ -18020,10 +17991,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Only return events of this type, or of the event types a wildcard matches."
+              "description": "Only return events of this type, or of the event types a wildcard matches. Names one type."
             },
             "required": false,
-            "description": "Only return events of this type, or of the event types a wildcard matches.",
+            "description": "Only return events of this type, or of the event types a wildcard matches. Names one type.",
             "name": "type",
             "in": "query"
           }
@@ -18057,7 +18028,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `from` or `to` is missing.\n- `unknown_type`: `type` isn't registered.\n- `validation_error`: a time is unreadable, `to` isn't after `from`, the window is over 400 days, `type` is malformed, or the window holds more than 5,000 occurrences. Then `details` has `max_occurrences` and `found`, and `expansion_incomplete` if a series also stopped expanding.",
+            "description": "- `missing_required_field`: `from` or `to` is missing.\n- `unknown_type`: `type` isn't registered.\n- `validation_error`: a time is unreadable, `to` isn't after `from`, the window is over 400 days, `type` is malformed, or the window holds more than 5,000 occurrences. Then `details` has `max_occurrences`, or `max_days` for the window.",
             "content": {
               "application/json": {
                 "schema": {
@@ -29245,7 +29216,8 @@
             },
             "description": "The reach from a copy stream, for a working copy. Marfa reads the current data and checks the reach in one snapshot, and returns `409 reach_changed` if it has changed. Leave it out for an ordinary read."
           }
-        ]
+        ],
+        "x-marfa-local-command": true
       },
       "post": {
         "operationId": "registerType",
@@ -29610,7 +29582,8 @@
             },
             "description": "The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers."
           }
-        ]
+        ],
+        "x-marfa-local-command": true
       }
     },
     "/types/{id}": {
@@ -29909,7 +29882,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       },
       "put": {
         "operationId": "replaceType",
@@ -30314,7 +30288,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       },
       "delete": {
         "operationId": "deleteType",
@@ -31484,7 +31459,8 @@
             },
             "description": "The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers."
           }
-        ]
+        ],
+        "x-marfa-local-command": true
       }
     },
     "/types/{id}/icon": {
@@ -32608,7 +32584,8 @@
             },
             "description": "The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers."
           }
-        ]
+        ],
+        "x-marfa-local-command": true
       },
       "get": {
         "operationId": "listEdgeTypes",
@@ -32880,7 +32857,8 @@
             },
             "description": "The reach from a copy stream, for a working copy. Marfa reads the current data and checks the reach in one snapshot, and returns `409 reach_changed` if it has changed. Leave it out for an ordinary read."
           }
-        ]
+        ],
+        "x-marfa-local-command": true
       }
     },
     "/edge-types/{id}": {
@@ -33261,7 +33239,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/blobs": {
@@ -36271,7 +36250,7 @@
           "Webhooks"
         ],
         "summary": "List webhooks",
-        "description": "Returns webhooks and their makers, with secrets redacted. The private local command sees every subscription; keys and apps see only their own.",
+        "description": "Returns webhooks and their makers, with secrets redacted. The local command sees every subscription; keys and apps see only their own.",
         "security": [
           {
             "bearerAuth": []
@@ -36529,7 +36508,7 @@
           "Webhooks"
         ],
         "summary": "Get a webhook",
-        "description": "Returns a webhook and its maker, with its secret redacted. The private local command can read any subscription; keys and apps can read only their own.",
+        "description": "Returns a webhook and its maker, with its secret redacted. The local command can read any subscription; keys and apps can read only their own.",
         "security": [
           {
             "bearerAuth": []
@@ -37593,7 +37572,7 @@
           "Webhooks"
         ],
         "summary": "List webhook deliveries",
-        "description": "Returns delivery metadata without event payloads, newest first. The private local command can inspect any subscription; keys and apps can inspect only their own.",
+        "description": "Returns delivery metadata without event payloads, newest first. The local command can inspect any subscription; keys and apps can inspect only their own.",
         "security": [
           {
             "bearerAuth": []
@@ -37916,7 +37895,7 @@
           "Webhooks"
         ],
         "summary": "Redeliver a webhook delivery",
-        "description": "Redelivers a failed delivery, queuing it again at the current URL. The private local command can retry any subscription; keys and apps can retry only their own.",
+        "description": "Redelivers a failed delivery, queuing it again at the current URL. The local command can retry any subscription; keys and apps can retry only their own.",
         "security": [
           {
             "bearerAuth": []
@@ -38103,7 +38082,7 @@
             }
           },
           "409": {
-            "description": "- `conflict`: Marfa can't send it again. `details.reason` is the first that applies: `webhook_inactive`; `credential_unavailable`, the registering key or app is gone or lacks `webhooks.manage`; `delivery_not_failed`; `delivery_expired`, past audit retention; or `delivery_not_retained`, its event is no longer held.",
+            "description": "- `conflict`: Marfa can't send it again. `details.reason` is the first that applies: `webhook_inactive`; `credential_unavailable`, the registering key or app is gone or lacks `webhooks.manage`; `delivery_not_failed`; or `delivery_expired`, past audit retention.",
             "content": {
               "application/json": {
                 "schema": {
@@ -40691,7 +40670,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/views": {
@@ -53172,7 +53152,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/auth/grants/{id}": {
@@ -53873,7 +53854,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/owner": {
@@ -55040,7 +55022,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       },
       "patch": {
         "operationId": "updateProfile",
@@ -55411,7 +55394,8 @@
             },
             "description": "The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers."
           }
-        ]
+        ],
+        "x-marfa-local-command": true
       }
     },
     "/owner/picture": {
@@ -56462,7 +56446,8 @@
             },
             "description": "The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers."
           }
-        ]
+        ],
+        "x-marfa-local-command": true
       }
     },
     "/owner/sign-ins": {
@@ -59018,7 +59003,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       },
       "put": {
         "operationId": "replaceConfig",
@@ -59977,7 +59963,8 @@
             },
             "description": "The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers."
           }
-        ]
+        ],
+        "x-marfa-local-command": true
       }
     },
     "/health": {
@@ -60805,7 +60792,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/audit": {
@@ -61164,7 +61152,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/housekeeping": {
@@ -62830,7 +62819,7 @@
     },
     {
       "name": "Webhooks",
-      "description": "Changes sent to a URL you choose, and each delivery's record.",
+      "description": "Changes sent to a URL you choose, and each delivery's record. Keys and apps use these endpoints; the owner's browser session can't.",
       "x-operation-order": [
         "createWebhook",
         "getWebhook",
