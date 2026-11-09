@@ -19989,7 +19989,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or carries only an owner's browser session. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
