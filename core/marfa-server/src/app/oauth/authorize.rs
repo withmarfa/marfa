@@ -397,7 +397,7 @@ fn issue_code(app: &App, unit: &Unit<'_, '_>, ticket: Ticket<'_>) -> Result<Stri
     store::insert_code(
         unit.tx(),
         &Code {
-            digest: digest_of(&app.settings.start.api_key_salt, &code)?,
+            digest: digest_of(&app.settings.start.key_salt, &code)?,
             client_id: ticket.client_id.to_string(),
             user_id: session.user_id.clone(),
             session_id: session.id.clone(),

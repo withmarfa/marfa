@@ -93,10 +93,10 @@ impl App {
     pub async fn start(accepted: Accepted) -> Result<Arc<App>, Failure> {
         let settings = accepted.open_secrets()?;
         let start = settings.start.clone();
-        let faults = Arc::new(Faults::default());
+        let faults = Arc::<Faults>::default();
         let options = Options {
             path: start.database.clone(),
-            busy_budget: start.busy_budget,
+            write_wait: start.write_wait,
             readers: READERS,
             migrations: MIGRATIONS,
         };
@@ -111,7 +111,10 @@ impl App {
         let cursor_secret = instance::cursor_secret(&db).await.map_err(unreadable)?;
         let mcp = mcp::Mcp::new(&start.auth_secret)
             .map_err(|refused| Failure::start(refused.to_string()))?;
+        #[cfg(feature = "test-hooks")]
         let clock = Arc::new(Clock::new(start.clock_offset_ms));
+        #[cfg(not(feature = "test-hooks"))]
+        let clock = Arc::new(Clock::default());
         let at = clock.stamp();
         let blobs = Blobs::open(
             &db,
@@ -191,12 +194,18 @@ impl App {
         Addresses::in_snapshot(&self.settings, snapshot, self.bound_port.get().copied())
     }
 
-    /// `PORT=0` leaves the port to the operating system.
+    /// `MARFA_PORT=0` leaves the port to the operating system.
     pub fn record_bound_port(&self, port: u16) {
         let _ = self.bound_port.set(port);
     }
 
+    #[cfg(feature = "test-hooks")]
     pub fn contract(&self) -> u32 {
         self.settings.start.contract_version.unwrap_or(0)
+    }
+
+    #[cfg(not(feature = "test-hooks"))]
+    pub fn contract(&self) -> u32 {
+        0
     }
 }

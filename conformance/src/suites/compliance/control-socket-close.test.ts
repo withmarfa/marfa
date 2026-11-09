@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, expect, it } from "vitest";
+import { typeScriptSettingNames } from "../../../scripts/marfa-server.js";
 import { controlRequest } from "../../utils/control-request.js";
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -44,12 +45,11 @@ syncBuiltinESMExports();
   const env = {
     PATH: process.env.PATH,
     HOME: process.env.HOME,
-    NODE_ENV: "test",
     MARFA_AUTH_SECRET: randomBytes(32).toString("hex"),
     MARFA_CONTROL_ONLY: "true",
     MARFA_CONTROL_SOCKET: socket,
-    SQLITE_PATH: join(root, "marfa.db"),
-    BLOB_PATH: join(root, "blobs"),
+    MARFA_DATABASE_PATH: join(root, "marfa.db"),
+    MARFA_BLOB_PATH: join(root, "blobs"),
     MARFA_ENRICHMENT_ENABLED: "false",
     MARFA_ENRICHMENT_OCR_ENABLED: "false",
   };
@@ -61,7 +61,7 @@ syncBuiltinESMExports();
         resolve("../packages/server/dist/index.js"),
       ],
       {
-        env,
+        env: typeScriptSettingNames(env),
         stdio: ["ignore", "pipe", "pipe"],
       },
     );

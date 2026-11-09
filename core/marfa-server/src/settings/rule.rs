@@ -1,17 +1,17 @@
 const BOOLEAN_RULE: &str = "must be true or false (also 1/0, yes/no, on/off)";
 
-pub const SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+pub const HOUR_MS: u64 = 3_600_000;
+pub const DAY_MS: u64 = 86_400_000;
+pub const YEAR_MS: u64 = 31_536_000_000;
+pub const TERABYTE: u64 = 1_099_511_627_776;
+pub const MILLION: u64 = 1_000_000;
 
 pub fn line(name: &str, rule: &str, value: &str) -> String {
     format!("{name} {rule} (got \"{value}\")")
 }
 
 pub fn whole_number(text: &str, min: u64, max: u64) -> Result<u64, String> {
-    let rule = if max >= SAFE_INTEGER {
-        format!("must be a whole number, {min} or more")
-    } else {
-        format!("must be a whole number, from {min} to {max}")
-    };
+    let rule = format!("must be a whole number, from {min} to {max}");
     let parsed = (!text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit()))
         .then(|| text.parse::<u64>().ok())
         .flatten();

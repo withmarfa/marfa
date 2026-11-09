@@ -573,7 +573,7 @@ fn serve_health(port: u16, state: &Path, stop: &AtomicBool) {
 
 fn secrets(rig: &Rig) -> [String; 2] {
     [
-        rig.setting("API_KEY_SALT").unwrap(),
+        rig.setting("MARFA_KEY_SALT").unwrap(),
         rig.setting("MARFA_AUTH_SECRET").unwrap(),
     ]
 }
@@ -628,8 +628,8 @@ fn a_first_install_writes_the_files_and_prints_the_link_and_no_secret() {
     ] {
         assert!(dotenv.lines().any(|l| l == line), "{line}\n{dotenv}");
     }
-    assert_eq!(rig.setting("TRUSTED_PROXY_CIDRS"), None);
-    assert_eq!(rig.setting("TRUSTED_PROXY_HEADER"), None);
+    assert_eq!(rig.setting("MARFA_TRUSTED_PROXY_CIDRS"), None);
+    assert_eq!(rig.setting("MARFA_TRUSTED_PROXY_HEADER"), None);
     let log = rig.log();
     assert!(log.contains("network create marfa-net"), "{log}");
     assert!(log.lines().any(|l| l.contains(" up -d")), "{log}");
@@ -813,12 +813,12 @@ fn each_way_of_reaching_it_sets_the_proxy_trust_it_needs() {
     ]);
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(
-        rig.setting("TRUSTED_PROXY_CIDRS").as_deref(),
+        rig.setting("MARFA_TRUSTED_PROXY_CIDRS").as_deref(),
         Some("172.30.0.0/24")
     );
-    assert_eq!(rig.setting("TRUSTED_PROXY_HEADER"), None);
+    assert_eq!(rig.setting("MARFA_TRUSTED_PROXY_HEADER"), None);
     assert_eq!(rig.address().as_deref(), Some("https://marfa.example.com"));
-    assert_eq!(rig.setting("MARFA_AUTH_BASE_URL"), None);
+    assert_eq!(rig.setting("MARFA_SIGN_IN_ADDRESS"), None);
 
     let salt = secrets(&rig);
     let (code, _, stderr) = rig.install(&[
@@ -828,9 +828,9 @@ fn each_way_of_reaching_it_sets_the_proxy_trust_it_needs() {
         "https://marfa.example.com",
     ]);
     assert_eq!(code, 0, "{stderr}");
-    assert_eq!(rig.setting("TRUSTED_PROXY_CIDRS"), None);
+    assert_eq!(rig.setting("MARFA_TRUSTED_PROXY_CIDRS"), None);
     assert_eq!(
-        rig.setting("TRUSTED_PROXY_HEADER").as_deref(),
+        rig.setting("MARFA_TRUSTED_PROXY_HEADER").as_deref(),
         Some("CF-Connecting-IP")
     );
     assert_eq!(
@@ -841,7 +841,7 @@ fn each_way_of_reaching_it_sets_the_proxy_trust_it_needs() {
 
     let (code, _, stderr) = rig.install(&["--access", "local"]);
     assert_eq!(code, 0, "{stderr}");
-    assert_eq!(rig.setting("TRUSTED_PROXY_HEADER"), None);
+    assert_eq!(rig.setting("MARFA_TRUSTED_PROXY_HEADER"), None);
     let local = format!("http://localhost:{}", rig.port);
     assert_eq!(rig.address().as_deref(), Some(local.as_str()));
     let moved = free_port();
@@ -1401,9 +1401,9 @@ fn managed_elsewhere(rig: &Rig, body: &str) {
 }
 
 const CLOUDFLARE_FILE: &str =
-    "API_KEY_SALT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    "MARFA_KEY_SALT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 MARFA_AUTH_SECRET=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-TRUSTED_PROXY_HEADER=CF-Connecting-IP
+MARFA_TRUSTED_PROXY_HEADER=CF-Connecting-IP
 OTEL_RESOURCE_ATTRIBUTES=service.instance.id=mine
 ";
 
@@ -1454,9 +1454,9 @@ fn a_settings_file_managed_elsewhere_is_used_as_it_is() {
 }
 
 const QUOTED_FILE: &str =
-    "API_KEY_SALT='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    "MARFA_KEY_SALT='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 MARFA_AUTH_SECRET='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
-TRUSTED_PROXY_HEADER='CF-Connecting-IP'
+MARFA_TRUSTED_PROXY_HEADER='CF-Connecting-IP'
 ";
 
 #[test]
@@ -1503,7 +1503,7 @@ fn a_quoted_proxy_header_that_is_not_cloudflares_is_refused() {
     ]);
     assert_eq!(code, 2, "{stderr}");
     assert!(
-        stderr.contains("TRUSTED_PROXY_HEADER must be CF-Connecting-IP"),
+        stderr.contains("MARFA_TRUSTED_PROXY_HEADER must be CF-Connecting-IP"),
         "{stderr}"
     );
     assert!(
@@ -1525,7 +1525,7 @@ fn a_settings_file_that_lacks_what_the_install_needs_is_refused_without_its_valu
     assert_eq!(code, 2, "{stderr}");
     assert!(stderr.contains("does not exist"), "{stderr}");
 
-    managed_elsewhere(&rig, "API_KEY_SALT=sssssssssssssssssssssssssssssssss\n");
+    managed_elsewhere(&rig, "MARFA_KEY_SALT=sssssssssssssssssssssssssssssssss\n");
     let (code, _, stderr) = rig.install(&[
         "--access",
         "cloudflare",
@@ -1536,7 +1536,7 @@ fn a_settings_file_that_lacks_what_the_install_needs_is_refused_without_its_valu
     assert_eq!(code, 2, "{stderr}");
     for said in [
         "MARFA_AUTH_SECRET is not set",
-        "TRUSTED_PROXY_HEADER must be CF-Connecting-IP",
+        "MARFA_TRUSTED_PROXY_HEADER must be CF-Connecting-IP",
     ] {
         assert!(stderr.contains(said), "{said}\n{stderr}");
     }
@@ -1553,8 +1553,11 @@ fn a_settings_file_that_lacks_what_the_install_needs_is_refused_without_its_valu
 #[test]
 fn a_proxy_range_in_a_settings_file_must_cover_the_dockers_network() {
     let rig = Rig::new("external-range");
-    let base = CLOUDFLARE_FILE.replace("TRUSTED_PROXY_HEADER=CF-Connecting-IP\n", "");
-    managed_elsewhere(&rig, &format!("{base}TRUSTED_PROXY_CIDRS=10.0.0.0/8\n"));
+    let base = CLOUDFLARE_FILE.replace("MARFA_TRUSTED_PROXY_HEADER=CF-Connecting-IP\n", "");
+    managed_elsewhere(
+        &rig,
+        &format!("{base}MARFA_TRUSTED_PROXY_CIDRS=10.0.0.0/8\n"),
+    );
     let proxy = [
         "--access",
         "proxy",
@@ -1567,7 +1570,7 @@ fn a_proxy_range_in_a_settings_file_must_cover_the_dockers_network() {
     assert!(stderr.contains("172.30.0.0/24"), "{stderr}");
     managed_elsewhere(
         &rig,
-        &format!("{base}TRUSTED_PROXY_CIDRS=10.0.0.0/8,172.30.0.0/16\n"),
+        &format!("{base}MARFA_TRUSTED_PROXY_CIDRS=10.0.0.0/8,172.30.0.0/16\n"),
     );
     let (code, _, stderr) = rig.install(&proxy);
     assert_eq!(code, 0, "{stderr}");
@@ -1632,8 +1635,8 @@ fn a_settings_file_missing_a_secret_is_not_completed_over_data() {
         whole
             .lines()
             .map(|line| {
-                if line.starts_with("API_KEY_SALT=") {
-                    "API_KEY_SALT="
+                if line.starts_with("MARFA_KEY_SALT=") {
+                    "MARFA_KEY_SALT="
                 } else {
                     line
                 }
@@ -1821,7 +1824,7 @@ fn the_tailnet_address_follows_the_install() {
         Some("https://host.example.ts.net")
     );
     assert_eq!(
-        rig.setting("TRUSTED_PROXY_CIDRS").as_deref(),
+        rig.setting("MARFA_TRUSTED_PROXY_CIDRS").as_deref(),
         Some("172.30.0.0/24")
     );
 
@@ -1880,7 +1883,7 @@ fn a_login_agent_that_failed_to_load_is_not_left_to_load_at_the_next_login() {
 #[test]
 fn an_empty_secret_is_made_where_there_is_no_data() {
     let rig = Rig::new("empty-secret");
-    managed_elsewhere(&rig, "API_KEY_SALT=\nMARFA_AUTH_SECRET=\n");
+    managed_elsewhere(&rig, "MARFA_KEY_SALT=\nMARFA_AUTH_SECRET=\n");
     rig.installed(&["--access", "local"]);
     let [salt, secret] = secrets(&rig);
     assert_eq!((salt.len(), secret.len()), (64, 64));
@@ -2024,8 +2027,8 @@ fn a_native_install_runs_the_server_as_a_service_and_prints_the_link_and_no_secr
     for text in [&stdout, &stderr] {
         assert!(!text.contains(&salt) && !text.contains(&secret));
     }
-    assert_eq!(rig.setting("MARFA_AUTH_BASE_URL"), None);
-    assert_eq!(rig.setting("TRUSTED_PROXY_CIDRS"), None);
+    assert_eq!(rig.setting("MARFA_SIGN_IN_ADDRESS"), None);
+    assert_eq!(rig.setting("MARFA_TRUSTED_PROXY_CIDRS"), None);
 
     let service = fs::read_to_string(rig.service_file("marfa")).unwrap();
     assert!(
@@ -2339,10 +2342,10 @@ fn a_native_server_trusts_the_loopback_proxy_and_the_address_is_set_on_its_socke
         "https://marfa.example.com/",
     ]);
     assert_eq!(
-        rig.setting("TRUSTED_PROXY_CIDRS").as_deref(),
+        rig.setting("MARFA_TRUSTED_PROXY_CIDRS").as_deref(),
         Some("127.0.0.1/32,::1/128")
     );
-    assert_eq!(rig.setting("TRUSTED_PROXY_HEADER"), None);
+    assert_eq!(rig.setting("MARFA_TRUSTED_PROXY_HEADER"), None);
     assert_eq!(rig.address().as_deref(), Some("https://marfa.example.com"));
     let socket = format!("{}/data/control/marfa.sock", rig.real_dir().display());
     assert!(rig.control_log().contains(&socket) || rig.control_log().contains("config update"));
@@ -2353,9 +2356,9 @@ fn a_native_server_trusts_the_loopback_proxy_and_the_address_is_set_on_its_socke
         "--address",
         "https://marfa.example.com",
     ]);
-    assert_eq!(rig.setting("TRUSTED_PROXY_CIDRS"), None);
+    assert_eq!(rig.setting("MARFA_TRUSTED_PROXY_CIDRS"), None);
     assert_eq!(
-        rig.setting("TRUSTED_PROXY_HEADER").as_deref(),
+        rig.setting("MARFA_TRUSTED_PROXY_HEADER").as_deref(),
         Some("CF-Connecting-IP")
     );
     // The address was held already, so it is not written again.
@@ -2680,16 +2683,16 @@ fn run_starts_the_server_with_the_settings_of_its_folder() {
     let env = fs::read_to_string(rig.state.join("server-env")).unwrap();
     let dir = rig.real_dir();
     for line in [
-        format!("PORT={}", rig.port),
+        format!("MARFA_PORT={}", rig.port),
         "MARFA_LISTEN_HOST=127.0.0.1".to_string(),
-        format!("SQLITE_PATH={}/data/marfa.db", dir.display()),
-        format!("BLOB_PATH={}/data/blobs", dir.display()),
+        format!("MARFA_DATABASE_PATH={}/data/marfa.db", dir.display()),
+        format!("MARFA_BLOB_PATH={}/data/blobs", dir.display()),
         format!(
             "MARFA_CONTROL_SOCKET={}/data/control/marfa.sock",
             dir.display()
         ),
-        "TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128".to_string(),
-        format!("API_KEY_SALT={}", secrets(&rig)[0]),
+        "MARFA_TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128".to_string(),
+        format!("MARFA_KEY_SALT={}", secrets(&rig)[0]),
     ] {
         assert!(
             env.lines().any(|set| set == line),
@@ -2709,14 +2712,17 @@ fn run_takes_the_port_and_the_paths_from_the_folder_whatever_the_settings_file_s
     let rig = Rig::new("r-own");
     rig.native_installed(&["--access", "local"]);
     let mut text = rig.file("marfa.env");
-    text.push_str("PORT=9123\nMARFA_LISTEN_HOST=0.0.0.0\nSQLITE_PATH=/elsewhere/marfa.db\n");
+    text.push_str(
+        "MARFA_PORT=9123\nMARFA_LISTEN_HOST=0.0.0.0\nMARFA_DATABASE_PATH=/elsewhere/marfa.db\n",
+    );
     fs::write(rig.dir.join("marfa.env"), text).unwrap();
     let mut child = rig.run_server(&[]);
     ended(&mut child, 20).expect("run did not end");
     let env = fs::read_to_string(rig.state.join("server-env")).unwrap();
     let dir = rig.real_dir();
     assert!(
-        env.lines().any(|line| line == format!("PORT={}", rig.port)),
+        env.lines()
+            .any(|line| line == format!("MARFA_PORT={}", rig.port)),
         "{env}"
     );
     assert!(
@@ -2726,10 +2732,10 @@ fn run_takes_the_port_and_the_paths_from_the_folder_whatever_the_settings_file_s
     );
     assert!(
         env.lines()
-            .any(|line| line == format!("SQLITE_PATH={}/data/marfa.db", dir.display())),
+            .any(|line| line == format!("MARFA_DATABASE_PATH={}/data/marfa.db", dir.display())),
         "{env}"
     );
-    for name in ["PORT=", "MARFA_LISTEN_HOST=", "SQLITE_PATH="] {
+    for name in ["MARFA_PORT=", "MARFA_LISTEN_HOST=", "MARFA_DATABASE_PATH="] {
         assert_eq!(
             env.lines().filter(|line| line.starts_with(name)).count(),
             1,
@@ -2972,12 +2978,12 @@ fn a_native_install_refuses_settings_that_move_what_the_folder_decides() {
     let rig = Rig::new("n-folder-settings");
     rig.native_installed(&["--access", "local"]);
     let mut text = rig.file("marfa.env");
-    text.push_str("SQLITE_PATH=/elsewhere/marfa.db\nPORT=9123\n");
+    text.push_str("MARFA_DATABASE_PATH=/elsewhere/marfa.db\nMARFA_PORT=9123\n");
     fs::write(rig.dir.join("marfa.env"), &text).unwrap();
     let (code, _, stderr) = rig.native(&["--access", "local"]);
     assert_eq!(code, 2, "{stderr}");
     assert!(
-        stderr.contains("SQLITE_PATH") && stderr.contains("PORT"),
+        stderr.contains("MARFA_DATABASE_PATH") && stderr.contains("MARFA_PORT"),
         "{stderr}"
     );
     assert_eq!(rig.file("marfa.env"), text, "the refusal changed the file");
@@ -2986,12 +2992,12 @@ fn a_native_install_refuses_settings_that_move_what_the_folder_decides() {
     fs::create_dir_all(&external.dir).unwrap();
     fs::write(
         external.dir.join("marfa.env"),
-        "API_KEY_SALT=a\nBETTER_AUTH_SECRET=b\nBLOB_PATH=/elsewhere/blobs\n",
+        "MARFA_KEY_SALT=a\nMARFA_AUTH_SECRET=b\nMARFA_BLOB_PATH=/elsewhere/blobs\n",
     )
     .unwrap();
     let (code, _, stderr) = external.native(&["--access", "local", "--external-settings"]);
     assert_eq!(code, 2, "{stderr}");
-    assert!(stderr.contains("BLOB_PATH"), "{stderr}");
+    assert!(stderr.contains("MARFA_BLOB_PATH"), "{stderr}");
 }
 
 #[test]
@@ -3022,7 +3028,7 @@ fn a_link_in_the_folder_is_never_followed_when_a_file_is_read_or_written() {
     let rig = Rig::new("n-link");
     rig.native_installed(&["--access", "local"]);
     let target = rig.root.join("elsewhere.env");
-    fs::write(&target, "API_KEY_SALT=a\nBETTER_AUTH_SECRET=b\n").unwrap();
+    fs::write(&target, "MARFA_KEY_SALT=a\nMARFA_AUTH_SECRET=b\n").unwrap();
     fs::remove_file(rig.dir.join("marfa.env")).unwrap();
     std::os::unix::fs::symlink(&target, rig.dir.join("marfa.env")).unwrap();
     let (code, _, stderr) = rig.native(&["--access", "local"]);
@@ -3030,7 +3036,7 @@ fn a_link_in_the_folder_is_never_followed_when_a_file_is_read_or_written() {
     assert!(stderr.contains("link"), "{stderr}");
     assert_eq!(
         fs::read_to_string(&target).unwrap(),
-        "API_KEY_SALT=a\nBETTER_AUTH_SECRET=b\n",
+        "MARFA_KEY_SALT=a\nMARFA_AUTH_SECRET=b\n",
         "a file behind a link was written"
     );
 }

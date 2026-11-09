@@ -81,6 +81,8 @@ The instance draws no owner console, so each task an owner has is a command. Mos
 | See what a key can read | `marfa overview` |
 | Read the instance's name and enforcement | `marfa config get` |
 | Change a setting | `marfa config update`, `marfa config replace` |
+| List every setting with its default and rule | `marfa config settings` |
+| Check what changing the addresses would do | `marfa config check-address` |
 | Make, list, change and revoke a key | `marfa keys create`, `marfa keys list`, `marfa keys update`, `marfa keys revoke` |
 | List the browsers, apps and keys that can sign in | `marfa sign-ins list` |
 | Rename a sign-in | `marfa sign-ins rename` |
@@ -1936,6 +1938,27 @@ Change only the settings the body names; `null` removes one. Needs `config.manag
 
 ```text
 marfa config update [OPTIONS]
+```
+
+| Option | Description |
+| --- | --- |
+| `--file <PATH>` | A file holding the JSON body; `-` reads stdin. |
+| `--body <JSON>` | The JSON body inline. |
+
+### marfa config settings
+
+Every stored setting with its value, default and rule, and the settings only the environment sets. Needs `config.manage` or `instance.read`.
+
+```text
+marfa config settings [OPTIONS]
+```
+
+### marfa config check-address
+
+What changing the addresses would do and whether a write needs confirming; nothing is written. Needs `config.manage`.
+
+```text
+marfa config check-address [OPTIONS]
 ```
 
 | Option | Description |

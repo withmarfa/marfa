@@ -34,11 +34,11 @@ fn program(dir: &Path, hooks: &str) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_marfa-server"));
     command
         .env_clear()
-        .env("PORT", "0")
+        .env("MARFA_PORT", "0")
         .env("MARFA_LISTEN_HOST", "127.0.0.1")
         .env("MARFA_TEST_HOOKS", hooks)
-        .env("SQLITE_PATH", dir.join("marfa.db"))
-        .env("BLOB_PATH", dir.join("blobs"))
+        .env("MARFA_DATABASE_PATH", dir.join("marfa.db"))
+        .env("MARFA_BLOB_PATH", dir.join("blobs"))
         .env("MARFA_CONTROL_SOCKET", control_socket(dir))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -161,9 +161,8 @@ fn a_stale_shell_is_ignored_and_warned_of_by_name_alone() {
     let mut command = program(dir.path(), "false");
     command
         .env("MARFA_MAX_REQUEST_BYTES", STALE_VALUE)
-        .env("RATE_LIMIT_ENABLED", STALE_VALUE)
-        .env("MARFA_AUTH_BASE_URL", STALE_VALUE)
-        .env("NODE_ENV", "production");
+        .env("MARFA_RATE_LIMIT_ENABLED", STALE_VALUE)
+        .env("MARFA_SIGN_IN_ADDRESS", STALE_VALUE);
     let log = Server::start(command).stop();
 
     let warnings: Vec<_> = log
@@ -172,15 +171,14 @@ fn a_stale_shell_is_ignored_and_warned_of_by_name_alone() {
         .collect();
     for (name, key) in [
         ("MARFA_MAX_REQUEST_BYTES", "max_request_bytes"),
-        ("RATE_LIMIT_ENABLED", "rate_limit_enabled"),
-        ("MARFA_AUTH_BASE_URL", "sign_in_address"),
+        ("MARFA_RATE_LIMIT_ENABLED", "rate_limit_enabled"),
+        ("MARFA_SIGN_IN_ADDRESS", "sign_in_address"),
     ] {
         let found = warnings.iter().filter(|line| line.contains(name));
         let found: Vec<_> = found.filter(|line| line.contains(key)).collect();
         assert_eq!(found.len(), 1, "{name}: {log}");
         assert!(found[0].contains("/config"), "{log}");
     }
-    assert!(!log.contains("NODE_ENV"), "{log}");
     assert!(!log.contains(STALE_VALUE), "{log}");
 }
 
@@ -188,7 +186,7 @@ fn a_stale_shell_is_ignored_and_warned_of_by_name_alone() {
 fn a_refused_start_makes_no_secrets_file() {
     let dir = TempDir::new().unwrap();
     let mut command = program(dir.path(), "false");
-    command.env("PORT", "seventy");
+    command.env("MARFA_PORT", "seventy");
     let (code, _) = everything_on_stdout(dir.path(), command);
     assert_eq!(code, Some(1));
     assert!(!dir.path().join("marfa.secrets").exists());
@@ -267,10 +265,10 @@ async fn the_sign_in_address_follows_the_port_bound_until_one_is_stored() {
     let dir = TempDir::new().unwrap();
     let database = dir.path().join("marfa.db");
     let pairs = [
-        ("SQLITE_PATH", database.to_str().unwrap()),
-        ("BLOB_PATH", dir.path().to_str().unwrap()),
+        ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
+        ("MARFA_BLOB_PATH", dir.path().to_str().unwrap()),
         ("MARFA_LISTEN_HOST", "127.0.0.1"),
-        ("PORT", "0"),
+        ("MARFA_PORT", "0"),
     ];
     let accepted = Settings::read(Environment::from_pairs(&pairs)).unwrap();
     let app = App::start(accepted).await.unwrap();
@@ -290,8 +288,8 @@ struct Instance {
 async fn boot(dir: &Path) -> Arc<App> {
     let database = dir.join("marfa.db");
     let pairs = [
-        ("SQLITE_PATH", database.to_str().unwrap()),
-        ("BLOB_PATH", dir.to_str().unwrap()),
+        ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
+        ("MARFA_BLOB_PATH", dir.to_str().unwrap()),
         ("MARFA_TEST_HOOKS", "true"),
         ("MARFA_MAX_REQUEST_BYTES", "4096"),
     ];

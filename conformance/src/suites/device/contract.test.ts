@@ -1060,6 +1060,8 @@ const invocations: Record<string, () => string[]> = {
   "config get": () => [],
   "config replace": () => ["--body", "{}"],
   "config update": () => ["--body", "{}"],
+  "config settings": () => [],
+  "config check-address": () => ["--body", "{}"],
   export: () => [],
   restore: () => [fileOf("archive.tar.gz", "archive")],
   "views create": () => [

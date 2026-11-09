@@ -1,7 +1,4 @@
-//! Faults a test harness sets on a running server, each named for where it acts.
-
 use std::collections::HashSet;
-use std::net::IpAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -9,13 +6,14 @@ use std::time::Duration;
 use serde::Serialize;
 use tokio::sync::watch;
 
-use super::blobs::Hash;
-use super::{attention, housekeeping};
+use super::super::blobs::Hash;
+use super::super::{attention, housekeeping};
+use super::{DEVICE_OWNER_INSTANCE_LANE, Lie, Resolved, TYPE_DEFINITION, Volume};
 use crate::db::Pulse;
 
 const MAX_NTH: u32 = 1_000_000;
 const MAX_FREE_BYTES: u64 = 9_007_199_254_740_991;
-const MAX_DEADLINE_MS: u64 = 2_147_483_647;
+const MAX_DEADLINE_MS: u64 = 86_400_000;
 const MAX_BLOB_HASHES: usize = 1_000;
 
 const BEAT: Duration = Duration::from_millis(25);
@@ -24,6 +22,15 @@ const JOB_POINT: &str = "housekeeping:";
 const UNFOLD_DEADLINE: &str = "unfold-deadline";
 /// What a `free` fault holds for a volume whose free space cannot be read.
 const FREE_UNKNOWN: u64 = u64::MAX;
+const STORE_CHECK_DEADLINE: &str = "store-check-deadline";
+const LOSE_BLOB: &str = "lose:blob";
+const UNREADABLE_BLOB: &str = "damage:blob-unreadable";
+const DAMAGE_BLOB: &str = "damage:blob";
+const LIES: [(&str, Lie); 3] = [
+    (LOSE_BLOB, Lie::Lost),
+    (UNREADABLE_BLOB, Lie::Unreadable),
+    (DAMAGE_BLOB, Lie::Damaged),
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -67,89 +74,13 @@ macro_rules! points {
     };
 }
 
-points! {
-    HOLD_WRITE = Hold "write" Write;
-    HOLD_READ_HYDRATION = Hold "read-hydration" None;
-    HOLD_READ_SNAPSHOT = Hold "read-snapshot" None;
-    HOLD_THINNING_ITEM = Hold "version-thinning:item" None;
-    HOLD_BULK_PAGE = Hold "bulk-page" Nth;
-    HOLD_STREAM_OPEN = Hold "stream-open" None;
-    HOLD_STREAM_HEAD = Hold "stream-head" None;
-    HOLD_STREAM_REPLAY = Hold "stream-replay" None;
-    HOLD_STREAM_DRAIN = Hold "stream-drain" None;
-    HOLD_FOLDER_STATUS_READ = Hold "folder-status-read" None;
-    HOLD_WEBHOOK_RESPONSE = Hold "webhook:response" None;
-    HOLD_WEBHOOK_SCHEDULE = Hold "webhook-schedule" None;
-    HOLD_WEBHOOK_SCHEDULE_QUEUED = Hold "webhook-schedule:queued" None;
-    HOLD_CONNECTOR_WRITE = Hold "connector-write" None;
-    HOLD_ATTENTION = Hold "attention" Write;
-    FAIL_ATTENTION = Fail "attention" Write;
-    HOLD_JOB_SELECTED = Hold "bulk-job:selected" None;
-    HOLD_JOB_CLAIMED = Hold "bulk-job:claimed" None;
-    HOLD_JOB_IN_CHUNK = Hold "bulk-job:in-chunk" None;
-    HOLD_JOB_BETWEEN_CHUNKS = Hold "bulk-job:between-chunks" Nth;
-    HOLD_JOB_FINISHING = Hold "bulk-job:finishing" None;
-    FAIL_STREAM_HEAD = Fail "stream-head" Nth;
-    FAIL_STREAM_REPLAY = Fail "stream-replay" Nth;
-    FAIL_STREAM_CREDENTIAL = Fail "stream-credential" Nth;
-    FAIL_STREAM_REPLAY_ROW = Fail "stream-replay-row" Nth;
-    FAIL_STREAM_REPLAY_UNTYPED = Fail "stream-replay-untyped" Nth;
-    FAIL_LOCK = Fail "lock" Nth;
-    FAIL_AUDIT = Fail "audit" Write;
-    FAIL_COMMIT = Fail "commit" Write;
-    FAIL_COMMIT_FULL = Fail "commit-full" Write;
-    FAIL_COMMIT_ACK = Fail "commit-ack" Write;
-    FAIL_SESSION_LOOKUP = Fail "session-lookup" Nth;
-    FAIL_SESSION_DELETE = Fail "session-delete" Nth;
-    FAIL_SESSION_USE = Fail "session-use" Nth;
-    FAIL_BLOB_WRITE = Fail "blob-write" Nth;
-    FAIL_BLOB_READ = Fail "blob-read" Nth;
-    FAIL_BLOB_DELETE = Fail "blob-delete" Nth;
-    HOLD_BLOB_HAS = Hold "blob-has" None;
-    HOLD_BLOB_READ = Hold "blob-read" Nth;
-    HOLD_BLOB_WRITE = Hold "blob-write" None;
-    HOLD_BLOB_DELETE = Hold "blob-delete" None;
-    HOLD_BLOB_PURGE = Hold "blob-orphans:purge" None;
-    FAIL_HEALTH_WRITE = Fail "health-write" Nth;
-    HOLD_DISK_PROBE = Hold "disk-probe" None;
-    FAIL_JOB_ROW = Fail "job-row" Nth;
-    FAIL_FOLDER_STATUS_REPORT = Fail "folder-status-report" Nth;
-    REFUSE_READ = Refuse "read" None;
-    REFUSE_WRITE = Refuse "write" None;
-    REFUSE_WRITE_LOCK = Refuse "write-lock" None;
-    REFUSE_BLOB_STORE = Refuse "blob-store" None;
-}
+point_list!(points);
 
 const ATTENTION: &str = "attention";
 
 fn check_names() -> String {
     let names: Vec<&str> = attention::CHECKS.iter().map(|(check, _)| *check).collect();
     names.join(", ")
-}
-
-const STORE_CHECK_DEADLINE: &str = "store-check-deadline";
-
-/// What a blob fault makes the disk store read of a blob it names.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Lie {
-    Lost,
-    Unreadable,
-    Damaged,
-}
-
-const LOSE_BLOB: &str = "lose:blob";
-const UNREADABLE_BLOB: &str = "damage:blob-unreadable";
-const DAMAGE_BLOB: &str = "damage:blob";
-const LIES: [(&str, Lie); 3] = [
-    (LOSE_BLOB, Lie::Lost),
-    (UNREADABLE_BLOB, Lie::Unreadable),
-    (DAMAGE_BLOB, Lie::Damaged),
-];
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Volume {
-    Database,
-    Blobs,
 }
 
 impl Volume {
@@ -329,19 +260,14 @@ fn blob_hashes(arg: Option<&str>) -> Result<HashSet<String>, String> {
 fn unfold_deadline_of(arg: Option<&str>) -> Result<u64, String> {
     arg.filter(|text| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit()))
         .and_then(|text| text.parse::<u64>().ok())
-        .filter(|check| (1..=MAX_DEADLINE_MS).contains(check))
+        .filter(|check| (1..=u64::from(MAX_NTH)).contains(check))
         .ok_or_else(|| {
-            format!("{UNFOLD_DEADLINE} takes a deadline check number, from 1 to {MAX_DEADLINE_MS}")
+            format!("{UNFOLD_DEADLINE} takes a deadline check number, from 1 to {MAX_NTH}")
         })
 }
-
-/// Lanes whose attempt cap a `limit:<lane>=<n>` fault lowers.
-pub const DEVICE_OWNER_INSTANCE_LANE: &str = "device-owner-instance";
 const LIMIT_LANES: [&str; 1] = [DEVICE_OWNER_INSTANCE_LANE];
 const MAX_LIMIT: u64 = 1_000_000;
 
-/// Stored values an `unreadable:<stored>=<id>` fault makes the server read as damaged.
-pub const TYPE_DEFINITION: &str = "type-definition";
 const UNREADABLE_STORED: [&str; 1] = [TYPE_DEFINITION];
 
 fn is_stored_id(text: &str) -> bool {
@@ -484,13 +410,6 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
                 .to_string(),
         ),
     }
-}
-
-/// `judged>reached` lets a public-address check connect to a local fixture.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Resolved {
-    pub judged: Vec<IpAddr>,
-    pub reached: Vec<IpAddr>,
 }
 
 /// One answer for each lookup, separated by `;`, each a list of addresses separated by `,`.
@@ -847,6 +766,7 @@ impl Faults {
 
 #[cfg(test)]
 mod tests {
+    use std::net::IpAddr;
     use std::time::Duration;
 
     use super::*;
@@ -941,7 +861,8 @@ mod tests {
         assert!(refused("fail:housekeeping:heartbeat", None));
         assert!(refused("deadline:trash-purge", None));
         assert!(refused("deadline:trash-purge", Some("0")));
-        assert!(refused("deadline:trash-purge", Some("2147483648")));
+        assert!(refused("deadline:trash-purge", Some("86400001")));
+        assert!(!refused("deadline:trash-purge", Some("86400000")));
         assert!(!refused("hold:housekeeping:trash-purge", None));
         assert!(!refused("release:housekeeping:trash-purge", None));
         assert!(!refused("fail:housekeeping:trash-purge", Some("2")));
@@ -962,6 +883,8 @@ mod tests {
         assert!(refused("unfold-deadline", None));
         assert!(refused("unfold-deadline", Some("0")));
         assert!(refused("unfold-deadline", Some("soon")));
+        assert!(refused("unfold-deadline", Some("1000001")));
+        assert!(!refused("unfold-deadline", Some("1000000")));
         let faults = Faults::default();
         assert_eq!(faults.unfold_deadline(), None);
         faults.set("unfold-deadline", Some("1")).unwrap();

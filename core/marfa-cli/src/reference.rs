@@ -52,6 +52,8 @@ const OWNER_TASKS: &[(&str, &[&str])] = &[
     ("See what a key can read", &["overview"]),
     ("Read the instance's name and enforcement", &["config get"]),
     ("Change a setting", &["config update", "config replace"]),
+    ("List every setting with its default and rule", &["config settings"]),
+    ("Check what changing the addresses would do", &["config check-address"]),
     (
         "Make, list, change and revoke a key",
         &["keys create", "keys list", "keys update", "keys revoke"],

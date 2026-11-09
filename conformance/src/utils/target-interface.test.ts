@@ -26,7 +26,7 @@ const HOUR_MS = 3_600_000;
  * the setting's ceiling means the scheduler never claims anything; a run
  * asked for over HTTP does not wait on a poll.
  */
-const SCHEDULER_NEVER_POLLS_MS = "2147483647";
+const SCHEDULER_NEVER_POLLS_MS = "3600000";
 
 let scratch: string;
 let server: FreshServer;

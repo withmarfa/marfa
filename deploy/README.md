@@ -29,13 +29,13 @@ The command asks how you reach the server, writes the settings, starts the servi
 
 The install lives in one folder: `~/marfa-server`, or `/var/lib/marfa-server` for root on Linux. Choose another with `--dir`; the path of the folder plus `/data/control/marfa.sock` must be 100 bytes or fewer.
 
-| Path                      | What it holds                                                                                                                                                                                                                                               |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `marfa.env`               | The server's settings, including its two secrets, `API_KEY_SALT` and `MARFA_AUTH_SECRET`. Only you can read it. **Keep a copy outside the folder.** The server refuses data that it is started on without the secrets, or rejects every key if they differ. |
-| `.env`                    | What the `marfa server` commands record about the install: its name, release, port and how you reach it. It holds no secret, and the server doesn't read it.                                                                                                |
-| `data/marfa.db`           | The database.                                                                                                                                                                                                                                               |
-| `data/blobs/`             | The files.                                                                                                                                                                                                                                                  |
-| `data/control/marfa.sock` | The private socket that claim and recovery commands use.                                                                                                                                                                                                    |
+| Path                      | What it holds                                                                                                                                                                                                                                                 |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `marfa.env`               | The server's settings, including its two secrets, `MARFA_KEY_SALT` and `MARFA_AUTH_SECRET`. Only you can read it. **Keep a copy outside the folder.** The server refuses data that it is started on without the secrets, or rejects every key if they differ. |
+| `.env`                    | What the `marfa server` commands record about the install: its name, release, port and how you reach it. It holds no secret, and the server doesn't read it.                                                                                                  |
+| `data/marfa.db`           | The database.                                                                                                                                                                                                                                                 |
+| `data/blobs/`             | The files.                                                                                                                                                                                                                                                    |
+| `data/control/marfa.sock` | The private socket that claim and recovery commands use.                                                                                                                                                                                                      |
 
 The folder decides the port, the listen address, and the paths of the data and the socket. The server listens on `127.0.0.1`, on port 8600 or the next free port. Choose a port with `--port`. A `marfa.env` that sets one of these settings is refused. To have a secrets manager write `marfa.env`, use `--external-settings`; the command then only checks the file.
 
@@ -43,12 +43,12 @@ The folder decides the port, the listen address, and the paths of the data and t
 
 `--access` says how people and devices reach the server. It also decides which caller addresses the server believes, because the server doesn't terminate TLS.
 
-| `--access`   | How you reach the server                                                                                           | What the install sets for proxy trust        |
-| ------------ | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------- |
-| `local`      | Only this machine, at `http://localhost`.                                                                          | Nothing.                                     |
-| `tailscale`  | Devices on your tailnet, through Tailscale Serve, at this machine's `ts.net` name.                                 | `TRUSTED_PROXY_CIDRS` is the loopback range. |
-| `cloudflare` | Anywhere, through a Cloudflare Tunnel on this machine, at your own address. Needs `--address`.                     | `TRUSTED_PROXY_HEADER=CF-Connecting-IP`.     |
-| `proxy`      | Anywhere, through a reverse proxy on this machine, such as Caddy or nginx, at your own address. Needs `--address`. | `TRUSTED_PROXY_CIDRS` is the loopback range. |
+| `--access`   | How you reach the server                                                                                           | What the install sets for proxy trust              |
+| ------------ | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------- |
+| `local`      | Only this machine, at `http://localhost`.                                                                          | Nothing.                                           |
+| `tailscale`  | Devices on your tailnet, through Tailscale Serve, at this machine's `ts.net` name.                                 | `MARFA_TRUSTED_PROXY_CIDRS` is the loopback range. |
+| `cloudflare` | Anywhere, through a Cloudflare Tunnel on this machine, at your own address. Needs `--address`.                     | `MARFA_TRUSTED_PROXY_HEADER=CF-Connecting-IP`.     |
+| `proxy`      | Anywhere, through a reverse proxy on this machine, such as Caddy or nginx, at your own address. Needs `--address`. | `MARFA_TRUSTED_PROXY_CIDRS` is the loopback range. |
 
 For `cloudflare` and `proxy`, point the tunnel or proxy at `http://127.0.0.1:<port>`; the command prints the address. For `tailscale`, the command sets up Tailscale Serve, which needs Tailscale installed and signed in with MagicDNS and HTTPS certificates turned on. `--https-port` changes the port Tailscale serves on from 443.
 
@@ -142,11 +142,11 @@ docker run --name marfa -d -p 127.0.0.1:8600:8600 -v marfa-data:/data \
 ```
 
 - **Publish the port on `127.0.0.1`.** A bare `-p 8600:8600` is open to every network the machine is on. Put a proxy or tunnel on the machine in front of it.
-- **Publish another host port, and leave `PORT` alone.** The image's health check runs `marfa status` against port 8600 inside the container. For port 9000 on the host, use `-p 127.0.0.1:9000:8600`.
+- **Publish another host port, and leave `MARFA_PORT` alone.** The image's health check runs `marfa status` against port 8600 inside the container. For port 9000 on the host, use `-p 127.0.0.1:9000:8600`.
 - **A folder mounted at `/data` must be writable by user 65532,** or run the container as the folder's owner with `--user`. A named volume works as it is.
-- **Secrets:** on a first start without `API_KEY_SALT` and `MARFA_AUTH_SECRET`, the server makes them and keeps them in `/data/marfa.secrets`, readable by its user alone. Keep that file with the data. A database without its secrets is refused.
+- **Secrets:** on a first start without `MARFA_KEY_SALT` and `MARFA_AUTH_SECRET`, the server makes them and keeps them in `/data/marfa.secrets`, readable by its user alone. Keep that file with the data. A database without its secrets is refused.
 
-The image sets `MARFA_LISTEN_HOST`, `PORT`, `SQLITE_PATH`, `BLOB_PATH` and `MARFA_CONTROL_SOCKET`; the table below gives the values. To pass more settings, use `-e` or `--env-file`.
+The image sets `MARFA_LISTEN_HOST`, `MARFA_PORT`, `MARFA_DATABASE_PATH`, `MARFA_BLOB_PATH` and `MARFA_CONTROL_SOCKET`; the table below gives the values. To pass more settings, use `-e` or `--env-file`.
 
 ## Build the programs and the image yourself
 
@@ -172,17 +172,17 @@ scripts/check-image.sh marfa-server 0.0.0
 
 The server reads these settings from its environment when it starts. None is required: a first start makes the two secrets when you don't set them. The server's other settings are stored in the database.
 
-| Name                   | Default in the program                   | Set by the image           | What it does                                                                                                                                                                          |
-| ---------------------- | ---------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PORT`                 | `8600`                                   | `8600`                     | The port the server listens on.                                                                                                                                                       |
-| `MARFA_LISTEN_HOST`    | All interfaces                           | `0.0.0.0`                  | The address the server listens on. A native install sets `127.0.0.1`.                                                                                                                 |
-| `SQLITE_PATH`          | `./data/marfa.db`                        | `/data/marfa.db`           | Where the database is.                                                                                                                                                                |
-| `BLOB_PATH`            | `./data/blobs`                           | `/data/blobs`              | Where the server keeps files.                                                                                                                                                         |
-| `MARFA_CONTROL_SOCKET` | `control/marfa.sock` beside the database | `/data/control/marfa.sock` | Where the private socket is. Use an absolute path of 103 bytes or fewer, with no symbolic link in it.                                                                                 |
-| `API_KEY_SALT`         | Made on a first start                    | Not set                    | The secret that keys are stored under. Changing it ends every key.                                                                                                                    |
-| `MARFA_AUTH_SECRET`    | Made on a first start                    | Not set                    | The secret that sign-in is signed with, at least 32 characters. Changing it ends every browser session.                                                                               |
-| `TRUSTED_PROXY_CIDRS`  | Not set                                  | Not set                    | Comma-separated ranges of the proxies whose `X-Forwarded-For` the server believes. Unset, the header is ignored.                                                                      |
-| `TRUSTED_PROXY_HEADER` | Not set                                  | Not set                    | A header that the edge in front of the server overwrites with the caller's address, such as `CF-Connecting-IP`. Set it only when nothing reaches the server except through that edge. |
-| `MARFA_CONTROL_ONLY`   | `false`                                  | Not set                    | Starts the private socket alone, for [recovery](#recover-the-owner).                                                                                                                  |
+| Name                         | Default in the program                   | Set by the image           | What it does                                                                                                                                                                          |
+| ---------------------------- | ---------------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MARFA_PORT`                 | `8600`                                   | `8600`                     | The port the server listens on.                                                                                                                                                       |
+| `MARFA_LISTEN_HOST`          | All interfaces                           | `0.0.0.0`                  | The address the server listens on. A native install sets `127.0.0.1`.                                                                                                                 |
+| `MARFA_DATABASE_PATH`        | `./data/marfa.db`                        | `/data/marfa.db`           | Where the database is.                                                                                                                                                                |
+| `MARFA_BLOB_PATH`            | `./data/blobs`                           | `/data/blobs`              | Where the server keeps files.                                                                                                                                                         |
+| `MARFA_CONTROL_SOCKET`       | `control/marfa.sock` beside the database | `/data/control/marfa.sock` | Where the private socket is. Use an absolute path of 103 bytes or fewer, with no symbolic link in it.                                                                                 |
+| `MARFA_KEY_SALT`             | Made on a first start                    | Not set                    | The secret that keys are stored under. Changing it ends every key.                                                                                                                    |
+| `MARFA_AUTH_SECRET`          | Made on a first start                    | Not set                    | The secret that sign-in is signed with, at least 32 characters. Changing it ends every browser session.                                                                               |
+| `MARFA_TRUSTED_PROXY_CIDRS`  | Not set                                  | Not set                    | Comma-separated ranges of the proxies whose `X-Forwarded-For` the server believes. Unset, the header is ignored.                                                                      |
+| `MARFA_TRUSTED_PROXY_HEADER` | Not set                                  | Not set                    | A header that the edge in front of the server overwrites with the caller's address, such as `CF-Connecting-IP`. Set it only when nothing reaches the server except through that edge. |
+| `MARFA_CONTROL_ONLY`         | `false`                                  | Not set                    | Starts the private socket alone, for [recovery](#recover-the-owner).                                                                                                                  |
 
 The `OTEL_EXPORTER_OTLP_*` names set where an OpenTelemetry receiver is, `MARFA_POSTHOG_HOST` with `MARFA_POSTHOG_PROJECT_TOKEN` set where exception reports go, and `OTEL_SDK_DISABLED=true` turns telemetry off. A value outside its rule stops the server with a message that names the setting.

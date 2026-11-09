@@ -33,8 +33,8 @@ let workingKey = "";
 
 beforeAll(async () => {
   server = await bootFreshServer("cli-first-sync-pages", {
-    RATE_LIMIT_ENABLED: "true",
-    RATE_LIMIT_REQUESTS: "150",
+    MARFA_RATE_LIMIT_ENABLED: "true",
+    MARFA_RATE_LIMIT_REQUESTS: "150",
   });
   ({ apiUrl, workingKey } = server);
   cli = new Cli(requireBinary(), apiUrl, workingKey).withEnv({

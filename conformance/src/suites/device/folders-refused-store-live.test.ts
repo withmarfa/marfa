@@ -176,7 +176,8 @@ function untaken(store: string): number {
 /** Gives the folder's store a column this build does not make, as a store
  *  another build of the core made. */
 function misshape(folder: CliFolder): void {
-  const db = new DatabaseSync(folder.store);
+  // A running watch can hold the write lock for a moment.
+  const db = new DatabaseSync(folder.store, { timeout: 10_000 });
   try {
     db.exec("ALTER TABLE items ADD COLUMN stray TEXT");
   } finally {

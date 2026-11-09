@@ -424,7 +424,7 @@ const server = http.createServer((_, response) => {
   response.statusCode = ${status.toString()};
   response.end("ok");
 });
-server.listen(Number(process.env.PORT), "127.0.0.1", () => {
+server.listen(Number(process.env.MARFA_PORT), "127.0.0.1", () => {
   console.log("Marfa server listening on port " + server.address().port);
 });
 process.on("SIGTERM", () => process.exit(${exitCode.toString()}));

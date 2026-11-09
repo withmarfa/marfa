@@ -121,7 +121,7 @@ export async function startFaultSinks(): Promise<FaultSinks> {
   const origin = `http://127.0.0.1:${String(address.port)}`;
   return {
     env: () => ({
-      ERROR_WEBHOOK_URL: `${origin}/errors`,
+      MARFA_ERROR_WEBHOOK_URL: `${origin}/errors`,
       OTEL_SDK_DISABLED: "false",
       OTEL_EXPORTER_OTLP_ENDPOINT: origin,
       MARFA_POSTHOG_HOST: origin,
