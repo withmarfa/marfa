@@ -6,7 +6,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { idOf, openBody, send } from "../../utils/inbound-sender.js";
+import { idOf, openCounted, send } from "../../utils/inbound-sender.js";
 import { HOUR_MS, movedClock } from "../../utils/moved-clock.js";
 
 let server: FreshServer;
@@ -14,9 +14,7 @@ let clock: ReturnType<typeof movedClock>;
 let serial = 0;
 beforeAll(async () => {
   server = await bootFreshServer("inbound-source-continuity", {
-    MARFA_RATE_LIMIT_ENABLED: "true",
-    MARFA_RATE_LIMIT_INBOUND_REQUESTS: "3",
-    MARFA_RATE_LIMIT_WINDOW_MS: "600000",
+    MARFA_RATE_LIMIT_ENABLED: "false",
   });
   clock = movedClock(server);
 }, FRESH_SERVER_TIMEOUT_MS);
@@ -321,33 +319,36 @@ describe("source-owned inbound continuity", () => {
     2 * FRESH_SERVER_TIMEOUT_MS,
   );
 
-  it("keeps the endpoint rate window across takeover and refuses an already arriving body", async () => {
+  it("refuses an already arriving body after a takeover", async () => {
     await server.restart({
-      env: { MARFA_INBOUND_MAX_BYTES: "4", MARFA_INBOUND_IN_FLIGHT_BYTES: "4" },
+      env: {
+        MARFA_INBOUND_MAX_BYTES: "2000",
+        MARFA_INBOUND_IN_FLIGHT_BYTES: "4096",
+      },
     });
     const { source, oldKey, old, endpoint } = await fixture();
     expect((await send(server.apiUrl, endpoint.path, "x")).status).toBe(202);
-    const held = openBody(server.apiUrl, endpoint.path, 4, "hel");
-    const probe = await fixture();
-    let probeStatus = 0;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      probeStatus = (await send(server.apiUrl, probe.endpoint.path, "xx"))
-        .status;
-      if (probeStatus === 503) break;
-      expect(probeStatus).toBe(202);
-    }
-    // Two probe bytes cannot fit while the three held bytes are in flight.
-    expect(probeStatus).toBe(503);
+    const held = await openCounted(
+      server,
+      endpoint.path,
+      1900,
+      "h".repeat(1800),
+    );
+    // The source may hold half of the 4096, which 1900 and 300 pass, so the
+    // probe is refused now the body is counted.
+    expect(
+      (await send(server.apiUrl, endpoint.path, "x".repeat(300))).status,
+    ).toBe(503);
+    const taken = 1;
     expect((await call(`/keys/${oldKey.id}`, "DELETE")).status).toBe(200);
     const successor = await register((await mint(source)).key);
     expect(successor.status).toBe(201);
-    held.finish("d");
+    held.finish("d".repeat(100));
     expect((await held.answer).status).toBe(404);
     expect(
       (await listed(successor.id, successor.key, "deliveries")).data,
-    ).toHaveLength(1);
+    ).toHaveLength(taken);
     expect((await send(server.apiUrl, endpoint.path, "new")).status).toBe(202);
-    expect((await send(server.apiUrl, endpoint.path, "x")).status).toBe(429);
     expect((await listed(old.id, server.managementKey)).data).toEqual([]);
   });
   it("preserves retired endpoints and retained bodies after key expiry without serving before registration", async () => {

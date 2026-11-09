@@ -8,9 +8,9 @@ What one deployment says about itself, and what happens to it as an owner runs i
 
 ### `instance/attention-authority`
 
-When the owner or a private local command sends `GET /attention`, the server MUST return an unpaginated `data` array of concerns, each with `kind`, `reference`, `title`, `description`, and a local console `href`.
+When a private local command sends `GET /attention`, the server MUST return an unpaginated `data` array of concerns, each with `kind`, `reference`, `title` and `description`.
 
-**Tests:** `cli/attention.test.ts › shares owner HTTP and private-socket attention, keeps known concerns, and refuses keys`.
+**Tests:** `cli/attention.test.ts › shares private-socket attention, keeps known concerns, and refuses every other credential`.
 
 ### `instance/attention-credentials`
 
@@ -18,27 +18,41 @@ When a key or delegated credential sends `GET /attention`, the server MUST answe
 
 **Reason:** the aggregate includes the owner's folder and key inventories, which management permissions alone do not grant.
 
-**Tests:** `cli/attention.test.ts › shares owner HTTP and private-socket attention, keeps known concerns, and refuses keys`.
+**Tests:** `cli/attention.test.ts › shares private-socket attention, keeps known concerns, and refuses every other credential`.
+
+### `instance/attention-session`
+
+When a request that carries no bearer token and arrives by the public listener sends `GET /attention`, the server MUST answer `401 unauthorized`.
+
+**Reason:** the owner reads attention through the private socket, as for the folder inventory.
+
+**Tests:** `cli/attention.test.ts › shares private-socket attention, keeps known concerns, and refuses every other credential`.
+
+### `instance/attention-query`
+
+If `GET /attention` carries a query field, then the server MUST answer `400 validation_error`.
+
+**Tests:** `cli/attention.test.ts › shares private-socket attention, keeps known concerns, and refuses every other credential`.
 
 ### `instance/attention-concerns`
 
-When `GET /attention` completes its checks, the server MUST include degraded or down health components, housekeeping jobs whose last run failed, connectors whose last run failed or that report problems or have said nothing for more than 24 hours, current folder reports with problems, paused removals or first sync waiting, and live keys expiring within the next seven days inclusive.
+When `GET /attention` completes its checks, the server MUST include degraded or down health components, housekeeping jobs whose last run failed, connectors whose last run failed or that report problems or have said nothing for more than 24 hours, active folders whose current sign-ins report problems, paused removals or a first sync waiting, and live keys expiring within the next seven days inclusive.
 
 **Reason:** connector silence follows the latest registration, heartbeat, or received run; folder totals exclude historical sign-ins and do not claim that a copy is online.
 
-**Tests:** `cli/attention.test.ts › shares owner HTTP and private-socket attention, keeps known concerns, and refuses keys`.
+**Tests:** `cli/attention.test.ts › shares private-socket attention, keeps known concerns, and refuses every other credential`.
 
 ### `instance/attention-unavailable`
 
 If a check fails or does not answer within its bounded deadline, then the server MUST answer `GET /attention` with known concerns and an `unavailable` item identifying the check whose state is unknown.
 
-**Tests:** `cli/attention.test.ts › shares owner HTTP and private-socket attention, keeps known concerns, and refuses keys`.
+**Tests:** `cli/attention.test.ts › shares private-socket attention, keeps known concerns, and refuses every other credential`.
 
 ### `instance/attention-empty`
 
 When every attention check completes without finding a concern, the server MUST return an empty `data` array from `GET /attention`.
 
-**Tests:** `cli/attention.test.ts › shares owner HTTP and private-socket attention, keeps known concerns, and refuses keys`.
+**Tests:** `cli/attention.test.ts › shares private-socket attention, keeps known concerns, and refuses every other credential`.
 
 ## Background work
 
@@ -638,7 +652,7 @@ If a component's probe has given no answer within two seconds, then the server M
 
 **Reason:** a refusal is known and a silence is not.
 
-**Tests:** `compliance/health.test.ts › answers the write component degraded and the status 200 when the probe has given no answer within two seconds, and ok once the lock is released`.
+**Tests:** `compliance/health.test.ts › answers the write component degraded and the status 200 when the probe has given no answer within two seconds, and ok once the lock is released`, `compliance/health.test.ts › answers the disk and blob storage components degraded within two seconds when the filesystem does not answer, while other requests are served, and ok once it does`.
 
 ### `instance/health-disk-down`
 
@@ -1556,7 +1570,7 @@ A setting is either stored or start-only. A **stored** setting lives in the data
 
 A stored setting has one key, in lowercase snake case. While `MARFA_TEST_HOOKS` is true, the harness can seed a stored setting's default from the environment variable named `MARFA_` plus its key in capitals, such as `MARFA_AUDIT_RETENTION_DAYS` for `audit_retention_days`, and `MARFA_ADDRESSES` and `MARFA_CORS_ORIGINS` take origins separated by commas. A value stored by `PUT /config` or `PATCH /config` wins over a seed.
 
-Each bound is wide enough that no owner meets it and narrow enough that a slip of a digit is refused: an interval to a year (31536000000 milliseconds), a timeout to a day, a poll interval to an hour, a count to a million, a byte count to a terabyte and a retention to a hundred years (36500 days). Where a setting differs, the row says so in its bound: a rate-limit window runs to a day, an unreferenced blob's grace to a year as an interval does, a retry count to 100, a rate-limit multiplier to 1000 and extracted text to a hundred million characters.
+Each bound is wide enough that no owner meets it and narrow enough that a slip of a digit is refused: an interval to a year (31536000000 milliseconds), a timeout to a day, a poll interval to an hour, a count to a million, a byte count to a terabyte and a retention to a hundred years (36500 days). Where a setting differs, the row says so in its bound: a rate-limit window runs to a day, an unreferenced blob's grace to a year as an interval does, an inbound delivery's body timeout to five minutes, a retry count to 100, a rate-limit multiplier to 1000 and extracted text to a hundred million characters.
 
 | Key                                | Default            | Allowed values                                            | What it sets                                                                                                                                                                                                                                                                                                                                                                                               |
 | ---------------------------------- | ------------------ | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1603,7 +1617,7 @@ Each bound is wide enough that no owner meets it and narrow enough that a slip o
 | `inbound_retained_bytes`           | `1073741824` bytes | Whole number of bytes, 1 to 1099511627776                 | The most bytes of deliveries the server retains across live and retired endpoints.                                                                                                                                                                                                                                                                                                                         |
 | `inbound_cleanup_interval_ms`      | `60000` ms         | Whole number of milliseconds, 1 to 31536000000            | How often the `inbound-delivery-cleanup` job runs.                                                                                                                                                                                                                                                                                                                                                         |
 | `inbound_in_flight_bytes`          | `104857600` bytes  | Whole number of bytes, 1 to 1099511627776                 | The most bytes of inbound webhook deliveries the server holds in memory at once.                                                                                                                                                                                                                                                                                                                           |
-| `inbound_read_timeout_ms`          | `30000` ms         | Whole number of milliseconds, 1 to 86400000               | How long a delivery's body has to arrive whole.                                                                                                                                                                                                                                                                                                                                                            |
+| `inbound_read_timeout_ms`          | `30000` ms         | Whole number of milliseconds, 1 to 300000                 | How long a delivery's body has to arrive whole.                                                                                                                                                                                                                                                                                                                                                            |
 | `inbound_handled_retention_days`   | `7` days           | Whole number of days, 0 to 36500                          | How long the server keeps a handled delivery. At 0 age does not expire a delivery.                                                                                                                                                                                                                                                                                                                         |
 | `inbound_pending_retention_days`   | `30` days          | Whole number of days, 0 to 36500                          | How long the server keeps an unhandled delivery. At 0 age does not expire a delivery.                                                                                                                                                                                                                                                                                                                      |
 | `housekeeping_poll_interval_ms`    | `1000` ms          | Whole number of milliseconds, 1 to 3600000                | How often the housekeeping scheduler asks its table which jobs are due.                                                                                                                                                                                                                                                                                                                                    |

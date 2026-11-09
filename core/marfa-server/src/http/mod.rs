@@ -2,6 +2,7 @@
 
 mod admission;
 pub mod answer;
+mod attention;
 mod audit;
 mod auth;
 mod blobs;
@@ -23,6 +24,7 @@ mod events;
 mod folders;
 mod health;
 mod housekeeping;
+mod inbound;
 mod items;
 mod jobs;
 mod keys;
@@ -136,6 +138,12 @@ fn overview_doors(app: Arc<App>) -> Routes {
     Doors::new()
         .route("/overview", get(overview::read))
         .admitting(app, Admission::Mapped)
+}
+
+fn attention_doors(app: Arc<App>) -> Routes {
+    Doors::new()
+        .route("/attention", get(attention::list))
+        .admitting(app, Admission::Presented)
 }
 
 fn count_doors(app: Arc<App>) -> Routes {
@@ -286,6 +294,23 @@ fn connector_doors(app: Arc<App>) -> Routes {
             "/connectors/{id}/agreements/lookup",
             post(connectors::lookup_agreements),
         )
+        .route(
+            "/connectors/{id}/endpoints",
+            post(inbound::create_endpoint).get(inbound::list_endpoints),
+        )
+        .route(
+            "/connectors/{id}/endpoints/{endpoint_id}",
+            delete(inbound::retire_endpoint),
+        )
+        .route("/connectors/{id}/deliveries", get(inbound::list_deliveries))
+        .route(
+            "/connectors/{id}/deliveries/handled",
+            post(inbound::mark_handled),
+        )
+        .route(
+            "/connectors/{id}/deliveries/{delivery_id}/body",
+            get(inbound::delivery_body),
+        )
         .admitting(app, Admission::Presented)
 }
 
@@ -308,6 +333,7 @@ fn shared(app: Arc<App>) -> Routes {
         .merge(blob_doors())
         .merge(connector_doors(app.clone()))
         .merge(overview_doors(app.clone()))
+        .merge(attention_doors(app.clone()))
         .merge(count_doors(app))
         .merge(owner_item_doors())
         .merge(auth::owner_doors())
@@ -343,6 +369,13 @@ pub fn public(app: Arc<App>) -> Router {
     public_on(app, listener)
 }
 
+/// A sender's address is its credential and the sender holds no copy of the instance.
+fn sender_doors() -> Routes {
+    Doors::new()
+        .route("/inbound/{token}", post(inbound::receive))
+        .unjudged()
+}
+
 /// Sign-in, grant and OAuth callers hold no copy of the instance.
 fn public_doors(app: Arc<App>) -> Routes {
     shared(app)
@@ -350,6 +383,7 @@ fn public_doors(app: Arc<App>) -> Routes {
         .merge(auth::doors().unjudged())
         .merge(oauth::doors().unjudged())
         .merge(mcp::doors())
+        .merge(sender_doors())
 }
 
 pub fn public_on(app: Arc<App>, listener: Declaration) -> Router {

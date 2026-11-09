@@ -2,6 +2,7 @@
 
 pub mod access;
 pub mod addresses;
+pub mod attention;
 pub mod audit;
 pub mod auth;
 pub mod blobs;
@@ -19,6 +20,7 @@ pub mod folders;
 pub mod health;
 pub mod housekeeping;
 pub mod idempotency;
+pub mod inbound;
 pub mod instance;
 pub mod items;
 pub mod jobs;
@@ -81,6 +83,7 @@ pub struct App {
     pub cursor_secret: Secret,
     pub reindexing: Arc<Notify>,
     pub viewers: events::Viewers,
+    pub inbound: inbound::InFlight,
     stop: watch::Sender<bool>,
     catalog: Arc<ArcSwap<Catalog>>,
     read_only: Arc<ArcSwap<connectors::Registry>>,
@@ -145,6 +148,7 @@ impl App {
             cursor_secret,
             reindexing: Arc::new(Notify::new()),
             viewers: events::Viewers::default(),
+            inbound: inbound::InFlight::default(),
             stop: watch::channel(false).0,
             health: Health::default(),
             usage: Usage::default(),

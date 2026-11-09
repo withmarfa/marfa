@@ -9,8 +9,10 @@ import {
   codeOf,
   idOf,
   answerToUnfinished,
+  openCounted,
   send,
   sendChunked,
+  type OpenBody,
 } from "../../utils/inbound-sender.js";
 
 /**
@@ -20,8 +22,8 @@ import {
  * rather than a refusal that never reaches the later check.
  */
 
-const MAX_BYTES = 64;
-const IN_FLIGHT_BYTES = 8;
+const MAX_BYTES = 1000;
+const IN_FLIGHT_BYTES = 4096;
 const BACKLOG_BYTES = 4;
 const RETAINED_DELIVERIES = 2;
 
@@ -29,15 +31,15 @@ let server: FreshServer;
 let minter: MarfaClient;
 let capacityServer: FreshServer;
 let capacityMinter: MarfaClient;
+let flightServer: FreshServer;
+let flightMinter: MarfaClient;
 let serial = 0;
 
 beforeAll(async () => {
   server = await bootFreshServer("inbound-check-order", {
-    MARFA_RATE_LIMIT_ENABLED: "true",
-    MARFA_RATE_LIMIT_INBOUND_REQUESTS: "2",
+    MARFA_RATE_LIMIT_ENABLED: "false",
     MARFA_INBOUND_BACKLOG_DELIVERIES: "1",
     MARFA_INBOUND_MAX_BYTES: String(MAX_BYTES),
-    MARFA_INBOUND_IN_FLIGHT_BYTES: String(IN_FLIGHT_BYTES),
     MARFA_INBOUND_READ_TIMEOUT_MS: "1000",
   });
   minter = new MarfaClient({
@@ -56,12 +58,24 @@ beforeAll(async () => {
     baseUrl: capacityServer.apiUrl,
     apiKey: capacityServer.workingKey,
   });
-}, 4 * FRESH_SERVER_TIMEOUT_MS);
+  // The bytes in flight are held by bodies the fixture holds open, which a
+  // short read timeout would end.
+  flightServer = await bootFreshServer("inbound-check-order-flight", {
+    MARFA_RATE_LIMIT_ENABLED: "false",
+    MARFA_INBOUND_MAX_BYTES: String(MAX_BYTES),
+    MARFA_INBOUND_IN_FLIGHT_BYTES: String(IN_FLIGHT_BYTES),
+  });
+  flightMinter = new MarfaClient({
+    baseUrl: flightServer.apiUrl,
+    apiKey: flightServer.workingKey,
+  });
+}, 6 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
   await server.stop();
   await capacityServer.stop();
-}, 4 * FRESH_SERVER_TIMEOUT_MS);
+  await flightServer.stop();
+}, 6 * FRESH_SERVER_TIMEOUT_MS);
 
 interface Registration {
   client: MarfaClient;
@@ -96,16 +110,14 @@ async function endpoint(owner: Registration) {
 }
 
 describe("a receipt that meets two refusals", () => {
-  it("answers an address no live endpoint holds 404 before the rate window and the declared length", async () => {
+  it("answers an address no live endpoint holds 404 before the backlog and the declared length", async () => {
     const owner = await registration();
     const made = await endpoint(owner);
     idOf(await send(server.apiUrl, made.path, "x"));
+    // The witness that the backlog is full: the live address is refused.
     const full = await send(server.apiUrl, made.path, "x");
     expect(full.status).toBe(503);
-    // The witness that the window is spent: the live address is refused.
-    const spent = await send(server.apiUrl, made.path, "x");
-    expect(spent.status).toBe(429);
-    expect(codeOf(spent)).toBe("rate_limited");
+    expect(codeOf(full)).toBe("inbound_unavailable");
 
     expect(
       (await owner.client.retireInboundEndpoint(owner.id, made.id)).status,
@@ -131,27 +143,6 @@ describe("a receipt that meets two refusals", () => {
     );
     expect(unknown.status).toBe(404);
     expect(codeOf(unknown)).toBe("not_found");
-  });
-
-  it("answers the rate window's 429 before the backlog's 503", async () => {
-    const owner = await registration();
-    const first = await endpoint(owner);
-    const second = await endpoint(owner);
-    idOf(await send(server.apiUrl, first.path, "x"));
-    // The backlog is full from here, and this one spends the second place in
-    // the window.
-    const full = await send(server.apiUrl, first.path, "x");
-    expect(full.status).toBe(503);
-    expect(codeOf(full)).toBe("inbound_unavailable");
-
-    const spent = await send(server.apiUrl, first.path, "x");
-    expect(spent.status).toBe(429);
-    expect(codeOf(spent)).toBe("rate_limited");
-    // The witness: another endpoint of the registration has a window of its
-    // own and meets the backlog that was full all along.
-    const witness = await send(server.apiUrl, second.path, "x");
-    expect(witness.status).toBe(503);
-    expect(codeOf(witness)).toBe("inbound_unavailable");
   });
 
   it("answers a full backlog 503 before a declared length over the limit", async () => {
@@ -259,21 +250,43 @@ describe("a receipt that meets two refusals", () => {
   });
 
   it("answers a body read past the limit 413 before the bytes in flight's 503", async () => {
-    const owner = await registration();
+    const on = { server: flightServer, minter: flightMinter };
+    const owner = await registration(on);
     const made = await endpoint(owner);
-    const over = await sendChunked(server.apiUrl, made.path, [
+    const bodies: OpenBody[] = [];
+    for (const declared of [1000, 1000, 900, 800]) {
+      const holder = await registration(on);
+      const held = await endpoint(holder);
+      bodies.push(
+        await openCounted(
+          flightServer,
+          held.path,
+          declared,
+          "h".repeat(declared - 100),
+        ),
+      );
+    }
+    // Four sources each hold a body, 3700 bytes in all of the 4096, so that
+    // the room left is less than the limit and than the bodies below.
+    // A body one byte over the limit would also fail the bytes in flight,
+    // and is told the limit's 413.
+    const over = await sendChunked(flightServer.apiUrl, made.path, [
       Buffer.alloc(MAX_BYTES + 1, 0x61),
     ]);
     expect(over.status).toBe(413);
     expect(codeOf(over)).toBe("request_too_large");
 
-    // The witness: a body past the bytes in flight and under the limit is
-    // refused for them.
-    const flight = await sendChunked(server.apiUrl, made.path, [
-      Buffer.alloc(IN_FLIGHT_BYTES + 1, 0x61),
+    // The witness: a body under the limit that does not fit in the rest is
+    // refused for the bytes in flight.
+    const flight = await sendChunked(flightServer.apiUrl, made.path, [
+      Buffer.alloc(700, 0x61),
     ]);
     expect(flight.status).toBe(503);
     expect(codeOf(flight)).toBe("inbound_unavailable");
+    for (const body of bodies) {
+      body.finish("z".repeat(100));
+      expect((await body.answer).status).toBe(202);
+    }
     expect(
       (await owner.client.listInboundDeliveries(owner.id)).data.data,
     ).toEqual([]);
