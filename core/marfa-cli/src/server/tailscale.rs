@@ -28,9 +28,6 @@ fn on_path(name: &OsStr, path: Option<&OsStr>) -> Option<PathBuf> {
         .find(|candidate| is_program(candidate))
 }
 
-/// The program as a shell finds it, except that an empty `PATH` entry is skipped:
-/// `MARFA_TAILSCALE` by path or on the `PATH`, else `tailscale` on the `PATH`, then
-/// the Mac app. The caller runs exactly this path.
 fn resolve(named: Option<&OsStr>, path: Option<&OsStr>, app: &Path) -> Option<PathBuf> {
     match named {
         Some(name) if name.as_encoded_bytes().contains(&b'/') => {
@@ -43,8 +40,12 @@ fn resolve(named: Option<&OsStr>, path: Option<&OsStr>, app: &Path) -> Option<Pa
 }
 
 /// A process list (`ps -Axo comm=`) with the Mac app running.
-fn judge_processes(processes: &str) -> Result<(), CliError> {
-    if processes.lines().map(str::trim).any(|line| line == MAC_APP) {
+fn judge_processes(processes: &str, app: &Path) -> Result<(), CliError> {
+    if processes
+        .lines()
+        .map(str::trim)
+        .any(|line| OsStr::new(line) == app.as_os_str())
+    {
         Ok(())
     } else {
         Err(CliError::Install(
@@ -53,12 +54,15 @@ fn judge_processes(processes: &str) -> Result<(), CliError> {
     }
 }
 
-/// With the app installed, any Tailscale program run while it is closed can bring
-/// up its network extension switched off.
-fn require_the_app_running() -> Result<(), CliError> {
-    if !cfg!(target_os = "macos") || !Path::new(MAC_APP).is_file() {
+/// Avoid invoking Tailscale while its installed Mac app is closed.
+fn require_the_app_running(setup: &Setup) -> Result<(), CliError> {
+    if !setup.guarded || !setup.app.is_file() {
         return Ok(());
     }
+    judge_processes(&(setup.processes)()?, setup.app)
+}
+
+fn list_processes() -> Result<String, CliError> {
     let listed = Command::new("/bin/ps")
         .args(["-Axo", "comm="])
         .stdin(Stdio::null())
@@ -70,18 +74,39 @@ fn require_the_app_running() -> Result<(), CliError> {
             listed.status
         )));
     }
-    judge_processes(&String::from_utf8_lossy(&listed.stdout))
+    Ok(String::from_utf8_lossy(&listed.stdout).into_owned())
+}
+
+struct Setup<'a> {
+    named: Option<&'a OsStr>,
+    path: Option<&'a OsStr>,
+    app: &'a Path,
+    guarded: bool,
+    processes: &'a dyn Fn() -> Result<String, CliError>,
 }
 
 fn run(args: &[&str]) -> Result<String, CliError> {
     let named = std::env::var_os("MARFA_TAILSCALE");
     let path = std::env::var_os("PATH");
-    let program = resolve(named.as_deref(), path.as_deref(), Path::new(MAC_APP)).ok_or_else(|| {
+    run_with(
+        &Setup {
+            named: named.as_deref(),
+            path: path.as_deref(),
+            app: Path::new(MAC_APP),
+            guarded: cfg!(target_os = "macos"),
+            processes: &list_processes,
+        },
+        args,
+    )
+}
+
+fn run_with(setup: &Setup, args: &[&str]) -> Result<String, CliError> {
+    let program = resolve(setup.named, setup.path, setup.app).ok_or_else(|| {
         CliError::Install(
             "Tailscale is not installed, or its command line is not on the PATH. Install it from tailscale.com and sign in, then run this again".into(),
         )
     })?;
-    require_the_app_running()?;
+    require_the_app_running(setup)?;
     let mut command = Command::new(&program);
     // The Mac app's binary is the command line only with this set.
     command
@@ -191,9 +216,16 @@ mod tests {
 
     #[test]
     fn only_the_running_app_lets_a_command_through() {
-        assert!(judge_processes(&format!("/usr/sbin/cfprefsd\n  {MAC_APP}\n")).is_ok());
+        assert!(
+            judge_processes(
+                &format!("/usr/sbin/cfprefsd\n  {MAC_APP}\n"),
+                Path::new(MAC_APP)
+            )
+            .is_ok()
+        );
         let refused = judge_processes(
             "/usr/sbin/cfprefsd\ntailscaled\n/Applications/Tailscale.app/Contents/PlugIns/IPNExtension.appex/Contents/MacOS/IPNExtension\n",
+            Path::new(MAC_APP),
         )
         .unwrap_err()
         .to_string();
@@ -201,7 +233,7 @@ mod tests {
             refused.contains("Tailscale app is not running"),
             "{refused}"
         );
-        assert!(judge_processes("").is_err());
+        assert!(judge_processes("", Path::new(MAC_APP)).is_err());
     }
 
     fn program(dir: &Path, name: &str) -> PathBuf {
@@ -267,5 +299,170 @@ mod tests {
         assert_eq!(served(STATUS, 8443), None);
         assert_eq!(served("{}", 443), None);
         assert_eq!(served("", 443), None);
+    }
+
+    static EXEC: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct Fake {
+        dir: tempfile::TempDir,
+        marker: PathBuf,
+    }
+
+    impl Fake {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let marker = dir.path().join("ran");
+            Self { dir, marker }
+        }
+
+        fn program(&self, name: &str) -> PathBuf {
+            let path = self.dir.path().join(name);
+            let script = format!(
+                "#!/bin/sh\ntouch '{}'\necho \"$TAILSCALE_BE_CLI $*\"\n",
+                self.marker.display()
+            );
+            std::fs::write(&path, script).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            path
+        }
+
+        fn ran(&self) -> bool {
+            self.marker.exists()
+        }
+    }
+
+    fn running(app: &Path) -> impl Fn() -> Result<String, CliError> {
+        let listed = format!("/usr/sbin/cfprefsd\n{}\n", app.display());
+        move || Ok(listed.clone())
+    }
+
+    fn closed() -> Result<String, CliError> {
+        Ok("/usr/sbin/cfprefsd\ntailscaled\n".into())
+    }
+
+    fn attempt(
+        named: Option<&OsStr>,
+        path: Option<&OsStr>,
+        app: &Path,
+        guarded: bool,
+        processes: &dyn Fn() -> Result<String, CliError>,
+    ) -> Result<String, CliError> {
+        run_with(
+            &Setup {
+                named,
+                path,
+                app,
+                guarded,
+                processes,
+            },
+            &["status", "--json"],
+        )
+    }
+
+    const REFUSED: &str = "the Tailscale app is not running";
+
+    #[test]
+    fn a_closed_app_refuses_before_the_program_runs() {
+        let _serial = EXEC
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let fake = Fake::new();
+        let program = fake.program("ts");
+        let app = fake.program("Tailscale");
+        std::fs::remove_file(&fake.marker).ok();
+        let refused = attempt(Some(program.as_os_str()), None, &app, true, &closed)
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains(REFUSED), "{refused}");
+        assert!(!fake.ran());
+        let listed = running(&app);
+        let output = attempt(Some(program.as_os_str()), None, &app, true, &listed).unwrap();
+        assert_eq!(output, "1 status --json");
+        assert!(fake.ran());
+    }
+
+    #[test]
+    fn a_running_app_lets_the_program_run() {
+        let _serial = EXEC
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let fake = Fake::new();
+        let app = fake.program("Tailscale");
+        let listed = running(&app);
+        let output = attempt(None, None, &app, true, &listed).unwrap();
+        assert_eq!(output, "1 status --json");
+        assert!(fake.ran());
+    }
+
+    #[test]
+    fn the_guard_is_off_where_it_is_not_asked_for() {
+        let _serial = EXEC
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let fake = Fake::new();
+        let program = fake.program("ts");
+        let app = fake.program("Tailscale");
+        let output = attempt(Some(program.as_os_str()), None, &app, false, &closed).unwrap();
+        assert_eq!(output, "1 status --json");
+        assert!(fake.ran());
+    }
+
+    #[test]
+    fn without_the_app_installed_the_program_runs() {
+        let _serial = EXEC
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let fake = Fake::new();
+        let program = fake.program("ts");
+        let app = fake.dir.path().join("no-app");
+        attempt(Some(program.as_os_str()), None, &app, true, &closed).unwrap();
+        assert!(fake.ran());
+    }
+
+    #[test]
+    fn a_relative_symlinked_or_searched_program_meets_the_same_guard() {
+        let _serial = EXEC
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let app_dir = tempfile::tempdir().unwrap();
+        let app = program(app_dir.path(), "Tailscale");
+        let listed = running(&app);
+
+        let fake = Fake::new();
+        let real = fake.program("real");
+        let link = fake.dir.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let relative = {
+            let up = std::env::current_dir().unwrap().components().count() - 1;
+            let mut path = PathBuf::new();
+            (0..up).for_each(|_| path.push(".."));
+            path.join(link.strip_prefix("/").unwrap())
+        };
+        assert!(relative.is_relative() && relative.to_string_lossy().contains('/'));
+        let searched = std::env::join_paths([fake.dir.path()]).unwrap();
+        let searched_name = fake.program("searched");
+
+        for (label, named) in [
+            ("relative", Some(relative.as_os_str())),
+            ("symlink", Some(link.as_os_str())),
+            ("searched", Some(searched_name.file_name().unwrap())),
+        ] {
+            std::fs::remove_file(&fake.marker).ok();
+            let refused = attempt(named, Some(&searched), &app, true, &closed)
+                .unwrap_err()
+                .to_string();
+            assert!(refused.contains(REFUSED), "{label}: {refused}");
+            assert!(!fake.ran(), "{label} ran with the app closed");
+            let output = attempt(named, Some(&searched), &app, true, &listed).unwrap();
+            assert_eq!(output, "1 status --json", "{label}");
+            assert!(fake.ran(), "{label} did not run with the app open");
+        }
+    }
+
+    #[test]
+    fn only_the_exact_app_path_counts_as_running() {
+        let app = Path::new("/tmp/one/Tailscale");
+        assert!(judge_processes("/tmp/one/Tailscale\n", app).is_ok());
+        assert!(judge_processes("/tmp/two/Tailscale\n/tmp/one/Tailscale2\n", app).is_err());
     }
 }
