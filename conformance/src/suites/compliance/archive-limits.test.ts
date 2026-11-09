@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
 import { TEST_OWNER } from "../../utils/target.js";
-import { itemsArchive, listTarGzEntries, tarGz } from "../../utils/archive.js";
+import { editLineFile, itemsArchive } from "../../utils/archive.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -191,19 +191,12 @@ describe("the size of a row an archive carries", () => {
             },
           })}\n`
         : "";
-    const archive = tarGz(
-      listTarGzEntries(itemsArchive([])).map((entry) => {
-        if (entry.name === "items.ndjson") {
-          return {
-            name: entry.name,
-            body: lines.map((l) => `${l}\n`).join(""),
-          };
-        }
-        return {
-          name: entry.name,
-          body: entry.name === "edges.ndjson" ? edges : entry.body,
-        };
-      }),
+    const archive = editLineFile(
+      editLineFile(itemsArchive([]), "items", () =>
+        lines.map((l) => `${l}\n`).join(""),
+      ),
+      "edges",
+      () => edges,
     );
     return { archive, first, second, edge };
   }
