@@ -1388,7 +1388,7 @@ async fn an_expired_browser_session_goes_and_a_live_one_stays() {
     app.db
         .write(Write::own(), |tx| {
             tx.execute(
-                "UPDATE auth_session SET expires_at = 0 \
+                "UPDATE auth_session SET expires_at = '2000-01-01T00:00:00.000Z' \
                  WHERE id = (SELECT id FROM auth_session LIMIT 1)",
                 [],
             )?;
@@ -1441,15 +1441,15 @@ async fn a_pass_works_through_more_than_one_batch() {
             tx.execute(
                 "INSERT INTO auth_oauth_consent \
                  (client_id, user_id, grant_id, scopes, created_at, updated_at) \
-                 SELECT client_id, ?1, client_id, '[]', 0, 0 FROM auth_oauth_client",
-                [&user],
+                 SELECT client_id, ?1, client_id, '[]', ?2, ?2 FROM auth_oauth_client",
+                [user.as_str(), "2000-01-01T00:00:00.000Z"],
             )?;
             tx.execute(
                 "INSERT INTO auth_oauth_code (digest, client_id, user_id, session_id, grant_id, \
                  redirect_uri, scopes, challenge, resources, expires_at) \
-                 SELECT client_id, client_id, ?1, 's', client_id, 'r', '[]', 'c', '[]', 0 \
+                 SELECT client_id, client_id, ?1, 's', client_id, 'r', '[]', 'c', '[]', ?2 \
                  FROM auth_oauth_client",
-                [&user],
+                [user.as_str(), "2000-01-01T00:00:00.000Z"],
             )?;
             Ok(())
         })
@@ -1677,12 +1677,12 @@ impl Instance {
             .status
     }
 
-    async fn last_use(&self) -> i64 {
-        let query = "SELECT coalesce(max(last_used_at), 0) FROM auth_oauth_consent";
-        self.count(query).await
+    async fn last_use(&self) -> String {
+        let query = "SELECT coalesce(max(last_used_at), '') FROM auth_oauth_consent";
+        self.text_of(query).await
     }
 
-    async fn when_use_moves_from(&self, last: i64) -> i64 {
+    async fn when_use_moves_from(&self, last: String) -> String {
         for _ in 0..500 {
             let now = self.last_use().await;
             if now != last {
@@ -2465,7 +2465,7 @@ async fn a_grant_records_its_use_at_most_once_a_minute_and_starts_over_when_stoo
     let issued = instance.tokens(&client, NOTES).await;
     let token = text_at(&issued, "access_token");
     let issuing = instance.last_use().await;
-    assert!(issuing > 0);
+    assert!(!issuing.is_empty());
 
     instance.app.clock.advance(30_000).unwrap();
     assert_eq!(instance.reads(token).await, StatusCode::OK);
@@ -2473,7 +2473,7 @@ async fn a_grant_records_its_use_at_most_once_a_minute_and_starts_over_when_stoo
     assert_eq!(instance.last_use().await, issuing);
     instance.app.clock.advance(31_000).unwrap();
     assert_eq!(instance.reads(token).await, StatusCode::OK);
-    assert!(instance.when_use_moves_from(issuing).await > issuing);
+    assert!(instance.when_use_moves_from(issuing.clone()).await > issuing);
 
     let grant = instance.grant_of(&client).await;
     let ended = instance.end_grant(&grant).await;
@@ -2519,7 +2519,7 @@ async fn a_foreign_form_neither_uses_nor_renews_a_session() {
     let instance = Instance::signed_in().await;
     instance.app.clock.advance(120_000).unwrap();
     let last_use = "SELECT updated_at FROM auth_session";
-    let before = instance.count(last_use).await;
+    let before = instance.text_of(last_use).await;
 
     for door in [
         "/auth/authorize/decision",
@@ -2544,7 +2544,7 @@ async fn a_foreign_form_neither_uses_nor_renews_a_session() {
         assert!(reply.cookie().is_none(), "{door}");
     }
 
-    assert_eq!(instance.count(last_use).await, before);
+    assert_eq!(instance.text_of(last_use).await, before);
     let own = instance
         .send(get("/auth/get-session", Some(&instance.cookie)))
         .await;
