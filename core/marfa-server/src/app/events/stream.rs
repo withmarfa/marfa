@@ -222,7 +222,7 @@ fn read_page(
     let mut bytes = 0;
     page::scan(read.tx, after, PAGE_ROWS, |entry| {
         scanned += 1;
-        let Some(kind) = judge.wants(entry) else {
+        let Some(kind) = judge.wants(&entry.head()) else {
             page.position = entry.id;
             return Ok(Next::Continue);
         };
@@ -238,7 +238,7 @@ fn read_page(
                 payload = without_item_type(payload);
             }
         }
-        match judge.render(entry, kind, &payload)? {
+        match judge.render(&entry.head(), kind, &payload)? {
             Verdict::Send(text) => {
                 bytes += text.len();
                 page.frames.push((entry.id, text));
@@ -853,8 +853,8 @@ mod tests {
             dir.path().join("s.sock"),
         );
         let pairs = [
-            ("SQLITE_PATH", database.to_str().unwrap()),
-            ("BLOB_PATH", blobs.to_str().unwrap()),
+            ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
+            ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
             ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
         ];
         let app = App::start(Settings::read(Environment::from_pairs(&pairs)).unwrap())

@@ -20,18 +20,14 @@ const COMMITTED = new URL("../../openapi.json", import.meta.url);
  */
 const OPEN_ON_PURPOSE: readonly { pattern: RegExp; reason: string }[] = [
   {
-    pattern: /^OAuthClientRegistration\.jwks\.keys$/,
-    reason:
-      "A JSON Web Key can carry extension members beyond its algorithm and public key material.",
-  },
-  {
     pattern: /^\w+Refusal\.error\.details$/,
     reason: "A refusal's details, which differ by code and by door.",
   },
   {
-    pattern: /^(BulkEntryError|BulkActionError)\.details$/,
+    pattern:
+      /^(BulkEntryError|BulkActionError|BulkActionResult\.settings_error)\.details$/,
     reason:
-      "The details of the refusal a single write or a bulk-action job row gives, which differ by code.",
+      "The details of the refusal a single write, a bulk-action job row or a type move's settings rewrite gives, which differ by code.",
   },
   {
     pattern:

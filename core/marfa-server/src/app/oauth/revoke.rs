@@ -6,7 +6,7 @@ use serde_json::json;
 
 use super::grant;
 use super::store;
-use super::token::{Form, checked_client};
+use super::token::{Form, checked_client, credential_refused};
 use super::tokens::{looks_like_access_token, looks_like_refresh_token};
 use super::{Answered, Problem};
 use crate::app::App;
@@ -20,6 +20,9 @@ const TOKEN_REVOKED: &str = "auth.credentials.revoked";
 pub(super) const GRANT_REVOKED: &str = "auth.grant.revoked";
 
 pub async fn revoke(app: &Arc<App>, form: Form, visit: &Visit) -> Result<Answered<()>> {
+    if let Some(problem) = credential_refused(&form) {
+        return Ok(Err(problem));
+    }
     let Some(token) = form.get("token").map(str::to_string) else {
         return Ok(Err(Problem::new("invalid_request", "Name the token.")));
     };
@@ -27,7 +30,7 @@ pub async fn revoke(app: &Arc<App>, form: Form, visit: &Visit) -> Result<Answere
         Ok(client) => client,
         Err(problem) => return Ok(Err(problem)),
     };
-    let digest = digest_of(&app.settings.start.api_key_salt, &token)?;
+    let digest = digest_of(&app.settings.start.key_salt, &token)?;
     let ip = visit.client_ip();
     if looks_like_access_token(&token) {
         app.write(&Caller::Server, TOKEN_REVOKED, move |unit| {

@@ -1,26 +1,43 @@
 name: Release
 
-# A release is a tag, and tags are the maintainer's. Each is the one before
-# it plus 0.0.1, starting at 0.0.1. Pushing `v<version>` builds the artifacts
-# from that commit, uploads them to the run, and publishes them: the npm
-# packages `@withmarfa/core` and `@withmarfa/client`, the server image
-# `ghcr.io/withmarfa/marfa-server` for linux/amd64 and linux/arm64, and a
-# GitHub release carrying those tarballs and the `marfa` command line as four
-# archives, `marfa-<version>-darwin-arm64`, `-darwin-x86_64`, `-linux-x86_64`
-# and `-linux-aarch64`, with one checksum file for them. The macOS binaries
-# are signed with the maintainer's Developer ID and notarized; the Linux
-# binaries are static, so they run on any distribution. A release is not
-# published unless all four archives built.
+# A release is a tag, and tags are the maintainer's. Pushing `v<version>`
+# builds Marfa's Rust server from that commit, runs what it built, and
+# publishes it: a GitHub release carrying three archives, `marfa-<version>-`
+# `darwin-arm64`, `-linux-x86_64` and `-linux-aarch64`, each holding `marfa`,
+# `marfa-server` and `NOTICES.txt`, with one checksum file for them and the two
+# npm packages `@withmarfa/core` and `@withmarfa/client`; and the server image
+# `ghcr.io/withmarfa/marfa-server` for linux/amd64 and linux/arm64, made from
+# the Linux archives' own programs. The macOS programs are signed with the
+# maintainer's Developer ID and notarized, and the signed server is made to
+# read a text file, a PDF and a picture; the Linux programs are static, so
+# they run on any distribution, and each runs on its own architecture before a
+# release is made. There is no Intel Mac build. A release is not published
+# unless every archive and the image built and ran, and the install proof held:
+# on a clean runner of each platform the collected archives go through
+# `scripts/install.sh` and `marfa server install` (the image too, on Linux)
+# behind HTTPS, in a dry run as in a release, and nothing is published by it.
 #
-# A dispatch with a `version` is a dry run: it runs the same build a tag
-# would, the image's included, and skips only the publish job and the image's
-# push. It is how the workflow is exercised without a tag, which only the
-# maintainer makes; the tag path reads the version off the tag and never off
-# an input.
+# The Homebrew formula is written every run and held with the release's files.
+# It is pushed to `withmarfa/homebrew-tap` only when the repository variable
+# `HOMEBREW_TAP` is `publish`; otherwise the tap job says so and pushes nothing.
+#
+# A dispatch with a `version` is a dry run: it runs the same builds and checks
+# a tag would, the image's included, and skips only the publish job, the
+# tap job and the image's push. It is how the workflow is exercised without a
+# tag, which only the maintainer makes; the tag path reads the version off the
+# tag and never off an input.
 #
 # The version is the tag's, and nowhere else: `scripts/release/stamp-version.sh`
 # writes it into every manifest in this checkout, which is why no manifest in
-# the repository holds one (`ci/version-fields.test.ts`).
+# the repository holds one (`ci/version-fields.test.ts`). Each version is the
+# one before it plus 0.0.1, from 0.0.70, the first Rust release, which may
+# follow any released version below it; the last TypeScript release is 0.0.66,
+# and this workflow releases nothing below 0.0.70.
+#
+# The TypeScript server's emergency path: a fix to it is released from a branch
+# made at `v0.0.66`, whose own `release.yml` builds and publishes it, because
+# GitHub runs the workflow of the tagged commit. Dispatch `ci.yml` on that
+# branch first, so that the release's CI check passes.
 #
 # The image is built and booted on a runner of each platform, and for a tag
 # each runner pushes it untagged, by digest, and boots the pushed digest. The
@@ -62,8 +79,6 @@ concurrency:
 
 env:
   CARGO_BUILD_JOBS: 2
-  CARGO_PROFILE_DEV_DEBUG: 0
-  CARGO_PROFILE_TEST_DEBUG: 0
 
 permissions:
   contents: read
@@ -104,11 +119,11 @@ jobs:
           fi
           echo "ci.yml is green for $GITHUB_SHA ($query)"
 
-  build:
-    name: Build the artifacts
+  version:
+    name: Read the version
     needs: require-green-ci
-    runs-on: macos-26
-    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     outputs:
@@ -152,6 +167,13 @@ jobs:
             echo "::error::$version is not 0.0.N; every version steps by 0.0.1."
             exit 1
           fi
+          # The first Rust release, the one version that may leave a gap; main
+          # releases nothing below it.
+          first_rust=70
+          if [ "$patch" -lt "$first_rust" ]; then
+            echo "::error::$version is below 0.0.$first_rust, the first Rust release; this workflow releases only the Rust server."
+            exit 1
+          fi
           # Whether a version has a public release: "true", "false", or the
           # step fails, so a lookup that errs is never read as either.
           released() {
@@ -186,7 +208,9 @@ jobs:
             fi
           done
           expected=$((previous < 0 ? 1 : previous + 1))
-          if [ "$patch" != "$expected" ]; then
+          if [ "$patch" = "$first_rust" ] && [ "$previous" -ge 0 ]; then
+            echo "$version is the first Rust release, so it may follow any released version below it."
+          elif [ "$patch" != "$expected" ]; then
             echo "::error::$version does not follow the tags before it; the next version is 0.0.$expected."
             exit 1
           fi
@@ -211,10 +235,43 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "building $version from $GITHUB_SHA"
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-          targets: x86_64-apple-darwin
+  # The programs for macOS, with the two npm packages, built unsigned. The
+  # native readers are built from pinned sources by `build-programs.sh`, which
+  # needs cmake and ninja on the Mac and the Rust version the pins name. A
+  # cold PDFium build is the long part. Only `ci.yml` on `main` saves the
+  # native cache, and only for x86_64 Linux, so this build is cold.
+  programs-macos:
+    name: Build the programs (macOS)
+    needs: version
+    runs-on: macos-26
+    timeout-minutes: 240
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install cmake and ninja if the runner lacks them
+        run: |
+          missing=()
+          for tool in cmake ninja; do
+            command -v "$tool" > /dev/null || missing+=("$tool")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then brew install "${missing[@]}"; fi
+          cmake --version | head -1
+          echo "ninja $(ninja --version)"
+
+      - name: Install the Rust version the native pins name
+        run: |
+          rust=$(awk '$1 == "toolchain" && $2 == "rust" { print $3 }' core/marfa-enrichment/native/manifest.txt)
+          if [ -z "$rust" ]; then
+            echo "::error::native/manifest.txt pins no Rust toolchain."
+            exit 1
+          fi
+          rustup toolchain install "$rust" --profile minimal
+          rustup default "$rust"
+          rustc --version
 
       - uses: pnpm/action-setup@v6
         with:
@@ -222,6 +279,23 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+
+      - name: Choose the folder for downloads and results
+        run: echo "MARFA_NATIVE_ROOT=$RUNNER_TEMP/marfa-native" >> "$GITHUB_ENV"
+      - name: Key the cache on the pins, the patches and the build scripts
+        id: key
+        run: echo "key=marfa-native-$RUNNER_OS-${{ hashFiles('core/marfa-enrichment/native/manifest.txt', 'core/marfa-enrichment/native/patches/**', 'core/marfa-enrichment/native/build.sh', 'core/marfa-enrichment/native/pdfium.sh', 'core/marfa-enrichment/native/tesseract.sh', 'core/marfa-enrichment/native/models.sh', 'core/marfa-enrichment/native/lib.sh', 'core/marfa-enrichment/native/linux/**') }}" >> "$GITHUB_OUTPUT"
+      # Restored from `main`, and saved only from `main`: a tag's own cache
+      # could never be restored by another ref, and would only crowd out the
+      # one that can.
+      - name: Restore the downloads and the PDFium library
+        id: cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ runner.temp }}/marfa-native/downloads
+            ${{ runner.temp }}/marfa-native/archives
+          key: ${{ steps.key.outputs.key }}
 
       # The stamp's `cargo update` runs offline, so it needs every crate the
       # lockfiles name already in the cargo cache. `--locked` refuses rather
@@ -236,8 +310,6 @@ jobs:
       # that record (`verifyDepsBeforeRun`). The lockfile holds no workspace
       # version, so a frozen install passes over the stamped manifests.
       - name: Stamp the version into every manifest
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
         run: bash scripts/release/stamp-version.sh "$VERSION"
 
       - run: pnpm install --frozen-lockfile
@@ -246,8 +318,6 @@ jobs:
 
       - name: Build and pack @withmarfa/core
         working-directory: core/bindings/node
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
         run: |
           mkdir -p "$RUNNER_TEMP/artifacts"
           pnpm --ignore-workspace install --frozen-lockfile
@@ -258,48 +328,38 @@ jobs:
           bash "$GITHUB_WORKSPACE/scripts/release/hold-platform.sh" "$RUNNER_TEMP/artifacts/withmarfa-core-$VERSION.tgz" \
             darwin arm64
 
-      # The Intel binary is cross-built on this Apple silicon runner and run
-      # under Rosetta, so it is asked its version here as well.
-      - name: Build the binaries for macOS
-        working-directory: core
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          cargo build --release -p marfa-cli
-          cargo build --release -p marfa-cli --target x86_64-apple-darwin
-          reported=$(target/release/marfa --version)
-          if [ "$reported" != "marfa $VERSION" ]; then
-            echo "::error::The Apple silicon binary reports '$reported', not 'marfa $VERSION'."
-            exit 1
-          fi
-          reported=$(arch -x86_64 target/x86_64-apple-darwin/release/marfa --version)
-          if [ "$reported" != "marfa $VERSION" ]; then
-            echo "::error::The Intel binary reports '$reported', not 'marfa $VERSION'."
-            exit 1
-          fi
-          cp target/release/marfa "$RUNNER_TEMP/artifacts/marfa-darwin-arm64"
-          cp target/x86_64-apple-darwin/release/marfa "$RUNNER_TEMP/artifacts/marfa-darwin-x86_64"
-
       - name: Pack @withmarfa/client
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
         run: |
           pnpm --filter @withmarfa/client pack --pack-destination "$RUNNER_TEMP/artifacts"
           bash scripts/release/hold-tarball.sh "$RUNNER_TEMP/artifacts/withmarfa-client-$VERSION.tgz" \
             dist/index.js dist/index.d.ts
 
-      # The binaries go to the sign job unsigned, beside the two packages.
-      - name: Hold the build to the two binaries and the two packages
+      # Each program is asked its version before it goes to be signed.
+      - name: Build the programs
+        run: |
+          target=aarch64-apple-darwin
+          bash scripts/release/build-programs.sh "$target"
+          out="$MARFA_NATIVE_ROOT/out/$target"
+          for program in marfa marfa-server; do
+            reported=$("$out/$program" --version)
+            if [ "$reported" != "$program $VERSION" ]; then
+              echo "::error::$program reports '$reported', not '$program $VERSION'."
+              exit 1
+            fi
+          done
+          cp "$out/marfa" "$out/marfa-server" "$out/NOTICES.txt" "$RUNNER_TEMP/artifacts/"
+
+      # The programs go to the sign job unsigned, beside the two packages.
+      - name: Hold the build to the programs and the two packages
         working-directory: ${{ runner.temp }}/artifacts
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
         run: |
           bash "$GITHUB_WORKSPACE/scripts/release/hold-artifacts.sh" \
-            marfa-darwin-arm64 marfa-darwin-x86_64 "withmarfa-client-$VERSION.tgz" "withmarfa-core-$VERSION.tgz"
+            NOTICES.txt marfa marfa-server \
+            "withmarfa-client-$VERSION.tgz" "withmarfa-core-$VERSION.tgz"
 
       - uses: actions/upload-artifact@v7
         with:
-          name: build-${{ steps.version.outputs.version }}
+          name: build-${{ needs.version.outputs.version }}
           path: ${{ runner.temp }}/artifacts/
           if-no-files-found: error
           retention-days: 1
@@ -308,24 +368,30 @@ jobs:
   # signing identity never shares a machine with the build's dependencies. A
   # dry run signs and notarizes too, so a change here is proved before a tag
   # depends on it.
+  #
+  # After notarizing, the programs are asked their version from the archive a
+  # person unpacks, and the server unpacked from it reads a text file, a PDF
+  # and a picture (`prove-reading.sh`). The server does not report how far its
+  # reader was sandboxed, so the same script also runs the signed server as its
+  # own reading child and requires the full sandbox in the child's first frame.
   sign:
-    name: Sign the binaries
-    needs: build
+    name: Sign the programs
+    needs: [version, programs-macos]
     runs-on: macos-26
-    timeout-minutes: 45
+    timeout-minutes: 120
     permissions:
       contents: read
     env:
-      VERSION: ${{ needs.build.outputs.version }}
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions/download-artifact@v8
         with:
-          name: build-${{ needs.build.outputs.version }}
-          path: ${{ runner.temp }}/artifacts
+          name: build-${{ needs.version.outputs.version }}
+          path: ${{ runner.temp }}/build
 
-      - name: Sign and notarize the binaries
+      - name: Sign and notarize the programs
         env:
           APPLE_DEVELOPER_ID_P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
           APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
@@ -334,48 +400,49 @@ jobs:
           APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          for arch in darwin-arm64 darwin-x86_64; do
+          for program in marfa marfa-server; do
             # An artifact keeps no file modes.
-            chmod +x "$RUNNER_TEMP/artifacts/marfa-$arch"
-            bash scripts/release/sign-binary.sh "$RUNNER_TEMP/artifacts/marfa-$arch"
+            chmod +x "$RUNNER_TEMP/build/$program"
+            bash scripts/release/sign-binary.sh "$RUNNER_TEMP/build/$program"
           done
 
-      # Each archive is unpacked and its binary asked its version, the Intel
-      # one under Rosetta.
-      - name: Pack the binaries
-        working-directory: ${{ runner.temp }}/artifacts
+      - name: Pack the programs and run them from the archive
         run: |
-          bash "$GITHUB_WORKSPACE/scripts/release/pack-cli.sh" \
-            marfa-darwin-arm64 "marfa-$VERSION-darwin-arm64.tar.gz" "$VERSION"
-          bash "$GITHUB_WORKSPACE/scripts/release/pack-cli.sh" \
-            marfa-darwin-x86_64 "marfa-$VERSION-darwin-x86_64.tar.gz" "$VERSION" arch -x86_64
-          rm marfa-darwin-arm64 marfa-darwin-x86_64
+          mkdir -p "$RUNNER_TEMP/pack" "$RUNNER_TEMP/artifacts"
+          cp "$RUNNER_TEMP/build/marfa" "$RUNNER_TEMP/build/marfa-server" "$RUNNER_TEMP/build/NOTICES.txt" "$RUNNER_TEMP/pack/"
+          bash scripts/release/pack-programs.sh "$RUNNER_TEMP/pack" "$RUNNER_TEMP/artifacts/marfa-$VERSION-darwin-arm64.tar.gz"
+          bash scripts/release/check-archive.sh "$RUNNER_TEMP/artifacts/marfa-$VERSION-darwin-arm64.tar.gz" "$VERSION" --boot
+          bash scripts/release/prove-reading.sh "$RUNNER_TEMP/artifacts/marfa-$VERSION-darwin-arm64.tar.gz" \
+            core/marfa-enrichment/fixtures
+          cp "$RUNNER_TEMP/build/withmarfa-client-$VERSION.tgz" "$RUNNER_TEMP/build/withmarfa-core-$VERSION.tgz" "$RUNNER_TEMP/artifacts/"
 
-      # Exactly the four the collect job reads, by name: an upload that only
+      # Exactly the three the collect job reads, by name: an upload that only
       # refuses an empty folder would carry a run missing one.
-      - name: Hold the artifacts to the four this job makes
+      - name: Hold the artifacts to the three this job makes
         working-directory: ${{ runner.temp }}/artifacts
         run: |
           bash "$GITHUB_WORKSPACE/scripts/release/hold-artifacts.sh" \
-            "marfa-$VERSION-darwin-arm64.tar.gz" "marfa-$VERSION-darwin-x86_64.tar.gz" \
+            "marfa-$VERSION-darwin-arm64.tar.gz" \
             "withmarfa-client-$VERSION.tgz" "withmarfa-core-$VERSION.tgz"
 
       - uses: actions/upload-artifact@v7
         with:
-          name: signed-${{ needs.build.outputs.version }}
+          name: signed-${{ needs.version.outputs.version }}
           path: ${{ runner.temp }}/artifacts/
           if-no-files-found: error
           retention-days: 1
 
-  # The command line for Linux, built on a runner of each architecture so the
-  # archive's binary is the one that ran there. It is linked statically
-  # against musl, which needs no particular glibc of the machine it lands on.
-  # Nothing here is signed, so no secret is read.
-  cli-linux:
-    name: Build the binary for Linux (${{ matrix.arch }})
-    needs: build
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+  # The programs for Linux, built in Docker on a runner of the architecture
+  # `build-programs.sh` needs (x86_64) for each target, in a job of its own
+  # apiece, because a cold PDFium build is the long part. Both targets are
+  # linked statically against musl, which needs no particular glibc of the
+  # machine they land on. Nothing is signed, so no secret is read. Each
+  # archive is run on its own architecture by the `run-linux` job.
+  programs-linux:
+    name: Build the programs (${{ matrix.arch }} Linux)
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
     permissions:
       contents: read
     strategy:
@@ -383,26 +450,40 @@ jobs:
       matrix:
         include:
           - arch: x86_64
-            runner: ubuntu-latest
             target: x86_64-unknown-linux-musl
+            cache: marfa-native
           - arch: aarch64
-            runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
+            cache: marfa-native-aarch64
     env:
-      VERSION: ${{ needs.build.outputs.version }}
+      VERSION: ${{ needs.version.outputs.version }}
+      TARGET: ${{ matrix.target }}
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
+      # The first build of a target asks for 40 GB of free disk, and the
+      # runner starts with less. These are the toolchains it does not use.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      # The host only fetches crates and stamps the version; the programs are
+      # built in the pinned image.
+      - name: Install the Rust version the native pins name
+        run: |
+          rust=$(awk '$1 == "toolchain" && $2 == "rust" { print $3 }' core/marfa-enrichment/native/manifest.txt)
+          if [ -z "$rust" ]; then
+            echo "::error::native/manifest.txt pins no Rust toolchain."
+            exit 1
+          fi
+          rustup toolchain install "$rust" --profile minimal
+          rustup default "$rust"
+          rustc --version
 
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-
-      - name: Install the musl C compiler
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
 
       - name: Stamp the version into every manifest
         run: |
@@ -410,22 +491,38 @@ jobs:
           cargo fetch --locked --manifest-path core/bindings/swift/Cargo.toml
           bash scripts/release/stamp-version.sh "$VERSION"
 
-      - name: Build the binary
-        working-directory: core
-        env:
-          TARGET: ${{ matrix.target }}
-        run: |
-          export "CC_${TARGET//-/_}=musl-gcc"
-          cargo build --release --locked -p marfa-cli --target "$TARGET"
-          mkdir -p "$RUNNER_TEMP/artifacts"
-          cp "target/$TARGET/release/marfa" "$RUNNER_TEMP/artifacts/marfa-linux-${{ matrix.arch }}"
+      - name: Choose the folder for downloads and results
+        run: echo "MARFA_NATIVE_ROOT=$RUNNER_TEMP/marfa-native" >> "$GITHUB_ENV"
+      # The x86_64 key is the one `ci.yml`'s `Core native (x86_64 Linux)` job
+      # saves from `main`, so that target restores its cache. Restored from
+      # `main`, and saved only from `main`.
+      - name: Key the cache on the pins, the patches and the build scripts
+        id: key
+        run: echo "key=${{ matrix.cache }}-$RUNNER_OS-${{ hashFiles('core/marfa-enrichment/native/manifest.txt', 'core/marfa-enrichment/native/patches/**', 'core/marfa-enrichment/native/build.sh', 'core/marfa-enrichment/native/pdfium.sh', 'core/marfa-enrichment/native/tesseract.sh', 'core/marfa-enrichment/native/models.sh', 'core/marfa-enrichment/native/lib.sh', 'core/marfa-enrichment/native/linux/**') }}" >> "$GITHUB_OUTPUT"
+      - name: Restore the downloads and the PDFium library
+        id: cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ runner.temp }}/marfa-native/downloads
+            ${{ runner.temp }}/marfa-native/archives
+          key: ${{ steps.key.outputs.key }}
 
-      - name: Pack the binary
-        working-directory: ${{ runner.temp }}/artifacts
+      # The arm64 programs are built here on x86_64 and read a sample under emulation.
+      - name: Set up emulation for arm64
+        if: matrix.arch == 'aarch64'
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: arm64
+
+      - name: Build the programs
+        run: bash scripts/release/build-programs.sh "$TARGET"
+
+      - name: Pack the programs
         run: |
-          bash "$GITHUB_WORKSPACE/scripts/release/pack-cli.sh" \
-            "marfa-linux-${{ matrix.arch }}" "marfa-$VERSION-linux-${{ matrix.arch }}.tar.gz" "$VERSION"
-          rm "marfa-linux-${{ matrix.arch }}"
+          mkdir -p "$RUNNER_TEMP/artifacts"
+          bash scripts/release/pack-programs.sh "$MARFA_NATIVE_ROOT/out/$TARGET" \
+            "$RUNNER_TEMP/artifacts/marfa-$VERSION-linux-${{ matrix.arch }}.tar.gz"
 
       - name: Hold the artifacts to the archive
         working-directory: ${{ runner.temp }}/artifacts
@@ -435,34 +532,72 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: linux-${{ needs.build.outputs.version }}-${{ matrix.arch }}
+          name: linux-${{ needs.version.outputs.version }}-${{ matrix.arch }}
           path: ${{ runner.temp }}/artifacts/
           if-no-files-found: error
           retention-days: 1
 
-  # Everything a release carries, in one folder, with the checksum file for
-  # the four command line archives. Publishing waits for this job, so a
-  # release with an archive missing is never made.
-  collect:
-    name: Collect the release
-    needs: [build, sign, cli-linux]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+  # Each Linux archive on a runner of its own architecture, unpacked as a
+  # person would: both programs report the version, the server boots with
+  # throwaway secrets and answers `/health`, and it reads a text file, a PDF
+  # and a picture under the full sandbox (`prove-reading.sh`). This is the only
+  # job that runs the arm64 programs on arm64: the build runs them under QEMU,
+  # which cannot install the reader's seccomp filter.
+  run-linux:
+    name: Run the programs (${{ matrix.arch }} Linux)
+    needs: [version, programs-linux]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
     permissions:
       contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
     env:
-      VERSION: ${{ needs.build.outputs.version }}
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions/download-artifact@v8
         with:
-          name: signed-${{ needs.build.outputs.version }}
+          name: linux-${{ needs.version.outputs.version }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/archive
+
+      - name: Unpack the archive, ask the programs their version and boot the server
+        run: bash scripts/release/check-archive.sh "$RUNNER_TEMP/archive/marfa-$VERSION-linux-${{ matrix.arch }}.tar.gz" "$VERSION" --boot
+
+      - name: Read a text file, a PDF and a picture with the server unpacked from the archive
+        run: bash scripts/release/prove-reading.sh "$RUNNER_TEMP/archive/marfa-$VERSION-linux-${{ matrix.arch }}.tar.gz" core/marfa-enrichment/fixtures
+
+  # Everything a release carries, in one folder, with the checksum file for
+  # the three archives, and the Homebrew formula the release would give the
+  # tap, kept apart because it is not part of the release. Publishing waits for
+  # this job, so a release with an archive missing is never made.
+  collect:
+    name: Collect the release
+    needs: [version, sign, programs-linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: signed-${{ needs.version.outputs.version }}
           path: ${{ runner.temp }}/artifacts
 
       - uses: actions/download-artifact@v8
         with:
-          pattern: linux-${{ needs.build.outputs.version }}-*
+          pattern: linux-${{ needs.version.outputs.version }}-*
           merge-multiple: true
           path: ${{ runner.temp }}/artifacts
 
@@ -470,35 +605,51 @@ jobs:
         working-directory: ${{ runner.temp }}/artifacts
         run: |
           bash "$GITHUB_WORKSPACE/scripts/release/write-checksums.sh" "marfa-$VERSION-checksums.txt" \
-            "marfa-$VERSION-darwin-arm64.tar.gz" "marfa-$VERSION-darwin-x86_64.tar.gz" \
+            "marfa-$VERSION-darwin-arm64.tar.gz" \
             "marfa-$VERSION-linux-aarch64.tar.gz" "marfa-$VERSION-linux-x86_64.tar.gz"
 
-      # Exactly the seven the publish job reads, by name.
-      - name: Hold the artifacts to the seven a release carries
+      - name: Write the Homebrew formula
+        run: |
+          mkdir -p "$RUNNER_TEMP/formula"
+          bash scripts/release/write-formula.sh "$VERSION" "$RUNNER_TEMP/artifacts/marfa-$VERSION-checksums.txt" > "$RUNNER_TEMP/formula/marfa.rb"
+          cat "$RUNNER_TEMP/formula/marfa.rb"
+
+      # Exactly the six the publish job reads, by name.
+      - name: Hold the artifacts to the six a release carries
         working-directory: ${{ runner.temp }}/artifacts
         run: |
           bash "$GITHUB_WORKSPACE/scripts/release/hold-artifacts.sh" \
             "marfa-$VERSION-checksums.txt" \
-            "marfa-$VERSION-darwin-arm64.tar.gz" "marfa-$VERSION-darwin-x86_64.tar.gz" \
+            "marfa-$VERSION-darwin-arm64.tar.gz" \
             "marfa-$VERSION-linux-aarch64.tar.gz" "marfa-$VERSION-linux-x86_64.tar.gz" \
             "withmarfa-client-$VERSION.tgz" "withmarfa-core-$VERSION.tgz"
 
+      - name: Hold the formula
+        working-directory: ${{ runner.temp }}/formula
+        run: bash "$GITHUB_WORKSPACE/scripts/release/hold-artifacts.sh" marfa.rb
+
       - uses: actions/upload-artifact@v7
         with:
-          name: release-${{ needs.build.outputs.version }}
+          name: release-${{ needs.version.outputs.version }}
           path: ${{ runner.temp }}/artifacts/
           if-no-files-found: error
 
-  # The server image, built from `deploy/Dockerfile` as this release and
-  # booted through its entrypoint on a runner of its own platform, so the
-  # arm64 image is the one that ran on arm64. Never pushed by a dry run. A
-  # tag pushes each platform's image untagged, by digest, which names nothing
-  # a person could pull: the tags come in the publish job, once everything
-  # else has held. The push is the same build again, answered from the
-  # builder's cache, so what was booted is what is pushed.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: formula-${{ needs.version.outputs.version }}
+          path: ${{ runner.temp }}/formula/marfa.rb
+          if-no-files-found: error
+
+  # The server image, built from `deploy/Dockerfile` out of the release's own
+  # Linux archives and booted on a runner of its own platform, so the arm64
+  # image is the one that ran on arm64. Never pushed by a dry run. A tag pushes
+  # each platform's image untagged, by digest, which names nothing a person
+  # could pull: the tags come in the publish job, once everything else has
+  # held. The push is the same build again, answered from the builder's cache,
+  # so what was booted is what is pushed.
   image:
     name: Build the server image (${{ matrix.platform }})
-    needs: build
+    needs: [version, programs-linux]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:
@@ -515,10 +666,19 @@ jobs:
             runner: ubuntu-24.04-arm
             arch: arm64
     env:
-      VERSION: ${{ needs.build.outputs.version }}
+      VERSION: ${{ needs.version.outputs.version }}
       IMAGE: ghcr.io/withmarfa/marfa-server
     steps:
       - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: linux-${{ needs.version.outputs.version }}-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/archives
+
+      - name: Lay out the build context from the release's archives
+        run: bash scripts/release/image-context.sh "$RUNNER_TEMP/archives" "$VERSION" "$RUNNER_TEMP/image-context"
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -526,7 +686,7 @@ jobs:
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: .
+          context: ${{ runner.temp }}/image-context
           file: deploy/Dockerfile
           platforms: ${{ matrix.platform }}
           load: true
@@ -534,17 +694,17 @@ jobs:
           provenance: false
           sbom: false
           build-args: |
-            VERSION_SHA=${{ github.sha }}
-            VERSION_RELEASE=${{ env.VERSION }}
+            VERSION=${{ env.VERSION }}
+            REVISION=${{ github.sha }}
           labels: |
             org.opencontainers.image.title=Marfa server
-            org.opencontainers.image.description=The Marfa server with Litestream beside it.
+            org.opencontainers.image.description=The Marfa server.
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ env.VERSION }}
 
       - name: Boot it, ask it, stop it
-        run: scripts/check-image.sh marfa-server:check "$GITHUB_SHA" "$VERSION"
+        run: scripts/check-image.sh marfa-server:check "$VERSION"
 
       - name: Log in to the registry
         if: github.event_name == 'push'
@@ -559,18 +719,18 @@ jobs:
         if: github.event_name == 'push'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: .
+          context: ${{ runner.temp }}/image-context
           file: deploy/Dockerfile
           platforms: ${{ matrix.platform }}
           provenance: false
           sbom: false
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           build-args: |
-            VERSION_SHA=${{ github.sha }}
-            VERSION_RELEASE=${{ env.VERSION }}
+            VERSION=${{ env.VERSION }}
+            REVISION=${{ github.sha }}
           labels: |
             org.opencontainers.image.title=Marfa server
-            org.opencontainers.image.description=The Marfa server with Litestream beside it.
+            org.opencontainers.image.description=The Marfa server.
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ env.VERSION }}
@@ -583,7 +743,7 @@ jobs:
           DIGEST: ${{ steps.push.outputs.digest }}
         run: |
           docker pull "$IMAGE@$DIGEST"
-          scripts/check-image.sh "$IMAGE@$DIGEST" "$GITHUB_SHA" "$VERSION"
+          scripts/check-image.sh "$IMAGE@$DIGEST" "$VERSION"
 
       - name: Hold the digest for the publish job
         if: github.event_name == 'push'
@@ -602,9 +762,60 @@ jobs:
         if: github.event_name == 'push'
         uses: actions/upload-artifact@v7
         with:
-          name: image-digest-${{ needs.build.outputs.version }}-${{ matrix.arch }}
+          name: image-digest-${{ needs.version.outputs.version }}-${{ matrix.arch }}
           path: ${{ runner.temp }}/digests/${{ matrix.arch }}
           if-no-files-found: error
+
+  # What a person does with a release, on a clean runner of each platform and
+  # with the files this run collected, not the ones a tag would publish:
+  # `scripts/install.sh` installs them, `marfa server install` runs the server
+  # as a service of the machine, Caddy puts HTTPS in front with a certificate
+  # authority of its own, and the owner claims the instance on the private
+  # socket. The Linux x86_64 runner does the install as root, with the system
+  # unit and the `marfa` account, and again with Docker on an image built here
+  # from the same archives. The arm64 runner runs a systemd user unit. A Mac
+  # with Docker cannot run on GitHub, so Docker on a Mac is proved by hand.
+  # It publishes nothing, and a release waits for it: an archive that does not
+  # install is not a release.
+  install-proof:
+    name: Prove the install (${{ matrix.platform }})
+    needs: [version, collect]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: darwin-arm64
+            runner: macos-26
+            modes: native-user
+          - platform: linux-x86_64
+            runner: ubuntu-latest
+            modes: native-root docker
+          - platform: linux-aarch64
+            runner: ubuntu-24.04-arm
+            modes: native-user
+            # The runner's /home carries an access control list, which the server
+            # refuses above its private socket.
+            root: /var/tmp/marfa-proof
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      MODES: ${{ matrix.modes }}
+      MARFA_PROOF_ROOT: ${{ matrix.root }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-${{ needs.version.outputs.version }}
+          path: ${{ runner.temp }}/release
+
+      - name: Install, claim and reach the server behind HTTPS
+        run: |
+          read -ra modes <<< "$MODES"
+          bash scripts/release/install-proof.sh "$RUNNER_TEMP/release" "$VERSION" "${modes[@]}"
 
   # Never reached by a dry run. Ordered so a failure part way leaves what a
   # re-run of the same tag can finish, and never a version half out: the
@@ -630,7 +841,7 @@ jobs:
   # on.
   publish:
     name: Publish
-    needs: [build, collect, image]
+    needs: [version, collect, run-linux, image, install-proof]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -639,7 +850,7 @@ jobs:
       contents: write
       packages: write
     env:
-      VERSION: ${{ needs.build.outputs.version }}
+      VERSION: ${{ needs.version.outputs.version }}
       IMAGE: ghcr.io/withmarfa/marfa-server
     steps:
       # Node 24's npm, rather than a newer one installed into a job that can
@@ -753,7 +964,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
-          name: release-${{ needs.build.outputs.version }}
+          name: release-${{ needs.version.outputs.version }}
           path: artifacts
 
       # The notes open with what a build does to a database an earlier or
@@ -810,7 +1021,7 @@ jobs:
 
       - uses: actions/download-artifact@v8
         with:
-          pattern: image-digest-${{ needs.build.outputs.version }}-*
+          pattern: image-digest-${{ needs.version.outputs.version }}-*
           merge-multiple: true
           path: digests
 
@@ -835,7 +1046,7 @@ jobs:
               exit 1
             fi
           done
-          if found=$(docker buildx imagetools inspect "$IMAGE:$VERSION" 2> "$RUNNER_TEMP/image-view.err"); then
+          if docker buildx imagetools inspect "$IMAGE:$VERSION" > /dev/null 2> "$RUNNER_TEMP/image-view.err"; then
             echo "$IMAGE:$VERSION is already tagged"
           elif grep -qi "not found" "$RUNNER_TEMP/image-view.err"; then
             docker buildx imagetools create -t "$IMAGE:$VERSION" \
@@ -870,7 +1081,7 @@ jobs:
             echo "::error::$IMAGE:latest is $latest, not the version's $tagged."
             exit 1
           fi
-          scripts/check-image.sh "$IMAGE:$VERSION" "$GITHUB_SHA" "$VERSION"
+          scripts/check-image.sh "$IMAGE:$VERSION" "$VERSION"
 
       # By trusted publishing: npm exchanges the job's OIDC identity itself,
       # so no token is set anywhere.
@@ -898,25 +1109,51 @@ jobs:
         run: gh release edit "v$VERSION" --draft=false
 
   # The Homebrew formula follows the public release: `brew install
-  # withmarfa/tap/marfa` installs the macOS archive of this version, by the
-  # checksum file the release carries. It runs after the release is public, so
-  # a formula never names an archive a person cannot download, and a failure
-  # here leaves the release as it is; run the job again.
+  # withmarfa/tap/marfa` installs the archive of this version for the machine,
+  # by the checksum file the release carries. It runs after the release is
+  # public, so a formula never names an archive a person cannot download, and
+  # a failure here leaves the release as it is; run the job again.
+  #
+  # The formula is always written and shown. It is pushed only when the
+  # repository variable `HOMEBREW_TAP` is `publish`, because a push makes
+  # `brew upgrade` install this version, and a machine whose folder watch runs
+  # Homebrew's `marfa` against another server would break.
   tap:
     name: Update the Homebrew tap
-    needs: [build, publish]
+    needs: [version, publish]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
     env:
-      VERSION: ${{ needs.build.outputs.version }}
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
+      - name: Say whether the formula is pushed
+        id: gate
+        env:
+          HOMEBREW_TAP: ${{ vars.HOMEBREW_TAP }}
+        run: |
+          if [ "$HOMEBREW_TAP" = publish ]; then
+            echo "push=true" >> "$GITHUB_OUTPUT"
+            echo "HOMEBREW_TAP is publish: the formula is pushed to the tap."
+          else
+            echo "push=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::The formula is written below and not pushed: the repository variable HOMEBREW_TAP is not 'publish'."
+          fi
+      - name: Get the release's checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "v$VERSION" --pattern "marfa-$VERSION-checksums.txt"
+      - name: Write the formula
+        run: |
+          bash scripts/release/write-formula.sh "$VERSION" "marfa-$VERSION-checksums.txt" > "$RUNNER_TEMP/marfa.rb"
+          cat "$RUNNER_TEMP/marfa.rb"
       # A fine-grained token with Contents read and write on withmarfa/homebrew-tap
       # only, kept as an Actions secret of this repository.
       - name: Require the tap token
+        if: steps.gate.outputs.push == 'true'
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
@@ -924,22 +1161,18 @@ jobs:
             echo "::error::The secret HOMEBREW_TAP_TOKEN is not set. Add a fine-grained token with Contents read and write on withmarfa/homebrew-tap as an Actions secret of this repository, then run this job again."
             exit 1
           fi
-      - name: Get the release's checksums
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release download "v$VERSION" --pattern "marfa-$VERSION-checksums.txt"
       - uses: actions/checkout@v7
+        if: steps.gate.outputs.push == 'true'
         with:
           repository: withmarfa/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           path: tap
-      - name: Write the formula
-        run: |
-          mkdir -p tap/Formula
-          bash scripts/release/write-formula.sh "$VERSION" "marfa-$VERSION-checksums.txt" > tap/Formula/marfa.rb
       - name: Commit and push the formula
+        if: steps.gate.outputs.push == 'true'
         working-directory: tap
         run: |
+          mkdir -p Formula
+          cp "$RUNNER_TEMP/marfa.rb" Formula/marfa.rb
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Formula/marfa.rb

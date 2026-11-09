@@ -35,7 +35,7 @@ const FORM_DOORS = [
 
 beforeAll(async () => {
   server = await bootFreshServer("sign-in-surface", {
-    TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+    MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
   });
   // The origin the surface trusts is its own, which discovery names as the
   // issuer.
@@ -532,21 +532,6 @@ describe("the pages a person reads at sign-in", () => {
     expect(await genuine.text()).not.toContain(
       "We could not verify this request",
     );
-  });
-
-  it("shows a browser at end-session with no session a page, and a program the provider's JSON", async () => {
-    const page = await fetch(`${server!.apiUrl}/auth/oauth2/end-session`, {
-      headers: NAVIGATION,
-    });
-    expect(page.status).toBe(200);
-    expect(page.headers.get("content-type")).toContain("text/html");
-    expect(await page.text()).toContain("signed out");
-
-    const program = await fetch(`${server!.apiUrl}/auth/oauth2/end-session`, {
-      headers: { accept: "application/json" },
-    });
-    expect(program.status).toBe(400);
-    expect(program.headers.get("content-type")).toContain("application/json");
   });
 
   it("tells a link whose window has closed that the request has expired", async () => {

@@ -8,7 +8,8 @@ use rusqlite::{OptionalExtension, Transaction, params};
 use super::App;
 use super::refusal::{Refusal, Result};
 use crate::db::Write;
-use crate::settings::registry;
+use crate::settings::registry::{self, Kind, Reading, Seeds, Setting};
+use crate::settings::report_unreadable;
 
 #[derive(Clone, Debug)]
 pub struct Change {
@@ -45,6 +46,18 @@ pub fn get(tx: &Transaction<'_>, key: &str) -> Result<Option<String>> {
         .prepare_cached("SELECT value FROM settings WHERE key = ?1")?
         .query_row([key], |row| row.get(0))
         .optional()?)
+}
+
+/// One setting as this transaction holds it, so a change committed while the write waited is
+/// seen. A row that does not read is reported and the seed or default is used, as the live
+/// settings do.
+pub fn setting<T: Kind>(tx: &Transaction<'_>, seeds: &Seeds, setting: Setting<T>) -> Result<T> {
+    let row = get(tx, setting.entry.key)?;
+    let (value, reading) = setting.resolve(seeds, row.as_deref());
+    if reading == Reading::Unreadable {
+        report_unreadable(setting.entry.key);
+    }
+    Ok(value)
 }
 
 pub fn remove(tx: &Transaction<'_>, key: &str) -> Result<()> {
@@ -168,7 +181,48 @@ mod tests {
     use rusqlite::Connection;
 
     use super::*;
-    use crate::settings::registry::ENTRIES;
+    use crate::settings::registry::{CONNECTOR_HOLD_MS, ENTRIES, RATE_LIMIT_ENABLED, Value};
+
+    fn table() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)")
+            .unwrap();
+        conn
+    }
+
+    #[test]
+    fn one_setting_reads_its_row_then_its_seed_then_its_default() {
+        let mut conn = table();
+        let tx = conn.transaction().unwrap();
+        let none = Seeds::new();
+        let seeded = Seeds::from([(CONNECTOR_HOLD_MS.entry.key, Value::Whole(5_000))]);
+        assert_eq!(setting(&tx, &none, CONNECTOR_HOLD_MS).unwrap(), 180_000);
+        assert_eq!(setting(&tx, &seeded, CONNECTOR_HOLD_MS).unwrap(), 5_000);
+        write_row(&tx, "connector_hold_ms", "9000").unwrap();
+        assert_eq!(setting(&tx, &seeded, CONNECTOR_HOLD_MS).unwrap(), 9_000);
+        write_row(&tx, "connector_hold_ms", "").unwrap();
+        assert_eq!(setting(&tx, &seeded, CONNECTOR_HOLD_MS).unwrap(), 5_000);
+        assert!(setting(&tx, &seeded, RATE_LIMIT_ENABLED).unwrap());
+    }
+
+    #[test]
+    fn a_row_that_does_not_read_falls_back_as_the_live_settings_do() {
+        let mut conn = table();
+        let tx = conn.transaction().unwrap();
+        let seeded = Seeds::from([(CONNECTOR_HOLD_MS.entry.key, Value::Whole(5_000))]);
+        for broken in ["soon", "-1", "999", "99999999999"] {
+            write_row(&tx, "connector_hold_ms", broken).unwrap();
+            let rows = rows(&tx).unwrap();
+            let live = registry::Snapshot::resolve(&seeded, &rows, 0);
+            assert_eq!(live.unreadable(), ["connector_hold_ms"], "{broken}");
+            assert_eq!(
+                setting(&tx, &seeded, CONNECTOR_HOLD_MS).unwrap(),
+                live.get(CONNECTOR_HOLD_MS),
+                "{broken}"
+            );
+            assert_eq!(live.get(CONNECTOR_HOLD_MS), 5_000);
+        }
+    }
 
     #[test]
     fn a_note_cannot_take_a_settings_row() {

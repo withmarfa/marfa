@@ -132,6 +132,36 @@ pub fn live_by_id(tx: &Transaction<'_>, id: &str, at: &str) -> Result<Option<Key
         .optional()?)
 }
 
+/// The live keys whose type map names `type_id` outright, as `(id, label)`. An app's keys are its grant's.
+pub fn naming_type(tx: &Transaction<'_>, type_id: &str, at: &str) -> Result<Vec<(String, String)>> {
+    let mut statement = tx.prepare(&format!(
+        "SELECT k.id, k.label FROM api_keys k WHERE {LIVE} AND k.oauth_client_id IS NULL \
+         AND EXISTS (SELECT 1 FROM json_each(k.type_permissions) WHERE key = ?2) \
+         ORDER BY k.created_at, k.id"
+    ))?;
+    let rows = statement.query_map([at, type_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// Whether the key is neither revoked nor expired at `at`.
+pub fn stands(tx: &Transaction<'_>, id: &str, at: &str) -> Result<bool> {
+    Ok(tx.query_row(
+        "SELECT EXISTS (SELECT 1 FROM api_keys k WHERE k.id = ?2 AND k.revoked_at IS NULL \
+         AND (k.expires_at IS NULL OR k.expires_at > ?1))",
+        [at, id],
+        |row| row.get(0),
+    )?)
+}
+
+/// A key's label for as long as its row is kept, revoked or not.
+pub fn label(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {
+    Ok(tx
+        .query_row("SELECT label FROM api_keys WHERE id = ?1", [id], |row| {
+            row.get(0)
+        })
+        .optional()?)
+}
+
 /// A key not revoked, whether or not its life has ended.
 pub fn unrevoked_by_id(tx: &Transaction<'_>, id: &str) -> Result<Option<Key>> {
     Ok(tx
@@ -157,7 +187,7 @@ fn unknown(tx: &Transaction<'_>, caller: &Caller, id: &str) -> Result<Refusal> {
     Ok(Refusal::new(Code::ApiKeyNotFound, message))
 }
 
-fn reached(tx: &Transaction<'_>, caller: &Caller, id: &str, at: &str) -> Result<Key> {
+pub(crate) fn reached(tx: &Transaction<'_>, caller: &Caller, id: &str, at: &str) -> Result<Key> {
     match live_by_id(tx, id, at)? {
         Some(key) if caller.reaches(&key) => Ok(key),
         _ => Err(unknown(tx, caller, id)?),
@@ -292,7 +322,7 @@ fn require_ahead(expires_at: Option<&str>, at: &str) -> Result<()> {
 
 pub async fn mint(app: &App, caller: &Caller, request: Mint) -> Result<(Key, String)> {
     let plain = secret::new_secret()?;
-    let hash = secret::hash(&app.settings.start.api_key_salt, &plain)?;
+    let hash = secret::hash(&app.settings.start.key_salt, &plain)?;
     let key = app
         .write(caller, "key.create", move |unit| {
             let caller = &unit.caller;
@@ -375,7 +405,7 @@ pub async fn update(app: &App, caller: &Caller, id: String, request: Update) -> 
     .await
 }
 
-fn end(unit: &Unit<'_, '_>, id: &str) -> Result<()> {
+pub(crate) fn end(unit: &Unit<'_, '_>, id: &str) -> Result<()> {
     unit.tx().execute(
         "UPDATE api_keys SET revoked_at = ?2 WHERE id = ?1",
         [id, &unit.at],
@@ -460,7 +490,7 @@ pub async fn authenticate(app: &Arc<App>, token: &str) -> Result<Option<Key>> {
     if !secret::looks_like_a_key(token) {
         return Ok(None);
     }
-    let hash = secret::hash(&app.settings.start.api_key_salt, token)?;
+    let hash = secret::hash(&app.settings.start.key_salt, token)?;
     let at = app.clock.stamp();
     let key = app
         .db

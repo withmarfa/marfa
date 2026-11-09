@@ -528,11 +528,19 @@ If an item names a `datetime` value with a time and no zone, or outside the boun
 
 **Tests:** `compliance/field-types.test.ts › takes every datetime form and refuses one with no zone or an hour past 23`.
 
+### `types/email-value`
+
+When an item names a value for an `email` field, an element of an array field whose `items_type` is `email`, or an `email` member of an entry of a list, the server MUST take the value only where it is one local part, an `@` and a domain, the local part of ASCII letters, digits and `_ + - . '`, nonempty, not starting with a dot, ending in a letter, digit or one of `_ + -`, and the domain of two or more labels joined by dots, each starting with an ASCII letter or digit and holding only ASCII letters, digits and hyphens, the last of at least two ASCII letters, with no two dots together anywhere in the value.
+
+**Reason:** a device judges the same value offline as the server does online (`device/declared-checked`), and one narrow, plain rule serves every client better than a full address grammar that few mail systems accept.
+
+**Tests:** `compliance/field-types.test.ts › takes the email %s`, `› refuses an email that %s, naming the field`, `device/property-validation-live.test.ts › matches a real server's field decisions and keeps queued writes across a catalog change`.
+
 ### `types/url-value`
 
-When an item names a value for a `url` field, an element of an array field whose `items_type` is `url`, or a `url` member of an entry of a list, the server MUST take the value where the WHATWG URL standard parses it as an absolute URL after the whitespace of JavaScript's `String.prototype.trim` is removed from both ends: the characters Unicode counts as white space except U+0085, and U+FEFF.
+When an item names a value for a `url` field, an element of an array field whose `items_type` is `url`, or a `url` member of an entry of a list, the server MUST take the value where the WHATWG URL standard parses it as an absolute URL after the Unicode `White_Space` characters are removed from both ends.
 
-**Reason:** a device judges the same value offline as the server does online (`device/url-trimmed`), so a padded value that the standard takes is taken on both. The Node versions the server supports judge some hosts differently from each other and from the standard, so the server runs the standard with `whatwg-url`, its reference implementation, and does not use the platform's `URL`.
+**Reason:** a device judges the same value offline as the server does online (`device/url-trimmed`), so a padded value that the standard takes is taken on both. The standard's parser, not a platform's own, decides which values are URLs.
 
 **Tests:** `device/property-validation-live.test.ts › treats %s in a url the same on both paths and stores the same value`.
 
@@ -562,7 +570,7 @@ If a `url` value of a special scheme has a host that holds a forbidden domain co
 
 ### `types/url-stored`
 
-When the server takes a `url` value, an element of an array of `url` or a `url` member of an entry of a list, the server MUST store the value without the whitespace trimmed from its ends and without tab, line feed and carriage return characters anywhere in it.
+When the server takes a `url` value, an element of an array of `url` or a `url` member of an entry of a list, the server MUST store the value without the Unicode `White_Space` trimmed from its ends and without tab, line feed and carriage return characters anywhere in it.
 
 **Reason:** this holds at every door that writes properties: a create, an update (at the current version and a passed one), an upsert onto an existing item and a bulk entry.
 
@@ -1040,11 +1048,19 @@ If the key sending `POST /types/{id}/move` lacks write on the type or on `to` in
 
 ### `types/move-settings`
 
-When no item of the type remains once a type move's job has run, the server MUST, in one transaction, rewrite to name `to` instead: a folder's `query.types`, `defaults.type` and `first_placement` key, a view's `query.types`, each `type eq` and `type neq` term naming the type in a folder's or view's `query.filter`, and a webhook's `type_filter` that is exactly the type.
+When no item of the type remains once a type move's job has run, and `types/move-settings-refused` does not hold the settings back, the server MUST, in one transaction, rewrite to name `to` instead: a folder's `query.types`, `defaults.type` and `first_placement` key, a view's `query.types`, each `type eq` and `type neq` term naming the type in a folder's or view's `query.filter`, and a webhook's `type_filter` that is exactly the type.
 
 **Reason:** a folder, view or webhook naming a type no item holds anymore would hold nothing, and the person who made it meant the items, not the identifier.
 
 **Tests:** `compliance/type-move.test.ts › rewrites the folders, views and webhooks that name the type once every item has moved`, `› writes nothing on a dry run, and the same move run for real writes`.
+
+### `types/move-settings-refused`
+
+If no item of the type remains once a type move's job has run, and `to` is no longer registered or a folder's or view's own operation would refuse its rewrite, then the server MUST rewrite no setting, set `result.settings_rewritten` to `false`, and answer that refusal's `code`, `message` and `details` in `result.settings_error`.
+
+**Reason:** a setting rewritten past its own checks would name a type nothing can hold, or refuse the person's next edit of it.
+
+**Tests:** `compliance/bulk-job-meanwhile.test.ts › rewrites no setting, and says why, when the type it moves to is gone by then`, `› rewrites none of the settings, and says why, when one of them would be refused by then`.
 
 ### `types/move-settings-delivered`
 
@@ -1265,6 +1281,8 @@ If `PUT /config` names `enforcement.strict_mode` without `types`, or `enforcemen
 ### `types/config-permission`
 
 If a key without `config.manage` sends `GET /config`, `PUT /config` or `PATCH /config`, then the server MUST answer `403 forbidden` with `details.required_scope` `config.manage`.
+
+**Reason:** `config.manage` also sets how long the audit log, the trash, the versions and the other retained records are kept. A holder may shorten a retention, and the shortening stands: the next run of the cleanup job removes what is now older, and nothing asks the owner again. A key that may only read the audit log holds no `config.manage`, so it cannot shorten the trail it reads.
 
 **Tests:** `compliance/schema-enforcement.test.ts › refuses all three doors to a key without config.manage`.
 
@@ -1604,7 +1622,7 @@ When `PUT /types/{id}/icon` or `DELETE /types/{id}/icon` succeeds, the server MU
 
 ## Item names
 
-In these statements, whitespace is the ECMAScript `WhiteSpace` and `LineTerminator` characters, a line ends at CR LF, LF, CR, U+2028 or U+2029, and a control character is one in the Unicode general category `Cc`. So U+0085 is a control character and neither whitespace nor a line end, and U+FEFF is whitespace. The cases both implementations are held to are in `conformance/fixtures/item-display.json`.
+In these statements, whitespace is a character with the Unicode property `White_Space`, a line ends at CR LF, LF, CR, U+2028 or U+2029, and a control character is one in the Unicode general category `Cc`. So U+0085 is whitespace and a control character but not a line end, and U+FEFF is none of the three. The cases both implementations are held to are in `conformance/fixtures/item-display.json`.
 
 ### `types/item-name-fields`
 
@@ -1612,7 +1630,7 @@ When computing the name of an item that `types/item-name-part` does not name, th
 
 **Reason:** Existing display hints, inherited as in `types/read-display-hint`, let a custom type choose its name without a second naming configuration; a file's existing `title` also holds its filename. A highlight's passage is its body but never its name, however short, so `core.highlight` sets `name_from_body` to `false` and a highlight whose source cannot name it is `Untitled`.
 
-**Tests:** `compliance/item-summaries.test.ts › names every built-in and custom type with bounded plain text and fallback fields`, `› names every shared display case as a device does, and Untitled where a device answers no name`, `› names a highlight after the item it is an excerpt of, and never by its passage`.
+**Tests:** `compliance/item-summaries.test.ts › names every built-in and custom type with bounded plain text and fallback fields`, `compliance/item-summaries-display.test.ts › names every shared display case as a device does, and Untitled where a device answers no name`, `compliance/item-summaries.test.ts › names a highlight after the item it is an excerpt of, and never by its passage`.
 
 ### `types/item-name-part`
 
@@ -1628,7 +1646,7 @@ When a name field contains text, the server MUST trim its surrounding whitespace
 
 **Reason:** A device names an item by the same rule (`device/item-name`), so the server and a device show one name for one item.
 
-**Tests:** `compliance/item-summaries.test.ts › names every built-in and custom type with bounded plain text and fallback fields`, `› names every shared display case as a device does, and Untitled where a device answers no name`.
+**Tests:** `compliance/item-summaries.test.ts › names every built-in and custom type with bounded plain text and fallback fields`, `compliance/item-summaries-display.test.ts › names every shared display case as a device does, and Untitled where a device answers no name`.
 
 ### `types/item-name-markdown`
 
@@ -1636,13 +1654,13 @@ When computing an item's name from its effective `display_hints.body_field`, `bo
 
 **Reason:** A body is Markdown, so a note whose body starts `# Plan` is named `Plan`, and a body that is only Markdown syntax gives no name. The other name fields hold plain text and keep every character.
 
-**Tests:** `compliance/item-summaries.test.ts › names every shared display case as a device does, and Untitled where a device answers no name`.
+**Tests:** `compliance/item-summaries-display.test.ts › names every shared display case as a device does, and Untitled where a device answers no name`.
 
 ### `types/item-name-empty`
 
 When no name candidate produces nonblank text, the server MUST return `Untitled` as the item's name.
 
-**Tests:** `compliance/item-summaries.test.ts › names every built-in and custom type with bounded plain text and fallback fields`, `› names every shared display case as a device does, and Untitled where a device answers no name`.
+**Tests:** `compliance/item-summaries.test.ts › names every built-in and custom type with bounded plain text and fallback fields`, `compliance/item-summaries-display.test.ts › names every shared display case as a device does, and Untitled where a device answers no name`.
 
 ### `types/delete-owner`
 

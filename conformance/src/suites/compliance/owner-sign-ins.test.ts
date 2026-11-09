@@ -41,10 +41,10 @@ let keysMinted = 0;
 
 beforeAll(async () => {
   server = await bootFreshServer("owner-sign-ins", {
-    TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+    MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
     // How long a write waits for the lock before it gives up, kept short for
     // the case that holds the lock from outside.
-    SQLITE_BUSY_BUDGET_MS: "1000",
+    MARFA_WRITE_WAIT_MS: "1000",
   });
   origin = await issuerOrigin(server);
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
@@ -272,15 +272,11 @@ async function versionsOf(id: string): Promise<unknown> {
 async function refresh(
   signedIn: SignedInApp,
 ): Promise<{ status: number; error?: string; access?: string }> {
-  const answer = await token(
-    server,
-    {
-      grant_type: "refresh_token",
-      refresh_token: signedIn.refreshToken,
-      client_id: signedIn.clientId,
-    },
-    signedIn.app,
-  );
+  const answer = await token(server, {
+    grant_type: "refresh_token",
+    refresh_token: signedIn.refreshToken,
+    client_id: signedIn.clientId,
+  });
   return {
     status: answer.status,
     error: answer.body.error,
@@ -1200,15 +1196,11 @@ describe("a browser session's idle week", () => {
 
     // The app's access token has lapsed in the week, and its refresh token
     // has not.
-    const renewed = await token(
-      server,
-      {
-        grant_type: "refresh_token",
-        refresh_token: tokens.refresh_token!,
-        client_id: app.clientId,
-      },
-      app,
-    );
+    const renewed = await token(server, {
+      grant_type: "refresh_token",
+      refresh_token: tokens.refresh_token!,
+      client_id: app.clientId,
+    });
     expect(renewed.status).toBe(200);
     expect(await itemsStatus(server, renewed.body.access_token!)).toBe(200);
   });

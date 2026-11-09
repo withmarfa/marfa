@@ -119,9 +119,11 @@ function copiesAsTheyArrive(door: () => FolderDoor | undefined) {
   return (request: RecordedRequest): Answer => {
     const copies = door()?.conflictedCopies() ?? [];
     const seen = BigInt(request.headers["last-event-id"] ?? "0");
-    // The log's head moves only once there is something in it to take.
-    return copies.length === 0 || seen >= 3n
-      ? copyReplay("2", [])
+    // The log's head moves only once there is something in it to take, and
+    // never back: a head behind the cursor the copy holds makes it build again.
+    if (copies.length === 0) return copyReplay("2", []);
+    return seen >= 3n
+      ? copyReplay("3", [])
       : copyReplay(
           "3",
           copies.map(([id, row]) =>

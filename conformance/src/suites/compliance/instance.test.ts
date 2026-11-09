@@ -10,6 +10,7 @@ import {
 } from "../../utils/setup.js";
 import {
   expectMatchesSchema,
+  committedOperations,
   publishedOperations,
 } from "../../utils/openapi.js";
 import { coverageRows } from "../../utils/coverage-table.js";
@@ -812,10 +813,15 @@ describe("the instance", () => {
     expect(published.size).toBeGreaterThan(0);
     const missing = [...published].filter((key) => !known.has(key));
     expect(missing).toEqual([]);
+    // A row stands for an operation of the committed document, which the
+    // target may not serve yet.
+    const committed = new Set(
+      committedOperations().map((op) => `${op.method} ${op.path}`),
+    );
     const stale = rows
       .filter((row) => row.status !== "unpublished")
       .map((row) => `${row.method} ${row.path}`)
-      .filter((key) => !published.has(key));
+      .filter((key) => !committed.has(key));
     expect(stale).toEqual([]);
     // And the exemption cannot be borrowed: a row that says unpublished
     // about a door the document publishes would wave that door out of
@@ -823,7 +829,7 @@ describe("the instance", () => {
     const wavedOut = rows
       .filter((row) => row.status === "unpublished")
       .map((row) => `${row.method} ${row.path}`)
-      .filter((key) => published.has(key));
+      .filter((key) => published.has(key) || committed.has(key));
     expect(wavedOut).toEqual([]);
   });
 });

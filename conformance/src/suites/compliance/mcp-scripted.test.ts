@@ -46,7 +46,7 @@ const hosts: Server[] = [];
 
 beforeAll(async () => {
   server = await bootFreshServer("mcp-scripted", {
-    RATE_LIMIT_ENABLED: "true",
+    MARFA_RATE_LIMIT_ENABLED: "true",
   });
   const stored = await new MarfaClient({
     baseUrl: server.apiUrl,

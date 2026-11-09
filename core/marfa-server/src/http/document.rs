@@ -41,6 +41,30 @@ const UNPUBLISHED: &[(&str, &str)] = &[
     ),
     ("GET /mcp", "answers 405: the endpoint opens no stream"),
     ("DELETE /mcp", "answers 405: the endpoint holds no session"),
+    (
+        "POST /mcp/schema",
+        "the Model Context Protocol endpoint of the schema tools, which its own protocol describes",
+    ),
+    (
+        "GET /mcp/schema",
+        "answers 405: the endpoint opens no stream",
+    ),
+    (
+        "DELETE /mcp/schema",
+        "answers 405: the endpoint holds no session",
+    ),
+    (
+        "POST /mcp/admin",
+        "the Model Context Protocol endpoint of the admin tools, which its own protocol describes",
+    ),
+    (
+        "GET /mcp/admin",
+        "answers 405: the endpoint opens no stream",
+    ),
+    (
+        "DELETE /mcp/admin",
+        "answers 405: the endpoint holds no session",
+    ),
     ("GET /auth/sign-in", "the sign-in page"),
     ("POST /auth/sign-in", "its form post"),
     (
@@ -110,14 +134,6 @@ const UNPUBLISHED: &[(&str, &str)] = &[
         "single-use browser handoff exchange",
     ),
     (
-        "GET /config/settings",
-        "every setting with where its value comes from",
-    ),
-    (
-        "POST /config/address-check",
-        "checks a public address before it is saved",
-    ),
-    (
         "HEAD /blobs/{hash}",
         "the headers of the published read, without its bytes",
     ),
@@ -158,34 +174,19 @@ const UNPUBLISHED: &[(&str, &str)] = &[
         "DELETE /_control/test/faults",
         "the private control socket, with test hooks on",
     ),
+    (
+        "GET /_control/test/blob-stores",
+        "the private control socket, with test hooks on",
+    ),
 ];
 
 /// Published operations the router does not serve yet. An entry that becomes
 /// served fails the test, so the list only shrinks.
 const NOT_YET_SERVED: &[&str] = &[
-    "DELETE /blobs/{hash}/copies/{store}",
-    "DELETE /webhooks/{id}",
     "GET /attention",
-    "GET /blobs/orphans",
     "GET /export",
-    "GET /folders",
-    "GET /folders/{id}/status",
-    "GET /items/bulk-actions/jobs/{id}",
     "GET /metrics",
-    "GET /webhooks",
-    "GET /webhooks/{id}",
-    "GET /webhooks/{id}/deliveries",
-    "PATCH /folders/{id}",
-    "PATCH /webhooks/{id}",
-    "POST /folders",
-    "POST /folders/{id}/revoke",
-    "POST /items/bulk-actions",
-    "POST /items/bulk-actions/jobs/{id}/cancel",
     "POST /restore",
-    "POST /types/{id}/move",
-    "POST /webhooks",
-    "POST /webhooks/{id}/deliveries/{delivery_id}/redeliver",
-    "PUT /folders/{id}/status",
 ];
 
 const METHODS: [&str; 8] = [
@@ -231,8 +232,8 @@ async fn served() -> Served {
     let blobs = dir.path().join("blobs");
     let socket = dir.path().join("s.sock");
     let settings = Settings::read(Environment::from_pairs(&[
-        ("SQLITE_PATH", database.to_str().unwrap()),
-        ("BLOB_PATH", blobs.to_str().unwrap()),
+        ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
+        ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
         ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
         ("MARFA_TEST_HOOKS", "true"),
     ]))

@@ -4,26 +4,18 @@ const PREFIX: &str = "sha256:";
 const HEX_LEN: usize = 64;
 
 /// A blob's name: `sha256:` and the 64 lowercase hex characters of a digest.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Hash(String);
 
 impl Hash {
-    /// Takes the prefixed form and the bare 64 characters, and nothing else.
     pub fn parse(text: &str) -> Result<Hash> {
-        let hex = text.strip_prefix(PREFIX).unwrap_or(text);
         let lowercase_hex = |byte: u8| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte);
-        if hex.len() == HEX_LEN && hex.bytes().all(lowercase_hex) {
-            Ok(Hash(format!("{PREFIX}{hex}")))
-        } else {
-            Err(Refusal::validation("Invalid blob hash").with_detail("field", "hash"))
+        match text.strip_prefix(PREFIX) {
+            Some(hex) if hex.len() == HEX_LEN && hex.bytes().all(lowercase_hex) => {
+                Ok(Hash(text.to_string()))
+            }
+            _ => Err(Refusal::validation("Invalid blob hash").with_detail("field", "hash")),
         }
-    }
-
-    /// A whole hash: the `sha256:` form alone.
-    pub fn whole(text: &str) -> Option<Hash> {
-        text.starts_with(PREFIX)
-            .then(|| Hash::parse(text).ok())
-            .flatten()
     }
 
     pub fn from_digest(digest: &[u8]) -> Hash {
@@ -46,24 +38,17 @@ mod tests {
     const HEX: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
     #[test]
-    fn takes_the_prefixed_and_the_bare_form_as_one_hash() {
-        let prefixed = Hash::parse(&format!("sha256:{HEX}")).unwrap();
-        assert_eq!(prefixed, Hash::parse(HEX).unwrap());
-        assert_eq!(prefixed.as_str(), format!("sha256:{HEX}"));
-        assert_eq!(prefixed.hex(), HEX);
-    }
-
-    #[test]
-    fn takes_only_the_prefixed_form_as_a_whole_hash() {
-        assert!(Hash::whole(&format!("sha256:{HEX}")).is_some());
-        assert!(Hash::whole(HEX).is_none());
-        assert!(Hash::whole(&format!("sha256:{}", &HEX[1..])).is_none());
+    fn takes_the_prefixed_form() {
+        let hash = Hash::parse(&format!("sha256:{HEX}")).unwrap();
+        assert_eq!(hash.as_str(), format!("sha256:{HEX}"));
+        assert_eq!(hash.hex(), HEX);
     }
 
     #[test]
     fn refuses_every_other_form() {
         let upper = HEX.to_uppercase();
         for form in [
+            HEX,
             &HEX[1..],
             &format!("{HEX}0"),
             upper.as_str(),

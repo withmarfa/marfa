@@ -1,3 +1,4 @@
+use marfa_rules::query::{EVERY_TYPE, StateFault, check_states};
 use marfa_rules::{filter, validation};
 use serde_json::{Map, Value, json};
 
@@ -7,7 +8,7 @@ use super::types::check_id;
 
 pub const SETTINGS: [&str; 4] = ["title", "query", "sort", "group"];
 
-const QUERY: [&str; 5] = ["types", "tier", "state", "filter", "beneath"];
+pub(crate) const QUERY: [&str; 5] = ["types", "tier", "state", "filter", "beneath"];
 const SORT_KEY: [&str; 2] = ["by", "direction"];
 const GROUP: [&str; 4] = ["by", "bucket", "order", "hidden"];
 const OWN_FIELDS: [&str; 8] = [
@@ -23,19 +24,18 @@ const OWN_FIELDS: [&str; 8] = [
 const DATE_FIELDS: [&str; 3] = ["created_at", "updated_at", "occurred_at"];
 const BUCKETS: [&str; 4] = ["day", "week", "month", "year"];
 const TIERS: [&str; 3] = ["library", "feed", "all"];
-const STATES: [&str; 2] = ["active", "archived"];
 const MAX_TITLE: usize = 500;
 const MAX_TYPES: usize = 100;
 const MAX_SORT_KEYS: usize = 10;
 const MAX_GROUP_VALUES: usize = 1_000;
 
-fn at(path: &str, message: impl Into<String>) -> Refusal {
+pub(crate) fn at(path: &str, message: impl Into<String>) -> Refusal {
     let message = message.into();
     Refusal::validation(message.clone())
         .with_detail("errors", json!([{ "path": path, "message": message }]))
 }
 
-fn undeclared_in(
+pub(crate) fn undeclared_in(
     object: &Map<String, Value>,
     allowed: &[&str],
     prefix: &str,
@@ -93,7 +93,7 @@ fn is_edge_field(field: &str, catalog: &Catalog) -> bool {
     })
 }
 
-fn check_title(value: &Value) -> Result<()> {
+pub(crate) fn check_title(value: &Value) -> Result<()> {
     let Some(title) = value.as_str() else {
         return Err(at("title", "title must be a string."));
     };
@@ -107,7 +107,7 @@ fn check_title(value: &Value) -> Result<()> {
     Ok(())
 }
 
-fn check_types(value: &Value, catalog: &Catalog) -> Result<()> {
+fn check_types(value: &Value, catalog: &Catalog, every_type: bool) -> Result<()> {
     let Some(types) = value.as_array() else {
         return Err(at("query.types", "query.types must be a list."));
     };
@@ -122,9 +122,12 @@ fn check_types(value: &Value, catalog: &Catalog) -> Result<()> {
         let Some(type_id) = entry.as_str() else {
             return Err(at(&path, "A type is a string."));
         };
+        if every_type && type_id == EVERY_TYPE {
+            continue;
+        }
         check_id(type_id, &path)?;
         if type_id == "system" || type_id.starts_with("system.") {
-            return Err(at(&path, "A view lists no system type."));
+            return Err(at(&path, "A query lists no system type."));
         }
         if !catalog.rules.known(type_id) {
             return Err(
@@ -138,12 +141,13 @@ fn check_types(value: &Value, catalog: &Catalog) -> Result<()> {
     Ok(())
 }
 
-fn check_query(value: &Value, catalog: &Catalog) -> Result<()> {
+/// `every_type` lets a query list `*`, which a folder's query holds and a view's does not.
+pub(crate) fn check_query(value: &Value, catalog: &Catalog, every_type: bool) -> Result<()> {
     let Some(query) = value.as_object() else {
         return Err(at("query", "query must be an object."));
     };
     if let Some(types) = query.get("types") {
-        check_types(types, catalog)?;
+        check_types(types, catalog, every_type)?;
     }
     if let Some(tier) = query.get("tier")
         && !tier.as_str().is_some_and(|tier| TIERS.contains(&tier))
@@ -151,17 +155,20 @@ fn check_query(value: &Value, catalog: &Catalog) -> Result<()> {
         return Err(at("query.tier", "query.tier is library, feed or all."));
     }
     if let Some(states) = query.get("state") {
-        let Some(states) = states.as_array().filter(|states| !states.is_empty()) else {
+        let Some(states) = states.as_array() else {
             return Err(at("query.state", "query.state is a list of states."));
         };
-        for (index, state) in states.iter().enumerate() {
-            if !state.as_str().is_some_and(|state| STATES.contains(&state)) {
-                return Err(at(
-                    &format!("query.state.{index}"),
-                    "A view lists the active and archived states.",
-                ));
-            }
-        }
+        let named: Vec<&str> = states
+            .iter()
+            .map(|state| state.as_str().unwrap_or_default())
+            .collect();
+        check_states(&named).map_err(|fault| match fault {
+            StateFault::Empty => at("query.state", "query.state is a list of states."),
+            StateFault::Unknown(index) => at(
+                &format!("query.state.{index}"),
+                "A query lists the active and archived states.",
+            ),
+        })?;
     }
     if let Some(text) = query.get("filter") {
         let Some(text) = text.as_str() else {
@@ -273,7 +280,7 @@ pub fn check(settings: &Map<String, Value>, catalog: &Catalog) -> Result<()> {
         check_title(title)?;
     }
     if let Some(query) = settings.get("query") {
-        check_query(query, catalog)?;
+        check_query(query, catalog, false)?;
     }
     if let Some(sort) = settings.get("sort") {
         check_sort(sort)?;

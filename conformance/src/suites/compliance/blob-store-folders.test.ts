@@ -99,7 +99,6 @@ describe("the copy record on an instance with one disk store", () => {
       expect.objectContaining({
         store_id: stores[0]!.id,
         kind: "disk",
-        policy: "all",
         detached: false,
         verified_at: null,
       }),
@@ -267,7 +266,7 @@ describe("a store is its folder", () => {
     // Another folder, which holds no marker: a fresh store with no copies
     // claimed, and the first one stays listed, detached.
     const other = join(server!.stateDir, "other-blobs");
-    await server!.restart({ env: { BLOB_PATH: other } });
+    await server!.restart({ env: { MARFA_BLOB_PATH: other } });
     ({ operator, working } = clientsFor(server!));
     const after = (await operator.listBlobStores()).data.data;
     expect(after).toHaveLength(2);
@@ -342,6 +341,29 @@ describe("a store is its folder", () => {
     expect(attached).toHaveLength(1);
     expect([original.id, fresh.id]).not.toContain(attached[0]!.id);
     expect(attached[0]!.kind).toBe("disk");
+  });
+});
+
+describe("a blob held only by detached stores", () => {
+  it("answers GET and HEAD 503 for a blob whose every copy is in a detached store", async () => {
+    // The tests above leave the second blob recorded only in the first
+    // store, which the server no longer names.
+    const rows = await copies(hashes.second);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((row) => row.detached)).toBe(true);
+
+    // The witness: a blob the attached store holds is served.
+    const held = await working.uploadBlob(
+      bytesOf("held by the attached store", 100),
+      "text/plain",
+    );
+    expect(held.status, JSON.stringify(held.error)).toBe(201);
+    expect((await operator.downloadBlob(held.data.hash)).status).toBe(200);
+
+    const download = await operator.downloadBlob(hashes.second);
+    expect(download.status).toBe(503);
+    expect(download.error?.error.code).toBe("blob_store_unavailable");
+    expect((await operator.headBlob(hashes.second)).status).toBe(503);
   });
 });
 
@@ -445,7 +467,7 @@ describe("a store whose folder is missing at start", () => {
         const refused = await bootRefused("blob-folder-missing", {
           prepare: (_database, state) =>
             cpSync(image, state, { recursive: true }),
-          extraEnv: { ...DISK_ONLY, BLOB_PATH: folder },
+          extraEnv: { ...DISK_ONLY, MARFA_BLOB_PATH: folder },
         });
         refusals.push(refused);
         return refused;

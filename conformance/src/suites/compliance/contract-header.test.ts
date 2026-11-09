@@ -21,9 +21,9 @@ let server: FreshServer | undefined;
 
 beforeAll(async () => {
   server = await bootFreshServer("contract-header", {
-    RATE_LIMIT_ENABLED: "true",
-    RATE_LIMIT_REQUESTS: String(LIMIT),
-    CORS_ORIGINS: ORIGIN,
+    MARFA_RATE_LIMIT_ENABLED: "true",
+    MARFA_RATE_LIMIT_REQUESTS: String(LIMIT),
+    MARFA_CORS_ORIGINS: ORIGIN,
   });
 }, FRESH_SERVER_TIMEOUT_MS);
 

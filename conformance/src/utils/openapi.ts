@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { Ajv2020, type ValidateFunction } from "ajv/dist/2020.js";
 import { requireApiUrl } from "./setup.js";
 
@@ -268,7 +270,22 @@ export interface PublishedOperation {
 
 /** Every published method and path in the served document. */
 export async function publishedOperations(): Promise<PublishedOperation[]> {
-  const doc = await fetchOpenApi();
+  return operationsOf(await fetchOpenApi());
+}
+
+/**
+ * Every method and path in the committed `openapi.json`, the contract's
+ * document, which a server that serves a document of its own may not match.
+ */
+export function committedOperations(): PublishedOperation[] {
+  return operationsOf(
+    JSON.parse(
+      readFileSync(resolve(process.cwd(), "../openapi.json"), "utf8"),
+    ) as OpenApiDocument,
+  );
+}
+
+function operationsOf(doc: OpenApiDocument): PublishedOperation[] {
   const out: PublishedOperation[] = [];
   for (const [path, methods] of Object.entries(doc.paths)) {
     for (const [method, op] of Object.entries(methods)) {

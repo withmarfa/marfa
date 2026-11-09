@@ -56,14 +56,14 @@ pub(crate) fn list_with(
     // `updated_at` it holds misses no row that shares the instant.
     if let Some(after) = &filters.updated_after {
         clauses.push("updated_at >= ?".into());
-        values.push(Value::String(marfa_rules::time::normalize(
+        values.push(Value::String(marfa_rules::time::normalize_bound(
             after,
             "updated_after",
         )?));
     }
     if let Some(before) = &filters.updated_before {
         clauses.push("updated_at < ?".into());
-        values.push(Value::String(marfa_rules::time::normalize(
+        values.push(Value::String(marfa_rules::time::normalize_bound(
             before,
             "updated_before",
         )?));
@@ -113,14 +113,14 @@ pub(crate) fn narrow_by_own_time(
 ) -> Result<()> {
     if let Some(after) = after {
         clauses.push("items.occurred_at > ?".into());
-        values.push(Value::String(marfa_rules::time::normalize(
+        values.push(Value::String(marfa_rules::time::normalize_bound(
             after,
             "occurred_after",
         )?));
     }
     if let Some(before) = before {
         clauses.push("items.occurred_at < ?".into());
-        values.push(Value::String(marfa_rules::time::normalize(
+        values.push(Value::String(marfa_rules::time::normalize_bound(
             before,
             "occurred_before",
         )?));

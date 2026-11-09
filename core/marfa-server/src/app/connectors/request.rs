@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use marfa_rules::{grammar, js, time};
+use marfa_rules::{grammar, number, time};
 use serde_json::{Map, Value};
 
 use crate::app::refusal::{Code, Refusal, Result};
@@ -40,7 +40,7 @@ pub(crate) fn invalid(field: &str, message: impl Into<String>) -> Refusal {
 
 /// Size limits use the wire format's number printing.
 fn serialized(document: &Fields) -> Result<usize> {
-    js::to_vec(document)
+    number::to_vec(document)
         .map(|bytes| bytes.len())
         .map_err(|_| Refusal::internal("a request document did not serialize"))
 }

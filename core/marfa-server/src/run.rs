@@ -8,7 +8,7 @@ use tokio::sync::watch;
 use tokio::task::JoinSet;
 
 use crate::app::auth::claim;
-use crate::app::{App, housekeeping};
+use crate::app::{App, housekeeping, jobs, webhooks};
 use crate::control_socket::Claim;
 use crate::failure::Failure;
 use crate::http;
@@ -125,11 +125,14 @@ pub async fn run(accepted: Accepted, telemetry: Config) -> Result<u8, Failure> {
     listen(&mut servers, &app, public, private);
     if !app.settings.start.control_only {
         housekeeping::start(&app);
+        webhooks::start(&app);
+        jobs::start(&app);
     }
     tracing::info!("Private control socket listening");
     if let Some(port) = port {
         tracing::info!("Marfa server listening on port {port}");
     }
+    #[cfg(feature = "test-hooks")]
     if app.settings.start.test_hooks {
         tracing::warn!("Test hooks are on; this instance must hold no real data");
     }
@@ -138,11 +141,16 @@ pub async fn run(accepted: Accepted, telemetry: Config) -> Result<u8, Failure> {
     let stopping_at = Instant::now();
     tracing::info!("Stopping");
     app.housekeeping.stop();
+    app.webhooks.stop();
+    app.jobs.stop();
+    #[cfg(feature = "test-hooks")]
     app.faults.clear(None);
     app.begin_stop();
-    let (closed, ()) = tokio::join!(
+    let (closed, (), (), ()) = tokio::join!(
         tokio::time::timeout(STOP_WAIT, servers.join_all()),
         app.housekeeping.settle(STOP_WAIT),
+        app.webhooks.settle(STOP_WAIT),
+        app.jobs.settle(STOP_WAIT),
     );
     if closed.is_err() {
         tracing::error!("A request was still open when the stop's wait ended");

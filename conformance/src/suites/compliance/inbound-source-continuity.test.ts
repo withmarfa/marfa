@@ -14,7 +14,7 @@ let clock: ReturnType<typeof movedClock>;
 let serial = 0;
 beforeAll(async () => {
   server = await bootFreshServer("inbound-source-continuity", {
-    RATE_LIMIT_ENABLED: "false",
+    MARFA_RATE_LIMIT_ENABLED: "false",
   });
   clock = movedClock(server);
 }, FRESH_SERVER_TIMEOUT_MS);

@@ -1,5 +1,7 @@
 //! `marfa server upgrade`, `start`, `stop`, `status` and `uninstall`.
 
+use std::path::Path;
+
 use serde_json::{Value, json};
 
 use super::docker::{self, Docker};
@@ -77,15 +79,12 @@ fn upgrade_native(
             "If {target} has a newer database schema, the server copies the database beside it and then updates it in place."
         ));
     }
-    let mark = service.mark();
-    // The service is written again, because the binary it names may have
-    // moved with the release. A changed service restarts by itself; a new
-    // release needs the restart even when the service is the same.
-    let was_running = service.running();
-    let started = service.on(state.autostart, &binary, &server)?;
-    if was_running && !unchanged && !started.changed {
-        service.restart()?;
+    if !unchanged {
+        folder.forget_applied(dotenv, files::kept_for(state.manager).dotenv)?;
     }
+    let mark = service.mark();
+    // A new release may keep the same service definition.
+    let started = service.on(state.autostart, !unchanged, &binary, &server)?;
     let watch = Watch::Process {
         service: &service,
         mark,
@@ -95,15 +94,18 @@ fn upgrade_native(
             return Err(error);
         }
         return Err(CliError::Install(format!(
-            "{error}\n\n{target} did not update the database, and the server says why above. A refused update leaves the database as it was, so {from} still reads it: install {from} again and run `marfa server start`.",
-            from = state.release,
+            "{error}\n\n{}",
+            refused_update_note(&target, &state.release, &folder.dir)
         )));
     }
     if !unchanged {
+        if !out.json {
+            started.say_unconfirmed(state.port);
+        }
         dotenv.set("MARFA_RELEASE", &target)?;
-        files::write_if_changed(
-            &folder.path(files::DOTENV),
-            &dotenv.render(),
+        folder.keep_applied(
+            dotenv,
+            &folder.applied(state.port, &target)?,
             files::kept_for(state.manager).dotenv,
         )?;
     }
@@ -254,12 +256,20 @@ fn database_update(log: &str) -> Option<DatabaseUpdate> {
         .next_back()
 }
 
+// The idle supervisor must stop before the earlier release can start.
+fn refused_update_note(target: &str, from: &str, dir: &Path) -> String {
+    let dir = format!("'{}'", dir.display().to_string().replace('\'', "'\\''"));
+    format!(
+        "{target} did not update the database, and the server says why above. A refused update leaves the database as it was, so {from} still reads it. The service stays up and idle after a refusal, so run `marfa server stop --dir {dir}`, install {from} again, then run `marfa server start --dir {dir}`."
+    )
+}
+
 // ---- start and stop -----------------------------------------------------
 
 pub fn start(args: StartArgs, out: &Printer) -> Result<(), CliError> {
     let steps = Steps { quiet: out.json };
     let folder = Folder::new(&args.dir)?;
-    let (state, _) = folder.require_state()?;
+    let (state, mut dotenv) = folder.require_state()?;
     match state.runtime {
         Runtime::Native => {
             let service = service_of(&state, &folder, !out.json)?;
@@ -275,11 +285,9 @@ pub fn start(args: StartArgs, out: &Printer) -> Result<(), CliError> {
             let mark = service.mark();
             // Written again, so that a binary that has moved is named by its
             // new path.
-            if service.on(state.autostart, &binary, &server)?.changed && service.running() {
-                service.restart()?;
-            } else {
-                service.start()?;
-            }
+            let was_running = service.running();
+            service.on(state.autostart, false, &binary, &server)?;
+            service.start()?;
             wait_until_healthy(
                 &Watch::Process {
                     service: &service,
@@ -288,6 +296,14 @@ pub fn start(args: StartArgs, out: &Printer) -> Result<(), CliError> {
                 state.port,
                 args.wait,
             )?;
+            // A server that was already running keeps what it started with.
+            if !was_running {
+                folder.keep_applied(
+                    &mut dotenv,
+                    &folder.applied(state.port, &state.release)?,
+                    files::kept_for(state.manager).dotenv,
+                )?;
+            }
         }
         Runtime::Docker => {
             let docker = Docker::new(!out.json);
@@ -495,6 +511,7 @@ fn own_data(folder: &Folder, state: &State) -> Result<(), CliError> {
         &folder.dir,
         state.manager == Some(Manager::SystemdSystem),
         super::account::lookup(super::account::NAME).map(|identity| identity.gid),
+        true,
     )?;
     match std::fs::symlink_metadata(&data) {
         Ok(found) if found.is_dir() => Ok(()),
@@ -572,12 +589,17 @@ pub fn uninstall(args: UninstallArgs, out: &Printer) -> Result<(), CliError> {
     }
     let mut unserved = false;
     if state.access == Access::Tailscale {
-        unserved = tailscale::unserve(
-            state.https_port.unwrap_or(443),
+        let https = state.https_port.unwrap_or(443);
+        match tailscale::unserve(
+            https,
             &format!("http://127.0.0.1:{}", state.port),
             !out.json,
-        )
-        .unwrap_or(false);
+        ) {
+            Ok(done) => unserved = done,
+            Err(error) => eprintln!(
+                "The address stays on your tailnet: {error}. Remove it with `tailscale serve --https={https} off`."
+            ),
+        }
     }
     if args.delete_data {
         let mut names = vec![files::SETTINGS, files::UNCONFIRMED, files::DOTENV];
@@ -668,5 +690,18 @@ mod tests {
             (4, 5, "/b")
         );
         assert!(database_update("{}").is_none());
+    }
+
+    #[test]
+    fn a_refused_update_says_to_stop_the_idle_service_before_starting_it_again() {
+        let note = refused_update_note("0.0.71", "0.0.70", Path::new("/srv/marfa one"));
+        let stop = note
+            .find("`marfa server stop --dir '/srv/marfa one'`")
+            .unwrap();
+        let install = note.find("install 0.0.70 again").unwrap();
+        let start = note
+            .find("`marfa server start --dir '/srv/marfa one'`")
+            .unwrap();
+        assert!(stop < install && install < start, "{note}");
     }
 }

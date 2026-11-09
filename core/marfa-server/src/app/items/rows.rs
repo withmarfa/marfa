@@ -123,6 +123,31 @@ pub(super) fn by_id(tx: &Transaction<'_>, id: &str) -> Result<Option<Item>> {
     Ok(statement.query_row([id], item_of).optional()?)
 }
 
+pub(super) fn newest_of(
+    tx: &Transaction<'_>,
+    type_id: &str,
+    state: &str,
+    after: Option<(&str, &str)>,
+    limit: i64,
+) -> Result<Vec<Item>> {
+    let mut statement = tx.prepare_cached(&format!(
+        "{ITEM} WHERE type = ?1 AND state = ?2 \
+         AND (?3 IS NULL OR (created_at, id) < (?3, ?4)) \
+         ORDER BY created_at DESC, id DESC LIMIT ?5"
+    ))?;
+    let found = statement.query_map(
+        params![
+            type_id,
+            state,
+            after.map(|at| at.0),
+            after.map(|at| at.1),
+            limit
+        ],
+        item_of,
+    )?;
+    Ok(found.collect::<rusqlite::Result<_>>()?)
+}
+
 pub(super) fn by_natural_key(
     tx: &Transaction<'_>,
     source: &str,
@@ -319,6 +344,80 @@ pub(super) fn move_state(tx: &Transaction<'_>, item: &Item, to: &Moved<'_>) -> R
         to.mark.is_some_and(|mark| mark.hosts),
     ])?;
     stored(tx, &item.id)
+}
+
+/// The folders and views that are not in the bin or revoked, folders first.
+pub(super) fn settings(tx: &Transaction<'_>) -> Result<Vec<Item>> {
+    let mut statement = tx.prepare_cached(&format!(
+        "{ITEM} WHERE type IN ('system.folder', 'system.view') \
+         AND state IN ('active', 'archived') ORDER BY type, seq"
+    ))?;
+    let found = statement.query_map([], item_of)?;
+    Ok(found.collect::<rusqlite::Result<_>>()?)
+}
+
+/// What one stored row carries beside its own JSON: its fixed columns and index entries.
+const ROW_BYTES: i64 = 256;
+
+/// The bytes a write of the row moves: the row and its extensions, and with `whole` also its
+/// versions and the edges touching it. Each counts `ROW_BYTES` beside its JSON.
+pub(super) fn weight(tx: &Transaction<'_>, id: &str, whole: bool) -> Result<i64> {
+    let weight: Option<f64> = tx
+        .prepare_cached(
+            "SELECT ?3 + length(i.properties) \
+             + (SELECT total(?3 + length(x.data)) FROM item_extensions x WHERE x.item_seq = i.seq) \
+             + CASE WHEN ?2 THEN \
+             (SELECT total(?3 + length(v.properties)) FROM item_versions v \
+              WHERE v.item_seq = i.seq) \
+             + (SELECT total(?3 + length(e.properties)) FROM edges e WHERE e.source_id = i.id) \
+             + (SELECT total(?3 + length(e.properties)) FROM edges e WHERE e.target_id = i.id) \
+             ELSE 0 END FROM items i WHERE i.id = ?1",
+        )?
+        .query_row(params![id, whole, ROW_BYTES], |row| row.get(0))
+        .optional()?;
+    Ok(weight.map_or(0, |bytes| bytes as i64))
+}
+
+pub(super) fn selected(tx: &Transaction<'_>, ids: &[String]) -> Result<Vec<super::Selected>> {
+    let listed = serde_json::to_string(ids)
+        .map_err(|_| crate::app::refusal::Refusal::internal("a list of IDs did not print"))?;
+    let mut statement = tx.prepare_cached(
+        "SELECT id, version, state FROM items WHERE id IN (SELECT value FROM json_each(?1))",
+    )?;
+    let mut found: std::collections::HashMap<String, (i64, String)> = statement
+        .query_map([listed], |row| {
+            Ok((row.get(0)?, (row.get(1)?, row.get(2)?)))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    ids.iter()
+        .map(|id| {
+            let (version, state) = found.remove(id).ok_or_else(|| {
+                crate::app::refusal::Refusal::internal("a matched item did not read")
+            })?;
+            Ok(super::Selected {
+                id: id.clone(),
+                version,
+                state,
+            })
+        })
+        .collect()
+}
+
+pub(super) fn types_of(tx: &Transaction<'_>, ids: &[String]) -> Result<Vec<String>> {
+    let listed = serde_json::to_string(ids)
+        .map_err(|_| crate::app::refusal::Refusal::internal("a list of IDs did not print"))?;
+    let mut statement = tx.prepare_cached(
+        "SELECT DISTINCT type FROM items WHERE id IN (SELECT value FROM json_each(?1)) ORDER BY type",
+    )?;
+    let found = statement.query_map([listed], |row| row.get(0))?;
+    Ok(found.collect::<rusqlite::Result<_>>()?)
+}
+
+/// The marks naming a retyped item follow it to its new type.
+pub(super) fn retype_marks(tx: &Transaction<'_>, root: &str, type_id: &str) -> Result<()> {
+    tx.prepare_cached("UPDATE items SET trashed_with_type = ?2 WHERE trashed_with = ?1")?
+        .execute(params![root, type_id])?;
+    Ok(())
 }
 
 pub(super) fn marked_with(tx: &Transaction<'_>, root: &str) -> Result<Vec<Item>> {

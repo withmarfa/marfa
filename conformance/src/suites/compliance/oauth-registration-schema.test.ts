@@ -1,4 +1,3 @@
-import { generateKeyPairSync } from "node:crypto";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import {
   bootFreshServer,
@@ -18,7 +17,6 @@ afterAll(async () => {
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 it("describes the public metadata registration accepts and echoes", async () => {
-  const { publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const metadata = {
     client_name: "Metadata Fixture",
     client_uri: "https://app.example.test/",
@@ -32,9 +30,6 @@ it("describes the public metadata registration accepts and echoes", async () => 
     ],
     response_types: [],
     token_endpoint_auth_method: "none",
-    jwks: { keys: [{ ...publicKey.export({ format: "jwk" }), alg: "ES256" }] },
-    subject_type: "public",
-    dpop_bound_access_tokens: true,
   };
   const documentResponse = await fetch(`${server!.apiUrl}/openapi.json`);
   expect(documentResponse.status).toBe(200);
@@ -56,7 +51,33 @@ it("describes the public metadata registration accepts and echoes", async () => 
   expect(validate(body), JSON.stringify(validate.errors)).toBe(true);
 });
 
-it("describes the resource and software-statement validation refusals", async () => {
+it("registers a client whose metadata the server does not support, and leaves that metadata out of its answer", async () => {
+  const unsupported = {
+    dpop_bound_access_tokens: true,
+    subject_type: "pairwise",
+    software_statement: "eyJhbGciOiJub25lIn0.eyJpc3MiOiJ4In0.",
+    resources: ["https://resource.example.test/"],
+  };
+  const response = await fetch(`${server!.apiUrl}/auth/oauth2/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      client_name: "Unsupported Metadata Fixture",
+      application_type: "native",
+      grant_types: ["urn:ietf:params:oauth:grant-type:device_code"],
+      response_types: [],
+      token_endpoint_auth_method: "none",
+      ...unsupported,
+    }),
+  });
+  const body = (await response.json()) as Record<string, unknown>;
+  expect(response.status, JSON.stringify(body)).toBe(201);
+  expect(body.client_id).toEqual(expect.any(String));
+  for (const field of Object.keys(unsupported))
+    expect(body, field).not.toHaveProperty(field);
+});
+
+it("describes the refusal of a resource that is not an absolute URI", async () => {
   const documentResponse = await fetch(`${server!.apiUrl}/openapi.json`);
   expect(documentResponse.status).toBe(200);
   const document = (await documentResponse.json()) as OpenApiDocument;
@@ -66,10 +87,11 @@ it("describes the resource and software-statement validation refusals", async ()
     ]?.schema;
   expect(schema).toBeDefined();
   const validate = validatorFor(schema, document);
-  for (const [field, value, code] of [
-    ["resources", ["not-a-uri"], "invalid_target"],
-    ["software_statement", 42, "invalid_software_statement"],
-  ] as const) {
+  for (const resource of [
+    "not-a-uri",
+    "/relative",
+    "https://a.example.test/#part",
+  ]) {
     const response = await fetch(`${server!.apiUrl}/auth/oauth2/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -79,75 +101,12 @@ it("describes the resource and software-statement validation refusals", async ()
         grant_types: ["urn:ietf:params:oauth:grant-type:device_code"],
         response_types: [],
         token_endpoint_auth_method: "none",
-        [field]: value,
+        resources: ["https://a.example.test/", resource],
       }),
     });
-    const body = await response.json();
-    expect(response.status).toBe(400);
-    expect(body).toMatchObject({ error: code });
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(response.status, resource).toBe(400);
+    expect(body, resource).toMatchObject({ error: "invalid_target" });
     expect(validate(body), JSON.stringify(validate.errors)).toBe(true);
   }
-});
-
-it("publishes only the subject type the configured provider accepts", async () => {
-  const documentResponse = await fetch(`${server!.apiUrl}/openapi.json`);
-  expect(documentResponse.status).toBe(200);
-  const document = (await documentResponse.json()) as OpenApiDocument;
-  const operation = document.paths["/auth/oauth2/register"]?.post;
-  expect(operation).toBeDefined();
-  const requestSchema =
-    operation!.requestBody?.content?.["application/json"]?.schema;
-  const successSchema =
-    operation!.responses?.["201"]?.content?.["application/json"]?.schema;
-  const refusalSchema =
-    operation!.responses?.["400"]?.content?.["application/json"]?.schema;
-  expect(requestSchema).toBeDefined();
-  expect(successSchema).toBeDefined();
-  expect(refusalSchema).toBeDefined();
-  const metadata = {
-    client_name: "Subject Fixture",
-    application_type: "native",
-    grant_types: ["urn:ietf:params:oauth:grant-type:device_code"],
-    response_types: [],
-    token_endpoint_auth_method: "none",
-    subject_type: "public",
-  };
-  const register = (body: typeof metadata) =>
-    fetch(`${server!.apiUrl}/auth/oauth2/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-  const publicResponse = await register(metadata);
-  const publicBody = await publicResponse.json();
-  expect(publicResponse.status).toBe(201);
-  expect(publicBody).toMatchObject({ subject_type: "public" });
-  const pairwiseMetadata = { ...metadata, subject_type: "pairwise" };
-  const pairwiseResponse = await register(pairwiseMetadata);
-  const pairwiseBody = await pairwiseResponse.json();
-  expect(pairwiseResponse.status).toBe(400);
-  expect(pairwiseBody).toMatchObject({
-    error: "invalid_client_metadata",
-    error_description:
-      "pairwise subject_type requires server pairwiseSecret configuration",
-  });
-  const validateRefusal = validatorFor(refusalSchema, document);
-  expect(
-    validateRefusal(pairwiseBody),
-    JSON.stringify(validateRefusal.errors),
-  ).toBe(true);
-  const validateRequest = validatorFor(requestSchema, document);
-  expect(
-    validateRequest(metadata),
-    JSON.stringify(validateRequest.errors),
-  ).toBe(true);
-  expect(validateRequest(pairwiseMetadata)).toBe(false);
-  const validateSuccess = validatorFor(successSchema, document);
-  expect(
-    validateSuccess(publicBody),
-    JSON.stringify(validateSuccess.errors),
-  ).toBe(true);
-  expect(validateSuccess({ ...publicBody, subject_type: "pairwise" })).toBe(
-    false,
-  );
 });

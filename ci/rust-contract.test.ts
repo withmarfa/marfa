@@ -71,6 +71,33 @@ describe("the Rust server's release build", () => {
     );
     expect(upload.with?.["if-no-files-found"]).toBe("error");
   });
+
+  it("builds the program a release ships a second time, without the test hooks, and uploads it for the shards", () => {
+    const names = (build?.steps ?? []).map((candidate) => candidate.name);
+    // After the hooked server is kept: the second build replaces the output.
+    expect(names.indexOf("Keep the server")).toBeGreaterThan(-1);
+    expect(
+      names.indexOf("Build the Rust server without test hooks"),
+    ).toBeGreaterThan(names.indexOf("Keep the server"));
+    const free = step(build, "Build the Rust server without test hooks");
+    expect(free.run).toBe(
+      'core/marfa-enrichment/native/release.sh "$TARGET" --server',
+    );
+    expect(free.env?.MARFA_SERVER_FEATURES).toBeUndefined();
+    const upload = step(build, "Keep the server without test hooks");
+    expect(upload.with?.name).toBe("rust-contract-release-server");
+    expect(upload.with?.["if-no-files-found"]).toBe("error");
+    expect(
+      shards?.steps.some(
+        (candidate) =>
+          candidate.uses?.startsWith("actions/download-artifact") &&
+          candidate.with?.name === "rust-contract-release-server",
+      ),
+    ).toBe(true);
+    expect(step(shards, "Name the server a release ships").run).toContain(
+      "MARFA_SERVER_RELEASE_BIN=",
+    );
+  });
 });
 
 describe("the Rust contract shards", () => {
@@ -150,9 +177,21 @@ describe("the Rust contract shards", () => {
 
   it("start nothing that is for the TypeScript server", () => {
     const text = JSON.stringify(shards?.steps);
-    expect(text).not.toContain("garage");
     expect(text).not.toContain("@withmarfa/server...");
     expect(text).not.toContain("MARFA_SERVER_BUILT");
+  });
+
+  it("put an object store beside the server for the stores chapter, and always stop it", () => {
+    const names = shards?.steps.map((s) => s.name) ?? [];
+    const store = names.indexOf("Put an object store beside the server");
+    expect(store).toBeGreaterThanOrEqual(0);
+    expect(store).toBeLessThan(names.indexOf("Boot the Rust server"));
+    expect(step(shards, "Put an object store beside the server").run).toContain(
+      "pnpm garage:up",
+    );
+    const stop = step(shards, "Stop the object store");
+    expect(stop.if).toBe("always()");
+    expect(stop.run).toContain("pnpm garage:down");
   });
 });
 

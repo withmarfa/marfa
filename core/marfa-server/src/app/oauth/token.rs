@@ -6,7 +6,7 @@ use std::sync::Arc;
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
-use super::client::{AuthMethod, GrantType};
+use super::client::GrantType;
 use super::clients::email_write_refused;
 use super::pkce;
 use super::resource::{Refused, at_token};
@@ -41,6 +41,17 @@ impl Form {
             .filter(|value| !value.is_empty())
     }
 
+    /// Every client is public, so any of these, even empty, is a credential no client holds.
+    fn offers_client_credential(&self) -> bool {
+        self.authorization
+            || self.pairs.iter().any(|(key, _)| {
+                matches!(
+                    key.as_str(),
+                    "client_secret" | "client_assertion" | "client_assertion_type"
+                )
+            })
+    }
+
     fn resources(&self) -> Vec<String> {
         self.pairs
             .iter()
@@ -54,7 +65,17 @@ fn invalid_grant(description: &str) -> Problem {
     Problem::new("invalid_grant", description)
 }
 
-/// A public client proves nothing, so it may present no secret.
+/// Each door asks this before it judges anything else the request holds.
+pub(super) fn credential_refused(form: &Form) -> Option<Problem> {
+    form.offers_client_credential().then(|| {
+        Problem::new(
+            "invalid_client",
+            "Clients here are public and present no credential of their own.",
+        )
+        .with_status(401)
+    })
+}
+
 pub(super) async fn checked_client(app: &App, form: &Form) -> Result<Answered<Client>> {
     let Some(id) = form.get("client_id").map(str::to_string) else {
         return Ok(Err(Problem::new("invalid_request", "Name a client_id.")));
@@ -64,16 +85,7 @@ pub(super) async fn checked_client(app: &App, form: &Form) -> Result<Answered<Cl
     let Some(client) = app.db.read(move |tx| store::client(tx, &id)).await? else {
         return Ok(Err(unknown()));
     };
-    match client.registration.token_endpoint_auth_method {
-        AuthMethod::None if form.authorization || form.get("client_secret").is_some() => {
-            Ok(Err(Problem::new(
-                "invalid_client",
-                "This client is public and presents no secret.",
-            )
-            .with_status(401)))
-        }
-        AuthMethod::None => Ok(Ok(client)),
-    }
+    Ok(Ok(client))
 }
 
 /// A public client's proof is what its grant presents, so a request lacking it is judged before
@@ -98,6 +110,9 @@ pub async fn exchange(
     form: Form,
     visit: &Visit,
 ) -> Result<Answered<Map<String, Value>>> {
+    if let Some(problem) = credential_refused(&form) {
+        return Ok(Err(problem));
+    }
     let Some(word) = form.get("grant_type") else {
         return Ok(Err(Problem::new("invalid_request", "Name a grant_type.")));
     };
@@ -166,7 +181,7 @@ struct Issue<'i> {
 fn issue(app: &App, unit: &Unit<'_, '_>, issue: Issue<'_>) -> Result<Map<String, Value>> {
     let tx = unit.tx();
     let now = ms_of(&unit.at)?;
-    let salt = &app.settings.start.api_key_salt;
+    let salt = &app.settings.start.key_salt;
     let access = new_access_token()?;
     store::insert_access_token(
         tx,
@@ -245,7 +260,7 @@ async fn by_code(
     app.write(&Caller::Server, TOKEN_ISSUED, move |unit| {
         let tx = unit.tx();
         let now = ms_of(&unit.at)?;
-        let digest = digest_of(&shared.settings.start.api_key_salt, &code)?;
+        let digest = digest_of(&shared.settings.start.key_salt, &code)?;
         let spent = || invalid_grant("This code cannot be exchanged.");
         let Some(code) = store::code(tx, &digest)?.filter(|code| code.expires_at > now) else {
             return Ok(Err(spent()));
@@ -334,7 +349,7 @@ async fn by_refresh(
     app.write(&Caller::Server, TOKEN_ISSUED, move |unit| {
         let tx = unit.tx();
         let now = ms_of(&unit.at)?;
-        let digest = digest_of(&shared.settings.start.api_key_salt, &token)?;
+        let digest = digest_of(&shared.settings.start.key_salt, &token)?;
         let dead = || invalid_grant("This refresh token cannot be used.");
         let Some(old) = store::refresh_token_by_digest(tx, &digest)?
             .filter(|old| old.client_id == client.id && old.ended_at.is_none())
@@ -407,7 +422,7 @@ async fn by_device_code(
     app.write(&Caller::Server, TOKEN_ISSUED, move |unit| {
         let tx = unit.tx();
         let now = ms_of(&unit.at)?;
-        let digest = digest_of(&shared.settings.start.api_key_salt, &code)?;
+        let digest = digest_of(&shared.settings.start.key_salt, &code)?;
         let spent = || invalid_grant("This device code cannot be exchanged.");
         let Some(code) =
             store::device_code(tx, &digest)?.filter(|code| code.client_id == client.id)

@@ -54,15 +54,25 @@ impl Accepted {
 
     /// Makes the secrets file on a first start; the server holds the control socket's claim before this.
     pub fn open_secrets(self) -> Result<Settings, Failure> {
-        let filled = secrets::open(self.given, &self.fixed.database, self.fixed.test_hooks)?;
+        #[cfg(feature = "test-hooks")]
+        let given = if self.fixed.test_hooks {
+            Given {
+                key_salt: self
+                    .given
+                    .key_salt
+                    .or_else(|| Some(secrets::TEST_SALT.to_string())),
+                auth_secret: self.given.auth_secret,
+            }
+        } else {
+            self.given
+        };
+        #[cfg(not(feature = "test-hooks"))]
+        let given = self.given;
+        let filled = secrets::open(given, &self.fixed.database)?;
         let live = Snapshot::resolve(&self.seeds, &[], 0);
         Ok(Settings {
-            start: Arc::new(Start::new(
-                self.fixed,
-                filled.api_key_salt,
-                filled.auth_secret,
-            )),
-            seeds: self.seeds,
+            start: Arc::new(Start::new(self.fixed, filled.key_salt, filled.auth_secret)),
+            seeds: Arc::new(self.seeds),
             start_only: self.start_only,
             live: ArcSwap::from_pointee(live),
             generation: AtomicU64::new(0),
@@ -72,10 +82,8 @@ impl Accepted {
 
 fn warn_of_ignored(environment: &Environment) {
     for entry in ENTRIES {
-        if let Some(name) = entry
-            .test_name
-            .filter(|name| environment.get(name).is_some())
-        {
+        let name = entry.seed_name();
+        if environment.get(&name).is_some() {
             let key = entry.key;
             tracing::warn!(
                 setting = name,
@@ -85,9 +93,16 @@ fn warn_of_ignored(environment: &Environment) {
     }
 }
 
+pub(crate) fn report_unreadable(key: &str) {
+    tracing::error!(
+        setting = key,
+        "A stored setting does not read; its row is kept and its default is in use"
+    );
+}
+
 pub struct Settings {
     pub start: Arc<Start>,
-    seeds: Seeds,
+    seeds: Arc<Seeds>,
     start_only: Vec<start_only::Listed>,
     live: ArcSwap<Snapshot>,
     generation: AtomicU64,
@@ -99,17 +114,23 @@ impl Settings {
     pub fn read(environment: Environment) -> Result<Accepted, Refused> {
         let mut problems = Vec::new();
         let read = Fixed::read(&environment, &mut problems);
+        #[cfg(feature = "test-hooks")]
         let seeds = if Fixed::hooks_on(&environment) {
             registry::seeds(&environment, &mut problems)
         } else {
             Seeds::new()
         };
+        #[cfg(not(feature = "test-hooks"))]
+        let seeds = Seeds::new();
         let (fixed, given) = match (read, problems.is_empty()) {
             (Some(read), true) => read,
             _ => return Err(Refused { lines: problems }),
         };
-        fixed.check_together(&environment, &mut problems);
-        problems.extend(together::seed_lines(&seeds, &fixed));
+        #[cfg(feature = "test-hooks")]
+        {
+            fixed.check_together(&environment, &mut problems);
+            problems.extend(together::seed_lines(&seeds, &fixed));
+        }
         if !problems.is_empty() {
             return Err(Refused { lines: problems });
         }
@@ -130,10 +151,7 @@ impl Settings {
     pub fn apply_stored(&self, stored: &[(String, String)]) {
         let snapshot = Snapshot::resolve(&self.seeds, stored, 0);
         for key in snapshot.unreadable() {
-            tracing::error!(
-                setting = key,
-                "A stored setting does not read; its row is kept and its default is in use"
-            );
+            report_unreadable(key);
         }
         self.live.store(Arc::new(snapshot));
     }
@@ -155,6 +173,10 @@ impl Settings {
         });
     }
 
+    pub(crate) fn seeds(&self) -> Arc<Seeds> {
+        self.seeds.clone()
+    }
+
     pub fn candidate(&self, stored: &[(String, String)]) -> Snapshot {
         Snapshot::resolve(&self.seeds, stored, 0)
     }
@@ -174,7 +196,7 @@ mod tests {
     use crate::app::addresses::Address;
     use crate::settings::registry::{MAX_REQUEST_BYTES, SIGN_IN_ADDRESS};
 
-    const IN_MEMORY: (&str, &str) = ("SQLITE_PATH", ":memory:");
+    const IN_MEMORY: (&str, &str) = ("MARFA_DATABASE_PATH", ":memory:");
     const HOOKS: (&str, &str) = ("MARFA_TEST_HOOKS", "true");
 
     fn read(pairs: &[(&str, &str)]) -> Result<Accepted, Refused> {
@@ -206,41 +228,49 @@ mod tests {
         let lower = |pairs: &[(&str, &str)]| refused(&[&[IN_MEMORY, HOOKS], pairs].concat());
         assert_eq!(
             lower(&[
-                ("VERSION_RECENT_DAYS", "40"),
-                ("VERSION_DAILY_SNAPSHOT_DAYS", "39")
-            ]),
-            ["VERSION_DAILY_SNAPSHOT_DAYS must be at least VERSION_RECENT_DAYS (got \"39\")"]
-        );
-        assert_eq!(
-            lower(&[
-                ("VERSION_DAILY_SNAPSHOT_DAYS", "100"),
-                ("VERSION_WEEKLY_SNAPSHOT_DAYS", "99")
+                ("MARFA_VERSION_RECENT_DAYS", "40"),
+                ("MARFA_VERSION_DAILY_SNAPSHOT_DAYS", "39")
             ]),
             [
-                "VERSION_WEEKLY_SNAPSHOT_DAYS must be at least VERSION_DAILY_SNAPSHOT_DAYS (got \"99\")"
+                "MARFA_VERSION_DAILY_SNAPSHOT_DAYS must be at least MARFA_VERSION_RECENT_DAYS (got \"39\")"
             ]
         );
         assert_eq!(
             lower(&[
-                ("VERSION_RECENT_DAYS", "soon"),
-                ("VERSION_DAILY_SNAPSHOT_DAYS", "1")
+                ("MARFA_VERSION_DAILY_SNAPSHOT_DAYS", "100"),
+                ("MARFA_VERSION_WEEKLY_SNAPSHOT_DAYS", "99")
             ]),
-            ["VERSION_RECENT_DAYS must be a whole number, from 0 to 36500 (got \"soon\")"],
+            [
+                "MARFA_VERSION_WEEKLY_SNAPSHOT_DAYS must be at least MARFA_VERSION_DAILY_SNAPSHOT_DAYS (got \"99\")"
+            ]
+        );
+        assert_eq!(
+            lower(&[
+                ("MARFA_VERSION_RECENT_DAYS", "soon"),
+                ("MARFA_VERSION_DAILY_SNAPSHOT_DAYS", "1")
+            ]),
+            ["MARFA_VERSION_RECENT_DAYS must be a whole number, from 0 to 36500 (got \"soon\")"],
             "a rule across settings waits until each one parses"
         );
         opened(&[
             HOOKS,
-            ("VERSION_RECENT_DAYS", "40"),
-            ("VERSION_DAILY_SNAPSHOT_DAYS", "40"),
-            ("VERSION_WEEKLY_SNAPSHOT_DAYS", "40"),
+            ("MARFA_VERSION_RECENT_DAYS", "40"),
+            ("MARFA_VERSION_DAILY_SNAPSHOT_DAYS", "40"),
+            ("MARFA_VERSION_WEEKLY_SNAPSHOT_DAYS", "40"),
         ]);
+    }
+
+    #[test]
+    fn test_hooks_keep_the_fixed_salt_and_no_other_start_uses_it() {
+        assert_eq!(opened(&[HOOKS]).start.key_salt, secrets::TEST_SALT);
+        assert_ne!(opened(&[]).start.key_salt, secrets::TEST_SALT);
     }
 
     #[test]
     fn with_hooks_off_no_seed_is_read_so_none_is_judged() {
         opened(&[
-            ("VERSION_RECENT_DAYS", "40"),
-            ("VERSION_DAILY_SNAPSHOT_DAYS", "39"),
+            ("MARFA_VERSION_RECENT_DAYS", "40"),
+            ("MARFA_VERSION_DAILY_SNAPSHOT_DAYS", "39"),
         ]);
     }
 
@@ -266,8 +296,8 @@ mod tests {
     }
 
     #[test]
-    fn the_address_seed_is_a_test_name_like_any_other() {
-        let seeded = ("MARFA_AUTH_BASE_URL", "HTTPS://Marfa.Example:443/");
+    fn the_address_seed_is_named_like_any_other() {
+        let seeded = ("MARFA_SIGN_IN_ADDRESS", "HTTPS://Marfa.Example:443/");
         let settings = opened(&[HOOKS, seeded]);
         let origin = |settings: &Settings| {
             settings
@@ -286,16 +316,16 @@ mod tests {
     #[test]
     fn with_hooks_on_a_value_outside_its_rule_refuses_the_start() {
         assert_eq!(
-            refused(&[HOOKS, ("MARFA_MAX_REQUEST_BYTES", "0"), ("PORT", "x")]),
+            refused(&[HOOKS, ("MARFA_MAX_REQUEST_BYTES", "0"), ("MARFA_PORT", "x")]),
             [
-                r#"PORT must be a whole number, from 0 to 65535 (got "x")"#,
-                r#"MARFA_MAX_REQUEST_BYTES must be a whole number, 1 or more (got "0")"#,
+                r#"MARFA_PORT must be a whole number, from 0 to 65535 (got "x")"#,
+                r#"MARFA_MAX_REQUEST_BYTES must be a whole number, from 1 to 1099511627776 (got "0")"#,
             ]
         );
-        let lines = refused(&[HOOKS, ("MARFA_AUTH_BASE_URL", "marfa.example")]);
+        let lines = refused(&[HOOKS, ("MARFA_SIGN_IN_ADDRESS", "marfa.example")]);
         assert_eq!(lines.len(), 1);
         assert!(
-            lines[0].starts_with("MARFA_AUTH_BASE_URL must"),
+            lines[0].starts_with("MARFA_SIGN_IN_ADDRESS must"),
             "{lines:?}"
         );
         assert!(lines[0].ends_with(r#"(got "marfa.example")"#), "{lines:?}");
@@ -331,7 +361,7 @@ mod tests {
 
     #[test]
     fn a_blank_row_counts_as_absent() {
-        let settings = opened(&[HOOKS, ("MARFA_AUTH_BASE_URL", "https://seed.example")]);
+        let settings = opened(&[HOOKS, ("MARFA_SIGN_IN_ADDRESS", "https://seed.example")]);
         settings.apply_stored(&row("sign_in_address", ""));
         assert!(settings.live().get(SIGN_IN_ADDRESS).is_some());
         assert!(settings.live().unreadable().is_empty());
@@ -345,18 +375,12 @@ mod tests {
     }
 
     #[test]
-    fn node_env_is_ignored_without_comment() {
-        assert!(read(&[("NODE_ENV", "production")]).is_ok());
-        assert!(read(&[("NODE_ENV", "staging")]).is_ok());
-    }
-
-    #[test]
     fn names_every_bad_setting_on_its_own_line() {
         assert_eq!(
-            refused(&[("PORT", "70000"), ("SQLITE_BUSY_BUDGET_MS", "soon")]),
+            refused(&[("MARFA_PORT", "70000"), ("MARFA_WRITE_WAIT_MS", "soon")]),
             [
-                r#"PORT must be a whole number, from 0 to 65535 (got "70000")"#,
-                r#"SQLITE_BUSY_BUDGET_MS must be a whole number, from 0 to 2147483647 (got "soon")"#,
+                r#"MARFA_PORT must be a whole number, from 0 to 65535 (got "70000")"#,
+                r#"MARFA_WRITE_WAIT_MS must be a whole number, from 0 to 86400000 (got "soon")"#,
             ]
         );
     }
@@ -364,7 +388,7 @@ mod tests {
     #[test]
     fn never_prints_a_secret() {
         let secret = " padded-secret-value-of-enough-length-to-pass ";
-        let lines = refused(&[("MARFA_AUTH_SECRET", secret), ("API_KEY_SALT", " salt")]);
+        let lines = refused(&[("MARFA_AUTH_SECRET", secret), ("MARFA_KEY_SALT", " salt")]);
         assert_eq!(lines.len(), 2);
         for line in lines {
             assert!(!line.contains("padded-secret"), "{line}");
@@ -378,26 +402,84 @@ mod tests {
 
     #[test]
     fn a_secret_from_the_environment_reaches_start() {
-        let salt = ("API_KEY_SALT", "a-salt-from-the-environment");
+        let salt = ("MARFA_KEY_SALT", "a-salt-from-the-environment");
         let auth = (
             "MARFA_AUTH_SECRET",
             "an-auth-secret-of-at-least-32-characters",
         );
         let settings = opened(&[salt, auth]);
-        assert_eq!(settings.start.api_key_salt, salt.1);
+        assert_eq!(settings.start.key_salt, salt.1);
         assert_eq!(settings.start.auth_secret, auth.1);
     }
 
     #[test]
+    fn an_object_store_is_attached_by_its_bucket_and_read_with_its_defaults() {
+        assert!(read(&[]).ok().unwrap().fixed().object_store.is_none());
+        let read_back = read(&[("S3_BUCKET", "marfa"), ("S3_PREFIX", "/one/two/")]);
+        let store = read_back.ok().unwrap().fixed.object_store.unwrap();
+        assert_eq!(
+            (
+                store.bucket.as_str(),
+                store.region.as_str(),
+                store.prefix.as_str()
+            ),
+            ("marfa", "us-east-1", "one/two")
+        );
+        assert!(store.path_style && store.endpoint.is_none());
+        assert_eq!(store.locator(), "s3://marfa/one/two");
+    }
+
+    #[test]
+    fn refuses_a_prefix_or_endpoint_that_cannot_name_the_store() {
+        for prefix in ["a/../b", "a b", "a//b", "./a"] {
+            let lines = refused(&[("S3_BUCKET", "marfa"), ("S3_PREFIX", prefix)]);
+            assert_eq!(lines.len(), 1, "{prefix}");
+        }
+        let lines = refused(&[("S3_BUCKET", "m"), ("S3_ENDPOINT", "ftp://key@host")]);
+        assert!(!lines[0].contains("key@host"), "{}", lines[0]);
+        assert!(read(&[("S3_BUCKET", "m"), ("S3_FORCE_PATH_STYLE", "maybe")]).is_ok());
+        let styled = [
+            ("S3_BUCKET", "m"),
+            ("S3_ENDPOINT", "http://127.0.0.1:3900"),
+            ("S3_FORCE_PATH_STYLE", "OFF"),
+        ];
+        let store = read(&styled).ok().unwrap().fixed.object_store.unwrap();
+        assert!(!store.path_style);
+        assert_eq!(
+            refused(&[styled[0], styled[1], ("S3_FORCE_PATH_STYLE", "maybe")]).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn refuses_an_endpoint_that_carries_a_credential_and_never_repeats_it() {
+        for endpoint in [
+            "http://key:secret@127.0.0.1:3900",
+            "https://key@s3.example.com",
+            "https://:secret@s3.example.com",
+        ] {
+            let lines = refused(&[("S3_BUCKET", "m"), ("S3_ENDPOINT", endpoint)]);
+            assert_eq!(lines.len(), 1, "{endpoint}");
+            assert!(lines[0].contains("S3_ACCESS_KEY_ID"), "{}", lines[0]);
+            assert!(lines[0].contains("S3_SECRET_ACCESS_KEY"), "{}", lines[0]);
+            assert!(!lines[0].contains("secret@"), "{}", lines[0]);
+            assert!(!lines[0].contains("key"), "{}", lines[0]);
+        }
+    }
+
+    #[test]
     fn a_blank_value_counts_as_unset() {
-        assert_eq!(read(&[("PORT", "   ")]).ok().unwrap().fixed().port, 8600);
+        assert_eq!(
+            read(&[("MARFA_PORT", "   ")]).ok().unwrap().fixed().port,
+            8600
+        );
     }
 
     #[test]
     fn holds_back_rules_between_settings_until_each_one_parses() {
         assert_eq!(
-            refused(&[("MARFA_TEST_CONTRACT_VERSION", "1"), ("PORT", "x")]),
-            [r#"PORT must be a whole number, from 0 to 65535 (got "x")"#]
+            refused(&[("MARFA_TEST_CONTRACT_VERSION", "1"), ("MARFA_PORT", "x")]),
+            [r#"MARFA_PORT must be a whole number, from 0 to 65535 (got "x")"#]
         );
     }
 

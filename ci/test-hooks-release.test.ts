@@ -42,7 +42,7 @@ describe("the test hooks and what is released", () => {
       .map((pair) => pair.split("=")[0] ?? "")
       .filter((name) => name !== "");
     // The witness: it reads the names the Dockerfile does set.
-    expect(set).toContain("SQLITE_PATH");
+    expect(set).toContain("MARFA_DATABASE_PATH");
     expect(set.filter((name) => name.startsWith("MARFA_TEST_"))).toEqual([]);
     expect(dockerfile).not.toContain("MARFA_TEST_HOOKS");
 
@@ -66,5 +66,20 @@ describe("the test hooks and what is released", () => {
         ).toBe(true);
       }
     }
+  });
+
+  it("builds the server with the test-hooks feature for the contract runs and without it for a release", () => {
+    const workflows = (name: string) =>
+      readFileSync(`${root}.github/workflows/${name}`, "utf8");
+    const live = workflows("core-live.yml")
+      .split("\n")
+      .filter((line) => /cargo build .*-p marfa-server/.test(line));
+    expect(live.length).toBeGreaterThan(0);
+    for (const line of live) expect(line).toContain("--features test-hooks");
+    const ci = workflows("ci.yml");
+    expect(ci).toMatch(
+      /MARFA_SERVER_FEATURES: test-hooks\n\s+run: core\/marfa-enrichment\/native\/release\.sh "\$TARGET" --server/,
+    );
+    expect(workflows("release.yml")).not.toContain("test-hooks");
   });
 });

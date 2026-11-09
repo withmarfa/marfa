@@ -1095,7 +1095,30 @@
           },
           "settings_rewritten": {
             "type": "boolean",
-            "description": "On a type move, `true` if Marfa rewrote `settings` to name the new type. `false` if an item of the old type remains, counted in `remaining` or `remaining_hidden`, or a setting has a `reason`: Marfa then rewrote none of them. Absent otherwise."
+            "description": "On a type move, `true` if Marfa rewrote `settings` to name the new type. `false` if an item of the old type remains, a setting has a `reason`, or `settings_error` names a refusal; then none was rewritten. Absent otherwise."
+          },
+          "settings_error": {
+            "type": "object",
+            "description": "On a type move, why Marfa rewrote none of `settings` once no item of the old type remained: the new type is gone, or a folder or view would refuse its rewrite. Change the setting or register the type, then run the move again. Absent otherwise.",
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "A machine-readable code for the refusal. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the refusal for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the refusal, as the setting's own operation gives it."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ]
           }
         },
         "required": [
@@ -1543,6 +1566,59 @@
           "version": {
             "type": "string",
             "description": "The build the instance runs, when it is known."
+          },
+          "housekeeping": {
+            "type": "object",
+            "properties": {
+              "failed": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "description": "The job's name."
+                    },
+                    "at": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "When the failed run finished, in UTC."
+                    },
+                    "error": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "The error the run hit."
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "at",
+                    "error"
+                  ],
+                  "description": "A housekeeping job whose last run failed."
+                },
+                "description": "Every job here whose last run failed, or `null` if the schedule can't be read in time."
+              },
+              "unreadable_settings": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The keys of stored settings that no longer read, which Marfa runs on their defaults."
+              }
+            },
+            "required": [
+              "failed",
+              "unreadable_settings"
+            ],
+            "description": "What needs attention in the background work. Present only for a caller that holds `instance.read`."
           }
         },
         "required": [
@@ -5434,44 +5510,6 @@
         ],
         "description": "A key or app whose type map names a type outright."
       },
-      "BulkCapExceededOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "type": "string",
-                "enum": [
-                  "bulk_cap_exceeded",
-                  "missing_required_field",
-                  "unknown_type",
-                  "validation_error"
-                ],
-                "description": "A machine-readable code for the error. Use it in your logic."
-              },
-              "message": {
-                "type": "string",
-                "description": "A description of the error for a person to read. It can change, so don't match on it."
-              },
-              "details": {
-                "type": "object",
-                "additionalProperties": {},
-                "description": "More about the error, such as the field it concerns. Each code defines its own details."
-              }
-            },
-            "required": [
-              "code",
-              "message"
-            ],
-            "description": "What went wrong."
-          }
-        },
-        "required": [
-          "error"
-        ],
-        "description": "An error response."
-      },
       "CoreTypeImmutableOrTypeNotPermittedRefusal": {
         "type": "object",
         "properties": {
@@ -6235,10 +6273,6 @@
             "type": "string",
             "description": "Where the store is: its directory for a `disk` store, `s3://<bucket>/<prefix>` for an `s3` store."
           },
-          "policy": {
-            "type": "string",
-            "description": "Which blobs the store takes. Marfa defines one policy, `all`: the store takes every blob."
-          },
           "attached_at": {
             "type": "string",
             "description": "When the instance first attached the store, in UTC."
@@ -6255,7 +6289,6 @@
           "id",
           "kind",
           "locator",
-          "policy",
           "attached_at",
           "detached_at"
         ],
@@ -6370,10 +6403,6 @@
             ],
             "description": "The kind of store: `disk` for the disk beside the server, `s3` for an S3-compatible bucket."
           },
-          "policy": {
-            "type": "string",
-            "description": "Which blobs the store takes. Marfa defines one policy, `all`: the store takes every blob."
-          },
           "detached": {
             "type": "boolean",
             "description": "`true` if the instance's configuration no longer names the store. A copy in a detached store doesn't count toward `min_copies`."
@@ -6393,7 +6422,6 @@
         "required": [
           "store_id",
           "kind",
-          "policy",
           "detached",
           "recorded_at",
           "verified_at"
@@ -6600,7 +6628,7 @@
             }
           ]
         },
-        "description": "What a run reports, under names its job chooses, such as `deleted` or `copied`."
+        "description": "What a run reports, under names its job chooses, such as `deleted`, `copied` or, for `trash-purge`, `passed_over`: the items it could not purge and left for the next run."
       },
       "HousekeepingRun": {
         "type": "object",
@@ -7895,11 +7923,10 @@
               "kind": {
                 "type": "string",
                 "enum": [
-                  "browser",
                   "app",
                   "key"
                 ],
-                "description": "browser: owner browser session; app: signed-in app grant; key: API key."
+                "description": "app: signed-in app grant; key: API key."
               },
               "id": {
                 "type": "string",
@@ -8581,7 +8608,7 @@
           "version_max_versions": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 9007199254740991,
+            "maximum": 1000000,
             "description": "Maximum versions per item, after applying the time windows. Per-type policy overrides these instance defaults."
           },
           "grant_inactivity_days": {
@@ -8677,6 +8704,17 @@
             "minimum": 0,
             "maximum": 36500,
             "description": "Days Marfa keeps inbound webhook deliveries no connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies."
+          },
+          "addresses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The addresses people reach this instance at, each an origin with no path. The sign-in address is always one of them."
+          },
+          "sign_in_address": {
+            "type": "string",
+            "description": "The address people sign in at, an origin with no path. Absent: this computer's own address."
           }
         },
         "required": [
@@ -9545,51 +9583,14 @@
             "type": "string",
             "description": "The software's version. Leave it out if there is none."
           },
-          "software_statement": {
-            "type": "string",
-            "description": "A signed software statement. Leave it out to register without one."
-          },
-          "post_logout_redirect_uris": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "format": "uri"
-            },
-            "minItems": 1,
-            "description": "Addresses the app may return to after sign-out. Leave it out if there are none."
-          },
           "token_endpoint_auth_method": {
             "type": "string",
             "minLength": 1,
-            "default": "client_secret_basic",
-            "description": "`none` is public, `client_secret_basic` uses HTTP Basic and `client_secret_post` sends the secret in the body. Other methods, including `private_key_jwt`, are refused with `invalid_client_metadata`.",
+            "default": "none",
+            "description": "`none`: the client is public and proves itself with PKCE. Any other method is refused with `invalid_client_metadata`.",
             "enum": [
-              "none",
-              "client_secret_basic",
-              "client_secret_post"
+              "none"
             ]
-          },
-          "jwks": {
-            "type": "object",
-            "properties": {
-              "keys": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "additionalProperties": {}
-                },
-                "minItems": 1,
-                "description": "The client's public JSON Web Keys, including any extension members."
-              }
-            },
-            "required": [
-              "keys"
-            ],
-            "description": "The client's public JSON Web Key Set. Leave it out if the client has none."
-          },
-          "jwks_uri": {
-            "type": "string",
-            "description": "The URL of the client's public JSON Web Key Set. Leave it out if the client has none."
           },
           "grant_types": {
             "type": "array",
@@ -9618,26 +9619,15 @@
             ],
             "description": "`web` or `native`, which decides the redirect URIs the client may use. Defaults to `web`."
           },
-          "subject_type": {
-            "type": "string",
-            "enum": [
-              "public"
-            ],
-            "description": "`public` for public subject identifiers. Leave it out to use public identifiers. `pairwise` is refused with `invalid_client_metadata`."
-          },
-          "dpop_bound_access_tokens": {
-            "type": "boolean",
-            "description": "`true` to bind the client's access tokens to DPoP proofs. Leave it out for tokens without that binding."
-          },
           "resources": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Resource identifiers to register the client for. Leave it out for the instance's default resources."
+            "description": "Resource identifiers, each an absolute URI without a fragment; any other value is refused with `invalid_target`. Marfa doesn't register them or return them: a token request names its own `resource`."
           }
         },
-        "description": "An OAuth client: its app metadata and the grants it uses."
+        "description": "An OAuth client: its app metadata and the grants it uses. Marfa ignores metadata it doesn't support and leaves it out of the answer."
       },
       "StreamCapacityExhaustedOrWriteContentionRefusal": {
         "type": "object",
@@ -9698,7 +9688,7 @@
               "string",
               "null"
             ],
-            "description": "The type, with its subtypes, or the pattern whose item events Marfa sends. Absent when Marfa sends item events of every type. Edge events aren't filtered."
+            "description": "The type, with its subtypes, or the pattern whose item events Marfa sends. `null` when Marfa sends item events of every type. Edge events aren't filtered."
           },
           "secret": {
             "type": "string",
@@ -9721,6 +9711,7 @@
           "id",
           "url",
           "events",
+          "type_filter",
           "secret",
           "active",
           "created_at",
@@ -10638,6 +10629,266 @@
             "$ref": "#/components/schemas/WebhookEdgeEvent"
           }
         ]
+      },
+      "InstanceChangedOrSignInAddressChangeUnconfirmedRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "instance_changed",
+                  "sign_in_address_change_unconfirmed"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the error, such as the field it concerns. Each code defines its own details."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
+      },
+      "AddressConsequence": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "browser_sessions_end",
+              "passkeys_unusable",
+              "apps_sign_in_again",
+              "address_removed"
+            ],
+            "description": "What happens: `browser_sessions_end`, `passkeys_unusable` or `apps_sign_in_again` when the sign-in address moves, `address_removed` for each address that is dropped."
+          },
+          "sentence": {
+            "type": "string",
+            "description": "The consequence, in a sentence for a person to read."
+          },
+          "count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "description": "How many sessions, passkeys or apps it affects, or `null` for an address that is dropped."
+          }
+        },
+        "required": [
+          "code",
+          "sentence",
+          "count"
+        ],
+        "description": "One thing a change of address does."
+      },
+      "AddressCheck": {
+        "type": "object",
+        "properties": {
+          "sign_in_address": {
+            "type": "string",
+            "description": "The sign-in address after the change."
+          },
+          "addresses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The addresses after the change."
+          },
+          "requires_confirmation": {
+            "type": "boolean",
+            "description": "`true` if a write of this change needs `confirm_sign_in_address_change: true`: the sign-in address of a claimed instance moves."
+          },
+          "consequences": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AddressConsequence"
+            },
+            "description": "Everything the change does, empty if it does nothing."
+          }
+        },
+        "required": [
+          "sign_in_address",
+          "addresses",
+          "requires_confirmation",
+          "consequences"
+        ],
+        "description": "What a change of address would do. Nothing is written."
+      },
+      "AddressCheckRequest": {
+        "type": "object",
+        "properties": {
+          "sign_in_address": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The sign-in address to try, an origin with no path. `null` tries removing it, so the server's default applies."
+          },
+          "addresses": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The addresses to try, each an origin with no path. `null` tries removing them, so the server's default applies."
+          }
+        },
+        "additionalProperties": false,
+        "description": "The address change to check, written as `PATCH /config` writes it."
+      },
+      "ConfigSetting": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The setting's key, the field `/config` reads and writes."
+          },
+          "description": {
+            "type": "string",
+            "description": "What the setting does."
+          },
+          "value": {
+            "description": "The value in force now: the stored one if it reads, else the default."
+          },
+          "default": {
+            "description": "The value the setting takes when nothing is stored."
+          },
+          "stored": {
+            "description": "The value stored for it, `null` if none is, or the stored text itself if it no longer reads."
+          },
+          "rule": {
+            "type": "string",
+            "description": "The values the setting accepts, in words."
+          },
+          "unreadable": {
+            "type": "boolean",
+            "description": "`true` if the stored value no longer reads. Marfa then uses the default. Present only then."
+          },
+          "together": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The keys of the other settings a rule across settings ties to this one."
+          }
+        },
+        "required": [
+          "key",
+          "description",
+          "value",
+          "default",
+          "stored",
+          "rule",
+          "together"
+        ],
+        "description": "A stored setting: its value, its default and the rule it follows."
+      },
+      "ConfigSettingRule": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The rule's name."
+          },
+          "description": {
+            "type": "string",
+            "description": "What the rule requires of the settings it names."
+          },
+          "keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The keys of the settings the rule holds together."
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "keys"
+        ],
+        "description": "A rule that holds across several settings."
+      },
+      "StartOnlySetting": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The environment variable that sets it."
+          },
+          "description": {
+            "type": "string",
+            "description": "What the setting does."
+          },
+          "secret": {
+            "type": "boolean",
+            "description": "`true` if the setting holds a secret, which Marfa never shows."
+          },
+          "set": {
+            "type": "boolean",
+            "description": "`true` if the environment sets it."
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "secret",
+          "set"
+        ],
+        "description": "A setting only the environment sets, read when Marfa starts."
+      },
+      "ConfigSettings": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConfigSetting"
+            },
+            "description": "Every stored setting."
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConfigSettingRule"
+            },
+            "description": "Every rule that holds across settings."
+          },
+          "start_only": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StartOnlySetting"
+            },
+            "description": "Every setting only the environment sets."
+          }
+        },
+        "required": [
+          "data",
+          "rules",
+          "start_only"
+        ],
+        "description": "Every setting Marfa has: the stored ones, the rules across them and the ones only the environment sets."
       }
     },
     "parameters": {},
@@ -30903,11 +31154,11 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `to` is missing.\n- `validation_error`: `to` is malformed or names the type itself.\n- `unknown_type`: no type has the identifier `to`.\n- `bulk_cap_exceeded`: the type holds over 50,000 items.",
+            "description": "- `missing_required_field`: `to` is missing.\n- `validation_error`: `to` is malformed or names the type itself.\n- `unknown_type`: no type has the identifier `to`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BulkCapExceededOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"
+                  "$ref": "#/components/schemas/MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"
                 }
               }
             },
@@ -36324,7 +36575,7 @@
           "Webhooks"
         ],
         "summary": "List webhooks",
-        "description": "Returns webhooks and their makers, with secrets redacted. The owner's browser session and local command see every subscription; keys and apps see only their own.",
+        "description": "Returns webhooks and their makers, with secrets redacted. The local command sees every subscription; keys and apps see only their own.",
         "security": [
           {
             "bearerAuth": []
@@ -36581,7 +36832,7 @@
           "Webhooks"
         ],
         "summary": "Get a webhook",
-        "description": "Returns a webhook and its maker, with its secret redacted. The owner's browser session and local command can read any subscription; keys and apps can read only their own.",
+        "description": "Returns a webhook and its maker, with its secret redacted. The local command can read any subscription; keys and apps can read only their own.",
         "security": [
           {
             "bearerAuth": []
@@ -37644,7 +37895,7 @@
           "Webhooks"
         ],
         "summary": "List webhook deliveries",
-        "description": "Returns delivery metadata without event payloads, newest first. The owner's browser session and local command can inspect any subscription; keys and apps can inspect only their own.",
+        "description": "Returns delivery metadata without event payloads, newest first. The local command can inspect any subscription; keys and apps can inspect only their own.",
         "security": [
           {
             "bearerAuth": []
@@ -37966,7 +38217,7 @@
           "Webhooks"
         ],
         "summary": "Redeliver a webhook delivery",
-        "description": "Redelivers a failed delivery, queuing it again at the current URL. The owner's recently authenticated browser session or local command can retry any subscription; keys and apps can retry only their own.",
+        "description": "Redelivers a failed delivery, queuing it again at the current URL. The local command can retry any subscription; keys and apps can retry only their own.",
         "security": [
           {
             "bearerAuth": []
@@ -38093,7 +38344,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't have `webhooks.manage`. An owner browser must have signed in within five minutes.",
+            "description": "- `forbidden`: you don't have `webhooks.manage`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -38153,7 +38404,7 @@
             }
           },
           "409": {
-            "description": "- `conflict`: Marfa can't send it again. `details.reason` is the first that applies: `webhook_inactive`; `credential_unavailable`, the registering key or app is gone or lacks `webhooks.manage`; `delivery_not_failed`; `delivery_expired`, past audit retention; or `delivery_not_retained`, its event is no longer held.",
+            "description": "- `conflict`: Marfa can't send it again. `details.reason` is the first that applies: `webhook_inactive`; `credential_unavailable`, the registering key or app is gone or lacks `webhooks.manage`; `delivery_not_failed`; or `delivery_expired`, past audit retention.",
             "content": {
               "application/json": {
                 "schema": {
@@ -38343,12 +38594,8 @@
           "Folders"
         ],
         "summary": "List folders",
-        "description": "Returns active folder summaries, newest first, for the owner or a private local command. Revoked folders are excluded. Read reported copies with `GET /folders/{id}/status`.",
-        "security": [
-          {
-            "ownerSession": []
-          }
-        ],
+        "description": "Returns active folder summaries, newest first, to the private local command. Revoked folders are excluded. Read reported copies with `GET /folders/{id}/status`.",
+        "security": [],
         "parameters": [
           {
             "schema": {
@@ -38463,7 +38710,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: only the owner or a private local command can list folders.",
+            "description": "- `forbidden`: only the private local command can list folders.",
             "content": {
               "application/json": {
                 "schema": {
@@ -39091,7 +39338,7 @@
           "Folders"
         ],
         "summary": "Update a folder",
-        "description": "Updates a folder's title and settings at the version you read. Each setting you send replaces its value whole; omitted settings stay. Removes stored properties the folder type does not declare.",
+        "description": "Updates a folder's title and settings at the version you read. Each setting you send replaces its value whole; omitted settings stay.",
         "security": [
           {
             "bearerAuth": []
@@ -52621,7 +52868,7 @@
         },
         "responses": {
           "201": {
-            "description": "Returns the registered client, with its `client_id` and, unless it's a public client, its `client_secret`.",
+            "description": "Returns the registered client, with its `client_id`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -52674,49 +52921,12 @@
                       "type": "string",
                       "description": "Version identifier for the software_id"
                     },
-                    "software_statement": {
-                      "type": "string",
-                      "description": "JWT containing metadata values about the client software as claims"
-                    },
-                    "post_logout_redirect_uris": {
-                      "type": "array",
-                      "items": {
-                        "type": "string",
-                        "format": "uri"
-                      },
-                      "description": "List of allowed logout redirect uris"
-                    },
                     "token_endpoint_auth_method": {
                       "type": "string",
-                      "description": "How the client proves itself at the token endpoint.",
+                      "description": "How the client proves itself at the token endpoint: `none`, for a public client.",
                       "enum": [
-                        "none",
-                        "client_secret_basic",
-                        "client_secret_post"
+                        "none"
                       ]
-                    },
-                    "jwks": {
-                      "description": "The client's public JSON Web Key Set, as registered.",
-                      "type": "object",
-                      "properties": {
-                        "keys": {
-                          "minItems": 1,
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "additionalProperties": {}
-                          },
-                          "description": "The client's public JSON Web Keys, including any extension members."
-                        }
-                      },
-                      "required": [
-                        "keys"
-                      ],
-                      "additionalProperties": false
-                    },
-                    "jwks_uri": {
-                      "description": "The URL of the client's public JSON Web Key Set, as registered.",
-                      "type": "string"
                     },
                     "grant_types": {
                       "type": "array",
@@ -52743,36 +52953,9 @@
                         "native"
                       ]
                     },
-                    "subject_type": {
-                      "description": "`public` for public subject identifiers.",
-                      "type": "string",
-                      "enum": [
-                        "public"
-                      ]
-                    },
-                    "dpop_bound_access_tokens": {
-                      "description": "`true` if the client always uses DPoP for its token requests.",
-                      "type": "boolean"
-                    },
-                    "resources": {
-                      "type": "array",
-                      "items": {
-                        "type": "string",
-                        "format": "uri"
-                      },
-                      "description": "Final resource identifiers linked to the registered client"
-                    },
                     "client_id": {
                       "type": "string",
                       "description": "Unique identifier for the client."
-                    },
-                    "client_secret": {
-                      "type": "string",
-                      "description": "The secret the client proves itself with at the token endpoint. Absent for a public client."
-                    },
-                    "client_secret_expires_at": {
-                      "type": "number",
-                      "description": "When the secret expires, in seconds since the Unix epoch, or `0` if it doesn't."
                     },
                     "user_id": {
                       "type": "string",
@@ -52812,7 +52995,7 @@
             }
           },
           "400": {
-            "description": "- `invalid_client_metadata`: client metadata is invalid.\n- `invalid_redirect_uri`: a redirect URI is invalid, or there are more than 10.\n- `invalid_scope`: a scope is not allowed.\n- `invalid_target`: a resource is invalid.\n- `invalid_software_statement`: a software statement is invalid.\n\nThese errors use RFC 7591. An unknown query parameter gets Marfa's `validation_error` instead.",
+            "description": "- `invalid_client_metadata`: client metadata is invalid.\n- `invalid_redirect_uri`: a redirect URI is invalid, or there are more than 10.\n- `invalid_scope`: a scope is not allowed.\n- `invalid_target`: a resource is invalid.\n\nThese errors use RFC 7591. An unknown query parameter gets Marfa's `validation_error` instead.",
             "content": {
               "application/json": {
                 "schema": {
@@ -52829,8 +53012,7 @@
                             "invalid_client_metadata",
                             "invalid_redirect_uri",
                             "invalid_scope",
-                            "invalid_target",
-                            "invalid_software_statement"
+                            "invalid_target"
                           ],
                           "description": "The OAuth error code."
                         },
@@ -54908,6 +55090,282 @@
       }
     },
     "/profile": {
+      "get": {
+        "operationId": "getProfile",
+        "tags": [
+          "Owner"
+        ],
+        "summary": "Get the owner's profile",
+        "description": "Returns the fields of the owner's profile that your credential can read: `name`, `email` and `avatar`, each only with profile read permission for that field. A field you can't read is left out, so a credential that can read none gets an empty object.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The profile fields you can read.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "description": "The owner's name. Present with `profile.name:read`."
+                    },
+                    "email": {
+                      "type": "string",
+                      "format": "email",
+                      "description": "The owner's sign-in email address. Present with `profile.email:read`."
+                    },
+                    "avatar": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "format": "uri",
+                      "description": "The address of the owner's picture, or `null` when there is none. Present with `profile.avatar:read`."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "description": "The owner's profile, as far as your credential can read it."
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              }
+            }
+          },
+          "400": {
+            "description": "- `validation_error`: the query has a parameter this endpoint doesn't take.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "404": {
+            "description": "The owner is unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerNotFoundRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "503": {
+            "description": "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteContentionRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "507": {
+            "description": "`insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsufficientStorageRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "operationId": "updateProfile",
         "tags": [
@@ -58946,7 +59404,7 @@
                   "version_max_versions": {
                     "type": "integer",
                     "minimum": 1,
-                    "maximum": 9007199254740991,
+                    "maximum": 1000000,
                     "description": "Maximum versions per item, after applying the time windows. Per-type policy overrides these instance defaults."
                   },
                   "grant_inactivity_days": {
@@ -59043,6 +59501,21 @@
                     "minimum": 0,
                     "maximum": 36500,
                     "description": "Days Marfa keeps inbound webhook deliveries no connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies."
+                  },
+                  "addresses": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "The addresses people reach this instance at, each an origin with no path. The sign-in address is always one of them."
+                  },
+                  "sign_in_address": {
+                    "type": "string",
+                    "description": "The address people sign in at, an origin with no path. Absent: this computer's own address."
+                  },
+                  "confirm_sign_in_address_change": {
+                    "type": "boolean",
+                    "description": "`true` to confirm a change that moves the sign-in address of a claimed instance. It sets nothing."
                   }
                 },
                 "additionalProperties": false
@@ -59169,11 +59642,11 @@
             }
           },
           "409": {
-            "description": "`instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.",
+            "description": "- `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.\n- `sign_in_address_change_unconfirmed`: the change moves the sign-in address of a claimed instance and the body lacks `confirm_sign_in_address_change: true`. `details.consequences` lists what the change does. Nothing is written.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InstanceChangedRefusal"
+                  "$ref": "#/components/schemas/InstanceChangedOrSignInAddressChangeUnconfirmedRefusal"
                 }
               }
             },
@@ -59408,7 +59881,7 @@
                       "null"
                     ],
                     "minimum": 1,
-                    "maximum": 9007199254740991,
+                    "maximum": 1000000,
                     "description": "Maximum versions per item, after applying the time windows. Per-type policy overrides these instance defaults. `null` removes it, so the server's default applies."
                   },
                   "grant_inactivity_days": {
@@ -59546,6 +60019,27 @@
                     "minimum": 0,
                     "maximum": 36500,
                     "description": "Days Marfa keeps inbound webhook deliveries no connector has marked handled. `0` keeps them with no age limit. `null` removes it, so the server's default applies."
+                  },
+                  "addresses": {
+                    "type": [
+                      "array",
+                      "null"
+                    ],
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "The addresses people reach this instance at, each an origin with no path. The sign-in address is always one of them. `null` removes them, so the server's default applies."
+                  },
+                  "sign_in_address": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "The address people sign in at, an origin with no path. Absent: this computer's own address. `null` removes it, so the server's default applies."
+                  },
+                  "confirm_sign_in_address_change": {
+                    "type": "boolean",
+                    "description": "`true` to confirm a change that moves the sign-in address of a claimed instance. It sets nothing."
                   }
                 },
                 "additionalProperties": false
@@ -59672,11 +60166,11 @@
             }
           },
           "409": {
-            "description": "`instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.",
+            "description": "- `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.\n- `sign_in_address_change_unconfirmed`: the change moves the sign-in address of a claimed instance and the body lacks `confirm_sign_in_address_change: true`. `details.consequences` lists what the change does. Nothing is written.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InstanceChangedRefusal"
+                  "$ref": "#/components/schemas/InstanceChangedOrSignInAddressChangeUnconfirmedRefusal"
                 }
               }
             },
@@ -59858,6 +60352,431 @@
             "description": "The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers."
           }
         ]
+      }
+    },
+    "/config/settings": {
+      "get": {
+        "operationId": "listSettings",
+        "tags": [
+          "Instance"
+        ],
+        "summary": "List the settings",
+        "description": "Returns every stored setting with its value, default and rule, the rules across settings, and the settings only the environment sets. Requires `config.manage` or `instance.read`.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Returns the settings.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigSettings"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              }
+            }
+          },
+          "400": {
+            "description": "- `validation_error`: the query has a parameter this endpoint doesn't take.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "403": {
+            "description": "- `forbidden`: you hold neither `config.manage` nor `instance.read`. `details.required_scope` names `instance.read`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/config/address-check": {
+      "post": {
+        "operationId": "checkAddressChange",
+        "tags": [
+          "Instance"
+        ],
+        "summary": "Check an address change",
+        "description": "Returns what changing the addresses would do and whether a write needs confirmation, and writes nothing. Requires `config.manage`.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddressCheckRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Returns what the change would do.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddressCheck"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              }
+            }
+          },
+          "400": {
+            "description": "- `validation_error`: an address isn't an origin with no path, or the settings can't be used together.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MissingRequiredFieldOrValidationErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "403": {
+            "description": "- `forbidden`: you don't hold `config.manage`. `details.required_scope` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "413": {
+            "description": "`request_too_large`: the request body is larger than this instance accepts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestTooLargeRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          }
+        }
       }
     },
     "/health": {
@@ -62719,7 +63638,7 @@
     },
     {
       "name": "Webhooks",
-      "description": "Changes sent to a URL you choose, and each delivery's record.",
+      "description": "Changes sent to a URL you choose, and each delivery's record. Keys and apps use these endpoints; the owner's browser session can't.",
       "x-operation-order": [
         "createWebhook",
         "getWebhook",
@@ -62829,6 +63748,7 @@
         "createOwner",
         "getOwner",
         "updateOwner",
+        "getProfile",
         "updateProfile",
         "replaceOwnerPicture",
         "replaceProfilePicture",
@@ -62854,6 +63774,8 @@
         "getInstance",
         "getOverview",
         "getConfig",
+        "listSettings",
+        "checkAddressChange",
         "updateConfig",
         "replaceConfig"
       ]

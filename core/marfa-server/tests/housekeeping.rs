@@ -5,7 +5,7 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use marfa_server::app::stored::{self, Change};
-use marfa_server::app::{App, housekeeping};
+use marfa_server::app::{App, housekeeping, webhooks};
 use marfa_server::db::Write;
 use marfa_server::http::{control, public};
 use marfa_server::settings::{Environment, Settings};
@@ -33,16 +33,17 @@ impl Instance {
         let blobs = dir.path().join("blobs");
         let socket = dir.path().join("s.sock");
         let mut pairs = vec![
-            ("SQLITE_PATH", database.to_str().unwrap()),
-            ("BLOB_PATH", blobs.to_str().unwrap()),
+            ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
+            ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
             ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
             ("MARFA_TEST_HOOKS", "true"),
-            ("RATE_LIMIT_ENABLED", "false"),
+            ("MARFA_RATE_LIMIT_ENABLED", "false"),
         ];
         pairs.extend_from_slice(settings);
         let settings = Settings::read(Environment::from_pairs(&pairs)).unwrap();
         let app = App::start(settings).await.unwrap();
         app.clock.pause(true);
+        webhooks::start(&app);
         let mut instance = Instance {
             public: public(app.clone()),
             control: control(app.clone()),
@@ -103,6 +104,9 @@ impl Instance {
     }
 
     async fn run(&self, job: &str) -> Value {
+        if job == "event-log-cleanup" {
+            self.scheduled().await;
+        }
         let path = format!("/housekeeping/{job}/run");
         let run = self.ok(Method::POST, &path, json!({})).await;
         assert_eq!(run["outcome"], "ok", "{run}");
@@ -187,6 +191,17 @@ impl Instance {
         panic!("{what} did not happen");
     }
 
+    /// The event log keeps what the webhook sender has not passed.
+    async fn scheduled(&self) {
+        self.when("the webhook sender to pass the log", async |instance| {
+            instance.count(
+                "SELECT count(*) FROM webhook_position \
+                 WHERE event_id = (SELECT COALESCE(MAX(id), 0) FROM event_log)",
+            ) == 1
+        })
+        .await;
+    }
+
     async fn when_held(&self) {
         self.when("a hold", async |instance| {
             let faults = instance.app.faults.list();
@@ -198,7 +213,7 @@ impl Instance {
 
 #[tokio::test]
 async fn trash_purge_takes_a_binned_item_a_second_past_its_retention() {
-    let instance = Instance::start(&[("TRASH_RETENTION_DAYS", "2")]).await;
+    let instance = Instance::start(&[("MARFA_TRASH_RETENTION_DAYS", "2")]).await;
     let id = instance.note().await;
     let path = format!("/items/{id}");
     instance.ok(Method::DELETE, &path, Value::Null).await;
@@ -218,7 +233,7 @@ async fn trash_purge_takes_a_binned_item_a_second_past_its_retention() {
 
 #[tokio::test]
 async fn trash_purge_leaves_an_active_item_of_any_age() {
-    let instance = Instance::start(&[("TRASH_RETENTION_DAYS", "2")]).await;
+    let instance = Instance::start(&[("MARFA_TRASH_RETENTION_DAYS", "2")]).await;
     let id = instance.note().await;
     instance.forward(400 * DAY);
     assert_eq!(instance.run("trash-purge").await["deleted"], 0);
@@ -227,7 +242,7 @@ async fn trash_purge_leaves_an_active_item_of_any_age() {
 
 #[tokio::test]
 async fn trash_purge_reads_the_retention_inside_its_write() {
-    let instance = Instance::start(&[("TRASH_RETENTION_DAYS", "2")]).await;
+    let instance = Instance::start(&[("MARFA_TRASH_RETENTION_DAYS", "2")]).await;
     let id = instance.note().await;
     let path = format!("/items/{id}");
     instance.ok(Method::DELETE, &path, Value::Null).await;
@@ -250,7 +265,7 @@ async fn trash_purge_reads_the_retention_inside_its_write() {
 
 #[tokio::test]
 async fn audit_cleanup_takes_an_entry_a_second_past_its_retention() {
-    let instance = Instance::start(&[("AUDIT_RETENTION_DAYS", "2")]).await;
+    let instance = Instance::start(&[("MARFA_AUDIT_RETENTION_DAYS", "2")]).await;
     instance.note().await;
     let held = instance.count("SELECT count(*) FROM audit_log");
     assert!(held > 0);
@@ -292,6 +307,36 @@ async fn event_log_cleanup_takes_entries_a_second_past_the_retention_and_never_t
     instance.forward(400 * DAY);
     instance.run("event-log-cleanup").await;
     assert_eq!(instance.count("SELECT count(*) FROM event_log"), 1);
+}
+
+#[tokio::test]
+async fn event_log_cleanup_keeps_what_the_webhook_sender_has_not_passed() {
+    let instance = Instance::start(&[("MARFA_EVENT_LOG_RETENTION_HOURS", "2")]).await;
+    instance.note().await;
+    instance.scheduled().await;
+    instance
+        .app
+        .faults
+        .set("hold:webhook-schedule", None)
+        .unwrap();
+    instance.note().await;
+    instance.note().await;
+    instance.when_held().await;
+    let passed = instance.count("SELECT event_id FROM webhook_position");
+    let held = instance.count("SELECT count(*) FROM event_log");
+    assert!(passed < held);
+
+    instance.forward(3 * HOUR);
+    let path = "/housekeeping/event-log-cleanup/run";
+    let run = instance.ok(Method::POST, path, json!({})).await;
+    assert_eq!(run["result"]["deleted"], passed);
+    assert_eq!(instance.count("SELECT MIN(id) FROM event_log"), passed + 1);
+
+    instance.app.faults.clear(Some("hold:webhook-schedule"));
+    assert_eq!(
+        instance.run("event-log-cleanup").await["deleted"],
+        held - passed - 1
+    );
 }
 
 #[tokio::test]
@@ -440,7 +485,7 @@ async fn feed_expiry_goes_past_a_whole_chunk_it_holds_back() {
 
 #[tokio::test]
 async fn trash_purge_removes_edges_and_the_parts_that_went_with_a_host() {
-    let instance = Instance::start(&[("TRASH_RETENTION_DAYS", "1")]).await;
+    let instance = Instance::start(&[("MARFA_TRASH_RETENTION_DAYS", "1")]).await;
     let host = instance.note().await;
     let part = instance.note().await;
     let other = instance.note().await;
@@ -461,7 +506,7 @@ async fn trash_purge_removes_edges_and_the_parts_that_went_with_a_host() {
 
 #[tokio::test]
 async fn trash_purge_walks_past_rows_it_cannot_take_and_tries_them_on_the_next_run() {
-    let instance = Instance::start(&[("TRASH_RETENTION_DAYS", "1")]).await;
+    let instance = Instance::start(&[("MARFA_TRASH_RETENTION_DAYS", "1")]).await;
     let held = instance.binned(201).await;
     let last_held = instance.count("SELECT max(seq) FROM items");
     instance.forward(HOUR);
@@ -493,7 +538,7 @@ async fn trash_purge_walks_past_rows_it_cannot_take_and_tries_them_on_the_next_r
 
 #[tokio::test]
 async fn trash_purge_ends_in_error_when_every_row_fails_with_one() {
-    let instance = Instance::start(&[("TRASH_RETENTION_DAYS", "1")]).await;
+    let instance = Instance::start(&[("MARFA_TRASH_RETENTION_DAYS", "1")]).await;
     let held = instance.binned(2).await;
     instance
         .sql(
@@ -515,8 +560,8 @@ async fn trash_purge_ends_in_error_when_every_row_fails_with_one() {
 #[tokio::test]
 async fn a_zero_retention_keeps_every_kind_of_record() {
     let zero = [
-        ("TRASH_RETENTION_DAYS", "0"),
-        ("AUDIT_RETENTION_DAYS", "0"),
+        ("MARFA_TRASH_RETENTION_DAYS", "0"),
+        ("MARFA_AUDIT_RETENTION_DAYS", "0"),
         ("MARFA_EVENT_LOG_RETENTION_HOURS", "0"),
     ];
     let instance = Instance::start(&zero).await;
@@ -539,8 +584,8 @@ async fn a_zero_retention_keeps_every_kind_of_record() {
 #[tokio::test]
 async fn the_largest_retention_gives_a_cutoff_that_takes_nothing_inside_it() {
     let largest = [
-        ("TRASH_RETENTION_DAYS", "36500"),
-        ("AUDIT_RETENTION_DAYS", "36500"),
+        ("MARFA_TRASH_RETENTION_DAYS", "36500"),
+        ("MARFA_AUDIT_RETENTION_DAYS", "36500"),
         ("MARFA_EVENT_LOG_RETENTION_HOURS", "876000"),
     ];
     let instance = Instance::start(&largest).await;
@@ -558,7 +603,7 @@ async fn the_largest_retention_gives_a_cutoff_that_takes_nothing_inside_it() {
 
 #[tokio::test]
 async fn thinning_leaves_the_head_and_the_snapshots_the_policy_keeps() {
-    let instance = Instance::start(&[("VERSION_MAX_VERSIONS", "1")]).await;
+    let instance = Instance::start(&[("MARFA_VERSION_MAX_VERSIONS", "1")]).await;
     let id = instance.note().await;
     let path = format!("/items/{id}");
     for (version, body) in [(1, "two"), (2, "three"), (3, "four")] {
@@ -662,8 +707,8 @@ async fn start_clears_an_unfinished_run_and_moves_no_schedule_later() {
 async fn the_scheduler_follows_a_shortened_interval_and_repairs_a_schedule() {
     let instance = Instance::start(&[
         ("MARFA_HOUSEKEEPING_POLL_INTERVAL_MS", "5"),
-        ("AUDIT_CLEANUP_INTERVAL_MS", "3153600000000"),
-        ("TRASH_PURGE_INTERVAL_MS", "3153600000000"),
+        ("MARFA_AUDIT_CLEANUP_INTERVAL_MS", "31536000000"),
+        ("MARFA_TRASH_PURGE_INTERVAL_MS", "31536000000"),
     ])
     .await;
     instance.app.clock.pause(false);

@@ -32,19 +32,19 @@ let scratch: string;
 const REFUSED_TAGS: Array<[string, string]> = [
   ["", "empty"],
   ["   ", "blank"],
-  ["\t  ﻿", "blank in the way JavaScript's trim reads blank"],
-  ["a".repeat(129), "129 UTF-16 code units"],
-  ["\u{1F600}".repeat(65), "65 characters of two UTF-16 code units each"],
+  ["\t\u00a0\u2003", "blank in the way Unicode White_Space reads blank"],
+  ["\u0085", "a lone next-line character, which is White_Space"],
+  ["a".repeat(129), "129 characters"],
+  ["\u{1F600}".repeat(129), "129 emoji, one character each"],
   [".", "a dot, which a URL path cannot name as a segment"],
   ["..", "two dots, which a URL path cannot name as a segment"],
 ];
 
 /** Taken by the server, and so by the device. */
 const ACCEPTED_TAGS: Array<[string, string]> = [
-  ["a".repeat(128), "128 UTF-16 code units"],
-  ["\u{1F600}".repeat(64), "64 characters of two UTF-16 code units each"],
-  // The one character Unicode calls white space and JavaScript's trim keeps.
-  ["\u0085", "a lone next-line character, which JavaScript does not trim"],
+  ["a".repeat(128), "128 characters"],
+  ["\u{1F600}".repeat(128), "128 emoji, one character each"],
+  ["\ufeff", "a lone byte order mark, which is not White_Space"],
   [" padded ", "spaces round a word"],
 ];
 

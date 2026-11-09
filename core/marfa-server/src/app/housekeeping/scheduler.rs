@@ -299,9 +299,7 @@ pub async fn supervise(
             report(&app, job.name, fault);
         }
     }
-    if again {
-        app.housekeeping.wake.notify_one();
-    }
+    app.housekeeping.wake.notify_one();
     Ok(ended)
 }
 

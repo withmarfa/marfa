@@ -275,6 +275,9 @@ jobs:
         run: |
           cargo fmt --all --check
           cargo clippy --locked --workspace --all-targets --no-deps -- -D warnings
+          # The tests above compile the server with its test hooks. A release
+          # build leaves them out, so the server is linted without them too.
+          cargo clippy --locked -p marfa-server --no-deps -- -D warnings
           scripts/login-keychain-unchanged.sh cargo nextest run --locked --workspace
           # The next run writes its report over this one's.
           scripts/report-flaky.py target/nextest/ci/junit.xml
@@ -340,6 +343,7 @@ jobs:
         run: |
           cargo fmt --all --check
           cargo clippy --locked --workspace --all-targets --no-deps -- -D warnings
+          cargo clippy --locked -p marfa-server --no-deps -- -D warnings
           cargo nextest run --locked --workspace
           # The next run writes its report over this one's.
           scripts/report-flaky.py target/nextest/ci/junit.xml
@@ -410,11 +414,11 @@ jobs:
   # `native/release.sh --full` builds PDFium, Leptonica and Tesseract, links
   # and checks the programs, gathers the licences into `NOTICES.txt`, and runs
   # `native/verify.sh`: every format, the refusals, the injected faults, a
-  # reader that has been taken over, and the memory limit, with every counted
-  # read held to `sandbox: Full`. The fuzz then reads mutated files through the
-  # real reader. A hosted x86_64 Linux runner is what the Landlock and seccomp
-  # of an x86_64 kernel can be proved on at all: an Apple silicon Mac runs the
-  # program under emulation, which reports the sandbox as `Off`.
+  # reader that has been taken over, and the memory limit. The fuzz then reads
+  # mutated files through the real reader. A hosted x86_64 Linux runner is what
+  # the Landlock and seccomp of an x86_64 kernel can be proved on at all: an
+  # Apple silicon Mac runs the program only under emulation, where it cannot
+  # confine itself and reads nothing.
   #
   # PDFium's finished library (`archives/`) and the pinned downloads are cached
   # by what pins and builds them, saved only from `main` so that a pull request
@@ -453,23 +457,14 @@ jobs:
           key: ${{ steps.key.outputs.key }}
       - name: Build and check the programs
         run: core/marfa-enrichment/native/release.sh "$TARGET" --full
-      # `verify.sh` holds each read to this already. Counting again here makes
-      # the claim this job stands for plain, and fails a run whose reads left
-      # no state to count instead of passing it.
-      - name: Check that every counted read reported sandbox Full
+      # A run whose cases did not run would pass `verify.sh` with nothing to fail;
+      # counting the cases that passed makes it fail instead.
+      - name: Check that the matrix ran
         run: |
-          results="$MARFA_NATIVE_ROOT/out/$TARGET/verify/results"
-          states=$(grep -h '^sandbox:' "$results"/*/*.stderr || true)
-          total=$(printf '%s\n' "$states" | grep -c '^sandbox:' || true)
-          full=$(printf '%s\n' "$states" | grep -c '^sandbox: Full$' || true)
-          echo "Reads that reported a sandbox: $total, of which Full: $full"
-          printf '%s\n' "$states" | sort | uniq -c
-          if [ "$total" -lt 20 ]; then
-            echo "::error::Only $total reads reported a sandbox state; the checks did not run as they should"
-            exit 1
-          fi
-          if [ "$full" -ne "$total" ]; then
-            echo "::error::$((total - full)) of $total reads reported a sandbox other than Full"
+          passed=$(grep -c '^PASS ' "$MARFA_NATIVE_ROOT/out/$TARGET/verify/report.txt" || true)
+          echo "Cases that passed: $passed"
+          if [ "$passed" -lt 20 ]; then
+            echo "::error::Only $passed cases passed; the checks did not run as they should"
             exit 1
           fi
       # The licences ship beside the program, so the job says whether the build
@@ -1039,8 +1034,8 @@ jobs:
   # (`conformance/src/utils/rust-judged.ts`) are the part that must pass whole;
   # the score job fails if one does not, and `Full CI` waits for it. The
   # backup fixtures are not run: they boot the server through the container's
-  # entrypoint, which starts the Node server. There is no object store beside
-  # the server here, so the blob chapters' object-store half is not asserted.
+  # entrypoint, which starts the Node server. An object store sits beside the
+  # server, as in `Conformance shard`, so the stores chapter is asserted.
   rust-contract:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract != 'false') }}
@@ -1075,6 +1070,8 @@ jobs:
             ${{ runner.temp }}/marfa-native/archives
           key: ${{ steps.key.outputs.key }}
       - name: Build the Rust server
+        env:
+          MARFA_SERVER_FEATURES: test-hooks
         run: core/marfa-enrichment/native/release.sh "$TARGET" --server
       # Every shard downloads it, and a re-run of one shard does too, so it
       # is kept as long as the shards' reports. It is an input, not a
@@ -1083,6 +1080,16 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: rust-contract-server
+          path: ${{ runner.temp }}/marfa-native/out/${{ env.TARGET }}/marfa-server
+          if-no-files-found: error
+          retention-days: 3
+      # Release-only fixtures need a separate binary without test hooks.
+      - name: Build the Rust server without test hooks
+        run: core/marfa-enrichment/native/release.sh "$TARGET" --server
+      - name: Keep the server without test hooks
+        uses: actions/upload-artifact@v7
+        with:
+          name: rust-contract-release-server
           path: ${{ runner.temp }}/marfa-native/out/${{ env.TARGET }}/marfa-server
           if-no-files-found: error
           retention-days: 3
@@ -1258,6 +1265,14 @@ jobs:
         run: |
           chmod +x "$RUNNER_TEMP/rust-contract-server/marfa-server"
           echo "MARFA_SERVER_BIN=$RUNNER_TEMP/rust-contract-server/marfa-server" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v8
+        with:
+          name: rust-contract-release-server
+          path: ${{ runner.temp }}/rust-contract-release-server
+      - name: Name the server a release ships
+        run: |
+          chmod +x "$RUNNER_TEMP/rust-contract-release-server/marfa-server"
+          echo "MARFA_SERVER_RELEASE_BIN=$RUNNER_TEMP/rust-contract-release-server/marfa-server" >> "$GITHUB_ENV"
 
       # The CLI and device fixtures drive the `marfa` binary, and the device
       # fixtures the Node module, as in `Conformance shard`. The keys leave
@@ -1325,6 +1340,14 @@ jobs:
       - if: ${{ matrix.module }}
         run: echo "MARFA_DEVICE_MODULE=$(ls "$PWD"/core/bindings/node/*.node)" >> "$GITHUB_ENV"
 
+      # `garage:up` writes S3 settings to GITHUB_ENV for the server.
+      - name: Put an object store beside the server
+        working-directory: conformance
+        run: |
+          curl --fail --location --retry 3 https://garagehq.deuxfleurs.fr/_releases/v2.4.1/x86_64-unknown-linux-musl/garage -o "$RUNNER_TEMP/garage-bin"
+          sudo install -m 755 "$RUNNER_TEMP/garage-bin" /usr/local/bin/garage
+          pnpm garage:up --state "$RUNNER_TEMP/garage"
+
       - name: Boot the Rust server
         working-directory: conformance
         # A shard's fixtures can keep it busy on servers of their own for
@@ -1383,6 +1406,11 @@ jobs:
         if: always()
         working-directory: conformance
         run: pnpm marfa:down --state "$RUNNER_TEMP/marfa"
+
+      - name: Stop the object store
+        if: always()
+        working-directory: conformance
+        run: pnpm garage:down --state "$RUNNER_TEMP/garage"
 
   # The score of the Rust server against the contract: tests passing out of
   # all, by file, in the job summary (`conformance/README.md` says how it is

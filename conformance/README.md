@@ -177,7 +177,7 @@ data, log and env file. The default is `.marfa-state` in the working directory.
 | `restart [--signal TERM\|INT\|KILL] [--env K=V ...]`             | Stops the target with the signal, prints how it ended as `previous exit {"code":..,"signal":..,"ms":..}`, and boots it again on the same data. The URL may change.                                                                                                                                                                                        |
 | `down`                                                           | Stops the target and removes its data.                                                                                                                                                                                                                                                                                                                    |
 | `status`                                                         | Exits 0 when the target is running, and prints its URL.                                                                                                                                                                                                                                                                                                   |
-| `refused [--node-env <name>] [--env K=V ...]`                    | Boots with settings the target must refuse, as the `NODE_ENV` named when `--node-env` is given, and waits for it to end. Exits 0 when it ended; its exit record and log are in the state directory.                                                                                                                                                       |
+| `refused [--env K=V ...]`                                        | Boots with settings the target must refuse and waits for it to end. Exits 0 when it ended; its exit record and log are in the state directory.                                                                                                                                                                                                            |
 | `clock advance <ms>`                                             | Moves the target's clock forward. A negative or fractional step is refused and the exit status is 1.                                                                                                                                                                                                                                                      |
 | `clock pause` / `clock resume`                                   | Pauses system-time drift or resumes it, retaining explicit advances. Prints `now` and `offset_ms` as JSON.                                                                                                                                                                                                                                                |
 | `fault set <name>[=<arg>]`, `fault clear [<name>]`, `fault list` | Sets or clears a named fault. `list` prints `{"faults":[{"name":..,"arg":..,"waiting":..,"fired":..}]}`, where `waiting` counts the callers held at a `hold` fault and `fired` the times a `fail` fault has acted, a `resolve` fault has answered or a `release` fault has released its hold. A `release` fault that has acted adds `held_when_answered`. |
@@ -225,20 +225,21 @@ account.
 
 ### Settings
 
-`--env K=V` names a setting for one boot. Any setting in the table of
-[`spec/instance.md`](spec/instance.md) may be passed, and a value outside its
-rule is refused as that chapter says. The adapter sets these itself, and a
-value passed for one replaces its own:
+`--env K=V` names a setting for one boot. Any start-only setting in the second
+table of [`spec/instance.md`](spec/instance.md) may be passed by its name, and
+any stored setting by its seed name (`MARFA_` and its key in capitals). A value
+outside a rule is refused as that chapter says. The adapter sets these itself,
+and a value passed for one replaces its own:
 
 - The port, the paths of the database, the disk store and the private socket
   (`MARFA_CONTROL_SOCKET` names its path, and then its folder is the caller's),
-  `MARFA_LISTEN_HOST` and `MARFA_AUTH_SECRET`. By default `MARFA_AUTH_BASE_URL`
-  is unset so the server derives it from its assigned loopback port.
+  `MARFA_LISTEN_HOST` and `MARFA_AUTH_SECRET`. By default `MARFA_SIGN_IN_ADDRESS`
+  is unset, so the sign-in address is the server's own on its assigned loopback
+  port.
 - Enrichment, OCR and the request limiter off, a blob cleanup grace of 0, and
   webhook delivery to private addresses allowed, so the fixtures can use a
   receiver on the loopback address.
-- `MARFA_TEST_HOOKS` true, except for a boot told to run as `production`
-  (`--node-env production`), which would be refused for it.
+- `MARFA_TEST_HOOKS` true.
 
 ### Stopping a server nobody stopped
 
@@ -289,18 +290,14 @@ fixture moves the clock and then runs the job it tests with
 The model is "time passed": the target and every party the harness controls
 use the stated clock. A fixture's process keeps its real clock, so clients
 apply `FreshServer.clockOffsetMs` (the boot offset plus subsequent advances)
-when creating or checking protocol timestamps. `MarfaClient` and `DpopClient`
-accept `serverClockOffsetMs` as a number or a callback; use the callback when
-a client outlives a clock advance. DPoP proofs and other client assertions,
-explicit HTTP `Date` headers and signed timestamps must use that stated time.
-The server's DPoP proof-age checks remain unchanged: a real-time proof is stale
-after the stated time advances beyond its validity window.
+when creating or checking protocol timestamps. `MarfaClient` accepts
+`serverClockOffsetMs` as a number or a callback; use the callback when a client
+outlives a clock advance. Client assertions, explicit HTTP `Date` headers and
+signed timestamps must use that stated time.
 
-Webhook receivers and OAuth relying parties in the harness also use the
-stated clock. Webhook signature timestamps, event-body timestamps, absolute
-`Retry-After` dates and retry scheduling follow it. OAuth ID-token `iat`,
-`exp`, `nbf` (when present) and `auth_time` claims follow it, just as opaque
-tokens and sessions do.
+Webhook receivers in the harness also use the stated clock. Webhook signature
+timestamps, event-body timestamps, absolute `Retry-After` dates and retry
+scheduling follow it, just as opaque tokens and sessions do.
 
 Packed-attestation certificate validity follows the stated clock. A fixture
 that moves the clock must issue any certificates it presents on that clock,
@@ -379,6 +376,7 @@ Write holds act before admission because SQLite admits only one writer at a time
 | `hold:bulk-job:claimed`                | The worker waits, once it has taken a job and before it writes the job's first chunk, so a job queued behind stays queued.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `hold:bulk-job:in-chunk`               | The worker waits, once a chunk's rows are written and before the chunk is committed with its checkpoint.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `hold:bulk-job:between-chunks[=<n>]`   | The worker waits, once a chunk is committed and the job has more, before it begins the next. With no argument it waits every time; with `=<n>` only the nth time after the fault is set.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `hold:bulk-job:finishing`              | The worker waits, once every chunk of a job is committed and before the job's last step: a type move's settings and the job's end.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `hold:bulk-page[=<n>]`                 | A request of `POST /items/bulk` or `POST /edges/bulk` waits before an entry of its page until the fault is cleared; an atomic page keeps its write open while it waits. With no argument it waits every time; with `=<n>` only the nth time after the fault is set.                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `deadline:<job>=<ms>`                  | Shortens the run deadline of the job.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `hold:blob-orphans:purge`              | A run of `blob-orphans` waits, for each blob it has chosen to purge, before it purges the blob.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
@@ -396,7 +394,8 @@ Write holds act before admission because SQLite admits only one writer at a time
 | `hold:stream-drain`                    | A copy stream waits once its replay has read to the end of the log, before it reads what was written since and announces `stream_live`. A plain stream announces `stream_live` without reading to the end first, so it never waits here.                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `hold:read-snapshot`                   | A conditional read, one that names `X-Marfa-Reach`, waits inside the snapshot it reads from, after the target has judged the reach and before the door reads. The snapshot's own bound, five seconds, still runs.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `unfold-deadline=<check>`              | Expires each series at the numbered deadline check, starting at 1. A check comes every N candidates, where N is the server's own cadence. A fixture names a check number, not a candidate count, so expiry does not depend on that cadence or machine speed.                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `hold:webhook-schedule:queued`         | The `webhook-schedule` job waits inside its transaction after queuing deliveries and before recording its position in the event log.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `hold:webhook-schedule`                | Each time the server wakes to queue and send webhook deliveries, it waits before reading the event log until the hold is cleared, so nothing is queued or newly sent meanwhile.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `hold:webhook-schedule:queued`         | The server waits inside the transaction that queues webhook deliveries, after queuing them and advancing its position, before either change commits.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `resolve:<hostname>=<answers>`         | Supplies scripted answers for the name lookups of an outbound webhook and of a file the MCP tools fetch.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `hold:read-hydration`                  | An item, metadata, extension, history, lookup, list, occurrence or export read waits after selecting or authorizing rows and before hydrating related data; an edge list waits between reading its edges and checking their sources. The five-second snapshot bound applies except to archive export pages, whose snapshots end with their page or on cancellation.                                                                                                                                                                                                                                                                                                                                    |
 | `hold:export-validation`               | An archive export waits after it has staged its selection's type registrations for the restore checks and before it checks the selection's rows. It holds no read snapshot and no write lock. A client that leaves, or a server that stops, ends the wait.                                                                                                                                                                                                                                                                                                                                                                                                                                             |
@@ -410,8 +409,8 @@ Write holds act before admission because SQLite admits only one writer at a time
 | `lose:blob=<hashes>`                   | The disk store answers that each named blob is absent, from now until it deletes that blob or places it again, or the fault is cleared or set again. `<hashes>` is a list of `sha256:` names separated by `,`. The bytes are not touched, so clearing the fault gives the store back what it held.                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `damage:blob=<hashes>`                 | The disk store returns each named blob with its first byte changed and the same length, until it deletes that blob or the fault is cleared or set again. Placing a blob already held does not end it, as a store leaves bytes already under a name alone. `<hashes>` is as for `lose:blob`.                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `damage:blob-unreadable=<hashes>`      | A read of each named blob from the disk store, and a question whether the disk store holds it, fail with `EIO`, until the store deletes that blob or the fault is cleared or set again. `<hashes>` is as for `lose:blob`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `hide:event=<first>[-<last>]`          | Each run of `webhook-schedule` reads the events with ids from `<first>` to `<last>` (one id when `-<last>` is left out) as absent from the event log, until the fault is cleared or set again. The server's own checks of its place in the log then meet the gap. Nothing is stored, so the fault ends with the clear.                                                                                                                                                                                                                                                                                                                                                                                 |
-| `hide:webhook-position`                | Each run of `webhook-schedule` reads the place it keeps in the event log as absent, until the fault is cleared. Nothing is stored, so the fault ends with the clear.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `hide:event=<first>[-<last>]`          | The server reads the events with ids from `<first>` to `<last>` (one id when `-<last>` is left out) as absent when it queues webhook deliveries, until the fault is cleared or set again. The server's own checks of its place in the log then meet the gap. Nothing is stored, so the fault ends with the clear.                                                                                                                                                                                                                                                                                                                                                                                      |
+| `hide:webhook-position`                | The server reads the place it keeps in the event log for webhooks as absent, until the fault is cleared. Nothing is stored, so the fault ends with the clear.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `store-check-deadline=<ms>`            | Shortens the 15,000 ms the target waits for a store to answer whether it holds a blob, to open its bytes, or to delete them, and the 15,000 ms a write waits before the time it allows for the blob's size, so a fixture shows what a store that does not answer does without waiting out the 15 seconds. It tests the bound, not the 15,000 ms.                                                                                                                                                                                                                                                                                                                                                       |
 
 For `resolve`, separate successive answers with `;` and addresses within one answer with `,`. The last answer repeats, and `fired` counts the lookups answered. An address can use the form `<checked>><connected>`: the address check evaluates `<checked>`, and the socket connects to `<connected>`. Without `>`, both use the same address. This lets a fixture check a public address and connect to a loopback receiver without sending a packet off the machine. Scripted answers replace only the underlying DNS resolver: every call to it consumes one answer, including an erroneous second lookup after the address check. The normal address check applies unchanged. The socket translates a returned checked address to its connected address without resolving or consuming another answer. The mapping remains necessary to exercise the public-address check with a loopback receiver.
@@ -445,7 +444,7 @@ it acted, and a fault that never acted is not mistaken for a pass. A fault
 that has acted does not act again until it is set again. The statement points (`audit`, `inbound-receipt`, `inbound-cleanup`, `export-read`, `housekeeping:<job>` and `job-row`) count only a statement that failed: a run that reaches the point and runs no statement, such as a job with nothing to do, leaves `fired` at 0 and the fault waiting for a reach that can fail.
 
 `<n>` is a decimal integer from 1 through 1000000, without leading zeros.
-`<ms>` is a whole number from 1 through 2147483647. An action argument
+`<ms>` is a whole number from 1 through 86400000, a day. `<check>` takes the same range as `<n>`. An action argument
 starts with a lowercase ASCII letter and contains only lowercase ASCII
 letters, digits, underscores, periods, or hyphens. The target validates this
 syntax; an action that no write records never fires.
@@ -458,7 +457,9 @@ argument as `<action>`, for the first such write, or `<action>@<n>`, so a
 request that makes other writes first does not shift the count: a
 `POST /items/bulk` page under `atomic: false` is a run of `items.bulk` writes,
 and `fail:commit=items.bulk@2` fails the second entry's commit. A write point
-without an action counts every write.
+without an action counts every write. A `fail` fault at a write point may take `<action>@always`
+instead, and then acts on every such write until it is cleared, as a fault
+that does not clear would.
 
 `fail:lock` counts only writes made for a caller. The target's own writes, such
 as a bulk-action job's chunks and the housekeeping jobs', are not counted, so a
@@ -495,7 +496,7 @@ it.
 | `fail:folder-status-report[=<n>]`  | In `PUT /folders/{id}/status`, after the report is stored and before the transaction commits.                                                                                                                    | The request fails with `SQLITE_IOERR` and its transaction rolls back, so the folder keeps its earlier report.                                                                                                                                                   |
 | `refuse:read`                      | Every read of the database, until the fault is cleared.                                                                                                                                                          | The read fails with `SQLITE_IOERR`.                                                                                                                                                                                                                             |
 | `refuse:write`                     | Every write, before it takes the write lock, until the fault is cleared.                                                                                                                                         | The write fails with `SQLITE_IOERR`.                                                                                                                                                                                                                            |
-| `refuse:write-lock`                | Every write, until the fault is cleared.                                                                                                                                                                         | The write waits for the lock as if another connection held it. When its busy budget (`SQLITE_BUSY_BUDGET_MS`) is spent it is refused with `503 write_contention`; clearing the fault lets a write that still waits through.                                     |
+| `refuse:write-lock`                | Every write, until the fault is cleared.                                                                                                                                                                         | The write waits for the lock as if another connection held it. When its write wait (`MARFA_WRITE_WAIT_MS`) is spent it is refused with `503 write_contention`; clearing the fault lets a write that still waits through.                                        |
 | `refuse:blob-store`                | Each check of the disk store that `GET /health` makes.                                                                                                                                                           | The store does not answer, and `blob_storage` reports `down`.                                                                                                                                                                                                   |
 
 `<write>` stands for `<n>`, `<action>` or `<action>@<n>`. A target that
@@ -526,8 +527,8 @@ name), without a `lose:blob` or `damage:blob` fault changing the answer. It alwa
 
 The clock, fault and blob-store routes (`/_control/test/clock`, `/_control/test/faults`
 and `/_control/test/blob-stores`) exist only on the private control socket, and only when `MARFA_TEST_HOOKS` is
-`true`. They are never on the HTTP listener, and the server refuses to start with
-the setting under `NODE_ENV=production`, which the released image sets. It logs
+`true`. They are never on the HTTP listener, and a Rust server built without the
+`test-hooks` feature, as a release is, refuses to start with the setting. It logs
 a warning at boot when the hooks are on. `spec/instance.md`, "Test hooks", holds
 these rules.
 
@@ -697,7 +698,7 @@ keys go through the private socket as they do for the TypeScript server. The
 Rust server (`core/marfa-server/`) is the program this exists for.
 
 ```sh
-cargo build --release -p marfa-server --manifest-path ../core/Cargo.toml
+cargo build --release -p marfa-server --features test-hooks --manifest-path ../core/Cargo.toml
 
 export MARFA_SERVER_BIN="$PWD/../core/target/release/marfa-server"
 pnpm marfa:up --state /tmp/marfa
@@ -707,12 +708,27 @@ pnpm exec vitest run --project correctness
 pnpm marfa:down --state /tmp/marfa
 ```
 
-Setting `MARFA_SERVER_BIN` also stops `vitest.config.ts` leaving out the files
+The build needs the `test-hooks` feature: the fixtures turn the test hooks on,
+and a server built without it refuses to start with them on. Setting
+`MARFA_SERVER_BIN` also stops `vitest.config.ts` leaving out the files
 listed in `src/utils/rust-judged.ts` (see below). Do not set it together with
 `MARFA_SERVER_BUILT`. The backup fixtures boot the server through the
 container's entrypoint, which starts the Node server, so they do not run
-against another program. There is no object store beside the server in this
-setup, so the object-store half of the blob chapters is not asserted.
+against another program. The object-store half of the blob chapters needs an
+object store beside the server: run `pnpm garage:up --state /tmp/garage` and
+source `/tmp/garage/garage.env` before `pnpm marfa:up`, as the Rust contract
+shards in CI do.
+
+`MARFA_SERVER_RELEASE_BIN` names the same server built without the
+`test-hooks` feature, the program a release ships. Only
+`src/suites/compliance/hook-free-server.test.ts` reads it: it starts that
+program itself, as a person starts it, to judge the rules that hold only
+where no hook is built (the refusal of `MARFA_TEST_HOOKS`, no clock or fault
+route, and the generated secrets). Build it with
+`cargo build --release -p marfa-server --manifest-path ../core/Cargo.toml`.
+The Rust contract job builds both and gives each shard the path. The file is
+left out of a run without `MARFA_SERVER_BIN`, and fails at once, saying so,
+when `MARFA_SERVER_RELEASE_BIN` is unset.
 
 ### Read a run
 

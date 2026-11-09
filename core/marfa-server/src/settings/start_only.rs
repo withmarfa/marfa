@@ -43,26 +43,48 @@ const fn hook(name: &'static str, description: &'static str) -> Declared {
 }
 
 pub const DECLARED: &[Declared] = &[
-    plain("PORT", "The port the server listens on."),
+    plain("MARFA_PORT", "The port the server listens on."),
     plain("MARFA_LISTEN_HOST", "The address the server listens on."),
     plain(
-        "TRUSTED_PROXY_CIDRS",
+        "MARFA_TRUSTED_PROXY_CIDRS",
         "The proxies in front of the server whose forwarded addresses it trusts.",
     ),
     plain(
-        "TRUSTED_PROXY_HEADER",
+        "MARFA_TRUSTED_PROXY_HEADER",
         "The header an edge in front of the server puts the caller's address in.",
     ),
-    plain("SQLITE_PATH", "Where the database is."),
+    plain("MARFA_DATABASE_PATH", "Where the database is."),
     plain(
-        "SQLITE_BUSY_BUDGET_MS",
-        "How long a database request waits for the database, in milliseconds.",
+        "MARFA_WRITE_WAIT_MS",
+        "How long a write waits for the one writer before it fails, in milliseconds.",
+    ),
+    plain("MARFA_BLOB_PATH", "Where the server keeps files."),
+    plain(
+        "MARFA_ENRICHMENT_TESSDATA_DIR",
+        "A folder of `<language>.traineddata` files that OCR reads beside the models the server carries, and in place of one of the same language. The server only reads it, and it may be missing.",
     ),
     plain(
-        "MARFA_CONNECTOR_HOLD_MS",
-        "How long a connector's hold on its registration lasts after its last take or renewal, in milliseconds.",
+        "S3_BUCKET",
+        "The bucket of an object store kept beside the disk.",
     ),
-    plain("BLOB_PATH", "Where the server keeps files."),
+    plain("S3_REGION", "The region of the object store."),
+    secret("S3_ENDPOINT", "Where the object store is."),
+    plain(
+        "S3_ACCESS_KEY_ID",
+        "The key the object store is reached with.",
+    ),
+    secret(
+        "S3_SECRET_ACCESS_KEY",
+        "The secret the object store is reached with.",
+    ),
+    plain(
+        "S3_FORCE_PATH_STYLE",
+        "Whether the object store is addressed by path rather than by host.",
+    ),
+    plain(
+        "S3_PREFIX",
+        "The folder in the bucket the server keeps files under.",
+    ),
     plain(
         "MARFA_CONTROL_SOCKET",
         "Where the private socket for the person running the server is.",
@@ -71,10 +93,10 @@ pub const DECLARED: &[Declared] = &[
         "MARFA_CONTROL_ONLY",
         "Starts the private socket alone, for recovery.",
     ),
-    secret("API_KEY_SALT", "Secret that keys are stored under."),
+    secret("MARFA_KEY_SALT", "Secret that keys are stored under."),
     secret("MARFA_AUTH_SECRET", "Secret that sign-in is signed with."),
     secret(
-        "ERROR_WEBHOOK_URL",
+        "MARFA_ERROR_WEBHOOK_URL",
         "Where a notice of a server error is sent.",
     ),
     plain(
@@ -82,6 +104,10 @@ pub const DECLARED: &[Declared] = &[
         "How long a notice of a server error may take to send, in milliseconds.",
     ),
     secret("MARFA_HEARTBEAT_URL", "Where the heartbeat is sent."),
+    plain(
+        "MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES",
+        "Lets outbound webhooks reach loopback, private and other addresses that are not public.",
+    ),
     plain("MARFA_POSTHOG_HOST", "Where exception reports are sent."),
     secret(
         "MARFA_POSTHOG_PROJECT_TOKEN",
@@ -167,13 +193,32 @@ mod tests {
     }
 
     #[test]
+    fn the_contract_tables_each_name_declared() {
+        let spec = include_str!("../../../../conformance/spec/instance.md");
+        let section = spec
+            .split("\n## Start-only settings\n")
+            .nth(1)
+            .and_then(|rest| rest.split("\n## ").next())
+            .expect("instance.md holds the section");
+        let tabled: Vec<&str> = section
+            .lines()
+            .filter_map(|line| line.strip_prefix("| `"))
+            .filter_map(|rest| rest.split('`').next())
+            .collect();
+        let held: Vec<&str> = DECLARED.iter().map(|declared| declared.name).collect();
+        for name in &held {
+            assert!(tabled.contains(name), "{name} is not tabled");
+        }
+    }
+
+    #[test]
     fn test_hooks_are_listed_only_when_they_are_on() {
-        let environment = Environment::from_pairs(&[("PORT", "8600")]);
+        let environment = Environment::from_pairs(&[("MARFA_PORT", "8600")]);
         let off = listed(&environment, false);
         assert!(off.iter().all(|entry| !entry.declared.test_hook));
         assert!(
             off.iter()
-                .any(|entry| entry.declared.name == "PORT" && entry.set)
+                .any(|entry| entry.declared.name == "MARFA_PORT" && entry.set)
         );
         assert!(listed(&environment, true).len() > off.len());
     }

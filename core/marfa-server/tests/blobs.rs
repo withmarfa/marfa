@@ -111,11 +111,11 @@ impl Instance {
         let blobs = dir.path().join("blobs");
         let socket = dir.path().join("s.sock");
         let mut pairs = vec![
-            ("SQLITE_PATH", database.to_str().unwrap()),
-            ("BLOB_PATH", blobs.to_str().unwrap()),
+            ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
+            ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
             ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
             ("MARFA_TEST_HOOKS", "true"),
-            ("RATE_LIMIT_ENABLED", "false"),
+            ("MARFA_RATE_LIMIT_ENABLED", "false"),
         ];
         pairs.extend_from_slice(more);
         let settings = Settings::read(Environment::from_pairs(&pairs)).unwrap();
@@ -193,7 +193,7 @@ async fn an_upload_is_kept_under_its_hash_and_read_back_whole_and_by_range() {
     assert_eq!(stored.json()["size_bytes"], bytes.len());
     assert_eq!(stored.json()["mime_type"], "application/octet-stream");
     let hex = hash.strip_prefix("sha256:").unwrap();
-    let placed = Path::new(&hex[0..2]).join(&hex[2..4]).join(hex);
+    let placed = Path::new(&hex[0..4]).join(hex);
     assert_eq!(instance.files(), vec![placed]);
 
     let whole = instance.fetch(&hash).await;
@@ -273,7 +273,7 @@ async fn a_file_with_no_record_is_never_served_and_the_next_upload_records_it() 
     let bytes = b"renamed into place, then the process died".to_vec();
     let hash = hash_of(&bytes);
     let hex = hash.strip_prefix("sha256:").unwrap();
-    let folder = instance.folder().join(&hex[0..2]).join(&hex[2..4]);
+    let folder = instance.folder().join(&hex[0..4]);
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(folder.join(hex), &bytes).unwrap();
 

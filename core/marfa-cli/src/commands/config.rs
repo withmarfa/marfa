@@ -16,6 +16,13 @@ pub enum ConfigCommand {
     /// Change only the settings the body names; `null` removes one. Needs
     /// `config.manage`.
     Update(BodySource),
+    /// Every stored setting with its value, default and rule, and the
+    /// settings only the environment sets. Needs `config.manage` or
+    /// `instance.read`.
+    Settings,
+    /// What changing the addresses would do and whether a write needs
+    /// confirming; nothing is written. Needs `config.manage`.
+    CheckAddress(BodySource),
 }
 
 pub fn get_request() -> Request {
@@ -30,11 +37,21 @@ pub fn update_request(body: serde_json::Value) -> Request {
     Request::patch(&["config"]).json(body)
 }
 
+pub fn settings_request() -> Request {
+    Request::get(&["config", "settings"])
+}
+
+pub fn check_address_request(body: serde_json::Value) -> Request {
+    Request::post(&["config", "address-check"]).json(body)
+}
+
 pub fn run(command: ConfigCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let request = match &command {
         ConfigCommand::Get => get_request(),
         ConfigCommand::Replace(body) => replace_request(body.read()?),
         ConfigCommand::Update(body) => update_request(body.read()?),
+        ConfigCommand::Settings => settings_request(),
+        ConfigCommand::CheckAddress(body) => check_address_request(body.read()?),
     };
     out.value(&remote.json(&request)?)
 }

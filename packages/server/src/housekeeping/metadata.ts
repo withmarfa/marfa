@@ -69,8 +69,7 @@ export const HOUSEKEEPING_JOBS = {
   },
   "blob-replicate": {
     name: "blob-replicate",
-    description:
-      "Copies blobs to satisfy each attached store's replication policy.",
+    description: "Copies each blob into every attached store that lacks it.",
   },
   "blob-integrity": {
     name: "blob-integrity",
@@ -89,7 +88,6 @@ export const HOUSEKEEPING_JOBS = {
   },
   "bulk-action-gc": {
     name: "bulk-action-gc",
-    description:
-      "Removes completed bulk action jobs after their retention window.",
+    description: "Removes finished bulk action jobs after 7 days.",
   },
 } as const;

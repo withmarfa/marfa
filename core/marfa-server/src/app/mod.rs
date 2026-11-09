@@ -15,16 +15,19 @@ pub mod edges;
 pub mod enrichment;
 pub mod events;
 pub mod faults;
+pub mod folders;
 pub mod health;
 pub mod housekeeping;
 pub mod idempotency;
 pub mod inbound;
 pub mod instance;
 pub mod items;
+pub mod jobs;
 pub mod keys;
 pub mod mcp;
 pub mod oauth;
 pub mod occurrences;
+pub mod outbound;
 pub mod overview;
 pub mod provenance;
 pub mod query;
@@ -35,6 +38,7 @@ pub mod stored;
 pub mod types;
 pub mod unit;
 pub mod views;
+pub mod webhooks;
 
 use std::sync::{Arc, OnceLock};
 
@@ -70,6 +74,8 @@ pub struct App {
     pub key_limit: Limiter,
     pub passwords: Passwords,
     pub housekeeping: Housekeeping,
+    pub webhooks: webhooks::Webhooks,
+    pub jobs: jobs::Jobs,
     pub blobs: Blobs,
     pub mcp: mcp::Mcp,
     pub telemetry: Telemetry,
@@ -88,10 +94,10 @@ impl App {
     pub async fn start(accepted: Accepted) -> Result<Arc<App>, Failure> {
         let settings = accepted.open_secrets()?;
         let start = settings.start.clone();
-        let faults = Arc::new(Faults::default());
+        let faults = Arc::<Faults>::default();
         let options = Options {
             path: start.database.clone(),
-            busy_budget: start.busy_budget,
+            write_wait: start.write_wait,
             readers: READERS,
             migrations: MIGRATIONS,
         };
@@ -104,12 +110,22 @@ impl App {
         settings.apply_stored(&rows);
         let instance_id = instance::identity(&db).await.map_err(unreadable)?;
         let cursor_secret = instance::cursor_secret(&db).await.map_err(unreadable)?;
-        let blobs = Blobs::open(&start.blob_path, &start.auth_secret)?;
         let mcp = mcp::Mcp::new(&start.auth_secret)
             .map_err(|refused| Failure::start(refused.to_string()))?;
+        #[cfg(feature = "test-hooks")]
         let clock = Arc::new(Clock::new(start.clock_offset_ms));
+        #[cfg(not(feature = "test-hooks"))]
+        let clock = Arc::new(Clock::default());
         let at = clock.stamp();
-        blobs.register(&db, at.clone()).await?;
+        let blobs = Blobs::open(
+            &db,
+            &start.blob_path,
+            start.object_store.as_ref(),
+            &start.auth_secret,
+            faults.clone(),
+            at.clone(),
+        )
+        .await?;
         db.write(Write::own(), move |tx| catalog::reconcile(tx, &at))
             .await
             .map_err(|refused| Failure::start(refused.to_string()))?;
@@ -138,6 +154,8 @@ impl App {
             key_limit: Limiter::default(),
             passwords: Passwords::default(),
             housekeeping: Housekeeping::default(),
+            webhooks: webhooks::Webhooks::default(),
+            jobs: jobs::Jobs::default(),
             blobs,
             mcp,
             telemetry: Telemetry::default(),
@@ -178,12 +196,18 @@ impl App {
         Addresses::in_snapshot(&self.settings, snapshot, self.bound_port.get().copied())
     }
 
-    /// `PORT=0` leaves the port to the operating system.
+    /// `MARFA_PORT=0` leaves the port to the operating system.
     pub fn record_bound_port(&self, port: u16) {
         let _ = self.bound_port.set(port);
     }
 
+    #[cfg(feature = "test-hooks")]
     pub fn contract(&self) -> u32 {
         self.settings.start.contract_version.unwrap_or(0)
+    }
+
+    #[cfg(not(feature = "test-hooks"))]
+    pub fn contract(&self) -> u32 {
+        0
     }
 }

@@ -312,7 +312,7 @@ While the key of an endpoint's current registration is revoked or past its `expi
 
 ### `inbound-webhooks/body-over-limit`
 
-If a request to an inbound address carries a body larger than the limit, 26214400 bytes unless `MARFA_INBOUND_MAX_BYTES` names another, then the server MUST answer `413 request_too_large`.
+If a request to an inbound address carries a body larger than the limit, 26214400 bytes unless `inbound_max_bytes` names another, then the server MUST answer `413 request_too_large`.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › refuses a body over the limit, and stores one at it`, `compliance/inbound-bounds.test.ts › stores a body of exactly MARFA_INBOUND_MAX_BYTES and refuses one byte more`.
 
@@ -342,7 +342,7 @@ If a body sent without a `Content-Length` passes the limit across its chunks, th
 
 ### `inbound-webhooks/body-timeout`
 
-If a body has not arrived whole within `MARFA_INBOUND_READ_TIMEOUT_MS`, 30000 milliseconds unless named, then the server MUST answer `408 request_timeout`.
+If a body has not arrived whole within `inbound_read_timeout_ms`, 30000 milliseconds unless named, then the server MUST answer `408 request_timeout`.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › answers request_timeout to a body that does not arrive in time, and stores nothing`, `compliance/inbound-check-order.test.ts › answers a declared length over the limit 413 before the body's 408`.
 
@@ -364,13 +364,13 @@ If the server answers `408 request_timeout`, then the server MUST NOT store a de
 
 ## The rate window
 
-Each endpoint has a window of its own, so a busy sender of one endpoint does not slow another. The limiter is on unless `RATE_LIMIT_ENABLED` says otherwise.
+Each endpoint has a window of its own, so a busy sender of one endpoint does not slow another. The limiter is on unless `rate_limit_enabled` says otherwise.
 
 ### `inbound-webhooks/rate-limit`
 
-While the limiter is on, if an endpoint's address receives more requests in one window than `RATE_LIMIT_INBOUND_REQUESTS`, 600 unless named, then the server MUST answer the request past the count `429 rate_limited`.
+While the limiter is on, if an endpoint's address receives more requests in one window than `rate_limit_inbound_requests`, 600 unless named, then the server MUST answer the request past the count `429 rate_limited`.
 
-**Tests:** `compliance/inbound-rate-limit.test.ts › holds each endpoint to its own rate window`, `compliance/inbound-rate-limit.test.ts › counts every request to a live address in its window, whatever answer it got`, `› ends a window after RATE_LIMIT_WINDOW_MS, and tells a refused sender how long is left`.
+**Tests:** `compliance/inbound-rate-limit.test.ts › holds each endpoint to its own rate window`, `compliance/inbound-rate-limit.test.ts › counts every request to a live address in its window, whatever answer it got`, `› ends a window after MARFA_RATE_LIMIT_WINDOW_MS, and tells a refused sender how long is left`.
 
 ### `inbound-webhooks/rate-counts-every-request`
 
@@ -386,15 +386,15 @@ While the limiter is on, the server MUST NOT count a request to an address no li
 
 ### `inbound-webhooks/rate-window-length`
 
-While the limiter is on, the server MUST end an endpoint's window after `RATE_LIMIT_WINDOW_MS`, 60000 milliseconds unless named, and take the full count again in the next.
+While the limiter is on, the server MUST end an endpoint's window after `rate_limit_window_ms`, 60000 milliseconds unless named, and take the full count again in the next.
 
-**Tests:** `compliance/inbound-rate-limit.test.ts › ends a window after RATE_LIMIT_WINDOW_MS, and tells a refused sender how long is left`.
+**Tests:** `compliance/inbound-rate-limit.test.ts › ends a window after MARFA_RATE_LIMIT_WINDOW_MS, and tells a refused sender how long is left`.
 
 ### `inbound-webhooks/rate-retry-after`
 
 When the server answers `429 rate_limited` to a request to an inbound address, the server MUST carry a `Retry-After` of the seconds left in the endpoint's window.
 
-**Tests:** `compliance/inbound-rate-limit.test.ts › ends a window after RATE_LIMIT_WINDOW_MS, and tells a refused sender how long is left`, `compliance/inbound-rate-limit.test.ts › holds each endpoint to its own rate window`.
+**Tests:** `compliance/inbound-rate-limit.test.ts › ends a window after MARFA_RATE_LIMIT_WINDOW_MS, and tells a refused sender how long is left`, `compliance/inbound-rate-limit.test.ts › holds each endpoint to its own rate window`.
 
 ### `inbound-webhooks/rate-own-window`
 
@@ -408,19 +408,19 @@ Three things bound what a registration holds: what it has not handled, what it r
 
 ### `inbound-webhooks/backlog-count`
 
-If a receipt would take the unhandled deliveries of a registration, across all its endpoints, live and retired, past `MARFA_INBOUND_BACKLOG_DELIVERIES`, 10000 unless named, then the server MUST answer `503 inbound_unavailable`.
+If a receipt would take the unhandled deliveries of a registration, across all its endpoints, live and retired, past `inbound_backlog_deliveries`, 10000 unless named, then the server MUST answer `503 inbound_unavailable`.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › refuses while the backlog is full, and takes again once it drains`.
 
 ### `inbound-webhooks/backlog-count-retired`
 
-When the server counts a registration's unhandled deliveries against `MARFA_INBOUND_BACKLOG_DELIVERIES`, the server MUST count those that a retired endpoint stored.
+When the server counts a registration's unhandled deliveries against `inbound_backlog_deliveries`, the server MUST count those that a retired endpoint stored.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › counts the unhandled deliveries a retired endpoint stored toward the backlog, until they are handled`.
 
 ### `inbound-webhooks/backlog-bytes`
 
-If a receipt would take the bytes of a registration's unhandled bodies past `MARFA_INBOUND_BACKLOG_BYTES`, 1073741824 unless named, then the server MUST answer `503 inbound_unavailable`.
+If a receipt would take the bytes of a registration's unhandled bodies past `inbound_backlog_bytes`, 1073741824 unless named, then the server MUST answer `503 inbound_unavailable`.
 
 **Reason:** the server adds the receipt's own body to the bytes already held, so a body that would pass the limit is refused before it is stored.
 
@@ -428,7 +428,7 @@ If a receipt would take the bytes of a registration's unhandled bodies past `MAR
 
 ### `inbound-webhooks/backlog-zero-body`
 
-When a registration's unhandled bodies hold exactly `MARFA_INBOUND_BACKLOG_BYTES` bytes and its count has room, the server MUST take a receipt with an empty body.
+When a registration's unhandled bodies hold exactly `inbound_backlog_bytes` bytes and its count has room, the server MUST take a receipt with an empty body.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › checks prospective bytes and accepts a zero body at exactly full pending bytes`.
 
@@ -474,7 +474,7 @@ If the server refuses a receipt for capacity, then the server MUST NOT remove a 
 
 ### `inbound-webhooks/in-flight-limit`
 
-If a request would take the bytes of all the requests the instance is receiving past `MARFA_INBOUND_IN_FLIGHT_BYTES`, 104857600 unless named, then the server MUST answer `503 inbound_unavailable`.
+If a request would take the bytes of all the requests the instance is receiving past `inbound_in_flight_bytes`, 104857600 unless named, then the server MUST answer `503 inbound_unavailable`.
 
 **Reason:** a request holds the bytes of its headers, its query and its body, and a declared `Content-Length` is held whole before the body is read, so the server refuses a request that does not fit without reading it.
 
@@ -482,13 +482,13 @@ If a request would take the bytes of all the requests the instance is receiving 
 
 ### `inbound-webhooks/in-flight-summed`
 
-When several requests are arriving at once, the server MUST count their bytes together against `MARFA_INBOUND_IN_FLIGHT_BYTES`.
+When several requests are arriving at once, the server MUST count their bytes together against `inbound_in_flight_bytes`.
 
 **Tests:** `compliance/inbound-bounds.test.ts › refuses a body that would pass the bytes in flight summed across bodies, takes one that fills them, and gives back what a body held when it ended or broke off`.
 
 ### `inbound-webhooks/in-flight-per-source`
 
-If a request would take the bytes that the requests arriving for one source hold past half of `MARFA_INBOUND_IN_FLIGHT_BYTES`, then the server MUST answer `503 inbound_unavailable`.
+If a request would take the bytes that the requests arriving for one source hold past half of `inbound_in_flight_bytes`, then the server MUST answer `503 inbound_unavailable`.
 
 **Reason:** a leaked token for one source must not refuse every other source's receipts.
 
@@ -520,13 +520,13 @@ If the key of an endpoint's registration is revoked while a body is arriving at 
 
 ### `inbound-webhooks/retained-count`
 
-If a receipt would take the deliveries a registration retains, handled or unhandled, across its live and retired endpoints, past `MARFA_INBOUND_RETAINED_DELIVERIES`, 10000 unless named, then the server MUST answer `503 inbound_unavailable`.
+If a receipt would take the deliveries a registration retains, handled or unhandled, across its live and retired endpoints, past `inbound_retained_deliveries`, 10000 unless named, then the server MUST answer `503 inbound_unavailable`.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › bounds handled zero-body receipts across live and retired endpoints of a registration`.
 
 ### `inbound-webhooks/retained-bytes`
 
-If a receipt's charge would take the bytes a registration retains past `MARFA_INBOUND_RETAINED_BYTES`, 1073741824 unless named, then the server MUST answer `503 inbound_unavailable`.
+If a receipt's charge would take the bytes a registration retains past `inbound_retained_bytes`, 1073741824 unless named, then the server MUST answer `503 inbound_unavailable`.
 
 **Tests:** `compliance/inbound-bounds.test.ts › takes a second receipt at exactly twice the charge of the first and refuses it one byte under`, `compliance/inbound-webhooks.test.ts › counts query metadata when every retained body has zero bytes`.
 
@@ -814,7 +814,7 @@ The retention of a handled delivery and of an unhandled one is a setting that `P
 
 ### `inbound-webhooks/retention-handled`
 
-Where `PUT /config` names no `inbound_handled_retention_days`, when the `inbound-delivery-cleanup` job runs, the server MUST remove each delivery that was handled more than `MARFA_INBOUND_HANDLED_RETENTION_DAYS` days before, 7 days unless named.
+Where `PUT /config` names no `inbound_handled_retention_days`, when the `inbound-delivery-cleanup` job runs, the server MUST remove each delivery that was handled more than `inbound_handled_retention_days` days before, 7 days unless named.
 
 **Reason:** a handled delivery ages from the time it was handled, not from the time it arrived.
 
@@ -828,7 +828,7 @@ Where `PUT /config` names `inbound_handled_retention_days`, when the `inbound-de
 
 ### `inbound-webhooks/retention-pending`
 
-Where `PUT /config` names no `inbound_pending_retention_days`, when the `inbound-delivery-cleanup` job runs, the server MUST remove each unhandled delivery that arrived more than `MARFA_INBOUND_PENDING_RETENTION_DAYS` days before, 30 days unless named.
+Where `PUT /config` names no `inbound_pending_retention_days`, when the `inbound-delivery-cleanup` job runs, the server MUST remove each unhandled delivery that arrived more than `inbound_pending_retention_days` days before, 30 days unless named.
 
 **Tests:** `compliance/inbound-retention.test.ts › removes handled deliveries seven days after they were handled and pending ones thirty days after they arrived, and keeps the rest`, `› ages each class by the retention the instance names for it, and by the default for one it does not`.
 
@@ -924,7 +924,7 @@ If a run of `inbound-delivery-cleanup` fails while it removes deliveries, then t
 
 ### `inbound-webhooks/cleanup-interval`
 
-The server MUST list `inbound-delivery-cleanup` with an `interval_ms` of 60000 unless `MARFA_INBOUND_CLEANUP_INTERVAL_MS` names another.
+The server MUST list `inbound-delivery-cleanup` with an `interval_ms` of 60000 unless `inbound_cleanup_interval_ms` names another.
 
 **Tests:** `compliance/inbound-retention.test.ts › lists inbound-delivery-cleanup every 60000 milliseconds, or at the interval the instance names`.
 
@@ -976,7 +976,7 @@ If storing a receipt fails on a database fault, then the server MUST NOT carry t
 
 ### `inbound-webhooks/contention`
 
-If a receipt cannot get the store's write lock within the instance's busy budget, then the server MUST answer `503 write_contention`, as `errors/contention` says of a write.
+If a receipt cannot get the store's write lock within the instance's write wait, then the server MUST answer `503 write_contention`, as `errors/contention` says of a write.
 
 **Reason:** a sender records the refusal as a failed delivery and sends it again.
 
@@ -1002,13 +1002,13 @@ While the limiter is on, if a request is past an endpoint's window and its regis
 
 ### `inbound-webhooks/order-backlog-before-length`
 
-If a request declares a `Content-Length` over the limit and its registration already holds `MARFA_INBOUND_BACKLOG_DELIVERIES` unhandled deliveries, then the server MUST answer `503 inbound_unavailable`.
+If a request declares a `Content-Length` over the limit and its registration already holds `inbound_backlog_deliveries` unhandled deliveries, then the server MUST answer `503 inbound_unavailable`.
 
 **Tests:** `compliance/inbound-check-order.test.ts › answers a full backlog 503 before a declared length over the limit`.
 
 ### `inbound-webhooks/order-length-before-capacity`
 
-If a request declares a `Content-Length` over the limit while its registration's unhandled bodies hold `MARFA_INBOUND_BACKLOG_BYTES` bytes or the registration retains `MARFA_INBOUND_RETAINED_DELIVERIES` deliveries or `MARFA_INBOUND_RETAINED_BYTES` bytes, then the server MUST answer `413 request_too_large`.
+If a request declares a `Content-Length` over the limit while its registration's unhandled bodies hold `inbound_backlog_bytes` bytes or the registration retains `inbound_retained_deliveries` deliveries or `inbound_retained_bytes` bytes, then the server MUST answer `413 request_too_large`.
 
 **Reason:** of the bounds on what a registration holds, a declared length over the limit is told its 413 after the count of unhandled deliveries only; the other bounds are judged for a declared length within the limit, and again as the body is stored.
 

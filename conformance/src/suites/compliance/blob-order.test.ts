@@ -304,6 +304,32 @@ describe("the order a blob operation meets its refusals in", () => {
     expect(verdict(await asResponse(told))).toMatchObject(BAD_HASH);
   });
 
+  it("answers a hash without its prefix on an instance link as malformed, before its signature", async () => {
+    const link = await instanceLink("a path without the prefix");
+    const bare = new URL(link.url);
+    bare.pathname = `/blobs/${link.hash.slice("sha256:".length)}/fetch`;
+
+    // The witness: the link as minted, signature and all, is served.
+    expect(await statusOf(fetch(link.url))).toBe(200);
+
+    const told = await fetch(bare);
+    expect(verdict(await asResponse(told))).toMatchObject(BAD_HASH);
+  });
+
+  it("answers a hash without its prefix on the drop door as malformed, before the blob's copies", async () => {
+    const link = await instanceLink("dropped without the prefix");
+    const drop = (hash: string) => operator.deleteBlobCopy(hash, "no-store");
+
+    // The witness: under its hash, the blob is found and the store refused.
+    expect(verdict(await drop(link.hash))).toMatchObject({
+      status: 404,
+      code: "blob_copy_not_found",
+    });
+
+    const bare = link.hash.slice("sha256:".length);
+    expect(verdict(await drop(bare))).toMatchObject(BAD_HASH);
+  });
+
   it("answers a stray key on an instance link before its signature", async () => {
     const link = await instanceLink("a stray key");
     const altered = alteredSignature(link.url);

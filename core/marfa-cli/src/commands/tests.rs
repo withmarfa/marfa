@@ -1082,6 +1082,10 @@ fn the_instance_doors_are_reached_where_the_document_puts_them() {
     assert_eq!(config::get_request().path(), "/config");
     assert_eq!(config::replace_request(json!({})).method, Method::Put);
     assert_eq!(config::update_request(json!({})).method, Method::Patch);
+    assert_eq!(config::settings_request().path(), "/config/settings");
+    let check = config::check_address_request(json!({}));
+    assert_eq!(check.method, Method::Post);
+    assert_eq!(check.path(), "/config/address-check");
     let exported = export::request(&export::ExportArgs {
         format: Some(export::ExportFormat::Archive),
         type_: Some("core.note".into()),

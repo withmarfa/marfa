@@ -128,9 +128,9 @@ async function served(): Promise<{
 const apps = new Map<string, ReturnType<typeof approvedApp>>();
 function app(name: "writes" | "avatar" | "name") {
   const scopes = {
-    writes: ["openid", "profile:write"],
-    avatar: ["openid", "profile.avatar:read", "offline_access"],
-    name: ["openid", "profile.name:read"],
+    writes: ["profile:write"],
+    avatar: ["profile.avatar:read"],
+    name: ["profile.name:read"],
   }[name];
   let made = apps.get(name);
   if (made === undefined) {
@@ -536,54 +536,23 @@ describe("the owner's picture", () => {
     expect((await served()).bytes).toEqual(kept);
   });
 
-  it("gives an app that may read the avatar the picture's address, and no claim when there is none", async () => {
+  it("gives an app that may read the avatar the picture's address at its profile, and null when there is none", async () => {
     const readsPicture = await app("avatar");
     const readsName = await app("name");
-    const userinfo = async (token: string) =>
+    const profile = async (token: string) =>
       (await (
-        await fetch(`${server.apiUrl}/auth/oauth2/userinfo`, {
+        await fetch(`${server.apiUrl}/profile`, {
           headers: { authorization: `Bearer ${token}` },
         })
       ).json()) as Record<string, unknown>;
-    const idToken = async () => {
-      const refreshed = await fetch(`${server.apiUrl}/auth/oauth2/token`, {
-        method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          grant_type: "refresh_token",
-          refresh_token: readsPicture.refreshToken ?? "",
-          client_id: readsPicture.clientId,
-        }),
-      });
-      expect(refreshed.status).toBe(200);
-      const tokens = (await refreshed.json()) as {
-        id_token: string;
-        refresh_token?: string;
-        access_token: string;
-      };
-      if (tokens.refresh_token !== undefined)
-        readsPicture.refreshToken = tokens.refresh_token;
-      return JSON.parse(
-        Buffer.from(
-          tokens.id_token.split(".")[1] ?? "",
-          "base64url",
-        ).toString(),
-      ) as Record<string, unknown>;
-    };
 
     expect((await putOwner(png(8, 8))).status).toBe(200);
-    expect((await userinfo(readsPicture.token)).picture).toBe(address());
-    expect((await idToken()).picture).toBe(address());
+    expect(await profile(readsPicture.token)).toEqual({ avatar: address() });
     // An app that did not ask for the avatar is not given it.
-    expect(Object.hasOwn(await userinfo(readsName.token), "picture")).toBe(
-      false,
-    );
+    expect(Object.hasOwn(await profile(readsName.token), "avatar")).toBe(false);
 
     await clear();
-    expect(Object.hasOwn(await userinfo(readsPicture.token), "picture")).toBe(
-      false,
-    );
-    expect(Object.hasOwn(await idToken(), "picture")).toBe(false);
+    expect(await profile(readsPicture.token)).toEqual({ avatar: null });
   });
 
   it("serves the stored bytes under the kind decided from them", async () => {

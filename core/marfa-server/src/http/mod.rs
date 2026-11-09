@@ -20,10 +20,12 @@ mod doors;
 mod edge_types;
 mod edges;
 mod events;
+mod folders;
 mod health;
 mod housekeeping;
 mod inbound;
 mod items;
+mod jobs;
 mod keys;
 pub mod listening;
 mod listing;
@@ -39,10 +41,12 @@ mod profile;
 mod query;
 mod root;
 mod sources;
+#[cfg(feature = "test-hooks")]
 mod test_hooks;
 mod trash;
 mod types;
 mod views;
+mod webhooks;
 
 use std::sync::Arc;
 
@@ -85,6 +89,25 @@ fn key_doors(app: Arc<App>) -> Routes {
         .route_layer(from_fn_with_state(app, keys::limited))
 }
 
+fn webhook_doors(app: Arc<App>) -> Routes {
+    Doors::new()
+        .route("/webhooks", post(webhooks::create).get(webhooks::list))
+        .route(
+            "/webhooks/{id}",
+            get(webhooks::get)
+                .patch(webhooks::update)
+                .delete(webhooks::delete),
+        )
+        .route("/webhooks/{id}/deliveries", get(webhooks::deliveries))
+        .route(
+            "/webhooks/{id}/deliveries/{delivery_id}/redeliver",
+            post(webhooks::redeliver),
+        )
+        .route("/items/bulk-actions/jobs/{id}", get(jobs::read))
+        .route("/items/bulk-actions/jobs/{id}/cancel", post(jobs::cancel))
+        .admitting(app, Admission::Presented)
+}
+
 fn schema_doors() -> Routes {
     Doors::new()
         .route("/types", get(types::list).post(types::register))
@@ -102,6 +125,12 @@ fn schema_doors() -> Routes {
             get(edge_types::list).post(edge_types::register),
         )
         .route("/edge-types/{id}", delete(edge_types::delete))
+}
+
+fn type_move_doors(app: Arc<App>) -> Routes {
+    Doors::new()
+        .route("/types/{id}/move", post(jobs::move_type))
+        .admitting(app, Admission::Mapped)
 }
 
 fn overview_doors(app: Arc<App>) -> Routes {
@@ -126,6 +155,7 @@ fn item_doors(app: Arc<App>) -> Routes {
         .route("/views/{id}", patch(views::update).delete(views::delete))
         .route("/views/{id}/items", get(views::items))
         .route("/items/bulk", post(bulk::write))
+        .route("/items/bulk-actions", post(jobs::queue))
         .route("/items/bulk-get", post(items::bulk_get))
         .route("/items/titles", post(items::titles))
         .route("/items/lookup", post(lookup::lookup))
@@ -165,13 +195,31 @@ fn item_doors(app: Arc<App>) -> Routes {
         .admitting(app, Admission::Mapped)
 }
 
+fn folder_doors(app: Arc<App>) -> Routes {
+    let settings = Doors::new()
+        .route("/folders", post(folders::create))
+        .route("/folders/{id}", patch(folders::update))
+        .route("/folders/{id}/revoke", post(folders::revoke))
+        .admitting(app.clone(), Admission::Mapped);
+    let status = Doors::new()
+        .route("/folders", get(folders::inventory))
+        .route(
+            "/folders/{id}/status",
+            put(folders::report).get(folders::status),
+        )
+        .admitting(app, Admission::Presented);
+    settings.merge(status)
+}
+
 fn blob_doors() -> Routes {
     Doors::new()
         .route("/blobs", post(blobs::upload))
         .route("/blobs/stores", get(blobs::stores))
+        .route("/blobs/orphans", get(blobs::orphans))
         .route("/blobs/{hash}", get(blobs::download).head(blobs::head))
         .route("/blobs/{hash}/url", get(blobs::url))
         .route("/blobs/{hash}/copies", get(blobs::copies))
+        .route("/blobs/{hash}/copies/{store}", delete(blobs::drop_copy))
         .route(
             "/blobs/{hash}/fetch",
             get(blobs::fetch).head(blobs::fetch_head),
@@ -191,7 +239,7 @@ fn owner_item_doors() -> Routes {
 fn profile_doors() -> Routes {
     Doors::new()
         .route("/owner/picture", get(profile::read).put(profile::put_owner))
-        .route("/profile", patch(profile::update))
+        .route("/profile", get(profile::read_own).patch(profile::update))
         .route("/profile/picture", put(profile::put_profile))
 }
 
@@ -270,8 +318,11 @@ fn shared(app: Arc<App>) -> Routes {
         .route("/sources", get(sources::list))
         .route("/source", get(sources::read).patch(sources::update))
         .merge(schema_doors())
+        .merge(type_move_doors(app.clone()))
         .merge(key_doors(app.clone()))
+        .merge(webhook_doors(app.clone()))
         .merge(item_doors(app.clone()))
+        .merge(folder_doors(app.clone()))
         .merge(blob_doors())
         .merge(connector_doors(app.clone()))
         .merge(overview_doors(app.clone()))
@@ -341,7 +392,7 @@ pub(crate) async fn no_store(request: Request, next: Next) -> Response {
 }
 
 fn control_doors(app: &Arc<App>) -> Routes {
-    let mut routes = shared(app.clone())
+    let routes = shared(app.clone())
         .merge(oauth::grant_doors().unjudged())
         .route("/_control/setup/status", get(control::setup_status))
         .route("/_control/setup/claim", post(control::setup_claim))
@@ -352,8 +403,9 @@ fn control_doors(app: &Arc<App>) -> Routes {
             "/_control/owner/passkeys/add-url",
             get(auth::passkeys::add_url),
         );
-    if app.settings.start.test_hooks {
-        routes = routes
+    #[cfg(feature = "test-hooks")]
+    let routes = if app.settings.start.test_hooks {
+        routes
             .route(
                 "/_control/test/clock",
                 get(test_hooks::read_clock).post(test_hooks::move_clock),
@@ -363,8 +415,14 @@ fn control_doors(app: &Arc<App>) -> Routes {
                 get(test_hooks::read_faults)
                     .put(test_hooks::set_fault)
                     .delete(test_hooks::clear_faults),
-            );
-    }
+            )
+            .route(
+                "/_control/test/blob-stores",
+                get(test_hooks::inspect_stores),
+            )
+    } else {
+        routes
+    };
     routes
 }
 

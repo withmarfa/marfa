@@ -37,7 +37,7 @@ let serial = 0;
 
 beforeAll(async () => {
   server = await bootFreshServer("inbound-check-order", {
-    RATE_LIMIT_ENABLED: "false",
+    MARFA_RATE_LIMIT_ENABLED: "false",
     MARFA_INBOUND_BACKLOG_DELIVERIES: "1",
     MARFA_INBOUND_MAX_BYTES: String(MAX_BYTES),
     MARFA_INBOUND_READ_TIMEOUT_MS: "1000",
@@ -49,7 +49,7 @@ beforeAll(async () => {
   // A second instance whose backlog counts are out of reach, so that what
   // fills is the bytes of what is unhandled, or what a registration retains.
   capacityServer = await bootFreshServer("inbound-check-order-capacity", {
-    RATE_LIMIT_ENABLED: "false",
+    MARFA_RATE_LIMIT_ENABLED: "false",
     MARFA_INBOUND_BACKLOG_BYTES: String(BACKLOG_BYTES),
     MARFA_INBOUND_RETAINED_DELIVERIES: String(RETAINED_DELIVERIES),
     MARFA_INBOUND_MAX_BYTES: String(MAX_BYTES),
@@ -61,7 +61,7 @@ beforeAll(async () => {
   // The bytes in flight are held by bodies the fixture holds open, which a
   // short read timeout would end.
   flightServer = await bootFreshServer("inbound-check-order-flight", {
-    RATE_LIMIT_ENABLED: "false",
+    MARFA_RATE_LIMIT_ENABLED: "false",
     MARFA_INBOUND_MAX_BYTES: String(MAX_BYTES),
     MARFA_INBOUND_IN_FLIGHT_BYTES: String(IN_FLIGHT_BYTES),
   });

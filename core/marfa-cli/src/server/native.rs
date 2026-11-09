@@ -4,6 +4,8 @@
 use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
 
+use sha2::{Digest, Sha256};
+
 use crate::error::CliError;
 use crate::server::envfile::EnvFile;
 use crate::server::names;
@@ -69,11 +71,30 @@ pub fn environment(dir: &Path, port: u16, settings: &EnvFile) -> Vec<(String, St
     environment.extend([
         (names::PORT.to_string(), port.to_string()),
         (names::LISTEN_HOST.to_string(), "127.0.0.1".to_string()),
-        (names::SQLITE_PATH.to_string(), path(layout.database())),
+        (names::DATABASE_PATH.to_string(), path(layout.database())),
         (names::BLOB_PATH.to_string(), path(layout.blobs())),
         (names::CONTROL_SOCKET.to_string(), path(layout.socket())),
     ]);
     environment
+}
+
+/// A fingerprint of everything a server reads when it starts: the release,
+/// the port, the listen host, the data paths and the settings file exactly as
+/// it is. It is a hash, so the `.env` that keeps it never holds a secret.
+pub fn applied(dir: &Path, port: u16, release: &str, settings_text: &str) -> String {
+    let mut hash = Sha256::new();
+    let mut field = |text: &str| {
+        hash.update(text.len().to_le_bytes());
+        hash.update(text.as_bytes());
+    };
+    field(release);
+    for (name, value) in environment(dir, port, &EnvFile::default()) {
+        let (name, value) = (name.as_str(), value.as_str());
+        field(name);
+        field(value);
+    }
+    field(settings_text);
+    hex::encode(hash.finalize())
 }
 
 /// A settings file that sets what the install folder decides is refused,
@@ -146,7 +167,7 @@ mod tests {
         );
 
         let settings = EnvFile::parse(
-            "API_KEY_SALT=aa\nMARFA_AUTH_SECRET=bb\nPORT=9000\nMARFA_LISTEN_HOST=0.0.0.0\nSQLITE_PATH=/elsewhere/a.db\nBLOB_PATH=/elsewhere/b\nMARFA_CONTROL_SOCKET=/elsewhere/s\n",
+            "MARFA_KEY_SALT=aa\nMARFA_AUTH_SECRET=bb\nMARFA_PORT=9000\nMARFA_LISTEN_HOST=0.0.0.0\nMARFA_DATABASE_PATH=/elsewhere/a.db\nMARFA_BLOB_PATH=/elsewhere/b\nMARFA_CONTROL_SOCKET=/elsewhere/s\n",
         );
         let built = environment(dir, 8601, &settings);
         let get = |name: &str| {
@@ -155,15 +176,15 @@ mod tests {
                 .find(|(set, _)| set == name)
                 .map(|(_, value)| value.as_str())
         };
-        assert_eq!(get("PORT"), Some("8601"));
+        assert_eq!(get("MARFA_PORT"), Some("8601"));
         assert_eq!(get("MARFA_LISTEN_HOST"), Some("127.0.0.1"));
-        assert_eq!(get("SQLITE_PATH"), Some("/srv/marfa/data/marfa.db"));
-        assert_eq!(get("BLOB_PATH"), Some("/srv/marfa/data/blobs"));
+        assert_eq!(get("MARFA_DATABASE_PATH"), Some("/srv/marfa/data/marfa.db"));
+        assert_eq!(get("MARFA_BLOB_PATH"), Some("/srv/marfa/data/blobs"));
         assert_eq!(
             get("MARFA_CONTROL_SOCKET"),
             Some("/srv/marfa/data/control/marfa.sock")
         );
-        assert_eq!(get("API_KEY_SALT"), Some("aa"));
+        assert_eq!(get("MARFA_KEY_SALT"), Some("aa"));
         for name in names::FOLDER_DECIDED {
             assert_eq!(built.iter().filter(|(n, _)| n == name).count(), 1, "{name}");
         }
@@ -172,7 +193,7 @@ mod tests {
     #[test]
     fn a_settings_file_that_sets_what_the_folder_decides_is_refused_by_name() {
         let file = Path::new("/srv/marfa/marfa.env");
-        let clean = EnvFile::parse("API_KEY_SALT=aa\nMARFA_AUTH_SECRET=bb\n");
+        let clean = EnvFile::parse("MARFA_KEY_SALT=aa\nMARFA_AUTH_SECRET=bb\n");
         assert!(refuse_folder_settings(&clean, file).is_ok());
         for name in names::FOLDER_DECIDED {
             let error = refuse_folder_settings(&EnvFile::parse(&format!("{name}=x\n")), file)
@@ -180,10 +201,11 @@ mod tests {
                 .to_string();
             assert!(error.contains(name), "{error}");
         }
-        let error = refuse_folder_settings(&EnvFile::parse("PORT=1\nBLOB_PATH=/x\n"), file)
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains("PORT, BLOB_PATH"), "{error}");
+        let error =
+            refuse_folder_settings(&EnvFile::parse("MARFA_PORT=1\nMARFA_BLOB_PATH=/x\n"), file)
+                .unwrap_err()
+                .to_string();
+        assert!(error.contains("MARFA_PORT, MARFA_BLOB_PATH"), "{error}");
     }
 
     #[test]

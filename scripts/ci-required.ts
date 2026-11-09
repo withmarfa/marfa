@@ -53,7 +53,7 @@ export const JOBS = [
   "core-checks-linux",
   // `Core native (x86_64 Linux)`: `marfa-enrichment`'s PDF and OCR readers,
   // built from pinned sources by `native/release.sh` and checked on real
-  // x86_64 hardware, where every read must report `sandbox: Full`.
+  // x86_64 hardware, where a child that cannot confine itself reads nothing.
   "core-native",
   // `Core fault injection (Linux)`: the tests of `marfa-enrichment` built with
   // `fault-injection`, which make a child crash, hang and misbehave. `Core
@@ -81,10 +81,7 @@ export const JOBS = [
   "mcp-conformance",
   "cli-scenarios",
   "restore-drill",
-  // The shipped image: the release's static Linux programs from
-  // `scripts/release/build-programs.sh`, the Dockerfile around them, and the
-  // image booted on a read-only root. It reads what that build reads, never
-  // the TypeScript server.
+  // The image job builds and boots the shipped image from the release programs.
   "image",
   "types-freshness",
   "version-fields",
@@ -261,7 +258,8 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // table, and `compliance/instance.test.ts` holds the published operations
   // to the coverage table. No other server fixture reads the contract, and
   // `ci/ci-required.test.ts` fails when one starts to. A unit test of the Rust
-  // server holds its refusal codes to `errors.md`, so that chapter reaches it.
+  // server holds its refusal codes to `errors.md`, and two more hold its
+  // settings to the tables of `instance.md`, so those chapters reach it.
   [
     /^conformance\/spec\/errors\.md$/,
     [
@@ -280,6 +278,10 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
       "conformance-compliance",
       "rust-contract",
     ],
+  ],
+  [
+    /^conformance\/spec\/instance\.md$/,
+    ["workspace", "conformance-offline", "core-checks-linux", "rust-contract"],
   ],
   [/^conformance\/spec\//, ["workspace", "conformance-offline"]],
   // The item names and previews both implementations are held to: the

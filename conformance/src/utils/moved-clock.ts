@@ -15,7 +15,7 @@ export const HOUR_MS = 60 * MINUTE_MS;
 export const DAY_MS = 24 * HOUR_MS;
 
 /** An interval no clock a fixture reaches gets past. */
-const NEVER_MS = "3153600000000";
+const NEVER_MS = "31536000000";
 
 /**
  * Every cleanup job's own interval set past reach. Moving the clock makes a
@@ -24,12 +24,12 @@ const NEVER_MS = "3153600000000";
  * (`quiet`) and its next run is set from that.
  */
 export const QUIET_SCHEDULE: Record<string, string> = {
-  AUDIT_CLEANUP_INTERVAL_MS: NEVER_MS,
-  TRASH_PURGE_INTERVAL_MS: NEVER_MS,
+  MARFA_AUDIT_CLEANUP_INTERVAL_MS: NEVER_MS,
+  MARFA_TRASH_PURGE_INTERVAL_MS: NEVER_MS,
   MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS: NEVER_MS,
   MARFA_INBOUND_CLEANUP_INTERVAL_MS: NEVER_MS,
-  VERSION_THINNING_INTERVAL_MS: NEVER_MS,
-  FEED_EXPIRY_INTERVAL_MS: NEVER_MS,
+  MARFA_VERSION_THINNING_INTERVAL_MS: NEVER_MS,
+  MARFA_FEED_EXPIRY_INTERVAL_MS: NEVER_MS,
   MARFA_DCR_CLIENT_CLEANUP_INTERVAL_MS: NEVER_MS,
 };
 

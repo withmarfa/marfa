@@ -9,6 +9,7 @@ use super::grant::{self, DEVICE_SOURCE, GRANT_CREATED, GRANT_WRITE};
 use super::offer::{self, Decision, Offer, Post, Request};
 use super::scope::{OFFLINE_ACCESS, Registries, ScopeSet, narrow, needs_recent_sign_in};
 use super::store::{self, DeviceCode, DeviceStatus, ms_of};
+use super::token::{Form, credential_refused};
 use super::tokens::{new_device_code, new_user_code, normalize_user_code};
 use super::{Answered, DEVICE_CODE_SECONDS, DEVICE_INTERVAL_SECONDS, MS_PER_SECOND, Problem};
 use crate::app::App;
@@ -26,19 +27,17 @@ use crate::db::Write;
 
 const CODE_WRITE: &str = "auth.verification.create";
 
-pub async fn request(
-    app: &Arc<App>,
-    client_id: Option<&str>,
-    scope: Option<&str>,
-    visit: &Visit,
-) -> Result<Answered<Value>> {
+pub async fn request(app: &Arc<App>, form: &Form, visit: &Visit) -> Result<Answered<Value>> {
     hold_to(
         app,
         device_code_lanes(visit.address),
         "Too many device codes requested. Try again later.",
     )
     .await?;
-    let Some(client_id) = client_id else {
+    if let Some(problem) = credential_refused(form) {
+        return Ok(Err(problem));
+    }
+    let Some(client_id) = form.get("client_id") else {
         return Ok(Err(Problem::new("invalid_request", "Name a client_id.")));
     };
     let client = match clients::resolve(app, client_id, visit).await? {
@@ -51,7 +50,7 @@ pub async fn request(
             "This client is not registered for the device grant.",
         )));
     }
-    let scopes = ScopeSet::parse(scope.unwrap_or_default());
+    let scopes = ScopeSet::parse(form.get("scope").unwrap_or_default());
     if scopes.is_empty() {
         return Ok(Err(Problem::new(
             "invalid_scope",
@@ -75,7 +74,7 @@ pub async fn request(
 
     let device_code = new_device_code()?;
     let user_code = new_user_code()?;
-    let salt = &app.settings.start.api_key_salt;
+    let salt = &app.settings.start.key_salt;
     let now = app.clock.now_ms();
     let row = DeviceCode {
         digest: digest_of(salt, &device_code)?,
@@ -157,10 +156,7 @@ pub enum Lookup {
 }
 
 fn digest_of_typed(app: &App, typed: &str) -> Result<String> {
-    digest_of(
-        &app.settings.start.api_key_salt,
-        &normalize_user_code(typed),
-    )
+    digest_of(&app.settings.start.key_salt, &normalize_user_code(typed))
 }
 
 fn looked_up(found: Option<&DeviceCode>, now: i64) -> Lookup {

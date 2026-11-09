@@ -166,9 +166,16 @@ settled() {
 }
 echo "$*" >> "$H/launchctl.log"
 label=$(printf '%s' "$*" | sed -n 's/.*so\.marfa\.server\.\([a-z0-9_-]*\).*/\1/p')
+spawn() {
+  [ -e "$H/loaded-$label" ] || return 0
+  if [ -e "$H/restart-ignored" ] && [ -e "$H/pid-$label" ]; then return 0; fi
+  n=$(cat "$H/pidseq" 2>/dev/null || echo 100); n=$((n+1))
+  echo $n > "$H/pidseq"; echo $n > "$H/pid-$label"
+}
 begin() {
   plist="$1"
   grep -q '<string>run</string>' "$plist" || return 0
+  spawn
   dir=$(awk '/<string>--dir<\/string>/{getline; gsub(/.*<string>|<\/string>.*/, ""); print; exit}' "$plist")
   name=$(sed -n 's/^MARFA_NAME=//p' "$dir/.env")
   if [ -e "$S/refuse" ]; then
@@ -182,13 +189,16 @@ begin() {
 case "$1" in
   print)
     [ -e "$H/loaded-$label" ] || exit 1
-    if [ -e "$H/stopped-$label" ]; then echo "	state = waiting"; else echo "	state = running"; fi ;;
+    if [ -e "$H/stopped-$label" ]; then echo "	state = waiting"; else echo "	state = running"; [ -e "$H/pid-query-fails" ] || echo "	pid = $(cat "$H/pid-$label" 2>/dev/null)"; fi ;;
   bootstrap)
     [ -e "$H/bootstrap-fails" ] && { echo "Bootstrap failed: 5: Input/output error" >&2; exit 5; }
     label=$(basename "$3" .plist | sed 's/^so\.marfa\.server\.//')
     touch "$H/loaded-$label"; rm -f "$H/stopped-$label"; begin "$3" ;;
-  kickstart) rm -f "$H/stopped-$label"; f="$H/Library/LaunchAgents/so.marfa.server.$label.plist"; [ -e "$f" ] || f="$H/../install/so.marfa.server.$label.plist"; begin "$f" ;;
-  bootout) rm -f "$H/loaded-$label" "$S"/go-*; settled ;;
+  kickstart)
+    [ "$2" = -k ] && [ -e "$H/restart-fails" ] && { echo "Could not kickstart service: 5: Input/output error" >&2; exit 5; }
+    if [ "$2" = -k ] && [ ! -e "$H/restart-ignored" ]; then rm -f "$S"/go-* "$H/pid-$label"; settled; fi
+    rm -f "$H/stopped-$label"; f="$H/Library/LaunchAgents/so.marfa.server.$label.plist"; [ -e "$f" ] || f="$H/../install/so.marfa.server.$label.plist"; begin "$f" ;;
+  bootout) rm -f "$H/loaded-$label" "$H/pid-$label" "$S"/go-*; settled ;;
 esac
 "#;
 
@@ -213,6 +223,10 @@ begin() {
   dir=$(sed -n 's/.*"--dir" "\{0,1\}\([^" ]*\).*/\1/p' "$f")
   name=$(sed -n 's/^MARFA_NAME=//p' "$dir/.env")
   touch "$H/active-$unit"
+  if ! { [ -e "$H/restart-ignored" ] && [ -e "$H/pid-$unit" ]; }; then
+    n=$(cat "$H/pidseq" 2>/dev/null || echo 100); n=$((n+1))
+    echo $n > "$H/pidseq"; echo $n > "$H/pid-$unit"
+  fi
   if [ -e "$S/refuse" ]; then
     echo "marfa-server will not start on the database (exit status 78)" >> "$S/server-log"
     return 0
@@ -227,8 +241,13 @@ case "$cmd" in
   disable) rm -f "$H/enabled-$unit" ;;
   is-enabled) [ -e "$H/enabled-$unit" ] ;;
   is-active) [ -e "$H/active-$unit" ] ;;
-  start|restart) [ -e "$H/start-fails" ] && { echo "Job for $unit failed" >&2; exit 1; }; begin ;;
-  stop) rm -f "$H/active-$unit" "$S"/go-*; settled ;;
+  start) [ -e "$H/start-fails" ] && { echo "Job for $unit failed" >&2; exit 1; }; begin ;;
+  restart)
+    [ -e "$H/start-fails" ] || [ -e "$H/restart-fails" ] && { echo "Job for $unit failed" >&2; exit 1; }
+    if [ ! -e "$H/restart-ignored" ]; then rm -f "$S"/go-* "$H/pid-$unit"; settled; fi
+    begin ;;
+  show) [ -e "$H/pid-query-fails" ] && exit 1; for last; do :; done; cat "$H/pid-$last" 2>/dev/null || echo 0 ;;
+  stop) rm -f "$H/active-$unit" "$H/pid-$unit" "$S"/go-*; settled ;;
 esac
 "#;
 
@@ -554,7 +573,7 @@ fn serve_health(port: u16, state: &Path, stop: &AtomicBool) {
 
 fn secrets(rig: &Rig) -> [String; 2] {
     [
-        rig.setting("API_KEY_SALT").unwrap(),
+        rig.setting("MARFA_KEY_SALT").unwrap(),
         rig.setting("MARFA_AUTH_SECRET").unwrap(),
     ]
 }
@@ -569,6 +588,10 @@ fn a_first_install_writes_the_files_and_prints_the_link_and_no_secret() {
         "{stdout}"
     );
     assert!(stdout.contains(&format!("http://localhost:{}", rig.port)));
+    assert_eq!(
+        rig.address().as_deref(),
+        Some(format!("http://localhost:{}", rig.port).as_str())
+    );
 
     let mode = |name: &str| {
         fs::metadata(rig.dir.join(name))
@@ -605,8 +628,8 @@ fn a_first_install_writes_the_files_and_prints_the_link_and_no_secret() {
     ] {
         assert!(dotenv.lines().any(|l| l == line), "{line}\n{dotenv}");
     }
-    assert_eq!(rig.setting("TRUSTED_PROXY_CIDRS"), None);
-    assert_eq!(rig.setting("TRUSTED_PROXY_HEADER"), None);
+    assert_eq!(rig.setting("MARFA_TRUSTED_PROXY_CIDRS"), None);
+    assert_eq!(rig.setting("MARFA_TRUSTED_PROXY_HEADER"), None);
     let log = rig.log();
     assert!(log.contains("network create marfa-net"), "{log}");
     assert!(log.lines().any(|l| l.contains(" up -d")), "{log}");
@@ -781,7 +804,7 @@ fn a_claimed_server_gets_no_setup_link() {
 
 #[test]
 fn each_way_of_reaching_it_sets_the_proxy_trust_it_needs() {
-    let rig = Rig::new("proxy");
+    let mut rig = Rig::new("proxy");
     let (code, _, stderr) = rig.install(&[
         "--access",
         "proxy",
@@ -790,12 +813,12 @@ fn each_way_of_reaching_it_sets_the_proxy_trust_it_needs() {
     ]);
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(
-        rig.setting("TRUSTED_PROXY_CIDRS").as_deref(),
+        rig.setting("MARFA_TRUSTED_PROXY_CIDRS").as_deref(),
         Some("172.30.0.0/24")
     );
-    assert_eq!(rig.setting("TRUSTED_PROXY_HEADER"), None);
+    assert_eq!(rig.setting("MARFA_TRUSTED_PROXY_HEADER"), None);
     assert_eq!(rig.address().as_deref(), Some("https://marfa.example.com"));
-    assert_eq!(rig.setting("MARFA_AUTH_BASE_URL"), None);
+    assert_eq!(rig.setting("MARFA_SIGN_IN_ADDRESS"), None);
 
     let salt = secrets(&rig);
     let (code, _, stderr) = rig.install(&[
@@ -805,9 +828,9 @@ fn each_way_of_reaching_it_sets_the_proxy_trust_it_needs() {
         "https://marfa.example.com",
     ]);
     assert_eq!(code, 0, "{stderr}");
-    assert_eq!(rig.setting("TRUSTED_PROXY_CIDRS"), None);
+    assert_eq!(rig.setting("MARFA_TRUSTED_PROXY_CIDRS"), None);
     assert_eq!(
-        rig.setting("TRUSTED_PROXY_HEADER").as_deref(),
+        rig.setting("MARFA_TRUSTED_PROXY_HEADER").as_deref(),
         Some("CF-Connecting-IP")
     );
     assert_eq!(
@@ -818,12 +841,26 @@ fn each_way_of_reaching_it_sets_the_proxy_trust_it_needs() {
 
     let (code, _, stderr) = rig.install(&["--access", "local"]);
     assert_eq!(code, 0, "{stderr}");
-    assert_eq!(rig.setting("TRUSTED_PROXY_HEADER"), None);
-    // Asking for a local server clears the address, which no longer fits it.
-    assert_eq!(rig.address(), None);
+    assert_eq!(rig.setting("MARFA_TRUSTED_PROXY_HEADER"), None);
+    let local = format!("http://localhost:{}", rig.port);
+    assert_eq!(rig.address().as_deref(), Some(local.as_str()));
+    let moved = free_port();
+    rig.also_listen(moved);
+    let moved_arg = moved.to_string();
+    let (code, _, stderr) = rig.install_as(&["--port", &moved_arg]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(rig.address(), Some(format!("http://localhost:{moved}")));
+    // A run that changes nothing still puts it back, as after a failed update.
+    fs::write(rig.state.join("address"), "https://moved.example.com\n").unwrap();
+    let (code, _, stderr) = rig.install_as(&[]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(rig.address(), Some(format!("http://localhost:{moved}")));
     let fresh = Rig::new("proxy-local");
     fresh.installed(&["--access", "local"]);
-    assert_eq!(fresh.address(), None);
+    assert_eq!(
+        fresh.address(),
+        Some(format!("http://localhost:{}", fresh.port))
+    );
 }
 
 #[test]
@@ -1364,9 +1401,9 @@ fn managed_elsewhere(rig: &Rig, body: &str) {
 }
 
 const CLOUDFLARE_FILE: &str =
-    "API_KEY_SALT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    "MARFA_KEY_SALT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 MARFA_AUTH_SECRET=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-TRUSTED_PROXY_HEADER=CF-Connecting-IP
+MARFA_TRUSTED_PROXY_HEADER=CF-Connecting-IP
 OTEL_RESOURCE_ATTRIBUTES=service.instance.id=mine
 ";
 
@@ -1417,9 +1454,9 @@ fn a_settings_file_managed_elsewhere_is_used_as_it_is() {
 }
 
 const QUOTED_FILE: &str =
-    "API_KEY_SALT='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    "MARFA_KEY_SALT='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 MARFA_AUTH_SECRET='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
-TRUSTED_PROXY_HEADER='CF-Connecting-IP'
+MARFA_TRUSTED_PROXY_HEADER='CF-Connecting-IP'
 ";
 
 #[test]
@@ -1466,7 +1503,7 @@ fn a_quoted_proxy_header_that_is_not_cloudflares_is_refused() {
     ]);
     assert_eq!(code, 2, "{stderr}");
     assert!(
-        stderr.contains("TRUSTED_PROXY_HEADER must be CF-Connecting-IP"),
+        stderr.contains("MARFA_TRUSTED_PROXY_HEADER must be CF-Connecting-IP"),
         "{stderr}"
     );
     assert!(
@@ -1488,7 +1525,7 @@ fn a_settings_file_that_lacks_what_the_install_needs_is_refused_without_its_valu
     assert_eq!(code, 2, "{stderr}");
     assert!(stderr.contains("does not exist"), "{stderr}");
 
-    managed_elsewhere(&rig, "API_KEY_SALT=sssssssssssssssssssssssssssssssss\n");
+    managed_elsewhere(&rig, "MARFA_KEY_SALT=sssssssssssssssssssssssssssssssss\n");
     let (code, _, stderr) = rig.install(&[
         "--access",
         "cloudflare",
@@ -1499,7 +1536,7 @@ fn a_settings_file_that_lacks_what_the_install_needs_is_refused_without_its_valu
     assert_eq!(code, 2, "{stderr}");
     for said in [
         "MARFA_AUTH_SECRET is not set",
-        "TRUSTED_PROXY_HEADER must be CF-Connecting-IP",
+        "MARFA_TRUSTED_PROXY_HEADER must be CF-Connecting-IP",
     ] {
         assert!(stderr.contains(said), "{said}\n{stderr}");
     }
@@ -1516,8 +1553,11 @@ fn a_settings_file_that_lacks_what_the_install_needs_is_refused_without_its_valu
 #[test]
 fn a_proxy_range_in_a_settings_file_must_cover_the_dockers_network() {
     let rig = Rig::new("external-range");
-    let base = CLOUDFLARE_FILE.replace("TRUSTED_PROXY_HEADER=CF-Connecting-IP\n", "");
-    managed_elsewhere(&rig, &format!("{base}TRUSTED_PROXY_CIDRS=10.0.0.0/8\n"));
+    let base = CLOUDFLARE_FILE.replace("MARFA_TRUSTED_PROXY_HEADER=CF-Connecting-IP\n", "");
+    managed_elsewhere(
+        &rig,
+        &format!("{base}MARFA_TRUSTED_PROXY_CIDRS=10.0.0.0/8\n"),
+    );
     let proxy = [
         "--access",
         "proxy",
@@ -1530,7 +1570,7 @@ fn a_proxy_range_in_a_settings_file_must_cover_the_dockers_network() {
     assert!(stderr.contains("172.30.0.0/24"), "{stderr}");
     managed_elsewhere(
         &rig,
-        &format!("{base}TRUSTED_PROXY_CIDRS=10.0.0.0/8,172.30.0.0/16\n"),
+        &format!("{base}MARFA_TRUSTED_PROXY_CIDRS=10.0.0.0/8,172.30.0.0/16\n"),
     );
     let (code, _, stderr) = rig.install(&proxy);
     assert_eq!(code, 0, "{stderr}");
@@ -1595,8 +1635,8 @@ fn a_settings_file_missing_a_secret_is_not_completed_over_data() {
         whole
             .lines()
             .map(|line| {
-                if line.starts_with("API_KEY_SALT=") {
-                    "API_KEY_SALT="
+                if line.starts_with("MARFA_KEY_SALT=") {
+                    "MARFA_KEY_SALT="
                 } else {
                     line
                 }
@@ -1784,7 +1824,7 @@ fn the_tailnet_address_follows_the_install() {
         Some("https://host.example.ts.net")
     );
     assert_eq!(
-        rig.setting("TRUSTED_PROXY_CIDRS").as_deref(),
+        rig.setting("MARFA_TRUSTED_PROXY_CIDRS").as_deref(),
         Some("172.30.0.0/24")
     );
 
@@ -1843,7 +1883,7 @@ fn a_login_agent_that_failed_to_load_is_not_left_to_load_at_the_next_login() {
 #[test]
 fn an_empty_secret_is_made_where_there_is_no_data() {
     let rig = Rig::new("empty-secret");
-    managed_elsewhere(&rig, "API_KEY_SALT=\nMARFA_AUTH_SECRET=\n");
+    managed_elsewhere(&rig, "MARFA_KEY_SALT=\nMARFA_AUTH_SECRET=\n");
     rig.installed(&["--access", "local"]);
     let [salt, secret] = secrets(&rig);
     assert_eq!((salt.len(), secret.len()), (64, 64));
@@ -1867,6 +1907,22 @@ fn a_tailnet_that_cannot_be_reached_does_not_cost_the_setup_link() {
     assert!(stdout.contains("TICKET123"), "{stdout}");
     assert!(
         stderr.contains("The old address stays on your tailnet"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn an_uninstall_says_when_the_tailnet_address_stays() {
+    let rig = Rig::new("uninstall-tailnet-down");
+    rig.installed(&["--access", "tailscale"]);
+    let broken = rig.root.join("tailscale-down");
+    fs::write(&broken, "#!/bin/sh\nexit 1\n").unwrap();
+    fs::set_permissions(&broken, fs::Permissions::from_mode(0o755)).unwrap();
+    let (code, _, stderr) = rig.marfa_with(&["uninstall"], &[("MARFA_TAILSCALE", &broken)]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stderr.contains("The address stays on your tailnet")
+            && stderr.contains("tailscale serve --https=443 off"),
         "{stderr}"
     );
 }
@@ -1912,6 +1968,28 @@ impl Rig {
         fs::read_to_string(self.home().join(name)).unwrap_or_default()
     }
 
+    fn restarts(&self) -> usize {
+        let word = if cfg!(target_os = "macos") {
+            "kickstart -k"
+        } else {
+            " restart "
+        };
+        self.manager_log()
+            .lines()
+            .filter(|line| line.contains(word))
+            .count()
+    }
+
+    /// The number the stand-in manager gave the service's current process.
+    fn service_pid(&self, name: &str) -> Option<String> {
+        let key = if cfg!(target_os = "macos") {
+            name.to_string()
+        } else {
+            format!("marfa-{name}.service")
+        };
+        fs::read_to_string(self.home().join(format!("pid-{key}"))).ok()
+    }
+
     fn control_log(&self) -> String {
         fs::read_to_string(self.state.join("control.log")).unwrap_or_default()
     }
@@ -1949,8 +2027,8 @@ fn a_native_install_runs_the_server_as_a_service_and_prints_the_link_and_no_secr
     for text in [&stdout, &stderr] {
         assert!(!text.contains(&salt) && !text.contains(&secret));
     }
-    assert_eq!(rig.setting("MARFA_AUTH_BASE_URL"), None);
-    assert_eq!(rig.setting("TRUSTED_PROXY_CIDRS"), None);
+    assert_eq!(rig.setting("MARFA_SIGN_IN_ADDRESS"), None);
+    assert_eq!(rig.setting("MARFA_TRUSTED_PROXY_CIDRS"), None);
 
     let service = fs::read_to_string(rig.service_file("marfa")).unwrap();
     assert!(
@@ -1991,10 +2069,267 @@ fn running_a_native_install_again_changes_nothing() {
         !rig.manager_log()
             .lines()
             .skip(calls)
-            .any(|line| line.contains("bootstrap") || line.contains("restart")),
+            .any(|line| line.contains("bootstrap")
+                || line.contains("kickstart")
+                || line.contains("restart")),
         "the second run reloaded the service: {}",
         rig.manager_log()
     );
+}
+
+/// Whether anything answers on the port.
+fn answers(port: u16) -> bool {
+    let _held = SOCKETS.lock().unwrap();
+    std::net::TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+        Duration::from_millis(200),
+    )
+    .is_ok()
+}
+
+#[test]
+fn running_a_native_install_again_with_another_port_moves_the_running_server_to_it() {
+    let mut rig = Rig::new("n-port-move");
+    rig.native_installed(&["--access", "local"]);
+    assert!(answers(rig.port));
+    let (restarts, pid) = (rig.restarts(), rig.service_pid("marfa"));
+    assert!(pid.is_some(), "the stand-in gave the service no process");
+
+    let moved = free_port();
+    rig.also_listen(moved);
+    let (code, stdout, stderr) = rig.marfa(&[
+        "install",
+        "--yes",
+        "--wait",
+        "5",
+        "--access",
+        "local",
+        "--port",
+        &moved.to_string(),
+    ]);
+    assert_eq!(code, 0, "{stdout}\n{stderr}");
+    assert!(
+        rig.file(".env").contains(&format!("MARFA_PORT={moved}")),
+        "{}",
+        rig.file(".env")
+    );
+    assert_eq!(rig.restarts(), restarts + 1, "{}", rig.manager_log());
+    assert_ne!(rig.service_pid("marfa"), pid);
+    assert!(answers(moved), "nothing answers on the new port");
+    assert!(!answers(rig.port), "the old process still holds its port");
+}
+
+#[test]
+fn changing_how_a_native_server_is_reached_restarts_it_and_an_unchanged_run_does_not() {
+    let rig = Rig::new("n-access-restart");
+    let proxy = [
+        "--access",
+        "proxy",
+        "--address",
+        "https://marfa.example.com",
+    ];
+    rig.native_installed(&proxy);
+    let (restarts, pid) = (rig.restarts(), rig.service_pid("marfa"));
+
+    rig.native_installed(&proxy);
+    assert_eq!(rig.restarts(), restarts, "an unchanged run restarted it");
+    assert_eq!(rig.service_pid("marfa"), pid);
+
+    rig.native_installed(&[
+        "--access",
+        "cloudflare",
+        "--address",
+        "https://marfa.example.com",
+    ]);
+    assert_eq!(rig.setting("TRUSTED_PROXY_CIDRS"), None);
+    assert_eq!(rig.restarts(), restarts + 1, "{}", rig.manager_log());
+    assert_ne!(rig.service_pid("marfa"), pid);
+}
+
+#[test]
+fn a_native_run_that_finds_the_service_not_answering_on_its_port_restarts_it() {
+    let rig = Rig::new("n-unanswered");
+    rig.native_installed(&["--access", "local"]);
+    let restarts = rig.restarts();
+    // The state an earlier run left when it wrote a setting and then failed.
+    fs::remove_file(rig.state.join(format!("go-{}", rig.port))).unwrap();
+    let until = std::time::Instant::now() + Duration::from_secs(5);
+    while answers(rig.port) && std::time::Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    rig.native_installed(&["--access", "local"]);
+    assert_eq!(rig.restarts(), restarts + 1, "{}", rig.manager_log());
+    assert!(answers(rig.port));
+}
+
+#[test]
+fn settings_managed_elsewhere_are_applied_by_running_install_again() {
+    let rig = Rig::new("n-external-restart");
+    managed_elsewhere(&rig, CLOUDFLARE_FILE);
+    let external = [
+        "--access",
+        "cloudflare",
+        "--external-settings",
+        "--address",
+        "https://marfa.example.com",
+    ];
+    rig.native_installed(&external);
+    let (restarts, pid) = (rig.restarts(), rig.service_pid("marfa"));
+    fs::write(
+        rig.dir.join("marfa.env"),
+        CLOUDFLARE_FILE.replace("mine", "other"),
+    )
+    .unwrap();
+    rig.native_installed(&external);
+    assert_eq!(rig.restarts(), restarts + 1, "{}", rig.manager_log());
+    assert_ne!(rig.service_pid("marfa"), pid);
+}
+
+#[test]
+fn settings_managed_elsewhere_that_have_not_changed_leave_the_running_server_alone() {
+    let rig = Rig::new("n-external-same");
+    managed_elsewhere(&rig, CLOUDFLARE_FILE);
+    let external = [
+        "--access",
+        "cloudflare",
+        "--external-settings",
+        "--address",
+        "https://marfa.example.com",
+    ];
+    rig.native_installed(&external);
+    let (restarts, pid) = (rig.restarts(), rig.service_pid("marfa"));
+    assert!(pid.is_some());
+    rig.native_installed(&external);
+    assert_eq!(rig.restarts(), restarts, "{}", rig.manager_log());
+    assert_eq!(rig.service_pid("marfa"), pid);
+}
+
+#[test]
+fn what_the_running_server_was_started_with_is_kept_as_a_hash_and_survives_a_stop_and_start() {
+    let rig = Rig::new("n-applied");
+    managed_elsewhere(&rig, CLOUDFLARE_FILE);
+    let external = [
+        "--access",
+        "cloudflare",
+        "--external-settings",
+        "--address",
+        "https://marfa.example.com",
+    ];
+    rig.native_installed(&external);
+    let dotenv = rig.file(".env");
+    let applied = dotenv
+        .lines()
+        .find_map(|line| line.strip_prefix("MARFA_APPLIED="))
+        .expect("no MARFA_APPLIED after a confirmed start");
+    assert_eq!(applied.len(), 64, "{dotenv}");
+    assert!(
+        !dotenv.contains("aaaaaaaa") && !dotenv.contains("CF-Connecting-IP"),
+        "the settings are in .env: {dotenv}"
+    );
+
+    let (code, _, stderr) = rig.marfa(&["stop"]);
+    assert_eq!(code, 0, "{stderr}");
+    let (code, _, stderr) = rig.marfa(&["start", "--wait", "5"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(rig.file(".env"), dotenv);
+    let (restarts, pid) = (rig.restarts(), rig.service_pid("marfa"));
+    rig.native_installed(&external);
+    assert_eq!(rig.restarts(), restarts, "{}", rig.manager_log());
+    assert_eq!(rig.service_pid("marfa"), pid);
+}
+
+#[test]
+fn a_restart_that_failed_is_tried_again_by_running_install_again() {
+    let rig = Rig::new("n-failed-restart");
+    rig.native_installed(&["--access", "local"]);
+    let pid = rig.service_pid("marfa");
+    let proxy = [
+        "--access",
+        "proxy",
+        "--address",
+        "https://marfa.example.com",
+    ];
+    assert!(rig.file(".env").contains("MARFA_APPLIED="));
+    fs::write(rig.home().join("restart-fails"), "").unwrap();
+    let (code, _, stderr) = rig.native(&proxy);
+    assert_ne!(code, 0, "{stderr}");
+    assert_eq!(rig.service_pid("marfa"), pid, "the failed restart ran");
+    // A failed restart leaves no record of what the server runs.
+    assert!(
+        !rig.file(".env").contains("MARFA_APPLIED="),
+        "{}",
+        rig.file(".env")
+    );
+
+    fs::remove_file(rig.home().join("restart-fails")).unwrap();
+    let restarts = rig.restarts();
+    rig.native_installed(&proxy);
+    assert_eq!(rig.restarts(), restarts + 1, "{}", rig.manager_log());
+    assert_ne!(rig.service_pid("marfa"), pid);
+
+    rig.native_installed(&proxy);
+    assert_eq!(rig.restarts(), restarts + 1, "an applied run restarted it");
+}
+
+#[test]
+fn a_stopped_server_whose_settings_changed_is_started_once_not_restarted() {
+    let rig = Rig::new("n-stopped-changed");
+    rig.native_installed(&["--access", "local"]);
+    // `marfa server stop` unloads a launchd agent, which then loads as a
+    // changed definition; a loaded agent whose process exited does not.
+    if cfg!(target_os = "macos") {
+        fs::write(rig.home().join("stopped-marfa"), "").unwrap();
+    } else {
+        let (code, _, stderr) = rig.marfa(&["stop"]);
+        assert_eq!(code, 0, "{stderr}");
+    }
+    let restarts = rig.restarts();
+    rig.native_installed(&[
+        "--access",
+        "proxy",
+        "--address",
+        "https://marfa.example.com",
+    ]);
+    assert_eq!(rig.restarts(), restarts, "{}", rig.manager_log());
+    assert!(answers(rig.port));
+}
+
+#[test]
+fn a_process_id_that_cannot_be_read_does_not_cancel_the_restart_and_is_said() {
+    let rig = Rig::new("n-no-pid");
+    rig.native_installed(&["--access", "local"]);
+    let (restarts, pid) = (rig.restarts(), rig.service_pid("marfa"));
+    fs::write(rig.home().join("pid-query-fails"), "").unwrap();
+    let proxy = [
+        "--access",
+        "proxy",
+        "--address",
+        "https://marfa.example.com",
+    ];
+    let (code, stdout, stderr) = rig.native(&proxy);
+    assert_eq!(code, 0, "{stdout}\n{stderr}");
+    assert_eq!(rig.restarts(), restarts + 1, "{}", rig.manager_log());
+    assert_ne!(rig.service_pid("marfa"), pid);
+    assert!(stderr.contains("process ID"), "{stderr}");
+    assert!(stderr.contains("answers on port"), "{stderr}");
+
+    rig.native_installed(&proxy);
+    assert_eq!(rig.restarts(), restarts + 1, "an applied run restarted it");
+}
+
+#[test]
+fn a_restart_that_leaves_the_same_process_running_is_reported() {
+    let rig = Rig::new("n-restart-ignored");
+    rig.native_installed(&["--access", "local"]);
+    fs::write(rig.home().join("restart-ignored"), "").unwrap();
+    let (code, _, stderr) = rig.native(&[
+        "--access",
+        "proxy",
+        "--address",
+        "https://marfa.example.com",
+    ]);
+    assert_eq!(code, 3, "{stderr}");
+    assert!(stderr.contains("did not restart"), "{stderr}");
 }
 
 #[test]
@@ -2007,10 +2342,10 @@ fn a_native_server_trusts_the_loopback_proxy_and_the_address_is_set_on_its_socke
         "https://marfa.example.com/",
     ]);
     assert_eq!(
-        rig.setting("TRUSTED_PROXY_CIDRS").as_deref(),
+        rig.setting("MARFA_TRUSTED_PROXY_CIDRS").as_deref(),
         Some("127.0.0.1/32,::1/128")
     );
-    assert_eq!(rig.setting("TRUSTED_PROXY_HEADER"), None);
+    assert_eq!(rig.setting("MARFA_TRUSTED_PROXY_HEADER"), None);
     assert_eq!(rig.address().as_deref(), Some("https://marfa.example.com"));
     let socket = format!("{}/data/control/marfa.sock", rig.real_dir().display());
     assert!(rig.control_log().contains(&socket) || rig.control_log().contains("config update"));
@@ -2021,9 +2356,9 @@ fn a_native_server_trusts_the_loopback_proxy_and_the_address_is_set_on_its_socke
         "--address",
         "https://marfa.example.com",
     ]);
-    assert_eq!(rig.setting("TRUSTED_PROXY_CIDRS"), None);
+    assert_eq!(rig.setting("MARFA_TRUSTED_PROXY_CIDRS"), None);
     assert_eq!(
-        rig.setting("TRUSTED_PROXY_HEADER").as_deref(),
+        rig.setting("MARFA_TRUSTED_PROXY_HEADER").as_deref(),
         Some("CF-Connecting-IP")
     );
     // The address was held already, so it is not written again.
@@ -2348,16 +2683,16 @@ fn run_starts_the_server_with_the_settings_of_its_folder() {
     let env = fs::read_to_string(rig.state.join("server-env")).unwrap();
     let dir = rig.real_dir();
     for line in [
-        format!("PORT={}", rig.port),
+        format!("MARFA_PORT={}", rig.port),
         "MARFA_LISTEN_HOST=127.0.0.1".to_string(),
-        format!("SQLITE_PATH={}/data/marfa.db", dir.display()),
-        format!("BLOB_PATH={}/data/blobs", dir.display()),
+        format!("MARFA_DATABASE_PATH={}/data/marfa.db", dir.display()),
+        format!("MARFA_BLOB_PATH={}/data/blobs", dir.display()),
         format!(
             "MARFA_CONTROL_SOCKET={}/data/control/marfa.sock",
             dir.display()
         ),
-        "TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128".to_string(),
-        format!("API_KEY_SALT={}", secrets(&rig)[0]),
+        "MARFA_TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128".to_string(),
+        format!("MARFA_KEY_SALT={}", secrets(&rig)[0]),
     ] {
         assert!(
             env.lines().any(|set| set == line),
@@ -2377,14 +2712,17 @@ fn run_takes_the_port_and_the_paths_from_the_folder_whatever_the_settings_file_s
     let rig = Rig::new("r-own");
     rig.native_installed(&["--access", "local"]);
     let mut text = rig.file("marfa.env");
-    text.push_str("PORT=9123\nMARFA_LISTEN_HOST=0.0.0.0\nSQLITE_PATH=/elsewhere/marfa.db\n");
+    text.push_str(
+        "MARFA_PORT=9123\nMARFA_LISTEN_HOST=0.0.0.0\nMARFA_DATABASE_PATH=/elsewhere/marfa.db\n",
+    );
     fs::write(rig.dir.join("marfa.env"), text).unwrap();
     let mut child = rig.run_server(&[]);
     ended(&mut child, 20).expect("run did not end");
     let env = fs::read_to_string(rig.state.join("server-env")).unwrap();
     let dir = rig.real_dir();
     assert!(
-        env.lines().any(|line| line == format!("PORT={}", rig.port)),
+        env.lines()
+            .any(|line| line == format!("MARFA_PORT={}", rig.port)),
         "{env}"
     );
     assert!(
@@ -2394,10 +2732,10 @@ fn run_takes_the_port_and_the_paths_from_the_folder_whatever_the_settings_file_s
     );
     assert!(
         env.lines()
-            .any(|line| line == format!("SQLITE_PATH={}/data/marfa.db", dir.display())),
+            .any(|line| line == format!("MARFA_DATABASE_PATH={}/data/marfa.db", dir.display())),
         "{env}"
     );
-    for name in ["PORT=", "MARFA_LISTEN_HOST=", "SQLITE_PATH="] {
+    for name in ["MARFA_PORT=", "MARFA_LISTEN_HOST=", "MARFA_DATABASE_PATH="] {
         assert_eq!(
             env.lines().filter(|line| line.starts_with(name)).count(),
             1,
@@ -2536,6 +2874,16 @@ fn a_server_that_refuses_its_database_is_not_started_again_and_run_waits_to_be_s
         child.try_wait().unwrap().is_none(),
         "run ended on a refusal, so a supervisor would start it into the same one"
     );
+    let said = rig.run_said();
+    for command in ["stop", "start"] {
+        assert!(
+            said.contains(&format!(
+                "`marfa server {command} --dir '{}'",
+                rig.real_dir().display()
+            )),
+            "{said}"
+        );
+    }
     signal(&child, "TERM");
     let status = ended(&mut child, 20).expect("run did not end after a stop");
     assert_eq!(status.code(), Some(0));
@@ -2630,12 +2978,12 @@ fn a_native_install_refuses_settings_that_move_what_the_folder_decides() {
     let rig = Rig::new("n-folder-settings");
     rig.native_installed(&["--access", "local"]);
     let mut text = rig.file("marfa.env");
-    text.push_str("SQLITE_PATH=/elsewhere/marfa.db\nPORT=9123\n");
+    text.push_str("MARFA_DATABASE_PATH=/elsewhere/marfa.db\nMARFA_PORT=9123\n");
     fs::write(rig.dir.join("marfa.env"), &text).unwrap();
     let (code, _, stderr) = rig.native(&["--access", "local"]);
     assert_eq!(code, 2, "{stderr}");
     assert!(
-        stderr.contains("SQLITE_PATH") && stderr.contains("PORT"),
+        stderr.contains("MARFA_DATABASE_PATH") && stderr.contains("MARFA_PORT"),
         "{stderr}"
     );
     assert_eq!(rig.file("marfa.env"), text, "the refusal changed the file");
@@ -2644,12 +2992,12 @@ fn a_native_install_refuses_settings_that_move_what_the_folder_decides() {
     fs::create_dir_all(&external.dir).unwrap();
     fs::write(
         external.dir.join("marfa.env"),
-        "API_KEY_SALT=a\nBETTER_AUTH_SECRET=b\nBLOB_PATH=/elsewhere/blobs\n",
+        "MARFA_KEY_SALT=a\nMARFA_AUTH_SECRET=b\nMARFA_BLOB_PATH=/elsewhere/blobs\n",
     )
     .unwrap();
     let (code, _, stderr) = external.native(&["--access", "local", "--external-settings"]);
     assert_eq!(code, 2, "{stderr}");
-    assert!(stderr.contains("BLOB_PATH"), "{stderr}");
+    assert!(stderr.contains("MARFA_BLOB_PATH"), "{stderr}");
 }
 
 #[test]
@@ -2680,7 +3028,7 @@ fn a_link_in_the_folder_is_never_followed_when_a_file_is_read_or_written() {
     let rig = Rig::new("n-link");
     rig.native_installed(&["--access", "local"]);
     let target = rig.root.join("elsewhere.env");
-    fs::write(&target, "API_KEY_SALT=a\nBETTER_AUTH_SECRET=b\n").unwrap();
+    fs::write(&target, "MARFA_KEY_SALT=a\nMARFA_AUTH_SECRET=b\n").unwrap();
     fs::remove_file(rig.dir.join("marfa.env")).unwrap();
     std::os::unix::fs::symlink(&target, rig.dir.join("marfa.env")).unwrap();
     let (code, _, stderr) = rig.native(&["--access", "local"]);
@@ -2688,7 +3036,7 @@ fn a_link_in_the_folder_is_never_followed_when_a_file_is_read_or_written() {
     assert!(stderr.contains("link"), "{stderr}");
     assert_eq!(
         fs::read_to_string(&target).unwrap(),
-        "API_KEY_SALT=a\nBETTER_AUTH_SECRET=b\n",
+        "MARFA_KEY_SALT=a\nMARFA_AUTH_SECRET=b\n",
         "a file behind a link was written"
     );
 }

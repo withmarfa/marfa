@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::extract::State;
-use axum::http::{StatusCode, Uri};
+use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::response::IntoResponse;
 
 use super::{Browser, Fields, problem_answer};
@@ -11,6 +11,7 @@ use crate::app::auth::Visit;
 use crate::app::instance;
 use crate::app::oauth::authorize::sign_in_then;
 use crate::app::oauth::device::{self, Answer as Answered, Blocked, Lookup};
+use crate::app::oauth::token::Form;
 use crate::app::refusal::{Code, Refusal};
 use crate::http::answer::{Answer, json_answer};
 use crate::http::auth::redirect;
@@ -49,9 +50,17 @@ fn blocked(lookup: Lookup, typed: &str) -> Answer {
     }
 }
 
-pub async fn code(State(app): State<Arc<App>>, visit: Visit, body: JsonBody) -> Answer {
-    let fields = Fields(body.form_pairs().await?);
-    let asked = device::request(&app, fields.get("client_id"), fields.get("scope"), &visit).await?;
+pub async fn code(
+    State(app): State<Arc<App>>,
+    visit: Visit,
+    headers: HeaderMap,
+    body: JsonBody,
+) -> Answer {
+    let form = Form {
+        pairs: body.form_pairs().await?,
+        authorization: headers.contains_key(header::AUTHORIZATION),
+    };
+    let asked = device::request(&app, &form, &visit).await?;
     match asked {
         Ok(answer) => Ok(json_answer(StatusCode::OK, &answer)),
         Err(problem) => problem_answer(&problem),

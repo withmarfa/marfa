@@ -1,6 +1,6 @@
 mod queue;
 
-use std::fs::File;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,16 +12,15 @@ use serde_json::json;
 
 use super::App;
 use super::access::Caller;
-use super::blobs::{Blob, Hash};
+use super::blobs::{Blob, CopyRecord, Hash, Opened};
 use super::catalog::{self, Snapshot};
 use super::housekeeping::{Report, Run};
 use super::items::write::{Enriched, Offer, Offered, Written, apply_enrichment, offer};
-use super::refusal::{Refusal, Result};
+use super::refusal::{Code, Refusal, Result};
 use crate::settings::registry::{
     ENRICHMENT_BATCH_SIZE, ENRICHMENT_ENABLED, ENRICHMENT_ITEM_TIMEOUT_MS, ENRICHMENT_MAX_ATTEMPTS,
     ENRICHMENT_MAX_BLOB_BYTES, ENRICHMENT_MAX_INFLATED_BYTES, ENRICHMENT_MAX_MEMORY_BYTES,
-    ENRICHMENT_MAX_TEXT_CHARS, ENRICHMENT_OCR_ENABLED, ENRICHMENT_TESSDATA_DIR,
-    Snapshot as Settings,
+    ENRICHMENT_MAX_TEXT_CHARS, ENRICHMENT_OCR_ENABLED, Snapshot as Settings,
 };
 use queue::{Cap, Signatures, Why};
 
@@ -40,10 +39,15 @@ struct Plan {
 }
 
 impl Plan {
-    fn of(live: &Settings) -> Plan {
+    fn of(app: &App) -> Plan {
+        Plan::with(
+            &app.settings.live(),
+            app.settings.start.enrichment_tessdata_dir.clone(),
+        )
+    }
+
+    fn with(live: &Settings, data_dir: Option<PathBuf>) -> Plan {
         let ocr = live.get(ENRICHMENT_OCR_ENABLED);
-        let folder = live.get(ENRICHMENT_TESSDATA_DIR);
-        let data_dir = (!folder.is_empty()).then(|| PathBuf::from(&folder));
         let max_blob_bytes = live.get(ENRICHMENT_MAX_BLOB_BYTES);
         let max_inflated = live.get(ENRICHMENT_MAX_INFLATED_BYTES);
         let max_memory = live.get(ENRICHMENT_MAX_MEMORY_BYTES);
@@ -60,6 +64,9 @@ impl Plan {
             time_budget: None,
         };
         let languages = DEFAULT_OCR_LANGUAGES;
+        let folder = data_dir
+            .map(|folder| folder.display().to_string())
+            .unwrap_or_default();
         Plan {
             options,
             ocr,
@@ -90,8 +97,10 @@ enum Fate {
     Skip(Why),
     /// Tried and failed: offered again until its attempts run out.
     Retry,
-    /// No reader could start. The file was not tried.
+    /// No reader could start or confine itself. The file was not tried.
     Untried,
+    /// The store did not give the bytes. The file was not tried.
+    Unreached,
 }
 
 /// How a run counts a file that wrote nothing.
@@ -106,7 +115,7 @@ enum Count {
 impl Fate {
     fn count(self) -> Count {
         match self {
-            Fate::Read | Fate::Untried => Count::None,
+            Fate::Read | Fate::Untried | Fate::Unreached => Count::None,
             Fate::Skip(_) => Count::Skipped,
             Fate::Retry => Count::Failed,
         }
@@ -252,6 +261,22 @@ async fn begin(app: &Arc<App>, seq: i64, hash: &Hash) -> Result<Begun> {
     .await
 }
 
+fn record(
+    tx: &rusqlite::Transaction<'_>,
+    fate: Fate,
+    seq: i64,
+    hash: &Hash,
+    signatures: &Signatures,
+    at: &str,
+) -> Result<()> {
+    match fate {
+        Fate::Read => queue::read(tx, seq, hash.as_str(), at),
+        Fate::Skip(why) => queue::skip(tx, seq, hash.as_str(), why, signatures.of(why), at),
+        Fate::Retry => queue::defer(tx, seq, hash.as_str(), at),
+        Fate::Untried | Fate::Unreached => queue::refund(tx, seq, hash.as_str(), at),
+    }
+}
+
 /// Recheck the item and settle the attempt in the same transaction.
 async fn store(
     app: &Arc<App>,
@@ -282,14 +307,7 @@ async fn store(
         if written == Written::Changed {
             return Ok(Count::None);
         }
-        match fate {
-            Fate::Read => queue::read(tx, seq, hash.as_str(), &unit.at)?,
-            Fate::Skip(why) => {
-                queue::skip(tx, seq, hash.as_str(), why, signatures.of(why), &unit.at)?;
-            }
-            Fate::Retry => queue::failed(tx, seq, hash.as_str(), &unit.at)?,
-            Fate::Untried => queue::refund(tx, seq, hash.as_str())?,
-        }
+        record(tx, fate, seq, &hash, &signatures, &unit.at)?;
         Ok(if written == Written::Landed {
             Count::Extracted
         } else {
@@ -303,63 +321,158 @@ async fn store(
 async fn settle(app: &Arc<App>, plan: &Plan, seq: i64, hash: &Hash, fate: Fate) -> Result<Count> {
     let (hash, signatures) = (hash.clone(), plan.signatures.clone());
     app.write(&Caller::Server, ACTION, move |unit| {
-        let tx = unit.tx();
-        match fate {
-            Fate::Read => queue::read(tx, seq, hash.as_str(), &unit.at)?,
-            Fate::Skip(why) => {
-                queue::skip(tx, seq, hash.as_str(), why, signatures.of(why), &unit.at)?;
-            }
-            Fate::Retry => queue::failed(tx, seq, hash.as_str(), &unit.at)?,
-            Fate::Untried => queue::refund(tx, seq, hash.as_str())?,
-        }
+        record(unit.tx(), fate, seq, &hash, &signatures, &unit.at)?;
         Ok(fate.count())
     })
     .await
 }
 
+/// Failed opens in a row after which an object store counts as down for the rest of a run.
+const STORE_MISSES: u32 = 2;
+
+/// What a run learned about the object stores. A remote store is asked no more once it is down;
+/// a disk that cannot open one file may open the next.
+#[derive(Default)]
+struct Outage {
+    down: HashSet<String>,
+    /// Failed opens in a row for each remote store, which any file it serves ends.
+    misses: HashMap<String, u32>,
+    /// Files that failed alone, put behind every other file when the run ends.
+    stranded: Vec<(i64, Hash)>,
+}
+
+impl Outage {
+    async fn live_copies(app: &Arc<App>, hash: &Hash) -> Vec<CopyRecord> {
+        let copies = app.blob_copies(&Caller::Server, hash).await;
+        let mut live = copies.unwrap_or_default();
+        live.retain(|copy| !copy.detached);
+        live
+    }
+
+    /// Whether every copy of the file is in a store that is down.
+    async fn holds(&self, app: &Arc<App>, hash: &Hash) -> bool {
+        if self.down.is_empty() {
+            return false;
+        }
+        let live = Self::live_copies(app, hash).await;
+        !live.is_empty() && live.iter().all(|copy| self.down.contains(&copy.store_id))
+    }
+
+    /// A file served by its only store shows that the store answers.
+    async fn opened(&mut self, app: &Arc<App>, hash: &Hash) {
+        if self.misses.is_empty() {
+            return;
+        }
+        if let [only] = Self::live_copies(app, hash).await.as_slice() {
+            self.misses.remove(&only.store_id);
+        }
+    }
+
+    /// A store counts as down when it fails to open files one after another; one file that will
+    /// not open, or a shortage of room here, says nothing of the stores.
+    async fn failed(&mut self, app: &Arc<App>, seq: i64, hash: &Hash, refusal: &Refusal) {
+        self.stranded.push((seq, hash.clone()));
+        if refusal.code != Code::BlobStoreUnavailable {
+            return;
+        }
+        for copy in Self::live_copies(app, hash).await {
+            if copy.kind == "disk" {
+                continue;
+            }
+            let misses = self.misses.entry(copy.store_id.clone()).or_default();
+            *misses += 1;
+            if *misses >= STORE_MISSES {
+                self.down.insert(copy.store_id);
+            }
+        }
+    }
+
+    /// Hands the files that failed alone to the back of the line, behind the files deferred this run.
+    async fn put_behind(&mut self, app: &Arc<App>) -> Result<()> {
+        let stranded = std::mem::take(&mut self.stranded);
+        if stranded.is_empty() {
+            return Ok(());
+        }
+        app.write(&Caller::Server, ACTION, move |unit| {
+            for (seq, hash) in &stranded {
+                queue::behind(unit.tx(), *seq, hash.as_str(), &unit.at)?;
+            }
+            Ok(())
+        })
+        .await
+    }
+}
+
+/// What one file came to.
+enum Step {
+    Counted(Count),
+    /// Not tried or not readable now, and handed back with its attempt: the sweep gains nothing.
+    Refunded,
+}
+
 /// The reading itself, on a thread of its own: the file is read in a process of its own too.
 async fn read_blocking(
-    file: File,
+    file: Opened,
     mime: String,
     options: Options,
 ) -> Result<std::result::Result<Reading, Unread>> {
-    tokio::task::spawn_blocking(move || marfa_enrichment::read(&file, &mime, &options))
-        .await
-        .map_err(blocked)
+    tokio::task::spawn_blocking(move || {
+        let read = marfa_enrichment::read(file.file(), &mime, &options);
+        file.close();
+        read
+    })
+    .await
+    .map_err(blocked)
 }
 
-/// One file. An `Err` is a fault of the server's own, and ends the run.
-async fn one(app: &Arc<App>, plan: &Plan, seq: i64, stored: &str) -> Result<Count> {
+/// What one file came to. An `Err` is the server's own fault and ends the run.
+async fn one(
+    app: &Arc<App>,
+    plan: &Plan,
+    outage: &mut Outage,
+    seq: i64,
+    stored: &str,
+) -> Result<Step> {
+    let counted = |count: Result<Count>| count.map(Step::Counted);
     let Ok(hash) = Hash::parse(stored) else {
         let hash = stored.to_string();
         app.write(&Caller::Server, ACTION, move |unit| {
             queue::drop_row(unit.tx(), seq, &hash).map(|()| Count::None)
         })
         .await?;
-        return Ok(Count::None);
+        return Ok(Step::Counted(Count::None));
     };
+    if outage.holds(app, &hash).await {
+        let held = hash.clone();
+        app.write(&Caller::Server, ACTION, move |unit| {
+            queue::defer(unit.tx(), seq, held.as_str(), &unit.at)
+        })
+        .await?;
+        return Ok(Step::Refunded);
+    }
     let Begun::Reading(offered) = begin(app, seq, &hash).await? else {
-        return Ok(Count::None);
+        return Ok(Step::Counted(Count::None));
     };
-    let held = app.open_held(&hash).await;
-    let (file, blob): (File, Blob) = match held {
+    let (file, blob): (Opened, Blob) = match app.open_held(&hash).await {
         Ok(Some(found)) => found,
-        Ok(None) => return settle(app, plan, seq, &hash, Fate::Untried).await,
-        Err(_) => return settle(app, plan, seq, &hash, Fate::Retry).await,
+        Ok(None) => {
+            let fate = Fate::Skip(Why::Missing);
+            return counted(settle(app, plan, seq, &hash, fate).await);
+        }
+        Err(refusal) => {
+            outage.failed(app, seq, &hash, &refusal).await;
+            settle(app, plan, seq, &hash, Fate::Unreached).await?;
+            return Ok(Step::Refunded);
+        }
     };
+    outage.opened(app, &hash).await;
     let mime = offered
         .mime_type
         .clone()
         .unwrap_or_else(|| blob.mime_type.clone());
     if marfa_enrichment::loads_whole_file(&mime) && blob.size_bytes > plan.max_blob_bytes {
-        return settle(
-            app,
-            plan,
-            seq,
-            &hash,
-            Fate::Skip(Why::OverLimit(Cap::Blob(plan.max_blob_bytes))),
-        )
-        .await;
+        let fate = Fate::Skip(Why::OverLimit(Cap::Blob(plan.max_blob_bytes)));
+        return counted(settle(app, plan, seq, &hash, fate).await);
     }
     let read = read_blocking(file, mime.clone(), plan.options.clone()).await?;
     if let Err(Unread::ReaderUnavailable(reason)) = &read {
@@ -369,7 +482,13 @@ async fn one(app: &Arc<App>, plan: &Plan, seq: i64, stored: &str) -> Result<Coun
         )));
     }
     let judged = judge(read, &mime, plan);
-    store(app, plan, seq, &hash, offered.id, judged).await
+    let refunded = matches!(judged.fate, Fate::Untried | Fate::Unreached);
+    let count = store(app, plan, seq, &hash, offered.id, judged).await?;
+    Ok(if refunded {
+        Step::Refunded
+    } else {
+        Step::Counted(count)
+    })
 }
 
 pub async fn sweep(app: Arc<App>, run: Run) -> Result<Report> {
@@ -378,16 +497,22 @@ pub async fn sweep(app: Arc<App>, run: Run) -> Result<Report> {
     if !live.get(ENRICHMENT_ENABLED) {
         return Ok(Report::done(tally.result()));
     }
-    let plan = Plan::of(&live);
+    let plan = Plan::of(&app);
     let (files, more) = pick(&app, &plan).await?;
-    let mut again = more;
+    let (mut outage, mut progressed) = (Outage::default(), false);
+    let mut again = false;
     for (seq, hash) in files {
         if !run.go_on().await || !app.settings.live().get(ENRICHMENT_ENABLED) {
             again = true;
             break;
         }
-        tally.add(one(&app, &plan, seq, &hash).await?);
+        if let Step::Counted(count) = one(&app, &plan, &mut outage, seq, &hash).await? {
+            tally.add(count);
+            progressed = true;
+        }
+        again = more && progressed;
     }
+    outage.put_behind(&app).await?;
     Ok(Report {
         result: tally.result(),
         again,
@@ -410,8 +535,8 @@ mod tests {
         let blobs = dir.path().join("blobs");
         let socket = dir.path().join("s.sock");
         let pairs = [
-            ("SQLITE_PATH", database.to_str().unwrap()),
-            ("BLOB_PATH", blobs.to_str().unwrap()),
+            ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
+            ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
             ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
             ("MARFA_TEST_HOOKS", "true"),
             ("MARFA_ENRICHMENT_ENABLED", "true"),
@@ -420,7 +545,7 @@ mod tests {
         (dir, App::start(settings).await.unwrap())
     }
 
-    async fn upload(app: &App, bytes: &[u8]) -> String {
+    async fn upload(app: &Arc<App>, bytes: &[u8]) -> String {
         let caller = Caller::local();
         let mut intake = app
             .begin_upload(Some(bytes.len() as u64), "text/plain".into())
@@ -438,7 +563,7 @@ mod tests {
         }
     }
 
-    async fn file(app: &App, bytes: &[u8]) -> (String, Hash) {
+    async fn file(app: &Arc<App>, bytes: &[u8]) -> (String, Hash) {
         let hash = upload(app, bytes).await;
         let put = Put {
             type_id: "core.file".into(),
@@ -472,7 +597,7 @@ mod tests {
     #[tokio::test]
     async fn bytes_that_changed_while_they_were_read_write_nothing() {
         let (_dir, app) = started().await;
-        let plan = Plan::of(&app.settings.live());
+        let plan = Plan::of(&app);
         let (id, hash) = file(&app, b"first bytes").await;
         let (files, _) = pick(&app, &plan).await.unwrap();
         let (seq, _) = files[0].clone();
@@ -511,7 +636,7 @@ mod tests {
     #[tokio::test]
     async fn a_value_the_client_wrote_while_the_file_was_read_is_kept() {
         let (_dir, app) = started().await;
-        let plan = Plan::of(&app.settings.live());
+        let plan = Plan::of(&app);
         let (id, hash) = file(&app, b"the file's own words").await;
         let (files, _) = pick(&app, &plan).await.unwrap();
         let (seq, _) = files[0].clone();
@@ -552,7 +677,7 @@ mod tests {
     #[tokio::test]
     async fn bytes_named_by_another_property_are_not_the_files_bytes() {
         let (_dir, app) = started().await;
-        let plan = Plan::of(&app.settings.live());
+        let plan = Plan::of(&app);
         let named = upload(&app, b"bytes a description names").await;
         let (id, own) = file(&app, b"the file's own bytes").await;
         let update = Update {
@@ -584,7 +709,7 @@ mod tests {
     #[tokio::test]
     async fn a_file_in_the_bin_is_not_written_and_waits() {
         let (_dir, app) = started().await;
-        let plan = Plan::of(&app.settings.live());
+        let plan = Plan::of(&app);
         let (id, hash) = file(&app, b"binned bytes").await;
         let (files, _) = pick(&app, &plan).await.unwrap();
         let (seq, _) = files[0].clone();
@@ -619,7 +744,7 @@ mod tests {
     #[tokio::test]
     async fn an_attempt_is_counted_before_the_file_is_read() {
         let (_dir, app) = started().await;
-        let plan = Plan::of(&app.settings.live());
+        let plan = Plan::of(&app);
         let (_, hash) = file(&app, b"a file that stops the server").await;
         for _ in 0..plan.max_attempts {
             let (files, _) = pick(&app, &plan).await.unwrap();
@@ -631,7 +756,7 @@ mod tests {
 
     async fn waiting_after(cap: Cap, change: impl Fn(&mut Signatures)) -> usize {
         let (_dir, app) = started().await;
-        let plan = Plan::of(&app.settings.live());
+        let plan = Plan::of(&app);
         let (_, hash) = file(&app, b"a file past a limit").await;
         let (files, _) = pick(&app, &plan).await.unwrap();
         settle(
@@ -644,14 +769,14 @@ mod tests {
         .await
         .unwrap();
         assert!(pick(&app, &plan).await.unwrap().0.is_empty());
-        let mut other = Plan::of(&app.settings.live());
+        let mut other = Plan::of(&app);
         change(&mut other.signatures);
         pick(&app, &other).await.unwrap().0.len()
     }
 
     #[tokio::test]
     async fn a_skip_comes_back_only_when_the_limit_that_stopped_it_is_raised() {
-        let now = Plan::of(&started().await.1.settings.live()).signatures;
+        let now = Plan::of(&started().await.1).signatures;
         let caps = [
             Cap::Blob(now.blob),
             Cap::Inflated(now.inflated),
@@ -696,13 +821,13 @@ mod tests {
     #[tokio::test]
     async fn an_encrypted_file_is_left_whatever_the_settings() {
         let (_dir, app) = started().await;
-        let plan = Plan::of(&app.settings.live());
+        let plan = Plan::of(&app);
         let (_, hash) = file(&app, b"locked").await;
         let (files, _) = pick(&app, &plan).await.unwrap();
         settle(&app, &plan, files[0].0, &hash, Fate::Skip(Why::Encrypted))
             .await
             .unwrap();
-        let mut changed = Plan::of(&app.settings.live());
+        let mut changed = Plan::of(&app);
         changed.signatures.native.push('+');
         changed.signatures.blob += 1;
         changed.signatures.inflated += 1;
@@ -719,16 +844,14 @@ mod tests {
             dimensions: None,
             duration: None,
             text_refused: None,
-            sandbox: marfa_enrichment::Sandbox::Full,
         }
     }
 
     fn plan_with(ocr: bool) -> Plan {
-        let mut plan = Plan::of(&crate::settings::registry::Snapshot::resolve(
-            &Default::default(),
-            &[],
-            0,
-        ));
+        let mut plan = Plan::with(
+            &crate::settings::registry::Snapshot::resolve(&Default::default(), &[], 0),
+            None,
+        );
         plan.ocr = ocr;
         plan
     }

@@ -3,7 +3,6 @@
 use serde_json::{Map, Value};
 
 use crate::catalog::Indexing;
-use crate::js;
 
 // FTS5 wraps each match in private-use characters; the excerpt is escaped whole before they become `<mark>`. A row's own text can hold them too, so each opens only a closed mark and closes only an open one.
 pub const MARK_OPEN: char = '\u{E000}';
@@ -43,13 +42,13 @@ pub fn snippet_html(excerpt: &str) -> String {
 
 /// A query wholly inside double quotes is one phrase; otherwise each whitespace-separated word is quoted, so nothing a person types is FTS5 syntax, and the last word also matches as a prefix.
 pub fn fts_expression(query: &str) -> Option<String> {
-    let query = query.trim_matches(js::is_space);
+    let query = query.trim();
     if query.chars().count() > 2 && query.starts_with('"') && query.ends_with('"') {
         let inner = &query[1..query.len() - 1];
         return Some(format!("\"{}\"", inner.replace('"', "\"\"")));
     }
     let words: Vec<&str> = query
-        .split(js::is_space)
+        .split(char::is_whitespace)
         .filter(|word| !word.is_empty())
         .collect();
     let last = words.len().checked_sub(1)?;
@@ -130,7 +129,7 @@ mod tests {
         for query in [
             " \"quiet landscape\" ",
             "\t\"quiet land\"\n",
-            "\u{feff}\"quiet landscape\"\u{feff}",
+            "\u{85}\"quiet landscape\"\u{2003}",
         ] {
             let expected = if query.contains("land\"") {
                 "\"quiet land\""

@@ -311,7 +311,6 @@ export interface BlobStoreRow {
   id: string;
   kind: "disk" | "s3";
   locator: string;
-  policy: string;
   attached_at: string;
   detached_at: string | null;
 }
@@ -319,7 +318,6 @@ export interface BlobStoreRow {
 export interface BlobCopyRow {
   store_id: string;
   kind: "disk" | "s3";
-  policy: string;
   detached: boolean;
   recorded_at: string;
   verified_at: string | null;
@@ -689,6 +687,11 @@ export interface BulkActionResponse {
   remaining_hidden?: boolean;
   settings?: TypeSetting[];
   settings_rewritten?: boolean;
+  settings_error?: {
+    code: string;
+    message: string;
+    details?: Record<string, unknown>;
+  };
 }
 
 /** A folder, view or webhook setting that names a type. */

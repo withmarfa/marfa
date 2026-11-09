@@ -79,7 +79,7 @@ mod tests {
     use super::*;
 
     fn hash() -> Hash {
-        Hash::parse(&"a".repeat(64)).unwrap()
+        Hash::parse(&format!("sha256:{}", "a".repeat(64))).unwrap()
     }
 
     fn secret(name: &str) -> String {
@@ -92,7 +92,11 @@ mod tests {
         let signature = signer.sign(&hash(), 1_000).unwrap();
         assert!(signer.verifies(&hash(), 1_000, &signature));
         assert!(!signer.verifies(&hash(), 1_001, &signature));
-        assert!(!signer.verifies(&Hash::parse(&"b".repeat(64)).unwrap(), 1_000, &signature));
+        assert!(!signer.verifies(
+            &Hash::parse(&format!("sha256:{}", "b".repeat(64))).unwrap(),
+            1_000,
+            &signature
+        ));
         let mut altered = signature.clone();
         altered.replace_range(0..1, if signature.starts_with('0') { "1" } else { "0" });
         assert!(!signer.verifies(&hash(), 1_000, &altered));

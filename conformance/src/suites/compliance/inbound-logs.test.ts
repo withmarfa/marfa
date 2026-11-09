@@ -28,7 +28,7 @@ let server: FreshServer;
 
 beforeAll(async () => {
   server = await bootFreshServer("inbound-logs", {
-    RATE_LIMIT_ENABLED: "false",
+    MARFA_RATE_LIMIT_ENABLED: "false",
     MARFA_INBOUND_MAX_BYTES: String(MAX_BYTES),
     MARFA_INBOUND_BACKLOG_DELIVERIES: "2",
   });

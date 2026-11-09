@@ -60,7 +60,7 @@ jobs:
 
       - name: Build the Rust server
         working-directory: core
-        run: cargo build --locked --release -p marfa-server
+        run: cargo build --locked --release -p marfa-server --features test-hooks
 
       - name: Verify local server keys survive a restart
         run: core/scripts/server-keys.test.sh
@@ -77,16 +77,8 @@ jobs:
           # Assigned first: `eval "$(…)"` of a failed boot's empty output succeeds.
           server_env="$(scripts/server-up.sh)"
           eval "${server_env}"
-          # Restore the folder tests when the server serves their doors.
-          echo "Not run: the folder tests, which need the server's folder doors"
-          cargo nextest list --locked --workspace --run-ignored only \
-            -E 'binary(live_folders)' --message-format oneline
-          (cd bindings/swift && cargo nextest list --locked --run-ignored only \
-            -E 'test(/^folders::/)' --message-format oneline)
-          cargo nextest run --locked --workspace --run-ignored only \
-            -E 'not binary(live_folders)'
-          (cd bindings/swift && cargo nextest run --locked --run-ignored only \
-            -E 'not test(/^folders::/)')
+          cargo nextest run --locked --workspace --run-ignored only
+          (cd bindings/swift && cargo nextest run --locked --run-ignored only)
 
       # marfa-swift builds the framework itself, at the commit it pins. The
       # systems come from `build.sh`, as `check-targets.sh` reads them, so the

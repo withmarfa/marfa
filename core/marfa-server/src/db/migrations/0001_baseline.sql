@@ -244,6 +244,7 @@ CREATE TABLE IF NOT EXISTS event_log (
 CREATE TABLE IF NOT EXISTS housekeeping_jobs (
     name TEXT PRIMARY KEY,
     next_run_at TEXT NOT NULL,
+    wake_requested INTEGER NOT NULL DEFAULT 0 CHECK (wake_requested IN (0, 1)),
     running_since TEXT,
     last_started_at TEXT,
     last_finished_at TEXT,
@@ -251,6 +252,51 @@ CREATE TABLE IF NOT EXISTS housekeeping_jobs (
     last_error TEXT,
     last_result TEXT
 ) STRICT, WITHOUT ROWID;
+
+-- A bulk action or type move. `processed` is the checkpoint: it commits with the chunk it counts.
+CREATE TABLE IF NOT EXISTS bulk_jobs (
+    id TEXT PRIMARY KEY NOT NULL,
+    action TEXT NOT NULL,
+    input TEXT NOT NULL CHECK (json_valid(input)),
+    key_id TEXT,
+    grant_id TEXT,
+    status TEXT NOT NULL
+        CHECK (status IN ('queued', 'in_progress', 'completed', 'failed', 'canceled')),
+    matched INTEGER NOT NULL,
+    processed INTEGER NOT NULL DEFAULT 0,
+    succeeded INTEGER NOT NULL DEFAULT 0,
+    errored INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    error TEXT,
+    result TEXT CHECK (result IS NULL OR json_valid(result)),
+    CHECK ((key_id IS NULL) <> (grant_id IS NULL))
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS bulk_jobs_open ON bulk_jobs (status)
+    WHERE status IN ('queued', 'in_progress');
+CREATE INDEX IF NOT EXISTS bulk_jobs_finished ON bulk_jobs (finished_at)
+    WHERE finished_at IS NOT NULL;
+
+-- The items a job matched when it was queued, in the order it takes them, each with the
+-- version and state it was matched at: a job writes an item only as it was then.
+CREATE TABLE IF NOT EXISTS bulk_job_items (
+    job_id TEXT NOT NULL REFERENCES bulk_jobs (id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    item_id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    PRIMARY KEY (job_id, position)
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS bulk_job_notes (
+    job_id TEXT NOT NULL REFERENCES bulk_jobs (id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('changed', 'error', 'carried', 'blob')),
+    name TEXT NOT NULL,
+    body TEXT CHECK (body IS NULL OR json_valid(body)),
+    UNIQUE (job_id, kind, name)
+) STRICT;
 
 -- The text a search reads, by `items.seq`. A row in the bin holds no row here.
 CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
@@ -411,6 +457,72 @@ CREATE TABLE IF NOT EXISTS auth_oauth_consent (
     PRIMARY KEY (client_id, user_id)
 ) STRICT, WITHOUT ROWID;
 
+-- starts_after excludes events committed before registration.
+CREATE TABLE IF NOT EXISTS webhooks (
+    id TEXT PRIMARY KEY NOT NULL,
+    url TEXT NOT NULL,
+    events TEXT NOT NULL CHECK (json_valid(events)),
+    type_filter TEXT,
+    secret TEXT NOT NULL,
+    active INTEGER NOT NULL CHECK (active IN (0, 1)),
+    key_id TEXT REFERENCES api_keys (id) ON DELETE CASCADE,
+    grant_id TEXT REFERENCES auth_oauth_consent (grant_id) ON DELETE CASCADE,
+    starts_after INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK ((key_id IS NULL) <> (grant_id IS NULL))
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS webhooks_key ON webhooks (key_id) WHERE key_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS webhooks_grant ON webhooks (grant_id) WHERE grant_id IS NOT NULL;
+
+-- Moves whenever its maker makes or deletes a webhook, so a confirmation can
+-- tell the maker's webhooks changed and no one else's can move it.
+CREATE TABLE IF NOT EXISTS webhook_turns (
+    key_id TEXT REFERENCES api_keys (id) ON DELETE CASCADE,
+    grant_id TEXT REFERENCES auth_oauth_consent (grant_id) ON DELETE CASCADE,
+    turns INTEGER NOT NULL,
+    CHECK ((key_id IS NULL) <> (grant_id IS NULL))
+) STRICT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS webhook_turns_key ON webhook_turns (key_id) WHERE key_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS webhook_turns_grant ON webhook_turns (grant_id) WHERE grant_id IS NOT NULL;
+
+-- Payloads outlive log expiry; cycle_attempt restarts on redelivery.
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    seq INTEGER PRIMARY KEY,
+    id TEXT NOT NULL UNIQUE,
+    webhook_id TEXT NOT NULL REFERENCES webhooks (id) ON DELETE CASCADE,
+    event_id INTEGER NOT NULL,
+    event_type TEXT NOT NULL,
+    type TEXT NOT NULL,
+    source TEXT NOT NULL,
+    payload TEXT,
+    status TEXT NOT NULL CHECK (status IN ('pending', 'success', 'dead_letter', 'canceled')),
+    status_code INTEGER,
+    attempt INTEGER NOT NULL DEFAULT 0,
+    cycle_attempt INTEGER NOT NULL DEFAULT 0,
+    error TEXT,
+    due_at INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (webhook_id, event_id),
+    CHECK (payload IS NOT NULL OR status IN ('success', 'canceled'))
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS webhook_deliveries_due
+    ON webhook_deliveries (due_at, seq) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS webhook_deliveries_newest ON webhook_deliveries (webhook_id, seq);
+CREATE INDEX IF NOT EXISTS webhook_deliveries_settled
+    ON webhook_deliveries (created_at) WHERE status <> 'pending';
+
+-- A missing position is a scheduling fault.
+CREATE TABLE IF NOT EXISTS webhook_position (
+    id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
+    event_id INTEGER NOT NULL
+) STRICT;
+INSERT OR IGNORE INTO webhook_position (id, event_id) VALUES (1, 0);
+
 -- The redirect URIs a person approved. Only an approval adds a row, so a later
 -- change to the client's own list reaches nothing here. `page_origin` is what
 -- the URI allowed as a web page's origin when it was approved.
@@ -544,16 +656,28 @@ CREATE TABLE IF NOT EXISTS stores (
     detached_at TEXT
 ) STRICT, WITHOUT ROWID;
 
--- A store holds the bytes of a blob only while a row here says so.
+-- A store holds the bytes of a blob only while a row here says so. `object`
+-- names an object store's copy under its prefix, as the hash's hex and a name
+-- of its own write, so no other write or deletion ever names it; it is empty
+-- for a disk copy, whose file the hash names.
 CREATE TABLE IF NOT EXISTS blob_copies (
     hash TEXT NOT NULL REFERENCES blobs (hash) ON DELETE CASCADE,
     store_id TEXT NOT NULL REFERENCES stores (id),
+    object TEXT NOT NULL DEFAULT '',
     recorded_at TEXT NOT NULL,
     verified_at TEXT,
     PRIMARY KEY (hash, store_id)
 ) STRICT, WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS blob_copies_store ON blob_copies (store_id, verified_at);
+
+-- Failure counts keep one uncopyable blob from monopolizing replication.
+CREATE TABLE IF NOT EXISTS blob_copy_failures (
+    hash TEXT NOT NULL REFERENCES blobs (hash) ON DELETE CASCADE,
+    store_id TEXT NOT NULL REFERENCES stores (id),
+    failures INTEGER NOT NULL CHECK (failures > 0),
+    PRIMARY KEY (hash, store_id)
+) STRICT, WITHOUT ROWID;
 
 -- Who uploaded a blob: an API key's id, or the grant id of an app's tokens.
 CREATE TABLE IF NOT EXISTS blob_proofs (
@@ -601,23 +725,44 @@ CREATE TABLE IF NOT EXISTS blob_orphans (
     reported_at TEXT NOT NULL
 ) STRICT, WITHOUT ROWID;
 
--- Bytes a store still holds for a copy that left the copy record.
+-- Bytes a store may hold that no copy records: a copy that left the copy
+-- record, or an object a write was sent to before it was recorded. `object` is
+-- as in `blob_copies`.
 CREATE TABLE IF NOT EXISTS blob_pending_deletions (
     hash TEXT NOT NULL,
     store_id TEXT NOT NULL REFERENCES stores (id),
+    object TEXT NOT NULL DEFAULT '',
     queued_at TEXT NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 0,
     last_error TEXT,
-    PRIMARY KEY (hash, store_id)
+    PRIMARY KEY (hash, store_id, object)
 ) STRICT, WITHOUT ROWID;
 
--- The digest omits the `sha256:` prefix used by `blobs.hash`.
 CREATE TABLE IF NOT EXISTS owner_picture (
     id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
-    sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
+    hash TEXT NOT NULL CHECK (length(hash) = 71),
     mime_type TEXT NOT NULL CHECK (mime_type IN ('image/png', 'image/jpeg', 'image/webp')),
     updated_at TEXT NOT NULL
 ) STRICT;
+
+-- Physical backups keep reports; portable archives exclude them.
+CREATE TABLE IF NOT EXISTS folder_status (
+    folder_id TEXT NOT NULL REFERENCES items (id) ON DELETE CASCADE,
+    sign_in_kind TEXT NOT NULL CHECK (sign_in_kind IN ('app', 'key')),
+    sign_in_id TEXT NOT NULL,
+    sign_in_name TEXT NOT NULL,
+    folder_store_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL CHECK (sequence >= 1),
+    received_at TEXT NOT NULL,
+    last_success_at TEXT,
+    pending_uploads INTEGER NOT NULL CHECK (pending_uploads >= 0),
+    pending_downloads INTEGER NOT NULL CHECK (pending_downloads >= 0),
+    paused_removals INTEGER NOT NULL CHECK (paused_removals >= 0),
+    first_sync_waiting INTEGER NOT NULL CHECK (first_sync_waiting IN (0, 1)),
+    problems TEXT NOT NULL CHECK (json_valid(problems)),
+    PRIMARY KEY (folder_id, sign_in_kind, sign_in_id, folder_store_id)
+) STRICT, WITHOUT ROWID;
+
 
 -- A registration belongs to one key and outlives it; state, problems and agreements belong to the source.
 CREATE TABLE IF NOT EXISTS connectors (
@@ -723,7 +868,7 @@ CREATE TABLE IF NOT EXISTS enrichment_files (
     hash TEXT NOT NULL,
     state TEXT NOT NULL DEFAULT 'waiting' CHECK (state IN ('waiting', 'read', 'skipped')),
     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
-    reason TEXT CHECK (reason IN ('unsupported', 'encrypted', 'over_limit', 'ocr')),
+    reason TEXT CHECK (reason IN ('unsupported', 'encrypted', 'over_limit', 'ocr', 'missing')),
     signature TEXT NOT NULL DEFAULT '',
     -- The limit that stopped an over-limit file, and what it was then.
     capped_by TEXT CHECK (capped_by IN ('blob', 'inflated', 'memory', 'fixed')),
@@ -754,11 +899,13 @@ BEGIN
 END;
 
 -- An existing reference alone does not queue changed file properties. A skipped file keeps its
--- refusal and is read once more.
+-- refusal and is read once more. The type of file picks the reader, so a changed one counts, and
+-- a waiting file that failed under the old type gets its attempts back.
 CREATE TRIGGER IF NOT EXISTS enrichment_files_changed AFTER UPDATE OF type, properties ON items
 WHEN NEW.properties ->> '$.blob_ref' IS NOT NULL AND (
     NEW.type IS NOT OLD.type
     OR NEW.properties ->> '$.blob_ref' IS NOT OLD.properties ->> '$.blob_ref'
+    OR NEW.properties ->> '$.mime_type' IS NOT OLD.properties ->> '$.mime_type'
     OR (NEW.properties ->> '$.extracted_text' IS NULL AND OLD.properties ->> '$.extracted_text' IS NOT NULL)
     OR (NEW.properties ->> '$.width' IS NULL AND OLD.properties ->> '$.width' IS NOT NULL)
     OR (NEW.properties ->> '$.height' IS NULL AND OLD.properties ->> '$.height' IS NOT NULL)
@@ -773,7 +920,41 @@ BEGIN
         signature = CASE enrichment_files.state WHEN 'read' THEN '' ELSE enrichment_files.signature END,
         refill = CASE enrichment_files.state WHEN 'skipped' THEN 1 ELSE 0 END,
         updated_at = excluded.updated_at
-    WHERE enrichment_files.state IN ('read', 'skipped');
+    WHERE enrichment_files.state IN ('read', 'skipped')
+       OR (enrichment_files.state = 'waiting' AND enrichment_files.attempts > 0
+           AND (NEW.type IS NOT OLD.type
+                OR NEW.properties ->> '$.mime_type' IS NOT OLD.properties ->> '$.mime_type'));
+    UPDATE housekeeping_jobs
+    SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds')
+    WHERE name = 'enrichment-sweep'
+      AND (running_since IS NOT NULL
+           OR next_run_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds'));
+END;
+
+CREATE INDEX IF NOT EXISTS enrichment_files_missing ON enrichment_files (hash) WHERE reason = 'missing';
+
+-- A file left for want of a copy waits again, with its attempts as they were, once a copy is
+-- recorded or the store holding one is attached again.
+CREATE TRIGGER IF NOT EXISTS enrichment_files_copy_recorded AFTER INSERT ON blob_copies
+WHEN EXISTS (SELECT 1 FROM enrichment_files WHERE hash = NEW.hash AND reason = 'missing')
+BEGIN
+    UPDATE enrichment_files
+    SET state = 'waiting', reason = NULL, refill = 0, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE hash = NEW.hash AND reason = 'missing';
+    UPDATE housekeeping_jobs
+    SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds')
+    WHERE name = 'enrichment-sweep'
+      AND (running_since IS NOT NULL
+           OR next_run_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds'));
+END;
+
+CREATE TRIGGER IF NOT EXISTS enrichment_files_store_attached AFTER UPDATE OF detached_at ON stores
+WHEN OLD.detached_at IS NOT NULL AND NEW.detached_at IS NULL
+BEGIN
+    UPDATE enrichment_files
+    SET state = 'waiting', reason = NULL, refill = 0, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE reason = 'missing'
+      AND hash IN (SELECT hash FROM blob_copies WHERE store_id = NEW.id);
     UPDATE housekeeping_jobs
     SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds')
     WHERE name = 'enrichment-sweep'

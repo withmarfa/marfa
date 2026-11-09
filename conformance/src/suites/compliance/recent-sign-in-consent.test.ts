@@ -44,7 +44,7 @@ let keysMinted = 0;
 
 beforeAll(async () => {
   server = await bootFreshServer("recent-sign-in-consent", {
-    TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+    MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
   });
   origin = await issuerOrigin(server);
   management = new MarfaClient({
@@ -278,14 +278,13 @@ describe("approving a device", () => {
   it("approves from a session that signed in more than five minutes ago the scopes that only read, and not the ones left off", async () => {
     const { stale } = await staleAndFresh();
     const device = await deviceCode(
-      "core.note:read edge.parent-of:read metadata:read profile.name:read openid keys.manage core.note:write",
+      "core.note:read edge.parent-of:read metadata:read profile.name:read keys.manage core.note:write",
     );
     const approved = await deviceApproval(device, stale, [
       "core.note:read",
       "edge.parent-of:read",
       "metadata:read",
       "profile.name:read",
-      "openid",
     ]);
     expect(approved.status).toBe(200);
     await approved.body?.cancel();
@@ -297,7 +296,6 @@ describe("approving a device", () => {
         "edge.parent-of:read",
         "metadata:read",
         "profile.name:read",
-        "openid",
       ].sort(),
     );
   });
@@ -379,7 +377,7 @@ describe("the device screen", () => {
 
   it("shows a session that signed in more than five minutes ago a request that only reads, with no question", async () => {
     const { stale } = await staleAndFresh();
-    const reading = await deviceCode("core.note:read openid");
+    const reading = await deviceCode("core.note:read profile.name:read");
     const shown = await deviceScreen(reading, stale);
     expect(shown.status).toBe(200);
     expect(visibleText(await shown.text())).not.toContain("Confirm it's you");
@@ -454,7 +452,6 @@ describe("approving an app", () => {
       "edge.parent-of:read",
       "metadata:read",
       "profile:read",
-      "openid",
       "offline_access",
     ];
     const scope = [...reads, "keys.manage", "core.note:write"].join(" ");
@@ -462,17 +459,13 @@ describe("approving an app", () => {
     const { url, verifier } = await consentFor(app, scope, stale);
     const code = await codeOf(await decision(url, stale, reads));
     expect(code).toBeTruthy();
-    const exchanged = await token(
-      server,
-      {
-        grant_type: "authorization_code",
-        code: code!,
-        redirect_uri: CALLBACK,
-        code_verifier: verifier,
-        client_id: app.clientId,
-      },
-      app,
-    );
+    const exchanged = await token(server, {
+      grant_type: "authorization_code",
+      code: code!,
+      redirect_uri: CALLBACK,
+      code_verifier: verifier,
+      client_id: app.clientId,
+    });
     expect(exchanged.status).toBe(200);
     expect(scopesOf(exchanged.body.scope)).toEqual([...reads].sort());
   });
@@ -536,7 +529,7 @@ describe("the authorization screen", () => {
 
   it("shows a session that signed in more than five minutes ago a request that only reads, with no question", async () => {
     const { stale } = await staleAndFresh();
-    const scope = "core.note:read edge.parent-of:read profile:read openid";
+    const scope = "core.note:read edge.parent-of:read profile:read";
     const app = await registerApp(server, scope);
     const { url } = await consentFor(app, scope, stale);
     const shown = await ownerGet(`${url.pathname}${url.search}`, stale);
@@ -658,17 +651,13 @@ describe("revoking an app", () => {
       app,
       "core.note:read",
     );
-    const exchanged = await token(
-      server,
-      {
-        grant_type: "authorization_code",
-        code,
-        redirect_uri: CALLBACK,
-        code_verifier: verifier,
-        client_id: app.clientId,
-      },
-      app,
-    );
+    const exchanged = await token(server, {
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: CALLBACK,
+      code_verifier: verifier,
+      client_id: app.clientId,
+    });
     expect(exchanged.status).toBe(200);
     return { app, access: exchanged.body.access_token! };
   }
@@ -780,17 +769,13 @@ describe("narrowing an app", () => {
       app,
       "core.note:read",
     );
-    const exchanged = await token(
-      server,
-      {
-        grant_type: "authorization_code",
-        code,
-        redirect_uri: CALLBACK,
-        code_verifier: verifier,
-        client_id: app.clientId,
-      },
-      app,
-    );
+    const exchanged = await token(server, {
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: CALLBACK,
+      code_verifier: verifier,
+      client_id: app.clientId,
+    });
     expect(exchanged.status).toBe(200);
     const lister = (await mintKey(["grants.manage"])).key;
     const listed = await fetch(`${server.apiUrl}/auth/grants`, {

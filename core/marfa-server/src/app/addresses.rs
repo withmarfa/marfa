@@ -6,6 +6,7 @@ use std::sync::Arc;
 use url::Url;
 
 use crate::settings::registry::{ADDRESSES, SIGN_IN_ADDRESS};
+use crate::settings::start::Fixed;
 use crate::settings::{Settings, Snapshot};
 
 const LOOPBACK_IP: &str = "127.0.0.1";
@@ -134,7 +135,10 @@ impl Addresses {
         snapshot: Arc<Snapshot>,
         bound_port: Option<u16>,
     ) -> Addresses {
-        let start = &settings.start;
+        Addresses::of(&settings.start, snapshot, bound_port)
+    }
+
+    pub fn of(start: &Fixed, snapshot: Arc<Snapshot>, bound_port: Option<u16>) -> Addresses {
         Addresses {
             live: snapshot,
             loopback_host: match start.listen_host.as_deref() {
@@ -250,7 +254,7 @@ mod tests {
     }
 
     fn settings(pairs: &[(&str, &str)]) -> Settings {
-        let pairs = [&[("SQLITE_PATH", ":memory:")], pairs].concat();
+        let pairs = [&[("MARFA_DATABASE_PATH", ":memory:")], pairs].concat();
         Settings::read(Environment::from_pairs(&pairs))
             .ok()
             .unwrap()
@@ -265,12 +269,12 @@ mod tests {
         };
         assert_eq!(sign_in(&[], None), "http://localhost:8600");
         assert_eq!(
-            sign_in(&[("PORT", "0")], Some(51234)),
+            sign_in(&[("MARFA_PORT", "0")], Some(51234)),
             "http://localhost:51234"
         );
         assert_eq!(
             sign_in(
-                &[("MARFA_LISTEN_HOST", "127.0.0.1"), ("PORT", "0")],
+                &[("MARFA_LISTEN_HOST", "127.0.0.1"), ("MARFA_PORT", "0")],
                 Some(51234)
             ),
             "http://127.0.0.1:51234"
@@ -279,7 +283,7 @@ mod tests {
             sign_in(&[("MARFA_LISTEN_HOST", "0.0.0.0")], None),
             "http://localhost:8600"
         );
-        assert_eq!(sign_in(&[("PORT", "80")], None), "http://localhost");
+        assert_eq!(sign_in(&[("MARFA_PORT", "80")], None), "http://localhost");
     }
 
     #[test]

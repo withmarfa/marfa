@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use axum::extract::State;
 use axum::http::{StatusCode, Uri};
-use marfa_rules::query::{declared_type, type_entries};
+use marfa_rules::query::{list_entry, type_entries};
 use marfa_rules::time;
 
 use super::answer::{Answer, text_answer};
@@ -20,7 +20,11 @@ fn bound(params: &Params, name: &str) -> Result<i64> {
         Refusal::new(Code::MissingRequiredField, format!("{name} is required."))
             .with_detail("field", name)
     })?;
-    time::epoch_ms(value).ok_or_else(|| invalid_field(name, format!("{name} is not a timestamp.")))
+    time::normalize_bound(value, name)
+        .ok()
+        .as_deref()
+        .and_then(time::epoch_ms)
+        .ok_or_else(|| invalid_field(name, format!("{name} is not a timestamp.")))
 }
 
 fn type_of(params: &Params) -> Result<Option<String>> {
@@ -33,9 +37,7 @@ fn type_of(params: &Params) -> Result<Option<String>> {
     let [only] = entries.as_slice() else {
         return Err(invalid_field("type", "type names one type."));
     };
-    Ok(declared_type(Some(only))
-        .map_err(refused)?
-        .map(str::to_string))
+    Ok(Some(list_entry(only).map_err(refused)?.to_string()))
 }
 
 fn window_of(params: &Params) -> Result<Window> {

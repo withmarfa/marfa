@@ -1026,7 +1026,7 @@ mod tests {
     #[test]
     fn the_narrowed_request_decides_what_a_page_can_show_of_a_dropped_scope() {
         let registries = Registries::new(CHOOSABLE, []);
-        let kept = narrow(&set("core.note:read openid"), &registries.allowed()).kept;
+        let kept = narrow(&set("core.note:read notes"), &registries.allowed()).kept;
         let shown = format!(
             "{:?}",
             build(
@@ -1038,6 +1038,6 @@ mod tests {
                 }
             )
         );
-        assert!(!shown.contains("openid"));
+        assert!(!shown.contains("notes"));
     }
 }

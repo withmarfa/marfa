@@ -98,6 +98,11 @@ impl Caller {
         self.require_type_map("system.view", Level::Write)
     }
 
+    pub fn require_folder_write(&self) -> Result<()> {
+        self.require_reach()?;
+        self.require_type_map("system.folder", Level::Write)
+    }
+
     pub fn may_read_extension(&self, namespace: &str) -> bool {
         self.level_on(Axis::Extension, namespace) >= Level::Read
     }
@@ -160,6 +165,11 @@ impl Caller {
 
     pub fn filters_sources(&self) -> bool {
         self.holding().filters_sources()
+    }
+
+    /// The source filter in one spelling for one effect, to tell whether it moved.
+    pub fn source_filter_form(&self) -> serde_json::Value {
+        self.holding().source_filter_form()
     }
 
     pub fn lists(&self, rules: &Rules, type_id: &str, source: &str) -> bool {

@@ -281,7 +281,7 @@ pub async fn page_approved(app: &App, origin: &str) -> Result<bool> {
 
 pub(super) fn destinations_digest(app: &App, client: &Client) -> Result<String> {
     digest_of(
-        &app.settings.start.api_key_salt,
+        &app.settings.start.key_salt,
         &client.registration.redirect_uris.join("\n"),
     )
 }
@@ -327,10 +327,10 @@ mod tests {
         let registries = Registries::new(["core.note", "user.recipe"], []);
         let judged = judge(
             &registration("user.recipe:read", vec![GrantType::AuthorizationCode]),
-            &ScopeSet::parse("user.recipe:read core.*:read user.recipe:write openid"),
+            &ScopeSet::parse("user.recipe:read core.*:read user.recipe:write notes"),
             &registries,
         );
-        assert_eq!(judged.unknown, ["openid"]);
+        assert_eq!(judged.unknown, ["notes"]);
         assert_eq!(judged.outside, ["user.recipe:write"]);
         assert_eq!(judged.widened, ScopeSet::parse("core.*:read"));
         assert_eq!(judged.kept, ScopeSet::parse("user.recipe:read core.*:read"));
@@ -384,11 +384,11 @@ mod tests {
         let blobs = dir.path().join("blobs");
         let socket = dir.path().join("s.sock");
         let pairs = [
-            ("SQLITE_PATH", database.to_str().unwrap()),
-            ("BLOB_PATH", blobs.to_str().unwrap()),
+            ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
+            ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
             ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
             ("MARFA_TEST_HOOKS", "true"),
-            ("MARFA_AUTH_BASE_URL", OWN),
+            ("MARFA_SIGN_IN_ADDRESS", OWN),
         ];
         let settings = Settings::read(Environment::from_pairs(&pairs)).unwrap();
         (dir, App::start(settings).await.unwrap())

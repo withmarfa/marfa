@@ -177,7 +177,7 @@ struct SnapshotHead<'a> {
 }
 
 pub(crate) fn with_properties(head: &impl Serialize, properties: &str) -> Result<String> {
-    let printed = marfa_rules::js::to_vec(head)
+    let printed = marfa_rules::number::to_vec(head)
         .ok()
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .ok_or_else(|| Refusal::internal("an item did not print"))?;
@@ -311,6 +311,31 @@ fn not_found() -> Refusal {
     Refusal::new(Code::ItemNotFound, "Item not found")
 }
 
+/// The row `id` names when it is of `type_id` and the caller may read that type.
+pub(crate) fn readable_of(
+    tx: &Transaction<'_>,
+    caller: &Caller,
+    id: &str,
+    type_id: &str,
+) -> Result<Item> {
+    rows::by_id(tx, id)?
+        .filter(|row| {
+            row.type_id == type_id && row.state != "trashed" && caller.may_read_type(type_id)
+        })
+        .ok_or_else(not_found)
+}
+
+/// Rows of one type and state, newest first, after the position a page ended at.
+pub(crate) fn newest_of(
+    tx: &Transaction<'_>,
+    type_id: &str,
+    state: &str,
+    after: Option<(&str, &str)>,
+    limit: i64,
+) -> Result<Vec<Item>> {
+    rows::newest_of(tx, type_id, state, after, limit)
+}
+
 fn link_in<'a>(field: &str, properties: &'a Map<String, Value>) -> Option<&'a str> {
     properties
         .get(field)
@@ -319,16 +344,16 @@ fn link_in<'a>(field: &str, properties: &'a Map<String, Value>) -> Option<&'a st
 }
 
 fn name_of(tx: &Transaction<'_>, catalog: &Catalog, row: &Item) -> Result<String> {
-    let shown = shown_of(tx, catalog, row, &|_, _| true)?;
+    let shown = shown_of(tx, catalog, row, &|_| true)?;
     Ok(shown.name.unwrap_or_else(|| UNTITLED.to_string()))
 }
 
-/// An item's name and preview; a part is named after its oldest host that `readable` admits.
+/// An item's name and preview; a part is named after its oldest host of a readable type.
 pub(crate) fn shown_of(
     tx: &Transaction<'_>,
     catalog: &Catalog,
     row: &Item,
-    readable: &dyn Fn(&str, &str) -> bool,
+    readable: &dyn Fn(&str) -> bool,
 ) -> Result<display::ItemDisplay> {
     let rules = &catalog.rules;
     let properties = parsed(&row.properties)?;
@@ -387,7 +412,7 @@ fn metadata_text(
     shown: impl Fn(&str) -> bool,
 ) -> Result<String> {
     let tags = rows::tags(tx, item.seq)?;
-    let head = marfa_rules::js::to_vec(&json!({ "item_id": item.id, "tags": tags }))
+    let head = marfa_rules::number::to_vec(&json!({ "item_id": item.id, "tags": tags }))
         .ok()
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .ok_or_else(|| Refusal::internal("metadata did not print"))?;
@@ -427,6 +452,29 @@ pub fn type_of(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {
 
 pub fn mark_type(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {
     Ok(rows::by_id(tx, id)?.and_then(|row| row.mark.map(|mark| mark.with_type)))
+}
+
+/// The folders and views a type move or a type delete reads for the settings that name a type.
+pub fn settings(tx: &Transaction<'_>) -> Result<Vec<Item>> {
+    rows::settings(tx)
+}
+
+/// A matched item as a job found it when it was queued.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Selected {
+    pub id: String,
+    pub version: i64,
+    pub state: String,
+}
+
+/// The named items as they stand, in the order named.
+pub fn selected(tx: &Transaction<'_>, ids: &[String]) -> Result<Vec<Selected>> {
+    rows::selected(tx, ids)
+}
+
+/// The types the named items hold now, each once.
+pub fn types_of(tx: &Transaction<'_>, ids: &[String]) -> Result<Vec<String>> {
+    rows::types_of(tx, ids)
 }
 
 pub fn count_of_type(tx: &Transaction<'_>, type_id: &str) -> Result<i64> {

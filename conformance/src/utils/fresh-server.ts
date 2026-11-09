@@ -108,7 +108,7 @@ export interface FreshServer {
    * those blobs as absent or with a changed first byte,
    * `damage:blob-unreadable=<hashes>` makes a read of them fail,
    * `hide:event=<first>[-<last>]` and `hide:webhook-position` make the
-   * `webhook-schedule` job read events, or its place in the log, as absent,
+   * webhook sender read events, or its place in the log, as absent,
    * `store-check-deadline=<ms>` shortens how long a blob store may go
    * unanswered, `release:<point>` clears `hold:<point>` as the next
    * `GET /health` arrives, and `resolve:<hostname>=<answers>` scripts the name
@@ -285,13 +285,13 @@ async function mintWorkingKey(
  */
 function serverEnv(): NodeJS.ProcessEnv {
   return {
-    // The script pins the port to `PORT` when one is set, and the run's
+    // The script pins the port to `MARFA_PORT` when one is set, and the run's
     // own server may already hold it. The limiter is pinned off for the
     // same kind of reason and in the same place: a fixture that does not
     // ask for it should not inherit one from whoever started the run.
     ...process.env,
-    PORT: "",
-    RATE_LIMIT_ENABLED: "false",
+    MARFA_PORT: "",
+    MARFA_RATE_LIMIT_ENABLED: "false",
     MARFA_ENRICHMENT_ENABLED: "false",
     MARFA_ENRICHMENT_OCR_ENABLED: "false",
   };
@@ -604,13 +604,6 @@ export interface RefusedBootOptions {
    */
   prepare?: (sqlitePath: string, stateDir: string) => void | Promise<void>;
   extraEnv?: Record<string, string>;
-  /**
-   * The `NODE_ENV` the server is started under, which every other boot
-   * leaves unset. Naming one also leaves `MARFA_AUTH_SECRET` and
-   * `MARFA_AUTH_BASE_URL` to `extraEnv`, so a rule that holds only in
-   * production reads what the fixture gives it.
-   */
-  nodeEnv?: string;
 }
 
 function fingerprint(sqlitePath: string): DatabaseFiles {
@@ -663,9 +656,6 @@ export async function bootRefused(
         "refused",
         "--state",
         state,
-        ...(options.nodeEnv === undefined
-          ? []
-          : ["--node-env", options.nodeEnv]),
         ...envArgs(options.extraEnv ?? {}),
       ],
       serverEnv(),

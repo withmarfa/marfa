@@ -5148,18 +5148,16 @@ mod tests {
             .unwrap();
         let held = core.get(id.clone()).unwrap().unwrap();
         assert_eq!(held.unreadable_properties, None);
-        // The copy keeps numbers and orders keys as the server does, which is
-        // JavaScript: a whole float is an integer, and integer-like keys come
-        // first, ascending.
+        // The copy writes a number as the server does, so a whole float is an
+        // integer, and keeps the keys in the order they were written.
         let wanted = parsed(
             r#"{
-            "2": 4, "10": 3,
             "title": "caf\u00e9 \ud83d\ude00 \u2028 \n \"quoted\"",
             "nothing": null, "yes": true, "no": false,
             "small": -7, "beyond": 1152921504606847000, "least": -1152921504606847000,
             "ratio": 0.1, "whole": 2, "tiny": 1e-300,
             "list": [1, [2, [3, {"deep": [null, "x"]}]]], "empty": {}, "none": [],
-            "z": 1, "a": 2
+            "z": 1, "a": 2, "10": 3, "2": 4
         }"#,
         );
         assert_eq!(held.properties, wanted);

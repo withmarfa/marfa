@@ -34,6 +34,8 @@ struct Instance {
 enum Presents {
     Key,
     Cookie,
+    /// A cookie with no `Origin` of its own; a test may add one.
+    BareCookie,
     Nothing,
 }
 
@@ -44,13 +46,13 @@ impl Instance {
         let blobs = dir.path().join("blobs");
         let socket = dir.path().join("s.sock");
         let pairs = [
-            ("SQLITE_PATH", database.to_str().unwrap()),
-            ("BLOB_PATH", blobs.to_str().unwrap()),
+            ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
+            ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
             ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
             ("MARFA_TEST_HOOKS", "true"),
-            ("MARFA_AUTH_BASE_URL", ORIGIN),
-            ("API_KEY_SALT", "a salt for these tests"),
-            ("RATE_LIMIT_ENABLED", "false"),
+            ("MARFA_SIGN_IN_ADDRESS", ORIGIN),
+            ("MARFA_KEY_SALT", "a salt for these tests"),
+            ("MARFA_RATE_LIMIT_ENABLED", "false"),
         ];
         let settings = Settings::read(Environment::from_pairs(&pairs)).unwrap();
         let app: Arc<App> = App::start(settings).await.unwrap();
@@ -138,6 +140,9 @@ impl Instance {
                 request = request
                     .header(header::COOKIE, &self.cookie)
                     .header(header::ORIGIN, ORIGIN);
+            }
+            Presents::BareCookie => {
+                request = request.header(header::COOKIE, &self.cookie);
             }
             Presents::Nothing => {}
         }
@@ -348,6 +353,63 @@ async fn a_cookie_is_no_credential_at_a_door_that_ignores_cookies() {
 }
 
 #[tokio::test]
+async fn a_cookie_is_no_credential_at_a_folder_door_whatever_instance_it_names() {
+    let instance = Instance::start().await;
+    let folder = format!("/folders/{ITEM}");
+    for (method, path, body) in [
+        (
+            Method::POST,
+            "/folders".to_string(),
+            json!({ "title": "Inbox" }),
+        ),
+        (
+            Method::PATCH,
+            folder.clone(),
+            json!({ "title": "Inbox", "version": 1 }),
+        ),
+        (Method::POST, format!("{folder}/revoke"), json!({})),
+        (Method::PUT, format!("{folder}/status"), json!({})),
+    ] {
+        for named in [Some(OTHER), Some("not-an-instance"), None] {
+            let headers: Vec<(&str, &str)> = named
+                .map(|id| ("x-marfa-instance-id", id))
+                .into_iter()
+                .collect();
+            let reply = instance
+                .on_public(
+                    method.clone(),
+                    &path,
+                    Presents::Cookie,
+                    &headers,
+                    Some(body.clone()),
+                )
+                .await;
+            assert_refused(
+                &reply,
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                &format!("cookie only, {method} {path} naming {named:?}"),
+            );
+        }
+        let with_key = instance
+            .on_public(
+                method.clone(),
+                &path,
+                Presents::Key,
+                &[("x-marfa-instance-id", OTHER)],
+                Some(body.clone()),
+            )
+            .await;
+        assert_refused(
+            &with_key,
+            StatusCode::CONFLICT,
+            "instance_changed",
+            &format!("the witness: a key at {method} {path}"),
+        );
+    }
+}
+
+#[tokio::test]
 async fn another_instance_is_refused_before_a_conditional_read_judges_its_reach() {
     let instance = Instance::start().await;
     let read = json!({ "ids": [ITEM] });
@@ -448,4 +510,42 @@ async fn a_method_no_door_serves_is_not_found_whatever_instance_it_names() {
         "instance_changed",
         "the witness: a method the path serves",
     );
+}
+
+#[tokio::test]
+async fn a_cookie_with_a_missing_or_foreign_origin_is_no_credential_at_a_folder_write() {
+    let instance = Instance::start().await;
+    let folder = format!("/folders/{ITEM}");
+    for (method, path, body) in [
+        (
+            Method::POST,
+            "/folders".to_string(),
+            json!({ "title": "Inbox" }),
+        ),
+        (
+            Method::PATCH,
+            folder.clone(),
+            json!({ "title": "Inbox", "version": 1 }),
+        ),
+        (Method::POST, format!("{folder}/revoke"), json!({})),
+    ] {
+        for origin in [None, Some("https://elsewhere.example")] {
+            let headers: Vec<(&str, &str)> = origin.map(|o| ("origin", o)).into_iter().collect();
+            let reply = instance
+                .on_public(
+                    method.clone(),
+                    &path,
+                    Presents::BareCookie,
+                    &headers,
+                    Some(body.clone()),
+                )
+                .await;
+            assert_refused(
+                &reply,
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                &format!("cookie with origin {origin:?}, {method} {path}"),
+            );
+        }
+    }
 }

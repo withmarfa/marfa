@@ -314,6 +314,14 @@ The owner's name and picture, changed with a key or app's profile write permissi
 marfa profile [OPTIONS] <COMMAND>
 ```
 
+### marfa profile show
+
+Show the owner's name, email address and avatar, as far as profile read permission reaches.
+
+```text
+marfa profile show [OPTIONS]
+```
+
 ### marfa profile update
 
 Change the owner's name or avatar with profile write permission for each field.
@@ -1881,6 +1889,27 @@ Change only the settings the body names; `null` removes one. Needs `config.manag
 
 ```text
 marfa config update [OPTIONS]
+```
+
+| Option | Description |
+| --- | --- |
+| `--file <PATH>` | A file holding the JSON body; `-` reads stdin. |
+| `--body <JSON>` | The JSON body inline. |
+
+### marfa config settings
+
+Every stored setting with its value, default and rule, and the settings only the environment sets. Needs `config.manage` or `instance.read`.
+
+```text
+marfa config settings [OPTIONS]
+```
+
+### marfa config check-address
+
+What changing the addresses would do and whether a write needs confirming; nothing is written. Needs `config.manage`.
+
+```text
+marfa config check-address [OPTIONS]
 ```
 
 | Option | Description |

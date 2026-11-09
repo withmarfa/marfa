@@ -283,6 +283,59 @@ describe("a datetime or a date field", () => {
   });
 });
 
+describe("an email field", () => {
+  let typeId: string;
+
+  beforeAll(async () => {
+    typeId = `user.mailbox-${ctx.runId}`;
+    const registered = await client.registerType({
+      id: typeId,
+      fields: { address: { type: "email" } },
+    });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+  });
+
+  const send = async (address: string) => {
+    const created = await client.createItem({
+      type: typeId,
+      source: ctx.source,
+      properties: { address },
+    });
+    if (created.ok) trackItem(ctx, created.data.item.id);
+    return created;
+  };
+
+  it.each([
+    "reader@example.com",
+    "reader+tag@example.test",
+    "o'brien@mail.example.co",
+    "a_b-c.d@sub-domain.example.org",
+    "x@y.example.io",
+  ])("takes the email %s", async (address) => {
+    const created = await send(address);
+    expect(created.status, JSON.stringify(created.error)).toBe(201);
+    expect(created.data.item.properties.address).toBe(address);
+  });
+
+  it.each([
+    ["has no at sign", "reader.example.com"],
+    ["has no local part", "@example.com"],
+    ["starts its local part with a dot", ".reader@example.com"],
+    ["has two dots together", "a..b@example.com"],
+    ["ends its local part with a dot", "reader.@example.com"],
+    ["has a one-label domain", "reader@example"],
+    ["has a one-letter last label", "reader@example.c"],
+    ["has digits in its last label", "reader@example.c0m"],
+    ["has a label starting with a hyphen", "reader@-example.com"],
+    ["has a space", "re ader@example.com"],
+    ["has a non-ASCII letter", "rëader@example.com"],
+  ])("refuses an email that %s, naming the field", async (_name, address) => {
+    const refused = await send(address);
+    expect(refused.status, address).toBe(400);
+    expect(refused.error?.error.code, address).toBe("invalid_properties");
+  });
+});
+
 describe("an array field", () => {
   let typeId: string;
   let childId: string;
@@ -398,6 +451,20 @@ describe("an array field", () => {
     const taken = await create({ sites: [url] });
     expect(taken.status, JSON.stringify(taken.error)).toBe(201);
     expect(taken.data.item.properties.sites).toEqual([url]);
+  });
+
+  it("trims Unicode White_Space from a url and refuses a byte order mark before one", async () => {
+    const url = "https://example.test/a";
+    for (const edge of ["\u0085", "\u3000", "\u00a0", "\u2028"]) {
+      const taken = await create({ sites: [`${edge}${url}${edge}`] });
+      expect(taken.status, JSON.stringify(edge)).toBe(201);
+      expect(taken.data.item.properties.sites).toEqual([url]);
+    }
+    // A byte order mark is not White_Space, so it stays and the value is no url.
+    const refused = await create({ sites: [`\ufeff${url}`] });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_properties");
+    expect(fields(refused)).toContain("sites.0");
   });
 
   it("takes the values of the declared types, an empty array and a null", async () => {

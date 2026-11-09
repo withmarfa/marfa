@@ -308,9 +308,9 @@ When a `GET` that names a path no operation serves carries `X-Marfa-Reach`, the 
 
 ### `errors/contention`
 
-If a write cannot get the store's write lock within the instance's busy budget, and the lock is not held by a bulk page that `errors/contention-bulk-wait` describes, then the server MUST answer `503 write_contention`.
+If a write cannot get the store's write lock within the instance's write wait (`MARFA_WRITE_WAIT_MS`), and the lock is not held by a bulk page that `errors/contention-bulk-wait` describes, then the server MUST answer `503 write_contention`.
 
-**Reason:** a device retries a `5xx` without counting it against the write (`queue-and-verdicts/environmental-uncounted`), and contention is the case that retry exists for. A `500` would name the wrong cause, and a `409` would stop a write that the next attempt would land. The budget is the instance's `SQLITE_BUSY_BUDGET_MS`.
+**Reason:** a device retries a `5xx` without counting it against the write (`queue-and-verdicts/environmental-uncounted`), and contention is the case that retry exists for. A `500` would name the wrong cause, and a `409` would stop a write that the next attempt would land. The budget is the instance's `MARFA_WRITE_WAIT_MS`.
 
 **Tests:** `compliance/write-contention.test.ts › answers 503 write_contention, never 500`, `compliance/bulk-page-answers-others.test.ts › is still refused 503 write_contention behind a lock held for longer than the budget`.
 
@@ -324,23 +324,23 @@ The server MUST declare `503 write_contention` in its OpenAPI document on every 
 
 ### `errors/contention-budget`
 
-When the server answers `503 write_contention`, the server MUST carry the busy budget it spent, in milliseconds, in `details.budget_ms`.
+When the server answers `503 write_contention`, the server MUST carry the write wait it spent, in milliseconds, in `details.budget_ms`.
 
 **Tests:** `compliance/write-contention.test.ts › names the budget it spent, so the setting is observable`.
 
 ### `errors/contention-wait`
 
-When a write meets a write lock that is released inside the instance's busy budget, the server MUST land the write.
+When a write meets a write lock that is released inside the instance's write wait, the server MUST land the write.
 
 **Tests:** `compliance/write-contention.test.ts › waits out a briefly held lock on the default budget`.
 
 ### `errors/contention-bulk-wait`
 
-While a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: true` holds the write lock and writes an entry within every busy budget, the server MUST hold a write that waits for the lock until the page ends, rather than answer it `503 write_contention`.
+While a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: true` holds the write lock and writes an entry within every write wait, the server MUST hold a write that waits for the lock until the page ends, rather than answer it `503 write_contention`.
 
 **Reason:** the server answers other requests while a page is written (`items/bulk-answers-reads`), so a write can arrive behind a page that holds the lock for longer than the budget. The wait ends when the page does; a refusal would turn an ordinary wait into a retry. A holder that writes nothing for the budget still meets `errors/contention`.
 
-**Tests:** `compliance/bulk-page-answers-others.test.ts › lands after an atomic page that holds the lock longer than the busy budget`, `compliance/bulk-page-answers-others.test.ts › counts a sign-in attempt after an atomic page that holds the lock longer than the busy budget`.
+**Tests:** `compliance/bulk-page-answers-others.test.ts › lands after an atomic page that holds the lock longer than the write wait`, `compliance/bulk-page-answers-others.test.ts › counts a sign-in attempt after an atomic page that holds the lock longer than the write wait`.
 
 ### `errors/contention-read`
 
@@ -374,13 +374,13 @@ When an otherwise permitted read uses a live browser session while another write
 
 ### `errors/contention-housekeeping`
 
-If `POST /housekeeping/{name}/run` cannot get the write lock within the busy budget, then the server MUST answer `503 write_contention`.
+If `POST /housekeeping/{name}/run` cannot get the write lock within the write wait, then the server MUST answer `503 write_contention`.
 
 **Tests:** `compliance/write-contention.test.ts › refuses a housekeeping run, which writes outside a request's transaction`.
 
 ### `errors/contention-registration`
 
-If `POST /auth/oauth2/register` cannot get the write lock within the busy budget, then the server MUST answer `503 write_contention` in the envelope.
+If `POST /auth/oauth2/register` cannot get the write lock within the write wait, then the server MUST answer `503 write_contention` in the envelope.
 
 **Reason:** registration takes no credential and the sign-in library serves it, but it writes.
 
@@ -404,7 +404,7 @@ If a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: false` meets t
 
 ## A volume with no room
 
-An instance keeps a reserve of free space on the volume that holds its disk store, set by `MARFA_DISK_RESERVE_BYTES`. `blobs.md` states the uploads and restores that are held to it.
+An instance keeps a reserve of free space on the volume that holds its disk store, set by `disk_reserve_bytes`. `blobs.md` states the uploads and restores that are held to it.
 
 ### `errors/storage-full`
 
@@ -722,88 +722,89 @@ When a database statement fails for an item that a `POST /items/bulk-actions` jo
 
 ## Codes
 
-Every code the server answers over HTTP is a row of the table below, which is written from the server's own code table and so cannot differ from it. The codes of a tool error on the MCP endpoint, such as `confirmation_stale` and `file_not_fetched`, are in `mcp.md`, not in this table.
+Every code the server answers over HTTP is a row of the table below, and a server answers no code the table does not hold. The codes of a tool error on the MCP endpoint, such as `confirmation_stale` and `file_not_fetched`, are in `mcp.md`, not in this table.
 
 <!-- errors-table:start -->
 
-| Code                              | Status              | Meaning                                                                                                                                                                                        |
-| --------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `bulk_atomic_rollback`            | The inner refusal's | An atomic bulk page failed on one entry, so nothing was written. `details` names the entry and the refusal.                                                                                    |
-| `bulk_cap_exceeded`               | 400                 | A bulk action matched more items than its `max_items` allows.                                                                                                                                  |
-| `bulk_confirmation_required`      | 400                 | A destructive bulk action was sent without its confirmation literal.                                                                                                                           |
-| `edge_constraint_violation`       | 400                 | An edge write breaks a constraint of its edge type or of the link graph, such as cardinality, endpoint types or a duplicate.                                                                   |
-| `edge_cycle`                      | 400                 | An edge would close a cycle: a self-loop on any edge type, or a loop on an edge type that must stay acyclic.                                                                                   |
-| `inheritance_violation`           | 400                 | A type changes the shape of a field it inherits, or a change to a parent clashes with a field a child declares.                                                                                |
-| `invalid_client`                  | 400                 | The device sign-in page names a client that is not registered.                                                                                                                                 |
-| `invalid_id`                      | 400                 | An item, edge or folder id is not a well-formed identifier.                                                                                                                                    |
-| `invalid_properties`              | 400                 | An item's properties break the schema of its type, or an edge's break the property schema of its edge type.                                                                                    |
-| `invalid_schema`                  | 400                 | A type or edge type carries a schema the server cannot accept.                                                                                                                                 |
-| `invalid_transition`              | 400                 | The move is not one the current state of the item or folder allows.                                                                                                                            |
-| `missing_required_field`          | 400                 | A field the operation requires is absent. `details.field` names it.                                                                                                                            |
-| `property_shadows_field`          | 400                 | A type declares a field with the name of a first-class item field.                                                                                                                             |
-| `unknown_type`                    | 400                 | A well-formed type identifier names a type nobody registered.                                                                                                                                  |
-| `validation_error`                | 400                 | The request is malformed or breaks a rule that no other code names, such as a bad body, parameter, cursor or limit.                                                                            |
-| `setup_proof_invalid`             | 401                 | The setup code, handoff link or setup session is wrong, spent, expired or replaced. Ask for a new setup code or link.                                                                          |
-| `unauthorized`                    | 401                 | The request carries no credential the server accepts: none, an unknown or revoked one, or an expired or altered link.                                                                          |
-| `core_type_immutable`             | 403                 | The type ships with the platform, so it cannot be replaced, deleted or moved out of.                                                                                                           |
-| `edge_permission_denied`          | 403                 | The credential lacks the edge-type permission the operation needs.                                                                                                                             |
-| `forbidden`                       | 403                 | The credential is valid but lacks a standing permission, reach or origin the operation needs.                                                                                                  |
-| `type_not_permitted`              | 403                 | The credential holds no grant on the type at the level the operation asks for.                                                                                                                 |
-| `api_key_not_found`               | 404                 | No key the caller can reach has this id, or the key was already revoked.                                                                                                                       |
-| `blob_copy_not_found`             | 404                 | The named store holds no copy of the blob, or is not attached.                                                                                                                                 |
-| `blob_not_found`                  | 404                 | No blob the caller may read has this hash, or no attached store holds its bytes. On a write of a file item, no blob the caller uploaded or may read has the hash its `blob_ref` names.         |
-| `bulk_job_not_found`              | 404                 | No bulk action job the caller can see has this id.                                                                                                                                             |
-| `connector_not_found`             | 404                 | No connector registration the credential may read has this id.                                                                                                                                 |
-| `delivery_not_found`              | 404                 | The connector's registration has no delivery with this id.                                                                                                                                     |
-| `edge_not_found`                  | 404                 | No edge the caller may read has this id.                                                                                                                                                       |
-| `edge_type_not_found`             | 404                 | No edge type is registered under this identifier.                                                                                                                                              |
-| `endpoint_not_found`              | 404                 | The connector's registration has no endpoint with this id.                                                                                                                                     |
-| `housekeeping_job_not_found`      | 404                 | The instance runs no housekeeping job of this name, or has switched it off.                                                                                                                    |
-| `item_not_found`                  | 404                 | No item the caller may read has this id: it does not exist, is in the bin, or is of a type the caller may not read.                                                                            |
-| `not_found`                       | 404                 | The request names a path or address the server does not serve.                                                                                                                                 |
-| `oauth_grant_not_found`           | 404                 | No app grant has this id.                                                                                                                                                                      |
-| `owner_not_found`                 | 404                 | The instance has no owner yet.                                                                                                                                                                 |
-| `passkey_not_found`               | 404                 | No passkey of the owner has this id.                                                                                                                                                           |
-| `sign_in_not_found`               | 404                 | No live sign-in of the owner has this id: it never existed, has ended or has expired.                                                                                                          |
-| `source_not_found`                | 404                 | The caller can't see a source with this code.                                                                                                                                                  |
-| `type_not_found`                  | 404                 | No registered type has this identifier.                                                                                                                                                        |
-| `webhook_not_found`               | 404                 | No webhook subscription the caller can reach has this id.                                                                                                                                      |
-| `request_timeout`                 | 408                 | A body did not arrive in time: an inbound webhook delivery did not finish before its deadline, or a restore or a blob upload received no bytes for the upload idle limit.                      |
-| `ancestor_unavailable`            | 409                 | The write names a version that has no snapshot the caller may merge against.                                                                                                                   |
-| `conflict`                        | 409                 | The request collides with the current state in a way that no other code names.                                                                                                                 |
-| `connector_held`                  | 409                 | Another process holds the connector's registration until `details.expires_at`.                                                                                                                 |
-| `copies_below_minimum`            | 409                 | Dropping the copy would leave fewer live copies than the instance's minimum.                                                                                                                   |
-| `edge_type_in_use`                | 409                 | Edges of the edge type still exist, and the delete did not ask to force.                                                                                                                       |
-| `export_rows_unrestorable`        | 409                 | Both reads of an archive export refused the same unchanged row. No archive bytes were sent. `details.row` names the row.                                                                       |
-| `housekeeping_job_running`        | 409                 | The housekeeping job is in the middle of a run.                                                                                                                                                |
-| `id_reused`                       | 409                 | A caller-minted id already names a different item or edge.                                                                                                                                     |
-| `idempotency_key_in_flight`       | 409                 | An `Idempotency-Key` is held by another request, or kept changing hands. Retry.                                                                                                                |
-| `instance_changed`                | 409                 | A request names another instance in `X-Marfa-Instance-Id`. Nothing is written. Rebuild the working copy from the instance at this address.                                                     |
-| `item_exists`                     | 409                 | A create that asked not to overwrite names a source and source id, or an id, that an item already holds. Nothing is written. `details.existing_id` names the item.                             |
-| `link_taken`                      | 409                 | A write would give an item a link that another item of its type holds.                                                                                                                         |
-| `owner_exists`                    | 409                 | The instance already has an owner.                                                                                                                                                             |
-| `reach_changed`                   | 409                 | A conditional copy read or copy stream carries a proof for a reach that has since changed. Rebuild the working copy.                                                                           |
-| `source_id_conflict`              | 409                 | A change to `source_id` names a natural key that another item already holds under the same source.                                                                                             |
-| `trash_plan_changed`              | 409                 | A trash names a `digest` that no longer matches what it would move to the trash. Nothing is trashed; preview it again.                                                                         |
-| `type_already_exists`             | 409                 | A type is already registered under this identifier.                                                                                                                                            |
-| `type_chain_unresolvable`         | 409                 | The stored definition of a type does not read. `PUT /types/{id}` still accepts a corrected schema.                                                                                             |
-| `type_has_subtypes`               | 409                 | Another type declares this type as its parent. Forcing the delete does not override this.                                                                                                      |
-| `type_in_use`                     | 409                 | Items of the type still exist, the bin included, or a folder, view or webhook setting names it, and the delete did not ask to force.                                                           |
-| `type_mismatch`                   | 409                 | The request declares a type other than the type of the item it resolved.                                                                                                                       |
-| `type_move_blocked`               | 409                 | A folder, view or webhook setting names the type, and the move can't rewrite it. `details.settings` names each, with its `reason`.                                                             |
-| `version_conflict`                | 409                 | The write names a version that is no longer the current one. The answer carries the current state.                                                                                             |
-| `request_too_large`               | 413                 | The request body is over the cap for its operation.                                                                                                                                            |
-| `range_not_satisfiable`           | 416                 | A `Range` request asks for bytes the blob does not have. `Content-Range` names its size.                                                                                                       |
-| `compatible_with_violation`       | 422                 | A `compatible_with` claim is invalid, or a change breaks another type's claim. `details.dependent_type_ids` names dependents whose claims the change would break.                              |
-| `idempotency_key_reused`          | 422                 | An `Idempotency-Key` is sent with a different request than the one it first named.                                                                                                             |
-| `idempotency_result_not_retained` | 422                 | An `Idempotency-Key` repeats a request whose first answer was too large to keep. `details.original_status` is the status it carried.                                                           |
-| `rate_limited`                    | 429                 | The credential, or an inbound endpoint, is past its request cap for the current window.                                                                                                        |
-| `internal_error`                  | 500                 | A fault that nothing else names a refusal for. The answer says nothing of what failed.                                                                                                         |
-| `blob_store_unavailable`          | 503                 | A blob store failed, or did not answer in time, while Marfa checked, read, wrote or deleted a blob's copy. Nothing was written. Retry later.                                                   |
-| `export_unrestorable`             | 503                 | Writes changed the row an archive export refused, or its type, between two reads. No archive bytes were sent. Retry the export.                                                                |
-| `inbound_unavailable`             | 503                 | An inbound endpoint cannot take a delivery now, because its connector's backlog is full or the instance holds as many bodies in flight as it allows. Retry later.                              |
-| `stream_capacity_exhausted`       | 503                 | The instance is serving as many live event streams as it allows. `details.reason` is `viewer_cap`.                                                                                             |
-| `write_contention`                | 503                 | A write could not get the store's write lock within the busy budget. Retry it unchanged.                                                                                                       |
-| `insufficient_storage`            | 507                 | The volume the instance writes to has no room for the request, or the request would leave less free than the instance's reserve. Nothing was kept unless `details.write_outcome` is `unknown`. |
+| Code                                 | Status              | Meaning                                                                                                                                                                                        |
+| ------------------------------------ | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bulk_atomic_rollback`               | The inner refusal's | An atomic bulk page failed on one entry, so nothing was written. `details` names the entry and the refusal.                                                                                    |
+| `bulk_cap_exceeded`                  | 400                 | A bulk action matched more items than its `max_items` allows.                                                                                                                                  |
+| `bulk_confirmation_required`         | 400                 | A destructive bulk action was sent without its confirmation literal.                                                                                                                           |
+| `edge_constraint_violation`          | 400                 | An edge write breaks a constraint of its edge type or of the link graph, such as cardinality, endpoint types or a duplicate.                                                                   |
+| `edge_cycle`                         | 400                 | An edge would close a cycle: a self-loop on any edge type, or a loop on an edge type that must stay acyclic.                                                                                   |
+| `inheritance_violation`              | 400                 | A type changes the shape of a field it inherits, or a change to a parent clashes with a field a child declares.                                                                                |
+| `invalid_client`                     | 400                 | The device sign-in page names a client that is not registered.                                                                                                                                 |
+| `invalid_id`                         | 400                 | An item, edge or folder id is not a well-formed identifier.                                                                                                                                    |
+| `invalid_properties`                 | 400                 | An item's properties break the schema of its type, or an edge's break the property schema of its edge type.                                                                                    |
+| `invalid_schema`                     | 400                 | A type or edge type carries a schema the server cannot accept.                                                                                                                                 |
+| `invalid_transition`                 | 400                 | The move is not one the current state of the item or folder allows.                                                                                                                            |
+| `missing_required_field`             | 400                 | A field the operation requires is absent. `details.field` names it.                                                                                                                            |
+| `property_shadows_field`             | 400                 | A type declares a field with the name of a first-class item field.                                                                                                                             |
+| `unknown_type`                       | 400                 | A well-formed type identifier names a type nobody registered.                                                                                                                                  |
+| `validation_error`                   | 400                 | The request is malformed or breaks a rule that no other code names, such as a bad body, parameter, cursor or limit.                                                                            |
+| `setup_proof_invalid`                | 401                 | The setup code, handoff link or setup session is wrong, spent, expired or replaced. Ask for a new setup code or link.                                                                          |
+| `unauthorized`                       | 401                 | The request carries no credential the server accepts: none, an unknown or revoked one, or an expired or altered link.                                                                          |
+| `core_type_immutable`                | 403                 | The type ships with the platform, so it cannot be replaced, deleted or moved out of.                                                                                                           |
+| `edge_permission_denied`             | 403                 | The credential lacks the edge-type permission the operation needs.                                                                                                                             |
+| `forbidden`                          | 403                 | The credential is valid but lacks a standing permission, reach or origin the operation needs.                                                                                                  |
+| `type_not_permitted`                 | 403                 | The credential holds no grant on the type at the level the operation asks for.                                                                                                                 |
+| `api_key_not_found`                  | 404                 | No key the caller can reach has this id, or the key was already revoked.                                                                                                                       |
+| `blob_copy_not_found`                | 404                 | The named store holds no copy of the blob, or is not attached.                                                                                                                                 |
+| `blob_not_found`                     | 404                 | No blob the caller may read has this hash, or no attached store holds its bytes. On a write of a file item, no blob the caller uploaded or may read has the hash its `blob_ref` names.         |
+| `bulk_job_not_found`                 | 404                 | No bulk action job the caller can see has this id.                                                                                                                                             |
+| `connector_not_found`                | 404                 | No connector registration the credential may read has this id.                                                                                                                                 |
+| `delivery_not_found`                 | 404                 | The connector's registration has no delivery with this id.                                                                                                                                     |
+| `edge_not_found`                     | 404                 | No edge the caller may read has this id.                                                                                                                                                       |
+| `edge_type_not_found`                | 404                 | No edge type is registered under this identifier.                                                                                                                                              |
+| `endpoint_not_found`                 | 404                 | The connector's registration has no endpoint with this id.                                                                                                                                     |
+| `housekeeping_job_not_found`         | 404                 | The instance runs no housekeeping job of this name, or has switched it off.                                                                                                                    |
+| `item_not_found`                     | 404                 | No item the caller may read has this id: it does not exist, is in the bin, or is of a type the caller may not read.                                                                            |
+| `not_found`                          | 404                 | The request names a path or address the server does not serve.                                                                                                                                 |
+| `oauth_grant_not_found`              | 404                 | No app grant has this id.                                                                                                                                                                      |
+| `owner_not_found`                    | 404                 | The instance has no owner yet.                                                                                                                                                                 |
+| `passkey_not_found`                  | 404                 | No passkey of the owner has this id.                                                                                                                                                           |
+| `sign_in_not_found`                  | 404                 | No live sign-in of the owner has this id: it never existed, has ended or has expired.                                                                                                          |
+| `source_not_found`                   | 404                 | The caller can't see a source with this code.                                                                                                                                                  |
+| `type_not_found`                     | 404                 | No registered type has this identifier.                                                                                                                                                        |
+| `webhook_not_found`                  | 404                 | No webhook subscription the caller can reach has this id.                                                                                                                                      |
+| `request_timeout`                    | 408                 | A body did not arrive in time: an inbound webhook delivery did not finish before its deadline, or a restore or a blob upload received no bytes for the upload idle limit.                      |
+| `ancestor_unavailable`               | 409                 | The write names a version that has no snapshot the caller may merge against.                                                                                                                   |
+| `conflict`                           | 409                 | The request collides with the current state in a way that no other code names.                                                                                                                 |
+| `connector_held`                     | 409                 | Another process holds the connector's registration until `details.expires_at`.                                                                                                                 |
+| `copies_below_minimum`               | 409                 | Dropping the copy would leave fewer live copies than the instance's minimum.                                                                                                                   |
+| `edge_type_in_use`                   | 409                 | Edges of the edge type still exist, and the delete did not ask to force.                                                                                                                       |
+| `export_rows_unrestorable`           | 409                 | Both reads of an archive export refused the same unchanged row. No archive bytes were sent. `details.row` names the row.                                                                       |
+| `housekeeping_job_running`           | 409                 | The housekeeping job is in the middle of a run.                                                                                                                                                |
+| `id_reused`                          | 409                 | A caller-minted id already names a different item or edge.                                                                                                                                     |
+| `idempotency_key_in_flight`          | 409                 | An `Idempotency-Key` is held by another request, or kept changing hands. Retry.                                                                                                                |
+| `instance_changed`                   | 409                 | A request names another instance in `X-Marfa-Instance-Id`. Nothing is written. Rebuild the working copy from the instance at this address.                                                     |
+| `item_exists`                        | 409                 | A create that asked not to overwrite names a source and source id, or an id, that an item already holds. Nothing is written. `details.existing_id` names the item.                             |
+| `link_taken`                         | 409                 | A write would give an item a link that another item of its type holds.                                                                                                                         |
+| `owner_exists`                       | 409                 | The instance already has an owner.                                                                                                                                                             |
+| `reach_changed`                      | 409                 | A conditional copy read or copy stream carries a proof for a reach that has since changed. Rebuild the working copy.                                                                           |
+| `sign_in_address_change_unconfirmed` | 409                 | A write moves the sign-in address without `confirm_sign_in_address_change`. Nothing is changed; `details.consequences` names what the move would do.                                           |
+| `source_id_conflict`                 | 409                 | A change to `source_id` names a natural key that another item already holds under the same source.                                                                                             |
+| `trash_plan_changed`                 | 409                 | A trash names a `digest` that no longer matches what it would move to the trash. Nothing is trashed; preview it again.                                                                         |
+| `type_already_exists`                | 409                 | A type is already registered under this identifier.                                                                                                                                            |
+| `type_chain_unresolvable`            | 409                 | The stored definition of a type does not read. `PUT /types/{id}` still accepts a corrected schema.                                                                                             |
+| `type_has_subtypes`                  | 409                 | Another type declares this type as its parent. Forcing the delete does not override this.                                                                                                      |
+| `type_in_use`                        | 409                 | Items of the type still exist, the bin included, or a folder, view or webhook setting names it, and the delete did not ask to force.                                                           |
+| `type_mismatch`                      | 409                 | The request declares a type other than the type of the item it resolved.                                                                                                                       |
+| `type_move_blocked`                  | 409                 | A folder, view or webhook setting names the type, and the move can't rewrite it. `details.settings` names each, with its `reason`.                                                             |
+| `version_conflict`                   | 409                 | The write names a version that is no longer the current one. The answer carries the current state.                                                                                             |
+| `request_too_large`                  | 413                 | The request body is over the cap for its operation.                                                                                                                                            |
+| `range_not_satisfiable`              | 416                 | A `Range` request asks for bytes the blob does not have. `Content-Range` names its size.                                                                                                       |
+| `compatible_with_violation`          | 422                 | A `compatible_with` claim is invalid, or a change breaks another type's claim. `details.dependent_type_ids` names dependents whose claims the change would break.                              |
+| `idempotency_key_reused`             | 422                 | An `Idempotency-Key` is sent with a different request than the one it first named.                                                                                                             |
+| `idempotency_result_not_retained`    | 422                 | An `Idempotency-Key` repeats a request whose first answer was too large to keep. `details.original_status` is the status it carried.                                                           |
+| `rate_limited`                       | 429                 | The credential, or an inbound endpoint, is past its request cap for the current window.                                                                                                        |
+| `internal_error`                     | 500                 | A fault that nothing else names a refusal for. The answer says nothing of what failed.                                                                                                         |
+| `blob_store_unavailable`             | 503                 | A blob store failed, or did not answer in time, while Marfa checked, read, wrote or deleted a blob's copy. Nothing was written. Retry later.                                                   |
+| `export_unrestorable`                | 503                 | Writes changed the row an archive export refused, or its type, between two reads. No archive bytes were sent. Retry the export.                                                                |
+| `inbound_unavailable`                | 503                 | An inbound endpoint cannot take a delivery now, because its connector's backlog is full or the instance holds as many bodies in flight as it allows. Retry later.                              |
+| `stream_capacity_exhausted`          | 503                 | The instance is serving as many live event streams as it allows. `details.reason` is `viewer_cap`.                                                                                             |
+| `write_contention`                   | 503                 | A write could not get the store's write lock within the busy budget. Retry it unchanged.                                                                                                       |
+| `insufficient_storage`               | 507                 | The volume the instance writes to has no room for the request, or the request would leave less free than the instance's reserve. Nothing was kept unless `details.write_outcome` is `unknown`. |
 
 <!-- errors-table:end -->
