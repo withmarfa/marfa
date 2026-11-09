@@ -9,7 +9,6 @@ use marfa_rules::schema::resolve;
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 
-use super::super::App;
 use super::super::access::Caller;
 use super::super::blobs::references;
 use super::super::catalog::{self, Catalog, Snapshot};
@@ -17,6 +16,7 @@ use super::super::faults::HOLD_THINNING_ITEM;
 use super::super::housekeeping::{DAY_MS, Report, Run};
 use super::super::refusal::Result;
 use super::super::unit::Unit;
+use super::super::{App, stored};
 use crate::settings::registry::{
     VERSION_DAILY_SNAPSHOT_DAYS, VERSION_MAX_VERSIONS, VERSION_RECENT_DAYS,
     VERSION_WEEKLY_SNAPSHOT_DAYS,
@@ -115,20 +115,22 @@ fn thin(history: &[Kept], policy: &Policy, now_ms: i64) -> Vec<Kept> {
         .collect()
 }
 
-fn instance_policy(app: &App) -> Policy {
-    let live = app.settings.live();
-    let whole = |value: u64| i64::try_from(value).unwrap_or(i64::MAX);
-    Policy {
-        recent_days: whole(live.get(VERSION_RECENT_DAYS)),
-        daily_days: whole(live.get(VERSION_DAILY_SNAPSHOT_DAYS)),
-        weekly_days: whole(live.get(VERSION_WEEKLY_SNAPSHOT_DAYS)),
-        max_versions: whole(live.get(VERSION_MAX_VERSIONS)),
-    }
+/// Read from `tx`, since the live settings lag a change the writer has committed.
+fn instance_policy(tx: &Transaction<'_>, app: &App) -> Result<Policy> {
+    let seeds = app.settings.seeds();
+    let whole = |setting| -> Result<i64> {
+        Ok(i64::try_from(stored::deciding(tx, &seeds, setting)?).unwrap_or(i64::MAX))
+    };
+    Ok(Policy {
+        recent_days: whole(VERSION_RECENT_DAYS)?,
+        daily_days: whole(VERSION_DAILY_SNAPSHOT_DAYS)?,
+        weekly_days: whole(VERSION_WEEKLY_SNAPSHOT_DAYS)?,
+        max_versions: whole(VERSION_MAX_VERSIONS)?,
+    })
 }
 
 /// A type no longer registered has only the instance's policy; one that cannot be read has none, and its items are left whole.
-fn policy_of(app: &App, catalog: &Catalog, type_id: &str) -> Option<Policy> {
-    let defaults = instance_policy(app);
+fn policy_of(defaults: Policy, catalog: &Catalog, type_id: &str) -> Option<Policy> {
     if catalog.is_unreadable(type_id) {
         return None;
     }
@@ -174,13 +176,19 @@ fn history(tx: &Transaction<'_>, seq: i64) -> Result<Vec<Kept>> {
         .collect::<rusqlite::Result<_>>()?)
 }
 
-fn doomed(app: &App, catalog: &Catalog, tx: &Transaction<'_>, seq: i64) -> Result<Vec<Kept>> {
+fn doomed(
+    app: &App,
+    defaults: Policy,
+    catalog: &Catalog,
+    tx: &Transaction<'_>,
+    seq: i64,
+) -> Result<Vec<Kept>> {
     let type_id: Option<String> = tx
         .query_row("SELECT type FROM items WHERE seq = ?1", [seq], |row| {
             row.get(0)
         })
         .optional()?;
-    let policy = type_id.and_then(|type_id| policy_of(app, catalog, &type_id));
+    let policy = type_id.and_then(|type_id| policy_of(defaults, catalog, &type_id));
     match policy {
         Some(policy) => Ok(thin(&history(tx, seq)?, &policy, app.clock.now_ms())),
         None => Ok(Vec::new()),
@@ -194,6 +202,7 @@ struct Page {
 
 fn page(app: &App, tx: &Transaction<'_>, after: i64) -> Result<Page> {
     let catalog = catalog::current(&app.catalog_handle(), tx, Snapshot::Committed)?;
+    let defaults = instance_policy(tx, app)?;
     let mut statement = tx.prepare_cached(
         "SELECT item_seq FROM item_versions WHERE item_seq > ?1 GROUP BY item_seq \
          HAVING count(*) > ?2 ORDER BY item_seq LIMIT ?3",
@@ -203,7 +212,7 @@ fn page(app: &App, tx: &Transaction<'_>, after: i64) -> Result<Page> {
         .collect::<rusqlite::Result<Vec<i64>>>()?;
     let mut chosen = Vec::new();
     for seq in &seqs {
-        if !doomed(app, &catalog, tx, *seq)?.is_empty() {
+        if !doomed(app, defaults, &catalog, tx, *seq)?.is_empty() {
             chosen.push(*seq);
         }
     }
@@ -216,7 +225,7 @@ fn page(app: &App, tx: &Transaction<'_>, after: i64) -> Result<Page> {
 fn remove(unit: &Unit<'_, '_>, app: &App, seq: i64) -> Result<usize> {
     let tx = unit.tx();
     let catalog = catalog::current(&app.catalog_handle(), tx, Snapshot::Pending)?;
-    let mut doomed = doomed(app, &catalog, tx, seq)?;
+    let mut doomed = doomed(app, instance_policy(tx, app)?, &catalog, tx, seq)?;
     doomed.truncate(CHUNK);
     if doomed.is_empty() {
         return Ok(0);
