@@ -10,10 +10,10 @@ use serde_json::{Map, Value};
 use super::embed::FILE_TYPE;
 use super::text::Typed;
 use crate::folder::fields;
-use crate::http::{TITLE_LOOKUP_NAMES, TITLE_LOOKUP_UNITS, TitledItem};
+use crate::http::{TITLE_LOOKUP_NAMES, TitledItem};
 use crate::{Core, Result, store};
 use marfa_rules::catalog::Catalog;
-use marfa_rules::names::{folded, name_of, title_of};
+use marfa_rules::names::{self, folded, name_of, title_of};
 
 /// Where the files of items sit, which a name may name by path or file name:
 /// a folder's files on disk, or the placements a working copy holds.
@@ -390,7 +390,7 @@ impl<'a> Resolver<'a> {
     fn ask(&mut self, asked: Vec<(String, String)>) {
         let (past, asked): (Vec<_>, Vec<_>) = asked
             .into_iter()
-            .partition(|(_, sent)| sent.encode_utf16().count() > TITLE_LOOKUP_UNITS);
+            .partition(|(_, sent)| sent.chars().count() > names::MAX_NAME_LENGTH);
         // A title past the cap has no key, so nothing is titled so.
         for (key, _) in past {
             self.looked.insert(
@@ -1151,7 +1151,7 @@ mod tests {
         let core = copy_holding(&server, dir.path(), &[]);
         let catalog = catalog_of(&core);
         server.on("/items/titles", vec![answer_of(&[titled("dots", "...")])]);
-        let long = "n".repeat(TITLE_LOOKUP_UNITS + 1);
+        let long = "n".repeat(names::MAX_NAME_LENGTH + 1);
         let mut resolver = resolver(&core, &catalog);
         resolver.prefetch(["...", " \u{3000} ", &long]).unwrap();
         assert_eq!(sent_names(&server), [["..."]]);

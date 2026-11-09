@@ -20,7 +20,11 @@ fn bound(params: &Params, name: &str) -> Result<i64> {
         Refusal::new(Code::MissingRequiredField, format!("{name} is required."))
             .with_detail("field", name)
     })?;
-    time::epoch_ms(value).ok_or_else(|| invalid_field(name, format!("{name} is not a timestamp.")))
+    time::normalize_bound(value, name)
+        .ok()
+        .as_deref()
+        .and_then(time::epoch_ms)
+        .ok_or_else(|| invalid_field(name, format!("{name} is not a timestamp.")))
 }
 
 fn type_of(params: &Params) -> Result<Option<String>> {

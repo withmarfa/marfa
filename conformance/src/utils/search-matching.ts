@@ -150,8 +150,8 @@ export const MATCHING_CASES: MatchingCase[] = [
     hits: [],
   },
   {
-    name: "pasted byte-order marks around a phrase are trimmed",
-    query: '\uFEFF"quiet landscape"\uFEFF',
+    name: "next-line and em space characters around a phrase are trimmed",
+    query: '\u0085"quiet landscape"\u2003',
     hits: set("marsh"),
   },
   {

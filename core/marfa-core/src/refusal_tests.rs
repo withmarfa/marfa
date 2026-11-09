@@ -221,7 +221,7 @@ fn a_url_is_trimmed_in_the_row_and_in_the_queued_write_as_the_server_keeps_it() 
     let core = copy(&Scripted::start());
     let queued = core
         .create_item(&bookmark(serde_json::json!({
-            "url": "\u{3000}https://example.com/a\u{feff}",
+            "url": "\u{3000}https://example.com/a\u{85}",
             "source_url": " https://exa\tmple.com/b ",
             "title": "  kept as written  ",
         })))
@@ -235,7 +235,7 @@ fn a_url_is_trimmed_in_the_row_and_in_the_queued_write_as_the_server_keeps_it() 
     assert_eq!(sent["properties"]["url"], "https://example.com/a");
 
     let edit = crate::Edit {
-        properties: serde_json::json!({ "url": "\u{feff}https://example.com/c " })
+        properties: serde_json::json!({ "url": "\u{85}https://example.com/c " })
             .as_object()
             .unwrap()
             .clone(),
@@ -258,7 +258,7 @@ fn a_url_the_server_refuses_is_refused_and_one_it_takes_is_not() {
     let core = copy(&Scripted::start());
     for refused in [
         "not a url",
-        "\u{85}https://example.com",
+        "\u{feff}https://example.com",
         "http://xn--é/",
         "http://bücher.xn--",
         "   ",

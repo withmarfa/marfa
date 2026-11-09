@@ -4,7 +4,7 @@
 use serde_json::{Map, Value};
 
 use crate::error::{Code, FieldError, RuleError, field_code};
-use crate::js;
+use crate::number;
 
 /// Fewest digits a whole number can have and still be beyond a float's exact range, 2^53.
 const MIN_DIGITS: usize = 16;
@@ -15,7 +15,7 @@ fn served_as(source: &str) -> Option<String> {
         .parse::<f64>()
         .ok()
         .filter(|rounded| rounded.is_finite())
-        .map(js::number)
+        .map(number::text)
 }
 
 /// Every safe integer is kept except `-0`, which is served as `0`.

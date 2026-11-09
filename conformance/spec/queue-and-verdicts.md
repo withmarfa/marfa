@@ -2350,7 +2350,7 @@ If a caller queues an item create or update that leaves out a property its type 
 
 ### `queue-and-verdicts/check-as-server`
 
-When a device judges a property value against a field of the held catalog, a device MUST judge the field's kind, enum membership, length in UTF-16 code units, array length, a NUL in a bounded string, and the `url`, `email`, `date`, `datetime` and `thumbnail` rules as the server does (`types.md`).
+When a device judges a property value against a field of the held catalog, a device MUST judge the field's kind, enum membership, length in characters, array length, a NUL in a bounded string, and the `url`, `email`, `date`, `datetime` and `thumbnail` rules as the server does (`types.md`).
 
 **Tests:** `device/property-validation-live.test.ts › matches a real server's field decisions and keeps queued writes across a catalog change`, `device/property-validation.test.ts › refuses missing and invalid fields atomically and accepts their boundary neighbours`.
 

@@ -12,7 +12,7 @@ use crate::model::{
 };
 use crate::wire::{WireEdge, WireItem};
 use marfa_rules::catalog::Indexing;
-use marfa_rules::js;
+use marfa_rules::number;
 pub use marfa_rules::search::fts_text;
 use marfa_rules::wire::{WireCatalog, WireType};
 
@@ -4473,7 +4473,7 @@ pub fn upsert_item(
             item.occurred_at,
             item.created_at,
             item.updated_at,
-            js::json(&Value::Object(js::object_order(&item.properties))),
+            number::object(&item.properties),
             item.capture_latitude,
             item.capture_longitude,
             item.trashed_at,
@@ -5066,7 +5066,7 @@ pub fn upsert_edge(conn: &Connection, edge: &WireEdge) -> Result<(), CoreError> 
             edge.source_id,
             edge.target_id,
             edge.edge_type,
-            Value::Object(js::object_order(&edge.properties)).to_string(),
+            number::object(&edge.properties),
             edge.version,
             edge.created_at,
             edge.updated_at,
@@ -9089,7 +9089,7 @@ mod tests {
     #[test]
     fn timestamp_reprojection_preserves_the_queued_request_and_retry_key() {
         for (spelling, expected) in [
-            ("2026-01-01T01:00:00.500+0100", "2026-01-01T00:00:00.500Z"),
+            ("2026-01-01T01:00:00.500+01:00", "2026-01-01T00:00:00.500Z"),
             ("invalid", "invalid"),
         ] {
             let conn = conn();
