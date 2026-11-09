@@ -2502,7 +2502,7 @@ If an archive registers a type or an edge type that the instance holds different
 
 If an archive carries a core edge type, then the server MUST answer `409 conflict`.
 
-**Tests:** `compliance/declared-refusals.test.ts › cannot be deleted, and cannot be redefined by an archive`.
+**Tests:** `compliance/restore-archive.test.ts › refuses an archive that carries a core edge type with 409 conflict`.
 
 ### `search-and-filters/restore-type-unknown-key`
 
@@ -2584,13 +2584,13 @@ When restoring an item whose `source`, after trimming whitespace and ignoring ca
 
 **Reason:** An archive carries history but no app credentials. A restored source cannot belong to a credential (`keys-and-oauth/claims-reserved`), so a later app sign-in cannot overwrite the archived item's natural key.
 
-**Tests:** `compliance/restore-archive.test.ts › rewrites app sources exactly and accepts previously restored sources`, `compliance/version-writers.test.ts › restores app-written items twice with their writers and separate natural keys`.
+**Tests:** `compliance/restore-archive.test.ts › rewrites app sources exactly and accepts previously restored sources`, `compliance/version-writers-archive.test.ts › restores app-written items twice with their writers and separate natural keys`.
 
 ### `search-and-filters/restore-source-again`
 
 When restoring an item whose `source` starts with `restored:`, the server MUST preserve that source unchanged.
 
-**Tests:** `compliance/restore-archive.test.ts › rewrites app sources exactly and accepts previously restored sources`, `compliance/version-writers.test.ts › restores app-written items twice with their writers and separate natural keys`.
+**Tests:** `compliance/restore-archive.test.ts › rewrites app sources exactly and accepts previously restored sources`, `compliance/version-writers-archive.test.ts › restores app-written items twice with their writers and separate natural keys`.
 
 ### `search-and-filters/restore-app-connection`
 
@@ -2598,7 +2598,7 @@ When restoring a `system.connection` item whose `kind` property is `app`, the se
 
 **Reason:** A restored app connection records past access, not a live grant. Its other fields and archived version writers remain part of that history (`versions/writer-restore`).
 
-**Tests:** `compliance/version-writers.test.ts › marks restored app connections inactive without changing their recorded fields`.
+**Tests:** `compliance/version-writers-archive.test.ts › marks restored app connections inactive without changing their recorded fields`.
 
 ### `search-and-filters/restore-scalars`
 

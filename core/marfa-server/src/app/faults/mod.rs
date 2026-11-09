@@ -10,6 +10,7 @@ macro_rules! point_list {
         HOLD_THINNING_ITEM = Hold "version-thinning:item" None;
         HOLD_BULK_PAGE = Hold "bulk-page" Nth;
         HOLD_EXPORT_PAGE = Hold "export-page" Nth;
+        HOLD_RESTORE_ITEM = Hold "restore:item" Nth;
         HOLD_RESTORE_COMMIT = Hold "restore:before-commit" None;
         HOLD_BACKUP_PUT = Hold "backup:put" None;
         HOLD_STREAM_OPEN = Hold "stream-open" None;

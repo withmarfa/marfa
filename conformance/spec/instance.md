@@ -70,7 +70,7 @@ When a request starts or wakes background work, the server MUST evaluate that wo
 
 When `GET /` is answered with the description, the server MUST give it an `instance_id` that is a UUIDv7.
 
-**Tests:** `compliance/instance.test.ts › names itself the same way at the root, at /config and in an archive`, `› describes itself at the root`, `compliance/instance-config.test.ts › answers one identity to every caller, keeps it across a restart, and shares it with no other instance`.
+**Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`, `compliance/instance.test.ts › describes itself at the root`, `compliance/instance-config.test.ts › answers one identity to every caller, keeps it across a restart, and shares it with no other instance`.
 
 ### `instance/request-limit-at-root`
 
@@ -84,7 +84,7 @@ When `GET /` is answered with the description, the server MUST give it a `max_re
 
 When a key holding `config.manage` sends `GET /config`, the server MUST answer an `instance_id` equal to the one the root answers.
 
-**Tests:** `compliance/instance.test.ts › names itself the same way at the root, at /config and in an archive`, `compliance/instance-config.test.ts › answers one identity to every caller, keeps it across a restart, and shares it with no other instance`.
+**Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`, `compliance/instance-config.test.ts › answers one identity to every caller, keeps it across a restart, and shares it with no other instance`.
 
 ### `instance/id-in-archive`
 
@@ -92,7 +92,7 @@ When a credential that may export sends `GET /export?format=archive`, the server
 
 **Reason:** the manifest is a file nothing echoes back, so an export that wrote another name, or none, would go unnoticed at every other operation.
 
-**Tests:** `compliance/instance.test.ts › names itself the same way at the root, at /config and in an archive`.
+**Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`.
 
 ### `instance/id-same-every-answer`
 
@@ -204,7 +204,7 @@ When a request that carries no credential sends `GET /`, the server MUST answer 
 
 **Reason:** the identity is read by a caller that holds no key yet.
 
-**Tests:** `compliance/instance.test.ts › names itself the same way at the root, at /config and in an archive`, `› answers a browser at the root with a page and a program with the JSON`.
+**Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`, `compliance/instance.test.ts › answers a browser at the root with a page and a program with the JSON`.
 
 ### `instance/root-fields`
 
@@ -284,7 +284,7 @@ When a credential that may export sends `GET /export?format=archive`, the server
 
 **Reason:** an archive is read only by the build that wrote it, and the format stays at version 0 until the first public release (`search-and-filters/restore-version`).
 
-**Tests:** `compliance/instance.test.ts › names itself the same way at the root, at /config and in an archive`.
+**Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`.
 
 ### `instance/contract-header`
 
@@ -1092,7 +1092,7 @@ While the server runs an archive export, an archive restore, an NDJSON export, a
 
 **Reason:** a long job that held up other requests would stop every request, `/health` included, for as long as it runs, and a container whose health check waits five seconds restarts a server that is working. The fixture checks the order of the answer and a later step of the job, which the server records, where a time would measure the machine. A restore also holds the write lock, which makes the write probe `degraded` and is not a held process.
 
-**Tests:** `compliance/long-job-health.test.ts › is answered between two pages of an archive export`, `› is answered between the first and the last row of an archive restore`, `› is answered between two pages of an NDJSON export`, `› is answered between two chunks of a bulk action`, `› is answered between two pages of the blob orphan sweep`, `› is answered between two pages of version thinning`, `› is answered between two grants of the retirement of inactive grants`.
+**Tests:** `compliance/long-job-health-restore.test.ts › is answered between the first and the last row of an archive restore`, `compliance/long-job-health.test.ts › is answered between two pages of an archive export`, `› is answered between two pages of an NDJSON export`, `› is answered between two chunks of a bulk action`, `› is answered between two pages of the blob orphan sweep`, `› is answered between two pages of version thinning`, `› is answered between two grants of the retirement of inactive grants`.
 
 ## The root in a browser
 

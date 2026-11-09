@@ -21,7 +21,7 @@ use crate::app::blobs::Scratch;
 use crate::app::blobs::restore as blobs;
 use crate::app::catalog::{self, Snapshot};
 use crate::app::edges::write::Writing;
-use crate::app::faults::HOLD_RESTORE_COMMIT;
+use crate::app::faults::{HOLD_RESTORE_COMMIT, HOLD_RESTORE_ITEM};
 use crate::app::items::restored::{self, Restored};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::{connectors, edge_types, sources, stored, types};
@@ -253,6 +253,7 @@ impl App {
                         for (row, line) in lines(&spools[1])?.enumerate() {
                             let line = line?;
                             checks::item(&catalog, cap, &line, row + 1).map_err(|refused| refused.refusal)?;
+                            faults.hold_writing(HOLD_RESTORE_ITEM);
                             match restored::restore(unit, &catalog, &line, &held)? {
                                 Restored::Written => imported += 1,
                                 Restored::Duplicate => duplicates += 1,

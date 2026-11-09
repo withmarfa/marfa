@@ -1122,6 +1122,72 @@ describe("what a restore answers", () => {
       blob: { type: "string", label: "Blob" },
     });
   });
+
+  it("refuses an archive that carries a core edge type with 409 conflict", async () => {
+    const archive = tar([
+      {
+        name: "manifest.json",
+        body: JSON.stringify({
+          version: 0,
+          format: "marfa-archive-v0",
+          created_at: new Date().toISOString(),
+          item_count: 0,
+          edge_count: 0,
+          blob_count: 0,
+          type_count: 0,
+          edge_type_count: 1,
+          blobs: {},
+        }),
+      },
+      lineFile(
+        "instance",
+        `${JSON.stringify({ edge_type: { id: "about", label: "About" } })}\n`,
+      ),
+      lineFile("items", ""),
+      lineFile("edges", ""),
+    ]);
+    const restored = await owner.restoreArchive(archive);
+    expect(restored.status).toBe(409);
+    expect(restored.error?.error.code).toBe("conflict");
+    await expectMatchesSchema("POST", "/restore", 409, restored.error);
+  });
+});
+
+describe("a restore sent under text/plain", () => {
+  it("takes an archive sent under text/plain, which a JSON door refuses when sent that way", async () => {
+    // The witness: a JSON door refuses the same media type.
+    const json = await fetch(`${apiUrl}/items`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${fileKey}`,
+        "Content-Type": "text/plain",
+      },
+      body: JSON.stringify({ type: "core.note", properties: { body: "x" } }),
+    });
+    expect(json.status).toBe(400);
+    expect(
+      ((await json.json()) as { error: { code: string } }).error.code,
+    ).toBe("validation_error");
+
+    const id = uuidv7();
+    const archive = itemsArchive([
+      {
+        id,
+        type: "core.note",
+        source: ctx.source,
+        source_id: `restore-text-plain-${ctx.runId}`,
+        properties: { body: "restored under text/plain" },
+      },
+    ]);
+    const res = await owner.rawRequest<{ imported: number }>("/restore", {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: Buffer.from(archive),
+    });
+    trackItem(ctx, id);
+    expect(res.status, JSON.stringify(res.error)).toBe(200);
+    expect(res.data.imported).toBe(1);
+  });
 });
 
 describe("a restore of a registration carrying a key the schema does not define", () => {
