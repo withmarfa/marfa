@@ -52,7 +52,7 @@ fn forward_stops() {
     }
 }
 
-/// macOS has no such request; there the service manager's clean-up of the process group does it.
+/// macOS has no parent-death signal; there the service manager's clean-up of the process group stops the child.
 #[cfg(target_os = "linux")]
 fn die_with_the_parent(command: &mut Command) {
     let parent = std::process::id() as libc::pid_t;

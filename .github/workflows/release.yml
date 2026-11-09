@@ -684,6 +684,7 @@ jobs:
   publish:
     name: Publish
     needs: [version, collect, run-linux, image, install-proof]
+    # npm's trusted publishing does not check the ref: only this condition keeps publication to tags.
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 30

@@ -25,6 +25,7 @@ fail() {
   exit 1
 }
 
+# The server's default paths are relative, so in this folder its socket path stays under the OS limit.
 (
   cd "$state"
   exec env -i HOME="$state" PATH="$PATH" MARFA_PORT=0 MARFA_LISTEN_HOST=127.0.0.1 \

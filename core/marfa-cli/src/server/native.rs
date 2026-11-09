@@ -58,7 +58,7 @@ impl<'a> Layout<'a> {
     }
 }
 
-/// The settings file cannot set the folder's paths or the port.
+/// The settings file cannot set what the folder decides: its paths, the port and the listen host.
 pub fn environment(dir: &Path, port: u16, settings: &EnvFile) -> Vec<(String, String)> {
     let layout = Layout::new(dir);
     let path = |path: PathBuf| path.to_string_lossy().into_owned();
