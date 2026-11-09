@@ -1,5 +1,6 @@
 pub mod apps;
 pub mod audit;
+pub mod backups;
 pub mod blobs;
 pub mod config;
 pub mod connectors;

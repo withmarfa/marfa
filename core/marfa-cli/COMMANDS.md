@@ -1942,6 +1942,44 @@ marfa restore [OPTIONS] <FILE>
 | --- | --- |
 | `<FILE>` | The archive, as `export --format archive` wrote it. |
 
+## backups
+
+Backups the server puts in its object store on a schedule, and takes and restores when asked. Each holds every item, edge and setting, the trash included, and no file, which the object store already holds.
+
+### marfa backups
+
+```text
+marfa backups [OPTIONS] <COMMAND>
+```
+
+### marfa backups list
+
+The backups in the instance's object store, newest first. Requires the owner or --socket.
+
+```text
+marfa backups list [OPTIONS]
+```
+
+### marfa backups run
+
+Take a backup now, whether or not anything changed since the last one. Requires the owner or --socket.
+
+```text
+marfa backups run [OPTIONS]
+```
+
+### marfa backups restore
+
+Restore a backup from the object store. The server reads it itself, so nothing is downloaded here. It restores as `restore` does an archive, and holds no sign-in, keys, apps or webhooks. Requires the owner, signed in within five minutes, or --socket.
+
+```text
+marfa backups restore [OPTIONS] <NAME>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<NAME>` | The backup's name, as `backups list` shows it. |
+
 ## views
 
 Views: saved lists of items, held as `system.view` and shared by every app. Writing one needs write on `system.view`.

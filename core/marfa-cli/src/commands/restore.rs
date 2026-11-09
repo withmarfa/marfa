@@ -19,8 +19,12 @@ pub fn request(args: &RestoreArgs) -> Request {
 }
 
 pub fn run(args: RestoreArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {
-    let answer = remote.json(&request(&args))?;
-    out.value(&answer)?;
+    answered(&remote.json(&request(&args))?, out)
+}
+
+/// Prints a restore's answer, says what is set up again, and fails on blobs it lacks.
+pub fn answered(answer: &serde_json::Value, out: &Printer) -> Result<(), CliError> {
+    out.value(answer)?;
     if let Some(note) = answer
         .get("set_up_again")
         .and_then(serde_json::Value::as_str)
