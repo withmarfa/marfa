@@ -2792,7 +2792,7 @@ Where the volume has room for an archive beside the instance's reserve (`blobs/r
 
 ### `search-and-filters/restore-duration`
 
-While a part of the body of `POST /restore` arrives at least once in every `MARFA_UPLOAD_IDLE_TIMEOUT_MS`, the server MUST NOT end the request for the time the body takes.
+While a part of the body of `POST /restore` arrives at least once in every `upload_idle_timeout_ms`, the server MUST NOT end the request for the time the body takes.
 
 **Reason:** an archive has no size cap (`search-and-filters/restore-blob-size`), so a large one over a slow link outlasts any fixed request deadline. The limit on a body that stops arriving is `search-and-filters/restore-idle`.
 
@@ -2800,7 +2800,7 @@ While a part of the body of `POST /restore` arrives at least once in every `MARF
 
 ### `search-and-filters/restore-idle`
 
-If no byte of the body of `POST /restore` arrives for `MARFA_UPLOAD_IDLE_TIMEOUT_MS`, 60000 milliseconds unless named, then the server MUST answer `408 request_timeout`.
+If no byte of the body of `POST /restore` arrives for `upload_idle_timeout_ms`, 60000 milliseconds unless named, then the server MUST answer `408 request_timeout`.
 
 **Reason:** a sender that has gone quiet would otherwise hold its request and the bytes it has sent for ever. The time counts the server's wait for the sender, not the time it takes to write what has arrived.
 
@@ -2946,11 +2946,11 @@ While a restore writes, the server MUST NOT show its rows, registrations or even
 
 ### `search-and-filters/restore-writers-wait`
 
-While a restore writes, if another request has to write and waits for the restore longer than the instance's busy budget, then the server MUST answer that request `503 write_contention`.
+While a restore writes, if another request has to write and waits for the restore longer than the instance's write wait, then the server MUST answer that request `503 write_contention`.
 
 **Reason:** the restore holds the write lock until it commits, and a caller retries a `503` (`errors/contention`), whose `details.budget_ms` names the budget (`errors/contention-budget`).
 
-**Tests:** `compliance/restore-concurrent.test.ts › is answered 201, or 503 write_contention carrying the busy budget, and nothing else`.
+**Tests:** `compliance/restore-concurrent.test.ts › is answered 201, or 503 write_contention carrying the write wait, and nothing else`.
 
 ### `search-and-filters/restore-bytes-kept`
 

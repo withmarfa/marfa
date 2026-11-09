@@ -217,7 +217,7 @@ describe("starting on an image a crash leaves", () => {
   );
 });
 
-describe("starting on a data directory with another API_KEY_SALT", () => {
+describe("starting on a data directory with another MARFA_KEY_SALT", () => {
   const OTHER_SALT = "another-salt-".padEnd(40, "x");
   let server: FreshServer;
   let appToken: string;
@@ -276,7 +276,7 @@ describe("starting on a data directory with another API_KEY_SALT", () => {
         );
       }
 
-      await server.restart({ env: { API_KEY_SALT: OTHER_SALT } });
+      await server.restart({ env: { MARFA_KEY_SALT: OTHER_SALT } });
       for (const door of doors) {
         expect(await ask(door.path, door.credential()), door.who).toEqual({
           status: 401,
@@ -295,7 +295,7 @@ describe("starting on a data directory with another API_KEY_SALT", () => {
   );
 
   it(
-    "keeps the completed claim and offers no setup code or unauthenticated key mint under another API_KEY_SALT",
+    "keeps the completed claim and offers no setup code or unauthenticated key mint under another MARFA_KEY_SALT",
     async () => {
       const announcements = async (): Promise<number> =>
         (await server.output()).split(
@@ -304,7 +304,7 @@ describe("starting on a data directory with another API_KEY_SALT", () => {
       // The initial unclaimed boot announced setup proof; the claimed restart does not.
       expect(await announcements()).toBe(1);
 
-      await server.restart({ env: { API_KEY_SALT: OTHER_SALT } });
+      await server.restart({ env: { MARFA_KEY_SALT: OTHER_SALT } });
       const minted = await ask("/keys", undefined, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -394,7 +394,10 @@ it(
     const socket = join(root, "control.sock");
     try {
       const refused = await bootRefused("lifecycle-port-taken", {
-        extraEnv: { PORT: String(held.port), MARFA_CONTROL_SOCKET: socket },
+        extraEnv: {
+          MARFA_PORT: String(held.port),
+          MARFA_CONTROL_SOCKET: socket,
+        },
       });
       try {
         expect(refused).toMatchObject({ code: 1, signal: null });
@@ -431,11 +434,9 @@ function holdPort(): Promise<{ port: number; server: Server }> {
  *  settings' lines after removing the state. */
 async function refusedOverSettings(
   env: Record<string, string>,
-  nodeEnv?: string,
 ): Promise<string[]> {
   const refused = await bootRefused("lifecycle-settings", {
     extraEnv: env,
-    nodeEnv,
   });
   try {
     // Exit status 1, as for any failure to start that is not a refused database
@@ -463,16 +464,16 @@ describe("starting with a setting outside its rule", () => {
       'MARFA_CONNECTOR_HOLD_MS must be a whole number, from 1000 to 3600000 (got "999")',
     ],
     [
-      "AUDIT_RETENTION_DAYS",
+      "MARFA_AUDIT_RETENTION_DAYS",
       "a count above its maximum",
       "36501",
-      'AUDIT_RETENTION_DAYS must be a whole number, from 0 to 36500 (got "36501")',
+      'MARFA_AUDIT_RETENTION_DAYS must be a whole number, from 0 to 36500 (got "36501")',
     ],
     [
-      "SQLITE_BUSY_BUDGET_MS",
+      "MARFA_EVENT_LOG_RETENTION_HOURS",
       "not a number",
       "soon",
-      'SQLITE_BUSY_BUDGET_MS must be a whole number, from 0 to 2147483647 (got "soon")',
+      'MARFA_EVENT_LOG_RETENTION_HOURS must be a whole number, from 0 to 876000 (got "soon")',
     ],
     [
       "MARFA_ENRICHMENT_ENABLED",
@@ -502,19 +503,17 @@ describe("starting with a setting outside its rule", () => {
     async () => {
       const server = await bootFreshServer("lifecycle-settings-edge", {
         MARFA_CONNECTOR_HOLD_MS: "1000",
-        AUDIT_RETENTION_DAYS: "36500",
-        SQLITE_BUSY_BUDGET_MS: "0",
+        MARFA_AUDIT_RETENTION_DAYS: "36500",
+        MARFA_EVENT_LOG_RETENTION_HOURS: "0",
         MARFA_ENRICHMENT_ENABLED: "OFF",
         S3_ENDPOINT: "https://objects.example.test",
         OTEL_RESOURCE_ATTRIBUTES: "team=a%20b",
         // With no bucket the endpoint is parsed and never reached, whatever
         // object store the run's environment names.
         S3_BUCKET: "",
-        VERSION_RECENT_DAYS: "40",
-        VERSION_DAILY_SNAPSHOT_DAYS: "40",
-        VERSION_WEEKLY_SNAPSHOT_DAYS: "40",
-        MARFA_BULK_ACTION_POLL_INTERVAL_MS: "500",
-        MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS: "500",
+        MARFA_VERSION_RECENT_DAYS: "40",
+        MARFA_VERSION_DAILY_SNAPSHOT_DAYS: "40",
+        MARFA_VERSION_WEEKLY_SNAPSHOT_DAYS: "40",
         MARFA_AUTH_SECRET: "x".repeat(32),
       });
 
@@ -587,25 +586,20 @@ describe("starting with a setting outside its rule", () => {
 
   const disagreeing: [string, Record<string, string>, string][] = [
     [
-      "VERSION_DAILY_SNAPSHOT_DAYS",
-      { VERSION_RECENT_DAYS: "40", VERSION_DAILY_SNAPSHOT_DAYS: "39" },
-      'VERSION_DAILY_SNAPSHOT_DAYS must be at least VERSION_RECENT_DAYS (got "39")',
+      "MARFA_VERSION_DAILY_SNAPSHOT_DAYS",
+      {
+        MARFA_VERSION_RECENT_DAYS: "40",
+        MARFA_VERSION_DAILY_SNAPSHOT_DAYS: "39",
+      },
+      'MARFA_VERSION_DAILY_SNAPSHOT_DAYS must be at least MARFA_VERSION_RECENT_DAYS (got "39")',
     ],
     [
-      "VERSION_WEEKLY_SNAPSHOT_DAYS",
+      "MARFA_VERSION_WEEKLY_SNAPSHOT_DAYS",
       {
-        VERSION_DAILY_SNAPSHOT_DAYS: "100",
-        VERSION_WEEKLY_SNAPSHOT_DAYS: "99",
+        MARFA_VERSION_DAILY_SNAPSHOT_DAYS: "100",
+        MARFA_VERSION_WEEKLY_SNAPSHOT_DAYS: "99",
       },
-      'VERSION_WEEKLY_SNAPSHOT_DAYS must be at least VERSION_DAILY_SNAPSHOT_DAYS (got "99")',
-    ],
-    [
-      "MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS",
-      {
-        MARFA_BULK_ACTION_POLL_INTERVAL_MS: "500",
-        MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS: "499",
-      },
-      'MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS must be at least MARFA_BULK_ACTION_POLL_INTERVAL_MS (got "499")',
+      'MARFA_VERSION_WEEKLY_SNAPSHOT_DAYS must be at least MARFA_VERSION_DAILY_SNAPSHOT_DAYS (got "99")',
     ],
   ];
 
@@ -637,33 +631,11 @@ describe("starting with a setting outside its rule", () => {
       expect(
         await refusedOverSettings({
           ...disagreement,
-          VERSION_RECENT_DAYS: "soon",
+          MARFA_VERSION_RECENT_DAYS: "soon",
         }),
       ).toEqual([
-        'VERSION_RECENT_DAYS must be a whole number, from 0 to 36500 (got "soon")',
+        'MARFA_VERSION_RECENT_DAYS must be a whole number, from 0 to 36500 (got "soon")',
       ]);
-
-      // The rules that hold only in production wait too. The three settings
-      // production requires are given as empty, which is unset, so what the
-      // environment of whoever runs the suite holds does not answer them.
-      const unset = {
-        API_KEY_SALT: "",
-        MARFA_AUTH_SECRET: "",
-        MARFA_AUTH_BASE_URL: "",
-      };
-      // The witness: in production alone, the three are named.
-      expect(
-        [...(await refusedOverSettings(unset, "production"))].sort(),
-      ).toEqual(
-        [
-          "API_KEY_SALT must be set in production; generate one with `openssl rand -hex 32`",
-          "MARFA_AUTH_BASE_URL must be set in production to the public URL clients reach this server at",
-          "MARFA_AUTH_SECRET must be set in production; generate one with `openssl rand -hex 32`",
-        ].sort(),
-      );
-      expect(
-        await refusedOverSettings({ ...unset, [name]: value }, "production"),
-      ).toEqual([line]);
     },
     2 * FRESH_SERVER_TIMEOUT_MS,
   );

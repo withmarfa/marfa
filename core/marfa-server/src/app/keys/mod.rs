@@ -132,6 +132,17 @@ pub fn live_by_id(tx: &Transaction<'_>, id: &str, at: &str) -> Result<Option<Key
         .optional()?)
 }
 
+/// The live keys whose type map names `type_id` outright, as `(id, label)`. An app's keys are its grant's.
+pub fn naming_type(tx: &Transaction<'_>, type_id: &str, at: &str) -> Result<Vec<(String, String)>> {
+    let mut statement = tx.prepare(&format!(
+        "SELECT k.id, k.label FROM api_keys k WHERE {LIVE} AND k.oauth_client_id IS NULL \
+         AND EXISTS (SELECT 1 FROM json_each(k.type_permissions) WHERE key = ?2) \
+         ORDER BY k.created_at, k.id"
+    ))?;
+    let rows = statement.query_map([at, type_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
 /// Whether the key is neither revoked nor expired at `at`.
 pub fn stands(tx: &Transaction<'_>, id: &str, at: &str) -> Result<bool> {
     Ok(tx.query_row(
@@ -311,7 +322,7 @@ fn require_ahead(expires_at: Option<&str>, at: &str) -> Result<()> {
 
 pub async fn mint(app: &App, caller: &Caller, request: Mint) -> Result<(Key, String)> {
     let plain = secret::new_secret()?;
-    let hash = secret::hash(&app.settings.start.api_key_salt, &plain)?;
+    let hash = secret::hash(&app.settings.start.key_salt, &plain)?;
     let key = app
         .write(caller, "key.create", move |unit| {
             let caller = &unit.caller;
@@ -479,7 +490,7 @@ pub async fn authenticate(app: &Arc<App>, token: &str) -> Result<Option<Key>> {
     if !secret::looks_like_a_key(token) {
         return Ok(None);
     }
-    let hash = secret::hash(&app.settings.start.api_key_salt, token)?;
+    let hash = secret::hash(&app.settings.start.key_salt, token)?;
     let at = app.clock.stamp();
     let key = app
         .db

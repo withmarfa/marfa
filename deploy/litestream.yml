@@ -23,7 +23,7 @@ snapshot:
   retention: 24h
 
 dbs:
-  - path: ${SQLITE_PATH}
+  - path: ${MARFA_DATABASE_PATH}
     replica:
       type: s3
       bucket: ${S3_BUCKET}

@@ -14,10 +14,14 @@ use serde_json::{Map, Value, json};
 
 use super::App;
 use super::access::Caller;
+use super::auth;
 use super::faults::HOLD_CONNECTOR_WRITE;
+use super::housekeeping;
 use super::items;
 use super::query::{Position, bad_cursor};
 use super::refusal::{Code, Refusal, Result};
+use super::stored;
+use crate::settings::registry::CONNECTOR_HOLD_MS;
 pub use read_only::{ReadOnly, Registry};
 pub use request::{Batch, Lookup, Register, Replace, Run, Take, released};
 use store::Registration;
@@ -164,6 +168,57 @@ pub async fn list(app: &App, caller: &Caller) -> Result<Value> {
         Ok(json!({ "data": data, "next_cursor": null }))
     })
     .await
+}
+
+/// Why a connector needs a look.
+pub enum Reason {
+    Failed(Option<String>),
+    Problems(usize),
+    Quiet,
+}
+
+pub struct Concern {
+    pub id: String,
+    pub name: String,
+    pub reasons: Vec<Reason>,
+}
+
+/// Every connector whose last run failed, that reports problems, or that has said nothing for
+/// more than a day, read in one snapshot at `at`.
+pub fn concerns(tx: &Transaction<'_>, at: &str) -> Result<Vec<Concern>> {
+    let now = auth::millis_of(at)?;
+    let mut found = Vec::new();
+    for registration in store::newest_first(tx)? {
+        let run = store::last_run(tx, &registration.id)?;
+        let mut reasons = Vec::new();
+        if let Some(run) = run.as_ref().filter(|run| run.outcome == "failed") {
+            reasons.push(Reason::Failed(run.error.clone()));
+        }
+        let problems = store::problems(tx, &registration.source)?.len();
+        if problems > 0 {
+            reasons.push(Reason::Problems(problems));
+        }
+        let mut heard = [
+            Some(registration.registered_at.as_str()),
+            registration.last_heartbeat_at.as_deref(),
+            run.as_ref().map(|run| run.reported_at.as_str()),
+        ]
+        .into_iter()
+        .flatten()
+        .map(auth::millis_of);
+        let latest = heard.try_fold(i64::MIN, |latest, at| at.map(|at| latest.max(at)))?;
+        if now - latest > housekeeping::DAY_MS {
+            reasons.push(Reason::Quiet);
+        }
+        if !reasons.is_empty() {
+            found.push(Concern {
+                id: registration.id,
+                name: registration.name,
+                reasons,
+            });
+        }
+    }
+    Ok(found)
 }
 
 pub async fn read(app: &App, caller: &Caller, id: String) -> Result<Value> {
@@ -378,9 +433,10 @@ pub async fn clear_state(app: &App, caller: &Caller, id: String) -> Result<()> {
 }
 
 pub async fn take_hold(app: &App, caller: &Caller, id: String, request: Take) -> Result<Value> {
-    let window = app.settings.start.connector_hold;
+    let seeds = app.settings.seeds();
     app.write(caller, "connector.hold", move |unit| {
         let tx = unit.tx();
+        let window = Duration::from_millis(stored::setting(tx, &seeds, CONNECTOR_HOLD_MS)?);
         let registration = find(tx, &id)?;
         unit.caller
             .require_own_connector_key(&registration.key_id)?;

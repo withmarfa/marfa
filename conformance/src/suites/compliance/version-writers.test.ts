@@ -36,7 +36,7 @@ let addresses = 0;
 beforeAll(async () => {
   [server, target] = await Promise.all([
     bootFreshServer("version-writers", {
-      TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
       MARFA_ENRICHMENT_ENABLED: "true",
       // Driven through the housekeeping operation rather than the scheduler.
       MARFA_ENRICHMENT_INTERVAL_MS: "3600000",

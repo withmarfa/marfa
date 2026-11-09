@@ -22,6 +22,7 @@ pub mod schema;
 pub mod search;
 pub mod thumbnail;
 pub mod time;
+pub mod type_move;
 pub mod url_host;
 pub mod validation;
 pub mod wire;

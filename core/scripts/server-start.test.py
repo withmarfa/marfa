@@ -66,7 +66,7 @@ with tempfile.TemporaryDirectory(prefix="marfa-start-") as directory:
         environments = []
         for name in ("first", "second", "collision", "broken", "ipv4", "shared-env", "racing"):
             env = dict(os.environ)
-            for key in ("PORT", "MARFA_SERVER_KEEP", "MARFA_CONTROL_SOCKET", "MARFA_AUTH_BASE_URL"):
+            for key in ("MARFA_PORT", "MARFA_SERVER_KEEP", "MARFA_CONTROL_SOCKET", "MARFA_SIGN_IN_ADDRESS"):
                 env.pop(key, None)
             env["MARFA_SERVER_REPO"] = str(scripts.parents[1])
             env["PATH"] = str(shim) + os.pathsep + env["PATH"]
@@ -110,7 +110,7 @@ with tempfile.TemporaryDirectory(prefix="marfa-start-") as directory:
                 thread = threading.Thread(target=witness.serve_forever)
                 thread.start()
                 try:
-                    ipv4 = environments[4] | {"PORT": str(witness.server_port)}
+                    ipv4 = environments[4] | {"MARFA_PORT": str(witness.server_port)}
                     result = subprocess.run([scripts / "server-up.sh"], env=ipv4, capture_output=True, text=True)
                     assert result.returncode != 0, "helper accepted another instance's IPv4 endpoint"
                     assert "EADDRINUSE" in result.stderr, result.stderr
@@ -145,7 +145,7 @@ with tempfile.TemporaryDirectory(prefix="marfa-start-") as directory:
             assert sorted(result.returncode for result in starts) == [0, 1], "concurrent duplicate starts did not have one owner"
             racing = read_env(Path(environments[6]["MARFA_SERVER_ENV"]))
             assert get(racing["MARFA_TEST_URL"] + "/")["instance_id"]
-            collision = environments[2] | {"PORT": str(candidate)}
+            collision = environments[2] | {"MARFA_PORT": str(candidate)}
             result = subprocess.run([scripts / "server-up.sh"], env=collision, capture_output=True, text=True)
             assert result.returncode != 0, "occupied explicit port booted"
             assert "EADDRINUSE" in result.stderr, result.stderr
@@ -157,7 +157,7 @@ with tempfile.TemporaryDirectory(prefix="marfa-start-") as directory:
             (broken_state / "blobs").write_text("occupied")
             with bind_port() as released:
                 startup_port = released.getsockname()[1]
-            broken = environments[3] | {"MARFA_SERVER_KEEP": str(broken_state), "PORT": str(startup_port)}
+            broken = environments[3] | {"MARFA_SERVER_KEEP": str(broken_state), "MARFA_PORT": str(startup_port)}
             result = subprocess.run([scripts / "server-up.sh"], env=broken, capture_output=True, text=True)
             assert result.returncode != 0, "invalid blob path booted"
             assert "Marfa server listening on port" not in result.stderr

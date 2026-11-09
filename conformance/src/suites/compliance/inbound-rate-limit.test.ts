@@ -28,9 +28,9 @@ let serial = 0;
 
 beforeAll(async () => {
   server = await bootFreshServer("inbound-rate-window", {
-    RATE_LIMIT_ENABLED: "true",
-    RATE_LIMIT_INBOUND_REQUESTS: String(REQUESTS),
-    RATE_LIMIT_WINDOW_MS: String(WINDOW_MS),
+    MARFA_RATE_LIMIT_ENABLED: "true",
+    MARFA_RATE_LIMIT_INBOUND_REQUESTS: String(REQUESTS),
+    MARFA_RATE_LIMIT_WINDOW_MS: String(WINDOW_MS),
     MARFA_INBOUND_MAX_BYTES: String(MAX_BYTES),
   });
   minter = new MarfaClient({
@@ -108,7 +108,7 @@ describe("the inbound rate window", () => {
     expect(codeOf(retired)).toBe("not_found");
   });
 
-  it("ends a window after RATE_LIMIT_WINDOW_MS, and tells a refused sender how long is left", async () => {
+  it("ends a window after MARFA_RATE_LIMIT_WINDOW_MS, and tells a refused sender how long is left", async () => {
     const { endpoint } = await liveEndpoint();
     for (let i = 0; i < REQUESTS; i++) {
       idOf(await send(server.apiUrl, endpoint.path, "x"));

@@ -1048,11 +1048,19 @@ If the key sending `POST /types/{id}/move` lacks write on the type or on `to` in
 
 ### `types/move-settings`
 
-When no item of the type remains once a type move's job has run, the server MUST, in one transaction, rewrite to name `to` instead: a folder's `query.types`, `defaults.type` and `first_placement` key, a view's `query.types`, each `type eq` and `type neq` term naming the type in a folder's or view's `query.filter`, and a webhook's `type_filter` that is exactly the type.
+When no item of the type remains once a type move's job has run, and `types/move-settings-refused` does not hold the settings back, the server MUST, in one transaction, rewrite to name `to` instead: a folder's `query.types`, `defaults.type` and `first_placement` key, a view's `query.types`, each `type eq` and `type neq` term naming the type in a folder's or view's `query.filter`, and a webhook's `type_filter` that is exactly the type.
 
 **Reason:** a folder, view or webhook naming a type no item holds anymore would hold nothing, and the person who made it meant the items, not the identifier.
 
 **Tests:** `compliance/type-move.test.ts › rewrites the folders, views and webhooks that name the type once every item has moved`, `› writes nothing on a dry run, and the same move run for real writes`.
+
+### `types/move-settings-refused`
+
+If no item of the type remains once a type move's job has run, and `to` is no longer registered or a folder's or view's own operation would refuse its rewrite, then the server MUST rewrite no setting, set `result.settings_rewritten` to `false`, and answer that refusal's `code`, `message` and `details` in `result.settings_error`.
+
+**Reason:** a setting rewritten past its own checks would name a type nothing can hold, or refuse the person's next edit of it.
+
+**Tests:** `compliance/bulk-job-meanwhile.test.ts › rewrites no setting, and says why, when the type it moves to is gone by then`, `› rewrites none of the settings, and says why, when one of them would be refused by then`.
 
 ### `types/move-settings-delivered`
 
@@ -1273,6 +1281,8 @@ If `PUT /config` names `enforcement.strict_mode` without `types`, or `enforcemen
 ### `types/config-permission`
 
 If a key without `config.manage` sends `GET /config`, `PUT /config` or `PATCH /config`, then the server MUST answer `403 forbidden` with `details.required_scope` `config.manage`.
+
+**Reason:** `config.manage` also sets how long the audit log, the trash, the versions and the other retained records are kept. A holder may shorten a retention, and the shortening stands: the next run of the cleanup job removes what is now older, and nothing asks the owner again. A key that may only read the audit log holds no `config.manage`, so it cannot shorten the trail it reads.
 
 **Tests:** `compliance/schema-enforcement.test.ts › refuses all three doors to a key without config.manage`.
 

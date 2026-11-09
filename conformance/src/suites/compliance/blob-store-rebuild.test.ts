@@ -52,7 +52,7 @@ describe("a missing folder beside an object store", () => {
           refused = await bootRefused("blob-store-rebuild-refused", {
             prepare: (_database, state) =>
               cpSync(image, state, { recursive: true }),
-            extraEnv: { ...ownObjectStore(), BLOB_PATH: folder },
+            extraEnv: { ...ownObjectStore(), MARFA_BLOB_PATH: folder },
           });
           expect(refused.code).toBe(1);
           expect(refused.output).toContain(folder);

@@ -145,7 +145,7 @@ fn add(
 
 pub async fn issue_code(app: &App, caller: &Caller) -> Result<(String, String)> {
     let code = new_code()?;
-    let digest = digest_of(&app.settings.start.api_key_salt, &normalized(&code))?;
+    let digest = digest_of(&app.settings.start.key_salt, &normalized(&code))?;
     let generation = hex::encode(random::<16>()?);
     let instance_id = app.instance_id.clone();
     let issued = generation.clone();
@@ -175,7 +175,7 @@ pub async fn announce_at_start(app: &App) -> Result<()> {
 
 pub async fn issue_ticket(app: &App, caller: &Caller) -> Result<(String, i64)> {
     let ticket = hex::encode(random::<TOKEN_BYTES>()?);
-    let digest = digest_of(&app.settings.start.api_key_salt, &ticket)?;
+    let digest = digest_of(&app.settings.start.key_salt, &ticket)?;
     let instance_id = app.instance_id.clone();
     let clock = app.clock.clone();
     let expires_at = app
@@ -230,7 +230,7 @@ async fn exchange(
     visit: Visit,
 ) -> Result<SetupSession> {
     let token = hex::encode(random::<TOKEN_BYTES>()?);
-    let session_digest = digest_of(&app.settings.start.api_key_salt, &token)?;
+    let session_digest = digest_of(&app.settings.start.key_salt, &token)?;
     let instance_id = app.instance_id.clone();
     let clock = app.clock.clone();
     let expires_at = app
@@ -265,7 +265,7 @@ async fn exchange(
 }
 
 pub async fn exchange_ticket(app: &App, ticket: &str, visit: Visit) -> Result<SetupSession> {
-    let digest = digest_of(&app.settings.start.api_key_salt, ticket)?;
+    let digest = digest_of(&app.settings.start.key_salt, ticket)?;
     exchange(
         app,
         "instance.setup_ticket.exchanged",
@@ -281,7 +281,7 @@ pub async fn exchange_code(app: &App, code: &str, visit: Visit) -> Result<SetupS
         return Err(already_claimed());
     }
     count_code(app, visit.address).await?;
-    let digest = digest_of(&app.settings.start.api_key_salt, &normalized(code))?;
+    let digest = digest_of(&app.settings.start.key_salt, &normalized(code))?;
     exchange(app, "instance.setup_code.exchanged", CODE, digest, visit).await
 }
 
@@ -293,7 +293,7 @@ pub enum Proof {
 }
 
 fn sought(app: &App, proof: &Proof) -> Result<Option<(&'static str, String)>> {
-    let salt = &app.settings.start.api_key_salt;
+    let salt = &app.settings.start.key_salt;
     Ok(match proof {
         Proof::Local => None,
         Proof::Code(code) => Some((CODE, digest_of(salt, &normalized(code))?)),
@@ -314,7 +314,7 @@ fn proof_stands(
 }
 
 pub async fn session_stands(app: &App, token: &str) -> Result<bool> {
-    let digest = digest_of(&app.settings.start.api_key_salt, token)?;
+    let digest = digest_of(&app.settings.start.key_salt, token)?;
     let clock = app.clock.clone();
     app.db
         .read(move |tx| holds(tx, SESSION, &digest, clock.now_ms()))

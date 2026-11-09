@@ -23,6 +23,8 @@ export const HOLD = {
   inChunk: "hold:bulk-job:in-chunk",
   /** A chunk is committed and the job has more. */
   betweenChunks: "hold:bulk-job:between-chunks",
+  /** Every chunk is committed and the job's last step is not. */
+  finishing: "hold:bulk-job:finishing",
 } as const;
 
 /** Creates `rows` items of `type` carrying `tag`, 500 to a request. */

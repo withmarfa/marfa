@@ -15,7 +15,7 @@ const HEADER: &[u8; 16] = b"SQLite format 3\0";
 #[derive(Debug)]
 pub struct Options {
     pub path: DatabasePath,
-    pub busy_budget: Duration,
+    pub write_wait: Duration,
     pub readers: usize,
     pub migrations: &'static [Migration],
 }
@@ -118,13 +118,13 @@ fn judge_file(path: &Path, options: &Options, label: &str) -> Result<Standing, F
     }
     .map_err(|error| refused_open(label, error))?;
     inspected
-        .busy_timeout(options.busy_budget)
+        .busy_timeout(options.write_wait)
         .map_err(|error| refused_open(label, error))?;
     migrate::judge(&inspected, options.migrations, label)
 }
 
 fn prepare_writer(conn: &Connection, options: &Options) -> rusqlite::Result<()> {
-    conn.busy_timeout(options.busy_budget)?;
+    conn.busy_timeout(options.write_wait)?;
     conn.pragma_update_and_check(None, "journal_mode", "WAL", |_| Ok(()))?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     conn.pragma_update(None, "foreign_keys", true)?;
@@ -132,7 +132,7 @@ fn prepare_writer(conn: &Connection, options: &Options) -> rusqlite::Result<()> 
 }
 
 fn prepare_reader(conn: &Connection, options: &Options) -> rusqlite::Result<()> {
-    conn.busy_timeout(options.busy_budget)?;
+    conn.busy_timeout(options.write_wait)?;
     conn.pragma_update(None, "foreign_keys", true)?;
     conn.pragma_update(None, "query_only", true)?;
     Ok(())

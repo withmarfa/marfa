@@ -253,6 +253,51 @@ CREATE TABLE IF NOT EXISTS housekeeping_jobs (
     last_result TEXT
 ) STRICT, WITHOUT ROWID;
 
+-- A bulk action or type move. `processed` is the checkpoint: it commits with the chunk it counts.
+CREATE TABLE IF NOT EXISTS bulk_jobs (
+    id TEXT PRIMARY KEY NOT NULL,
+    action TEXT NOT NULL,
+    input TEXT NOT NULL CHECK (json_valid(input)),
+    key_id TEXT,
+    grant_id TEXT,
+    status TEXT NOT NULL
+        CHECK (status IN ('queued', 'in_progress', 'completed', 'failed', 'canceled')),
+    matched INTEGER NOT NULL,
+    processed INTEGER NOT NULL DEFAULT 0,
+    succeeded INTEGER NOT NULL DEFAULT 0,
+    errored INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    error TEXT,
+    result TEXT CHECK (result IS NULL OR json_valid(result)),
+    CHECK ((key_id IS NULL) <> (grant_id IS NULL))
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS bulk_jobs_open ON bulk_jobs (status)
+    WHERE status IN ('queued', 'in_progress');
+CREATE INDEX IF NOT EXISTS bulk_jobs_finished ON bulk_jobs (finished_at)
+    WHERE finished_at IS NOT NULL;
+
+-- The items a job matched when it was queued, in the order it takes them, each with the
+-- version and state it was matched at: a job writes an item only as it was then.
+CREATE TABLE IF NOT EXISTS bulk_job_items (
+    job_id TEXT NOT NULL REFERENCES bulk_jobs (id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    item_id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    PRIMARY KEY (job_id, position)
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS bulk_job_notes (
+    job_id TEXT NOT NULL REFERENCES bulk_jobs (id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('changed', 'error', 'carried', 'blob')),
+    name TEXT NOT NULL,
+    body TEXT CHECK (body IS NULL OR json_valid(body)),
+    UNIQUE (job_id, kind, name)
+) STRICT;
+
 -- The text a search reads, by `items.seq`. A row in the bin holds no row here.
 CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
     title, body, description, name, extra, tags,
@@ -823,7 +868,7 @@ CREATE TABLE IF NOT EXISTS enrichment_files (
     hash TEXT NOT NULL,
     state TEXT NOT NULL DEFAULT 'waiting' CHECK (state IN ('waiting', 'read', 'skipped')),
     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
-    reason TEXT CHECK (reason IN ('unsupported', 'encrypted', 'over_limit', 'ocr')),
+    reason TEXT CHECK (reason IN ('unsupported', 'encrypted', 'over_limit', 'ocr', 'missing')),
     signature TEXT NOT NULL DEFAULT '',
     -- The limit that stopped an over-limit file, and what it was then.
     capped_by TEXT CHECK (capped_by IN ('blob', 'inflated', 'memory', 'fixed')),
@@ -854,11 +899,13 @@ BEGIN
 END;
 
 -- An existing reference alone does not queue changed file properties. A skipped file keeps its
--- refusal and is read once more.
+-- refusal and is read once more. The type of file picks the reader, so a changed one counts, and
+-- a waiting file that failed under the old type gets its attempts back.
 CREATE TRIGGER IF NOT EXISTS enrichment_files_changed AFTER UPDATE OF type, properties ON items
 WHEN NEW.properties ->> '$.blob_ref' IS NOT NULL AND (
     NEW.type IS NOT OLD.type
     OR NEW.properties ->> '$.blob_ref' IS NOT OLD.properties ->> '$.blob_ref'
+    OR NEW.properties ->> '$.mime_type' IS NOT OLD.properties ->> '$.mime_type'
     OR (NEW.properties ->> '$.extracted_text' IS NULL AND OLD.properties ->> '$.extracted_text' IS NOT NULL)
     OR (NEW.properties ->> '$.width' IS NULL AND OLD.properties ->> '$.width' IS NOT NULL)
     OR (NEW.properties ->> '$.height' IS NULL AND OLD.properties ->> '$.height' IS NOT NULL)
@@ -873,7 +920,41 @@ BEGIN
         signature = CASE enrichment_files.state WHEN 'read' THEN '' ELSE enrichment_files.signature END,
         refill = CASE enrichment_files.state WHEN 'skipped' THEN 1 ELSE 0 END,
         updated_at = excluded.updated_at
-    WHERE enrichment_files.state IN ('read', 'skipped');
+    WHERE enrichment_files.state IN ('read', 'skipped')
+       OR (enrichment_files.state = 'waiting' AND enrichment_files.attempts > 0
+           AND (NEW.type IS NOT OLD.type
+                OR NEW.properties ->> '$.mime_type' IS NOT OLD.properties ->> '$.mime_type'));
+    UPDATE housekeeping_jobs
+    SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds')
+    WHERE name = 'enrichment-sweep'
+      AND (running_since IS NOT NULL
+           OR next_run_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds'));
+END;
+
+CREATE INDEX IF NOT EXISTS enrichment_files_missing ON enrichment_files (hash) WHERE reason = 'missing';
+
+-- A file left for want of a copy waits again, with its attempts as they were, once a copy is
+-- recorded or the store holding one is attached again.
+CREATE TRIGGER IF NOT EXISTS enrichment_files_copy_recorded AFTER INSERT ON blob_copies
+WHEN EXISTS (SELECT 1 FROM enrichment_files WHERE hash = NEW.hash AND reason = 'missing')
+BEGIN
+    UPDATE enrichment_files
+    SET state = 'waiting', reason = NULL, refill = 0, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE hash = NEW.hash AND reason = 'missing';
+    UPDATE housekeeping_jobs
+    SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds')
+    WHERE name = 'enrichment-sweep'
+      AND (running_since IS NOT NULL
+           OR next_run_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds'));
+END;
+
+CREATE TRIGGER IF NOT EXISTS enrichment_files_store_attached AFTER UPDATE OF detached_at ON stores
+WHEN OLD.detached_at IS NOT NULL AND NEW.detached_at IS NULL
+BEGIN
+    UPDATE enrichment_files
+    SET state = 'waiting', reason = NULL, refill = 0, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE reason = 'missing'
+      AND hash IN (SELECT hash FROM blob_copies WHERE store_id = NEW.id);
     UPDATE housekeeping_jobs
     SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds')
     WHERE name = 'enrichment-sweep'

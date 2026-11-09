@@ -74,7 +74,7 @@ pub async fn request(app: &Arc<App>, form: &Form, visit: &Visit) -> Result<Answe
 
     let device_code = new_device_code()?;
     let user_code = new_user_code()?;
-    let salt = &app.settings.start.api_key_salt;
+    let salt = &app.settings.start.key_salt;
     let now = app.clock.now_ms();
     let row = DeviceCode {
         digest: digest_of(salt, &device_code)?,
@@ -156,10 +156,7 @@ pub enum Lookup {
 }
 
 fn digest_of_typed(app: &App, typed: &str) -> Result<String> {
-    digest_of(
-        &app.settings.start.api_key_salt,
-        &normalize_user_code(typed),
-    )
+    digest_of(&app.settings.start.key_salt, &normalize_user_code(typed))
 }
 
 fn looked_up(found: Option<&DeviceCode>, now: i64) -> Lookup {

@@ -12,7 +12,7 @@
 # or in MARFA_SERVER_REPO's checkout when that names one.
 # MARFA_SERVER_KEEP: a directory a later boot reuses, with the same port,
 # data, secrets and keys; server-down.sh leaves it in place.
-# PORT: the operating system assigns one by default.
+# MARFA_PORT: the operating system assigns one by default.
 #
 # A boot also creates an owner, so sign-in and the owner's pages can be tried
 # by hand. Its throwaway email and password come from test-owner.example.env
@@ -63,7 +63,7 @@ if [[ -f "${boot}" ]]; then
   chmod 600 "${boot}"
   # shellcheck disable=SC1090
   source "${boot}"
-  PORT="${BOOT_PORT}"
+  MARFA_PORT="${BOOT_PORT}"
   kept_key="${BOOT_KEY}"
   owner_email="${BOOT_OWNER_EMAIL:-}"
   owner_password="${BOOT_OWNER_PASSWORD:-}"
@@ -74,13 +74,13 @@ if [[ -f "${boot}" ]]; then
 fi
 exec 8>>"${env_file}"
 reserve_fd 8 "server env file ${env_file}"
-port="${PORT:-0}"
+port="${MARFA_PORT:-0}"
 url="http://127.0.0.1:${port}"
 log="${state}/server.log"
 
-export SQLITE_PATH="${state}/marfa.db"
-export BLOB_PATH="${state}/blobs"
-export PORT="${port}"
+export MARFA_DATABASE_PATH="${state}/marfa.db"
+export MARFA_BLOB_PATH="${state}/blobs"
+export MARFA_PORT="${port}"
 export MARFA_LISTEN_HOST="127.0.0.1"
 
 # A kept data directory can exceed the Unix socket path limit, especially

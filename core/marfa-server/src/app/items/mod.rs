@@ -456,6 +456,29 @@ pub fn mark_type(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {
     Ok(rows::by_id(tx, id)?.and_then(|row| row.mark.map(|mark| mark.with_type)))
 }
 
+/// The folders and views a type move or a type delete reads for the settings that name a type.
+pub fn settings(tx: &Transaction<'_>) -> Result<Vec<Item>> {
+    rows::settings(tx)
+}
+
+/// A matched item as a job found it when it was queued.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Selected {
+    pub id: String,
+    pub version: i64,
+    pub state: String,
+}
+
+/// The named items as they stand, in the order named.
+pub fn selected(tx: &Transaction<'_>, ids: &[String]) -> Result<Vec<Selected>> {
+    rows::selected(tx, ids)
+}
+
+/// The types the named items hold now, each once.
+pub fn types_of(tx: &Transaction<'_>, ids: &[String]) -> Result<Vec<String>> {
+    rows::types_of(tx, ids)
+}
+
 pub fn count_of_type(tx: &Transaction<'_>, type_id: &str) -> Result<i64> {
     rows::count_of_type(tx, type_id)
 }

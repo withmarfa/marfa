@@ -66,7 +66,7 @@ pub const DOTENV_HEADER: &str = "\
 
 pub const SETTINGS_HEADER: &str = "\
 # The server's settings: https://docs.marfa.so/run/settings
-# API_KEY_SALT and MARFA_AUTH_SECRET are made once and never change. Keep a
+# MARFA_KEY_SALT and MARFA_AUTH_SECRET are made once and never change. Keep a
 # copy of this file outside this folder: neither secret is stored in the data,
 # and a server started on the data without them refuses every key.";
 
@@ -253,16 +253,7 @@ fn is_ours(name: &str) -> bool {
                 .any(|file| name.starts_with(&format!(".{file}."))))
 }
 
-/// An install folder is absent, empty, or one an earlier install of this
-/// command made (it holds `.env`); a folder that also holds the settings file
-/// or the data of a restore is one too. Anything else is someone's, and this
-/// command writes nothing into it. When the server runs as the account, root
-/// must own the folder and every folder above it, and nobody else can write to
-/// any of them. Otherwise the user running the command must own the folder
-/// and what a restore put in it, and nobody else can write to it. Every file
-/// the command keeps in it belongs to that owner.
-/// `native` is an install whose server keeps its private socket below the
-/// folder, which the server refuses below a folder others can change.
+/// Refuses an install folder that is someone else's or that another account could change.
 pub fn admit_folder(
     dir: &Path,
     root_install: bool,

@@ -35,7 +35,7 @@ const FORM_DOORS = [
 
 beforeAll(async () => {
   server = await bootFreshServer("sign-in-surface", {
-    TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+    MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
   });
   // The origin the surface trusts is its own, which discovery names as the
   // issuer.

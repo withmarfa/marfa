@@ -41,11 +41,11 @@ const DEFAULT_KEYS_LIMIT = 200;
 
 beforeAll(async () => {
   server = await bootFreshServer("keys-rate-limit", {
-    RATE_LIMIT_ENABLED: "true",
-    RATE_LIMIT_KEYS_REQUESTS: String(KEYS_LIMIT),
+    MARFA_RATE_LIMIT_ENABLED: "true",
+    MARFA_RATE_LIMIT_KEYS_REQUESTS: String(KEYS_LIMIT),
   });
   unset = await bootFreshServer("keys-rate-limit-default", {
-    RATE_LIMIT_ENABLED: "true",
+    MARFA_RATE_LIMIT_ENABLED: "true",
   });
 }, 4 * FRESH_SERVER_TIMEOUT_MS);
 
@@ -86,7 +86,7 @@ describe("the key doors' rate limit", () => {
 
     // One. The header says which cap this request was judged against, so
     // the setting is observable before anything is refused: a server that
-    // ignored `RATE_LIMIT_KEYS_REQUESTS` would name its own number here.
+    // ignored `MARFA_RATE_LIMIT_KEYS_REQUESTS` would name its own number here.
     const first = await client.listKeys();
     expect(first.status).toBe(200);
     expect(first.headers.get("X-RateLimit-Limit")).toBe(String(KEYS_LIMIT));
