@@ -873,8 +873,8 @@ jobs:
 
   # The conformance jobs as one verdict, which `Full CI` collects with the
   # rest. It passes when every conformance job that ran passed and when the
-  # classifier skipped them all; it fails when any of them failed or was
-  # cancelled, or was owed a run and skipped.
+  # classifier skipped them all; it fails when any of them ended in anything
+  # but success or skipped, or was owed a run and skipped.
   conformance:
     needs:
       [
@@ -916,7 +916,8 @@ jobs:
           fi
           for result in $RESULTS; do
             case "$result" in
-              failure | cancelled)
+              success | skipped) ;;
+              *)
                 echo "::error::A conformance job ended as $result."
                 exit 1
                 ;;
@@ -1748,12 +1749,15 @@ jobs:
       - env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
-          case " ${RESULTS} " in
-            *" failure "* | *" cancelled "*)
-              echo "::error::A job failed or was cancelled: ${RESULTS}"
-              exit 1
-              ;;
-          esac
+          for result in ${RESULTS}; do
+            case "$result" in
+              success | skipped) ;;
+              *)
+                echo "::error::A job ended as ${result}: ${RESULTS}"
+                exit 1
+                ;;
+            esac
+          done
 
   # A failed nightly run opens an issue, or comments on the one that is open.
   # Only a schedule reports, so no pull request run can open an issue.

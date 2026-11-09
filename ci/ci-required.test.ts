@@ -678,11 +678,6 @@ describe("what a change runs", () => {
       ["ci-sqlite", ...CONFORMANCE, "restore-drill"],
     ],
     [
-      "the entrypoint, which a ci/ test runs",
-      ["deploy/entrypoint.sh"],
-      ["ci-sqlite", "workspace"],
-    ],
-    [
       "the script that builds the release's programs, which the image is made from",
       ["scripts/release/build-programs.sh"],
       ["ci-sqlite", "workspace", "image"],

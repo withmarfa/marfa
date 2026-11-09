@@ -17,20 +17,24 @@ export const DAY_MS = 24 * HOUR_MS;
 /** An interval no clock a fixture reaches gets past. */
 const NEVER_MS = "31536000000";
 
+/** The longest the scheduler may go between looks for a job that is due. */
+const POLL_CEILING_MS = "3600000";
+
 /**
- * Every cleanup job's own interval set past reach. Moving the clock makes a
- * job whose schedule has passed due, and the scheduler would then run it
- * beside the fixture's own run, so each job is run once at the start
- * (`quiet`) and its next run is set from that.
+ * Settings that keep the scheduler from running a job the fixture did not ask
+ * for. The scheduler looks for due jobs once an hour, so however far a fixture
+ * moves the clock, no job runs unless the fixture runs it. Each job's own
+ * interval is also set past reach, so a run the fixture asks for leaves the
+ * job's next run a year away.
  */
 export const QUIET_SCHEDULE: Record<string, string> = {
+  MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: POLL_CEILING_MS,
   MARFA_AUDIT_CLEANUP_INTERVAL_MS: NEVER_MS,
   MARFA_TRASH_PURGE_INTERVAL_MS: NEVER_MS,
   MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS: NEVER_MS,
   MARFA_INBOUND_CLEANUP_INTERVAL_MS: NEVER_MS,
   MARFA_VERSION_THINNING_INTERVAL_MS: NEVER_MS,
   MARFA_FEED_EXPIRY_INTERVAL_MS: NEVER_MS,
-  MARFA_DCR_CLIENT_CLEANUP_INTERVAL_MS: NEVER_MS,
   MARFA_CREDENTIAL_CLEANUP_INTERVAL_MS: NEVER_MS,
 };
 
@@ -65,10 +69,9 @@ export async function runJob(
 }
 
 /**
- * Runs each job once and waits until its next run is out of reach. A run
- * asked for ahead of schedule leaves the schedule where it was (the job's
- * first run is some seconds after boot), so the scheduler still makes that
- * first run itself, and only after it is the next run an interval away.
+ * Runs each job once, so a fixture starts from jobs that have each run and
+ * found nothing to do. The scheduler is quiet (`QUIET_SCHEDULE`), so no run
+ * follows these.
  */
 export async function quiet(
   server: FreshServer,
@@ -76,21 +79,6 @@ export async function quiet(
 ): Promise<void> {
   for (const name of names) {
     expect((await runJob(server, name)).outcome, name).toBe("ok");
-  }
-  const deadline = Date.now() + 60_000;
-  for (;;) {
-    const listed = await jobs(server);
-    const due = names.filter(
-      (name) =>
-        Date.parse(listed[name]?.next_run_at ?? "") < Date.now() + DAY_MS,
-    );
-    if (due.length === 0) return;
-    if (Date.now() > deadline) {
-      throw new Error(
-        `${due.join(", ")} still due within a day after a minute`,
-      );
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
   }
 }
 

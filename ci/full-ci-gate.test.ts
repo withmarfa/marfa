@@ -4,8 +4,8 @@
  * stays expected, and blocks a merge, until the run that marking the pull
  * request ready starts has finished: a skipped job passes a required check,
  * and a draft skips most jobs. These tests hold that it exists once, under
- * that name, waits for every other job, and fails for a failed or a cancelled
- * job and for nothing else.
+ * that name, waits for every other job, and passes only when each job ended
+ * as success or skipped: a failed, cancelled or abandoned job fails it.
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -172,6 +172,11 @@ describe("Full CI", () => {
       ["a lone job failed", "failure"],
       ["a lone job was cancelled", "cancelled"],
       ["a failure is among skipped jobs", "skipped failure skipped"],
+      ["a job was abandoned", "success abandoned success"],
+      ["the first job was abandoned", "abandoned skipped skipped"],
+      ["the last job was abandoned", "success success abandoned"],
+      ["a lone job was abandoned", "abandoned"],
+      ["a job ended in a result no one has named", "success timed_out success"],
     ])("fails when %s", (_, results) => {
       expect(status(results)).toBe(1);
     });

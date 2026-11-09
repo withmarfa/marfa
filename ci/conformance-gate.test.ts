@@ -1,8 +1,8 @@
 /**
  * `Conformance`, the one verdict `Full CI` collects for the conformance jobs,
  * once its work is split over shards: that it still exists under that name and nothing else has it, that
- * it fails for any shard that failed or was cancelled and passes for ones the
- * classifier skipped, that the shards cover every file of their project once,
+ * it fails for any job that ended as anything but success or skipped and
+ * passes for ones the classifier skipped, that the shards cover every file of their project once,
  * and that the matrix `ci.yml` falls back to is the classifier's.
  */
 import { execFileSync } from "node:child_process";
@@ -155,6 +155,10 @@ describe("the Conformance check", () => {
       ["the offline lane failed", "failure skipped skipped skipped"],
       ["MCP conformance failed", "skipped skipped skipped failure"],
       ["MCP conformance was cancelled", "skipped skipped skipped cancelled"],
+      ["a shard was abandoned", "success abandoned skipped skipped"],
+      ["the statuses job was abandoned", "success success abandoned skipped"],
+      ["the offline lane was abandoned", "abandoned skipped skipped skipped"],
+      ["MCP conformance was abandoned", "skipped skipped skipped abandoned"],
     ])("fails when %s", (_, results) => {
       expect(verdict(results)).toBe(1);
     });

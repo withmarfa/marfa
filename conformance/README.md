@@ -203,6 +203,22 @@ stays because that thing is what it checks.
   build that ships a field on a type, below which a registered type declares the
   field in another shape, holds a conflict: every door and a restore refuse one,
   and no fault ships a build.
+- `compliance/stored-times.test.ts` reads every column that holds a time in
+  every table, and rewrites one key's `expires_at` and the browser sessions'
+  `expires_at` to values that do not read. The contract is about the form a
+  time has at rest, and no door or fault stores a time in another form.
+- `compliance/unreadable-deletion-settings.test.ts` and
+  `compliance/blob-store-settings.test.ts` write and remove rows of the
+  `settings` table (`trash_retention_days`, the version maximum,
+  `blob_min_copies`, `blob_cleanup_grace_ms`) with a value outside the
+  setting's bounds. `PUT /config` and the start-up settings refuse such a
+  value, and no fault damages a stored setting, so only a hand edit, or a
+  release that narrows a bound, leaves one.
+- `compliance/health.test.ts`, "names a stored setting that no longer reads",
+  writes one such `settings` row before a restart, for the same reason.
+- `compliance/trash-purge-passed-over.test.ts` creates and drops a database
+  trigger that refuses the removal of one item. No door or fault fails the
+  removal of a single row, and the run must pass over that item and go on.
 - `compliance/control-socket-close.test.ts` starts the server directly and
   holds it inside its socket cleanup, where the private socket is already closed
   and so no fault can be set or cleared.

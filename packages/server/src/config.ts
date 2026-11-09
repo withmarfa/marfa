@@ -890,9 +890,7 @@ const text: Parser<string> = {
 };
 
 /**
- * `deploy/entrypoint.sh` reads the value the same way for the database
- * replica, `<prefix>/db`, before the server starts, and `ci/entrypoint.test.ts`
- * holds the two readings together. A segment that is empty, `.` or `..` is
+ * A segment that is empty, `.` or `..` is
  * refused because an HTTP client or a store that normalizes the path would
  * read two different prefixes as one place, such as `trial/../blobs` as
  * `blobs`.
