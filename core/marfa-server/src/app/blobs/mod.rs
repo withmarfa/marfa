@@ -788,6 +788,13 @@ impl App {
             );
             return Err(unavailable());
         }
+        let (queued, at) = (hash.clone(), self.clock.stamp());
+        let disk_id = self.blobs.disk.id().to_string();
+        self.db
+            .write(Write::own(), move |tx| {
+                rows::queue_deletion(tx, &queued, &disk_id, "", &at)
+            })
+            .await?;
         let (target, placed, faults) = (self.blobs.disk.clone(), hash.clone(), self.faults.clone());
         let mut staged = staged;
         self.blobs
