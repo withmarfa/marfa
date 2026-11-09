@@ -7,7 +7,7 @@ use axum::http::{StatusCode, Uri};
 use serde_json::{Map, Value};
 
 use super::answer::{Answer, text_answer};
-use super::body::{Bag, ReadBody};
+use super::body::Bag;
 use super::items::{Named, Sent, check_item_id, keyed, version_of};
 use super::listing::{Params, whole_limit};
 use super::query;
@@ -22,8 +22,7 @@ use crate::app::views::{SETTINGS, refuse_null, undeclared};
 const VIEW_PAGE: i64 = 50;
 const MAX_VIEW_PAGE: i64 = 200;
 
-fn declared(body: &ReadBody, allowed: &[&str]) -> Result<Map<String, Value>> {
-    let sent = body.object(Bag::Properties)?;
+fn declared(sent: Map<String, Value>, allowed: &[&str]) -> Result<Map<String, Value>> {
     let unknown = undeclared(&sent, allowed);
     if unknown.is_empty() {
         return Ok(sent);
@@ -35,8 +34,8 @@ fn declared(body: &ReadBody, allowed: &[&str]) -> Result<Map<String, Value>> {
     .with_detail("unknown_body_fields", unknown))
 }
 
-fn creating(body: &ReadBody) -> Result<ViewChange> {
-    let settings = declared(body, &SETTINGS)?;
+pub(super) fn creating(sent: Map<String, Value>) -> Result<ViewChange> {
+    let settings = declared(sent, &SETTINGS)?;
     refuse_null(&settings)?;
     if !settings.contains_key("title") {
         return Err(missing_field("title"));
@@ -44,10 +43,10 @@ fn creating(body: &ReadBody) -> Result<ViewChange> {
     Ok(ViewChange::Create { settings })
 }
 
-fn updating(id: String, body: &ReadBody) -> Result<ViewChange> {
+pub(super) fn updating(id: String, sent: Map<String, Value>) -> Result<ViewChange> {
     let mut allowed = SETTINGS.to_vec();
     allowed.push("version");
-    let mut settings = declared(body, &allowed)?;
+    let mut settings = declared(sent, &allowed)?;
     if !settings.contains_key("version") {
         return Err(missing_field("version"));
     }
@@ -76,7 +75,7 @@ pub async fn create(State(app): State<Arc<App>>, caller: Caller, sent: Sent) -> 
     let (door, who) = (app.clone(), caller.clone());
     keyed(&app, &caller, sent, |claim, uri, body| async move {
         query::only(&uri, &[])?;
-        let change = creating(&body)?;
+        let change = creating(body.object(Bag::Properties)?)?;
         write::run(&door, &who, claim, Change::View(change)).await
     })
     .await
@@ -92,9 +91,9 @@ pub async fn update(
     let (door, who) = (app.clone(), caller.clone());
     keyed(&app, &caller, sent, |claim, uri, body| async move {
         query::only(&uri, &[])?;
-        body.object(Bag::Properties)?;
+        let sent = body.object(Bag::Properties)?;
         check_item_id(&id)?;
-        let change = updating(id, &body)?;
+        let change = updating(id, sent)?;
         write::run(&door, &who, claim, Change::View(change)).await
     })
     .await

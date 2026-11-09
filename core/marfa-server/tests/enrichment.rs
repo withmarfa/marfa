@@ -1,5 +1,8 @@
 //! The reader starts this test program as its child; `main` must serve it first.
 
+#[allow(dead_code)]
+mod fake_s3;
+
 use std::sync::Arc;
 
 use axum::Router;
@@ -398,6 +401,45 @@ async fn leaves_a_disabled_sweep_with_its_files_waiting() {
     assert_eq!(one.sweep().await, counts(1, 0, 0));
 }
 
+async fn reads_a_file_whose_only_copy_is_in_the_object_store() {
+    let s3 = fake_s3::FakeS3::start().await;
+    let named = s3.settings("marfa", "blobs");
+    let named: Vec<(&str, &str)> = named
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.as_str()))
+        .collect();
+    let one = Instance::start(&named).await;
+    let id = one
+        .file(b"the numbat ledger, kept far away", "text/plain", json!({}))
+        .await;
+    let hash = one.item(&id).await["properties"]["blob_ref"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    for job in ["blob-replicate", "blob-integrity"] {
+        if job == "blob-integrity" {
+            let hex = hash.strip_prefix("sha256:").unwrap();
+            let file = one.dir.path().join("blobs").join(&hex[0..4]).join(hex);
+            std::fs::remove_file(file).unwrap();
+        }
+        let ended = housekeeping::run_now(&one.app, job).await.unwrap();
+        assert_eq!(ended.outcome, "ok", "{:?}", ended.error);
+    }
+    let copies = "SELECT count(*) FROM blob_copies c JOIN stores s ON s.id = c.store_id \
+                  WHERE c.hash = ?1 AND s.kind = 's3'";
+    assert_eq!(one.count(copies, &hash), 1);
+    let all = "SELECT count(*) FROM blob_copies WHERE hash = ?1";
+    assert_eq!(one.count(all, &hash), 1);
+
+    assert_eq!(one.sweep().await, counts(1, 0, 0));
+    assert_eq!(
+        one.item(&id).await["properties"]["extracted_text"],
+        "the numbat ledger, kept far away"
+    );
+    let spool = std::fs::read_dir(one.dir.path().join("blobs").join("tmp")).unwrap();
+    assert_eq!(spool.count(), 0);
+}
+
 fn main() {
     marfa_enrichment::serve_child_if_asked();
     let arguments = Arguments::from_args();
@@ -450,6 +492,10 @@ fn main() {
                     reads_a_skipped_file_again_for_a_cleared_field_and_still_holds_its_refusal(),
                 )
             },
+        ),
+        trial(
+            "reads_a_file_whose_only_copy_is_in_the_object_store",
+            || Box::pin(reads_a_file_whose_only_copy_is_in_the_object_store()),
         ),
         trial("leaves_a_disabled_sweep_with_its_files_waiting", || {
             Box::pin(leaves_a_disabled_sweep_with_its_files_waiting())

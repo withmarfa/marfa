@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -6,12 +7,13 @@ use serde::Serialize;
 use tokio::sync::watch;
 
 use super::super::housekeeping;
-use super::{DEVICE_OWNER_INSTANCE_LANE, Resolved, TYPE_DEFINITION, Volume};
+use super::{DEVICE_OWNER_INSTANCE_LANE, Lie, Resolved, TYPE_DEFINITION, Volume};
 use crate::db::Pulse;
 
 const MAX_NTH: u32 = 1_000_000;
 const MAX_FREE_BYTES: u64 = 9_007_199_254_740_991;
 const MAX_DEADLINE_MS: u64 = 2_147_483_647;
+const MAX_BLOB_HASHES: usize = 1_000;
 
 const BEAT: Duration = Duration::from_millis(25);
 const JOB_POINT: &str = "housekeeping:";
@@ -19,6 +21,15 @@ const JOB_POINT: &str = "housekeeping:";
 const UNFOLD_DEADLINE: &str = "unfold-deadline";
 /// What a `free` fault holds for a volume whose free space cannot be read.
 const FREE_UNKNOWN: u64 = u64::MAX;
+const STORE_CHECK_DEADLINE: &str = "store-check-deadline";
+const LOSE_BLOB: &str = "lose:blob";
+const UNREADABLE_BLOB: &str = "damage:blob-unreadable";
+const DAMAGE_BLOB: &str = "damage:blob";
+const LIES: [(&str, Lie); 3] = [
+    (LOSE_BLOB, Lie::Lost),
+    (UNREADABLE_BLOB, Lie::Unreadable),
+    (DAMAGE_BLOB, Lie::Damaged),
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -100,6 +111,7 @@ struct Armed {
     gate: watch::Sender<bool>,
     waiting: Arc<AtomicU64>,
     held_when_answered: Option<Vec<String>>,
+    hashes: HashSet<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -200,16 +212,40 @@ fn judge_job(
     }
 }
 
-fn deadline_of(job: &str, arg: Option<&str>) -> Result<u64, String> {
-    if !housekeeping::is_job(job) {
-        return Err(format!("no job is named {job}"));
-    }
+fn milliseconds(arg: Option<&str>) -> Result<u64, String> {
     arg.filter(|text| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit()))
         .and_then(|text| text.parse::<u64>().ok())
         .filter(|ms| (1..=MAX_DEADLINE_MS).contains(ms))
         .ok_or_else(|| {
             format!("a deadline takes a whole number of ms, from 1 to {MAX_DEADLINE_MS}")
         })
+}
+
+fn deadline_of(job: &str, arg: Option<&str>) -> Result<u64, String> {
+    if !housekeeping::is_job(job) {
+        return Err(format!("no job is named {job}"));
+    }
+    milliseconds(arg)
+}
+
+fn blob_hashes(arg: Option<&str>) -> Result<HashSet<String>, String> {
+    let named = |hash: &str| {
+        hash.strip_prefix("sha256:").is_some_and(|hex| {
+            hex.len() == 64
+                && hex
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        })
+    };
+    let hashes: Vec<&str> = arg
+        .filter(|arg| !arg.is_empty())
+        .map_or_else(Vec::new, |arg| arg.split(',').collect());
+    if hashes.is_empty() || hashes.len() > MAX_BLOB_HASHES || !hashes.iter().all(|h| named(h)) {
+        return Err(format!(
+            "a blob fault takes up to {MAX_BLOB_HASHES} sha256: names separated by ,"
+        ));
+    }
+    Ok(hashes.into_iter().map(str::to_string).collect())
 }
 
 fn unfold_deadline_of(arg: Option<&str>) -> Result<u64, String> {
@@ -261,6 +297,9 @@ fn judge_hide(rest: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>
 }
 
 fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), String> {
+    if name == STORE_CHECK_DEADLINE {
+        return milliseconds(arg).map(|ms| (None, Some(ms)));
+    }
     let (kind, rest) = name.split_once(':').unwrap_or((name, ""));
     if let Some(job) = rest.strip_prefix(JOB_POINT) {
         return judge_job(kind, job, arg);
@@ -345,7 +384,8 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
         _ => Err(
             "a fault is named hold:<point>, fail:<point>, refuse:<point>, release:<point>, \
              deadline:<job>, unfold-deadline, free:<volume>, resolve:<host>, limit:<lane>, \
-             unreadable:<stored>, hide:event or hide:webhook-position"
+             unreadable:<stored>, lose:blob, damage:blob, damage:blob-unreadable, \
+             store-check-deadline, hide:event or hide:webhook-position"
                 .to_string(),
         ),
     }
@@ -395,7 +435,12 @@ impl Faults {
 
     /// Re-arming starts a fault again; a hold's waiters stay held. A refused fault is never armed.
     pub fn set(&self, name: &str, arg: Option<&str>) -> Result<(), String> {
-        let (aim, number) = judge(name, arg)?;
+        let (aim, number, hashes) = if LIES.iter().any(|(lie, _)| *lie == name) {
+            (None, None, blob_hashes(arg)?)
+        } else {
+            let (aim, number) = judge(name, arg)?;
+            (aim, number, HashSet::new())
+        };
         let lowered;
         let name = if name.starts_with(RESOLVE) {
             lowered = name.to_ascii_lowercase();
@@ -412,6 +457,7 @@ impl Faults {
             fault.seen = 0;
             fault.fired = 0;
             fault.held_when_answered = None;
+            fault.hashes = hashes;
         } else {
             armed.push(Armed {
                 name: name.to_string(),
@@ -423,6 +469,7 @@ impl Faults {
                 gate: watch::Sender::new(false),
                 waiting: Arc::default(),
                 held_when_answered: None,
+                hashes,
             });
         }
         Ok(())
@@ -559,6 +606,39 @@ impl Faults {
             .find(|fault| fault.name == name)
             .and_then(|fault| fault.number)
             .map(Duration::from_millis)
+    }
+
+    /// How long a store is given to answer, when a test has shortened it.
+    pub fn store_check_deadline(&self) -> Option<Duration> {
+        self.armed()
+            .iter()
+            .find(|fault| fault.name == STORE_CHECK_DEADLINE)
+            .and_then(|fault| fault.number)
+            .map(Duration::from_millis)
+    }
+
+    /// What a blob fault makes the disk store read of `hash`, if one names it.
+    pub fn lie(&self, hash: &str) -> Option<Lie> {
+        let armed = self.armed();
+        LIES.iter()
+            .find(|(name, _)| {
+                armed
+                    .iter()
+                    .any(|fault| fault.name == *name && fault.hashes.contains(hash))
+            })
+            .map(|(_, lie)| *lie)
+    }
+
+    /// The disk store deleted `hash`, which ends every blob fault on it, or placed it,
+    /// which ends only its loss.
+    pub fn heal(&self, hash: &str, placed: bool) {
+        for fault in self.armed().iter_mut() {
+            if fault.name == LOSE_BLOB
+                || (!placed && (fault.name == DAMAGE_BLOB || fault.name == UNREADABLE_BLOB))
+            {
+                fault.hashes.remove(hash);
+            }
+        }
     }
 
     pub fn unfold_deadline(&self) -> Option<u64> {
@@ -886,6 +966,77 @@ mod tests {
         assert!(faults.fail(FAIL_COMMIT, Some("item.create")));
         assert!(!faults.fail(FAIL_COMMIT, Some("item.create")));
         assert_eq!(faults.list()[0].fired, 1);
+    }
+
+    #[test]
+    fn a_store_check_deadline_takes_milliseconds_alone() {
+        assert!(refused("store-check-deadline", None));
+        assert!(refused("store-check-deadline", Some("0")));
+        assert!(refused("store-check-deadline:disk", Some("10")));
+        let faults = Faults::default();
+        faults.set("store-check-deadline", Some("200")).unwrap();
+        assert_eq!(
+            faults.store_check_deadline(),
+            Some(Duration::from_millis(200))
+        );
+    }
+
+    #[test]
+    fn a_blob_fault_names_its_blobs_and_ends_as_the_store_deletes_or_places_them() {
+        let (one, two) = (
+            format!("sha256:{}", "a".repeat(64)),
+            format!("sha256:{}", "b".repeat(64)),
+        );
+        assert!(refused("lose:blob", None));
+        assert!(refused("lose:blob", Some("")));
+        assert!(refused("damage:blob", Some(&"a".repeat(64))));
+        assert!(refused("damage:blob", Some(&format!("{one},"))));
+        assert!(refused("damage:blob", Some(&one.to_uppercase())));
+        assert!(refused("lose:blobs", Some(&one)));
+        let many = vec![one.as_str(); MAX_BLOB_HASHES + 1].join(",");
+        assert!(refused("lose:blob", Some(&many)));
+
+        let faults = Faults::default();
+        faults
+            .set("damage:blob", Some(&format!("{one},{two}")))
+            .unwrap();
+        faults.set("lose:blob", Some(&one)).unwrap();
+        assert_eq!(faults.lie(&one), Some(Lie::Lost));
+        assert_eq!(faults.lie(&two), Some(Lie::Damaged));
+        faults.heal(&one, true);
+        assert_eq!(faults.lie(&one), Some(Lie::Damaged));
+        faults.heal(&two, true);
+        assert_eq!(faults.lie(&two), Some(Lie::Damaged));
+        faults.heal(&two, false);
+        assert_eq!(faults.lie(&two), None);
+        faults.set("damage:blob", Some(&two)).unwrap();
+        assert_eq!(faults.lie(&one), None);
+        assert_eq!(faults.lie(&two), Some(Lie::Damaged));
+        faults.set("damage:blob-unreadable", Some(&two)).unwrap();
+        assert_eq!(faults.lie(&two), Some(Lie::Unreadable));
+        faults.clear(Some("damage:blob-unreadable"));
+        assert_eq!(faults.lie(&two), Some(Lie::Damaged));
+    }
+
+    #[tokio::test]
+    async fn a_counted_hold_with_no_count_holds_every_caller() {
+        let faults = Arc::new(Faults::default());
+        faults.set("hold:blob-read", None).unwrap();
+        let held: Vec<_> = (0..2)
+            .map(|_| {
+                let faults = faults.clone();
+                tokio::spawn(async move { faults.hold(HOLD_BLOB_READ, None).await })
+            })
+            .collect();
+        while faults.list()[0].waiting < 2 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        faults.set("hold:blob-read", Some("2")).unwrap();
+        faults.hold(HOLD_BLOB_READ, None).await;
+        faults.clear(None);
+        for task in held {
+            task.await.unwrap();
+        }
     }
 
     async fn waiting_after(faults: &Arc<Faults>, reaches: usize, point: &'static Point) -> u64 {

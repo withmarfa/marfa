@@ -405,6 +405,61 @@ mod tests {
     }
 
     #[test]
+    fn an_object_store_is_attached_by_its_bucket_and_read_with_its_defaults() {
+        assert!(read(&[]).ok().unwrap().fixed().object_store.is_none());
+        let read_back = read(&[("S3_BUCKET", "marfa"), ("S3_PREFIX", "/one/two/")]);
+        let store = read_back.ok().unwrap().fixed.object_store.unwrap();
+        assert_eq!(
+            (
+                store.bucket.as_str(),
+                store.region.as_str(),
+                store.prefix.as_str()
+            ),
+            ("marfa", "us-east-1", "one/two")
+        );
+        assert!(store.path_style && store.endpoint.is_none());
+        assert_eq!(store.locator(), "s3://marfa/one/two");
+    }
+
+    #[test]
+    fn refuses_a_prefix_or_endpoint_that_cannot_name_the_store() {
+        for prefix in ["a/../b", "a b", "a//b", "./a"] {
+            let lines = refused(&[("S3_BUCKET", "marfa"), ("S3_PREFIX", prefix)]);
+            assert_eq!(lines.len(), 1, "{prefix}");
+        }
+        let lines = refused(&[("S3_BUCKET", "m"), ("S3_ENDPOINT", "ftp://key@host")]);
+        assert!(!lines[0].contains("key@host"), "{}", lines[0]);
+        assert!(read(&[("S3_BUCKET", "m"), ("S3_FORCE_PATH_STYLE", "maybe")]).is_ok());
+        let styled = [
+            ("S3_BUCKET", "m"),
+            ("S3_ENDPOINT", "http://127.0.0.1:3900"),
+            ("S3_FORCE_PATH_STYLE", "OFF"),
+        ];
+        let store = read(&styled).ok().unwrap().fixed.object_store.unwrap();
+        assert!(!store.path_style);
+        assert_eq!(
+            refused(&[styled[0], styled[1], ("S3_FORCE_PATH_STYLE", "maybe")]).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn refuses_an_endpoint_that_carries_a_credential_and_never_repeats_it() {
+        for endpoint in [
+            "http://key:secret@127.0.0.1:3900",
+            "https://key@s3.example.com",
+            "https://:secret@s3.example.com",
+        ] {
+            let lines = refused(&[("S3_BUCKET", "m"), ("S3_ENDPOINT", endpoint)]);
+            assert_eq!(lines.len(), 1, "{endpoint}");
+            assert!(lines[0].contains("S3_ACCESS_KEY_ID"), "{}", lines[0]);
+            assert!(lines[0].contains("S3_SECRET_ACCESS_KEY"), "{}", lines[0]);
+            assert!(!lines[0].contains("secret@"), "{}", lines[0]);
+            assert!(!lines[0].contains("key"), "{}", lines[0]);
+        }
+    }
+
+    #[test]
     fn a_blank_value_counts_as_unset() {
         assert_eq!(
             read(&[("MARFA_PORT", "   ")]).ok().unwrap().fixed().port,

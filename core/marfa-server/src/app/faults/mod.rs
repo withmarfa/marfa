@@ -9,7 +9,6 @@ macro_rules! point_list {
         HOLD_READ_SNAPSHOT = Hold "read-snapshot" None;
         HOLD_THINNING_ITEM = Hold "version-thinning:item" None;
         HOLD_BULK_PAGE = Hold "bulk-page" Nth;
-        HOLD_BLOB_READ = Hold "blob-read" Nth;
         HOLD_STREAM_OPEN = Hold "stream-open" None;
         HOLD_STREAM_HEAD = Hold "stream-head" None;
         HOLD_STREAM_REPLAY = Hold "stream-replay" None;
@@ -32,6 +31,13 @@ macro_rules! point_list {
         FAIL_SESSION_DELETE = Fail "session-delete" Nth;
         FAIL_SESSION_USE = Fail "session-use" Nth;
         FAIL_BLOB_WRITE = Fail "blob-write" Nth;
+        FAIL_BLOB_READ = Fail "blob-read" Nth;
+        FAIL_BLOB_DELETE = Fail "blob-delete" Nth;
+        HOLD_BLOB_HAS = Hold "blob-has" None;
+        HOLD_BLOB_READ = Hold "blob-read" Nth;
+        HOLD_BLOB_WRITE = Hold "blob-write" None;
+        HOLD_BLOB_DELETE = Hold "blob-delete" None;
+        HOLD_BLOB_PURGE = Hold "blob-orphans:purge" None;
         FAIL_HEALTH_WRITE = Fail "health-write" Nth;
         REFUSE_READ = Refuse "read" None;
         REFUSE_WRITE = Refuse "write" None;
@@ -46,6 +52,14 @@ macro_rules! point_list {
 pub struct Resolved {
     pub judged: Vec<std::net::IpAddr>,
     pub reached: Vec<std::net::IpAddr>,
+}
+
+/// What a blob fault makes the disk store read of a blob it names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lie {
+    Lost,
+    Unreadable,
+    Damaged,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

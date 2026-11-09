@@ -249,6 +249,14 @@ registry! {
     UPLOAD_IDLE_TIMEOUT_MS: u64 = "upload_idle_timeout_ms", UP_TO_A_DAY, "60000", "How long a blob upload may go without receiving a byte, in milliseconds, before the server ends it.";
     BLOB_READ_IDLE_TIMEOUT_MS: u64 = "blob_read_idle_timeout_ms", UP_TO_A_DAY, "30000", "How long a blob download may make no progress, in milliseconds, before the server closes it.";
     BLOB_MIN_COPIES: u64 = "blob_min_copies", COUNT, "1", "The fewest live copies the server keeps of each blob.";
+    BLOB_REPLICATE_INTERVAL_MS: u64 = "blob_replicate_interval_ms", INTERVAL, "60000", "How often the `blob-replicate` job gives every attached store its copies, in milliseconds.";
+    BLOB_REPLICATE_BATCH: u64 = "blob_replicate_batch", COUNT, "100", "The most blobs one replication run copies.";
+    BLOB_REPLICATE_BATCH_BYTES: u64 = "blob_replicate_batch_bytes", BYTES, "1073741824", "The most bytes one replication run copies.";
+    BLOB_INTEGRITY_INTERVAL_MS: u64 = "blob_integrity_interval_ms", INTERVAL, "3600000", "How often the `blob-integrity` job checks the copies, in milliseconds.";
+    BLOB_INTEGRITY_BATCH: u64 = "blob_integrity_batch", COUNT, "500", "The most copies one integrity run checks.";
+    BLOB_INTEGRITY_BATCH_BYTES: u64 = "blob_integrity_batch_bytes", BYTES, "1073741824", "The most bytes one integrity run checks.";
+    BLOB_CLEANUP_INTERVAL_MS: u64 = "blob_cleanup_interval_ms", Rule::Whole { min: 0, max: rule::YEAR_MS }, "86400000", "How often the `blob-orphans` job sweeps for blobs nothing references, in milliseconds. 0 turns the sweep off.";
+    BLOB_CLEANUP_GRACE_MS: u64 = "blob_cleanup_grace_ms", Rule::Whole { min: 0, max: rule::YEAR_MS }, "86400000", "How long a blob nothing references stands in the orphan report before a later run purges it, in milliseconds.";
     RATE_LIMIT_ENABLED: bool = "rate_limit_enabled", Rule::Boolean, "true", "Whether requests made with a key, app registrations, device code requests and passkey sign-in challenges are limited.";
     RATE_LIMIT_KEYS_REQUESTS: u64 = "rate_limit_keys_requests", COUNT, "200", "How many requests one key may make in each window.";
     RATE_LIMIT_WINDOW_MS: u64 = "rate_limit_window_ms", UP_TO_A_DAY, "60000", "How long one rate-limit window lasts, in milliseconds.";

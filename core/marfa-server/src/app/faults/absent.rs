@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use super::{Resolved, Volume};
+use super::{Lie, Resolved, Volume};
 use crate::db::Pulse;
 
 #[derive(Debug)]
@@ -48,6 +48,16 @@ impl Faults {
     pub fn limit(&self, _lane: &str) -> Option<i64> {
         None
     }
+
+    pub fn store_check_deadline(&self) -> Option<Duration> {
+        None
+    }
+
+    pub fn lie(&self, _hash: &str) -> Option<Lie> {
+        None
+    }
+
+    pub fn heal(&self, _hash: &str, _placed: bool) {}
 
     pub fn unfold_deadline(&self) -> Option<u64> {
         None

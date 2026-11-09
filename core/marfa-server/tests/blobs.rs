@@ -193,7 +193,7 @@ async fn an_upload_is_kept_under_its_hash_and_read_back_whole_and_by_range() {
     assert_eq!(stored.json()["size_bytes"], bytes.len());
     assert_eq!(stored.json()["mime_type"], "application/octet-stream");
     let hex = hash.strip_prefix("sha256:").unwrap();
-    let placed = Path::new(&hex[0..2]).join(&hex[2..4]).join(hex);
+    let placed = Path::new(&hex[0..4]).join(hex);
     assert_eq!(instance.files(), vec![placed]);
 
     let whole = instance.fetch(&hash).await;
@@ -273,7 +273,7 @@ async fn a_file_with_no_record_is_never_served_and_the_next_upload_records_it() 
     let bytes = b"renamed into place, then the process died".to_vec();
     let hash = hash_of(&bytes);
     let hex = hash.strip_prefix("sha256:").unwrap();
-    let folder = instance.folder().join(&hex[0..2]).join(&hex[2..4]);
+    let folder = instance.folder().join(&hex[0..4]);
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(folder.join(hex), &bytes).unwrap();
 
