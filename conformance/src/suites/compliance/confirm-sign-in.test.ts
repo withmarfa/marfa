@@ -86,18 +86,21 @@ function get(path: string, cookie: string): Promise<Response> {
   });
 }
 
-/** A change that needs a sign-in from the last five minutes. */
-function changeName(cookie: string): Promise<Response> {
-  return fetch(`${server.apiUrl}/owner`, {
-    method: "PATCH",
-    headers: {
-      "content-type": "application/json",
-      cookie,
-      origin,
-      [CLIENT_HEADER]: nextAddress(),
-    },
-    body: JSON.stringify({ name: "Confirmed Owner" }),
+/**
+ * A step that needs a sign-in from the last five minutes: removing a passkey.
+ * No passkey has this ID, so a session recent enough is answered 404.
+ */
+function removeAbsent(cookie: string): Promise<Response> {
+  return fetch(`${server.apiUrl}/owner/passkeys/absent`, {
+    method: "DELETE",
+    headers: { cookie, origin, [CLIENT_HEADER]: nextAddress() },
   });
+}
+
+/** Whether `response` got past the five-minute check. */
+async function wasRecent(response: Response): Promise<boolean> {
+  expect([403, 404], await response.clone().text()).toContain(response.status);
+  return response.status === 404;
 }
 
 /**
@@ -119,7 +122,7 @@ describe("confirming with the password", () => {
   it("replaces a stale session with a new one, so the change that was refused runs", async () => {
     const stale = await signIn();
     await server.advanceClock(6 * MINUTE);
-    const refused = await changeName(stale);
+    const refused = await removeAbsent(stale);
     expect(refused.status).toBe(403);
     const refusal = (await refused.json()) as {
       error: { code: string; message: string };
@@ -136,10 +139,10 @@ describe("confirming with the password", () => {
     expect(renewed).toBeTruthy();
     expect(renewed).not.toBe(stale);
 
-    expect((await changeName(renewed!)).status).toBe(200);
+    expect(await wasRecent(await removeAbsent(renewed!))).toBe(true);
     // The old session ended in the same step.
-    expect((await get("/owner/sign-ins", stale)).status).toBe(401);
-    expect((await get("/owner/sign-ins", renewed!)).status).toBe(200);
+    expect((await get("/owner/passkeys", stale)).status).toBe(401);
+    expect((await get("/owner/passkeys", renewed!)).status).toBe(200);
   });
 
   it("dates the new session from the confirmation, so it goes stale five minutes after it", async () => {
@@ -149,9 +152,9 @@ describe("confirming with the password", () => {
       await confirm({ password: TEST_OWNER.password }, stale),
     )!;
     await server.advanceClock(4 * MINUTE);
-    expect((await changeName(renewed)).status).toBe(200);
+    expect(await wasRecent(await removeAbsent(renewed))).toBe(true);
     await server.advanceClock(2 * MINUTE);
-    const again = await changeName(renewed);
+    const again = await removeAbsent(renewed);
     expect(again.status).toBe(403);
     expect(await code(again)).toBe("forbidden");
   });
@@ -164,8 +167,8 @@ describe("confirming with the password", () => {
     expect(await code(wrong)).toBe("unauthorized");
     expect(sendsNoOtherSession(wrong, stale)).toBe(true);
     // The session lives, is still stale, and a right password renews it.
-    expect((await get("/owner/sign-ins", stale)).status).toBe(200);
-    expect((await changeName(stale)).status).toBe(403);
+    expect((await get("/owner/passkeys", stale)).status).toBe(200);
+    expect((await removeAbsent(stale)).status).toBe(403);
     expect(
       (await confirm({ password: TEST_OWNER.password }, stale)).status,
     ).toBe(200);
@@ -233,8 +236,8 @@ describe("confirming with the password", () => {
 
     // The refused confirmation left the session as it was: live, and still stale.
     expect(sendsNoOtherSession(locked, stale)).toBe(true);
-    expect((await get("/owner/sign-ins", stale)).status).toBe(200);
-    expect((await changeName(stale)).status).toBe(403);
+    expect((await get("/owner/passkeys", stale)).status).toBe(200);
+    expect((await removeAbsent(stale)).status).toBe(403);
     // Another address is not held by it.
     expect(
       (await confirm({ password: TEST_OWNER.password }, stale)).status,
@@ -256,8 +259,8 @@ describe("a confirmation names no account", () => {
       expect(refused.status, JSON.stringify(Object.keys(body))).toBe(400);
       expect(sendsNoOtherSession(refused, stale)).toBe(true);
     }
-    expect((await get("/owner/sign-ins", stale)).status).toBe(200);
-    expect((await changeName(stale)).status).toBe(403);
+    expect((await get("/owner/passkeys", stale)).status).toBe(200);
+    expect((await removeAbsent(stale)).status).toBe(403);
   });
 
   it("refuses a passkey that is not registered to the signed-in owner, and leaves the session as it was", async () => {
@@ -300,8 +303,8 @@ describe("a confirmation names no account", () => {
     );
     expect(refused.status).toBe(401);
     expect(sendsNoOtherSession(refused, owner)).toBe(true);
-    expect((await get("/owner/sign-ins", owner)).status).toBe(200);
-    expect((await changeName(owner)).status).toBe(403);
+    expect((await get("/owner/passkeys", owner)).status).toBe(200);
+    expect((await removeAbsent(owner)).status).toBe(403);
   });
 });
 
@@ -332,7 +335,7 @@ describe("confirming with a passkey", () => {
     expect(added.status).toBe(200);
 
     await server.advanceClock(6 * MINUTE);
-    expect((await changeName(stale)).status).toBe(403);
+    expect((await removeAbsent(stale)).status).toBe(403);
     const asked = await get(
       "/auth/passkey/generate-authenticate-options",
       stale,
@@ -345,117 +348,8 @@ describe("confirming with a passkey", () => {
     expect(confirmed.status).toBe(200);
     const renewed = sessionCookie(confirmed);
     expect(renewed).toBeTruthy();
-    expect((await changeName(renewed!)).status).toBe(200);
-    expect((await get("/owner/sign-ins", stale)).status).toBe(401);
-  });
-});
-
-describe("a stale session signing out", () => {
-  it("lets a stale browser session sign itself out in one request, and ends another only with a recent one", async () => {
-    const stale = await signIn();
-    await server.advanceClock(6 * MINUTE);
-    const fresh = await signIn();
-    const listed = (await (await get("/owner/sign-ins", stale)).json()) as {
-      data: { id: string; kind: string; current?: boolean }[];
-    };
-    const browsers = listed.data.filter((row) => row.kind === "browser");
-    const own = browsers.find((row) => row.current)!;
-    const other = browsers.find((row) => !row.current)!;
-    const end = (id: string, cookie: string) =>
-      fetch(`${server.apiUrl}/owner/sign-ins/${id}`, {
-        method: "DELETE",
-        headers: { cookie, origin, [CLIENT_HEADER]: nextAddress() },
-      });
-
-    expect((await end(other.id, stale)).status).toBe(403);
-    expect((await get("/owner/sign-ins", fresh)).status).toBe(200);
-    expect((await end(own.id, stale)).status).toBe(200);
-    expect((await get("/owner/sign-ins", stale)).status).toBe(401);
-    expect((await get("/owner/sign-ins", fresh)).status).toBe(200);
-  });
-});
-
-describe("signing out the other browsers", () => {
-  /** `POST /auth/revoke-other-sessions` from the browser session `cookie`. */
-  const endOthers = (cookie: string) =>
-    fetch(`${server.apiUrl}/auth/revoke-other-sessions`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        cookie,
-        origin,
-        [CLIENT_HEADER]: nextAddress(),
-      },
-      body: "{}",
-    });
-
-  it("ends every other browser session of the owner and keeps the one that sent it", async () => {
-    const sender = await signIn();
-    const others = [await signIn(), await signIn()];
-    // The witness: the other sessions are live until the sender ends them.
-    for (const other of others)
-      expect((await get("/owner/sign-ins", other)).status).toBe(200);
-    const ended = await endOthers(sender);
-    expect(ended.status).toBe(200);
-    for (const other of others)
-      expect((await get("/owner/sign-ins", other)).status).toBe(401);
-    expect((await get("/owner/sign-ins", sender)).status).toBe(200);
-  });
-
-  it("refuses a session created more than five minutes ago and ends none, until the owner confirms", async () => {
-    const stale = await signIn();
-    const other = await signIn();
-    await server.advanceClock(6 * MINUTE);
-    const refused = await endOthers(stale);
-    expect(refused.status).toBe(403);
-    const refusal = (await refused.json()) as {
-      error: { code: string; message: string };
-    };
-    expect(refusal.error.code).toBe("forbidden");
-    expect(refusal.error.message).toBe(
-      "Sign in again to perform this operation",
-    );
-    expect((await get("/owner/sign-ins", other)).status).toBe(200);
-
-    const renewed = sessionCookie(
-      await confirm({ password: TEST_OWNER.password }, stale),
-    )!;
-    expect((await endOthers(renewed)).status).toBe(200);
-    expect((await get("/owner/sign-ins", other)).status).toBe(401);
-    expect((await get("/owner/sign-ins", renewed)).status).toBe(200);
-  });
-});
-
-describe("signing out every browser", () => {
-  /** `POST /auth/revoke-sessions` from the browser session `cookie`. */
-  const endAll = (cookie: string) =>
-    fetch(`${server.apiUrl}/auth/revoke-sessions`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        cookie,
-        origin,
-        [CLIENT_HEADER]: nextAddress(),
-      },
-      body: "{}",
-    });
-
-  it("ends no browser session for one created more than five minutes ago, until the owner confirms", async () => {
-    const stale = await signIn();
-    const other = await signIn();
-    await server.advanceClock(6 * MINUTE);
-    const refused = await endAll(stale);
-    expect(refused.status).toBe(403);
-    expect(await code(refused)).toBe("forbidden");
-    expect((await get("/owner/sign-ins", stale)).status).toBe(200);
-    expect((await get("/owner/sign-ins", other)).status).toBe(200);
-
-    const renewed = sessionCookie(
-      await confirm({ password: TEST_OWNER.password }, stale),
-    )!;
-    expect((await endAll(renewed)).status).toBe(200);
-    expect((await get("/owner/sign-ins", other)).status).toBe(401);
-    expect((await get("/owner/sign-ins", renewed)).status).toBe(401);
+    expect(await wasRecent(await removeAbsent(renewed!))).toBe(true);
+    expect((await get("/owner/passkeys", stale)).status).toBe(401);
   });
 });
 

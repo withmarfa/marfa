@@ -1454,47 +1454,15 @@ The server MUST NOT put markup in an excerpt other than pairs of `<mark>` and `<
 
 **Tests:** `compliance/search-matching.test.ts › escapes the row's text in an excerpt and marks only the match`.
 
-## Owner browser reads
-
-### `search-and-filters/owner-count-export`
-
-When a request to `GET /items/stats` or `GET /export` carries a live browser session of the instance's owner and no Authorization header, the server MUST admit the request as the owner without requiring authentication within the last five minutes.
-
-**Tests:** `compliance/owner-item-read.test.ts › admits the owner to filtered counts and both exports without creating a key`.
-
-### `search-and-filters/owner-read-reach`
-
-When an owner browser session reads counts or an export, the server MUST apply the operation's filters and instance source filtering with read access to every type, edge type, extension namespace, history snapshot and referenced blob.
-
-**Reason:** The browser session is explicit owner authority, not a key with a projected permission map. The operation's existing state and system-item defaults still apply.
-
-**Tests:** `compliance/owner-item-read.test.ts › admits the owner to filtered counts and both exports without creating a key`, `› refuses undeclared and invalid filters and accepts an empty selection`, `› keeps instance source filtering on owner counts and both exports`.
-
-### `search-and-filters/owner-read-no-key`
-
-When the owner reads counts or an export through their browser session, the server MUST create no API key for that read.
-
-**Tests:** `compliance/owner-item-read.test.ts › admits the owner to filtered counts and both exports without creating a key`.
-
-### `search-and-filters/owner-read-bearer`
-
-When a request to counts or export carries an Authorization header alongside an owner browser cookie, the server MUST decide access using the presented credential alone.
-
-**Tests:** `compliance/owner-item-read.test.ts › refuses an invalid bearer with an owner cookie and attributes owner exports`.
+## Counts and exports
 
 ### `search-and-filters/owner-read-boundary`
 
-When a request carries only owner browser authority to another item content route (excluding `GET /items/summaries`), edge, search, occurrence or tag content route, or only private local authority to counts or export, the server MUST retain that route's existing credential requirement.
+When a request carries only private local authority to `GET /items/stats` or `GET /export`, the server MUST retain that route's credential requirement.
 
-**Reason:** Owner browser counts and exports admit no other content operation or transport.
+**Reason:** Counts and exports answer what a credential reaches, and the local command is not a credential.
 
-**Tests:** `compliance/owner-item-read.test.ts › keeps other content doors and private socket reads closed with credential witnesses`.
-
-### `search-and-filters/owner-read-ended`
-
-When a request to counts or export carries only an ended or expired owner browser session, the server MUST answer `401 unauthorized`.
-
-**Tests:** `compliance/owner-item-read.test.ts › refuses the ended browser session on counts and exports`.
+**Tests:** `compliance/owner-item-read.test.ts › keeps counts and exports closed to the private local command, which a credential reads`.
 
 ## Counting
 
@@ -1744,7 +1712,7 @@ When the rows of a page fill it exactly and it holds the last row, the server MU
 
 ## Export
 
-`GET /export` admits the owner browser session or a credential and answers the items that caller may read and the edges between them, as NDJSON or as an archive that `POST /restore` reads. Management permissions alone grant no content access (`blobs/export-operator-refused`).
+`GET /export` admits a credential and answers the items that caller may read and the edges between them, as NDJSON or as an archive that `POST /restore` reads. Management permissions alone grant no content access (`blobs/export-operator-refused`).
 
 ### `search-and-filters/export-lines`
 
@@ -1988,7 +1956,7 @@ If a `type_icon` line of an archive is not an object holding a `type_id` and a s
 
 ### `search-and-filters/archive-sources`
 
-The server MUST carry in the `instance.ndjson.gz` of an archive one `source` line, holding the `source` code and its `name` and `mark` or `null` for each, for every source with a name or mark set when the owner exports and, for any other credential, for each such source of the items the archive carries, and count them in the manifest's `source_count`.
+The server MUST carry in the `instance.ndjson.gz` of an archive one `source` line, holding the `source` code and its `name` and `mark` or `null` for each, for every source with a name or mark set in a backup and, in an export, for each such source of the items the archive carries, and count them in the manifest's `source_count`.
 
 **Reason:** a source's name and mark are kept beside its items and not in them, so an archive that carried only items would lose them on a move to a new instance.
 
@@ -2270,7 +2238,7 @@ If the key that a `GET /export?format=archive` request was admitted on is revoke
 
 ## Restore
 
-`POST /restore` takes an archive that `GET /export?format=archive` wrote, with direct owner or local authority, and answers counts of what it wrote and skipped.
+`POST /restore` takes an archive that `GET /export?format=archive` wrote, with local authority, and answers counts of what it wrote and skipped.
 
 ### `search-and-filters/restore-operator`
 
@@ -2278,11 +2246,11 @@ If a working key sends `POST /restore`, then the server MUST answer `403 forbidd
 
 **Reason:** full restoration can write server-managed records, so ordinary app and key permissions cannot authorize it.
 
-**Tests:** `compliance/restore-archive.test.ts › requires direct owner authority`.
+**Tests:** `compliance/restore-archive.test.ts › requires local authority`.
 
 ### `search-and-filters/restore-roundtrip`
 
-When direct owner or local authority sends `POST /restore` with an archive that `GET /export?format=archive` wrote, the server MUST answer `200` with the counts of what it restored.
+When local authority sends `POST /restore` with an archive that `GET /export?format=archive` wrote, the server MUST answer `200` with the counts of what it restored.
 
 **Tests:** `compliance/restore-archive.test.ts › round-trips: archive export then restore accepts the same payload`.
 
@@ -2874,7 +2842,7 @@ When the server refuses `POST /restore` after it has started to read the body, t
 
 When the server refuses `POST /restore` before it has started to read the body, the server MUST answer with `Connection: close` within 2 seconds, after reading at most `max_request_bytes` of the body.
 
-**Reason:** a caller that is not the direct owner has proved nothing, so the server reads no more of what it sends than a client already sending a small archive has in flight, which lets that client hear the refusal instead of a reset. A client that sent `Expect: 100-continue`, as `marfa restore` does, has sent no body, and the server reads none.
+**Reason:** a caller without local authority has proved nothing, so the server reads no more of what it sends than a client already sending a small archive has in flight, which lets that client hear the refusal instead of a reset. A client that sent `Expect: 100-continue`, as `marfa restore` does, has sent no body, and the server reads none.
 
 **Tests:** `compliance/restore-archive.test.ts › answers a caller with no credential within two seconds and closes the connection while it keeps sending`, `› reads the rest of a large body and answers the refusal, to the owner, and answers a working key before the body`.
 
@@ -2883,36 +2851,6 @@ When the server refuses `POST /restore` before it has started to read the body, 
 When the server answers `POST /restore` with `408 request_timeout`, the server MUST NOT write any item, type registration or blob of the archive.
 
 **Tests:** `compliance/upload-timing.test.ts › ends a restore with 408 request_timeout, writes nothing and removes what it spooled`.
-
-### `search-and-filters/restore-sign-in-age`
-
-If the owner's browser session signed in more than five minutes before a `POST /restore` started, then the server MUST answer `403 forbidden` without waiting for the body to finish arriving.
-
-**Reason:** restoring can write server-managed records (`search-and-filters/restore-operator`), so it needs a recent sign-in. Judging it when the request starts refuses a stale session before the owner has sent the archive.
-
-**Tests:** `compliance/restore-upload-sign-in.test.ts › refuses with 403 forbidden an owner who signed in six minutes before the request started, as soon as the request starts`.
-
-### `search-and-filters/restore-sign-in-start`
-
-If the owner's browser session signed in within five minutes before a `POST /restore` started, then the server MUST NOT refuse the request because more than five minutes have passed since the sign-in when the body finishes arriving.
-
-**Reason:** the sign-in is judged at the moment the request starts, both before the body is read and when the restore is written, so an upload that begins inside the window is not discarded for taking longer than the window. Any other operation that needs a recent sign-in judges it when it runs.
-
-**Tests:** `compliance/restore-upload-sign-in.test.ts › restores an archive from an owner who signed in four minutes before the request started and whose body finished arriving two minutes later`.
-
-### `search-and-filters/restore-session-ended`
-
-If the owner's browser session ends before the body of a `POST /restore` finishes arriving, then the server MUST answer `401 unauthorized`.
-
-**Reason:** judging the sign-in at the start does not extend the session. A sign-out, or a session that has expired, stops the restore however recent the sign-in was.
-
-**Tests:** `compliance/restore-upload-sign-in.test.ts › answers 401 unauthorized, though the sign-in was recent when the request started`.
-
-### `search-and-filters/restore-session-unwritten`
-
-When the server answers `POST /restore` with `401 unauthorized` because the owner's browser session ended during the upload, the server MUST NOT write any item, type registration or blob of the archive.
-
-**Tests:** `compliance/restore-upload-sign-in.test.ts › writes nothing of the archive`.
 
 ### `search-and-filters/restore-blob-bytes`
 
@@ -2976,7 +2914,7 @@ If the `instance.ndjson.gz` of an archive registers the same type ID, or the sam
 
 ### `search-and-filters/restore-no-count-limit`
 
-When direct owner or local authority restores an archive that the same build wrote, the server MUST take its counts of items, edges, types and edge types without a limit of its own.
+When local authority restores an archive that the same build wrote, the server MUST take its counts of items, edges, types and edge types without a limit of its own.
 
 **Reason:** an export that the same build cannot restore is not a usable backup.
 
@@ -3068,7 +3006,7 @@ When the server removes the blob bytes of a restore that did not commit, the ser
 
 ### `search-and-filters/owner-summaries-authority`
 
-When `GET /items/summaries` carries direct owner browser authority or private local authority, the server MUST admit the read without requiring a recent sign-in.
+When the private local command sends `GET /items/summaries`, the server MUST admit the read.
 
 **Tests:** `compliance/item-summaries.test.ts › pages name matches without leaking content or widening other owner reads`.
 

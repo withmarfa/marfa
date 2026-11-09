@@ -236,7 +236,7 @@ impl App {
 
     /// The backups the object store holds, of every instance that put them there, newest first.
     pub async fn list_backups(&self, caller: &Caller) -> Result<Vec<Value>> {
-        caller.require_direct()?;
+        caller.require_local()?;
         let bucket = self.bucket()?;
         let found = super::blobs::store::within(LIST_DEADLINE, bucket.list_under(FOLDER))
             .await
@@ -259,7 +259,7 @@ impl App {
 
     /// Puts a backup now, whether or not anything has changed since the last.
     pub async fn run_backup(self: &Arc<App>, caller: &Caller) -> Result<Value> {
-        caller.require_direct()?;
+        caller.require_local()?;
         let app = self.clone();
         let outcome = tokio::spawn(async move { back_up(&app, true).await })
             .await
@@ -278,7 +278,7 @@ impl App {
         instance: &str,
         name: &str,
     ) -> Result<Value> {
-        caller.require_direct()?;
+        caller.require_local()?;
         let bucket = self.bucket()?;
         if !instance_of(instance) || parse(name).is_none() {
             return Err(not_found(instance, name));

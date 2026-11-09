@@ -108,7 +108,7 @@ async fn receive(
     read: &mut Read,
 ) -> Answer {
     let caller = caller?;
-    caller.require_direct()?;
+    caller.require_local()?;
     let started_at = app.clock.stamp();
     caller.require_recent(&started_at)?;
     query::only(&parts.uri, &[])?;

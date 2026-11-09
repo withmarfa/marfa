@@ -31,7 +31,6 @@ import {
   collectUntil,
   withStream,
 } from "../../utils/stream.js";
-import { TEST_OWNER } from "../../utils/target.js";
 import { waitFor } from "../../utils/wait.js";
 
 /**
@@ -69,9 +68,7 @@ afterAll(async () => {
 function ownerClient(): MarfaClient {
   return new MarfaClient({
     baseUrl: server.apiUrl,
-    ownerCookie: server.ownerCookie,
-    ownerCredentials: TEST_OWNER,
-    ownerSessionFile: `${server.stateDir}/owner-session.json`,
+    controlSocket: server.controlSocket,
   });
 }
 

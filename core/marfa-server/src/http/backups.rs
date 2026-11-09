@@ -13,7 +13,7 @@ use crate::app::App;
 use crate::app::access::Caller;
 
 pub async fn list(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
-    caller.require_direct()?;
+    caller.require_local()?;
     query::only(&uri, &[])?;
     let data = app.list_backups(&caller).await?;
     Ok(json_answer(
@@ -23,7 +23,7 @@ pub async fn list(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answ
 }
 
 pub async fn run(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
-    caller.require_direct()?;
+    caller.require_local()?;
     query::only(&uri, &[])?;
     let answer = app.run_backup(&caller).await?;
     Ok(json_answer(StatusCode::OK, &answer))
@@ -35,7 +35,7 @@ pub async fn restore(
     Path((instance, name)): Path<(String, String)>,
     uri: Uri,
 ) -> Answer {
-    caller.require_direct()?;
+    caller.require_local()?;
     let started_at = app.clock.stamp();
     caller.require_recent(&started_at)?;
     query::only(&uri, &[])?;

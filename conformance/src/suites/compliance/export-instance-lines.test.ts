@@ -12,7 +12,6 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { clientsFor, DISK_ONLY } from "../../utils/own-blob-server.js";
-import { TEST_OWNER } from "../../utils/target.js";
 
 /**
  * What an archive carries of the instance beside its rows: stored settings,
@@ -51,7 +50,7 @@ describe("the instance lines of an archive", () => {
   it("carries the instance's settings, connector state and agreements to a credential that manages them, and none to one that does not", async () => {
     const owner = new MarfaClient({
       baseUrl: server.apiUrl,
-      ownerCookie: server.ownerCookie,
+      controlSocket: server.controlSocket,
     });
     const set = await operator.patchConfig({ audit_retention_days: 31 });
     expect(set.status, JSON.stringify(set.error)).toBe(200);
@@ -89,7 +88,7 @@ describe("the instance lines of an archive", () => {
     });
     expect(hook.status, JSON.stringify(hook.error)).toBe(201);
 
-    const whole = await owner.exportArchive();
+    const whole = await operator.exportArchive();
     expect(whole.status).toBe(200);
     const lines = archiveLines<InstanceLine>(whole.data, "instance");
     const settings = lines.flatMap((line) =>
@@ -150,9 +149,7 @@ describe("the instance lines of an archive", () => {
   it("restores the settings, connector state and agreements the instance lacks, and replaces none it holds", async () => {
     const owner = new MarfaClient({
       baseUrl: server.apiUrl,
-      ownerCookie: server.ownerCookie,
-      ownerCredentials: TEST_OWNER,
-      ownerSessionFile: `${server.stateDir}/owner-session.json`,
+      controlSocket: server.controlSocket,
     });
     for (const [key, value] of [
       ["trash_retention_days", 45],
@@ -204,7 +201,7 @@ describe("the instance lines of an archive", () => {
         })
       ).status,
     ).toBe(200);
-    const archive = await owner.exportArchive({ state: "any" });
+    const archive = await operator.exportArchive({ state: "any" });
     expect(archive.status).toBe(200);
 
     // Since the export: one setting is cleared and one changed, the state is
@@ -264,9 +261,7 @@ describe("the instance lines of an archive", () => {
   it("refuses settings the instance cannot hold together, answering as /config does, and stores none", async () => {
     const owner = new MarfaClient({
       baseUrl: server.apiUrl,
-      ownerCookie: server.ownerCookie,
-      ownerCredentials: TEST_OWNER,
-      ownerSessionFile: `${server.stateDir}/owner-session.json`,
+      controlSocket: server.controlSocket,
     });
     const withSettings = (settings: Record<string, unknown>) =>
       editLineFile(itemsArchive([]), "instance", (text) =>
@@ -312,9 +307,7 @@ describe("the instance lines of an archive", () => {
   it("refuses an archive that carries one setting twice, and stores neither value", async () => {
     const owner = new MarfaClient({
       baseUrl: server.apiUrl,
-      ownerCookie: server.ownerCookie,
-      ownerCredentials: TEST_OWNER,
-      ownerSessionFile: `${server.stateDir}/owner-session.json`,
+      controlSocket: server.controlSocket,
     });
     const key = "revoked_grant_retention_days";
     const before = (await operator.getConfig()).data as unknown as Record<

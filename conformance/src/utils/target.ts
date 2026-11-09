@@ -25,7 +25,6 @@ export interface TargetCredentials {
   controlSocket: string;
   /** Absent for a target with no owner sign-in. */
   ownerCookie?: string;
-  ownerSessionFile?: string;
   authSecret?: string;
 }
 
@@ -49,9 +48,6 @@ export function renderEnvFile(
     ...(credentials.ownerCookie === undefined
       ? []
       : [`MARFA_OWNER_COOKIE=${credentials.ownerCookie}`]),
-    ...(credentials.ownerSessionFile === undefined
-      ? []
-      : [`MARFA_OWNER_SESSION_FILE=${credentials.ownerSessionFile}`]),
     ...(credentials.authSecret === undefined
       ? []
       : [`MARFA_FIXTURE_AUTH_SECRET=${credentials.authSecret}`]),

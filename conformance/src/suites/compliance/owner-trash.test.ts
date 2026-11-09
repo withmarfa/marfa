@@ -7,6 +7,7 @@ import {
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import type { SseEvent } from "../../utils/sse.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
+import { localFetch } from "../../utils/control-request.js";
 let server: FreshServer;
 beforeAll(async () => {
   server = await bootFreshServer("owner-trash");
@@ -17,10 +18,7 @@ afterAll(async () => {
   vi.unstubAllEnvs();
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 function owner(path: string, init: RequestInit = {}) {
-  const headers = new Headers(init.headers);
-  headers.set("cookie", server.ownerCookie);
-  headers.set("origin", new URL(server.apiUrl).origin);
-  return fetch(`${server.apiUrl}${path}`, { ...init, headers });
+  return localFetch(server.controlSocket, `${server.apiUrl}${path}`, init);
 }
 function key(path: string, body?: unknown) {
   return fetch(`${server.apiUrl}${path}`, {
@@ -83,7 +81,7 @@ it("lists and changes trash as summaries, with exact versions and cascade restor
     retention_days: number;
   };
   await expectMatchesSchema("GET", "/trash", 200, body);
-  expect(body.data[0]?.trashed_by.kind).toBe("browser");
+  expect(body.data[0]?.trashed_by.kind).toBe("local");
   expect(body.data[0]?.trashed_at).toBeTruthy();
   expect(body.retention_days).toBeGreaterThan(0);
   expect(
@@ -168,9 +166,9 @@ it("preserves deletion identity and time through an archive and clears them on r
   const item = await note("Archive witness");
   expect((await act(item.id, "trash")).status).toBe(200);
   const before = (await (await owner("/trash")).json()) as { data: unknown[] };
-  const archive = await owner(
-    "/export?format=archive&type=core.note&state=any",
-  );
+  // The private local command meets no credential requirement of the export,
+  // so a key that reads notes takes the archive.
+  const archive = await key("/export?format=archive&type=core.note&state=any");
   expect(archive.status).toBe(200);
   const bytes = await archive.arrayBuffer();
   expect((await act(item.id, "purge")).status).toBe(200);

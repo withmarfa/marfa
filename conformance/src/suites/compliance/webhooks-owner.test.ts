@@ -5,7 +5,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { controlRequest } from "../../utils/control-request.js";
+import { controlRequest, localFetch } from "../../utils/control-request.js";
 import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
 import { waitFor } from "../../utils/wait.js";
 let server: FreshServer;
@@ -15,6 +15,10 @@ let ids: string[];
 let second: string;
 const privateBody = "owner-history-private-body";
 function owner(path: string, init: RequestInit = {}) {
+  return localFetch(server.controlSocket, server.apiUrl + path, init);
+}
+/** The owner's browser session, which counts only on the sign-in pages. */
+function browser(path: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers);
   headers.set("cookie", server.ownerCookie);
   headers.set("origin", server.apiUrl);
@@ -130,8 +134,10 @@ it("reads every maker through local authority while ordinary keys stay isolated"
 });
 
 it("refuses an owner's browser session on every webhook door with 401", async () => {
-  // The witness: the same session is the owner's, and other doors admit it.
-  expect((await owner("/keys")).status).toBe(200);
+  // The witness: the same session is the owner's on the passkey page's door.
+  const own = await browser("/owner/passkeys");
+  expect(own.status).toBe(200);
+  await own.body?.cancel();
   const id = ids[0]!;
   const doors: [string, string, unknown?][] = [
     ["GET", "/webhooks"],
@@ -147,7 +153,7 @@ it("refuses an owner's browser session on every webhook door with 401", async ()
     ["POST", `/webhooks/${id}/deliveries/whd_unknown/redeliver`],
   ];
   for (const [method, path, body] of doors) {
-    const response = await owner(path, {
+    const response = await browser(path, {
       method,
       ...(body === undefined
         ? {}
@@ -311,3 +317,58 @@ it("names a maker that no longer holds webhooks.manage as the reason a local red
     error: { code: "conflict", details: { reason: "credential_unavailable" } },
   });
 });
+
+it("refuses the 101st subscription of a key or an app with 409 conflict naming the cap, and accepts one again once one is deleted", async () => {
+  const minted = await owner("/keys", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      label: "Capped maker",
+      source: "capped-maker",
+      permissions: ["webhooks.manage"],
+      type_permissions: { "*": "read" },
+    }),
+  });
+  expect(minted.status).toBe(201);
+  const key = ((await minted.json()) as { key: string }).key;
+  const app = await approvedApp(server, ["core.note:read", "webhooks.manage"]);
+  const register = (token: string, label: string) =>
+    credential("/webhooks", token, "POST", {
+      url: receiver.hookUrl(label),
+      events: ["item.created"],
+    });
+  const held = async (token: string) =>
+    (
+      (await (await credential("/webhooks", token)).json()) as {
+        data: { id: string }[];
+      }
+    ).data;
+
+  // The key reaches the cap first, so each maker's registrations beside it
+  // show that the cap counts only a maker's own.
+  for (const [maker, token] of [
+    ["key", key],
+    ["app", app.token],
+  ] as const) {
+    while ((await held(token)).length < 100) {
+      expect((await register(token, `${maker}-cap`)).status).toBe(201);
+    }
+    const refused = await register(token, `${maker}-cap`);
+    expect(refused.status, maker).toBe(409);
+    expect(await refused.json(), maker).toMatchObject({
+      error: {
+        code: "conflict",
+        details: { reason: "webhook_cap", cap: 100 },
+      },
+    });
+    expect(await held(token), maker).toHaveLength(100);
+
+    const [first] = await held(token);
+    expect(
+      (await credential(`/webhooks/${first!.id}`, token, "DELETE")).status,
+      maker,
+    ).toBe(200);
+    expect((await register(token, `${maker}-cap`)).status, maker).toBe(201);
+    expect((await register(token, `${maker}-cap`)).status, maker).toBe(409);
+  }
+}, 60_000);

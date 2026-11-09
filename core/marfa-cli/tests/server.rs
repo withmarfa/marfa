@@ -2141,7 +2141,7 @@ fn changing_how_a_native_server_is_reached_restarts_it_and_an_unchanged_run_does
         "--address",
         "https://marfa.example.com",
     ]);
-    assert_eq!(rig.setting("TRUSTED_PROXY_CIDRS"), None);
+    assert_eq!(rig.setting("MARFA_TRUSTED_PROXY_CIDRS"), None);
     assert_eq!(rig.restarts(), restarts + 1, "{}", rig.manager_log());
     assert_ne!(rig.service_pid("marfa"), pid);
 }

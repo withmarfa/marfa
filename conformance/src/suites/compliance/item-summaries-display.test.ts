@@ -5,6 +5,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { localFetch } from "../../utils/control-request.js";
 
 let server: FreshServer;
 beforeAll(async () => {
@@ -16,10 +17,7 @@ afterAll(async () => {
   vi.unstubAllEnvs();
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 function owner(path: string, init: RequestInit = {}) {
-  const headers = new Headers(init.headers);
-  headers.set("cookie", server.ownerCookie);
-  headers.set("origin", new URL(server.apiUrl).origin);
-  return fetch(`${server.apiUrl}${path}`, { ...init, headers });
+  return localFetch(server.controlSocket, `${server.apiUrl}${path}`, init);
 }
 function key(path: string, body?: unknown) {
   return fetch(`${server.apiUrl}${path}`, {

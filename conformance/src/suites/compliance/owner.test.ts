@@ -153,8 +153,11 @@ describe("claiming the one owner", () => {
     expect(spent.status).toBe(401);
     expect(await errorCode(spent)).toBe("setup_proof_invalid");
     expect(
-      (await fetch(`${server.url}/owner`, { headers: { cookie: setupCookie } }))
-        .status,
+      (
+        await fetch(`${server.url}/owner/passkeys`, {
+          headers: { cookie: setupCookie },
+        })
+      ).status,
     ).toBe(401);
     for (let refresh = 0; refresh < 2; refresh++) {
       const page = await fetch(`${server.url}/setup`, {
@@ -350,7 +353,7 @@ describe("claiming the one owner", () => {
     expect((await local("/_control/setup/status")).body.claimed).toBe(false);
   });
 
-  it("creates exactly one owner and requires owner sign-in to read it", async () => {
+  it("creates exactly one owner and reads it through the local command", async () => {
     const attempts = await Promise.all(
       [0, 1].map(() =>
         post("/owner", {
@@ -389,9 +392,13 @@ describe("claiming the one owner", () => {
       .getSetCookie()
       .map((value) => value.split(";")[0])
       .join("; ");
-    const read = await fetch(`${server.url}/owner`, { headers: { cookie } });
+    expect(
+      (await fetch(`${server.url}/owner/passkeys`, { headers: { cookie } }))
+        .status,
+    ).toBe(200);
+    const read = await local("/owner");
     expect(read.status).toBe(200);
-    const readOwner = await read.json();
+    const readOwner = read.body;
     await expectMatchesSchema("GET", "/owner", 200, readOwner);
     expect(readOwner).toEqual(owner);
     expect((await post("/setup/claim", { ...OWNER, code })).status).toBe(409);
@@ -399,34 +406,30 @@ describe("claiming the one owner", () => {
   });
 
   it("ordinary full management access cannot become the owner", async () => {
-    const minted = await post(
-      "/keys",
-      {
-        label: "Instance management",
-        source: "owner-test",
-        permissions: [
-          "schema.write",
-          "keys.mint",
-          "items.purge",
-          "webhooks.manage",
-          "config.manage",
-          "audit.read",
-          "grants.manage",
-          "keys.manage",
-          "connectors.manage",
-          "instance.read",
-          "blobs.manage",
-          "instance.maintain",
-        ],
-        type_permissions: {},
-        edge_permissions: {},
-        metadata_permissions: {},
-        profile_permissions: {},
-      },
-      { cookie, origin: server.url },
-    );
+    const minted = await local("/keys", {
+      label: "Instance management",
+      source: "owner-test",
+      permissions: [
+        "schema.write",
+        "keys.mint",
+        "items.purge",
+        "webhooks.manage",
+        "config.manage",
+        "audit.read",
+        "grants.manage",
+        "keys.manage",
+        "connectors.manage",
+        "instance.read",
+        "blobs.manage",
+        "instance.maintain",
+      ],
+      type_permissions: {},
+      edge_permissions: {},
+      metadata_permissions: {},
+      profile_permissions: {},
+    });
     expect(minted.status).toBe(201);
-    const key = (await minted.json()).key;
+    const key = minted.body.key as string;
     managementKey = key;
     expect(typeof key).toBe("string");
     const read = await fetch(`${server.url}/owner`, {
@@ -470,7 +473,8 @@ describe("claiming the one owner", () => {
       200,
     );
     expect(
-      (await fetch(`${server.url}/owner`, { headers: { cookie } })).status,
+      (await fetch(`${server.url}/owner/passkeys`, { headers: { cookie } }))
+        .status,
     ).toBe(401);
     expect(
       (await post("/auth/sign-in/email", OWNER, { origin: server.url })).status,
@@ -485,8 +489,11 @@ describe("claiming the one owner", () => {
       ).status,
     ).toBe(200);
     expect(
-      (await fetch(`${server.url}/owner`, { headers: { cookie: otherCookie } }))
-        .status,
+      (
+        await fetch(`${server.url}/owner/passkeys`, {
+          headers: { cookie: otherCookie },
+        })
+      ).status,
     ).toBe(401);
     expect(
       (await post("/auth/sign-in/email", { ...OWNER, password }, lockedAddress))
@@ -538,6 +545,7 @@ describe("claiming the one owner", () => {
 async function withFreshInstance(
   run: (instance: {
     url: string;
+    controlSocket: string;
     code: () => Promise<string>;
     ticket: () => Promise<string>;
   }) => Promise<void>,
@@ -551,6 +559,7 @@ async function withFreshInstance(
       controlRequest(fresh.controlSocket, path, { method: "POST", body: {} });
     await run({
       url: fresh.url,
+      controlSocket: fresh.controlSocket,
       code: async () =>
         (await control("/_control/setup/code")).body.code as string,
       ticket: async () =>
@@ -617,11 +626,13 @@ describe("signing the owner in at the claim", () => {
         // The witness for the refusals above: the same request, valid, does set one.
         const session = sessionCookies(claimed);
         expect(session).toHaveLength(1);
-        const read = await fetch(`${instance.url}/owner`, {
+        const read = await fetch(`${instance.url}/owner/passkeys`, {
           headers: { cookie: cookieHeader(session) },
         });
         expect(read.status).toBe(200);
-        expect(await read.json()).toEqual(owner);
+        expect(
+          (await controlRequest(instance.controlSocket, "/owner")).body,
+        ).toEqual(owner);
 
         const login = await fetch(`${instance.url}/auth/sign-in/email`, {
           method: "POST",
@@ -636,17 +647,13 @@ describe("signing the owner in at the claim", () => {
           sessionCookies(login)[0]!.split("=")[0],
         );
 
-        // A sign-in within the last five minutes is what the owner update needs.
-        const renamed = await fetch(`${instance.url}/owner`, {
-          method: "PATCH",
-          headers: {
-            "content-type": "application/json",
-            origin,
-            cookie: cookieHeader(session),
-          },
-          body: JSON.stringify({ name: "Renamed" }),
+        // The claim's session is a sign-in within the last five minutes, which
+        // removing a passkey needs. No passkey has this ID.
+        const removed = await fetch(`${instance.url}/owner/passkeys/absent`, {
+          method: "DELETE",
+          headers: { origin, cookie: cookieHeader(session) },
         });
-        expect(renamed.status).toBe(200);
+        expect(removed.status, await removed.clone().text()).toBe(404);
 
         const repeated = await claim({ ...OWNER, code }, { origin });
         expect(repeated.status).toBe(409);
@@ -686,7 +693,7 @@ describe("signing the owner in at the claim", () => {
             .getSetCookie()
             .some((value) => /^marfa\.setup=;.*Max-Age=0/i.test(value)),
         ).toBe(true);
-        const read = await fetch(`${instance.url}/owner`, {
+        const read = await fetch(`${instance.url}/owner/passkeys`, {
           headers: { cookie: cookieHeader(session) },
         });
         expect(read.status).toBe(200);

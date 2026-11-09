@@ -296,7 +296,7 @@ fn refuse_undeclared(
     id: Option<&str>,
 ) -> Result<()> {
     let rules = &catalog.rules;
-    if !unit.caller.strict_on(type_id) || !rules.known(type_id) {
+    if !unit.caller.levers()?.strict_on(type_id) || !rules.known(type_id) {
         return Ok(());
     }
     let declared = rules.resolved(type_id).map_err(super::write::ruled)?;

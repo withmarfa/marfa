@@ -164,7 +164,7 @@ impl App {
         started_at: String,
         received: Received,
     ) -> Result<Value> {
-        caller.require_direct()?;
+        caller.require_local()?;
         let app = self.clone();
         let caller = caller.clone();
         let task = async move {
@@ -187,7 +187,7 @@ impl App {
             let written = app
                 .write(&caller, "restore_archive", move |unit| {
                     let began = std::time::Instant::now();
-                    unit.caller.require_direct()?;
+                    unit.caller.require_local()?;
                     unit.caller.require_recent(&started_at)?;
                     unit.fanning(false, |unit| {
                         let tx = unit.tx();

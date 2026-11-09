@@ -298,7 +298,9 @@ pub fn apply(
     })
 }
 
-pub(crate) use enrichment::{Enriched, Offer, Offered, Written, apply_enrichment, offer};
+pub(crate) use enrichment::{
+    Enriched, Offer, Offered, Standing, Written, apply_enrichment, offer, standing,
+};
 
 /// A change the server makes to an item it keeps for itself. No door that
 /// takes a caller's item may lead here.
@@ -361,7 +363,11 @@ pub fn apply_row(
         server_own: false,
     };
     let row = rows::by_id(unit.tx(), id)?.ok_or_else(not_found)?;
-    if !unit.caller.lists(&catalog.rules, &row.type_id, &row.source) {
+    if !unit
+        .caller
+        .levers()?
+        .lists(&catalog.rules, &row.type_id, &row.source)
+    {
         return Err(not_found());
     }
     let mut done = job.row_act(selected, act)?;
@@ -772,7 +778,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
     }
 
     fn refuse_unlisted_source(&self, type_id: &str, source: &str) -> Result<()> {
-        let Some(allowed) = self.caller().allowed_sources(type_id) else {
+        let Some(allowed) = self.caller().levers()?.allowed_sources(type_id) else {
             return Ok(());
         };
         if allowed.iter().any(|name| name == source) {
@@ -796,7 +802,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         let Some(properties) = properties else {
             return Ok(());
         };
-        if !self.caller().strict_on(type_id) || !rules.known(type_id) {
+        if !self.caller().levers()?.strict_on(type_id) || !rules.known(type_id) {
             return Ok(());
         }
         let declared = rules.resolved(type_id).map_err(ruled)?;
@@ -2224,8 +2230,10 @@ impl<'t, 'c> Job<'_, 't, 'c> {
 
     fn retarget(&self, id: &str, settings: Map<String, Value>) -> Result<Done> {
         let row = rows::by_id(self.unit.tx(), id)?.ok_or_else(not_found)?;
-        if row.type_id == VIEW_TYPE {
-            views::check(&settings, &self.catalog)?;
+        match row.type_id.as_str() {
+            VIEW_TYPE => views::check(&settings, &self.catalog)?,
+            FOLDER_TYPE => folders::check_stored(&settings, &self.catalog)?,
+            _ => {}
         }
         let (item, _) = self.landed(
             &row,
@@ -2330,14 +2338,11 @@ impl<'t, 'c> Job<'_, 't, 'c> {
 
     /// Answers with the summary alone, so nothing of the item's content leaves through this door.
     fn owner(&self, act: OwnerAct, id: String, version: i64) -> Result<Done> {
-        self.caller().require_direct()?;
-        self.caller().require_recent(&self.unit.at)?;
+        self.caller().require_local()?;
+        let levers = self.caller().levers()?;
         let row = rows::by_id(self.unit.tx(), &id)?
             .filter(|row| !super::is_system(&row.type_id))
-            .filter(|row| {
-                self.caller()
-                    .lists(&self.catalog.rules, &row.type_id, &row.source)
-            })
+            .filter(|row| levers.lists(&self.catalog.rules, &row.type_id, &row.source))
             .ok_or_else(not_found)?;
         let summary = summary_of(self.unit.tx(), &self.catalog, &row)?;
         if row.version != version {
@@ -2346,7 +2351,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 body: json!({
                     "error": {
                         "code": "version_conflict",
-                        "message": "This item changed. Refresh the page before trying again.",
+                        "message": "This item changed. Read it again before trying again.",
                     },
                     "current": summary,
                 })

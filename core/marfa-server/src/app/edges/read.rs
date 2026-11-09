@@ -54,8 +54,9 @@ fn page_of(
         limit: asked.limit + 1,
         ..*asked
     };
+    let levers = caller.levers()?;
     let mut found = rows::page(tx, &wider, |type_id, source| {
-        caller.lists(&catalog.rules, type_id, source)
+        levers.lists(&catalog.rules, type_id, source)
     })?;
     let more = found.len() as i64 > asked.limit;
     found.truncate(asked.limit as usize);
@@ -202,8 +203,9 @@ pub(crate) fn hydrate(
             by_change: false,
             limit: BLOCK_CAP + 1,
         };
+        let levers = caller.levers()?;
         let mut found = rows::page(tx, &wider, |type_id, source| {
-            caller.lists(&catalog.rules, type_id, source)
+            levers.lists(&catalog.rules, type_id, source)
         })?;
         let more = found.len() as i64 > BLOCK_CAP;
         found.truncate(BLOCK_CAP as usize);

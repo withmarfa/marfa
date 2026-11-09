@@ -8,7 +8,6 @@ import {
 import { MarfaClient } from "../client/api.js";
 import type { FreshServer } from "./fresh-server.js";
 import { clientsFor } from "./own-blob-server.js";
-import { TEST_OWNER } from "./target.js";
 import { waitFor } from "./wait.js";
 
 /**
@@ -81,13 +80,11 @@ export function bucketAt(prefix: string): Bucket {
   };
 }
 
-/** The owner's client on a fresh server, signed in as the run's owner. */
+/** The owner's client on a fresh server, through its private local command. */
 export function ownerOf(server: FreshServer): MarfaClient {
   return new MarfaClient({
     baseUrl: server.apiUrl,
-    ownerCookie: server.ownerCookie,
-    ownerCredentials: TEST_OWNER,
-    ownerSessionFile: `${server.stateDir}/owner-session.json`,
+    controlSocket: server.controlSocket,
   });
 }
 

@@ -84,7 +84,7 @@ it("restores an archive as its selection stood when read, whatever lands while i
     expect(archiveLines(exported.data, "edges")).toHaveLength(1);
     const owner = new MarfaClient({
       baseUrl: target.apiUrl,
-      ownerCookie: target.ownerCookie,
+      controlSocket: target.controlSocket,
     });
     const restored = await owner.restoreArchive(exported.data);
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
@@ -172,7 +172,7 @@ it("restores a custom type retyped away and deleted between archive pages", asyn
       try {
         const owner = new MarfaClient({
           baseUrl: destination.apiUrl,
-          ownerCookie: destination.ownerCookie,
+          controlSocket: destination.controlSocket,
         });
         const restored = await owner.restoreArchive(archive.data);
         expect(

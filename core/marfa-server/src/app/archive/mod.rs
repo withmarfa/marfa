@@ -160,10 +160,12 @@ fn line_value(line: &str) -> Result<Value> {
 }
 
 /// Whether the credential `read` stands on reads every part of `row` the line shows.
-fn reads_row(read: &Reader<'_, '_>, row: &Archived) -> bool {
+fn reads_row(read: &Reader<'_, '_>, row: &Archived) -> Result<bool> {
     let caller = &read.caller;
-    caller.may_read_type(&row.type_id)
-        && caller.lists(&read.catalog.rules, &row.type_id, &row.source)
+    Ok(caller.may_read_type(&row.type_id)
+        && caller
+            .levers()?
+            .lists(&read.catalog.rules, &row.type_id, &row.source)
         && row
             .namespaces
             .iter()
@@ -172,7 +174,7 @@ fn reads_row(read: &Reader<'_, '_>, row: &Archived) -> bool {
             .snapshot_types
             .iter()
             .chain(row.mark_type.iter())
-            .all(|type_id| caller.may_read_type(type_id))
+            .all(|type_id| caller.may_read_type(type_id)))
 }
 
 fn unrestorable(refused: &checks::Refused) -> Refusal {
@@ -522,7 +524,7 @@ fn select(
         .collect::<Result<_>>()?;
     count("edge_type_count", &mut instance, edge_types)?;
     count("type_icon_count", &mut instance, icons)?;
-    let direct = matches!(caller, Caller::Owner(_) | Caller::Local(_) | Caller::Server);
+    let direct = matches!(caller, Caller::Server);
     let named = sources::named(read.tx)?
         .into_iter()
         .filter(|named| direct || carried_sources.contains_key(&named.source))

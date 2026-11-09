@@ -134,14 +134,14 @@ impl Out<'_> {
         &self,
         name: &str,
         spooled: &Spooled<N>,
-        need: impl Fn(&N) -> Box<dyn Fn(&Reader<'_, '_>) -> bool + Send>,
+        need: impl Fn(&N) -> Judge,
     ) -> Result<(), Stop> {
         self.header(name, spooled.size).await?;
         let mut file = Some(spooled.open()?);
         let mut at = 0;
         for (end, needs) in &spooled.segments {
             let judge = need(needs);
-            self.holds(move |read| Ok(judge(read))).await?;
+            self.holds(move |read| judge(read)).await?;
             while at < *end {
                 let (back, chunk) = read(file.take(), at, *end).await?;
                 file = Some(back);
@@ -204,12 +204,13 @@ impl Out<'_> {
     }
 }
 
-fn items_need(need: &ItemNeed) -> Box<dyn Fn(&Reader<'_, '_>) -> bool + Send> {
+fn items_need(need: &ItemNeed) -> Judge {
     let need = need.clone();
     Box::new(move |read| {
         let caller = &read.caller;
-        need.rows.iter().all(|(type_id, source)| {
-            caller.may_read_type(type_id) && caller.lists(&read.catalog.rules, type_id, source)
+        let levers = caller.levers()?;
+        Ok(need.rows.iter().all(|(type_id, source)| {
+            caller.may_read_type(type_id) && levers.lists(&read.catalog.rules, type_id, source)
         }) && need
             .namespaces
             .iter()
@@ -217,37 +218,43 @@ fn items_need(need: &ItemNeed) -> Box<dyn Fn(&Reader<'_, '_>) -> bool + Send> {
             && need
                 .types
                 .iter()
-                .all(|type_id| caller.may_read_type(type_id))
+                .all(|type_id| caller.may_read_type(type_id)))
     })
 }
 
-fn instance_need(need: &InstanceNeed) -> Box<dyn Fn(&Reader<'_, '_>) -> bool + Send> {
+fn instance_need(need: &InstanceNeed) -> Judge {
     let need = need.clone();
     Box::new(move |read| {
         let caller = &read.caller;
-        need.permissions
+        let levers = caller.levers()?;
+        Ok(need
+            .permissions
             .iter()
             .all(|permission| caller.holds(*permission))
             && need.sources.iter().all(|(source, types)| {
                 types.iter().any(|type_id| {
                     caller.may_read_type(type_id)
-                        && caller.lists(&read.catalog.rules, type_id, source)
+                        && levers.lists(&read.catalog.rules, type_id, source)
                 })
             })
             && need.rows.iter().all(|(type_id, source)| {
-                caller.may_read_type(type_id) && caller.lists(&read.catalog.rules, type_id, source)
-            })
+                caller.may_read_type(type_id) && levers.lists(&read.catalog.rules, type_id, source)
+            }))
     })
 }
 
-fn edges_need(need: &EdgeNeed) -> Box<dyn Fn(&Reader<'_, '_>) -> bool + Send> {
+fn edges_need(need: &EdgeNeed) -> Judge {
     let need = need.clone();
     Box::new(move |read| {
-        need.0
+        Ok(need
+            .0
             .iter()
-            .all(|(edge_type, source_type)| read.caller.may_read_edge(edge_type, source_type))
+            .all(|(edge_type, source_type)| read.caller.may_read_edge(edge_type, source_type)))
     })
 }
+
+/// Whether the export's credential still reads one segment.
+type Judge = Box<dyn Fn(&Reader<'_, '_>) -> crate::app::refusal::Result<bool> + Send>;
 
 async fn read(file: Option<File>, at: u64, end: u64) -> Result<(File, Vec<u8>), Stop> {
     let mut file = file.ok_or_else(|| failed("a spool file was lost"))?;

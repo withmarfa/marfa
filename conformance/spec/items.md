@@ -1956,7 +1956,7 @@ If the credential's source filter changes, or hides a matched item, while the se
 
 ### `items/job-read`
 
-When the credential that queued a bulk-action job, a caller with `instance.read`, or direct owner or local authority sends `GET /items/bulk-actions/jobs/{id}`, the server MUST answer the job's `status`, `matched`, `processed`, `succeeded` and `errored`.
+When the credential that queued a bulk-action job, a caller with `instance.read`, or local authority sends `GET /items/bulk-actions/jobs/{id}`, the server MUST answer the job's `status`, `matched`, `processed`, `succeeded` and `errored`.
 
 **Tests:** `compliance/bulk.test.ts › POST returns 202 with a queued envelope; status terminates completed`, `compliance/bulk-limits.test.ts › lets instance.read and instance.maintain read and cancel any job`.
 
@@ -2600,7 +2600,7 @@ If a `GET /search` query contains a NUL character, then the server MUST answer `
 
 ### `items/owner-trash-summary`
 
-When the owner or a private local command calls `GET /trash`, the server MUST return a page of summaries containing `id`, `type`, `version`, `name`, `source`, `created_at`, `trashed_at`, `trashed_by` and `eligible_for_deletion_at`, with `retention_days` beside the page.
+When the private local command calls `GET /trash`, the server MUST return a page of summaries containing `id`, `type`, `version`, `name`, `source`, `created_at`, `trashed_at`, `trashed_by` and `eligible_for_deletion_at`, with `retention_days` beside the page.
 
 **Tests:** `compliance/owner-trash.test.ts › lists and changes trash as summaries, with exact versions and cascade restore`.
 
@@ -2624,7 +2624,7 @@ If `GET /trash` names a `limit` that is not a whole number of 1 to 200, then the
 
 ### `items/owner-trash-actions`
 
-When a recent owner session or a private local command posts to `/items/summaries/{id}/trash`, `/restore` or `/purge` under that item summary, the server MUST apply the corresponding item lifecycle operation, including its cascade, restoration and connection protections.
+When the private local command posts to `/items/summaries/{id}/trash`, `/restore` or `/purge` under that item summary, the server MUST apply the corresponding item lifecycle operation, including its cascade, restoration and connection protections.
 
 **Tests:** `compliance/owner-trash.test.ts › lists and changes trash as summaries, with exact versions and cascade restore`.
 
@@ -2654,17 +2654,9 @@ When an archive exports and restores a trashed item, the server MUST preserve it
 
 ### `items/owner-empty-trash`
 
-When a recent owner session or a private local command posts to `/trash/empty`, the server MUST attempt at most 200 selected items that still have their selected version and trash state, returning the committed purge count, per-item failures and the next batch cursor.
+When the private local command posts to `/trash/empty`, the server MUST attempt at most 200 selected items that still have their selected version and trash state, returning the committed purge count, per-item failures and the next batch cursor.
 
 **Tests:** `compliance/owner-trash.test.ts › lists and changes trash as summaries, with exact versions and cascade restore`.
-
-### `items/owner-trash-recent`
-
-If the browser session posting to `/items/summaries/{id}/trash`, `/restore` or `/purge`, or to `/trash/empty`, signed in more than five minutes ago, then the server MUST answer `403 forbidden` and change no item.
-
-**Reason:** A purge cannot be undone, so a browser left signed in, or a copied cookie, cannot remove what the owner kept without the password.
-
-**Tests:** `compliance/recent-sign-in-consent.test.ts › refuses a session that signed in more than five minutes ago 403 at each door and changes no item, and a fresh session passes through them`.
 
 ### `items/owner-trash-cli`
 

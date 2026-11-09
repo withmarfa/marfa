@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
-import { TEST_OWNER } from "../../utils/target.js";
 import type {
   MarfaItem,
   MarfaVersion,
@@ -52,8 +51,7 @@ beforeAll(async () => {
   freshOwner = new MarfaClient({
     baseUrl: fresh.apiUrl,
     apiKey: "",
-    ownerCookie: fresh.ownerCookie,
-    ownerCredentials: TEST_OWNER,
+    controlSocket: fresh.controlSocket,
   });
   freshReader = new MarfaClient({
     baseUrl: fresh.apiUrl,

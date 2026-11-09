@@ -799,10 +799,103 @@ describe("folder sync reports", () => {
       ).status,
     ).toBe(401);
   });
+  describe("the copies a sign-in reports", () => {
+    const copy = (n: number) => `copy-${String(n).padStart(2, "0")}`;
+    async function reported(
+      id: string,
+      signIn: string,
+    ): Promise<string[] | undefined> {
+      const group = (await get(id)).sign_ins.find(
+        (g) => g.sign_in.id === signIn,
+      );
+      return group?.copies.map((c) => c.folder_store_id).sort();
+    }
+    const range = (from: number, to: number) =>
+      Array.from({ length: to - from + 1 }, (_, at) => copy(from + at));
+
+    it("keeps 16 copies for each sign-in and folder, replacing the least recently reported copy with a 17th", async () => {
+      const id = await folder();
+      const elsewhere = await folder();
+      const reporter = await key();
+      const neighbor = await key();
+      for (let n = 0; n < 16; n++) {
+        await put(id, { ...report, folder_store_id: copy(n) }, reporter.key);
+        await clock.advance(1_000);
+      }
+      expect(await reported(id, reporter.id)).toEqual(range(0, 15));
+
+      const seventeenth = await put(
+        id,
+        { ...report, folder_store_id: copy(16) },
+        reporter.key,
+      );
+      expect(seventeenth.accepted).toBe(true);
+      expect(await reported(id, reporter.id)).toEqual(range(1, 16));
+
+      // A held copy reported again takes the place of no other.
+      await clock.advance(1_000);
+      const again = await put(
+        id,
+        { ...report, folder_store_id: copy(1), sequence: 2 },
+        reporter.key,
+      );
+      expect(again.accepted).toBe(true);
+      expect(await reported(id, reporter.id)).toEqual(range(1, 16));
+
+      // Copy 1 is now the newest, so the next new copy replaces copy 2.
+      await clock.advance(1_000);
+      await put(id, { ...report, folder_store_id: copy(17) }, reporter.key);
+      expect(await reported(id, reporter.id)).toEqual([
+        copy(1),
+        ...range(3, 17),
+      ]);
+
+      // Another sign-in on this folder, and this sign-in on another folder,
+      // count separately.
+      for (let n = 0; n < 16; n++) {
+        await put(id, { ...report, folder_store_id: copy(n) }, neighbor.key);
+        await put(
+          elsewhere,
+          { ...report, folder_store_id: copy(n) },
+          reporter.key,
+        );
+      }
+      expect(await reported(id, neighbor.id)).toEqual(range(0, 15));
+      expect(await reported(elsewhere, reporter.id)).toEqual(range(0, 15));
+      expect(await reported(id, reporter.id)).toEqual([
+        copy(1),
+        ...range(3, 17),
+      ]);
+    });
+
+    it("replaces, among copies reported at one instant, the one with the greatest copy ID", async () => {
+      const id = await folder();
+      const reporter = await key();
+      await server.pauseClock(true);
+      try {
+        for (let n = 0; n < 16; n++) {
+          await put(id, { ...report, folder_store_id: copy(n) }, reporter.key);
+        }
+        await put(id, { ...report, folder_store_id: copy(99) }, reporter.key);
+      } finally {
+        await server.pauseClock(false);
+      }
+      expect(await reported(id, reporter.id)).toEqual([
+        ...range(0, 14),
+        copy(99),
+      ]);
+    });
+  });
   it("ignores an owner's browser session on every folder door", async () => {
     const id = await folder();
     await put(id);
     const cookie = await signIn(server, origin);
+    // The witness: the same cookie is the owner on the passkey page's own door.
+    const own = await fetch(`${server.apiUrl}/owner/passkeys`, {
+      headers: { cookie },
+    });
+    expect(own.status).toBe(200);
+    await own.body?.cancel();
     for (const [method, path, body] of [
       ["GET", "/folders", undefined],
       ["POST", "/folders", { title: "From a browser" }],

@@ -960,6 +960,11 @@ impl App {
         })
     }
 
+    /// Whether an attached store records a copy of the blob.
+    pub(crate) fn copy_recorded(tx: &rusqlite::Transaction<'_>, hash: &Hash) -> Result<bool> {
+        Ok(!rows::holders(tx, hash)?.is_empty())
+    }
+
     /// For the test hooks: what each store holds, past every blob fault.
     pub async fn inspect_stores(&self, hash: Option<&str>) -> Result<serde_json::Value> {
         let hash = hash.map(Hash::parse).transpose()?;

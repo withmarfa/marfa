@@ -48,12 +48,14 @@ function signOut(cookie: string): Promise<Response> {
   });
 }
 
+/** Whether the session still counts on a sign-in page's door. */
 async function signedIn(cookie: string): Promise<boolean> {
-  const response = await fetch(`${server.apiUrl}/auth/get-session`, {
+  const response = await fetch(`${server.apiUrl}/owner/passkeys`, {
     headers: { cookie },
   });
-  expect(response.status).toBe(200);
-  return (await response.json()) !== null;
+  expect([200, 401]).toContain(response.status);
+  await response.body?.cancel();
+  return response.status === 200;
 }
 
 /** Whether an answer tells the browser to drop its session cookie. */

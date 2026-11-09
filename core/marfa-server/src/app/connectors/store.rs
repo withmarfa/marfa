@@ -306,6 +306,16 @@ pub fn drop_hold(tx: &Transaction<'_>, connector_id: &str, process: &str) -> Res
     Ok(())
 }
 
+pub fn kept_for(tx: &Transaction<'_>, source: &str) -> Result<bool> {
+    Ok(tx
+        .prepare_cached(
+            "SELECT 1 FROM connectors WHERE source = ?1 \
+             UNION ALL SELECT 1 FROM connector_states WHERE source = ?1 \
+             UNION ALL SELECT 1 FROM connector_agreements WHERE source = ?1 LIMIT 1",
+        )?
+        .exists([source])?)
+}
+
 pub fn document(tx: &Transaction<'_>, source: &str) -> Result<Option<Document>> {
     Ok(tx
         .prepare_cached(

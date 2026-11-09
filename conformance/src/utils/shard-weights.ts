@@ -43,7 +43,6 @@ export const SHARD_SECONDS: Readonly<Record<string, number>> = {
   "src/suites/compliance/instance-lifecycle.test.ts": 240,
   "src/suites/compliance/item-write-live-key.test.ts": 35,
   "src/suites/compliance/oauth-refusals.test.ts": 30,
-  "src/suites/compliance/owner-client-auth.test.ts": 35,
   "src/suites/compliance/owner-sign-ins.test.ts": 20,
   "src/suites/compliance/owner.test.ts": 330,
   "src/suites/compliance/restore-compatible-types.test.ts": 65,

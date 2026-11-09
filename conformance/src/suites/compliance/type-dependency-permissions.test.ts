@@ -4,6 +4,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { localFetch } from "../../utils/control-request.js";
 
 let server: FreshServer;
 beforeAll(async () => {
@@ -42,25 +43,25 @@ it.each(["parent", "compatible_with"] as const)(
       ).status,
     ).toBe(201);
     for (const narrowed of [false, true]) {
-      const ownerHeaders = {
-        Cookie: server.ownerCookie,
-        Origin: server.apiUrl,
-        "Content-Type": "application/json",
-      };
-      const minted = await fetch(`${server.apiUrl}/keys`, {
-        method: "POST",
-        headers: ownerHeaders,
-        body: JSON.stringify({
-          label: "Connector",
-          source: `connector-${kind}-${String(narrowed)}`,
-          permissions: [],
-          metadata_permissions: { types: "write" },
-          type_permissions: {
-            "app.*": "write",
-            ...(narrowed ? { [target]: "write" } : {}),
-          },
-        }),
-      });
+      const ownerHeaders = { "Content-Type": "application/json" };
+      const minted = await localFetch(
+        server.controlSocket,
+        `${server.apiUrl}/keys`,
+        {
+          method: "POST",
+          headers: ownerHeaders,
+          body: JSON.stringify({
+            label: "Connector",
+            source: `connector-${kind}-${String(narrowed)}`,
+            permissions: [],
+            metadata_permissions: { types: "write" },
+            type_permissions: {
+              "app.*": "write",
+              ...(narrowed ? { [target]: "write" } : {}),
+            },
+          }),
+        },
+      );
       expect(minted.status, await minted.clone().text()).toBe(201);
       const { key, id: keyId } = (await minted.json()) as {
         key: string;
@@ -83,13 +84,17 @@ it.each(["parent", "compatible_with"] as const)(
         ).status,
       ).toBe(201);
       if (narrowed) {
-        const updated = await fetch(`${server.apiUrl}/keys/${keyId}`, {
-          method: "PATCH",
-          headers: ownerHeaders,
-          body: JSON.stringify({
-            type_permissions: { "app.*": "write", [target]: "read" },
-          }),
-        });
+        const updated = await localFetch(
+          server.controlSocket,
+          `${server.apiUrl}/keys/${keyId}`,
+          {
+            method: "PATCH",
+            headers: ownerHeaders,
+            body: JSON.stringify({
+              type_permissions: { "app.*": "write", [target]: "read" },
+            }),
+          },
+        );
         expect(updated.status, await updated.clone().text()).toBe(200);
       }
       const relabeled = { ...schema, label: "Updated recipe" };
@@ -127,24 +132,24 @@ it(
   async () => {
     let sequence = 0;
     for (const grant of [undefined, "read", "none"] as const) {
-      const minted = await fetch(`${server.apiUrl}/keys`, {
-        headers: {
-          Cookie: server.ownerCookie,
-          Origin: server.apiUrl,
-          "Content-Type": "application/json",
+      const minted = await localFetch(
+        server.controlSocket,
+        `${server.apiUrl}/keys`,
+        {
+          headers: { "Content-Type": "application/json" },
+          method: "POST",
+          body: JSON.stringify({
+            label: "Dependency author",
+            source: `dependency-${grant ?? "absent"}`,
+            permissions: ["schema.write"],
+            metadata_permissions: { types: "write" },
+            type_permissions: {
+              "foreign.*": "write",
+              ...(grant ? { "user.*": grant } : {}),
+            },
+          }),
         },
-        method: "POST",
-        body: JSON.stringify({
-          label: "Dependency author",
-          source: `dependency-${grant ?? "absent"}`,
-          permissions: ["schema.write"],
-          metadata_permissions: { types: "write" },
-          type_permissions: {
-            "foreign.*": "write",
-            ...(grant ? { "user.*": grant } : {}),
-          },
-        }),
-      });
+      );
       expect(minted.status, await minted.clone().text()).toBe(201);
       const { key } = (await minted.json()) as { key: string };
       const platform = {

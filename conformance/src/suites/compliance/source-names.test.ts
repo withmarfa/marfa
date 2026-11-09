@@ -16,7 +16,6 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
 } from "../../utils/fresh-server.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
-import { TEST_OWNER } from "../../utils/target.js";
 
 /**
  * A source's name and mark (`keys-and-oauth/source-*`), and the counts of
@@ -230,8 +229,7 @@ describe("a source's name", () => {
         expect(own[0]?.name).not.toBe(own[0]?.source);
         const ownerClient = new MarfaClient({
           baseUrl: server.apiUrl,
-          ownerCookie: server.ownerCookie,
-          ownerCredentials: TEST_OWNER,
+          controlSocket: server.controlSocket,
         });
         expect(
           (await readSource(ownerClient, own[0]?.source ?? "")).data,

@@ -53,7 +53,10 @@ async fn item_page(
             &seqs,
             false,
         )?;
-        let whole = rows.iter().all(|row| reads_row(read, row));
+        let mut whole = true;
+        for row in &rows {
+            whole &= reads_row(read, row)?;
+        }
         let mut text = String::new();
         for row in &rows {
             text.push_str(&row.line);

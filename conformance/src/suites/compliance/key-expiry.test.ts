@@ -7,7 +7,6 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { HOUR_MS, movedClock } from "../../utils/moved-clock.js";
-import { TEST_OWNER } from "../../utils/target.js";
 
 /**
  * A key's `expires_at`: named on a mint, changed by an update, and held to
@@ -44,8 +43,7 @@ beforeAll(async () => {
   });
   owner = new MarfaClient({
     baseUrl: server.apiUrl,
-    ownerCookie: server.ownerCookie,
-    ownerCredentials: TEST_OWNER,
+    controlSocket: server.controlSocket,
   });
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
@@ -197,6 +195,58 @@ describe("a key past its expires_at", () => {
     expect(revoked.status).toBe(200);
     expect(revoked.data.data).toHaveLength(1);
     expect(revoked.data.data[0]?.resource_id).toBe(lapsing.data.id);
+  });
+
+  it("leaves a source a connector holds to keys.manage, and a source never used to keys.mint", async () => {
+    const register = async (source: string, expiresAt?: string) => {
+      const minted = await mover.createKey({
+        label: source,
+        source,
+        permissions: [],
+        ...(expiresAt === undefined ? {} : { expires_at: expiresAt }),
+      });
+      expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+      const connector = new MarfaClient({
+        baseUrl: moving.apiUrl,
+        apiKey: minted.data.key,
+      });
+      const registered = await connector.registerConnector({ name: source });
+      expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+      return minted.data.id;
+    };
+    const lapsed = unique("held-lapsed");
+    const ended = unique("held-revoked");
+    await register(lapsed, inAnHour());
+    expect((await mover.revokeKey(await register(ended))).status).toBe(200);
+    const name = unique("mint-only");
+    const minted = await mover.createKey({
+      label: name,
+      source: name,
+      permissions: ["keys.mint"],
+    });
+    expect(minted.status).toBe(201);
+    const minter = new MarfaClient({
+      baseUrl: moving.apiUrl,
+      apiKey: minted.data.key,
+    });
+    await clock.advance(2 * HOUR_MS);
+    const named = (client: MarfaClient, source: string) =>
+      client.createKey({ label: `${source}-next`, source, permissions: [] });
+
+    for (const source of [lapsed, ended]) {
+      const refused = await named(minter, source);
+      expect(refused.status).toBe(403);
+      expect(refused.error?.error.code).toBe("forbidden");
+      expect(refused.error?.error.details?.required_scope).toBe("keys.manage");
+      expect(refused.error?.error.details?.source).toBe(source);
+    }
+    const unused = await named(minter, unique("never-used"));
+    expect(unused.status, JSON.stringify(unused.error)).toBe(201);
+    for (const source of [lapsed, ended]) {
+      const allowed = await named(mover, source);
+      expect(allowed.status, JSON.stringify(allowed.error)).toBe(201);
+      expect(allowed.data.source).toBe(source);
+    }
   });
 
   it("answers 404 api_key_not_found to an update that would clear its expiry, and stays past it", async () => {
@@ -449,8 +499,7 @@ describe("a key an app made", () => {
         });
         const person = new MarfaClient({
           baseUrl: own.apiUrl,
-          ownerCookie: own.ownerCookie,
-          ownerCredentials: TEST_OWNER,
+          controlSocket: own.controlSocket,
         });
 
         const made = await app.createKey({

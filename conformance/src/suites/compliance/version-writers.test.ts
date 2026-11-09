@@ -20,9 +20,9 @@ import { expectMatchesSchema } from "../../utils/openapi.js";
 /**
  * Who wrote each version: the sign-in whose request wrote it, kept with the
  * version. Each kind of sign-in writes here the way it does in use: a key and
- * an app through the item operations, the owner's browser and the local
- * command through the sign-in operations that change an app's record, and the
- * enrichment sweep on its own. A second server takes the archive back.
+ * an app through the item operations, the owner's browser through the approval
+ * that records an app, the local command through the sign-in operations that
+ * change that record, and the enrichment sweep on its own. A second server takes the archive back.
  */
 let server: FreshServer;
 let target: FreshServer;
@@ -63,10 +63,13 @@ interface Snapshot {
 
 interface Browser {
   cookie: string;
+  /** Its session's ID in the sign-in listing. */
+  id: string;
 }
 
 /** The owner signs in from a browser of its own address. */
 async function signIn(userAgent = SAFARI): Promise<Browser> {
+  const before = new Set((await signIns()).map((row) => row.id));
   addresses += 1;
   const response = await fetch(`${server.apiUrl}/auth/sign-in/email`, {
     method: "POST",
@@ -83,22 +86,23 @@ async function signIn(userAgent = SAFARI): Promise<Browser> {
     response.headers.get("set-cookie") ?? "",
   )?.[1];
   expect(cookie, "sign-in set no session cookie").toBeTruthy();
-  return { cookie: cookie! };
+  const own = (await signIns()).find(
+    (row) => row.kind === "browser" && !before.has(row.id),
+  );
+  expect(own, "the listing holds no new browser session").toBeDefined();
+  return { cookie: cookie!, id: own!.id };
 }
 
 interface ListedSignIn {
   id: string;
   kind: string;
   name: string;
-  current: boolean;
 }
 
-async function signIns(browser: Browser): Promise<ListedSignIn[]> {
-  const response = await fetch(`${server.apiUrl}/owner/sign-ins`, {
-    headers: { cookie: browser.cookie },
-  });
+async function signIns(): Promise<ListedSignIn[]> {
+  const response = await local("GET", "/owner/sign-ins");
   expect(response.status).toBe(200);
-  return ((await response.json()) as { data: ListedSignIn[] }).data;
+  return response.body.data as ListedSignIn[];
 }
 
 /** The private local command's request, which carries no credential. */
@@ -213,27 +217,15 @@ function listedApp(rows: ListedSignIn[], name: string): ListedSignIn {
   return row!;
 }
 
-function renameApp(
-  browser: Browser,
-  id: string,
-  name: string,
-): Promise<Response> {
-  return fetch(`${server.apiUrl}/owner/sign-ins/${encodeURIComponent(id)}`, {
-    method: "PATCH",
-    headers: {
-      cookie: browser.cookie,
-      origin,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({ name }),
-  });
+async function renameApp(id: string, name: string): Promise<number> {
+  return (
+    await local("PATCH", `/owner/sign-ins/${encodeURIComponent(id)}`, { name })
+  ).status;
 }
 
-function endSignIn(browser: Browser, id: string): Promise<Response> {
-  return fetch(`${server.apiUrl}/owner/sign-ins/${encodeURIComponent(id)}`, {
-    method: "DELETE",
-    headers: { cookie: browser.cookie, origin },
-  });
+async function endSignIn(id: string): Promise<number> {
+  return (await local("DELETE", `/owner/sign-ins/${encodeURIComponent(id)}`))
+    .status;
 }
 
 // eslint-disable-next-line no-control-regex
@@ -259,8 +251,7 @@ describe("who wrote each version", () => {
     const app = await approvedApp(server, ["core.note:write"]);
     const id = await createNote(app.token);
     await changeNote(app.token, id, 1, "second");
-    const browser = await signIn();
-    const listed = (await signIns(browser)).find(
+    const listed = (await signIns()).find(
       (row) => row.kind === "app" && row.name === "conformance",
     );
     expect(listed, "the device's app is not listed").toBeDefined();
@@ -269,9 +260,7 @@ describe("who wrote each version", () => {
     ]);
 
     // The name the owner gives the app names what it writes next.
-    expect((await renameApp(browser, listed!.id, "Desk laptop")).status).toBe(
-      200,
-    );
+    expect(await renameApp(listed!.id, "Desk laptop")).toBe(200);
     await changeNote(app.token, id, 2, "third");
     await changeNote(app.token, id, 3, "fourth");
     expect(writers(await versionsOf(app.token, id))).toEqual([
@@ -283,13 +272,11 @@ describe("who wrote each version", () => {
 
   it("names the owner's browser and the local command that changed an app's record", async () => {
     const browser = await signIn();
-    const session = (await signIns(browser)).find((row) => row.current)!;
+    const session = (await signIns()).find((row) => row.id === browser.id)!;
     expect(session.name).toBe("Safari on macOS");
     await approveApp(browser, "record app");
-    const record = listedApp(await signIns(browser), "record app");
-    expect(
-      (await renameApp(browser, record.id, "renamed in Safari")).status,
-    ).toBe(200);
+    const record = listedApp(await signIns(), "record app");
+    expect(await renameApp(record.id, "renamed first")).toBe(200);
     const renamed = await local("PATCH", `/owner/sign-ins/${record.id}`, {
       name: "renamed locally",
     });
@@ -308,19 +295,18 @@ describe("who wrote each version", () => {
       name: "Safari on macOS",
     };
     expect(writers(await versionsOf(reader.key, record.id))).toEqual([
-      // The approval, the browser's rename, then the local command's.
+      // The browser's approval, then the local command's renames.
       byBrowser,
-      byBrowser,
+      { kind: "local", id: "local", name: "Local command" },
       { kind: "local", id: "local", name: "Local command" },
     ]);
   });
 
   it("still names each writer once the key is revoked, the app ended and the browser session ended", async () => {
-    const browser = await signIn();
     const other = await signIn();
-    const otherSession = (await signIns(other)).find((row) => row.current)!;
+    const otherSession = (await signIns()).find((row) => row.id === other.id)!;
     const app = await approveApp(other, "app that ends");
-    const appRow = listedApp(await signIns(browser), "app that ends");
+    const appRow = listedApp(await signIns(), "app that ends");
     const minted = await mintKey("key that ends");
     const reader = await mintKey("reader that stays", {
       "core.note": "read",
@@ -330,10 +316,9 @@ describe("who wrote each version", () => {
     const note = await createNote(minted.key);
     await changeNote(app.accessToken, note, 1, "by the app");
     await changeNote(minted.key, note, 2, "by the key");
-    // The record of the app that the other browser approved and renamed.
-    expect((await renameApp(other, appRow.id, "app that ended")).status).toBe(
-      200,
-    );
+    // The record of the app that the other browser approved, renamed by the
+    // local command.
+    expect(await renameApp(appRow.id, "app that ended")).toBe(200);
 
     const noteBefore = await versionsOf(reader.key, note);
     const recordBefore = await versionsOf(reader.key, appRow.id);
@@ -347,21 +332,24 @@ describe("who wrote each version", () => {
     expect(writers(noteBefore)).toEqual([byKey, byApp]);
     expect(writers(recordBefore)).toEqual([byOther]);
 
-    expect((await endSignIn(browser, minted.id)).status).toBe(200);
-    expect((await endSignIn(browser, appRow.id)).status).toBe(200);
-    expect((await endSignIn(browser, otherSession.id)).status).toBe(200);
+    expect(await endSignIn(minted.id)).toBe(200);
+    expect(await endSignIn(appRow.id)).toBe(200);
+    expect(await endSignIn(otherSession.id)).toBe(200);
     // Each is gone from the listing, so nothing live is left to name it.
-    const live = (await signIns(browser)).map((row) => row.id);
+    const live = (await signIns()).map((row) => row.id);
     expect(live).not.toContain(minted.id);
     expect(live).not.toContain(appRow.id);
     expect(live).not.toContain(otherSession.id);
 
     expect(await versionsOf(reader.key, note)).toEqual(noteBefore);
-    // Ending the app wrote its record once more, which left the rename the
-    // ended browser made behind it.
+    // Ending the app wrote its record once more, which left the local
+    // command's rename behind it.
     const recordAfter = await versionsOf(reader.key, appRow.id);
     expect(recordAfter.slice(0, 1)).toEqual(recordBefore);
-    expect(writers(recordAfter)).toEqual([byOther, byOther]);
+    expect(writers(recordAfter)).toEqual([
+      byOther,
+      { kind: "local", id: "local", name: "Local command" },
+    ]);
   });
 
   it("takes the writer from the credential, and refuses one a create or an update names", async () => {
@@ -546,8 +534,7 @@ describe("who wrote each version", () => {
     const owner = new MarfaClient({
       baseUrl: target.apiUrl,
       apiKey: "",
-      ownerCookie: target.ownerCookie,
-      ownerCredentials: OWNER,
+      controlSocket: target.controlSocket,
     });
     const restored = await owner.restoreArchive(archive.data);
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
@@ -581,8 +568,7 @@ describe("who wrote each version", () => {
     const owner = new MarfaClient({
       baseUrl: target.apiUrl,
       apiKey: "",
-      ownerCookie: target.ownerCookie,
-      ownerCredentials: OWNER,
+      controlSocket: target.controlSocket,
     });
     const restored = await owner.restoreArchive(
       itemsArchive([
@@ -622,8 +608,7 @@ describe("who wrote each version", () => {
     const owner = new MarfaClient({
       baseUrl: target.apiUrl,
       apiKey: "",
-      ownerCookie: target.ownerCookie,
-      ownerCredentials: OWNER,
+      controlSocket: target.controlSocket,
     });
     const restored = await owner.restoreArchive(archive.data);
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
@@ -665,8 +650,7 @@ describe("who wrote each version", () => {
       const secondOwner = new MarfaClient({
         baseUrl: secondTarget.apiUrl,
         apiKey: "",
-        ownerCookie: secondTarget.ownerCookie,
-        ownerCredentials: OWNER,
+        controlSocket: secondTarget.controlSocket,
       });
       const second = await secondOwner.restoreArchive(again.data);
       expect(second.status, JSON.stringify(second.error)).toBe(200);
@@ -745,8 +729,7 @@ describe("who wrote each version", () => {
     const owner = new MarfaClient({
       baseUrl: target.apiUrl,
       apiKey: "",
-      ownerCookie: target.ownerCookie,
-      ownerCredentials: OWNER,
+      controlSocket: target.controlSocket,
     });
     const restored = await owner.restoreArchive(forgotten);
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
@@ -769,7 +752,7 @@ describe("who wrote each version", () => {
   it("names an app by its client id once its sign-in record is gone, and still takes its write", async () => {
     const browser = await signIn();
     const app = await approveApp(browser, "app whose record goes");
-    const record = listedApp(await signIns(browser), "app whose record goes");
+    const record = listedApp(await signIns(), "app whose record goes");
     const id = await createNote(app.accessToken);
     // The record reads as gone while the app's token stands.
     await server.setFault(`unreadable:sign-in-record=${record.id}`);
@@ -804,8 +787,7 @@ describe("who wrote each version", () => {
     const owner = new MarfaClient({
       baseUrl: target.apiUrl,
       apiKey: "",
-      ownerCookie: target.ownerCookie,
-      ownerCredentials: OWNER,
+      controlSocket: target.controlSocket,
     });
 
     const edits: [string, (line: Record<string, unknown>) => void][] = [
@@ -874,9 +856,7 @@ describe("who wrote each version", () => {
       const minted = await mintKey(label);
       const id = await createNote(minted.key);
       await changeNote(minted.key, id, 1, "second");
-      const listed = (await signIns(browser)).find(
-        (row) => row.id === minted.id,
-      );
+      const listed = (await signIns()).find((row) => row.id === minted.id);
       // The witness: the listing gives this key its id, not its label.
       expect(listed?.name).toBe(minted.id);
       expect(writers(await versionsOf(minted.key, id))).toEqual([

@@ -21,6 +21,8 @@ use crate::telemetry::{Fault, Finished};
 
 /// Sockets the sender may hold open at once; each subscription still takes one turn at a time.
 const AT_ONCE: usize = 64;
+/// Attempts in flight at once for the subscriptions of one maker.
+const MAKER_SHARE: usize = 8;
 const METHOD: &str = "WEBHOOKS";
 const PATH: &str = "schedule";
 const CUT_BEFORE_END: Duration = Duration::from_secs(1);
@@ -81,12 +83,18 @@ pub fn start(app: &Arc<App>) {
     });
 }
 
+/// A delivery under attempt and the maker whose share it takes.
+struct Attempt {
+    seq: i64,
+    maker: String,
+}
+
 struct Sender {
     app: Arc<App>,
     stopping: watch::Receiver<bool>,
     commits: watch::Receiver<u64>,
     flying: JoinSet<Result<()>>,
-    busy: HashMap<Id, i64>,
+    busy: HashMap<Id, Attempt>,
     held_back: HashMap<i64, Instant>,
     reported: Option<(Gap, Option<i64>)>,
 }
@@ -219,8 +227,13 @@ impl Sender {
         let mut excluded: Vec<i64> = self
             .busy
             .values()
-            .chain(self.held_back.keys())
-            .copied()
+            .map(|attempt| attempt.seq)
+            .chain(self.held_back.keys().copied())
+            .collect();
+        let mut holding: Vec<String> = self
+            .busy
+            .values()
+            .map(|attempt| attempt.maker.clone())
             .collect();
         let now_ms = self.app.clock.now_ms();
         let read = self
@@ -228,12 +241,14 @@ impl Sender {
             .db
             .read(move |tx| {
                 let due = if free > 0 {
-                    store::due(tx, now_ms, &excluded, free)?
+                    store::due(tx, now_ms, &excluded, &holding, MAKER_SHARE, free)?
                 } else {
                     Vec::new()
                 };
-                excluded.extend(&due);
-                Ok((due, store::next_due(tx, &excluded)?))
+                excluded.extend(due.iter().map(|due| due.seq));
+                holding.extend(due.iter().map(|due| due.maker.clone()));
+                let full = full_makers(&holding);
+                Ok((due, store::next_due(tx, now_ms, &excluded, &full)?))
             })
             .await;
         let (due, next) = match read {
@@ -243,9 +258,9 @@ impl Sender {
                 return None;
             }
         };
-        for seq in due {
+        for store::Due { seq, maker } in due {
             let handle = self.flying.spawn(send::attempt(self.app.clone(), seq));
-            self.busy.insert(handle.id(), seq);
+            self.busy.insert(handle.id(), Attempt { seq, maker });
         }
         next
     }
@@ -255,7 +270,7 @@ impl Sender {
             Ok((id, outcome)) => (id, outcome.map_err(|refused| refused.to_string())),
             Err(error) => (error.id(), Err(error.to_string())),
         };
-        let Some(seq) = self.busy.remove(&id) else {
+        let Some(Attempt { seq, .. }) = self.busy.remove(&id) else {
             return;
         };
         if let Err(error) = outcome {
@@ -300,6 +315,18 @@ impl Sender {
             }
         }
     }
+}
+
+/// The makers whose share of attempts is taken.
+fn full_makers(holding: &[String]) -> Vec<String> {
+    let mut held: HashMap<&String, usize> = HashMap::new();
+    for maker in holding {
+        *held.entry(maker).or_default() += 1;
+    }
+    held.into_iter()
+        .filter(|(_, held)| *held >= MAKER_SHARE)
+        .map(|(maker, _)| maker.clone())
+        .collect()
 }
 
 async fn stopped(raised: &mut watch::Receiver<bool>) {

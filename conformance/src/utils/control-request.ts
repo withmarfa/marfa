@@ -1,3 +1,8 @@
+import {
+  Agent,
+  fetch as undiciFetch,
+  type RequestInit as UndiciInit,
+} from "undici";
 import { request } from "node:http";
 
 /**
@@ -68,4 +73,28 @@ export function controlRequest(
     req.on("error", reject);
     req.end(body);
   });
+}
+
+const agents = new Map<string, Agent>();
+
+/**
+ * `fetch` through the production local listener at `socketPath`, which
+ * answers as the private local command. `url` names the server as usual; only
+ * its path and query reach the socket.
+ */
+export function localFetch(
+  socketPath: string,
+  url: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  let agent = agents.get(socketPath);
+  if (agent === undefined) {
+    agent = new Agent({ connect: { socketPath } });
+    agents.set(socketPath, agent);
+  }
+  // Node's own fetch carries an older undici, which refuses this Agent.
+  return undiciFetch(url, {
+    ...(init as UndiciInit),
+    dispatcher: agent,
+  }) as unknown as Promise<Response>;
 }

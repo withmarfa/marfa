@@ -44,6 +44,10 @@ fn held(expires_at: Option<&str>) -> Refusal {
     }
 }
 
+pub(crate) fn source_held(tx: &Transaction<'_>, source: &str) -> Result<bool> {
+    Ok(store::kept_for(tx, source)? || super::inbound::kept_for(tx, source)?)
+}
+
 pub(crate) fn find(tx: &Transaction<'_>, id: &str) -> Result<Registration> {
     store::by_id(tx, id)?.ok_or_else(not_found)
 }

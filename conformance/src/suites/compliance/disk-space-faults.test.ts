@@ -10,7 +10,6 @@ import {
 } from "../../utils/fresh-server.js";
 import { clientsFor, DISK_ONLY } from "../../utils/own-blob-server.js";
 import { diskHolds, spooled, spooledBytes } from "../../utils/store-faults.js";
-import { TEST_OWNER } from "../../utils/target.js";
 import { waitFor } from "../../utils/wait.js";
 
 /**
@@ -55,9 +54,7 @@ afterAll(async () => {
 function ownerClient(): MarfaClient {
   return new MarfaClient({
     baseUrl: server.apiUrl,
-    ownerCookie: server.ownerCookie,
-    ownerCredentials: TEST_OWNER,
-    ownerSessionFile: `${server.stateDir}/owner-session.json`,
+    controlSocket: server.controlSocket,
   });
 }
 

@@ -121,7 +121,7 @@ function sortedById<T extends { item?: { id: string }; edge?: { id: string } }>(
 }
 
 describe("a backup in the object store", () => {
-  it("puts one object in the prefix's backups folder for its instance, named for its created_at, holding what an owner's archive export with state any and files false holds", async () => {
+  it("puts one object in the prefix's backups folder for its instance, named for its created_at, holding what an archive export with state any and files false holds for a key that reaches everything", async () => {
     made = await contents(origin);
     const owner = ownerOf(origin);
     const run = await owner.runBackup();
@@ -160,7 +160,7 @@ describe("a backup in the object store", () => {
       expect(Object.keys(manifest.missing_blobs)).toContain(hash);
     }
 
-    const exported = await owner.exportArchive({
+    const exported = await clientsFor(origin).operator.exportArchive({
       state: "any",
       files: "false",
     });
