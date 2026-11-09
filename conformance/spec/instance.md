@@ -450,7 +450,7 @@ An owner has two backups of an instance. Where `S3_BUCKET` is set, the server ba
 
 When the server takes a backup, the server MUST put it in the object store as one object named `<S3_PREFIX>/backups/<instance id>/<created_at>.tar`, where `<instance id>` is the instance's id and `<created_at>` is its manifest's `created_at`.
 
-**Reason:** a server that replaces another, or an older image of it, can start on the same prefix, and the folder keeps each instance's backups apart.
+**Reason:** a server that replaces another can start on the same prefix, and the folder keeps each instance's backups apart.
 
 **Tests:** `compliance/backups.test.ts › puts one object in the prefix's backups folder for its instance, named for its created_at, holding what an owner's archive export with state any and files false holds`.
 
