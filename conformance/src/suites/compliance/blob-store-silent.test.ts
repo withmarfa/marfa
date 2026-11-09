@@ -211,7 +211,7 @@ describe("a store's delete that does not answer", () => {
     const content = bytesOf("deleted while the store hangs", 120);
     const hash = await replicated("deleted while the store hangs", content);
     const s3 = await objectStore();
-    const exported = await owner().exportArchive();
+    const exported = await working.exportArchive();
     expect(exported.status, JSON.stringify(exported.error)).toBe(200);
     const archive = exported.data;
     // The drop's own delete fails, so the deletion stays queued for a run.
