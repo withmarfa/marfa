@@ -2095,7 +2095,7 @@ If a caller without `grants.manage` lists or revokes grants, then the server MUS
 
 **Reason:** A key is an app's own credential and a grant is another app's, so a credential trusted to rotate a key is not one that may revoke every other app.
 
-**Tests:** `compliance/auth-grants.test.ts › refuses a caller without grants.manage 403, naming it, and a request with no credential 401`.
+**Tests:** `compliance/auth-grants.test.ts › refuses a caller without grants.manage 403, naming it, and a request with no credential 401`, `› refuses a caller without grants.manage 403 whatever query it sends, at both doors`.
 
 ### `keys-and-oauth/grants-no-credential`
 
@@ -2123,9 +2123,25 @@ When a grant is revoked without `revoke_keys`, the server MUST leave every key t
 
 **Tests:** `compliance/auth-grants.test.ts › ends the app's tokens and the person's consent, and leaves the keys it minted working`.
 
+### `keys-and-oauth/refresh-revoke-keeps-keys`
+
+When an app revokes its refresh token at `POST /auth/oauth2/revoke`, the server MUST leave every key the app minted, and every key those keys minted, working.
+
+**Reason:** An app that disconnects itself says nothing about the keys it handed out, and those keys may serve someone else by now.
+
+**Tests:** `compliance/auth-grants.test.ts › leaves the keys an app minted working when the app revokes its refresh token`.
+
+### `keys-and-oauth/grant-retire-keeps-keys`
+
+When the inactivity retirement retires a grant, the server MUST leave every key the app minted, and every key those keys minted, working.
+
+**Reason:** The retirement measures the app's own use, and a key the app minted is used on its own account, so the app going quiet says nothing about the key.
+
+**Tests:** `compliance/auth-grants.test.ts › leaves the keys an idle app minted working when the inactivity retirement retires its grant`.
+
 ### `keys-and-oauth/grant-revoke-keys`
 
-When a grant is revoked with `revoke_keys=1`, the server MUST also revoke every key carrying that app's origin, whatever the caller's reach.
+When a grant is revoked with `revoke_keys=1`, the server MUST revoke in the same write every key the app minted and every key those keys minted, whatever the caller's reach.
 
 **Reason:** A key an app minted is held to the app's grant, so taking those keys with the grant reaches no further than revoking the grant does.
 
@@ -2821,7 +2837,7 @@ When `DELETE /owner/sign-ins/{id}` has ended an app, the server MUST answer `400
 
 ### `keys-and-oauth/sign-in-end-app-keys`
 
-When `DELETE /owner/sign-ins/{id}` ends an app without `revoke_keys` set to `true`, the server MUST keep every key that app minted working.
+When `DELETE /owner/sign-ins/{id}` ends an app without `revoke_keys` set to `true`, the server MUST keep every key that app minted, and every key those keys minted, working.
 
 **Reason:** As at `DELETE /auth/grants/{id}`, a key is minted on purpose and listed as a sign-in of its own, so ending an app ends its own tokens and leaves its keys to be ended with it or on their own.
 
@@ -2829,9 +2845,9 @@ When `DELETE /owner/sign-ins/{id}` ends an app without `revoke_keys` set to `tru
 
 ### `keys-and-oauth/sign-in-end-app-revoke-keys`
 
-When `DELETE /owner/sign-ins/{id}` with `revoke_keys` set to `true` ends an app, the server MUST answer `401` to the next request that carries a key that app minted.
+When `DELETE /owner/sign-ins/{id}` with `revoke_keys` set to `true` ends an app, the server MUST answer `401` to the next request that carries a key that app minted or a key that such a key minted.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › end with the app when revoke_keys is true, and no other key does`.
+**Tests:** `compliance/owner-sign-ins.test.ts › end with the app when revoke_keys is true, a key's descendant included, and no other key does`.
 
 ### `keys-and-oauth/sign-in-end-revoke-keys-not-app`
 
@@ -2849,7 +2865,7 @@ When `DELETE /owner/sign-ins/{id}` has ended a key, the server MUST answer `401`
 
 When `DELETE /owner/sign-ins/{id}` ends a sign-in, the server MUST keep every other sign-in of the owner signed in.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › ends that browser's session, whose next request is refused, and leaves the other signed in`, `› ends an app at once: its next request is refused and its refresh token is dead, and nothing else is`, `› ends a key at once, and leaves every other sign-in`, `› end with the app when revoke_keys is true, and no other key does`.
+**Tests:** `compliance/owner-sign-ins.test.ts › ends that browser's session, whose next request is refused, and leaves the other signed in`, `› ends an app at once: its next request is refused and its refresh token is dead, and nothing else is`, `› ends a key at once, and leaves every other sign-in`, `› end with the app when revoke_keys is true, a key's descendant included, and no other key does`.
 
 ### `keys-and-oauth/sign-in-end-versions`
 

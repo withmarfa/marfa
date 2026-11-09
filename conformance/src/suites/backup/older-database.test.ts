@@ -1,8 +1,7 @@
 /**
  * What the image does when the volume already holds a database and the
- * bucket holds a replica of it: the instance chapter's
- * `instance/replica-not-older` rule. `harness.ts` says what each boot runs
- * and what it needs.
+ * bucket holds a replica of it. `harness.ts` says what each boot runs and
+ * what it needs.
  *
  * Each test works under a prefix of its own and removes it at the end.
  */

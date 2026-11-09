@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { MarfaClient } from "../../client/api.js";
 import { controlRequest } from "../../utils/control-request.js";
+import { DAY_MS, movedClock, runJob } from "../../utils/moved-clock.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -259,12 +260,27 @@ describe("DELETE /auth/grants/{id}", () => {
       type_permissions: { "core.note": "read" },
     });
     const descendant = await mintedBy(key.key, "grant-taken-child");
-    // The witness: a key no app minted, which the revoke leaves alone.
+    // The witnesses: a key no app minted, a key the owner minted through the
+    // local command, and another app with a key it minted.
     const unrelated = await keyHolding("grant-unrelated", []);
     const unrelatedClient = new MarfaClient({
       baseUrl: server.apiUrl,
       apiKey: unrelated,
     });
+    const local = await controlRequest(server.controlSocket, "/keys", {
+      method: "POST",
+      body: {
+        label: "grant-local",
+        source: "grant-local",
+        type_permissions: { "core.note": "read" },
+      },
+    });
+    expect(local.status, JSON.stringify(local.body)).toBe(201);
+    const localKey = (local.body as { key: string }).key;
+    const otherApp = await approved();
+    const otherKey = await mintedBy(otherApp.access, "grant-other-app");
+    expect(await itemsStatus(server, key.key)).toBe(200);
+    expect(await itemsStatus(server, descendant.key)).toBe(200);
 
     const revoked = await revokeGrant(
       grant.id,
@@ -276,6 +292,34 @@ describe("DELETE /auth/grants/{id}", () => {
     expect(await itemsStatus(server, key.key)).toBe(401);
     expect(await itemsStatus(server, descendant.key)).toBe(401);
     expect((await unrelatedClient.getCurrentKey()).status).toBe(200);
+    expect(await itemsStatus(server, localKey)).toBe(200);
+    expect(await itemsStatus(server, otherApp.access)).toBe(200);
+    expect(await itemsStatus(server, otherKey.key)).toBe(200);
+  });
+
+  it("refuses a caller without grants.manage 403 whatever query it sends, at both doors", async () => {
+    const { access, grant } = await approved();
+    const without = await keyHolding("grants-query-without", ["audit.read"]);
+    const listed = await fetch(`${server.apiUrl}/auth/grants?stray=1`, {
+      headers: { authorization: `Bearer ${without}` },
+    });
+    expect(listed.status).toBe(403);
+    const revoked = await revokeGrant(grant.id, without, "?stray=1");
+    expect(revoked.status).toBe(403);
+    expect(
+      ((await revoked.json()) as { error: { details?: unknown } }).error
+        .details,
+    ).toEqual({ required_scope: "grants.manage" });
+    expect(await itemsStatus(server, access)).toBe(200);
+    // The witness: the same queries from a caller holding it are refused 400.
+    const holder = await keyHolding("grants-query-holder", ["grants.manage"]);
+    const asHolder = await fetch(`${server.apiUrl}/auth/grants?stray=1`, {
+      headers: { authorization: `Bearer ${holder}` },
+    });
+    expect(asHolder.status).toBe(400);
+    const revokedAsHolder = await revokeGrant(grant.id, holder, "?stray=1");
+    expect(revokedAsHolder.status).toBe(400);
+    expect(await itemsStatus(server, access)).toBe(200);
   });
 });
 
@@ -459,5 +503,69 @@ describe("PATCH /auth/grants/{id}", () => {
         Date.parse(app.last_used_at ?? app.created_at) + 365 * 86_400_000,
       ).toISOString(),
     );
+  });
+});
+
+describe("the keys an app minted, when its grant ends another way", () => {
+  /** A key the app mints that may mint, and the key that key mints. */
+  async function keysOf(
+    access: string,
+    label: string,
+  ): Promise<[{ key: string }, { key: string }]> {
+    const key = await mintedBy(access, label, {
+      permissions: ["keys.mint"],
+      type_permissions: { "core.note": "read" },
+    });
+    return [key, await mintedBy(key.key, `${label}-child`)];
+  }
+
+  it("leaves the keys an app minted working when the app revokes its refresh token", async () => {
+    const scope = `${SCOPE} offline_access`;
+    const app = await registerApp(server, scope);
+    const issued = await connect(server, origin, cookie, app, scope);
+    const [key, descendant] = await keysOf(
+      issued.access_token!,
+      "refresh-survivor",
+    );
+
+    const revoked = await fetch(`${server.apiUrl}/auth/oauth2/revoke`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        token: issued.refresh_token!,
+        token_type_hint: "refresh_token",
+        client_id: app.clientId,
+      }),
+    });
+    expect(revoked.status).toBe(200);
+    // The witness: the revocation ended the app.
+    expect(await itemsStatus(server, issued.access_token!)).toBe(401);
+    const afterRevoke = (await (await grants(server.managementKey)).json()) as {
+      data: Grant[];
+    };
+    expect(afterRevoke.data.map((g) => g.client_id)).not.toContain(
+      app.clientId,
+    );
+    expect(await itemsStatus(server, key.key)).toBe(200);
+    expect(await itemsStatus(server, descendant.key)).toBe(200);
+  });
+
+  // Moves the clock past every grant's window, so it runs last.
+  it("leaves the keys an idle app minted working when the inactivity retirement retires its grant", async () => {
+    const { clientId, access } = await approved();
+    const [key, descendant] = await keysOf(access, "idle-survivor");
+
+    await movedClock(server).advance(366 * DAY_MS);
+    expect((await runJob(server, "grant-inactivity-retirement")).outcome).toBe(
+      "ok",
+    );
+    // The witness: the retirement ended the app.
+    const listed = (await (await grants(server.managementKey)).json()) as {
+      data: Grant[];
+    };
+    expect(listed.data.map((g) => g.client_id)).not.toContain(clientId);
+    expect(await itemsStatus(server, key.key)).toBe(200);
+    expect(await itemsStatus(server, descendant.key)).toBe(200);
+    cookie = await signIn(server, origin);
   });
 });

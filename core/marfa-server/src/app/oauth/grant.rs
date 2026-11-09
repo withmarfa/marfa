@@ -203,8 +203,7 @@ pub(super) fn stand(
     })
 }
 
-/// Stops every credential issued under it, withdraws the consent and marks the item. Answers
-/// whether a grant stood.
+/// Returns whether a standing grant was ended.
 pub(super) fn end(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,

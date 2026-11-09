@@ -25,7 +25,8 @@ pub enum AppsCommand {
     Disconnect {
         /// The app grant's ID.
         id: String,
-        /// Also revoke keys the app minted.
+        /// Also revoke every key the app minted, and every key those keys
+        /// minted.
         #[arg(long)]
         revoke_keys: bool,
     },
