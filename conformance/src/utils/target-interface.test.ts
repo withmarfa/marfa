@@ -58,13 +58,10 @@ afterAll(async () => {
 
 /** When the server says a run of a housekeeping job started: its clock. */
 async function serverNow(): Promise<number> {
-  const run = await fetch(
-    `${server.apiUrl}/housekeeping/rate-limit-cleanup/run`,
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${server.managementKey}` },
-    },
-  );
+  const run = await fetch(`${server.apiUrl}/housekeeping/audit-cleanup/run`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${server.managementKey}` },
+  });
   expect(run.status).toBe(200);
   return Date.parse(((await run.json()) as { started_at: string }).started_at);
 }
@@ -83,7 +80,7 @@ describe("the clock", () => {
         for (const signal of ["SIGTERM", "SIGKILL"] as const) {
           await own.restart({ signal });
           const run = await fetch(
-            `${own.apiUrl}/housekeeping/rate-limit-cleanup/run`,
+            `${own.apiUrl}/housekeeping/audit-cleanup/run`,
             {
               method: "POST",
               headers: { Authorization: `Bearer ${own.managementKey}` },
@@ -201,12 +198,12 @@ describe("a fault", () => {
     await server.restart();
     expect(await server.faults()).toEqual([]);
 
-    await server.setFault("hold:housekeeping:rate-limit-cleanup");
-    const held = fetch(`${server.apiUrl}/housekeeping/rate-limit-cleanup/run`, {
+    await server.setFault("hold:housekeeping:audit-cleanup");
+    const held = fetch(`${server.apiUrl}/housekeeping/audit-cleanup/run`, {
       method: "POST",
       headers: { Authorization: `Bearer ${server.managementKey}` },
     });
-    await server.waitForHold("hold:housekeeping:rate-limit-cleanup");
+    await server.waitForHold("hold:housekeeping:audit-cleanup");
     await server.clearFault();
     expect((await held).status).toBe(200);
     expect(await server.faults()).toEqual([]);

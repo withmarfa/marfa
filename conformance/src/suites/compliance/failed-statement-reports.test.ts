@@ -89,14 +89,14 @@ describe("the health answer to a write that fails", () => {
 describe("a housekeeping run whose statement fails", () => {
   it("records a database failure with its SQLite code and none of the statement, the driver's message or the values, in the run's answer and in the list", async () => {
     // The witness: the same run ends well while its table is there.
-    const clean = await operator("/housekeeping/rate-limit-cleanup/run", {
+    const clean = await operator("/housekeeping/audit-cleanup/run", {
       method: "POST",
     });
     expect(clean.status).toBe(200);
     expect(((await clean.json()) as { outcome: string }).outcome).toBe("ok");
 
-    await server!.setFault("fail:housekeeping:rate-limit-cleanup");
-    const failed = await operator("/housekeeping/rate-limit-cleanup/run", {
+    await server!.setFault("fail:housekeeping:audit-cleanup");
+    const failed = await operator("/housekeeping/audit-cleanup/run", {
       method: "POST",
     });
     expect(failed.status).toBe(200);
@@ -115,7 +115,7 @@ describe("a housekeeping run whose statement fails", () => {
           last_error: string | null;
         }[];
       }
-    ).data.find((row) => row.name === "rate-limit-cleanup");
+    ).data.find((row) => row.name === "audit-cleanup");
     expect(job?.last_outcome).toBe("error");
 
     for (const recorded of [run.error, job?.last_error])

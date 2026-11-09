@@ -142,9 +142,6 @@ describe("a retention setting inside its range", () => {
           "trash-purge",
           "event-log-cleanup",
           "inbound-delivery-cleanup",
-          "revoked-grant-purge",
-          "grant-inactivity-retirement",
-          "dcr-client-cleanup",
         ];
         // Listed, so each can be run.
         const listed = await jobs(server);

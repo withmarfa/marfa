@@ -8,28 +8,21 @@ The server registers the following jobs when their settings and required stores 
 
 <!-- housekeeping-table:start -->
 
-| Job                           | What it does                                                                     |
-| ----------------------------- | -------------------------------------------------------------------------------- |
-| `event-log-cleanup`           | Removes expired event log entries and idempotency records.                       |
-| `audit-cleanup`               | Removes expired audit entries and outbound webhook delivery history.             |
-| `webhook-schedule`            | Schedules outbound webhook deliveries for new events.                            |
-| `webhook-poll`                | Sends pending outbound webhook deliveries and retries failures.                  |
-| `heartbeat`                   | Pings the configured liveness receiver.                                          |
-| `version-thinning`            | Thins item versions according to the configured retention policy.                |
-| `feed-expiry`                 | Moves expired feed items to the trash.                                           |
-| `trash-purge`                 | Permanently removes items whose trash retention has elapsed.                     |
-| `revoked-grant-purge`         | Removes revoked application grants after their retention window.                 |
-| `grant-inactivity-retirement` | Revokes application grants that have not been used within the inactivity window. |
-| `revoked-key-reap`            | Removes revoked or expired keys after the retention window.                      |
-| `auth-session-cleanup`        | Removes expired authentication sessions.                                         |
-| `rate-limit-cleanup`          | Removes expired rate limit windows.                                              |
-| `inbound-delivery-cleanup`    | Removes inbound deliveries after their handled or pending retention window.      |
-| `dcr-client-cleanup`          | Removes OAuth clients with no remaining grant after their retention window.      |
-| `blob-replicate`              | Copies each blob into every attached store that lacks it.                        |
-| `blob-integrity`              | Checks blob copies and removes copies whose bytes are missing or altered.        |
-| `blob-orphans`                | Reports unreferenced blobs and purges them after the grace period.               |
-| `enrichment-sweep`            | Extracts searchable text and image dimensions from uploaded files.               |
-| `bulk-action-gc`              | Removes finished bulk action jobs after 7 days.                                  |
+| Job                        | What it does                                                                                                                                                                                                                                                                |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `event-log-cleanup`        | Removes expired event log entries and idempotency records.                                                                                                                                                                                                                  |
+| `audit-cleanup`            | Removes expired audit entries and outbound webhook delivery history.                                                                                                                                                                                                        |
+| `inbound-delivery-cleanup` | Removes inbound deliveries after their handled or pending retention window.                                                                                                                                                                                                 |
+| `heartbeat`                | Pings the configured liveness receiver.                                                                                                                                                                                                                                     |
+| `version-thinning`         | Thins item versions according to the configured retention policy.                                                                                                                                                                                                           |
+| `feed-expiry`              | Moves expired feed items to the trash.                                                                                                                                                                                                                                      |
+| `trash-purge`              | Permanently removes items whose trash retention has elapsed.                                                                                                                                                                                                                |
+| `credential-cleanup`       | Removes expired sign-in sessions, codes and tokens, retires application grants not used within the inactivity window, removes revoked grants and unused registered clients after their retention windows, and removes revoked or expired keys after their retention window. |
+| `blob-replicate`           | Copies each blob into every attached store that lacks it.                                                                                                                                                                                                                   |
+| `blob-integrity`           | Checks blob copies and removes copies whose bytes are missing or altered.                                                                                                                                                                                                   |
+| `blob-orphans`             | Reports unreferenced blobs and purges them after the grace period.                                                                                                                                                                                                          |
+| `enrichment-sweep`         | Extracts searchable text and image dimensions from uploaded files.                                                                                                                                                                                                          |
+| `bulk-action-gc`           | Removes finished bulk action jobs after 7 days.                                                                                                                                                                                                                             |
 
 <!-- housekeeping-table:end -->
 
@@ -51,11 +44,11 @@ When a key or app token lacking `instance.read` sends `GET /housekeeping`, the s
 
 ### `housekeeping/always-listed`
 
-The server MUST list `trash-purge`, `version-thinning`, `feed-expiry`, `event-log-cleanup`, `audit-cleanup`, `inbound-delivery-cleanup`, `auth-session-cleanup`, `rate-limit-cleanup`, `revoked-key-reap`, `webhook-schedule`, `webhook-poll`, `blob-replicate`, `blob-integrity`, `enrichment-sweep` and `grant-inactivity-retirement` on every instance, whatever its settings and its `/config`.
+The server MUST list `trash-purge`, `version-thinning`, `feed-expiry`, `event-log-cleanup`, `audit-cleanup`, `inbound-delivery-cleanup`, `credential-cleanup`, `blob-replicate`, `blob-integrity` and `enrichment-sweep` on every instance, whatever its settings and its `/config`.
 
 **Reason:** jobs controlled by `/config` stay registered so that a later choice can start work without a restart. A disabled job skips work; a zero retention keeps everything.
 
-**Tests:** `compliance/housekeeping.test.ts › lists the housekeeping jobs to the management key`.
+**Tests:** `compliance/housekeeping.test.ts › lists the housekeeping jobs to the management key`, `compliance/credential-cleanup.test.ts › lists every job the server runs, and runs the credential clean-up on demand`.
 
 ### `housekeeping/switched-off-not-listed`
 
@@ -337,7 +330,7 @@ Where a retention `PUT /config` sets is at the largest value it accepts, the ser
 
 Where a retention setting is at the largest value it accepts, the server MUST finish each cleanup job that reads that setting with `last_outcome` `ok`.
 
-**Tests:** `compliance/housekeeping-settings.test.ts › finishes each cleanup job that reads a retention setting at the largest value with last_outcome ok`.
+**Tests:** `compliance/housekeeping-settings.test.ts › finishes each cleanup job that reads a retention setting at the largest value with last_outcome ok`, `compliance/credential-cleanup.test.ts › finishes the credential clean-up with the retention settings at the largest value`.
 
 ### `housekeeping/retention-setting-days-range`
 

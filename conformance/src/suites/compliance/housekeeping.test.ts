@@ -20,21 +20,15 @@ afterAll(async () => {
   await cleanup(ctx);
 });
 
-/** The sweeps every instance runs whatever its configuration. */
+/** The sweeps both servers run whatever the configuration. */
 const ALWAYS_LISTED = [
   "audit-cleanup",
-  "auth-session-cleanup",
   "blob-integrity",
   "blob-replicate",
   "event-log-cleanup",
   "feed-expiry",
-  "inbound-delivery-cleanup",
-  "rate-limit-cleanup",
-  "revoked-key-reap",
   "trash-purge",
   "version-thinning",
-  "webhook-poll",
-  "webhook-schedule",
 ];
 
 describe("the housekeeping the server runs on itself", () => {

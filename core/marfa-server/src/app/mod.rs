@@ -25,7 +25,9 @@ pub mod instance;
 pub mod items;
 pub mod jobs;
 pub mod keys;
+pub mod limiter;
 pub mod mcp;
+pub mod metrics;
 pub mod oauth;
 pub mod occurrences;
 pub mod outbound;
@@ -42,6 +44,7 @@ pub mod views;
 pub mod webhooks;
 
 use std::sync::{Arc, OnceLock};
+use std::time::Instant;
 
 use arc_swap::ArcSwap;
 use tokio::sync::{Notify, watch};
@@ -59,7 +62,8 @@ use clock::Clock;
 use faults::Faults;
 use health::Health;
 use housekeeping::Housekeeping;
-use keys::{Limiter, Usage};
+use keys::Usage;
+use limiter::Limiter;
 use query::Secret;
 
 const READERS: usize = 4;
@@ -72,7 +76,8 @@ pub struct App {
     pub instance_id: String,
     pub health: Health,
     pub usage: Usage,
-    pub key_limit: Limiter,
+    pub limiter: Limiter,
+    pub metrics: metrics::Permit,
     pub passwords: Passwords,
     pub housekeeping: Housekeeping,
     pub webhooks: webhooks::Webhooks,
@@ -80,6 +85,7 @@ pub struct App {
     pub blobs: Blobs,
     pub mcp: mcp::Mcp,
     pub telemetry: Telemetry,
+    pub started: Instant,
     pub cursor_secret: Secret,
     pub reindexing: Arc<Notify>,
     pub viewers: events::Viewers,
@@ -152,7 +158,8 @@ impl App {
             stop: watch::channel(false).0,
             health: Health::default(),
             usage: Usage::default(),
-            key_limit: Limiter::default(),
+            limiter: Limiter::default(),
+            metrics: metrics::Permit::default(),
             passwords: Passwords::default(),
             housekeeping: Housekeeping::default(),
             webhooks: webhooks::Webhooks::default(),
@@ -160,6 +167,7 @@ impl App {
             blobs,
             mcp,
             telemetry: Telemetry::default(),
+            started: Instant::now(),
             catalog,
             read_only: Arc::new(ArcSwap::from_pointee(connectors::Registry::empty())),
             bound_port: OnceLock::new(),

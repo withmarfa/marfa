@@ -49,6 +49,7 @@ macro_rules! point_list {
         HOLD_BLOB_PURGE = Hold "blob-orphans:purge" None;
         FAIL_HEALTH_WRITE = Fail "health-write" Nth;
         HOLD_DISK_PROBE = Hold "disk-probe" None;
+        HOLD_METRICS = Hold "metrics" None;
         FAIL_JOB_ROW = Fail "job-row" Nth;
         FAIL_INBOUND_RECEIPT = Fail "inbound-receipt" Nth;
         FAIL_INBOUND_CLEANUP = Fail "inbound-cleanup" Nth;

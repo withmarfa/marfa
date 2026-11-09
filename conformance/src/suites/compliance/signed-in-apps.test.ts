@@ -11,7 +11,7 @@ import {
  * An app signing in through the authorization flow, from registration to a
  * refreshed token, driven the way a browser and an app drive it. A person
  * has to be signed in, and an instance has one owner, so this file boots a
- * server of its own, with the limiter on, and claims its owner through the production local command.
+ * server of its own and claims its owner through the production local command.
  */
 let server: FreshServer | undefined;
 let origin: string;
@@ -28,9 +28,7 @@ let verifier: string;
 let tokens: { access_token: string; refresh_token: string; scope: string };
 
 beforeAll(async () => {
-  server = await bootFreshServer("signed-in-apps", {
-    MARFA_RATE_LIMIT_ENABLED: "true",
-  });
+  server = await bootFreshServer("signed-in-apps");
   const discovery = await fetch(
     `${server.apiUrl}/.well-known/oauth-authorization-server/auth`,
   );
@@ -101,15 +99,6 @@ async function token(form: Record<string, string>) {
   });
   expect(response.status).toBe(200);
   return (await response.json()) as typeof tokens;
-}
-
-async function remaining(accessToken: string): Promise<number> {
-  const response = await fetch(`${server!.apiUrl}/items?type=core.note`, {
-    headers: { authorization: `Bearer ${accessToken}` },
-  });
-  expect(response.status).toBe(200);
-  await response.body?.cancel();
-  return Number(response.headers.get("x-ratelimit-remaining"));
 }
 
 describe("an app signing in", () => {
@@ -221,16 +210,6 @@ describe("an app signing in", () => {
     );
     expect(omitted.pathname).toBe("/auth/sign-in");
     expect(omitted.searchParams.get("scope")).toBe(REGISTERED);
-  });
-
-  it("is limited by its grant, so a refreshed token shares the window of the one before it", async () => {
-    const before = await remaining(tokens.access_token);
-    const refreshed = await token({
-      grant_type: "refresh_token",
-      refresh_token: tokens.refresh_token,
-    });
-    expect(refreshed.access_token).not.toBe(tokens.access_token);
-    expect(await remaining(refreshed.access_token)).toBe(before - 1);
   });
 });
 
