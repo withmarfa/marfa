@@ -1,6 +1,4 @@
-//! Rules that compare settings with one another. Each is judged on what the settings would
-//! be after a change, defaults a clear exposes included, and is registered once so a write
-//! through `/config` and the listing read the same list.
+//! Rules that compare settings, judged on what the settings would be after a change.
 
 use super::registry::{
     self, ADDRESSES, ERROR_REPORTING_ENABLED, HEARTBEAT_ENABLED, Snapshot,

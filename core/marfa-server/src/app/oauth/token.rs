@@ -1,5 +1,4 @@
-//! Each exchange is one write: the check and the spending of what is exchanged commit together,
-//! so two uses at once cannot both win.
+//! Each exchange is one write, so two uses at once cannot both win.
 
 use std::sync::Arc;
 

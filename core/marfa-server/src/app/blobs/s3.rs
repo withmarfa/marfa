@@ -369,8 +369,7 @@ impl S3 {
             .map(|_| ())
     }
 
-    /// Puts `bytes` as the object at `key`, which appears whole or not at all, and answers the
-    /// bytes put. Fails once it outlasts `limit`.
+    /// Appears whole or not at all; fails once it outlasts `limit`.
     pub async fn put_whole(
         &self,
         key: &str,
@@ -385,9 +384,7 @@ impl S3 {
         self.place(key, attributes, bytes, deadline, None).await
     }
 
-    /// One put for a body of up to a part, and above that a multipart upload, which no listing
-    /// or read sees before it completes and which is aborted when it fails or meets `deadline`.
-    /// With `checked`, the bytes must hash to the blob before the object is placed.
+    /// A body above one part goes multipart, aborted on failure or at `deadline`.
     async fn place(
         &self,
         key: &str,

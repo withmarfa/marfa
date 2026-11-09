@@ -32,8 +32,7 @@ pub struct Archived {
     pub file_refs: BTreeSet<String>,
 }
 
-/// The rows of `seqs`, as an NDJSON export writes them, or with their history and lending as an
-/// archive writes them.
+/// With history and lending when written as an archive, not as an NDJSON export.
 pub fn archived(
     tx: &Transaction<'_>,
     caller: &Caller,

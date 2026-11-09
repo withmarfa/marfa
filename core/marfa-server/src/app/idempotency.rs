@@ -1,7 +1,4 @@
-//! `Idempotency-Key`: a claim committed before the write runs and completed in
-//! the write's own transaction, so the answer and the write land together. A
-//! refusal keeps or releases the claim afterwards; the release matches only a
-//! claim still in flight, which is safe when a commit's outcome is unknown.
+//! `Idempotency-Key`: the claim commits before the write and completes with it.
 
 mod expiry;
 

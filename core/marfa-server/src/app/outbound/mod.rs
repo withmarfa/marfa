@@ -1,5 +1,4 @@
-//! Every outbound request goes through here: public addresses only, judged once, and connected to
-//! directly to prevent DNS rebinding.
+//! Every outbound request goes through here, to public addresses judged once.
 
 pub mod address;
 

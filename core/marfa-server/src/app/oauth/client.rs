@@ -1,5 +1,4 @@
-//! Client metadata (RFC 7591) read into a typed registration or error. A client ID metadata
-//! document is read the same way, by [`Source::Document`].
+//! Client metadata (RFC 7591) read into a typed registration or error.
 
 use serde_json::{Map, Value, json};
 use url::Url;
@@ -473,8 +472,7 @@ pub(super) fn read(
     })
 }
 
-/// `allowed` is the default scope of a client that names none. The door caps the body's size
-/// before this.
+/// `allowed` is the default scope of a client that names none.
 pub fn parse_registration(body: &[u8], allowed: &ScopeSet) -> Reading<Registration> {
     let value: Value = serde_json::from_slice(body)
         .map_err(|_| RegistrationError::metadata("The body is not valid JSON."))?;

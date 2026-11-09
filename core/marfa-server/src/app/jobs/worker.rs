@@ -341,8 +341,7 @@ async fn checkpoint(app: &App, id: &str) -> Result<Option<i64>> {
         .await
 }
 
-/// Writes the job's next chunk: up to `CHUNK` items, ending after the item whose running total of
-/// bytes written or purged passes `CHUNK_BYTES`. `tried` counts the items this try reached.
+/// Ends after the item whose running total of bytes passes `CHUNK_BYTES`.
 async fn chunk(app: &App, id: &str, tried: &Arc<AtomicI64>) -> Result<Chunk> {
     let id = id.to_string();
     let cache = app.catalog_handle();

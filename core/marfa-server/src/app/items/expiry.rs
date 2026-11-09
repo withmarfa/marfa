@@ -1,6 +1,4 @@
-//! A feed item past its type's `feed_days` goes to the bin, but only when all a delete would take
-//! has expired too or is in the bin. An item brought back carries `restored_at`, set by a trigger,
-//! and the job leaves it alone for good.
+//! A feed item past `feed_days` is binned only when all a delete would take has expired too.
 
 use std::sync::Arc;
 

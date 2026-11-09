@@ -14,9 +14,7 @@ use crate::app::refusal::{Refusal, Result};
 const SIG: &str = "sig";
 const EXP: &str = "exp";
 
-/// RFC 8707 lets a request name several audiences. RFC 6749 section 3.1 lets
-/// no other parameter repeat, and two readers of a repeat can each take a
-/// different value.
+/// Only `resource` may repeat, since two readers of another repeat can take different values.
 const MAY_REPEAT: &str = "resource";
 
 /// The sign-in page adds where to go next beside a link it was given.

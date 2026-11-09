@@ -50,9 +50,7 @@ fn parsed(text: &str) -> Option<DateTime<Utc>> {
     read
 }
 
-/// Snapshots inside `recent_days` stay, then the latest of each day to `daily_days` and of each
-/// ISO week to `weekly_days`; zero `weekly_days` means no age limit. The newest version and any
-/// snapshot whose age cannot be read always stay; beyond `max_versions` the oldest go.
+/// The newest version and any snapshot whose age cannot be read always stay.
 fn thin(history: &[Kept], policy: &Policy, now_ms: i64) -> Vec<Kept> {
     if history.len() <= MINIMUM {
         return Vec::new();

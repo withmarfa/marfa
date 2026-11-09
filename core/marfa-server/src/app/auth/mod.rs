@@ -51,9 +51,7 @@ fn takes_fixture_callers(_start: &Start) -> bool {
     false
 }
 
-/// Refuses a caller off this machine until the sign-in address is set. The fallback address
-/// passes plain HTTP and says nothing of the interfaces the server is bound to. A connection
-/// with no network address is on this machine.
+/// A connection with no network address counts as on this machine.
 pub fn require_set_address(app: &App, visit: &Visit) -> Result<()> {
     let here = visit
         .address

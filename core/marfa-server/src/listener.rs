@@ -27,12 +27,8 @@ impl Transport {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Trust {
     Nothing,
-    /// The lowercase name of a header the platform's edge overwrites with the
-    /// caller's address. Believed from any peer: it says nothing reaches this
-    /// listener except through that edge.
+    /// Believed from any peer, since nothing reaches this listener except through that edge.
     EdgeHeader(String),
-    /// A header as `EdgeHeader` names it, believed only from a peer in these
-    /// ranges.
     EdgeHeaderFrom {
         header: String,
         ranges: Vec<IpNet>,

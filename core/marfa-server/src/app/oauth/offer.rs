@@ -46,8 +46,7 @@ pub struct Choice {
     pub value: String,
 }
 
-/// A row of `Offer::data` or `Offer::profile` posts as `scopes`; a row of `LevelRow::types`
-/// posts as `types`.
+/// A `LevelRow::types` row posts as `types`; the rest post as `scopes`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LevelRow {
     pub reach: Reach,

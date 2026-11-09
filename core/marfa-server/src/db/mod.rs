@@ -1,5 +1,4 @@
-//! The only door to SQLite. Nothing outside this module holds a `Connection`;
-//! everything reads through [`Db::read`] and writes through [`Db::write`].
+//! The only door to SQLite; nothing outside holds a `Connection`.
 
 pub mod migrate;
 mod open;

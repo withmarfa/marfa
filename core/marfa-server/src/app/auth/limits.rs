@@ -48,9 +48,7 @@ pub(super) fn account_key(email: &str) -> String {
         .collect()
 }
 
-/// Once there is an owner, only the owner's email has account lanes of its own, every other
-/// email shares one, and both account windows are pinned. Before, each email counts on its own,
-/// so what it spent carries into the claim.
+/// With an owner, only the owner's email has account lanes of its own; every other email shares one.
 pub fn password_lanes(email: &str, owner: Option<&str>, address: Option<IpAddr>) -> [Lane; 3] {
     let account = account_key(email);
     let account = match owner.map(account_key) {

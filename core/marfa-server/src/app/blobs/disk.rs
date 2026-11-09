@@ -270,8 +270,7 @@ fn fresh_marker(root: &Path, marker: &Path) -> Result<String, Failure> {
     Ok(id)
 }
 
-/// A file in `tmp` taking an upload's bytes. It goes when this does, unless it was moved
-/// into place.
+/// Goes when this does, unless it was moved into place.
 #[derive(Debug)]
 pub struct Staged {
     path: PathBuf,
@@ -317,8 +316,7 @@ impl Staged {
 }
 
 impl Staged {
-    /// Removes the file unless it was placed. It blocks, so a caller on the async runtime
-    /// runs it on a blocking task.
+    /// Blocking: async code runs it on a blocking task.
     pub fn discard(mut self) {
         self.remove();
     }

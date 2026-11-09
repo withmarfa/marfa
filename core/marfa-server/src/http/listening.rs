@@ -151,9 +151,7 @@ pub async fn serve<L: Source>(
                     }
                     () = hangup.close.notified() => break,
                     _ = stopped.wait_for(|stopping| *stopping), if !told => {
-                        // Hyper closes an idle connection at once, but keeps one
-                        // whose first head is only partly read until the header
-                        // timeout, though no request has begun on it.
+                        // Hyper holds a connection with a partly read first head until the header timeout.
                         if !asked.load(Ordering::Acquire) {
                             break;
                         }

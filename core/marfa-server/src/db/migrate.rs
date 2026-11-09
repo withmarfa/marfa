@@ -1,6 +1,4 @@
-//! The migrations built into the program, applied in one transaction to a new or unfinished
-//! file, or from its version on to a file an earlier build wrote. `user_version` records which
-//! build's schema the file holds, and a file a newer build wrote is refused.
+//! Migrations apply in one transaction; a file a newer build wrote is refused.
 
 use rusqlite::{Connection, TransactionBehavior};
 

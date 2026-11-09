@@ -1,6 +1,4 @@
-//! [`apply`] is the one way an item is written: it makes each access check on the state the
-//! transaction commits, writes the rows, keeps the version left behind, and leaves the audit
-//! entry and the event, all in that transaction.
+//! [`apply`] is the one way an item is written, with every access check on the committed state.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -337,8 +335,7 @@ pub enum RowAct {
     },
 }
 
-/// What one row's write did beyond the row: the other rows it moved, the blobs a purge took, and
-/// the bytes it wrote or purged (`rows::weight` of every row it touched, whole for a purge).
+/// The other rows it moved, the blobs a purge took, and the bytes it wrote or purged.
 #[derive(Debug, Default)]
 pub struct RowDone {
     pub carried: Vec<String>,
@@ -1612,10 +1609,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         refusal
     }
 
-    /// Holds what a write leaves to the type the row ends up as. A write that
-    /// carries no property and no move is not the write that has to satisfy a
-    /// type that gained a field, and a status word is judged where the write
-    /// changes it or moves the row.
+    /// A write with no property and no move need not satisfy a type that gained a field.
     fn judged(
         &self,
         row: &Item,
@@ -1652,9 +1646,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         self.catalog.rules.matches(FILE_TYPE, type_id)
     }
 
-    /// Decides the references `properties` give a row of `type_id`, and the size a file holds.
-    /// Each item-writing path comes through here, so the bulk actions' and the folders' doors
-    /// must too.
+    /// Every item-writing path comes through here, bulk actions and folders included.
     fn referenced(
         &self,
         row: Option<Referencing<'_>>,

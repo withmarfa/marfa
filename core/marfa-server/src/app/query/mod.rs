@@ -1,6 +1,4 @@
-//! Every door compiles through [`compile::selection`], which takes a [`Reach`], so no query of the
-//! item tables leaves this module without the caller's type map, the `system.*` default and the
-//! source filter in its `WHERE`.
+//! Every query of the item tables compiles through [`compile::selection`].
 
 mod compile;
 mod cursor;

@@ -14,9 +14,7 @@ const PRIVATE_FILE: u32 = 0o600;
 /// `sun_path` holds 104 bytes on macOS and 108 on Linux, with a NUL at the end.
 pub const MAX_PATH_BYTES: usize = 103;
 
-/// The right to serve at a path. A lock file beside the socket settles who
-/// may look at what is there, and stays locked until the process has gone, so
-/// a start cannot take the path from a server that is still closing.
+/// A lock file beside the socket stays locked until the process has gone.
 pub struct Claim {
     path: PathBuf,
     lock: File,
@@ -35,8 +33,6 @@ fn me() -> u32 {
     unsafe { libc::geteuid() }
 }
 
-/// Refuses a path that is not absolute and normalized, or that the platform
-/// cannot bind.
 pub fn check_path(path: &Path) -> Result<(), Failure> {
     let normal: PathBuf = path.components().collect();
     let plain = path.is_absolute()
@@ -56,8 +52,6 @@ pub fn check_path(path: &Path) -> Result<(), Failure> {
     )))
 }
 
-/// The socket's path when none is named: `control/marfa.sock` in `folder`,
-/// made absolute from the working folder and normalized.
 pub fn default_path(folder: &Path) -> PathBuf {
     let joined = folder.join("control").join("marfa.sock");
     let absolute = std::path::absolute(&joined).unwrap_or(joined);
@@ -258,8 +252,7 @@ fn bound_name(path: &Path) -> Result<PathBuf, Failure> {
 }
 
 impl Claim {
-    /// Takes the path, replacing a socket no process is listening on and
-    /// leaving alone anything else.
+    /// Replaces a socket nobody listens on; anything else is left alone.
     pub fn take(path: &Path) -> Result<Claim, Failure> {
         check_path(path)?;
         let me = me();
@@ -301,8 +294,7 @@ impl Claim {
         Ok(listener)
     }
 
-    /// Removes the socket while it is still this server's, and keeps the lock
-    /// until the process exits.
+    /// Removes the socket while it is still this server's; the lock stays until exit.
     pub fn release(self) {
         if let Some(published) = self.published {
             match std::fs::symlink_metadata(&self.path) {
@@ -318,16 +310,13 @@ impl Claim {
     }
 }
 
-/// Which file a path names. An inode number alone is reused at once on some
-/// file systems, so the change time is part of it.
+/// An inode number alone is reused at once on some file systems, so the change time joins it.
 type Identity = (u64, u64, i64, i64);
 
 fn identity(found: &Metadata) -> Identity {
     (found.dev(), found.ino(), found.ctime(), found.ctime_nsec())
 }
 
-/// Makes the socket at `bound` private and links it at `path`, answering
-/// the socket's identity before the link.
 fn publish(bound: &Path, path: &Path) -> Result<Identity, Failure> {
     let refused = |error: std::io::Error| {
         Failure::start(format!(

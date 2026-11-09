@@ -16,8 +16,7 @@ macro_rules! codes {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub enum Code {
             $($variant,)*
-            /// A bulk write's refusal of one entry, answered with the status
-            /// that entry's own refusal has.
+            /// Answered with the status that entry's own refusal has.
             BulkAtomicRollback { status: u16 },
         }
 
@@ -133,11 +132,9 @@ pub struct Refusal {
     pub code: Code,
     pub message: Cow<'static, str>,
     pub details: Option<Box<Map<String, Value>>>,
-    /// What an answer carries beside `error`: the item states a conflict
-    /// names, for the writer to merge from.
+    /// The item states a conflict names, for the writer to merge from.
     pub members: Option<Box<Map<String, Value>>>,
-    /// What an unhandled fault is told to the outside as. Set on a refusal
-    /// of `internal_error` and no other.
+    /// Set on `internal_error` refusals only.
     pub fault: Option<Arc<Fault>>,
     /// The commit itself failed, so the write may have landed.
     pub commit_failed: bool,

@@ -1,9 +1,4 @@
-//! Client ID metadata documents (draft-ietf-oauth-client-id-metadata-document): a `client_id`
-//! that is a URL, and the fetch of what it names. The URL comes from whoever opens an
-//! authorization, so nothing about it is trusted and the fetch must never reach this server's
-//! own network.
-//!
-//! Blocking: the door runs it off the async threads.
+//! Client ID metadata documents; the URL is untrusted input.
 
 use crate::app::faults::Faults;
 use crate::app::outbound::address::is_public;
@@ -54,10 +49,7 @@ pub fn is_url(client_id: &str) -> bool {
         .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https:"))
 }
 
-/// The draft compares client IDs as strings, so the text must already be the URL's one
-/// spelling: what is checked is what is fetched, and one document is never two clients. That
-/// also refuses dot segments (encoded too), an uppercase host, a default port and an encoded
-/// host, which the parser rewrites.
+/// The text must be the URL's one spelling, so what is checked is what is fetched.
 pub fn check_url(client_id: &str) -> Result<Url, Failure> {
     let refused = |why| Err(Failure::Refused(why));
     if !redirect::is_plain(client_id) {
@@ -205,9 +197,9 @@ impl Fetcher {
     /// Resolved once by the outbound path, which judges every answer: a name that also answers an
     /// internal address is not trusted for the sake of its public one.
     fn checked_addresses(&self, url: &Url) -> Result<Vec<SocketAddr>, Failure> {
-        let port = url
-            .port_or_known_default()
-            .ok_or(Failure::Unavailable("The client's host could not be resolved."))?;
+        let port = url.port_or_known_default().ok_or(Failure::Unavailable(
+            "The client's host could not be resolved.",
+        ))?;
         match self
             .runtime
             .block_on(outbound::reach(&self.faults, url, false))
@@ -429,8 +421,7 @@ mod tests {
             .expect("a runtime")
     });
 
-    /// What `NAME` resolves to on each lookup, as `judged>reached` entries: the guard judges the
-    /// first address and the connection goes to the second.
+    /// The guard judges the first address of each entry and the connection goes to the second.
     fn scripted(lookups: &str) -> Arc<Faults> {
         let faults = Arc::new(Faults::default());
         faults
@@ -604,10 +595,7 @@ mod tests {
             )
             .into_bytes(),
         );
-        assert!(matches!(
-            get(&redirecting),
-            Err(Failure::Refused(_))
-        ));
+        assert!(matches!(get(&redirecting), Err(Failure::Refused(_))));
         assert_eq!(redirecting.accepted.load(Ordering::SeqCst), 1);
         assert_eq!(target.accepted.load(Ordering::SeqCst), 0);
     }
@@ -664,10 +652,7 @@ mod tests {
     fn a_document_stops_at_the_size_limit() {
         let most = vec![b'a'; MAX_DOCUMENT_BYTES as usize];
         let listener = listen(NAME, reply("200 OK", "application/json", &most));
-        assert_eq!(
-            get(&listener).expect("a document").len(),
-            most.len()
-        );
+        assert_eq!(get(&listener).expect("a document").len(), most.len());
 
         let over = vec![b'a'; MAX_DOCUMENT_BYTES as usize + 1];
         let listener = listen(NAME, reply("200 OK", "application/json", &over));

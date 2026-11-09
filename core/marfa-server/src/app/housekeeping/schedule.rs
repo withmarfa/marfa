@@ -63,9 +63,7 @@ pub enum Step {
     Claim { name: &'static str, seen: String },
 }
 
-/// What should change now. A `next_run_at` only ever moves earlier: one that
-/// does not read becomes due, and one past what the interval allows comes in to
-/// it. Each due job is one claim however many intervals have gone by.
+/// `next_run_at` only moves earlier; each due job is one claim however many intervals passed.
 pub fn plan(rows: &[Row], wanted: &[Wanted], now_ms: i64) -> Vec<Step> {
     let mut steps = Vec::new();
     for job in wanted {
@@ -102,9 +100,7 @@ pub fn plan(rows: &[Row], wanted: &[Wanted], now_ms: i64) -> Vec<Step> {
     steps
 }
 
-/// Claims a run with a write, so that of two claims one wins. `seen` makes the
-/// claim hold only while the row is due as it was when the scheduler read it.
-/// The claim leaves `next_run_at` alone, so a run cut off stays due.
+/// `seen` makes the claim hold only while the row is due as the scheduler read it.
 pub fn claim(tx: &Transaction<'_>, name: &str, seen: Option<&str>, at: &str) -> Result<bool> {
     let changed = tx.execute(
         "UPDATE housekeeping_jobs SET running_since = ?2, last_started_at = ?2, wake_requested = 0 \
@@ -153,10 +149,7 @@ pub fn clear_unfinished(tx: &Transaction<'_>) -> Result<usize> {
     )?)
 }
 
-/// When a job is next due, once a run has finished. A run ahead of schedule
-/// leaves the schedule where it was; one on schedule, or one that took longer
-/// than its interval, sets the next from its finish, so missed intervals are
-/// not made up.
+/// A run ahead of schedule keeps it; otherwise the next run follows the finish, with no catching up.
 fn next_after(held: Option<i64>, started: i64, finished: i64, interval: i64, again: bool) -> i64 {
     if again {
         return finished;

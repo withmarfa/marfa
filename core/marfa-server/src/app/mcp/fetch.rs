@@ -271,8 +271,7 @@ fn stream(
     Ok(Fetched { blob, file_name })
 }
 
-/// Records every fetch attempt, including refusals. The attempt and its record run as
-/// their own task, so a caller that goes away mid-fetch still leaves the record.
+/// The attempt and its record are one task, so a caller who goes away still leaves the record.
 pub async fn file(
     app: &Arc<App>,
     caller: &Caller,

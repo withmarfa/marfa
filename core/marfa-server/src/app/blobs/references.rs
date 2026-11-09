@@ -1,6 +1,4 @@
-//! The reference index: which rows name a blob, and whether each reference lends its read. A
-//! row's references change in the transaction that writes the row, and a reference keeps the
-//! standing it entered with for as long as the row names its digest.
+//! Which rows name a blob, and whether each reference lends its read.
 
 use std::collections::{BTreeMap, BTreeSet};
 

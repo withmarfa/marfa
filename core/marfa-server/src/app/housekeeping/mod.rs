@@ -330,8 +330,7 @@ impl Ended {
     }
 }
 
-/// Runs a job now and answers how it ended. The claim and the run are on a task
-/// of their own, so a caller who goes away leaves neither half done.
+/// The claim and the run are one task, so a caller who goes away leaves neither half done.
 pub async fn run_now(app: &Arc<App>, name: &str) -> Result<Ended> {
     let job = JOBS
         .iter()

@@ -1,6 +1,4 @@
-//! Stdout carries only JSON objects, one per line. A log record has `level` and `message`;
-//! a request record has neither. The same events also leave for an OTLP collector (see
-//! [`crate::telemetry`]).
+//! Stdout carries only JSON objects, one per line.
 
 use std::io::Write;
 use std::sync::OnceLock;

@@ -1,6 +1,4 @@
-//! The jobs that keep every attached store whole: `blob-replicate` makes the copies a store
-//! lacks, `blob-integrity` checks the copies and finishes queued deletions, and
-//! `blob-orphans` reports and purges what nothing references.
+//! Jobs that keep every attached store whole: replicate, integrity and orphans.
 
 use std::collections::{BTreeSet, HashSet};
 use std::io;
@@ -518,9 +516,7 @@ fn past_grace(tx: &rusqlite::Transaction<'_>, app: &App) -> Result<Vec<Hash>> {
     }
 }
 
-/// Finishes the deletions a purge left, reports every blob nothing references, and purges
-/// each one an earlier run reported at least the grace ago that nothing names at the moment
-/// it is purged.
+/// Purges only what an earlier run reported at least the grace ago and nothing names now.
 pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
     let mut unreachable = BTreeSet::new();
     app.retry_deletions(&run, LEFTOVERS, true, &mut unreachable)

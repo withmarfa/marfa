@@ -1,6 +1,4 @@
-//! An unhandled fault as the sinks see it: a fixed kind, a message safe to leave
-//! the process, and a stack. A database failure is never described by the
-//! driver's text, which can quote the statement's bound values.
+//! A database failure is never described by the driver's text, which can quote bound values.
 
 use std::cell::RefCell;
 use std::panic::PanicHookInfo;
