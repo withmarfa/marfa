@@ -230,7 +230,7 @@ pub async fn find(app: &App, token: &str) -> Result<Option<Session>> {
     if !looks_like_a_token(token) {
         return Ok(None);
     }
-    let digest = digest_of(&app.settings.start.api_key_salt, token)?;
+    let digest = digest_of(&app.settings.start.key_salt, token)?;
     let now = app.clock.now_ms() / 1000;
     app.db
         .read(move |tx| live_by_digest(tx, &digest, now))

@@ -50,11 +50,11 @@ fn settings(dir: &Path, more: &[(&str, &str)]) -> Accepted {
     let blobs = dir.join("blobs");
     let socket = dir.join("s.sock");
     let mut pairs = vec![
-        ("SQLITE_PATH", database.to_str().unwrap()),
-        ("BLOB_PATH", blobs.to_str().unwrap()),
+        ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
+        ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
         ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
         ("MARFA_TEST_HOOKS", "true"),
-        ("RATE_LIMIT_ENABLED", "false"),
+        ("MARFA_RATE_LIMIT_ENABLED", "false"),
     ];
     pairs.extend_from_slice(more);
     Settings::read(Environment::from_pairs(&pairs)).unwrap()
@@ -407,7 +407,7 @@ async fn a_blob_held_only_by_a_detached_store_answers_503_and_an_unknown_one_404
     let elsewhere = instance.dir.path().join("elsewhere");
     let app = App::start(settings(
         instance.dir.path(),
-        &[("BLOB_PATH", elsewhere.to_str().unwrap())],
+        &[("MARFA_BLOB_PATH", elsewhere.to_str().unwrap())],
     ))
     .await
     .unwrap();
@@ -1358,7 +1358,7 @@ impl Instance {
     async fn with_owner(more: &[(&str, &str)]) -> Instance {
         let mut pairs = vec![
             ("MARFA_BLOB_CLEANUP_GRACE_MS", "0"),
-            ("MARFA_AUTH_BASE_URL", "http://127.0.0.1:8600"),
+            ("MARFA_SIGN_IN_ADDRESS", "http://127.0.0.1:8600"),
         ];
         pairs.extend_from_slice(more);
         let instance = Instance::start(&pairs).await;

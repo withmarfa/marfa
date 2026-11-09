@@ -33,9 +33,10 @@ use std::process::ExitCode;
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::commands::{
-    apps, audit, backups, blobs, config, connectors, docs, edge_types, edges, events, export,
-    extensions, housekeeping, items, keys, login, logout, metadata, metrics, operations, overview,
-    owner, profile, restore, search, sign_ins, sources, status, types, views, webhooks, whoami,
+    apps, attention, audit, backups, blobs, config, connectors, docs, edge_types, edges, events,
+    export, extensions, housekeeping, items, keys, login, logout, metadata, metrics, operations,
+    overview, owner, profile, restore, search, sign_ins, sources, status, types, views, webhooks,
+    whoami,
 };
 use crate::device::DeviceArgs;
 use crate::error::{CliError, DOCS_HINT, Exit, long_help_footer};
@@ -301,7 +302,7 @@ enum Command {
     /// non-zero exit when the stream closes on `cursor_ahead`,
     /// `catchup_too_old` or `stream_incomplete`.
     Events(events::EventsArgs),
-    /// Current concerns and unavailable checks. Requires the owner or --socket.
+    /// What needs the owner's attention: a degraded component, a failed job, a connector or folder with a problem, a key about to expire, and any check that could not answer. Needs --socket.
     Attention,
     /// The housekeeping jobs the server runs on itself. Explicit management permission required.
     Housekeeping {
@@ -663,9 +664,7 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         Command::Webhooks { command } => webhooks::run(command, &remote()?, &out),
         Command::Audit(args) => audit::run(args, &remote()?, &out),
         Command::Events(args) => events::run(args, &remote()?, &out),
-        Command::Attention => {
-            out.value(&remote()?.json(&crate::remote::request::Request::get(&["attention"]))?)
-        }
+        Command::Attention => attention::run(&remote()?, &out),
         Command::Housekeeping { command } => housekeeping::run(command, &remote()?, &out),
         Command::Connectors { command } => connectors::run(command, &remote()?, &out),
     }

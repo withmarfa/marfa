@@ -110,7 +110,7 @@ The server MUST serve a blob's bytes under the media type recorded first, on `GE
 
 Where an instance keeps a reserve of free space, if a `POST /blobs` declares a body that would leave less free on the volume that holds the disk store's folder than the reserve, then the server MUST answer `507 insufficient_storage`.
 
-**Reason:** an upload has no size cap, and the shipped image puts the database on the same volume, so one body can take the room every other write needs. Every write then meets `errors/storage-full`. The reserve is that room, and the instance's `MARFA_DISK_RESERVE_BYTES` sets it.
+**Reason:** an upload has no size cap, and the shipped image puts the database on the same volume, so one body can take the room every other write needs. Every write then meets `errors/storage-full`. The reserve is that room, and the instance's `disk_reserve_bytes` sets it.
 
 **Tests:** `compliance/disk-reserve.test.ts › refuses an upload 507 insufficient_storage, naming the reserve and the room, and stores nothing`, `› takes the same upload and the same restore once the instance holds no reserve`.
 
@@ -132,7 +132,7 @@ When the server answers `POST /blobs` with `507 insufficient_storage`, the serve
 
 ### `blobs/upload-duration`
 
-While a part of the body of `POST /blobs` arrives at least once in every `MARFA_UPLOAD_IDLE_TIMEOUT_MS`, the server MUST NOT end the request for the time the body takes.
+While a part of the body of `POST /blobs` arrives at least once in every `upload_idle_timeout_ms`, the server MUST NOT end the request for the time the body takes.
 
 **Reason:** an upload has no size cap (`blobs/upload-unlimited`), so a large one over a slow link outlasts any fixed request deadline. The limit on a body that stops arriving is `blobs/upload-idle`.
 
@@ -140,7 +140,7 @@ While a part of the body of `POST /blobs` arrives at least once in every `MARFA_
 
 ### `blobs/upload-idle`
 
-If no byte of the body of `POST /blobs` arrives for `MARFA_UPLOAD_IDLE_TIMEOUT_MS`, 60000 milliseconds unless named, then the server MUST answer `408 request_timeout`.
+If no byte of the body of `POST /blobs` arrives for `upload_idle_timeout_ms`, 60000 milliseconds unless named, then the server MUST answer `408 request_timeout`.
 
 **Reason:** a sender that has gone quiet would otherwise hold its request, the bytes it has sent and its share of the disk reserve for ever. The time counts the server's wait for the sender, not the time it takes to write what has arrived.
 

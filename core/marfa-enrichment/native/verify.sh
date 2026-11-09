@@ -21,24 +21,17 @@
 # Linux kernel (native/vm.sh), as an emulated x86_64 PC: the CPU is emulated and the
 # kernel, its Landlock and its seccomp are real. The machine holds the two programs and
 # the test files, and no shell. It runs each case, and this script judges the answers
-# the same way as on any other target. No memory workaround is allowed there, and every
-# read of a file must report `sandbox: Full`.
+# the same way as on any other target.
 #
 # Needs python3 (and Pillow, for the scanned PDF and the memory test's picture) and, on
 # Linux, docker. Under `uv`, `uv run --with pillow` finds Pillow. A target other than
-# the machine's own runs emulated; the report says which.
+# the machine's own is refused, except x86_64 with --vm.
 #
 # MARFA_VERIFY_CORPUS   a folder of real PDFs and pictures, read as well, and kept
 #                       with their text so targets can be compared.
 # MARFA_VERIFY_CORPUS_TIME_LIMIT  seconds each corpus file may take (default: the reader's 60).
 #                       Full-system emulation runs a CPU about ten times slower, and OCR that
 #                       the time budget cuts short cannot be compared with another target's.
-# MARFA_VERIFY_MEMORY   (not with --vm) a memory limit in bytes added to every run that sets none, and
-#                       the least for a run that sets a real one. Needed
-#                       to run linux/amd64 on an Apple silicon machine: Rosetta cannot
-#                       start a program whose address space is limited to the default
-#                       1 GiB (it stops with "rosetta error: mmap_anonymous_rw"), and
-#                       2 GiB is enough. Native machines leave it unset.
 # MARFA_VERIFY_IMAGE    the name of the container image to make (default
 #                       marfa-enrichment-verify). The script removes it at the end.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -103,13 +96,10 @@ case "$TARGET" in
   aarch64-unknown-linux-musl) KIND=linux PLATFORM=linux/arm64 ;;
   x86_64-unknown-linux-musl) KIND=linux PLATFORM=linux/amd64 ;;
 esac
-EXPECT_FULL=
 if [ -n "$VM" ]; then
   [ "$TARGET" = x86_64-unknown-linux-musl ] || die "--vm is for x86_64-unknown-linux-musl"
-  [ -z "${MARFA_VERIFY_MEMORY:-}" ] || die "--vm runs with the program's own limits; unset MARFA_VERIFY_MEMORY"
   KIND=vm
   EMULATED="yes (an emulated x86_64 PC in full-system QEMU, on a real Linux kernel; the machine is $(uname -m))"
-  EXPECT_FULL=1
 elif [ "$KIND" = linux ]; then
   need docker
   IMAGE=${MARFA_VERIFY_IMAGE:-marfa-enrichment-verify}-${TARGET%%-*}
@@ -121,7 +111,7 @@ elif [ "$KIND" = linux ]; then
 else
   EMULATED=no
 fi
-[ "$EMULATED" = no ] && EXPECT_FULL=1
+[ -n "$VM" ] || [ "$EMULATED" = no ] || die "a reader that cannot confine itself reads nothing, and an emulated run cannot hold the sandbox; run on this target's own hardware, or use --vm for x86_64"
 
 # The test files.
 chmod -R u+w "$V/models" "$V/context" 2>/dev/null || true
@@ -188,20 +178,6 @@ fi
 prog() {
   local bin=$1
   shift
-  if [ -n "${MARFA_VERIFY_MEMORY:-}" ]; then
-    # A limit below this one (but not a token one, which is decided before a child
-    # starts) is raised to it, so the runs that set their own still start.
-    local args=() previous=
-    for arg in "$@"; do
-      if [ "$previous" = --max-memory ] && [ "$arg" -ge 100000000 ] && [ "$arg" -lt "$MARFA_VERIFY_MEMORY" ]; then
-        arg=$MARFA_VERIFY_MEMORY
-      fi
-      args+=("$arg")
-      previous=$arg
-    done
-    case " $* " in *" --max-memory "*) ;; *) args+=(--max-memory "$MARFA_VERIFY_MEMORY") ;; esac
-    set -- "${args[@]}"
-  fi
   if [ "$KIND" = mac ]; then
     env -i "$OUT/$bin" "$@"
   else
@@ -218,9 +194,8 @@ REPORT="$V/report.txt"
 
 # check <name> <exit code> <text that must appear, words joined by '|'> <binary> <args...>
 # The text is looked for in what the program printed to stdout and stderr together.
-# On a target that must report `sandbox: Full`, a successful read of the shipped program
-# must say so. With --vm the cases are first only written down (MODE=plan) and run
-# together by one boot of the machine, then judged one by one (MODE=replay).
+# With --vm the cases are first only written down (MODE=plan) and run together by one
+# boot of the machine, then judged one by one (MODE=replay).
 MODE=
 VM_DIR="$V/context"
 check() {
@@ -247,9 +222,6 @@ check() {
   fi
   local ok=1 needle
   [ "$code" -eq "$want" ] || ok=0
-  if [ -n "$EXPECT_FULL" ] && [ "$bin" = marfa-enrichment-read ] && [ "$want" -eq 0 ]; then
-    needles="$needles|sandbox: Full"
-  fi
   local IFS='|'
   for needle in $needles; do
     cat "$dir/$name.stdout" "$dir/$name.stderr" | grep -qF -- "$needle" || ok=0
@@ -344,11 +316,6 @@ read_cases() {
   # the reader itself holds as it starts is no reader at all: it never sent its first frame.
   check refuse-over-limit 1 "refused: the file is past a limit" $R read "$f/sample.gif" --max-memory 100
   check refuse-limit-below-the-reader 1 "refused: no reader could start" $R read "$f/sample.txt" --max-memory 100
-  # What the child holds, from the proof program: the limits the parent set.
-  # An emulator may run a program without honoring its filter, and then says so.
-  local sandbox_wants="sandbox: Full"
-  [ -n "$EXPECT_FULL" ] || sandbox_wants="sandbox: "
-  check sandbox-state 0 "$sandbox_wants" marfa-enrichment-read-proof read "$f/faults/report.txt"
 }
 
 # Faults: one file after another by the same parent, and the good file must read.
@@ -441,14 +408,5 @@ if [ "$KIND" = vm ]; then
   MODE=replay
 fi
 run_cases
-echo "verify: sandbox states the programs reported:" | tee -a "$REPORT"
-cat "$V"/results/*/*.stderr | grep '^sandbox:' | sort | uniq -c | tee -a "$REPORT"
-if [ -n "$EXPECT_FULL" ]; then
-  not_full=$(cat "$V"/results/*/*.stderr | grep '^sandbox:' | grep -vc '^sandbox: Full$' || true)
-  if [ "$not_full" -ne 0 ]; then
-    FAILED=$((FAILED + 1))
-    echo "FAIL $not_full reads reported a sandbox other than Full on a target that must hold it" | tee -a "$REPORT"
-  fi
-fi
 echo "verify: $PASSED passed, $FAILED failed ($REPORT)" | tee -a "$REPORT"
 [ "$FAILED" -eq 0 ]

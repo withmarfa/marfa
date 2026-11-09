@@ -279,7 +279,7 @@ it(
     // The same port: the folder's copy belongs to this address.
     await server?.restart({
       env: {
-        PORT: new URL(server.apiUrl).port,
+        MARFA_PORT: new URL(server.apiUrl).port,
         MARFA_MAX_REQUEST_BYTES: String(8 * DEFAULT_LIMIT),
       },
     });
@@ -296,7 +296,7 @@ it(
     const restartAt = async (cap: number) =>
       server?.restart({
         env: {
-          PORT: new URL(server.apiUrl).port,
+          MARFA_PORT: new URL(server.apiUrl).port,
           MARFA_MAX_REQUEST_BYTES: String(cap),
         },
       });

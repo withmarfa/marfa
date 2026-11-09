@@ -353,6 +353,26 @@ pub async fn run_now(app: &Arc<App>, name: &str) -> Result<Ended> {
     .map_err(|_| Refusal::internal("a housekeeping run's task ended early"))?
 }
 
+/// Jobs this instance runs whose last run failed.
+fn failed_in(app: &App, rows: Vec<schedule::Row>) -> Vec<schedule::Row> {
+    rows.into_iter()
+        .filter(|row| row.last_outcome.as_deref() == Some("error"))
+        .filter(|row| {
+            JOBS.iter()
+                .any(|job| job.name == row.name && job.runs_here(app))
+        })
+        .collect()
+}
+
+/// Every job whose last run failed, read in one snapshot.
+pub async fn failed(app: &App) -> Result<Vec<(String, Option<String>)>> {
+    let rows = app.db.read(schedule::rows).await?;
+    Ok(failed_in(app, rows)
+        .into_iter()
+        .map(|row| (row.name, row.last_error))
+        .collect())
+}
+
 pub async fn attention(app: &App) -> Value {
     let read = app
         .db
@@ -363,12 +383,8 @@ pub async fn attention(app: &App) -> Value {
         .and_then(std::result::Result::ok)
         .unzip();
     let failed = rows.map(|rows| {
-        rows.iter()
-            .filter(|row| row.last_outcome.as_deref() == Some("error"))
-            .filter(|row| {
-                JOBS.iter()
-                    .any(|job| job.name == row.name && job.runs_here(app))
-            })
+        failed_in(app, rows)
+            .into_iter()
             .map(|row| {
                 json!({
                     "name": row.name,

@@ -28,7 +28,7 @@ use crate::settings::registry::MAX_REQUEST_BYTES;
 
 const LINGER: Duration = Duration::from_secs(5);
 const LINGER_BYTES: usize = 64 * 1024 * 1024;
-const BULK_PATH: &str = "/items/bulk";
+const BULK_PATHS: [&str; 2] = ["/items/bulk", "/items/bulk-actions"];
 const STATE_REQUEST_BYTES: usize = 2 * 512 * 1024 + 100 * 6 + 35;
 const CONNECTORS_PATH: &str = "/connectors";
 const REGISTER_PATH: &str = "/auth/oauth2/register";
@@ -206,7 +206,7 @@ impl FromRequest<Arc<App>> for JsonBody {
 }
 
 fn cap_on(app: &App, path: &str, extensions: &Extensions) -> usize {
-    if path == BULK_PATH {
+    if BULK_PATHS.contains(&path) {
         return BULK_REQUEST_BYTES;
     }
     if path == REGISTER_PATH {
@@ -413,6 +413,8 @@ fn parsed_object(bytes: &[u8], bag: Option<Bag>) -> Result<Map<String, Value>, R
 #[derive(Clone, Copy, Debug)]
 pub enum Bag {
     Properties,
+    /// A bulk action's `patch`, which it lays over each item's properties.
+    Patch,
     Entries(&'static str),
     Whole,
 }
@@ -421,6 +423,7 @@ impl Bag {
     fn refuse_inexact_numbers(self, text: &str) -> Result<(), Refusal> {
         let member = match self {
             Bag::Properties => Some("properties"),
+            Bag::Patch => Some("patch"),
             Bag::Whole => None,
             Bag::Entries(list) => {
                 return match integers::inexact_entry(text, list, "properties") {

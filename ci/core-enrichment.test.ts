@@ -66,9 +66,9 @@ describe("the native build", () => {
     expect(native?.env?.TARGET).toBe("x86_64-unknown-linux-musl");
   });
 
-  it("counts the sandbox of every read, and fails for none counted", () => {
-    const step = native?.steps.find((s) => s.name?.includes("sandbox Full"));
-    expect(step?.run).toContain("^sandbox: Full$");
+  it("counts the cases that passed, and fails for too few", () => {
+    const step = native?.steps.find((s) => s.name?.includes("matrix ran"));
+    expect(step?.run).toContain("^PASS ");
     expect(step?.run).toMatch(/-lt \d+/);
     expect(step?.run).toContain("exit 1");
   });

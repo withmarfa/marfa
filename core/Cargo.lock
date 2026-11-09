@@ -2777,6 +2777,7 @@ dependencies = [
  "marfa-acl",
  "marfa-enrichment",
  "marfa-rules",
+ "marfa-server",
  "marfa-telemetry",
  "object_store",
  "opentelemetry",

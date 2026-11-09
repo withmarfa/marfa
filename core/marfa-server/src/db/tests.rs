@@ -76,7 +76,7 @@ fn folder() -> Folder {
 fn options(file: &Path, migrations: &'static [Migration]) -> Options {
     Options {
         path: DatabasePath::File(file.to_path_buf()),
-        busy_budget: Duration::from_millis(200),
+        write_wait: Duration::from_millis(200),
         readers: 2,
         migrations,
         reserve: 0,

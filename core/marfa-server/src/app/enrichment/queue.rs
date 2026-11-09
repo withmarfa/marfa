@@ -33,6 +33,8 @@ pub enum Why {
     Encrypted,
     OverLimit(Cap),
     Ocr,
+    /// The store holds no copy of the file's bytes, so there is nothing to read.
+    Missing,
 }
 
 impl Why {
@@ -42,6 +44,7 @@ impl Why {
             Why::Encrypted => "encrypted",
             Why::OverLimit(_) => "over_limit",
             Why::Ocr => "ocr",
+            Why::Missing => "missing",
         }
     }
 }
@@ -60,7 +63,7 @@ impl Signatures {
     pub fn of(&self, why: Why) -> &str {
         match why {
             Why::Unsupported => &self.native,
-            Why::Encrypted | Why::OverLimit(_) => "",
+            Why::Encrypted | Why::OverLimit(_) | Why::Missing => "",
             Why::Ocr => &self.ocr,
         }
     }
@@ -130,13 +133,13 @@ pub fn attempt(tx: &Transaction<'_>, seq: i64, hash: &str, at: &str) -> Result<(
     Ok(())
 }
 
-/// A file that was not tried is not counted against.
-pub fn refund(tx: &Transaction<'_>, seq: i64, hash: &str) -> Result<()> {
+/// A file that was not tried is not counted against, and goes to the back of the line.
+pub fn refund(tx: &Transaction<'_>, seq: i64, hash: &str, at: &str) -> Result<()> {
     tx.prepare_cached(
-        "UPDATE enrichment_files SET attempts = max(attempts - 1, 0) \
+        "UPDATE enrichment_files SET attempts = max(attempts - 1, 0), updated_at = ?3 \
          WHERE item_seq = ?1 AND hash = ?2",
     )?
-    .execute(params![seq, hash])?;
+    .execute(params![seq, hash, at])?;
     Ok(())
 }
 
@@ -188,10 +191,21 @@ pub fn skip(
     Ok(())
 }
 
-/// Moves a file that failed to the back of the line.
-pub fn failed(tx: &Transaction<'_>, seq: i64, hash: &str, at: &str) -> Result<()> {
+/// Moves a file to the back of the line without counting an attempt.
+pub fn defer(tx: &Transaction<'_>, seq: i64, hash: &str, at: &str) -> Result<()> {
     tx.prepare_cached(
         "UPDATE enrichment_files SET updated_at = ?3 WHERE item_seq = ?1 AND hash = ?2",
+    )?
+    .execute(params![seq, hash, at])?;
+    Ok(())
+}
+
+/// Moves a file behind every file moved at or before `at`, without counting an attempt.
+pub fn behind(tx: &Transaction<'_>, seq: i64, hash: &str, at: &str) -> Result<()> {
+    tx.prepare_cached(
+        "UPDATE enrichment_files \
+         SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', ?3, '+0.001 seconds') \
+         WHERE item_seq = ?1 AND hash = ?2",
     )?
     .execute(params![seq, hash, at])?;
     Ok(())

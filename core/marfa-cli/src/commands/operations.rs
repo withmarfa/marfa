@@ -88,6 +88,8 @@ pub const OPERATIONS: &[Operation] = &[
     reached("getConfig", "config get"),
     reached("replaceConfig", "config replace"),
     reached("updateConfig", "config update"),
+    reached("listSettings", "config settings"),
+    reached("checkAddressChange", "config check-address"),
     reached("exportArchive", "export"),
     reached("restoreArchive", "restore"),
     reached("listBackups", "backups list"),

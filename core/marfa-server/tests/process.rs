@@ -23,11 +23,11 @@ fn program(dir: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_marfa-server"));
     command
         .env_clear()
-        .env("PORT", "0")
+        .env("MARFA_PORT", "0")
         .env("MARFA_LISTEN_HOST", "127.0.0.1")
         .env("MARFA_TEST_HOOKS", "true")
-        .env("SQLITE_PATH", dir.join("marfa.db"))
-        .env("BLOB_PATH", dir.join("blobs"))
+        .env("MARFA_DATABASE_PATH", dir.join("marfa.db"))
+        .env("MARFA_BLOB_PATH", dir.join("blobs"))
         .env("MARFA_CONTROL_SOCKET", control_socket(dir))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -141,8 +141,8 @@ fn a_refused_start_names_each_setting_and_leaves_nothing_behind() {
     let dir = TempDir::new().unwrap();
     let secret = "a-secret-with-spaces-around-it";
     let output = program(dir.path())
-        .env("PORT", "not-a-port")
-        .env("SQLITE_BUSY_BUDGET_MS", "soon")
+        .env("MARFA_PORT", "not-a-port")
+        .env("MARFA_WRITE_WAIT_MS", "soon")
         .env("MARFA_AUTH_SECRET", format!(" {secret} "))
         .stderr(Stdio::piped())
         .output()
@@ -153,7 +153,7 @@ fn a_refused_start_names_each_setting_and_leaves_nothing_behind() {
     let record: serde_json::Value = serde_json::from_str(printed.trim()).unwrap();
     let said = record["error"].as_str().unwrap();
     let line_of = |name: &str| said.lines().position(|line| line.contains(name));
-    let (port, budget) = (line_of("PORT"), line_of("SQLITE_BUSY_BUDGET_MS"));
+    let (port, budget) = (line_of("MARFA_PORT"), line_of("MARFA_WRITE_WAIT_MS"));
     assert!(
         port.is_some() && budget.is_some() && port != budget,
         "{said}"
@@ -170,7 +170,7 @@ fn a_port_in_use_is_refused_by_a_second_start() {
     let other = TempDir::new().unwrap();
     let first = Server::start(dir.path());
     let output = program(other.path())
-        .env("PORT", first.port.to_string())
+        .env("MARFA_PORT", first.port.to_string())
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));

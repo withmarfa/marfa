@@ -123,8 +123,7 @@ fn position(rng: &mut Rng, length: usize) -> usize {
     }
 }
 
-/// Reads `bytes` as a file that exists only for the reading: the reader is given a
-/// file, and the name is gone before it starts.
+/// Reads `bytes` as a file whose name is gone before the reader starts.
 fn read_bytes(bytes: &[u8], mime: &str, options: &Options) -> Result<Reading, Refusal> {
     static NEXT: AtomicU64 = AtomicU64::new(0);
 

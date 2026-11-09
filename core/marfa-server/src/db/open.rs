@@ -20,7 +20,7 @@ const JOURNAL_SIZE_LIMIT: i64 = 64 * 1024 * 1024;
 #[derive(Debug)]
 pub struct Options {
     pub path: DatabasePath,
-    pub busy_budget: Duration,
+    pub write_wait: Duration,
     pub readers: usize,
     pub migrations: &'static [Migration],
     /// The free space a copy before an upgrade must leave, unless the file stores its own.
@@ -133,7 +133,7 @@ fn judge_file(
     }
     .map_err(|error| refused_open(label, error))?;
     inspected
-        .busy_timeout(options.busy_budget)
+        .busy_timeout(options.write_wait)
         .map_err(|error| refused_open(label, error))?;
     let standing = migrate::judge(&inspected, options.migrations, label)?;
     if let Standing::Behind(from) = standing {
@@ -255,7 +255,7 @@ fn copy_before_upgrade(
 }
 
 fn prepare_writer(conn: &Connection, options: &Options) -> rusqlite::Result<()> {
-    conn.busy_timeout(options.busy_budget)?;
+    conn.busy_timeout(options.write_wait)?;
     conn.pragma_update_and_check(None, "journal_mode", "WAL", |_| Ok(()))?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     conn.pragma_update(None, "foreign_keys", true)?;
@@ -264,7 +264,7 @@ fn prepare_writer(conn: &Connection, options: &Options) -> rusqlite::Result<()> 
 }
 
 fn prepare_reader(conn: &Connection, options: &Options) -> rusqlite::Result<()> {
-    conn.busy_timeout(options.busy_budget)?;
+    conn.busy_timeout(options.write_wait)?;
     conn.pragma_update(None, "foreign_keys", true)?;
     conn.pragma_update(None, "query_only", true)?;
     Ok(())

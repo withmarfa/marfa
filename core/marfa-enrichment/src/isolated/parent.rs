@@ -1,6 +1,4 @@
-//! The parent's side. One loop on the calling thread reads what the child says and
-//! watches the clock and its memory, so there is no thread to leak, and a process that
-//! kept a pipe open cannot hold the loop past the child's end.
+//! The parent's side: one loop on the calling thread watches the child's output, clock and memory.
 
 use std::fs::File;
 use std::io::{ErrorKind, Read};
@@ -89,9 +87,7 @@ pub(super) fn read(
     )
 }
 
-/// What can be decided from the call alone never starts a process. The file is read
-/// through a descriptor the child shares with the caller, so it has to be a file the
-/// child can only read: a regular file, opened for reading and not for writing.
+/// Refusals the call alone decides. The child shares the descriptor, so the file must be regular and read-only.
 fn refuse_without_a_child(
     file: &File,
     mime: &str,
@@ -186,6 +182,8 @@ enum End {
     TooMuchOutput,
     /// What wrote the first line is no reader of this program's.
     BadFrame,
+    /// The child's first line says something other than a full sandbox holds it.
+    NotConfined,
     /// The child ended by itself.
     Exited,
 }
@@ -274,8 +272,7 @@ struct Watched {
 }
 
 impl Watched {
-    /// The file is the child's stdin, and the request is its last argument: the child
-    /// reads neither until it is confined.
+    /// The file is the child's stdin and the request its last argument.
     fn start(
         program: &Path,
         request: &str,
@@ -290,6 +287,7 @@ impl Watched {
             .arg(max_memory.to_string())
             .arg(request)
             .env_clear()
+            .envs(fault_environment())
             .current_dir("/")
             // Its own group, so anything it started ends with it.
             .process_group(0)
@@ -368,8 +366,12 @@ impl Watched {
             let ready = wait_for(&wanted, wait);
             if ready[0] || ready[1] {
                 self.drain(said);
-                if matches!(said.first_line, FirstLine::Bad) {
-                    return End::BadFrame;
+                match said.first_line {
+                    FirstLine::Bad => return End::BadFrame,
+                    FirstLine::Said(sandbox) if sandbox != Sandbox::Full => {
+                        return End::NotConfined;
+                    }
+                    FirstLine::Said(_) | FirstLine::Awaited => {}
                 }
                 if said.over_cap() {
                     return End::TooMuchOutput;
@@ -458,6 +460,18 @@ impl Drop for Watched {
     }
 }
 
+/// The one setting a fault-injection child keeps.
+#[cfg(feature = "fault-injection")]
+fn fault_environment() -> Option<(&'static str, std::ffi::OsString)> {
+    let name = super::fault::UNCONFINED;
+    std::env::var_os(name).map(|value| (name, value))
+}
+
+#[cfg(not(feature = "fault-injection"))]
+fn fault_environment() -> Option<(&'static str, std::ffi::OsString)> {
+    None
+}
+
 /// Reads until the pipe has nothing, closes, or `take` says stop. Whether it closed.
 fn drain_pipe(pipe: &mut impl Read, chunk: &mut [u8], mut take: impl FnMut(&[u8]) -> bool) -> bool {
     loop {
@@ -531,7 +545,7 @@ fn conclude(
             End::Deadline => "at the deadline".to_owned(),
             End::OverMemory(used) => format!("holding {used} bytes"),
             End::TooMuchOutput => "after writing more than it may".to_owned(),
-            End::BadFrame | End::Exited => {
+            End::BadFrame | End::NotConfined | End::Exited => {
                 status.map_or_else(|| "with no status".to_owned(), |status| status.to_string())
             }
         };
@@ -540,13 +554,18 @@ fn conclude(
             said,
         )));
     };
+    if sandbox != Sandbox::Full {
+        return Err(Refusal::ReaderUnavailable(format!(
+            "the reader could not confine itself ({sandbox:?}), so it read nothing"
+        )));
+    }
     match end {
         End::Deadline => return Err(Refusal::TimedOut),
         End::OverMemory(used) => return Err(over_memory(options, Some(used))),
         End::TooMuchOutput => {
             return Err(Refusal::Crashed("the reader wrote more than it may".into()));
         }
-        End::BadFrame | End::Exited => {}
+        End::BadFrame | End::NotConfined | End::Exited => {}
     }
     let Some(status) = status else {
         return Err(Refusal::Crashed("the reader's end cannot be known".into()));
@@ -568,7 +587,6 @@ fn conclude(
                 kind,
                 ocr: NATIVE && options.ocr.is_some(),
                 max_text_chars: options.max_text_chars,
-                sandbox,
             };
             Answer::judge(&said.stdout, &asked).map_err(|refusal| match refusal {
                 Refusal::Crashed(why) => Refusal::Crashed(with_last_words(why, said)),
@@ -670,7 +688,7 @@ mod tests {
 
     #[test]
     fn the_frame_may_arrive_in_pieces() {
-        let line = Frame::line(Sandbox::Partial);
+        let line = Frame::line(Sandbox::Full);
         let mut said = Said::new(64 * 1024);
         for byte in &line[..line.len() - 1] {
             said.keep_stdout(&[*byte]);
@@ -679,22 +697,44 @@ mod tests {
         said.keep_stdout(b"\n");
         assert!(confirmed(&said));
         said.keep_stdout(ANSWER);
-        assert_eq!(
-            ended(exited(0), &said, false).unwrap().sandbox,
-            Sandbox::Partial
-        );
+        assert!(ended(exited(0), &said, false).is_ok());
     }
 
     #[test]
     fn a_later_frame_changes_nothing() {
-        let mut said = confined(Sandbox::Partial);
-        said.keep_stdout(&Frame::line(Sandbox::Full));
+        let mut said = confined(Sandbox::Full);
+        said.keep_stdout(&Frame::line(Sandbox::Off));
         said.keep_stdout(ANSWER);
         assert!(matches!(
             ended(exited(0), &said, false),
             Err(Refusal::Crashed(_))
         ));
-        assert!(matches!(said.first_line, FirstLine::Said(Sandbox::Partial)));
+        assert!(matches!(said.first_line, FirstLine::Said(Sandbox::Full)));
+    }
+
+    #[test]
+    fn a_reader_that_is_not_fully_confined_gives_no_reading() {
+        let mut said = confined(Sandbox::Full);
+        said.keep_stdout(ANSWER);
+        assert!(ended(exited(0), &said, false).is_ok());
+        for sandbox in [Sandbox::Partial, Sandbox::Off] {
+            let mut said = confined(sandbox);
+            said.keep_stdout(ANSWER);
+            for end in [End::Exited, End::NotConfined] {
+                let result = conclude(
+                    end,
+                    exited(0),
+                    &said,
+                    Kind::Text,
+                    &Options::default(),
+                    false,
+                );
+                assert!(
+                    matches!(&result, Err(Refusal::ReaderUnavailable(why)) if why.contains("confine")),
+                    "{sandbox:?}: {result:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -829,8 +869,7 @@ mod tests {
         path
     }
 
-    /// A reader that never states its sandbox has read nothing, so it is no verdict on
-    /// the file, whatever it does next.
+    /// A reader that never states its sandbox has read nothing, so its end is no verdict on the file.
     #[test]
     fn a_reader_that_states_no_sandbox_is_no_reader() {
         let folder = tempfile::tempdir().unwrap();
@@ -848,7 +887,7 @@ mod tests {
             "{result:?}"
         );
 
-        let frame = String::from_utf8(Frame::line(Sandbox::Off)).unwrap();
+        let frame = String::from_utf8(Frame::line(Sandbox::Full)).unwrap();
         let states = script(
             folder.path(),
             &format!("printf '%s\\n' '{}'\nexit 9", frame.trim()),

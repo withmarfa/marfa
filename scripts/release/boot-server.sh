@@ -32,8 +32,8 @@ fail() {
 
 (
   cd "$state"
-  exec env -i HOME="$state" PATH="$PATH" PORT=0 MARFA_LISTEN_HOST=127.0.0.1 \
-    API_KEY_SALT="$(openssl rand -hex 32)" MARFA_AUTH_SECRET="$(openssl rand -hex 32)" \
+  exec env -i HOME="$state" PATH="$PATH" MARFA_PORT=0 MARFA_LISTEN_HOST=127.0.0.1 \
+    MARFA_KEY_SALT="$(openssl rand -hex 32)" MARFA_AUTH_SECRET="$(openssl rand -hex 32)" \
     "$server"
 ) >"$state/log" 2>&1 &
 pid=$!
