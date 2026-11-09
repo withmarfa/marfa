@@ -404,27 +404,25 @@ describe("connector interfaces", () => {
       for (const door of ["state", "agreements"] as const) {
         number++;
         const label = `${ending} ${door}`;
-        const mint = async (suffix: string) => {
-          const minted = await call(
-            "/keys",
-            "POST",
-            {
-              label,
-              source: `fence-${String(number)}${suffix}`,
-              ...(ending === "expired" && suffix === ""
-                ? {
-                    expires_at: new Date(
-                      Date.now() + server.clockOffsetMs + 60 * 60_000,
-                    ).toISOString(),
-                  }
-                : {}),
-            },
-            server.workingKey,
-          );
-          expect(minted.status, label).toBe(201);
-          return (await minted.json()) as { key: string; id: string };
-        };
-        const owner = await mint("");
+        const source = `fence-${String(number)}`;
+        const minted = await call(
+          "/keys",
+          "POST",
+          {
+            label,
+            source,
+            ...(ending === "expired"
+              ? {
+                  expires_at: new Date(
+                    Date.now() + server.clockOffsetMs + 60 * 60_000,
+                  ).toISOString(),
+                }
+              : {}),
+          },
+          server.workingKey,
+        );
+        expect(minted.status, label).toBe(201);
+        const owner = (await minted.json()) as { key: string; id: string };
         const registered = await call(
           "/connectors",
           "POST",
@@ -504,12 +502,12 @@ describe("connector interfaces", () => {
 
         // What the source holds is what the key wrote before it ended. A
         // successor under the source reads it through its own registration.
-        const minted = await controlRequest(server.controlSocket, "/keys", {
+        const minting = await controlRequest(server.controlSocket, "/keys", {
           method: "POST",
-          body: { label, source: `fence-${String(number)}` },
+          body: { label, source },
         });
-        expect(minted.status, label).toBe(201);
-        const successor = minted.body as { key: string; id: string };
+        expect(minting.status, label).toBe(201);
+        const successor = minting.body as { key: string; id: string };
         const successorRegistration = await call(
           "/connectors",
           "POST",
