@@ -1,7 +1,4 @@
-//! Reads a restore's body as it arrives, on a blocking thread: the manifest first, then the
-//! line files, each line checked against the registrations already read and the line files
-//! kept in the disk store's `tmp` as received, then the blob entries, staged and hashed.
-//! What it keeps in memory is what checks across rows need: ids, never whole files.
+//! Reads a restore's body as it arrives, keeping in memory only the ids cross-row checks need.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::File;

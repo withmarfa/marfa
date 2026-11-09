@@ -264,9 +264,9 @@ enum Command {
     ///
     /// The archive contains only data the exporting credential could read,
     /// including history allowed by each snapshot's type permissions and blobs
-    /// that credential could read. It holds no sign-in, keys, apps or webhooks,
+    /// that credential could read. It holds no sign-in, keys, apps, or webhooks,
     /// so set those up again after a restore; the command says so. Settings,
-    /// type icons, source names and connector state come back only where this
+    /// type icons, source names, and connector state come back only where this
     /// instance has none. Trashed items are absent unless explicitly exported,
     /// for example with `export --format archive --state any`.
     ///

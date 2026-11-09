@@ -1,6 +1,4 @@
-//! An item a restore writes as its archive line holds it: its id, version, dates, state,
-//! writer, tags, extensions and history, with each digest lending only where the line says
-//! it lent.
+//! An item written as its archive line holds it; a digest lends only where the line says.
 
 use std::collections::{BTreeSet, HashSet};
 
