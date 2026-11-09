@@ -494,3 +494,49 @@ async fn the_cap_counts_a_credential_only_under_keys() {
     let elsewhere = instance.call(&secret, Method::GET, "/sources", None).await;
     assert_eq!(elsewhere.status, StatusCode::OK);
 }
+
+#[tokio::test]
+async fn a_held_source_needs_keys_manage() {
+    let instance = Instance::start(&[]).await;
+    let (connector, token) = instance.key(bare("feed")).await;
+    let registered = instance
+        .call(
+            &token,
+            Method::POST,
+            "/connectors",
+            Some(json!({ "name": "feed" })),
+        )
+        .await;
+    assert_eq!(registered.status, StatusCode::CREATED, "{}", registered.body);
+    let path = format!("/keys/{connector}");
+    let revoked = instance.local(Method::DELETE, &path, None).await;
+    assert!(revoked.status.is_success(), "{}", revoked.body);
+
+    let (_, minter) = instance.key(narrow_minter("minter")).await;
+    let refused = instance
+        .call(&minter, Method::POST, "/keys", Some(bare("feed")))
+        .await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.body);
+    assert_eq!(refused.code(), "forbidden");
+    let details = &refused.body["error"]["details"];
+    assert_eq!(details["required_scope"], "keys.manage");
+    assert_eq!(details["source"], "feed");
+
+    let free = instance
+        .call(&minter, Method::POST, "/keys", Some(bare("never used")))
+        .await;
+    assert_eq!(free.status, StatusCode::CREATED, "{}", free.body);
+
+    let (_, manager) = instance
+        .key(json!({ "label": "manager", "source": "manager", "permissions": ["keys.mint", "keys.manage"] }))
+        .await;
+    let succeeded = instance
+        .call(&manager, Method::POST, "/keys", Some(bare("feed")))
+        .await;
+    assert_eq!(succeeded.status, StatusCode::CREATED, "{}", succeeded.body);
+    let path = format!("/keys/{}", succeeded.body["id"].as_str().unwrap());
+    let revoked = instance.local(Method::DELETE, &path, None).await;
+    assert!(revoked.status.is_success(), "{}", revoked.body);
+    let local = instance.local(Method::POST, "/keys", Some(bare("feed"))).await;
+    assert_eq!(local.status, StatusCode::CREATED, "{}", local.body);
+}
