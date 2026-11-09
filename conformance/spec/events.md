@@ -985,6 +985,26 @@ If `POST /webhooks` carries a top-level body key the operation does not declare,
 
 **Tests:** `compliance/undeclared-body-keys.test.ts › refuses %j as undeclared, naming each key, and writes nothing`.
 
+### `events/webhook-cap`
+
+If a key, or an app's grant, already holds 100 subscriptions and sends `POST /webhooks`, then the server MUST answer `409 conflict` with `details.reason` `webhook_cap` and `details.cap` `100`.
+
+**Reason:** every subscription is an event the server must queue and send, so the number one credential holds is bounded. A caller told the cap can delete one it no longer needs.
+
+**Tests:** `compliance/webhooks-owner.test.ts › refuses the 101st subscription of a key or an app with 409 conflict naming the cap, and accepts one again once one is deleted`.
+
+### `events/webhook-cap-own`
+
+The server MUST count toward the cap of `events/webhook-cap` only the subscriptions the requesting key, or the requesting app's grant, registered.
+
+**Tests:** `compliance/webhooks-owner.test.ts › refuses the 101st subscription of a key or an app with 409 conflict naming the cap, and accepts one again once one is deleted`.
+
+### `events/webhook-cap-frees`
+
+When a key or an app deletes a subscription it registered, the server MUST accept the next `POST /webhooks` from that key or app that the cap alone would have refused.
+
+**Tests:** `compliance/webhooks-owner.test.ts › refuses the 101st subscription of a key or an app with 409 conflict naming the cap, and accepts one again once one is deleted`.
+
 ### `events/webhook-refused-keeps`
 
 If `PATCH /webhooks/{id}` is refused, then the server MUST leave the subscription's stored `url`, `events` and `type_filter` as they were.
@@ -1664,6 +1684,28 @@ While other subscriptions have receivers that do not answer, the server MUST sta
 **Reason:** one attempt per subscription allows each subscription a turn without sharing a slow receiver's wait.
 
 **Tests:** `compliance/webhook-delivery.test.ts › delivers promptly while eight other subscriptions never answer`.
+
+### `events/delivery-maker-share`
+
+While a subscription of another maker has a delivery due, the server MUST NOT hold more than 8 delivery attempts in flight for the subscriptions of one maker.
+
+**Reason:** a maker's receivers that answer slowly or never would otherwise take every slot the server has for attempts and delay every other maker's deliveries by the time an attempt takes to end.
+
+**Tests:** `compliance/webhook-delivery.test.ts › holds at most eight attempts of one maker in flight while another maker's delivery is due`.
+
+### `events/delivery-maker-free`
+
+While no subscription of another maker has a delivery due, the server MUST attempt the due deliveries of one maker's subscriptions beyond 8 at once.
+
+**Reason:** the share of `events/delivery-maker-share` protects a maker from the others and does not hold a maker back when no other maker waits.
+
+**Tests:** `compliance/webhook-delivery.test.ts › lets a maker no other maker waits behind hold more than eight attempts in flight`.
+
+### `events/delivery-maker-isolation`
+
+While the subscriptions of one maker have receivers that do not answer, the server MUST start a due delivery of another maker's subscription without waiting for those attempts to finish.
+
+**Tests:** `compliance/webhook-delivery.test.ts › delivers promptly to a second maker while one maker's subscriptions never answer`.
 
 ## The audit log
 

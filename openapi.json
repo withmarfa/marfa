@@ -30607,11 +30607,18 @@
             }
           },
           "409": {
-            "description": "`instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.",
+            "description": "- `conflict`: You already hold 100 webhooks. Delete one, then register this one. `details.reason` is `webhook_cap` and `details.cap` is `100`.\n- `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InstanceChangedRefusal"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ConflictRefusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/InstanceChangedRefusal"
+                    }
+                  ]
                 }
               }
             },
