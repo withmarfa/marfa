@@ -115,8 +115,7 @@ fn thin(history: &[Kept], policy: &Policy, now_ms: i64) -> Vec<Kept> {
         .collect()
 }
 
-/// As `tx` holds the settings, so a change committed before the write that thins holds even
-/// before it is live.
+/// Read from `tx`, since the live settings lag a change the writer has committed.
 fn instance_policy(tx: &Transaction<'_>, app: &App) -> Result<Policy> {
     let seeds = app.settings.seeds();
     let whole = |setting| -> Result<i64> {

@@ -227,9 +227,8 @@ pub fn runs_statements(name: &str) -> bool {
     JOBS.iter().any(|job| job.name == name && job.statements)
 }
 
-/// The instant a retention keeps records from, or `None` while it is zero and
-/// keeps everything, as `tx` holds the setting: read in the write that deletes, so
-/// a change committed before it holds even before it is live.
+/// The instant a retention keeps records from, or `None` while it is zero and keeps everything.
+/// Read from `tx`, since the live settings lag a change the writer has committed.
 pub fn cutoff(
     tx: &rusqlite::Transaction<'_>,
     app: &App,
