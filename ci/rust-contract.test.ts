@@ -150,9 +150,21 @@ describe("the Rust contract shards", () => {
 
   it("start nothing that is for the TypeScript server", () => {
     const text = JSON.stringify(shards?.steps);
-    expect(text).not.toContain("garage");
     expect(text).not.toContain("@withmarfa/server...");
     expect(text).not.toContain("MARFA_SERVER_BUILT");
+  });
+
+  it("put an object store beside the server for the stores chapter, and always stop it", () => {
+    const names = shards?.steps.map((s) => s.name) ?? [];
+    const store = names.indexOf("Put an object store beside the server");
+    expect(store).toBeGreaterThanOrEqual(0);
+    expect(store).toBeLessThan(names.indexOf("Boot the Rust server"));
+    expect(step(shards, "Put an object store beside the server").run).toContain(
+      "pnpm garage:up",
+    );
+    const stop = step(shards, "Stop the object store");
+    expect(stop.if).toBe("always()");
+    expect(stop.run).toContain("pnpm garage:down");
   });
 });
 

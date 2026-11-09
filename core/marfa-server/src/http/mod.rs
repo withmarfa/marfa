@@ -186,9 +186,11 @@ fn blob_doors() -> Routes {
     Doors::new()
         .route("/blobs", post(blobs::upload))
         .route("/blobs/stores", get(blobs::stores))
+        .route("/blobs/orphans", get(blobs::orphans))
         .route("/blobs/{hash}", get(blobs::download).head(blobs::head))
         .route("/blobs/{hash}/url", get(blobs::url))
         .route("/blobs/{hash}/copies", get(blobs::copies))
+        .route("/blobs/{hash}/copies/{store}", delete(blobs::drop_copy))
         .route(
             "/blobs/{hash}/fetch",
             get(blobs::fetch).head(blobs::fetch_head),
@@ -356,6 +358,10 @@ fn control_doors(app: &Arc<App>) -> Routes {
                 get(test_hooks::read_faults)
                     .put(test_hooks::set_fault)
                     .delete(test_hooks::clear_faults),
+            )
+            .route(
+                "/_control/test/blob-stores",
+                get(test_hooks::inspect_stores),
             );
     }
     routes

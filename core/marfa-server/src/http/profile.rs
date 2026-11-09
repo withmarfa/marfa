@@ -84,7 +84,7 @@ async fn arrived(
 }
 
 async fn put(
-    app: &App,
+    app: &Arc<App>,
     caller: &Caller,
     visit: Visit,
     request: Request,
@@ -164,7 +164,11 @@ pub async fn read(
     let body = if unchanged {
         Body::empty()
     } else {
-        stream(app.bytes_of(&found).await?, 0, size, app.blob_read_idle())
+        stream(
+            app.bytes_of(&found, 0, size).await?,
+            size,
+            app.blob_read_idle(),
+        )
     };
     let mut response = Response::new(body);
     let headers = response.headers_mut();

@@ -187,7 +187,7 @@ struct Limits {
 
 /// Runs on a blocking thread: the body is read there, and handed to the store a chunk at a time.
 fn stream(
-    app: &App,
+    app: &Arc<App>,
     handle: &Handle,
     caller: &Caller,
     url: &Url,
