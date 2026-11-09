@@ -142,7 +142,7 @@ it("delivers promptly to a second maker while one maker's subscriptions never an
   }
 });
 
-it("holds at most eight attempts of one maker in flight while another maker's delivery is due", async () => {
+it("starts no ninth attempt of one maker while another maker's delivery is due", async () => {
   const stalled = await stallingReceiver();
   const alsoStalled = await stallingReceiver();
   const slow = await keyWith("share-slow-maker", reads);
@@ -197,6 +197,45 @@ it("lets a maker no other maker waits behind hold more than eight attempts in fl
       async () => (stalled.received() === 12 ? true : undefined),
       5_000,
     );
+  } finally {
+    await removeAll(made);
+    await closeStalled(stalled.server);
+  }
+});
+
+it("starts a later maker's delivery at once while one maker holds every attempt it may", async () => {
+  const stalled = await stallingReceiver();
+  const slow = await keyWith("later-slow-maker", reads);
+  const later = await keyWith("later-other-maker", reads);
+  const made: { id: string; client: MarfaClient }[] = [];
+  try {
+    for (let i = 0; i < 70; i++) {
+      const hook = await slow.client.createWebhook({
+        url: `http://127.0.0.1:${stalled.port}/${i}`,
+        events: ["item.created"],
+      });
+      expect(hook.status).toBe(201);
+      made.push({ id: hook.data.id, client: slow.client });
+    }
+    await makeNote("later-first");
+    await waitFor(
+      "the first maker to hold the attempts it may",
+      async () => (stalled.received() >= 56 ? true : undefined),
+      5_000,
+    );
+    const hook = await later.client.createWebhook({
+      url: receiver.hookUrl("later-maker"),
+      events: ["item.created"],
+    });
+    expect(hook.status).toBe(201);
+    made.push({ id: hook.data.id, client: later.client });
+    await makeNote("later-second");
+    await waitFor(
+      "the later maker's delivery beside a maker holding the attempts it may",
+      async () => receiver.received.find((r) => r.path === "/hook/later-maker"),
+      5_000,
+    );
+    expect(stalled.received()).toBe(56);
   } finally {
     await removeAll(made);
     await closeStalled(stalled.server);
