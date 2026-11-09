@@ -570,6 +570,23 @@ fn copy_not_found() -> Refusal {
     )
 }
 
+fn held_by_backup() -> Refusal {
+    Refusal::new(
+        Code::CopyHeldByBackup,
+        "A backup kept in this object store names the blob, so its copy there stays until \
+         thinning deletes every such backup.",
+    )
+}
+
+/// Refuses the drop of a copy in `store_id` that a backup kept there names.
+fn keep_held(tx: &rusqlite::Transaction<'_>, hash: &Hash, store_id: &str) -> Result<()> {
+    if crate::app::backups::held(tx, store_id, std::slice::from_ref(hash))?.is_empty() {
+        Ok(())
+    } else {
+        Err(held_by_backup())
+    }
+}
+
 fn below(live: usize, min_copies: u64) -> Refusal {
     Refusal::new(
         Code::CopiesBelowMinimum,
@@ -1204,6 +1221,10 @@ impl App {
             .store(store_id)
             .filter(|_| holders.iter().any(|held| held.store_id == store_id))
             .ok_or_else(copy_not_found)?;
+        let (blob, kept_in) = (hash.clone(), store_id.to_string());
+        self.db
+            .read(move |tx| keep_held(tx, &blob, &kept_in))
+            .await?;
         let seeds = self.settings.seeds();
         let min_copies = self
             .db
@@ -1251,6 +1272,7 @@ impl App {
             if !holders.iter().any(|held| held.store_id == dropped) {
                 return Err(copy_not_found());
             }
+            keep_held(unit.tx(), &blob, &dropped)?;
             let min_copies = stored::deciding(unit.tx(), &seeds, BLOB_MIN_COPIES)?;
             if ((holders.len() - 1) as u64) < min_copies {
                 return Err(below(holders.len(), min_copies));

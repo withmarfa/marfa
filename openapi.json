@@ -6561,6 +6561,41 @@
         ],
         "description": "An error response."
       },
+      "CopyHeldByBackupRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "copy_held_by_backup"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the error, such as the field it concerns. Each code defines its own details."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
+      },
       "HousekeepingJobPage": {
         "type": "object",
         "properties": {
@@ -29807,13 +29842,16 @@
             }
           },
           "409": {
-            "description": "- `copies_below_minimum`: deleting the copy would leave fewer live copies than `min_copies`, or fewer that their stores confirm they hold within 15 seconds. Nothing changes.",
+            "description": "- `copies_below_minimum`: deleting the copy would leave fewer live copies than `min_copies`, or fewer that their stores confirm they hold within 15 seconds. Nothing changes.\n- `copy_held_by_backup`: a backup kept in that object store names the blob, so its copy there stays until thinning deletes every such backup. Nothing changes.",
             "content": {
               "application/json": {
                 "schema": {
                   "anyOf": [
                     {
                       "$ref": "#/components/schemas/CopiesBelowMinimumRefusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CopyHeldByBackupRefusal"
                     },
                     {
                       "$ref": "#/components/schemas/InstanceChangedRefusal"
