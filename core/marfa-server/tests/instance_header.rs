@@ -333,10 +333,10 @@ async fn a_cookie_is_no_credential_at_a_door_that_ignores_cookies() {
     let owner_door = instance
         .on_public(
             Method::PATCH,
-            "/profile",
+            "/owner/passkeys/no-such-passkey",
             Presents::Cookie,
             &[("x-marfa-instance-id", OTHER)],
-            Some(json!({})),
+            Some(json!({ "name": "kept" })),
         )
         .await;
     assert_refused(
