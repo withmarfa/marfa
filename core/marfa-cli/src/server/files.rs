@@ -1,10 +1,11 @@
 //! What `marfa server install` writes: the Compose file, which is the same
 //! for every install, and the two settings files beside it.
 
+use marfa_acl::Exposure;
 use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
-use std::path::{Component, Path, PathBuf};
+use std::path::Path;
 
 use super::account::{self, Identity};
 use super::service::Manager;
@@ -374,49 +375,41 @@ fn admit(
 // Path-based writes rely on every ancestor; `O_NOFOLLOW` protects only the final component.
 fn check_parents(dir: &Path, trusted: u32) -> Result<(), CliError> {
     let absolute = std::path::absolute(dir)?;
-    let mut current = PathBuf::new();
-    for component in absolute.components() {
-        match component {
-            Component::RootDir | Component::Normal(_) => current.push(component),
-            Component::CurDir => continue,
-            _ => {
-                return Err(CliError::Usage(format!(
-                    "{} is not a normalized path: choose another --dir",
-                    dir.display()
-                )));
-            }
-        }
+    let folders = marfa_acl::folders_from_root(&absolute).ok_or_else(|| {
+        CliError::Usage(format!(
+            "{} is not a normalized path: choose another --dir",
+            dir.display()
+        ))
+    })?;
+    for current in folders {
         let found = match fs::symlink_metadata(&current) {
             Ok(found) => found,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error.into()),
         };
-        if found.file_type().is_symlink() {
-            return Err(CliError::Usage(format!(
-                "{} is a link, and the install folder lies below it: choose a --dir that does not pass through one",
-                current.display()
-            )));
-        }
-        if crate::local::foreign_owner(&found, trusted) {
-            return Err(CliError::Usage(format!(
-                "{} belongs to another account (user {}), and the install folder lies below it: that account could swap the install folder for a link after it was checked. Choose another --dir",
-                current.display(),
+        let shown = current.display();
+        let why = match marfa_acl::exposure(&current, &found, trusted)? {
+            None => continue,
+            Some(Exposure::Link) => format!(
+                "{shown} is a link, and the install folder lies below it: choose a --dir that does not pass through one"
+            ),
+            Some(Exposure::NotFolder) => {
+                format!(
+                    "{shown} is not a folder, so it cannot hold the install: choose another --dir"
+                )
+            }
+            Some(Exposure::Owner) => format!(
+                "{shown} belongs to another account (user {}), and the install folder lies below it: that account could swap the install folder for a link after it was checked. Choose another --dir",
                 found.uid()
-            )));
-        }
-        if crate::local::open_to_others(&found) {
-            return Err(CliError::Usage(format!(
-                "{} can be written by group or others, and the install folder lies below it: they could swap the install folder for a link after it was checked. Run `chmod go-w {}`, or choose another --dir",
-                current.display(),
-                current.display()
-            )));
-        }
-        if marfa_acl::others_may_write(&current, trusted)? {
-            return Err(CliError::Usage(format!(
-                "{} has an access control list that lets another account change what it holds, and the install folder lies below it: that account could swap the install folder for a link after it was checked. Choose another --dir",
-                current.display()
-            )));
-        }
+            ),
+            Some(Exposure::Mode) => format!(
+                "{shown} can be written by group or others, and the install folder lies below it: they could swap the install folder for a link after it was checked. Run `chmod go-w {shown}`, or choose another --dir"
+            ),
+            Some(Exposure::Acl) => format!(
+                "{shown} has an access control list that lets another account change what it holds, and the install folder lies below it: that account could swap the install folder for a link after it was checked. Choose another --dir"
+            ),
+        };
+        return Err(CliError::Usage(why));
     }
     Ok(())
 }

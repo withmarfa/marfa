@@ -24,80 +24,59 @@ pub fn http(path: &Path) -> Result<marfa_core::http::Http, CliError> {
     )?)
 }
 
-/// Whether a folder on the way to something private belongs to neither the
-/// account that relies on it nor root.
-pub(crate) fn foreign_owner(metadata: &std::fs::Metadata, uid: u32) -> bool {
-    metadata.uid() != uid && metadata.uid() != 0
-}
-
-/// Whether group or others can write to a folder, so that they could swap
-/// what is below it. A sticky folder of root's, such as `/tmp`, lets nobody
-/// replace what is not theirs.
-pub(crate) fn open_to_others(metadata: &std::fs::Metadata) -> bool {
-    metadata.mode() & 0o022 != 0 && !(metadata.uid() == 0 && metadata.mode() & 0o1000 != 0)
-}
-
 fn verify(path: &Path) -> Result<(), CliError> {
     if !path.is_absolute() {
         return Err(CliError::Invalid(
             "--socket requires an absolute path".into(),
         ));
     }
+    let mut folders = marfa_acl::folders_from_root(path)
+        .filter(|walked| walked.len() > 1)
+        .ok_or_else(|| CliError::Invalid("--socket requires a normalized absolute path".into()))?;
+    folders.pop();
     let uid = unsafe { libc::geteuid() };
-    let mut current = PathBuf::new();
-    for component in path.components() {
-        if !matches!(
-            component,
-            std::path::Component::RootDir | std::path::Component::Normal(_)
-        ) {
-            return Err(CliError::Invalid(
-                "--socket requires a normalized absolute path".into(),
-            ));
+    for folder in &folders {
+        let found = std::fs::symlink_metadata(folder)?;
+        match marfa_acl::exposure(folder, &found, uid) {
+            Ok(None) => {}
+            Ok(Some(marfa_acl::Exposure::Link)) => return Err(through_link()),
+            Ok(Some(why)) => {
+                return Err(CliError::Invalid(format!(
+                    "another account could replace the socket: {} {why}",
+                    folder.display()
+                )));
+            }
+            Err(error) => return Err(unverified(error)),
         }
-        current.push(component);
-        let metadata = std::fs::symlink_metadata(&current)?;
-        let private = current == path || Some(current.as_path()) == path.parent();
-        let acl = if private {
-            marfa_acl::grants_by_acl(&current)
-        } else {
-            marfa_acl::others_may_write(&current, uid)
-        };
-        match acl {
+    }
+    let holder = folders.last().map_or(path, PathBuf::as_path);
+    for (private, mode) in [(holder, 0o700), (path, 0o600)] {
+        let found = std::fs::symlink_metadata(private)?;
+        if found.file_type().is_symlink() {
+            return Err(through_link());
+        }
+        if found.uid() != uid || found.mode() & 0o777 != mode {
+            return Err(CliError::Invalid("the socket must be owned by this account with mode 0600, in an owned directory with mode 0700".into()));
+        }
+        match marfa_acl::grants_by_acl(private) {
             Ok(false) => {}
-            Ok(true) if private => {
+            Ok(true) => {
                 return Err(CliError::Invalid(
                     "the socket path has an access ACL".into(),
                 ));
             }
-            Ok(true) => {
-                return Err(CliError::Invalid(
-                    "the socket path is writable by another account".into(),
-                ));
-            }
-            Err(error) => {
-                return Err(CliError::Invalid(format!(
-                    "cannot verify the socket path ACL: {error}"
-                )));
-            }
-        }
-
-        if metadata.file_type().is_symlink() {
-            return Err(CliError::Invalid(
-                "--socket must not traverse symbolic links".into(),
-            ));
-        }
-        if private {
-            let expected = if current == path { 0o600 } else { 0o700 };
-            if metadata.uid() != uid || metadata.mode() & 0o777 != expected {
-                return Err(CliError::Invalid("the socket must be owned by this account with mode 0600, in an owned directory with mode 0700".into()));
-            }
-        } else if foreign_owner(&metadata, uid) || open_to_others(&metadata) {
-            return Err(CliError::Invalid(
-                "the socket path is writable by another account".into(),
-            ));
+            Err(error) => return Err(unverified(error)),
         }
     }
     Ok(())
+}
+
+fn through_link() -> CliError {
+    CliError::Invalid("--socket must not traverse symbolic links".into())
+}
+
+fn unverified(error: std::io::Error) -> CliError {
+    CliError::Invalid(format!("cannot verify the socket path ACL: {error}"))
 }
 
 #[derive(Debug)]
@@ -529,7 +508,7 @@ mod tests {
             if refused {
                 let said = checked.unwrap_err().to_string();
                 assert!(
-                    said.contains("writable by another account"),
+                    said.contains(&format!("replace the socket: {} ", above.display())),
                     "{grant:?}: {said}"
                 );
             } else {

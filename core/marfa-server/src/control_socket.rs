@@ -13,8 +13,6 @@ const PRIVATE_FOLDER: u32 = 0o700;
 const PRIVATE_FILE: u32 = 0o600;
 /// `sun_path` holds 104 bytes on macOS and 108 on Linux, with a NUL at the end.
 pub const MAX_PATH_BYTES: usize = 103;
-const STICKY: u32 = 0o1000;
-const OTHERS_WRITE: u32 = 0o022;
 
 /// The right to serve at a path. A lock file beside the socket settles who
 /// may look at what is there, and stays locked until the process has gone, so
@@ -76,48 +74,6 @@ pub fn default_path(folder: &Path) -> PathBuf {
     normal
 }
 
-/// A folder's standing, as its own entry reports it.
-#[derive(Clone, Copy, Debug)]
-struct Found {
-    link: bool,
-    folder: bool,
-    owner: u32,
-    mode: u32,
-}
-
-impl Found {
-    fn of(found: &Metadata) -> Found {
-        Found {
-            link: found.file_type().is_symlink(),
-            folder: found.is_dir(),
-            owner: found.uid(),
-            mode: found.mode(),
-        }
-    }
-}
-
-/// What keeps a folder on the way to the socket from being private, if
-/// anything. `last` is the folder that holds the socket.
-fn folder_fault(found: Found, me: u32, last: bool) -> Option<&'static str> {
-    if found.link {
-        return Some("is a symbolic link");
-    }
-    if !found.folder {
-        return Some("is not a folder");
-    }
-    if found.owner != me && found.owner != 0 {
-        return Some("belongs to another account");
-    }
-    let shared_tmp = found.owner == 0 && found.mode & STICKY != 0;
-    if found.mode & OTHERS_WRITE != 0 && !shared_tmp {
-        return Some("can be written by another account");
-    }
-    if last && (found.owner != me || found.mode & 0o777 != PRIVATE_FOLDER) {
-        return Some("must belong to the server's account with mode 0700");
-    }
-    None
-}
-
 fn refused_folder(folder: &Path, why: &str) -> Failure {
     Failure::start(format!(
         "The control socket's folder {} {why}",
@@ -130,12 +86,10 @@ fn prepare_folders(path: &Path, me: u32) -> Result<(), Failure> {
     let Some(holder) = path.parent() else {
         return Ok(());
     };
-    let mut folder = PathBuf::new();
-    for part in holder.components() {
-        folder.push(part);
-        if part == Component::RootDir {
-            continue;
-        }
+    let Some(folders) = marfa_acl::folders_from_root(holder) else {
+        return Err(refused_folder(holder, "is not a normalized absolute path"));
+    };
+    for folder in folders {
         match std::fs::DirBuilder::new()
             .mode(PRIVATE_FOLDER)
             .create(&folder)
@@ -151,31 +105,27 @@ fn prepare_folders(path: &Path, me: u32) -> Result<(), Failure> {
         }
         let found = std::fs::symlink_metadata(&folder)
             .map_err(|error| refused_folder(&folder, &format!("could not be read: {error}")))?;
-        let last = folder == holder;
-        if let Some(why) = folder_fault(Found::of(&found), me, last) {
-            return Err(refused_folder(&folder, why));
+        match marfa_acl::exposure(&folder, &found, me) {
+            Ok(None) => {}
+            Ok(Some(why)) => return Err(refused_folder(&folder, &why.to_string())),
+            Err(error) => {
+                return Err(refused_folder(
+                    &folder,
+                    &format!("has an access control list that could not be read: {error}"),
+                ));
+            }
         }
-        if last {
+        if folder == holder {
+            if found.uid() != me || found.mode() & 0o777 != PRIVATE_FOLDER {
+                return Err(refused_folder(
+                    &folder,
+                    "must belong to the server's account with mode 0700",
+                ));
+            }
             refuse_acl(&folder, "folder")?;
-        } else {
-            refuse_writable_acl(&folder, me)?;
         }
     }
     Ok(())
-}
-
-fn refuse_writable_acl(folder: &Path, me: u32) -> Result<(), Failure> {
-    match marfa_acl::others_may_write(folder, me) {
-        Ok(false) => Ok(()),
-        Ok(true) => Err(refused_folder(
-            folder,
-            "has an access control list that lets another account change what it holds",
-        )),
-        Err(error) => Err(refused_folder(
-            folder,
-            &format!("has an access control list that could not be read: {error}"),
-        )),
-    }
 }
 
 fn refused_lock(lock: &Path, why: impl std::fmt::Display) -> Failure {
@@ -485,53 +435,6 @@ mod tests {
     }
 
     #[test]
-    fn each_folder_rule_is_judged_by_owner_and_mode() {
-        let me = 501;
-        let folder = |owner, mode| Found {
-            link: false,
-            folder: true,
-            owner,
-            mode,
-        };
-        let link = Found {
-            link: true,
-            ..folder(me, 0o700)
-        };
-        let file = Found {
-            folder: false,
-            ..folder(me, 0o600)
-        };
-        assert_eq!(folder_fault(link, me, false), Some("is a symbolic link"));
-        assert_eq!(folder_fault(file, me, false), Some("is not a folder"));
-        assert_eq!(
-            folder_fault(folder(502, 0o700), me, false),
-            Some("belongs to another account")
-        );
-        for open in [0o770, 0o702, 0o777] {
-            assert_eq!(
-                folder_fault(folder(me, open), me, false),
-                Some("can be written by another account"),
-                "{open:o}"
-            );
-        }
-        assert_eq!(
-            folder_fault(folder(0, 0o777), me, false),
-            Some("can be written by another account")
-        );
-        assert_eq!(folder_fault(folder(0, 0o1777), me, false), None);
-        assert_eq!(folder_fault(folder(0, 0o755), me, false), None);
-        assert_eq!(folder_fault(folder(me, 0o755), me, false), None);
-        for last in [folder(me, 0o750), folder(me, 0o500), folder(0, 0o700)] {
-            assert_eq!(
-                folder_fault(last, me, true),
-                Some("must belong to the server's account with mode 0700"),
-                "{last:?}"
-            );
-        }
-        assert_eq!(folder_fault(folder(me, 0o700), me, true), None);
-    }
-
-    #[test]
     fn missing_folders_are_made_private_and_the_socket_is_published_private() {
         let (_dir, root) = private_root();
         let path = root.join("a").join("b").join("marfa.sock");
@@ -607,7 +510,13 @@ mod tests {
         let said = prepare_folders(&folder.join("marfa.sock"), me() + 1)
             .unwrap_err()
             .message;
-        assert!(said.contains("belongs to another account"), "{said}");
+        // Root's folders are trusted, so as root only the socket's folder is another's.
+        let why = if me() == 0 {
+            "must belong to the server's account"
+        } else {
+            "belongs to another account"
+        };
+        assert!(said.contains(why), "{said}");
     }
 
     #[test]
@@ -748,6 +657,45 @@ mod tests {
             said.contains("access control list that grants access"),
             "{said}"
         );
+    }
+
+    /// Puts back the mode of `/` and removes its ACLs.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    struct RootRestored(u32);
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    impl Drop for RootRestored {
+        fn drop(&mut self) {
+            for name in [c"system.posix_acl_access", c"system.posix_acl_default"] {
+                // SAFETY: both names are live C strings.
+                unsafe { libc::removexattr(c"/".as_ptr(), name.as_ptr()) };
+            }
+            set_mode(Path::new("/"), self.0);
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[test]
+    #[ignore = "sets ACLs on /: run it alone, as root, in a throwaway Linux container"]
+    fn a_root_folder_whose_acl_lets_another_account_write_is_refused() {
+        if me() != 0 {
+            eprintln!("skipped: only root can set an ACL on /");
+            return;
+        }
+        let (_dir, root) = private_root();
+        let path = root.join("control").join("marfa.sock");
+        drop(Claim::take(&path).unwrap());
+        let restored = RootRestored(std::fs::metadata("/").unwrap().mode() & 0o7777);
+        for (grant, why) in [
+            (Grant::InheritWrite, "access control list"),
+            (Grant::Write, "can be written by another account"),
+        ] {
+            assert!(let_another_account(Path::new("/"), grant), "{grant:?}");
+            let said = refusal(&path);
+            assert!(said.contains("folder / "), "{grant:?}: {said}");
+            assert!(said.contains(why), "{grant:?}: {said}");
+            drop(RootRestored(restored.0));
+        }
     }
 
     #[cfg(target_os = "macos")]

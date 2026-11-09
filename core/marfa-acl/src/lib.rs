@@ -1,11 +1,94 @@
 use std::ffi::CString;
+use std::fs::Metadata;
 use std::io::ErrorKind;
 use std::os::unix::ffi::OsStrExt;
-use std::path::Path;
+use std::os::unix::fs::MetadataExt;
+use std::path::{Component, Path, PathBuf};
 
 fn c_path(path: &Path) -> std::io::Result<CString> {
     CString::new(path.as_os_str().as_bytes())
         .map_err(|_| std::io::Error::from(ErrorKind::InvalidInput))
+}
+
+/// What lets an account other than the trusted one or root replace what a
+/// folder holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Exposure {
+    Link,
+    NotFolder,
+    Owner,
+    Mode,
+    Acl,
+}
+
+impl std::fmt::Display for Exposure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Exposure::Link => "is a symbolic link",
+            Exposure::NotFolder => "is not a folder",
+            Exposure::Owner => "belongs to another account",
+            Exposure::Mode => "can be written by another account",
+            Exposure::Acl => {
+                "has an access control list that lets another account change what it holds"
+            }
+        })
+    }
+}
+
+/// `/` and each folder below it, down to `path` itself: the folders a check
+/// of what `path` holds walks. `None` unless `path` is absolute and plain.
+pub fn folders_from_root(path: &Path) -> Option<Vec<PathBuf>> {
+    let mut parts = path.components();
+    if parts.next() != Some(Component::RootDir) {
+        return None;
+    }
+    let mut folder = PathBuf::from("/");
+    let mut folders = vec![folder.clone()];
+    for part in parts {
+        let Component::Normal(name) = part else {
+            return None;
+        };
+        folder.push(name);
+        folders.push(folder.clone());
+    }
+    Some(folders)
+}
+
+/// Judges one folder of [`folders_from_root`] by its own entry `found`, `/`
+/// included: `None` when only `trusted` or root can replace what it holds.
+pub fn exposure(
+    folder: &Path,
+    found: &Metadata,
+    trusted: u32,
+) -> std::io::Result<Option<Exposure>> {
+    let standing = by_mode(
+        found.file_type().is_symlink(),
+        found.is_dir(),
+        found.uid(),
+        found.mode(),
+        trusted,
+    );
+    if standing.is_some() {
+        return Ok(standing);
+    }
+    Ok(others_may_write(folder, trusted)?.then_some(Exposure::Acl))
+}
+
+// Root's sticky folders, such as `/tmp`, let nobody replace what is not theirs.
+fn by_mode(link: bool, folder: bool, owner: u32, mode: u32, trusted: u32) -> Option<Exposure> {
+    const STICKY: u32 = 0o1000;
+    const GROUP_OR_OTHERS_WRITE: u32 = 0o022;
+    if link {
+        Some(Exposure::Link)
+    } else if !folder {
+        Some(Exposure::NotFolder)
+    } else if owner != trusted && owner != 0 {
+        Some(Exposure::Owner)
+    } else if mode & GROUP_OR_OTHERS_WRITE != 0 && !(owner == 0 && mode & STICKY != 0) {
+        Some(Exposure::Mode)
+    } else {
+        None
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -503,6 +586,53 @@ mod tests {
     fn me() -> u32 {
         // SAFETY: `geteuid` takes nothing and cannot fail.
         unsafe { libc::geteuid() }
+    }
+
+    #[test]
+    fn the_walk_starts_at_the_root_and_ends_at_the_path() {
+        let walked = |path: &str| {
+            folders_from_root(Path::new(path)).map(|folders| {
+                folders
+                    .iter()
+                    .map(|f| f.display().to_string())
+                    .collect::<Vec<_>>()
+            })
+        };
+        assert_eq!(walked("/"), Some(vec!["/".to_string()]));
+        assert_eq!(
+            walked("/srv/marfa"),
+            Some(vec!["/".into(), "/srv".into(), "/srv/marfa".into()])
+        );
+        for wrong in ["srv/marfa", "./marfa", "/srv/../marfa"] {
+            assert_eq!(walked(wrong), None, "{wrong}");
+        }
+    }
+
+    #[test]
+    fn a_folder_is_judged_by_link_kind_owner_and_mode() {
+        let me = 501;
+        let folder = |owner, mode| by_mode(false, true, owner, mode, me);
+        assert_eq!(by_mode(true, true, me, 0o700, me), Some(Exposure::Link));
+        assert_eq!(
+            by_mode(false, false, me, 0o600, me),
+            Some(Exposure::NotFolder)
+        );
+        assert_eq!(folder(502, 0o700), Some(Exposure::Owner));
+        for open in [0o770, 0o702, 0o777] {
+            assert_eq!(folder(me, open), Some(Exposure::Mode), "{open:o}");
+        }
+        assert_eq!(folder(0, 0o777), Some(Exposure::Mode));
+        assert_eq!(folder(me, 0o1777), Some(Exposure::Mode));
+        assert_eq!(folder(0, 0o1777), None);
+        assert_eq!(folder(0, 0o755), None);
+        assert_eq!(folder(me, 0o755), None);
+    }
+
+    #[test]
+    fn the_real_root_lets_no_other_account_replace_what_it_holds() {
+        let root = Path::new("/");
+        let found = std::fs::symlink_metadata(root).unwrap();
+        assert_eq!(exposure(root, &found, me()).unwrap(), None);
     }
 
     #[test]
