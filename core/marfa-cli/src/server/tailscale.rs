@@ -1,7 +1,6 @@
 //! Tailscale Serve, which gives a machine on a tailnet an `https` address.
-//! `MARFA_TAILSCALE` names the program in place of the one found.
 
-use std::io::Read;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -11,36 +10,36 @@ use crate::error::CliError;
 
 const MAC_APP: &str = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
 
-fn program() -> Option<PathBuf> {
-    if let Some(named) = std::env::var_os("MARFA_TAILSCALE") {
-        return Some(named.into());
-    }
-    let found = std::env::var_os("PATH").and_then(|path| {
-        std::env::split_paths(&path)
-            .map(|dir| dir.join("tailscale"))
-            .find(|candidate| candidate.is_file())
-    });
-    found.or_else(|| {
-        let app = PathBuf::from(MAC_APP);
-        app.is_file().then_some(app)
-    })
+/// A file this user may run, as a shell judges it.
+fn is_program(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(text) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY: `text` is a valid NUL-terminated string that outlives the call.
+    let runnable = unsafe { libc::access(text.as_ptr(), libc::X_OK) } == 0;
+    runnable && std::fs::metadata(path).is_ok_and(|meta| meta.is_file())
 }
 
-/// Whether `program` is the Mac app's own binary or a script that starts it,
-/// as Tailscale's `/usr/local/bin/tailscale` does.
-fn runs_the_app(program: &Path) -> bool {
-    let resolved = std::fs::canonicalize(program).unwrap_or_else(|_| program.to_path_buf());
-    if resolved == Path::new(MAC_APP) {
-        return true;
+fn on_path(name: &OsStr, path: Option<&OsStr>) -> Option<PathBuf> {
+    std::env::split_paths(path?)
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .map(|dir| dir.join(name))
+        .find(|candidate| is_program(candidate))
+}
+
+/// The program as a shell finds it, except that an empty `PATH` entry is skipped:
+/// `MARFA_TAILSCALE` by path or on the `PATH`, else `tailscale` on the `PATH`, then
+/// the Mac app. The caller runs exactly this path.
+fn resolve(named: Option<&OsStr>, path: Option<&OsStr>, app: &Path) -> Option<PathBuf> {
+    match named {
+        Some(name) if name.as_encoded_bytes().contains(&b'/') => {
+            Some(PathBuf::from(name)).filter(|candidate| is_program(candidate))
+        }
+        Some(name) => on_path(name, path),
+        None => on_path(OsStr::new("tailscale"), path)
+            .or_else(|| is_program(app).then(|| app.to_path_buf())),
     }
-    let mut head = Vec::new();
-    let read =
-        std::fs::File::open(&resolved).and_then(|file| file.take(64 * 1024).read_to_end(&mut head));
-    read.is_ok()
-        && head.starts_with(b"#!")
-        && head
-            .windows(MAC_APP.len())
-            .any(|window| window == MAC_APP.as_bytes())
 }
 
 /// A process list (`ps -Axo comm=`) with the Mac app running.
@@ -54,10 +53,10 @@ fn judge_processes(processes: &str) -> Result<(), CliError> {
     }
 }
 
-/// The app's binary run as the command line while the app is closed can bring
-/// up Tailscale's network extension switched off.
-fn require_the_app_running(program: &Path) -> Result<(), CliError> {
-    if !cfg!(target_os = "macos") || !runs_the_app(program) {
+/// With the app installed, any Tailscale program run while it is closed can bring
+/// up its network extension switched off.
+fn require_the_app_running() -> Result<(), CliError> {
+    if !cfg!(target_os = "macos") || !Path::new(MAC_APP).is_file() {
         return Ok(());
     }
     let listed = Command::new("/bin/ps")
@@ -75,12 +74,14 @@ fn require_the_app_running(program: &Path) -> Result<(), CliError> {
 }
 
 fn run(args: &[&str]) -> Result<String, CliError> {
-    let program = program().ok_or_else(|| {
+    let named = std::env::var_os("MARFA_TAILSCALE");
+    let path = std::env::var_os("PATH");
+    let program = resolve(named.as_deref(), path.as_deref(), Path::new(MAC_APP)).ok_or_else(|| {
         CliError::Install(
             "Tailscale is not installed, or its command line is not on the PATH. Install it from tailscale.com and sign in, then run this again".into(),
         )
     })?;
-    require_the_app_running(&program)?;
+    require_the_app_running()?;
     let mut command = Command::new(&program);
     // The Mac app's binary is the command line only with this set.
     command
@@ -149,8 +150,7 @@ pub fn check_free(https_port: u16, target: &str, previous: Option<&str>) -> Resu
     }
 }
 
-/// Serves `target` on the tailnet only, unless the port already serves
-/// something else, which is never replaced.
+/// Serves `target` on the tailnet only; a port serving something else is never replaced.
 pub fn serve(
     https_port: u16,
     target: &str,
@@ -183,6 +183,8 @@ pub fn unserve(https_port: u16, target: &str, trace: bool) -> Result<bool, CliEr
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::PermissionsExt;
+
     use super::*;
 
     const STATUS: &str = r#"{"TCP":{"443":{"HTTPS":true}},"Web":{"host.example.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:8600"}}}}}"#;
@@ -202,31 +204,61 @@ mod tests {
         assert!(judge_processes("").is_err());
     }
 
-    #[test]
-    fn the_check_applies_to_the_app_and_to_any_script_that_starts_it() {
-        let dir = tempfile::tempdir().unwrap();
-        let write = |name: &str, text: &str| {
-            let path = dir.path().join(name);
-            std::fs::write(&path, text).unwrap();
-            path
-        };
-        let wrapper = write(
-            "tailscale",
-            &format!("#!/bin/sh\nexec env TAILSCALE_BE_CLI=1 {MAC_APP} \"$@\"\n"),
-        );
-        assert!(runs_the_app(&wrapper));
-        let linked = dir.path().join("linked");
-        std::os::unix::fs::symlink(&wrapper, &linked).unwrap();
-        assert!(runs_the_app(&linked));
-        assert!(runs_the_app(Path::new(MAC_APP)));
+    fn program(dir: &Path, name: &str) -> PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
 
-        assert!(!runs_the_app(&write("stand-in", "#!/bin/sh\necho {}\n")));
-        // A compiled command line that names the app in its data is not a script.
-        assert!(!runs_the_app(&write(
-            "compiled",
-            &format!("\x7fELF {MAC_APP}")
-        )));
-        assert!(!runs_the_app(&dir.path().join("missing")));
+    #[test]
+    fn a_name_with_a_slash_is_that_path_and_nothing_else() {
+        let dir = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let named = program(dir.path(), "ts");
+        program(other.path(), "ts");
+        let path = other.path().as_os_str();
+        let app = dir.path().join("no-app");
+        assert_eq!(
+            resolve(Some(named.as_os_str()), Some(path), &app),
+            Some(named)
+        );
+        let missing = dir.path().join("missing");
+        assert_eq!(resolve(Some(missing.as_os_str()), Some(path), &app), None);
+    }
+
+    #[test]
+    fn a_name_without_a_slash_is_searched_on_the_path() {
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        let found = program(second.path(), "ts");
+        std::fs::write(first.path().join("ts"), "not executable").unwrap();
+        let path = std::env::join_paths([first.path(), second.path()]).unwrap();
+        let app = first.path().join("no-app");
+        assert_eq!(
+            resolve(Some(OsStr::new("ts")), Some(&path), &app),
+            Some(found)
+        );
+        assert_eq!(resolve(Some(OsStr::new("other")), Some(&path), &app), None);
+        assert_eq!(resolve(Some(OsStr::new("ts")), None, &app), None);
+    }
+
+    #[test]
+    fn with_no_name_the_path_comes_before_the_app() {
+        let bin = tempfile::tempdir().unwrap();
+        let apps = tempfile::tempdir().unwrap();
+        let app = program(apps.path(), "Tailscale");
+        let empty = tempfile::tempdir().unwrap();
+        let none = std::env::join_paths([empty.path()]).unwrap();
+        assert_eq!(resolve(None, Some(&none), &app), Some(app.clone()));
+        assert_eq!(resolve(None, None, &app), Some(app.clone()));
+        let on_path = program(bin.path(), "tailscale");
+        let path = std::env::join_paths([bin.path()]).unwrap();
+        assert_eq!(resolve(None, Some(&path), &app), Some(on_path));
+        assert_eq!(
+            resolve(None, Some(&none), &apps.path().join("missing")),
+            None
+        );
     }
 
     #[test]

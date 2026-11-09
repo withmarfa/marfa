@@ -1,5 +1,5 @@
-//! A settings file rewritten line by line, so hand-added settings and comments
-//! survive. Values are read as Docker Compose reads `env_file`.
+//! A settings file rewritten line by line, so hand-added lines survive. Values are
+//! read as Docker Compose reads `env_file`.
 
 use crate::error::CliError;
 
