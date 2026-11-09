@@ -299,14 +299,12 @@ async fn cors_origins_seed_from_a_comma_list_and_change_as_a_list() {
 }
 
 #[tokio::test]
-async fn a_setting_whose_area_is_not_built_is_not_known() {
+async fn a_setting_no_area_owns_is_not_known() {
     let instance = Instance::start(&[]).await;
-    let refused = instance
-        .patch(json!({ "inbound_handled_retention_days": 5 }))
-        .await;
+    let refused = instance.patch(json!({ "no_such_setting": 5 })).await;
     assert_eq!(
         refused.body["error"]["details"]["unknown_body_fields"],
-        json!(["inbound_handled_retention_days"])
+        json!(["no_such_setting"])
     );
 }
 

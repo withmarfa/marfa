@@ -58,6 +58,14 @@ If a key or app token that is not the connector's own and lacks `connectors.mana
 
 **Tests:** `compliance/inbound-webhooks.test.ts › refuses another key, an unknown registration and a header that is no header name`.
 
+### `inbound-webhooks/owner-session-ignored`
+
+If a request to an operation under `/connectors/{id}/endpoints` or `/connectors/{id}/deliveries` presents an owner's browser session cookie and no other credential, then the server MUST answer `401 unauthorized` and leave the registration's endpoints and deliveries as they were.
+
+**Reason:** the owner acts on connectors through the private control socket, so a cookie, which a web page can send without the owner's knowing which door it reaches, is ignored on every inbound door this chapter states, as `connectors/owner-session-ignored` says of the connector doors.
+
+**Tests:** `compliance/connectors.test.ts › answers an owner session cookie 401 on every connector door, where the private socket keeps the owner's reach`.
+
 ### `inbound-webhooks/endpoint-unknown-registration`
 
 If `POST /connectors/{id}/endpoints`, `GET /connectors/{id}/endpoints` or `DELETE /connectors/{id}/endpoints/{endpoint_id}` names an id no registration carries, then the server MUST answer `404 connector_not_found`.
@@ -212,7 +220,9 @@ When the server stores a delivery, the server MUST store the query string as the
 
 ### `inbound-webhooks/receipt-headers`
 
-When the server stores a delivery, the server MUST store every header the request carried, except one `inbound-webhooks/receipt-no-tailscale` names, in the order and the case it arrived with, repeats kept.
+When the server stores a delivery, the server MUST store every header the request carried, except one `inbound-webhooks/receipt-no-tailscale` names, as a `[name, value]` pair with its name in lower case, repeats kept, the repeats of one name in the order they arrived.
+
+**Reason:** header names are case-insensitive, and only the order of one name's repeats changes what a header says. A connector reads a header by its name without regard to case.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › stores the body byte for byte, the headers as they arrived and the query as sent`, `› leaves out the identity headers a Tailscale proxy adds, and stores every other header`.
 
@@ -336,6 +346,14 @@ If a body has not arrived whole within `inbound_read_timeout_ms`, 30000 millisec
 
 **Tests:** `compliance/inbound-webhooks.test.ts › answers request_timeout to a body that does not arrive in time, and stores nothing`, `compliance/inbound-check-order.test.ts › answers a declared length over the limit 413 before the body's 408`.
 
+### `inbound-webhooks/body-timeout-ceiling`
+
+If `MARFA_INBOUND_READ_TIMEOUT_MS` is set to more than 300000, then the server MUST refuse to start and name the setting.
+
+**Reason:** a sender slower than five minutes holds a connection and its bytes in flight, and a webhook sender sends the delivery again.
+
+**Tests:** `compliance/inbound-webhooks.test.ts › is five minutes: a longer time is refused at start, naming the setting, and five minutes is taken`.
+
 ### `inbound-webhooks/body-timeout-stores-nothing`
 
 If the server answers `408 request_timeout`, then the server MUST NOT store a delivery for it.
@@ -352,7 +370,7 @@ Each endpoint has a window of its own, so a busy sender of one endpoint does not
 
 While the limiter is on, if an endpoint's address receives more requests in one window than `rate_limit_inbound_requests`, 600 unless named, then the server MUST answer the request past the count `429 rate_limited`.
 
-**Tests:** `compliance/inbound-webhooks.test.ts › holds each endpoint to its own rate window`, `compliance/inbound-rate-limit.test.ts › counts every request to a live address in its window, whatever answer it got`, `› ends a window after MARFA_RATE_LIMIT_WINDOW_MS, and tells a refused sender how long is left`.
+**Tests:** `compliance/inbound-rate-limit.test.ts › holds each endpoint to its own rate window`, `compliance/inbound-rate-limit.test.ts › counts every request to a live address in its window, whatever answer it got`, `› ends a window after MARFA_RATE_LIMIT_WINDOW_MS, and tells a refused sender how long is left`.
 
 ### `inbound-webhooks/rate-counts-every-request`
 
@@ -376,13 +394,13 @@ While the limiter is on, the server MUST end an endpoint's window after `rate_li
 
 When the server answers `429 rate_limited` to a request to an inbound address, the server MUST carry a `Retry-After` of the seconds left in the endpoint's window.
 
-**Tests:** `compliance/inbound-rate-limit.test.ts › ends a window after MARFA_RATE_LIMIT_WINDOW_MS, and tells a refused sender how long is left`, `compliance/inbound-webhooks.test.ts › holds each endpoint to its own rate window`.
+**Tests:** `compliance/inbound-rate-limit.test.ts › ends a window after MARFA_RATE_LIMIT_WINDOW_MS, and tells a refused sender how long is left`, `compliance/inbound-rate-limit.test.ts › holds each endpoint to its own rate window`.
 
 ### `inbound-webhooks/rate-own-window`
 
 While the limiter is on, the server MUST hold each endpoint to a window of its own, another endpoint of the same registration included.
 
-**Tests:** `compliance/inbound-webhooks.test.ts › holds each endpoint to its own rate window`.
+**Tests:** `compliance/inbound-rate-limit.test.ts › holds each endpoint to its own rate window`.
 
 ## What a registration may hold
 
@@ -456,19 +474,29 @@ If the server refuses a receipt for capacity, then the server MUST NOT remove a 
 
 ### `inbound-webhooks/in-flight-limit`
 
-If a body would take the bytes of all the bodies the instance is receiving past `inbound_in_flight_bytes`, 104857600 unless named, then the server MUST answer `503 inbound_unavailable`.
+If a request would take the bytes of all the requests the instance is receiving past `inbound_in_flight_bytes`, 104857600 unless named, then the server MUST answer `503 inbound_unavailable`.
+
+**Reason:** a request holds the bytes of its headers, its query and its body, and a declared `Content-Length` is held whole before the body is read, so the server refuses a request that does not fit without reading it.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › refuses a body that would pass the bytes the instance holds in flight`, `compliance/inbound-bounds.test.ts › refuses a body that would pass the bytes in flight summed across bodies, takes one that fills them, and gives back what a body held when it ended or broke off`.
 
 ### `inbound-webhooks/in-flight-summed`
 
-When several bodies are arriving at once, the server MUST count their bytes together against `inbound_in_flight_bytes`.
+When several requests are arriving at once, the server MUST count their bytes together against `inbound_in_flight_bytes`.
 
 **Tests:** `compliance/inbound-bounds.test.ts › refuses a body that would pass the bytes in flight summed across bodies, takes one that fills them, and gives back what a body held when it ended or broke off`.
 
+### `inbound-webhooks/in-flight-per-source`
+
+If a request would take the bytes that the requests arriving for one source hold past half of `inbound_in_flight_bytes`, then the server MUST answer `503 inbound_unavailable`.
+
+**Reason:** a leaked token for one source must not refuse every other source's receipts.
+
+**Tests:** `compliance/inbound-bounds.test.ts › refuses a source's receipt that would pass half the bytes in flight, and takes another source's`.
+
 ### `inbound-webhooks/in-flight-returned`
 
-When a body ends, whether it arrived whole, was refused or broke off, the server MUST stop counting its bytes toward the bytes in flight.
+When a request ends, whether its body arrived whole, was refused or broke off, the server MUST stop counting its bytes toward the bytes in flight.
 
 **Tests:** `compliance/inbound-bounds.test.ts › refuses a body that would pass the bytes in flight summed across bodies, takes one that fills them, and gives back what a body held when it ended or broke off`, `› refuses a body whose endpoint was retired while it arrived, and stores nothing`, `› refuses a body whose key was revoked while it arrived`.
 
@@ -504,9 +532,9 @@ If a receipt's charge would take the bytes a registration retains past `inbound_
 
 ### `inbound-webhooks/retained-charge`
 
-When the server charges a receipt against the bytes a source retains, the server MUST charge the length of its body, plus the UTF-8 length of the compact JSON object of its `id`, `endpoint_id`, `source`, `received_at`, `method`, `query`, `headers`, `size` and `sha256`, `dedupe_key` as the value the delivery carries in its endpoint's duplicate header or `null`, and `handled_at` and `outcome` as `null`, in that order, plus 32.
+When the server charges a receipt against the bytes a source retains, the server MUST charge the length of its body, plus the UTF-8 length of its query string, plus the UTF-8 lengths of the name and the value of each header it stores.
 
-**Reason:** the 32 bytes are kept for the marks a handled delivery gains, so handling never needs capacity. The charge bounds what is retained, not the size of the database file or the memory the server uses.
+**Reason:** the charge counts the retained body, query and header bytes. Handling changes none of those fields, so it needs no additional capacity. The charge does not measure the database file or server memory.
 
 **Tests:** `compliance/inbound-bounds.test.ts › takes a second receipt at exactly twice the charge of the first and refuses it one byte under`, `compliance/inbound-webhooks.test.ts › counts query metadata when every retained body has zero bytes`.
 
@@ -908,19 +936,35 @@ An address is a credential, so a log that anyone can read must not hold one.
 
 When the server logs a request to an inbound address, the server MUST write its path as `/inbound/****` and the last four characters of the address.
 
-**Tests:** `compliance/inbound-logs.test.ts › writes no address, header, query or body of a receipt, where another door's path is written`.
+**Tests:** `compliance/inbound-logs.test.ts › writes no address, header, query or body of a receipt, where another door's path is written`, `compliance/inbound-rate-limit.test.ts › writes the address of a request the window refuses as it writes any other, redacted`.
 
 ### `inbound-webhooks/log-address-hidden`
 
 When the server logs a request to an inbound address, the server MUST NOT write any character of the address but its last four, whatever the case of `/inbound/` in the request, whether a delivery was stored or refused.
 
-**Tests:** `compliance/inbound-logs.test.ts › writes no address, header, query or body of a receipt, where another door's path is written`.
+**Tests:** `compliance/inbound-logs.test.ts › writes no address, header, query or body of a receipt, where another door's path is written`, `compliance/inbound-rate-limit.test.ts › writes the address of a request the window refuses as it writes any other, redacted`.
 
 ### `inbound-webhooks/log-no-content`
 
 When the server logs a request to an inbound address, the server MUST NOT write a header, the query string or the body of the request.
 
 **Tests:** `compliance/inbound-logs.test.ts › writes no address, header, query or body of a receipt, where another door's path is written`.
+
+### `inbound-webhooks/request-id-own`
+
+When a request to an inbound address carries an `X-Request-ID` header, the server MUST answer with an `X-Request-ID` of its own.
+
+**Reason:** an inbound sender is not a Marfa client, and its headers are content (`inbound-webhooks/log-no-content`).
+
+**Tests:** `compliance/inbound-logs.test.ts › writes no address, header, query or body of a receipt, where another door's path is written`, `compliance/inbound-faults.test.ts › keeps the address, headers, query and body out of every report when the statement storing its metadata fails`.
+
+### `inbound-webhooks/trace-headers-not-written`
+
+When a request to an inbound address carries an `X-Request-ID`, `traceparent`, `tracestate` or `baggage` header, the server MUST NOT write its value to its log, a span, a telemetry record or an error report.
+
+**Reason:** a sender chooses these values, and they are as much its content as any other header.
+
+**Tests:** `compliance/inbound-logs.test.ts › writes no address, header, query or body of a receipt, where another door's path is written`, `compliance/inbound-faults.test.ts › keeps the address, headers, query and body out of every report when the statement storing its metadata fails`, `› keeps the address, headers, query and body out of every report when the statement storing its body fails`.
 
 ### `inbound-webhooks/fault-keeps-content`
 
@@ -948,13 +992,13 @@ If a request posts to an address no live endpoint holds, then the server MUST an
 
 **Reason:** an address that is not live is told nothing about the instance's state.
 
-**Tests:** `compliance/inbound-check-order.test.ts › answers an address no live endpoint holds 404 before the rate window and the declared length`.
+**Tests:** `compliance/inbound-check-order.test.ts › answers an address no live endpoint holds 404 before the backlog and the declared length`, `compliance/inbound-rate-limit.test.ts › answers an address no live endpoint holds 404 before the rate window`.
 
 ### `inbound-webhooks/order-window-before-backlog`
 
 While the limiter is on, if a request is past an endpoint's window and its registration's backlog of deliveries is full, then the server MUST answer `429 rate_limited`.
 
-**Tests:** `compliance/inbound-check-order.test.ts › answers the rate window's 429 before the backlog's 503`.
+**Tests:** `compliance/inbound-rate-limit.test.ts › answers the rate window's 429 before the backlog's 503`.
 
 ### `inbound-webhooks/order-backlog-before-length`
 
@@ -966,7 +1010,7 @@ If a request declares a `Content-Length` over the limit and its registration alr
 
 If a request declares a `Content-Length` over the limit while its registration's unhandled bodies hold `inbound_backlog_bytes` bytes or the registration retains `inbound_retained_deliveries` deliveries or `inbound_retained_bytes` bytes, then the server MUST answer `413 request_too_large`.
 
-**Reason:** of the bounds on what a registration holds, the server checks only the count of unhandled deliveries before it reads a body; the bytes of unhandled bodies and what the registration retains are checked as the body is stored.
+**Reason:** of the bounds on what a registration holds, a declared length over the limit is told its 413 after the count of unhandled deliveries only; the other bounds are judged for a declared length within the limit, and again as the body is stored.
 
 **Tests:** `compliance/inbound-check-order.test.ts › answers a declared length over the limit 413 before the backlog's bytes and the retained capacity's 503`.
 
@@ -1026,16 +1070,16 @@ When the current registration for a source is removed, the server MUST remove th
 
 If the registration binding changes while an inbound body arrives, then the server MUST answer `404 not_found`.
 
-**Tests:** `compliance/inbound-source-continuity.test.ts › keeps the endpoint rate window across takeover and refuses an already arriving body`.
+**Tests:** `compliance/inbound-source-continuity.test.ts › refuses an already arriving body after a takeover`.
 
 ### `inbound-webhooks/source-binding-no-receipt`
 
 If the registration binding changes while an inbound body arrives, then the server MUST NOT store a delivery for that request.
 
-**Tests:** `compliance/inbound-source-continuity.test.ts › keeps the endpoint rate window across takeover and refuses an already arriving body`.
+**Tests:** `compliance/inbound-source-continuity.test.ts › refuses an already arriving body after a takeover`.
 
 ### `inbound-webhooks/source-limits-preserved`
 
 When a source's registration changes, the server MUST keep its endpoint rate windows, source capacity accounting, stored receipt charges and retention ages unchanged.
 
-**Tests:** `compliance/inbound-source-continuity.test.ts › keeps the endpoint rate window across takeover and refuses an already arriving body`, `› keeps source endpoint and retained capacity across registration replacement`.
+**Tests:** `compliance/inbound-rate-limit.test.ts › keeps the endpoint's window when a successor key takes its source over`, `compliance/inbound-source-continuity.test.ts › keeps source endpoint and retained capacity across registration replacement`.
