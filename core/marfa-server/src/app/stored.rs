@@ -190,6 +190,56 @@ pub async fn change(app: &Arc<App>, write: Write, changes: Vec<Change>) -> Resul
     .await
 }
 
+/// Reads a `setting` line as the row it stores. The two addresses name where an instance
+/// answers, which a move changes, so a line naming either is a damaged archive.
+pub fn archived(line: &serde_json::Value) -> Result<(String, String)> {
+    let key = line
+        .get("key")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let refused =
+        |why: String| Refusal::validation(format!("The archive carries a setting {why}."));
+    let entry = registry::entry(key)
+        .filter(|entry| {
+            ![
+                registry::ADDRESSES.entry.key,
+                registry::SIGN_IN_ADDRESS.entry.key,
+            ]
+            .contains(&entry.key)
+        })
+        .ok_or_else(|| refused(format!("this instance does not take: {key}")))?;
+    let value = line
+        .get("value")
+        .ok_or_else(|| refused(format!("with no value: {key}")))?;
+    let text = entry
+        .row_text_of_json(value)
+        .and_then(|text| entry.row_text(&text))
+        .map_err(|rule| refused(format!("{key} whose value {rule}")))?;
+    Ok((key.to_string(), text))
+}
+
+/// Stores each archived setting the instance has none stored for, judged together with the
+/// instance's own as `/config` judges them, and answers how many it stored and how many it left.
+pub fn restore(
+    tx: &Transaction<'_>,
+    app: &App,
+    archived: &[(String, String)],
+) -> Result<(usize, usize)> {
+    let mut stored = rows(tx)?;
+    let held = archived.len();
+    let added: Vec<&(String, String)> = archived
+        .iter()
+        .filter(|(key, _)| !stored.iter().any(|(held, _)| held == key))
+        .collect();
+    stored.extend(added.iter().map(|&row| row.clone()));
+    let touched: Vec<&str> = added.iter().map(|(key, _)| key.as_str()).collect();
+    super::config::judge_together(app, &stored, &touched)?;
+    for (key, text) in &added {
+        write_row(tx, key, text)?;
+    }
+    Ok((added.len(), held - added.len()))
+}
+
 #[cfg(test)]
 mod tests {
     use rusqlite::Connection;

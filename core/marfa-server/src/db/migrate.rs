@@ -1,6 +1,6 @@
-//! The migrations built into the program, applied to a new or unfinished file in one
-//! transaction. `user_version` records which build's schema the file holds, and a file
-//! at any other version is refused.
+//! The migrations built into the program, applied in one transaction to a new or unfinished
+//! file, or from its version on to a file an earlier build wrote. `user_version` records which
+//! build's schema the file holds, and a file a newer build wrote is refused.
 
 use rusqlite::{Connection, TransactionBehavior};
 
@@ -27,6 +27,8 @@ pub enum Standing {
     Current,
     /// New, or left partway through making its tables and holding no rows.
     Unfinished,
+    /// Written whole by an earlier build, at this version.
+    Behind(u32),
 }
 
 fn latest(migrations: &[Migration]) -> u32 {
@@ -66,14 +68,51 @@ pub fn judge(
         )));
     }
     if version > 0 && version < newest {
-        return Err(not_this_builds(
-            label,
-            &format!("it is at schema version {version} and this build's is {newest}"),
-        ));
+        let count = migrations
+            .iter()
+            .take_while(|migration| migration.version <= version)
+            .count();
+        let earlier = migrations.get(..count).unwrap_or_default();
+        if earlier.last().map(|migration| migration.version) != Some(version) {
+            return Err(not_this_builds(
+                label,
+                &format!("this build has no schema version {version}"),
+            ));
+        }
+        let declared = schema::declared(earlier).map_err(read)?;
+        let differences = schema::compare(conn, &declared).map_err(read)?;
+        if !differences.found.is_empty() || !differences.missing_tables.is_empty() {
+            let mut found = differences.found;
+            found.extend(
+                differences
+                    .missing_tables
+                    .iter()
+                    .map(|missing| format!("the file lacks the {missing} table")),
+            );
+            return Err(not_this_builds(label, &found.join("; ")));
+        }
+        return Ok(Standing::Behind(version));
     }
     let declared = schema::declared(migrations).map_err(read)?;
     let differences = schema::compare(conn, &declared).map_err(read)?;
     judge_differences(conn, differences, version == newest, label)
+}
+
+/// Whether any table but a virtual table's own holds a row.
+pub fn holds_rows(conn: &Connection) -> rusqlite::Result<bool> {
+    let tables: Vec<String> = conn
+        .prepare(
+            "SELECT name FROM sqlite_schema WHERE type = 'table' \
+             AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'",
+        )?
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    for table in tables {
+        if !schema::is_shadow(conn, &table)? && schema::holds_rows(conn, &table)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn judge_differences(
@@ -112,6 +151,19 @@ fn judge_differences(
         }
     }
     Ok(Standing::Unfinished)
+}
+
+/// Applies the migrations after `from` to a file an earlier build wrote whole.
+pub fn upgrade(conn: &mut Connection, migrations: &[Migration], from: u32) -> rusqlite::Result<()> {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    for migration in migrations
+        .iter()
+        .filter(|migration| migration.version > from)
+    {
+        tx.execute_batch(migration.sql)?;
+    }
+    tx.pragma_update(None, "user_version", latest(migrations))?;
+    tx.commit()
 }
 
 /// Applies every migration to a new or unfinished file, which holds no rows.

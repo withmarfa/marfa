@@ -194,6 +194,8 @@ CREATE TABLE IF NOT EXISTS item_versions (
     PRIMARY KEY (item_seq, version)
 ) STRICT;
 
+CREATE INDEX IF NOT EXISTS item_versions_id ON item_versions (id);
+
 CREATE TABLE IF NOT EXISTS link_tombstones (
     type TEXT NOT NULL,
     value TEXT NOT NULL,
@@ -968,6 +970,154 @@ BEGIN
     DELETE FROM enrichment_files WHERE item_seq = OLD.seq AND hash = OLD.hash;
 END;
 
+CREATE TABLE IF NOT EXISTS backup_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    changes INTEGER NOT NULL DEFAULT 0,
+    backed_up INTEGER,
+    last_backup TEXT,
+    last_backup_at TEXT,
+    failures INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    last_failed_at TEXT
+) STRICT;
+
+CREATE TRIGGER IF NOT EXISTS backup_items_inserted AFTER INSERT ON items BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_items_updated AFTER UPDATE ON items BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_items_deleted AFTER DELETE ON items BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_item_tags_inserted AFTER INSERT ON item_tags BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_item_tags_updated AFTER UPDATE ON item_tags BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_item_tags_deleted AFTER DELETE ON item_tags BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_item_extensions_inserted AFTER INSERT ON item_extensions BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_item_extensions_updated AFTER UPDATE ON item_extensions BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_item_extensions_deleted AFTER DELETE ON item_extensions BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_item_versions_inserted AFTER INSERT ON item_versions BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_item_versions_updated AFTER UPDATE ON item_versions BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_item_versions_deleted AFTER DELETE ON item_versions BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_edges_inserted AFTER INSERT ON edges BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_edges_updated AFTER UPDATE ON edges BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_edges_deleted AFTER DELETE ON edges BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_types_inserted AFTER INSERT ON types BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_types_updated AFTER UPDATE ON types BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_types_deleted AFTER DELETE ON types BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_edge_types_inserted AFTER INSERT ON edge_types BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_edge_types_updated AFTER UPDATE ON edge_types BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_edge_types_deleted AFTER DELETE ON edge_types BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_source_names_inserted AFTER INSERT ON source_names BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_source_names_updated AFTER UPDATE ON source_names BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_source_names_deleted AFTER DELETE ON source_names BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_connector_states_inserted AFTER INSERT ON connector_states BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_connector_states_updated AFTER UPDATE ON connector_states BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_connector_states_deleted AFTER DELETE ON connector_states BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_connector_agreements_inserted AFTER INSERT ON connector_agreements BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_connector_agreements_updated AFTER UPDATE ON connector_agreements BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_connector_agreements_deleted AFTER DELETE ON connector_agreements BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_settings_inserted AFTER INSERT ON settings
+WHEN NEW.key <> 'health_probe'
+BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_settings_updated AFTER UPDATE ON settings
+WHEN NEW.key <> 'health_probe'
+BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS backup_settings_deleted AFTER DELETE ON settings
+WHEN OLD.key <> 'health_probe'
+BEGIN
+    INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
+END;
 -- Source takeover changes the binding without deleting endpoints or deliveries.
 CREATE TABLE IF NOT EXISTS inbound_sources (
     source TEXT PRIMARY KEY CHECK (length(source) > 0),

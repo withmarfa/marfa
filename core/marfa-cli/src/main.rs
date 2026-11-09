@@ -33,9 +33,10 @@ use std::process::ExitCode;
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::commands::{
-    apps, attention, audit, blobs, config, connectors, docs, edge_types, edges, events, export,
-    extensions, housekeeping, items, keys, login, logout, metadata, metrics, operations, overview,
-    owner, profile, restore, search, sign_ins, sources, status, types, views, webhooks, whoami,
+    apps, attention, audit, backups, blobs, config, connectors, docs, edge_types, edges, events,
+    export, extensions, housekeeping, items, keys, login, logout, metadata, metrics, operations,
+    overview, owner, profile, restore, search, sign_ins, sources, status, types, views, webhooks,
+    whoami,
 };
 use crate::device::DeviceArgs;
 use crate::error::{CliError, DOCS_HINT, Exit, long_help_footer};
@@ -262,9 +263,11 @@ enum Command {
     ///
     /// The archive contains only data the exporting credential could read,
     /// including history allowed by each snapshot's type permissions and blobs
-    /// that credential could read. It does not restore keys, webhooks, or
-    /// configuration. Trashed items are absent unless explicitly exported, for
-    /// example with `export --format archive --state any`.
+    /// that credential could read. It holds no sign-in, keys, apps, or webhooks,
+    /// so set those up again after a restore; the command says so. Settings,
+    /// type icons, source names, and connector state come back only where this
+    /// instance has none. Trashed items are absent unless explicitly exported,
+    /// for example with `export --format archive --state any`.
     ///
     /// Until the first public release, restore only with the server build that
     /// wrote the archive. Archive format 0 does not promise compatibility
@@ -275,6 +278,13 @@ enum Command {
     /// prints it and exits 1 with `blobs_missing`. Upload their bytes again
     /// with `blobs upload` to restore them.
     Restore(restore::RestoreArgs),
+    /// Backups the server puts in its object store on a schedule, and takes
+    /// and restores when asked. Each holds every item, edge and setting, the
+    /// trash included, and no file, which the object store already holds.
+    Backups {
+        #[command(subcommand)]
+        command: backups::BackupsCommand,
+    },
     /// Views: saved lists of items, held as `system.view` and shared by every
     /// app. Writing one needs write on `system.view`.
     Views {
@@ -649,6 +659,7 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         Command::Config { command } => config::run(command, &remote()?, &out),
         Command::Export(args) => export::run(args, &remote()?, &out),
         Command::Restore(args) => restore::run(args, &remote()?, &out),
+        Command::Backups { command } => backups::run(command, &remote()?, &out),
         Command::Views { command } => views::run(command, &remote()?, &out),
         Command::Webhooks { command } => webhooks::run(command, &remote()?, &out),
         Command::Audit(args) => audit::run(args, &remote()?, &out),

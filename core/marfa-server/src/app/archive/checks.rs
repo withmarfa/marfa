@@ -6,7 +6,6 @@ use serde_json::{Map, Value, json};
 
 use crate::app::catalog::Catalog;
 use crate::app::edges::write::judge_restored_ends;
-use crate::app::items::bulk::BULK_REQUEST_BYTES;
 use crate::app::items::write::ruled;
 use crate::app::refusal::{Code, Refusal};
 
@@ -39,6 +38,8 @@ pub struct Refused {
     pub field: Option<String>,
     /// The refusal a restore answers, or for a line it skips, the reason under `code`.
     pub refusal: Refusal,
+    /// Where a restore skips the line rather than refusing the archive, the reason it counts.
+    pub skip: Option<String>,
 }
 
 impl Refused {
@@ -77,6 +78,7 @@ impl At<'_> {
                 Some(field) => refusal.with_detail("field", field),
                 None => refusal,
             },
+            skip: None,
         })
     }
 
@@ -98,6 +100,17 @@ impl At<'_> {
         );
         let mut refused = self.refused(field, Refusal::validation(message));
         refused.refusal = refused.refusal.with_detail("reason", reason);
+        refused.skip = Some(reason.to_string());
+        refused
+    }
+}
+
+impl At<'_> {
+    /// An edge a restore skips, counted under the code `POST /edges` refuses it with.
+    fn skipping(&self, refusal: Refusal) -> Box<Refused> {
+        let reason = refusal.code.wire().to_string();
+        let mut refused = self.refused(None, refusal);
+        refused.skip = Some(reason);
         refused
     }
 }
@@ -130,13 +143,38 @@ fn is_type_id(text: &str) -> bool {
     marfa_rules::grammar::type_id(text).unwrap_or(false)
 }
 
-fn is_writer(value: &Value) -> bool {
-    match value {
-        Value::Null => true,
-        Value::Object(writer) => ["kind", "id", "name"]
-            .iter()
-            .all(|key| writer.get(*key).is_some_and(Value::is_string)),
-        _ => false,
+const WRITER_KINDS: [&str; 4] = ["browser", "app", "key", "local"];
+
+fn printable(text: &str) -> bool {
+    let count = text.chars().count();
+    (1..=200).contains(&count) && !text.chars().any(crate::app::sources::hidden)
+}
+
+/// Where a writer is not `null` or a writer as a version names one, the field that is wrong.
+fn writer_fault(value: &Value) -> Option<&'static str> {
+    let writer = match value {
+        Value::Null => return None,
+        Value::Object(writer) => writer,
+        _ => return Some(""),
+    };
+    let text = |key: &str| writer.get(key).and_then(Value::as_str);
+    if !text("kind").is_some_and(|kind| WRITER_KINDS.contains(&kind)) {
+        return Some("kind");
+    }
+    if !text("id").is_some_and(printable) {
+        return Some("id");
+    }
+    if !text("name").is_some_and(|name| printable(name) && name.trim() == name) {
+        return Some("name");
+    }
+    None
+}
+
+fn writer_field(field: &str, fault: &str) -> String {
+    if fault.is_empty() {
+        field.to_string()
+    } else {
+        format!("{field}.{fault}")
     }
 }
 
@@ -145,11 +183,11 @@ fn size_of(properties: &Value) -> usize {
     serde_json::to_string(properties).map_or(usize::MAX, |text| text.len())
 }
 
-fn oversized(at: &At<'_>, field: &str, properties: &Value) -> Option<Box<Refused>> {
+fn oversized(at: &At<'_>, cap: usize, field: &str, properties: &Value) -> Option<Box<Refused>> {
     let bytes = size_of(properties);
-    (bytes > BULK_REQUEST_BYTES).then(|| {
+    (bytes > cap).then(|| {
         let message = format!(
-            "{} {} on line {} of the archive: {field} is {bytes} bytes, more than the {BULK_REQUEST_BYTES} a \
+            "{} {} on line {} of the archive: {field} is {bytes} bytes, more than the {cap} a \
              write takes.",
             capitalized(at.kind.word()),
             at.id.unwrap_or("with no id"),
@@ -157,7 +195,7 @@ fn oversized(at: &At<'_>, field: &str, properties: &Value) -> Option<Box<Refused
         );
         at.refused(
             Some(field),
-            Refusal::new(Code::RequestTooLarge, message).with_detail("limit_bytes", BULK_REQUEST_BYTES),
+            Refusal::new(Code::RequestTooLarge, message).with_detail("limit_bytes", cap),
         )
     })
 }
@@ -169,8 +207,9 @@ fn state_held(type_id: &str, state: &str) -> bool {
     STATES.contains(&state) && !(system && state == "trashed") && !(!system && state == "revoked")
 }
 
-/// Judges an `items.ndjson.gz` line, the `row`th, as a restore into an instance holding `catalog`.
-pub fn item(catalog: &Catalog, line: &Value, row: usize) -> Result<(), Box<Refused>> {
+/// Judges an `items.ndjson.gz` line, the `row`th, as a restore into an instance holding `catalog`,
+/// whose bulk operations take bodies of `cap` bytes.
+pub fn item(catalog: &Catalog, cap: usize, line: &Value, row: usize) -> Result<(), Box<Refused>> {
     let unnamed = At {
         kind: Kind::Item,
         id: None,
@@ -178,7 +217,7 @@ pub fn item(catalog: &Catalog, line: &Value, row: usize) -> Result<(), Box<Refus
         row,
     };
     let Some(item) = line.get("item").and_then(Value::as_object) else {
-        return Err(unnamed.skipped(None, "malformed", "an item line it cannot read"));
+        return Err(unnamed.invalid("item", "an object"));
     };
     let id = item.get("id").and_then(Value::as_str);
     let type_id = item.get("type").and_then(Value::as_str);
@@ -188,19 +227,34 @@ pub fn item(catalog: &Catalog, line: &Value, row: usize) -> Result<(), Box<Refus
         type_id,
         row,
     };
-    if item.get("id").is_some_and(|id| !id.is_string()) {
+    if item.get("id").is_some_and(|id| {
+        !id.as_str()
+            .is_some_and(|id| marfa_rules::validation::id("id", id).is_ok())
+    }) {
         return Err(at.invalid("id", "an item ID"));
     }
     let Some(type_id) = type_id.filter(|type_id| is_type_id(type_id)) else {
         return Err(at.invalid("type", "a type identifier"));
     };
-    for field in ["created_at", "updated_at"] {
+    for field in ["created_at", "updated_at", "occurred_at"] {
         if item.get(field).is_some_and(|value| !is_instant(value)) {
             return Err(at.invalid(field, "an instant"));
         }
     }
     if item.get("version").is_some_and(|value| !is_version(value)) {
         return Err(at.invalid("version", "a positive safe integer"));
+    }
+    let binned = matches!(
+        item.get("state").and_then(Value::as_str),
+        Some("trashed" | "revoked")
+    );
+    if let Some(trashed_at) = item.get("trashed_at").filter(|value| !value.is_null()) {
+        if !is_instant(trashed_at) {
+            return Err(at.invalid("trashed_at", "an instant or null"));
+        }
+        if !binned {
+            return Err(at.invalid("trashed_at", "null outside the bin and the revoked state"));
+        }
     }
     if item
         .get("tier")
@@ -234,8 +288,8 @@ pub fn item(catalog: &Catalog, line: &Value, row: usize) -> Result<(), Box<Refus
         }
     };
     for field in ["writer", "trashed_by"] {
-        if line.get(field).is_some_and(|value| !is_writer(value)) {
-            return Err(at.invalid(field, "a writer or null"));
+        if let Some(fault) = line.get(field).and_then(writer_fault) {
+            return Err(at.invalid(&writer_field(field, fault), "a writer or null"));
         }
     }
     if line
@@ -248,7 +302,7 @@ pub fn item(catalog: &Catalog, line: &Value, row: usize) -> Result<(), Box<Refus
     history(&at, line.get("versions"), id, version)?;
     if let Some(refused) = item
         .get("properties")
-        .and_then(|properties| oversized(&at, "properties", properties))
+        .and_then(|properties| oversized(&at, cap, "properties", properties))
     {
         return Err(refused);
     }
@@ -256,13 +310,12 @@ pub fn item(catalog: &Catalog, line: &Value, row: usize) -> Result<(), Box<Refus
         for (index, snapshot) in versions.iter().enumerate() {
             if let Some(refused) = snapshot
                 .get("properties")
-                .and_then(|held| oversized(&at, &format!("versions.{index}.properties"), held))
+                .and_then(|held| oversized(&at, cap, &format!("versions.{index}.properties"), held))
             {
                 return Err(refused);
             }
         }
     }
-    lending(&at, line)?;
     let empty = Map::new();
     shape(catalog, &at, type_id, properties.unwrap_or(&empty))
 }
@@ -337,6 +390,9 @@ fn history(
                 return Err(at.invalid(&field(name), "an instant"));
             }
         }
+        if let Some(fault) = snapshot.get("writer").and_then(writer_fault) {
+            return Err(at.invalid(&writer_field(&field("writer"), fault), "a writer or null"));
+        }
         if !snapshot
             .get("source_id")
             .is_some_and(|source_id| source_id.is_null() || source_id.is_string())
@@ -354,37 +410,16 @@ fn history(
     Ok(())
 }
 
-fn lending(at: &At<'_>, line: &Value) -> Result<(), Box<Refused>> {
-    let digests = |value: &Value| {
-        value
-            .as_array()
-            .is_some_and(|list| list.iter().all(Value::is_string))
-    };
-    if line
-        .get("lending_blobs")
-        .is_some_and(|value| !digests(value))
-    {
-        return Err(at.invalid("lending_blobs", "an array of digests"));
-    }
-    if line.get("lending_extensions").is_some_and(|value| {
-        !value
-            .as_object()
-            .is_some_and(|namespaces| namespaces.values().all(digests))
-    }) {
-        return Err(at.invalid("lending_extensions", "an object of digest arrays"));
-    }
-    Ok(())
-}
-
 /// An edge's end, as a restore finds it once the archive's items are written.
 pub struct End<'a> {
     pub type_id: &'a str,
 }
 
 /// Judges an `edges.ndjson.gz` line, the `row`th, whose ends `ends` finds, as a restore into an
-/// instance holding `catalog`.
+/// instance holding `catalog`, whose bulk operations take bodies of `cap` bytes.
 pub fn edge<'a>(
     catalog: &Catalog,
+    cap: usize,
     line: &Value,
     row: usize,
     ends: impl Fn(&str) -> Option<End<'a>>,
@@ -406,6 +441,12 @@ pub fn edge<'a>(
         type_id: edge_type,
         row,
     };
+    if edge.get("id").is_some_and(|id| {
+        !id.as_str()
+            .is_some_and(|id| marfa_rules::validation::id("id", id).is_ok())
+    }) {
+        return Err(at.invalid("id", "an edge ID"));
+    }
     for field in ["created_at", "updated_at"] {
         if edge.get(field).is_some_and(|value| !is_instant(value)) {
             return Err(at.invalid(field, "an instant"));
@@ -421,16 +462,9 @@ pub fn edge<'a>(
     }
     if let Some(refused) = edge
         .get("properties")
-        .and_then(|properties| oversized(&at, "properties", properties))
+        .and_then(|properties| oversized(&at, cap, "properties", properties))
     {
         return Err(refused);
-    }
-    if line.get("lending_blobs").is_some_and(|value| {
-        !value
-            .as_array()
-            .is_some_and(|list| list.iter().all(Value::is_string))
-    }) {
-        return Err(at.invalid("lending_blobs", "an array of digests"));
     }
     let (Some(source_id), Some(target_id), Some(edge_type)) =
         (text(edge, "source_id"), text(edge, "target_id"), edge_type)
@@ -450,13 +484,13 @@ pub fn edge<'a>(
     };
     if source_id == target_id {
         let message = "Edge source and target must be different items";
-        return Err(at.refused(None, Refusal::new(Code::EdgeCycle, message)));
+        return Err(at.skipping(Refusal::new(Code::EdgeCycle, message)));
     }
     let Some(kind) = catalog.edge_kind(edge_type) else {
         return Ok(());
     };
     judge_restored_ends(catalog, kind, (source_id, source.type_id), target.type_id)
-        .map_err(|refusal| at.refused(None, refusal))
+        .map_err(|refusal| at.skipping(refusal))
 }
 
 #[cfg(test)]
@@ -464,6 +498,8 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    const CAP: usize = 16 * 1024 * 1024;
 
     fn line(item: Value) -> Value {
         json!({ "item": item, "metadata": { "tags": [], "extensions": {} } })
@@ -501,24 +537,53 @@ mod tests {
     }
 
     #[test]
+    fn a_writer_is_judged_field_by_field() {
+        assert_eq!(writer_fault(&Value::Null), None);
+        assert_eq!(
+            writer_fault(&json!({ "kind": "key", "id": "k", "name": "Desk" })),
+            None
+        );
+        assert_eq!(writer_fault(&json!("a key")), Some(""));
+        assert_eq!(
+            writer_fault(&json!({ "kind": "robot", "id": "k", "name": "x" })),
+            Some("kind")
+        );
+        assert_eq!(
+            writer_fault(&json!({ "kind": "key", "id": "", "name": "x" })),
+            Some("id")
+        );
+        assert_eq!(
+            writer_fault(&json!({ "kind": "key", "id": "k", "name": "a\u{7}b" })),
+            Some("name")
+        );
+        assert_eq!(
+            writer_fault(&json!({ "kind": "key", "id": "k", "name": " x" })),
+            Some("name")
+        );
+    }
+
+    #[test]
     fn a_row_its_type_takes_passes() {
         let catalog = Catalog::shipped();
-        assert!(item(&catalog, &line(note(json!({}))), 1).is_ok());
+        assert!(item(&catalog, CAP, &line(note(json!({}))), 1).is_ok());
         let history = json!({ "versions": [snapshot(1), snapshot(2)] });
         let mut held = line(note(json!({})));
         held.as_object_mut()
             .unwrap()
             .extend(history.as_object().unwrap().clone());
-        assert!(item(&catalog, &held, 1).is_ok());
+        assert!(item(&catalog, CAP, &held, 1).is_ok());
     }
 
     #[test]
     fn a_row_in_a_state_its_lifecycle_cannot_produce_is_refused() {
         let catalog = Catalog::shipped();
         let revoked = line(note(json!({ "state": "revoked" })));
-        assert_eq!(field(item(&catalog, &revoked, 1)).as_deref(), Some("state"));
+        assert_eq!(
+            field(item(&catalog, CAP, &revoked, 1)).as_deref(),
+            Some("state")
+        );
         let trashed = line(note(json!({ "state": "trashed" })));
-        assert!(item(&catalog, &trashed, 1).is_ok());
+        assert!(item(&catalog, CAP, &trashed, 1).is_ok());
     }
 
     #[test]
@@ -527,7 +592,7 @@ mod tests {
         for versions in [json!([snapshot(3)]), json!([snapshot(1), snapshot(1)])] {
             let mut held = line(note(json!({})));
             held["versions"] = versions;
-            let refused = field(item(&catalog, &held, 1)).unwrap();
+            let refused = field(item(&catalog, CAP, &held, 1)).unwrap();
             assert!(refused.ends_with(".version"), "{refused}");
         }
     }
@@ -535,25 +600,40 @@ mod tests {
     #[test]
     fn properties_past_the_bulk_cap_are_refused_and_at_it_pass() {
         let catalog = Catalog::shipped();
-        let at = BULK_REQUEST_BYTES - r#"{"t":""}"#.len();
-        let fits =
-            line(json!({ "id": "x", "type": "user.thing", "properties": { "t": "a".repeat(at) } }));
-        assert!(item(&catalog, &fits, 1).is_ok());
-        let over = line(
-            json!({ "id": "x", "type": "user.thing", "properties": { "t": "a".repeat(at + 1) } }),
+        let at = CAP - r#"{"t":""}"#.len();
+        let fits = line(
+            json!({ "id": "01a1bdba-8640-72ba-b7d6-9e27d94e7540", "type": "user.thing", "properties": { "t": "a".repeat(at) } }),
         );
-        let refused = item(&catalog, &over, 1).unwrap_err();
+        assert!(item(&catalog, CAP, &fits, 1).is_ok());
+        let over = line(
+            json!({ "id": "01a1bdba-8640-72ba-b7d6-9e27d94e7540", "type": "user.thing", "properties": { "t": "a".repeat(at + 1) } }),
+        );
+        let refused = item(&catalog, CAP, &over, 1).unwrap_err();
         assert_eq!(refused.refusal.code, Code::RequestTooLarge);
         assert_eq!(refused.field.as_deref(), Some("properties"));
     }
 
     #[test]
+    fn the_cap_is_the_one_the_instance_sets() {
+        let catalog = Catalog::shipped();
+        let row = line(
+            json!({ "id": "01a1bdba-8640-72ba-b7d6-9e27d94e7540", "type": "user.thing", "properties": { "t": "a".repeat(100) } }),
+        );
+        let size = r#"{"t":""}"#.len() + 100;
+        assert!(item(&catalog, size, &row, 1).is_ok());
+        let refused = item(&catalog, size - 1, &row, 1).unwrap_err();
+        assert_eq!(refused.refusal.code, Code::RequestTooLarge);
+    }
+
+    #[test]
     fn a_row_of_a_type_nothing_registers_keeps_its_shape_and_a_shipped_type_does_not() {
         let catalog = Catalog::shipped();
-        let orphan = line(json!({ "id": "x", "type": "user.gone", "properties": { "n": 1 } }));
-        assert!(item(&catalog, &orphan, 1).is_ok());
+        let orphan = line(
+            json!({ "id": "01a1bdba-8640-72ba-b7d6-9e27d94e7540", "type": "user.gone", "properties": { "n": 1 } }),
+        );
+        assert!(item(&catalog, CAP, &orphan, 1).is_ok());
         let wrong = line(note(json!({ "properties": { "title": 7 } })));
-        let refused = item(&catalog, &wrong, 1).unwrap_err();
+        let refused = item(&catalog, CAP, &wrong, 1).unwrap_err();
         assert_eq!(refused.refusal.code, Code::InvalidProperties);
         assert_eq!(refused.field.as_deref(), Some("properties.title"));
     }
@@ -566,22 +646,38 @@ mod tests {
                 type_id: "core.note",
             })
         };
-        let edge_line = |edge_type: &str, target: &str| {
+        let edge_with = |id: Value, edge_type: &str, target: &str| {
             json!({ "edge": {
-                "id": "e", "source_id": "a", "target_id": target, "edge_type": edge_type,
+                "id": id, "source_id": "a", "target_id": target, "edge_type": edge_type,
                 "version": 1, "properties": {},
             }, "lending_blobs": [] })
         };
-        assert!(edge(&catalog, &edge_line("about", "b"), 1, ends).is_ok());
-        assert!(edge(&catalog, &edge_line("user.gone", "b"), 1, ends).is_ok());
-        let bad = edge(&catalog, &edge_line("Not An Id", "b"), 1, ends).unwrap_err();
+        let edge_line = |edge_type: &str, target: &str| {
+            edge_with(
+                json!("01a1bdba-8640-72ba-b7d6-9e27d94e7541"),
+                edge_type,
+                target,
+            )
+        };
+        assert!(edge(&catalog, CAP, &edge_line("about", "b"), 1, ends).is_ok());
+        for id in [
+            json!("e"),
+            json!(7),
+            json!("01A1BDBA-8640-72BA-B7D6-9E27D94E7541"),
+        ] {
+            let refused = edge(&catalog, CAP, &edge_with(id, "about", "b"), 1, ends).unwrap_err();
+            assert_eq!(refused.field.as_deref(), Some("id"));
+            assert!(refused.skip.is_none());
+        }
+        assert!(edge(&catalog, CAP, &edge_line("user.gone", "b"), 1, ends).is_ok());
+        let bad = edge(&catalog, CAP, &edge_line("Not An Id", "b"), 1, ends).unwrap_err();
         assert_eq!(bad.field.as_deref(), Some("edge_type"));
-        let missing = edge(&catalog, &edge_line("about", "missing"), 1, ends).unwrap_err();
+        let missing = edge(&catalog, CAP, &edge_line("about", "missing"), 1, ends).unwrap_err();
         assert_eq!(
             missing.refusal.details.unwrap()["reason"],
             "endpoint_missing"
         );
-        let looped = edge(&catalog, &edge_line("about", "a"), 1, ends).unwrap_err();
+        let looped = edge(&catalog, CAP, &edge_line("about", "a"), 1, ends).unwrap_err();
         assert_eq!(looped.refusal.code, Code::EdgeCycle);
     }
 }

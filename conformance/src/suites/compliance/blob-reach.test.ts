@@ -646,6 +646,7 @@ describe("who may read and upload a blob", () => {
           ),
         }),
       },
+      lineFile("instance", ""),
       lineFile(
         "items",
         lines
@@ -664,12 +665,11 @@ describe("who may read and upload a blob", () => {
           .join("\n")
           .concat("\n"),
       ),
+      lineFile("edges", ""),
       ...lines.map((line) => ({
         name: `blobs/${sha256(line.data)}`,
         body: line.data,
       })),
-      lineFile("edges", ""),
-      lineFile("instance", ""),
     ]);
     const restored = await getOwnerClient().restoreArchive(archive);
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
@@ -2008,6 +2008,7 @@ describe("which write that names a digest lends it", () => {
           ),
         }),
       },
+      lineFile("instance", ""),
       lineFile(
         "items",
         `${noteLine(ids.source, {
@@ -2023,7 +2024,6 @@ describe("which write that names a digest lends it", () => {
         name: `blobs/${sha256(data)}`,
         body: data,
       })),
-      lineFile("instance", ""),
     ]);
     const restored = await getOwnerClient().restoreArchive(archive);
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);

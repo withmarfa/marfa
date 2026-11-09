@@ -19,6 +19,8 @@ const QUEUE_DEPTH: usize = 1024;
 /// refuses only what meets a lock.
 const QUEUE_FLOOR: Duration = Duration::from_millis(250);
 const CHECKPOINT_WAIT: Duration = Duration::from_secs(1);
+/// How long emptying the log waits for readers still on it, holding the writer meanwhile.
+const LOG_EMPTY_WAIT: Duration = Duration::from_millis(250);
 
 const QUEUED: u8 = 0;
 const RUNNING: u8 = 1;
@@ -259,6 +261,30 @@ impl Writer {
     fn waiting_on(&self, budget: Duration) -> Option<Instant> {
         let until = self.pulse.last() + budget.max(QUEUE_FLOOR);
         (until > Instant::now()).then_some(until)
+    }
+
+    /// Moves the log into the database file and truncates it, in the writer's turn. A reader
+    /// still on the log leaves it as it is, for the next time.
+    pub async fn empty_log(&self) {
+        let (done, emptied) = oneshot::channel();
+        let job: Job = Box::new(move |conn| {
+            let checked = conn.busy_timeout(LOG_EMPTY_WAIT).and_then(|()| {
+                conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+            });
+            let _ = done.send(checked);
+        });
+        if self.queue.send(Message::Run(job)).await.is_err() {
+            return;
+        }
+        match emptied.await {
+            Ok(Ok(0)) | Err(_) => {}
+            Ok(Ok(_)) => tracing::debug!("The database log was left for a reader still on it"),
+            Ok(Err(error)) => {
+                tracing::warn!(error = %error, "The database log was not moved into its file");
+            }
+        }
     }
 
     pub async fn stop(&self) {

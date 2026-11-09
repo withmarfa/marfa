@@ -93,7 +93,17 @@ pub struct Report {
     database_write: Component,
     disk: Component,
     blob_storage: Component,
+    backups: Value,
 }
+
+/// Fields of the `backups` object given only to a caller who may read the reasons.
+const BACKUP_DETAIL: [&str; 5] = [
+    "last_backup",
+    "last_backup_at",
+    "failures",
+    "last_error",
+    "last_failed_at",
+];
 
 impl Report {
     pub fn overall(&self) -> Status {
@@ -105,6 +115,7 @@ impl Report {
         ]
         .iter()
         .map(|component| component.status)
+        .chain((self.backups["status"] == "failing").then_some(Status::Degraded))
         .max()
         .unwrap_or(Status::Ok)
     }
@@ -127,6 +138,10 @@ impl Report {
     }
 
     pub fn to_json(&self, with_errors: bool) -> Value {
+        let mut backups = self.backups.clone();
+        if !with_errors && let Some(fields) = backups.as_object_mut() {
+            fields.retain(|key, _| !BACKUP_DETAIL.contains(&key.as_str()));
+        }
         json!({
             "status": self.overall().word(),
             "components": {
@@ -135,6 +150,7 @@ impl Report {
                 "disk": self.disk.to_json(with_errors),
                 "blob_storage": self.blob_storage.to_json(with_errors),
             },
+            "backups": backups,
             "unrecognized_stored_values": { "rows": 0, "scanned": false },
         })
     }
@@ -288,17 +304,19 @@ async fn blob_storage(app: &Arc<App>) -> Component {
 }
 
 pub async fn check(app: &Arc<App>) -> Report {
-    let (database, database_write, disk, blob_storage) = tokio::join!(
+    let (database, database_write, disk, blob_storage, backups) = tokio::join!(
         database(app),
         database_write(app),
         disk(app),
-        blob_storage(app)
+        blob_storage(app),
+        app.backup_health()
     );
     Report {
         database,
         database_write,
         disk,
         blob_storage,
+        backups,
     }
 }
 

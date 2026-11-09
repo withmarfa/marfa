@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { v7 as uuidv7 } from "uuid";
-import { tar, listEntries } from "../../utils/archive.js";
+import { editLineFile, readLineFile } from "../../utils/archive.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -33,16 +33,6 @@ const working = (server: FreshServer) =>
   new MarfaClient({ baseUrl: server.apiUrl, apiKey: server.workingKey });
 const owner = (server: FreshServer) =>
   new MarfaClient({ baseUrl: server.apiUrl, ownerCookie: server.ownerCookie });
-
-/** The archive with one member replaced, every other as it was. */
-function withEntry(archive: Uint8Array, name: string, body: string) {
-  return tar(
-    listEntries(archive).map((entry) => ({
-      name: entry.name,
-      body: entry.name === name ? body : entry.body,
-    })),
-  );
-}
 
 async function archiveOf(client: MarfaClient) {
   const exported = await client.exportArchive({ state: "any" });
@@ -126,15 +116,10 @@ describe("a restore of an edge whose type was force-deleted", () => {
 
     // The export succeeds, carries the edges and not the types.
     const exported = await archiveOf(source);
-    const members = listEntries(exported);
-    const edgeLines = members
-      .find((m) => m.name === "edges.ndjson")!
-      .body.toString();
+    const edgeLines = readLineFile(exported, "edges") ?? "";
     expect(edgeLines).toContain(`"edge_type":"${kept}"`);
     expect(edgeLines).toContain(`"edge_type":"${blocking}"`);
-    const typeLines = members
-      .find((m) => m.name === "types.ndjson")!
-      .body.toString();
+    const typeLines = readLineFile(exported, "instance") ?? "";
     expect(typeLines).not.toContain(kept);
     expect(typeLines).not.toContain(blocking);
 
@@ -264,13 +249,7 @@ describe("a restore of an edge whose type was force-deleted", () => {
         },
       })}\n`;
     const carrying = (extra: string) =>
-      withEntry(
-        exported,
-        "edges.ndjson",
-        listEntries(exported)
-          .find((m) => m.name === "edges.ndjson")!
-          .body.toString() + extra,
-      );
+      editLineFile(exported, "edges", (body) => body + extra);
 
     // A second edge out of the same source breaks the one-to-one the archive
     // itself registers, so it is skipped and the first stays. Beside it, edges

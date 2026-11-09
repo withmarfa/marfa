@@ -117,7 +117,7 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
     } else {
         observed.app.telemetry.begin(request.headers(), &method)
     };
-    let upload = super::blobs::is_upload(&request);
+    let upload = super::blobs::is_upload(&request) || super::restore::is_restore(&request);
     let origin = Origin {
         client_ip: caller_address.map(|address| address.to_string()),
         via: None,

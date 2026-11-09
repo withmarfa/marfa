@@ -282,3 +282,98 @@ pub async fn delete(app: &App, caller: &Caller, id: String, force: bool) -> Resu
     app.publish_catalog().await;
     Ok(())
 }
+
+/// What a restore does with an archive's edge types, judged on the catalog its write holds.
+pub struct Restoring {
+    fresh: Vec<Obj>,
+    pub skipped: usize,
+    pub conflicts: Vec<String>,
+}
+
+impl Restoring {
+    pub fn registered(&self) -> usize {
+        self.fresh.len()
+    }
+
+    pub fn rows(&self) -> Vec<Obj> {
+        self.fresh.clone()
+    }
+}
+
+/// Judges each edge type an archive carries as `POST /edge-types` would register it.
+pub fn plan_restored(catalog: &Catalog, archived: &[Obj]) -> Result<Restoring> {
+    let mut plan = Restoring {
+        fresh: Vec::new(),
+        skipped: 0,
+        conflicts: Vec::new(),
+    };
+    let mut named: Vec<(String, String)> = Vec::new();
+    for body in archived {
+        let id = text_of(body, "id").unwrap_or_default().to_string();
+        if shipped(&id)? {
+            return Err(Refusal::new(
+                Code::Conflict,
+                format!("The archive carries {id}, a core edge type, which cannot be redefined"),
+            ));
+        }
+        let unread = unread_edge_keys(body);
+        if !unread.is_empty() {
+            return Err(refusal_of(EdgeIssues::Schema(unread)));
+        }
+        request_shape(body).map_err(refusal_of)?;
+        if !edge_id(&id) {
+            return Err(Refusal::validation("Invalid edge-type identifier"));
+        }
+        if body.contains_key("extends") || body.contains_key("evolve_constraints") {
+            return Err(Refusal::validation(
+                "A registered edge type does not support `extends` or `evolve_constraints`",
+            ));
+        }
+        let existing = catalog.edge_type(&id);
+        let taken = |name: &str| {
+            named
+                .iter()
+                .find(|(held, _)| held == name)
+                .map(|(_, owner)| owner.clone())
+                .or_else(|| {
+                    holder_of(catalog, name).filter(|owner| *owner != id || existing.is_none())
+                })
+        };
+        let built = edge_type_from_request(body, &taken).map_err(refusal_of)?;
+        match existing {
+            Some(held) if *held == built => plan.skipped += 1,
+            Some(_) => plan.conflicts.push(id),
+            None => {
+                named.push((id.clone(), id.clone()));
+                if let Some(reverse) = text_of(&built, "reverse_name") {
+                    named.push((reverse.to_string(), id.clone()));
+                }
+                plan.fresh.push(built);
+            }
+        }
+    }
+    Ok(plan)
+}
+
+pub fn write_restored(unit: &Unit<'_, '_>, plan: Restoring) -> Result<()> {
+    if plan.fresh.is_empty() {
+        return Ok(());
+    }
+    for built in plan.fresh {
+        let id = text_of(&built, "id").unwrap_or_default().to_string();
+        unit.tx().execute(
+            "INSERT INTO edge_types (id, reverse_name, created_by, definition, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+            params![
+                id,
+                text_of(&built, "reverse_name"),
+                unit.caller.actor().to_string(),
+                Value::Object(built.clone()).to_string(),
+                unit.at,
+            ],
+        )?;
+        unit.audit("edge_type", &id, None)?;
+    }
+    catalog::raise(unit.tx())?;
+    instance::raise_reach(unit.tx())
+}

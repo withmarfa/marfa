@@ -841,3 +841,147 @@ pub(super) fn set_title_key(tx: &Transaction<'_>, seq: i64, key: Option<&str>) -
     )?;
     Ok(())
 }
+
+/// What a restored row keeps beside what a new row has: its version and dates as archived.
+pub(super) struct Restoring<'a> {
+    pub version: i64,
+    pub updated_at: &'a str,
+    pub restored_at: Option<&'a str>,
+}
+
+pub(super) fn insert_restored(
+    tx: &Transaction<'_>,
+    row: &NewRow<'_>,
+    kept: &Restoring<'_>,
+) -> Result<Item> {
+    let mut statement = tx.prepare_cached(
+        "INSERT INTO items (id, type, state, tier, source, source_id, properties, title_key, \
+         version, schema_version, occurred_at, created_at, updated_at, trashed_at, \
+         capture_latitude, capture_longitude, writer_kind, writer_id, writer_name, link, \
+         trashed_by_kind, trashed_by_id, trashed_by_name, restored_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, jsonb(?7), ?8, ?22, ?9, ?10, ?11, ?23, ?12, ?13, ?14, \
+         ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?24)",
+    )?;
+    statement.execute(params![
+        row.id,
+        row.type_id,
+        row.state,
+        row.tier,
+        row.source,
+        row.source_id,
+        row.properties,
+        row.title_key,
+        row.schema_version,
+        row.occurred_at,
+        row.at,
+        row.trashed_at,
+        row.capture_latitude,
+        row.capture_longitude,
+        row.writer.map(|by| &by.kind),
+        row.writer.map(|by| &by.id),
+        row.writer.map(|by| &by.name),
+        row.link,
+        row.trashed_by.map(|by| &by.kind),
+        row.trashed_by.map(|by| &by.id),
+        row.trashed_by.map(|by| &by.name),
+        kept.version,
+        kept.updated_at,
+        kept.restored_at,
+    ])?;
+    clear_tombstones(tx, row.type_id, row.link, row.source, row.source_id)?;
+    stored(tx, row.id)
+}
+
+pub(super) struct NewSnapshot<'a> {
+    pub item_seq: i64,
+    pub version: i64,
+    pub id: &'a str,
+    pub properties: &'a str,
+    pub type_id: &'a str,
+    pub tier: Option<&'a str>,
+    pub occurred_at: &'a str,
+    pub source_id: Option<&'a str>,
+    pub writer: Option<&'a Writer>,
+    pub created_at: &'a str,
+}
+
+pub(super) fn insert_snapshot(tx: &Transaction<'_>, snapshot: &NewSnapshot<'_>) -> Result<()> {
+    tx.prepare_cached(
+        "INSERT INTO item_versions (item_seq, version, id, properties, type, tier, occurred_at, \
+         source_id, writer_kind, writer_id, writer_name, created_at) \
+         VALUES (?1, ?2, ?3, jsonb(?4), ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+    )?
+    .execute(params![
+        snapshot.item_seq,
+        snapshot.version,
+        snapshot.id,
+        snapshot.properties,
+        snapshot.type_id,
+        snapshot.tier,
+        snapshot.occurred_at,
+        snapshot.source_id,
+        snapshot.writer.map(|by| &by.kind),
+        snapshot.writer.map(|by| &by.id),
+        snapshot.writer.map(|by| &by.name),
+        snapshot.created_at,
+    ])?;
+    Ok(())
+}
+
+const SNAPSHOT_BATCH: usize = 500;
+
+/// The ids of `ids` that the instance's history already holds, looked up in batches.
+pub(super) fn snapshot_ids(
+    tx: &Transaction<'_>,
+    ids: impl Iterator<Item = String>,
+) -> Result<std::collections::HashSet<String>> {
+    let mut held = std::collections::HashSet::new();
+    let mut ids = ids.peekable();
+    let mut batch = Vec::with_capacity(SNAPSHOT_BATCH);
+    while ids.peek().is_some() {
+        batch.clear();
+        batch.extend(ids.by_ref().take(SNAPSHOT_BATCH));
+        let marks = vec!["?"; batch.len()].join(", ");
+        let mut statement = tx.prepare_cached(&format!(
+            "SELECT id FROM item_versions WHERE id IN ({marks})"
+        ))?;
+        let mut rows = statement.query(params_from_iter(batch.iter()))?;
+        while let Some(row) = rows.next()? {
+            held.insert(row.get(0)?);
+        }
+    }
+    Ok(held)
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::{Connection, StatementStatus};
+
+    use super::*;
+    use crate::db::migrate::MIGRATIONS;
+
+    #[test]
+    fn a_snapshot_lookup_costs_the_ids_asked_for_and_not_the_history_held() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        conn.pragma_update(None, "foreign_keys", false).unwrap();
+        let tx = conn.transaction().unwrap();
+        let id = |at: u32| format!("01a1bdba-8640-72ba-b7d6-{at:012x}");
+        for at in 0..5_000u32 {
+            tx.execute(
+                "INSERT INTO item_versions (item_seq, version, id, properties, type, occurred_at, \
+                 created_at) VALUES (?1, 1, ?2, X'', 'core.note', '', '')",
+                params![at, id(at)],
+            )
+            .unwrap();
+        }
+        let asked = [id(7), id(4_000), id(9_999)];
+        let held = snapshot_ids(&tx, asked.iter().cloned()).unwrap();
+        assert_eq!(held, [id(7), id(4_000)].into_iter().collect());
+        let statement = tx
+            .prepare_cached("SELECT id FROM item_versions WHERE id IN (?, ?, ?)")
+            .unwrap();
+        let steps = statement.get_status(StatementStatus::VmStep);
+        assert!(steps < 100, "{steps} steps for three ids among 5,000 held");
+    }
+}

@@ -13,9 +13,14 @@ use crate::app::access::Caller;
 use crate::app::faults::{Faults, HOLD_BULK_PAGE};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::db::Pulse;
+use crate::settings::registry::MAX_BULK_REQUEST_BYTES;
 
-/// The largest body the bulk write operations take, and so the largest row a restore takes.
-pub const BULK_REQUEST_BYTES: usize = 16 * 1024 * 1024;
+impl App {
+    /// The largest body the bulk write operations take, and so the largest row a restore takes.
+    pub fn bulk_cap(&self) -> usize {
+        usize::try_from(self.settings.live().get(MAX_BULK_REQUEST_BYTES)).unwrap_or(usize::MAX)
+    }
+}
 
 const UNKNOWN_OUTCOME: &str = "The entry may have been written, but its commit could not be \
                                confirmed. Read its current state before retrying this entry; do \

@@ -4,6 +4,7 @@
 use std::fs::File;
 use std::io;
 use std::sync::Arc;
+use std::time::Duration;
 
 use bytes::Bytes;
 use chrono::DateTime;
@@ -43,9 +44,17 @@ struct Out<'a> {
     caller: &'a Caller,
     sender: &'a Sender,
     mtime: u64,
+    /// How long the reader may take no bytes before the archive is given up on.
+    idle: Duration,
 }
 
-pub async fn archive(app: Arc<App>, caller: Caller, prepared: Prepared, sender: Sender) {
+pub async fn archive(
+    app: Arc<App>,
+    caller: Caller,
+    prepared: Prepared,
+    sender: Sender,
+    idle: Duration,
+) {
     let mtime = DateTime::parse_from_rfc3339(&prepared.created_at)
         .map_or(0, |at| u64::try_from(at.timestamp()).unwrap_or(0));
     let out = Out {
@@ -53,6 +62,7 @@ pub async fn archive(app: Arc<App>, caller: Caller, prepared: Prepared, sender: 
         caller: &caller,
         sender: &sender,
         mtime,
+        idle,
     };
     match out.whole(&prepared).await {
         Ok(()) => sender.finish(),
@@ -64,8 +74,7 @@ pub async fn archive(app: Arc<App>, caller: Caller, prepared: Prepared, sender: 
 
 impl Out<'_> {
     async fn emit(&self, bytes: Bytes) -> Result<(), Stop> {
-        let idle = self.app.blob_read_idle();
-        match tokio::time::timeout(idle, self.sender.chunks.send(bytes)).await {
+        match tokio::time::timeout(self.idle, self.sender.chunks.send(bytes)).await {
             Ok(Ok(())) => Ok(()),
             _ => Err(Stop::Gone),
         }

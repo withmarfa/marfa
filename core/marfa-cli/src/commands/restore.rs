@@ -14,13 +14,26 @@ pub struct RestoreArgs {
     pub file: PathBuf,
 }
 
+/// The server answers a refusal it makes before reading the body without the body being sent.
 pub fn request(args: &RestoreArgs) -> Request {
-    Request::post(&["restore"]).file(args.file.clone(), "application/x-tar")
+    Request::post(&["restore"])
+        .file(args.file.clone(), "application/x-tar")
+        .header("Expect", "100-continue")
 }
 
 pub fn run(args: RestoreArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {
-    let answer = remote.json(&request(&args))?;
-    out.value(&answer)?;
+    answered(&remote.json(&request(&args))?, out)
+}
+
+/// Prints a restore's answer, says what is set up again, and fails on blobs it lacks.
+pub fn answered(answer: &serde_json::Value, out: &Printer) -> Result<(), CliError> {
+    out.value(answer)?;
+    if let Some(note) = answer
+        .get("set_up_again")
+        .and_then(serde_json::Value::as_str)
+    {
+        eprintln!("{note}");
+    }
     let missing: Vec<String> = answer
         .get("blobs_missing")
         .and_then(serde_json::Value::as_array)

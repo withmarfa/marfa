@@ -4,13 +4,18 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use rusqlite::{Connection, ErrorCode, OpenFlags};
+use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension};
 
 use super::migrate::{self, Migration, Standing};
+use super::volume;
+use crate::app::faults::{Faults, Volume};
 use crate::failure::Failure;
 use crate::settings::DatabasePath;
+use crate::settings::registry::{DISK_RESERVE_BYTES, Seeds, Snapshot};
 
 const HEADER: &[u8; 16] = b"SQLite format 3\0";
+/// What the log is cut back to once a checkpoint has moved it into the file.
+const JOURNAL_SIZE_LIMIT: i64 = 64 * 1024 * 1024;
 
 #[derive(Debug)]
 pub struct Options {
@@ -18,7 +23,12 @@ pub struct Options {
     pub write_wait: Duration,
     pub readers: usize,
     pub migrations: &'static [Migration],
+    /// The free space a copy before an upgrade must leave, unless the file stores its own.
+    pub reserve: u64,
 }
+
+/// The suffix of the copy kept beside the database from before its last upgrade.
+pub const BEFORE_UPGRADE: &str = ".before-upgrade";
 
 pub struct Opened {
     pub writer: Connection,
@@ -90,7 +100,12 @@ fn refused_open(label: &str, error: rusqlite::Error) -> Failure {
 
 /// Leaves the file's bytes and folder as they were: with no log to apply, SQLite is told
 /// not to look for one, since a reader of a WAL file would make side files.
-fn judge_file(path: &Path, options: &Options, label: &str) -> Result<Standing, Failure> {
+fn judge_file(
+    path: &Path,
+    options: &Options,
+    faults: &Faults,
+    label: &str,
+) -> Result<Standing, Failure> {
     let unreadable =
         |error: std::io::Error| Failure::start(format!("{label} could not be read: {error}"));
     let mut header = [0u8; 16];
@@ -120,7 +135,123 @@ fn judge_file(path: &Path, options: &Options, label: &str) -> Result<Standing, F
     inspected
         .busy_timeout(options.write_wait)
         .map_err(|error| refused_open(label, error))?;
-    migrate::judge(&inspected, options.migrations, label)
+    let standing = migrate::judge(&inspected, options.migrations, label)?;
+    if let Standing::Behind(from) = standing {
+        let holds = migrate::holds_rows(&inspected).map_err(|error| refused_open(label, error))?;
+        if holds {
+            copy_before_upgrade(&inspected, path, options, faults, label, from)?;
+        }
+    }
+    Ok(standing)
+}
+
+fn sibling(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(suffix);
+    PathBuf::from(name)
+}
+
+/// The reserve the file stores, read by the settings' own rule, or the one the server was
+/// started with where it stores none. A stored reserve that does not read refuses the start.
+fn reserve_of(conn: &Connection, options: &Options, label: &str) -> Result<u64, Failure> {
+    let key = DISK_RESERVE_BYTES.entry.key;
+    let unread = |error: rusqlite::Error| {
+        Failure::start(format!(
+            "{label} was not upgraded, because its stored settings could not be read: {error}. \
+             Nothing was changed."
+        ))
+    };
+    let has_settings: bool = conn
+        .query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'settings')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(unread)?;
+    if !has_settings {
+        return Ok(options.reserve);
+    }
+    let stored: Option<String> = conn
+        .query_row("SELECT value FROM settings WHERE key = ?1", [key], |row| {
+            row.get(0)
+        })
+        .optional()
+        .map_err(unread)?;
+    let rows: Vec<(String, String)> = stored
+        .into_iter()
+        .map(|text| (key.to_string(), text))
+        .collect();
+    let resolved = Snapshot::resolve(&Seeds::new(), &rows, 0);
+    if resolved.unreadable().contains(&key) {
+        return Err(Failure::start(format!(
+            "{label} was not upgraded, because its stored setting {key} does not read as {}. \
+             Correct that row, then start again. Nothing was changed.",
+            DISK_RESERVE_BYTES.entry.words().to_lowercase()
+        )));
+    }
+    Ok(match resolved.stored(DISK_RESERVE_BYTES.entry) {
+        Some(_) => resolved.get(DISK_RESERVE_BYTES),
+        None => options.reserve,
+    })
+}
+
+/// Writes the file as it stands to `<file>.before-upgrade`, in place of the last such copy,
+/// or refuses the start with nothing changed beside it.
+fn copy_before_upgrade(
+    conn: &Connection,
+    path: &Path,
+    options: &Options,
+    faults: &Faults,
+    label: &str,
+    from: u32,
+) -> Result<(), Failure> {
+    let copy = sibling(path, BEFORE_UPGRADE);
+    let partial = sibling(path, &format!("{BEFORE_UPGRADE}.partial"));
+    let refused = |why: String| {
+        Failure::start(format!(
+            "{label} was not upgraded from schema version {from}, because the copy kept \
+             before an upgrade could not be written to {}: {why}. Nothing was changed.",
+            copy.display()
+        ))
+    };
+    let pages = |pragma: &str| {
+        conn.pragma_query_value(None, pragma, |row| row.get::<_, i64>(0))
+            .map(|count| u64::try_from(count).unwrap_or(0))
+            .map_err(|error| refused(error.to_string()))
+    };
+    let needed =
+        pages("page_count")?.saturating_sub(pages("freelist_count")?) * pages("page_size")?;
+    let reserve = reserve_of(conn, options, label)?;
+    let folder = path.parent().unwrap_or(Path::new("."));
+    let free = match faults.free(Volume::Database) {
+        Some(set) => set,
+        None => volume::free_bytes(folder),
+    };
+    if let Some(free) = free
+        && free < needed.saturating_add(reserve)
+    {
+        return Err(refused(format!(
+            "it needs {needed} bytes and must leave the disk reserve of {reserve} bytes, \
+             and {free} bytes are free"
+        )));
+    }
+    let written = (|| -> std::io::Result<()> {
+        match std::fs::remove_file(&partial) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
+        conn.execute("VACUUM INTO ?1", [partial.to_string_lossy().as_ref()])
+            .map_err(std::io::Error::other)?;
+        File::open(&partial)?.sync_all()?;
+        std::fs::rename(&partial, &copy)?;
+        File::open(folder)?.sync_all()
+    })();
+    if let Err(error) = written {
+        let _ = std::fs::remove_file(&partial);
+        return Err(refused(error.to_string()));
+    }
+    tracing::info!(copy = %copy.display(), from, "The database was copied before its upgrade");
+    Ok(())
 }
 
 fn prepare_writer(conn: &Connection, options: &Options) -> rusqlite::Result<()> {
@@ -128,6 +259,7 @@ fn prepare_writer(conn: &Connection, options: &Options) -> rusqlite::Result<()> 
     conn.pragma_update_and_check(None, "journal_mode", "WAL", |_| Ok(()))?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     conn.pragma_update(None, "foreign_keys", true)?;
+    conn.pragma_update(None, "journal_size_limit", JOURNAL_SIZE_LIMIT)?;
     Ok(())
 }
 
@@ -139,7 +271,7 @@ fn prepare_reader(conn: &Connection, options: &Options) -> rusqlite::Result<()> 
 }
 
 /// Nothing is written until the judgment has passed.
-pub fn open(options: &Options) -> Result<Opened, Failure> {
+pub fn open(options: &Options, faults: &Faults) -> Result<Opened, Failure> {
     let target = Target::of(&options.path);
     let label = target.label();
     let standing = match &target {
@@ -152,7 +284,7 @@ pub fn open(options: &Options) -> Result<Opened, Failure> {
                     ))
                 })?;
             }
-            judge_file(path, options, &label)?
+            judge_file(path, options, faults, &label)?
         }
         Target::Uri(_) => {
             let read_only = OpenFlags::SQLITE_OPEN_READ_ONLY;
@@ -163,6 +295,12 @@ pub fn open(options: &Options) -> Result<Opened, Failure> {
         }
         Target::Memory(_) => Standing::Unfinished,
     };
+    if matches!(standing, Standing::Behind(_)) && !matches!(target, Target::File(_)) {
+        return Err(Failure::start(format!(
+            "{label} is at an earlier schema version, and only a database named by its path is \
+             upgraded, since a copy is kept beside it first"
+        )));
+    }
 
     let write_flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE;
     let refused = |error| refused_open(&label, error);
@@ -172,6 +310,9 @@ pub fn open(options: &Options) -> Result<Opened, Failure> {
         Standing::Current => {}
         Standing::Unfinished => {
             migrate::complete(&mut writer, options.migrations).map_err(refused)?;
+        }
+        Standing::Behind(from) => {
+            migrate::upgrade(&mut writer, options.migrations, from).map_err(refused)?;
         }
     }
 

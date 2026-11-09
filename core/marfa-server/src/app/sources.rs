@@ -246,6 +246,120 @@ pub(crate) fn named(tx: &Transaction<'_>) -> Result<Vec<Named>> {
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
+/// A `source` line of an archive, under the code its rows are restored with.
+#[derive(Clone, Debug)]
+pub struct Archived {
+    line: String,
+    source: String,
+    name: Option<String>,
+    mark: Option<String>,
+    unknown_mark: bool,
+}
+
+fn damaged(what: String) -> Refusal {
+    Refusal::new(Code::InvalidSchema, format!("The archive carries {what}."))
+}
+
+/// Reads a `source` line, refusing one that is damaged; a mark outside the pinned sets is
+/// kept to be skipped and counted.
+pub fn archived(value: &Value, restored: impl Fn(&str) -> String) -> Result<Archived> {
+    let line = value
+        .as_object()
+        .ok_or_else(|| damaged("a source line that is not an object".into()))?;
+    let code = line
+        .get("source")
+        .and_then(Value::as_str)
+        .ok_or_else(|| damaged("a source line with no source code".into()))?;
+    let source = restored(code);
+    if check_code(code).is_err() || check_code(&source).is_err() {
+        return Err(damaged(format!(
+            "a source line with an invalid code: {code}"
+        )));
+    }
+    let name = match line.get("name") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(held))
+            if name(&Value::from(held.as_str())).ok().flatten().as_deref() == Some(held) =>
+        {
+            Some(held.clone())
+        }
+        Some(_) => return Err(damaged(format!("an invalid name for source {code}"))),
+    };
+    let (mark, unknown_mark) = match line.get("mark") {
+        None | Some(Value::Null) => (None, false),
+        Some(Value::String(held)) => (Some(held.clone()), !icons().contains(held)),
+        Some(_) => return Err(damaged(format!("an invalid mark for source {code}"))),
+    };
+    if name.is_none() && mark.is_none() {
+        return Err(damaged(format!(
+            "a source line for {code} with neither a name nor a mark"
+        )));
+    }
+    Ok(Archived {
+        line: code.to_string(),
+        source,
+        name,
+        mark,
+        unknown_mark,
+    })
+}
+
+/// What a restore did with the archive's source lines.
+#[derive(Debug, Default)]
+pub struct Restored {
+    pub added: usize,
+    pub skipped: usize,
+    pub reasons: std::collections::BTreeMap<String, usize>,
+}
+
+impl Restored {
+    fn skip(&mut self, reason: &str) {
+        self.skipped += 1;
+        *self.reasons.entry(reason.to_string()).or_default() += 1;
+    }
+}
+
+/// Names each source the instance names nothing for. Where two lines land on one code, the
+/// line that carries it wins; a repeated line refuses the archive.
+pub fn restore(tx: &Transaction<'_>, at: &str, lines: &[Archived]) -> Result<Restored> {
+    let mut restored = Restored::default();
+    let mut read = HashSet::new();
+    let mut chosen: Vec<&Archived> = Vec::new();
+    for line in lines {
+        if !read.insert(line.line.as_str()) {
+            return Err(Refusal::validation(format!(
+                "The archive carries more than one name for source {}.",
+                line.line
+            )));
+        }
+        match chosen.iter().position(|held| held.source == line.source) {
+            None => chosen.push(line),
+            Some(at) => {
+                restored.skip("duplicate_code");
+                if line.line == line.source {
+                    chosen[at] = line;
+                }
+            }
+        }
+    }
+    for line in chosen {
+        if line.unknown_mark {
+            restored.skip("unknown_mark");
+            continue;
+        }
+        if set_on(tx, &line.source)? != (None, None) {
+            restored.skip("already_set");
+            continue;
+        }
+        tx.execute(
+            "INSERT INTO source_names (source, name, mark, updated_at) VALUES (?1, ?2, ?3, ?4)",
+            params![line.source, line.name, line.mark, at],
+        )?;
+        restored.added += 1;
+    }
+    Ok(restored)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

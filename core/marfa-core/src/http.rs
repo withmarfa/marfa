@@ -442,6 +442,8 @@ impl Http {
             .max_redirects(0)
             .timeout_connect(Some(Duration::from_secs(10)))
             .timeout_recv_response(Some(recv_response))
+            // Without it ureq sends the body of an `Expect: 100-continue` request after one second.
+            .timeout_await_100(Some(recv_response))
             .timeout_recv_body(Some(recv_body))
             .build();
         Self::with_connector(url, key, config, DefaultConnector::default)

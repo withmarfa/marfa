@@ -698,11 +698,6 @@ describe("what a change runs", () => {
       ["ci-sqlite", "core-checks-linux", "rust-contract", "image"],
     ],
     [
-      "the image's replica fixtures, which the drill's job runs",
-      ["conformance/src/suites/backup/replica-paths.test.ts"],
-      ["ci-sqlite", "workspace", "conformance-offline", "restore-drill"],
-    ],
-    [
       "the script that boots the image",
       ["scripts/check-image.sh"],
       ["ci-sqlite", "workspace", "image"],

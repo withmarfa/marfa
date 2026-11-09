@@ -14,6 +14,8 @@
  */
 
 import { randomBytes } from "node:crypto";
+import { request as httpRequest } from "node:http";
+import { connect } from "node:net";
 import { gzipSync } from "node:zlib";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { v7 as uuidv7 } from "uuid";
@@ -26,6 +28,8 @@ import {
   readLineFile,
   itemsArchive,
   blobHash,
+  type ArchiveFile,
+  type LineFile,
 } from "../../utils/archive.js";
 import type { TestContext } from "../../client/types.js";
 import {
@@ -176,6 +180,31 @@ describe("restore", () => {
     }
   });
 
+  it("keeps a blob whose manifest names a type no header can carry under application/octet-stream", async () => {
+    const data = new Uint8Array(randomBytes(40));
+    const hash = blobHash(data);
+    const restored = await owner.restoreArchive(
+      itemsArchive([], [{ data, mime_type: "text/\ud83d\ude00" }]),
+    );
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    const read = await owner.downloadBlob(hash);
+    expect(read.status).toBe(200);
+    expect(read.headers.get("content-type")).toBe("application/octet-stream");
+    expect(new Uint8Array(read.data)).toEqual(data);
+    // An object store takes the type as a header too, so the blob is copied
+    // there, and replication has nothing left.
+    for (let run = 0; run < 20; run++) {
+      const ran = await owner.runHousekeeping("blob-replicate");
+      if (ran.status === 409) continue;
+      expect(ran.status, JSON.stringify(ran.error)).toBe(200);
+      const left = (ran.data.result as { remaining: number }).remaining;
+      const copies = await owner.listBlobCopies(hash);
+      if (left === 0 && copies.data.data.some((copy) => copy.kind === "s3"))
+        return;
+    }
+    throw new Error("replication never copied the restored blob");
+  });
+
   it("refuses an archive recording a state the type's lifecycle cannot produce, and writes nothing", async () => {
     // `revoked` is a state, and not one the canonical lifecycle reaches, so
     // a note recorded in it is a row no door could have written. The whole
@@ -224,9 +253,7 @@ describe("restore", () => {
     );
     expect(systemRefused.status).toBe(400);
     expect(systemRefused.error?.error.message).toContain(systemId);
-    expect(systemRefused.error?.error.message).toContain(
-      '"active" to "trashed"',
-    );
+    expect(systemRefused.error?.error.details?.field).toBe("state");
     expect((await client.getItem(systemId)).status).toBe(404);
 
     // A value that is no state at all is refused the same way, since the
@@ -244,7 +271,8 @@ describe("restore", () => {
       ]),
     );
     expect(numeric.status).toBe(400);
-    expect(numeric.error?.error.message).toContain('Invalid target state "5"');
+    expect(numeric.error?.error.message).toContain(numbered);
+    expect(numeric.error?.error.details?.field).toBe("state");
     expect((await client.getItem(numbered)).status).toBe(404);
 
     // The same two rows in states the lifecycle contains restore, each in
@@ -364,9 +392,9 @@ describe("restore", () => {
             format: `marfa-archive-v${version}`,
           }),
         },
+        lineFile("instance", ""),
         lineFile("items", items),
         lineFile("edges", ""),
-        lineFile("instance", ""),
       ]);
     };
 
@@ -386,13 +414,13 @@ describe("restore", () => {
     expect((await client.getItem(other)).status).toBe(404);
   });
 
-  /** One archived note of this file's source, as an `items.ndjson` line. */
+  /** One archived note of this file's source, as an `items.ndjson.gz` line. */
   const archivedLine = (id: string, body: string): string => {
-    const lines = readEntry(
+    const lines = readLineFile(
       itemsArchive([
         { id, type: "core.note", source: ctx.source, properties: { body } },
       ]),
-      "items.ndjson",
+      "items",
     );
     if (lines === null) throw new Error("the archive helper wrote no items");
     return lines.trimEnd();
@@ -401,18 +429,23 @@ describe("restore", () => {
     name: "manifest.json",
     body: JSON.stringify({ version: 0, format: "marfa-archive-v0", blobs: {} }),
   };
-  /** The members an archive always carries beside its items, empty. */
-  const noEdgesOrTypes = [lineFile("edges", ""), lineFile("instance", "")];
+  /** An archive of `items`, its other line files empty, then `rest`. */
+  const around = (items: ArchiveFile[], rest: ArchiveFile[] = []): Uint8Array =>
+    tar([
+      manifest,
+      lineFile("instance", ""),
+      ...items,
+      lineFile("edges", ""),
+      ...rest,
+    ]);
 
   it("steps past an entry it does not read", async () => {
     const id = uuidv7();
     const restored = await owner.restoreArchive(
-      tar([
-        manifest,
-        lineFile("items", archivedLine(id, "beside padding") + "\n"),
-        ...noEdgesOrTypes,
-        { name: "padding.bin", body: new Uint8Array(16 * 1024 * 1024) },
-      ]),
+      around(
+        [lineFile("items", archivedLine(id, "beside padding") + "\n")],
+        [{ name: "padding.bin", body: new Uint8Array(16 * 1024 * 1024) }],
+      ),
     );
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     trackItem(ctx, id);
@@ -422,8 +455,7 @@ describe("restore", () => {
   it("refuses a line longer than 64 MiB, and writes nothing", async () => {
     const id = uuidv7();
     const refused = await owner.restoreArchive(
-      tar([
-        manifest,
+      around([
         lineFile(
           "items",
           Buffer.concat([
@@ -431,12 +463,12 @@ describe("restore", () => {
             Buffer.alloc(64 * 1024 * 1024 + 1, "x"),
           ]),
         ),
-        ...noEdgesOrTypes,
       ]),
     );
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("validation_error");
-    expect(refused.error?.error.message).toContain("items.ndjson line 2");
+    expect(refused.error?.error.message).toContain("Line 2 of items.ndjson.gz");
+    expect(refused.error?.error.details?.entry).toBe("items.ndjson.gz");
     expect((await client.getItem(id)).status).toBe(404);
   });
 
@@ -446,24 +478,19 @@ describe("restore", () => {
     const items = (id: string, body: string) =>
       lineFile("items", archivedLine(id, body) + "\n");
     const refused = await owner.restoreArchive(
-      tar([
-        manifest,
-        items(first, "first copy"),
-        items(second, "second copy"),
-        ...noEdgesOrTypes,
-      ]),
+      around([items(first, "first copy"), items(second, "second copy")]),
     );
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("validation_error");
     expect(refused.error?.error.message).toContain(
-      "items.ndjson more than once",
+      "items.ndjson.gz more than once",
     );
     expect((await client.getItem(first)).status).toBe(404);
     expect((await client.getItem(second)).status).toBe(404);
 
     // The witness: either copy alone restores.
     const restored = await owner.restoreArchive(
-      tar([manifest, items(first, "first copy"), ...noEdgesOrTypes]),
+      around([items(first, "first copy")]),
     );
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     trackItem(ctx, first);
@@ -504,28 +531,26 @@ describe("restore", () => {
   });
 });
 
-/** The archive with one member replaced or added, every other as it was. */
-function withEntry(
+/** The archive with one line file's lines replaced, every other entry as it was. */
+function withLines(
   archive: Uint8Array,
-  name: string,
-  body: string,
+  file: LineFile,
+  lines: string,
 ): Uint8Array {
-  const entries = listEntries(archive).map((entry) => ({
-    name: entry.name,
-    body: entry.name === name ? body : entry.body,
-  }));
-  if (!entries.some((entry) => entry.name === name)) {
-    entries.push({ name, body });
-  }
-  return tar(entries);
+  const replaced = lineFile(file, lines);
+  return tar(
+    listEntries(archive).map((entry) =>
+      entry.name === replaced.name ? replaced : entry,
+    ),
+  );
 }
 
 describe("an archive that lacks a member", () => {
   const MEMBERS = [
     "manifest.json",
-    "items.ndjson",
-    "edges.ndjson",
-    "types.ndjson",
+    "instance.ndjson.gz",
+    "items.ndjson.gz",
+    "edges.ndjson.gz",
   ];
 
   /** An archive of one note and one blob that a restore would write. */
@@ -572,7 +597,7 @@ describe("an archive that lacks a member", () => {
     },
   );
 
-  it("refuses a gzip-compressed tar that is no archive, naming every member it lacks", async () => {
+  it("refuses a tar that is no archive, naming every member it lacks", async () => {
     const unrelated = tar([{ name: "notes.txt", body: "not an archive" }]);
     const refused = await owner.restoreArchive(unrelated);
     expect(refused.status, JSON.stringify(refused.error)).toBe(400);
@@ -595,7 +620,9 @@ describe("an archive that lacks a member", () => {
             blobs: {},
           }),
         },
-        ...MEMBERS.slice(1).map((name) => ({ name, body: "" })),
+        lineFile("instance", ""),
+        lineFile("items", ""),
+        lineFile("edges", ""),
       ]),
     );
     expect(nothing.ok, JSON.stringify(nothing.error)).toBe(true);
@@ -638,11 +665,7 @@ describe("an archived item that no instance wrote", () => {
     for (const [what, item, code, field] of cases) {
       const id = uuidv7();
       const refused = await owner.restoreArchive(
-        withEntry(
-          itemsArchive([]),
-          "items.ndjson",
-          good + line({ id, ...item }),
-        ),
+        withLines(itemsArchive([]), "items", good + line({ id, ...item })),
       );
       expect(refused.status, `${what}: ${JSON.stringify(refused.error)}`).toBe(
         400,
@@ -658,7 +681,7 @@ describe("an archived item that no instance wrote", () => {
     // The witness: the first line alone, an item of a type nothing
     // registers, restores.
     const restored = await owner.restoreArchive(
-      withEntry(itemsArchive([]), "items.ndjson", good),
+      withLines(itemsArchive([]), "items", good),
     );
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     trackItem(ctx, witness);
@@ -669,25 +692,27 @@ describe("an archived item that no instance wrote", () => {
 
 describe("a body that is no archive", () => {
   /** An archive of one note that would restore, so a refusal can be told from
-   *  an empty restore by the row it did not write. */
-  function oneNote(): { id: string; archive: Uint8Array; padding: number } {
+   *  an empty restore by the row it did not write, and where its items file
+   *  sits in the tar, so a test can damage the middle of a compressed stream. */
+  function oneNote(): {
+    id: string;
+    archive: Uint8Array;
+    items: number;
+    length: number;
+  } {
     const id = uuidv7();
-    // Random bytes the gzip stream cannot shrink, so there is a middle to damage.
-    const padding = 256 * 1024;
-    const archive = tar([
-      ...listEntries(
-        itemsArchive([
-          {
-            id,
-            type: "core.note",
-            source: ctx.source,
-            properties: { body: "a row an unreadable body must not write" },
-          },
-        ]),
-      ).map((entry) => ({ name: entry.name, body: entry.body })),
-      { name: "padding.bin", body: new Uint8Array(randomBytes(padding)) },
+    // Random text the gzip stream cannot shrink much, so there is a middle to damage.
+    const body = randomBytes(192 * 1024).toString("base64");
+    const archive = itemsArchive([
+      { id, type: "core.note", source: ctx.source, properties: { body } },
     ]);
-    return { id, archive, padding };
+    const entry = listEntries(archive).find(
+      (one) => one.name === "items.ndjson.gz",
+    );
+    if (entry === undefined)
+      throw new Error("the archive helper wrote no items");
+    const items = Buffer.from(archive).indexOf(Buffer.from(entry.body));
+    return { id, archive, items, length: entry.body.length };
   }
 
   it("refuses an empty body, and takes an archive of nothing", async () => {
@@ -701,20 +726,23 @@ describe("a body that is no archive", () => {
     expect(nothing.data).toMatchObject({ imported: 0, duplicates: 0 });
   });
 
-  it("refuses a body that is not a gzip-compressed tar, or whose compressed stream breaks partway, and goes on serving", async () => {
+  it("refuses a body that is not a tar, or whose line file breaks partway, and goes on serving", async () => {
     const whole = oneNote();
-    const gz = Buffer.from(whole.archive);
-    const middle = Math.floor(gz.length / 2);
-    const damaged = Buffer.from(gz);
+    const bytes = Buffer.from(whole.archive);
+    const middle = whole.items + Math.floor(whole.length / 2);
+    const damaged = Buffer.from(bytes);
     randomBytes(64).copy(damaged, middle);
     const bodies: [string, Uint8Array][] = [
-      ["bytes that are not gzip", new Uint8Array(randomBytes(4096))],
+      ["bytes that are not a tar", new Uint8Array(randomBytes(4096))],
       [
-        "a gzip stream of text that is no tar",
+        "a gzip stream of text, which is no tar",
         new Uint8Array(gzipSync(Buffer.from("not a tar ".repeat(200)))),
       ],
-      ["a gzip stream cut short", new Uint8Array(gz.subarray(0, middle))],
-      ["a gzip stream with bytes overwritten", new Uint8Array(damaged)],
+      ["an archive cut short", new Uint8Array(bytes.subarray(0, middle))],
+      [
+        "an items file whose compressed stream breaks partway",
+        new Uint8Array(damaged),
+      ],
     ];
 
     // The witness: the whole archive restores and writes its row.
@@ -793,11 +821,7 @@ describe("what a restore answers", () => {
       },
     })}\n${JSON.stringify({ edge_type: edgeType(ids.edgeType) })}\n`;
     const archive = (extraEdges: Record<string, unknown>[] = []) =>
-      withEntry(
-        withEntry(base, "edges.ndjson", edges(extraEdges)),
-        "types.ndjson",
-        types,
-      );
+      withLines(withLines(base, "edges", edges(extraEdges)), "instance", types);
     return { a, b, edgeId, hash, archive };
   }
 
@@ -833,7 +857,17 @@ describe("what a restore answers", () => {
         "sources_skipped_reasons",
         "types_registered",
         "types_skipped",
+        "settings_added",
+        "settings_skipped",
+        "connector_states_added",
+        "connector_states_skipped",
+        "connector_agreements_added",
+        "connector_agreements_skipped",
+        "set_up_again",
       ].sort(),
+    );
+    expect(first.data.set_up_again).toContain(
+      "sign-in, keys, apps or webhooks",
     );
     expect(first.data).toEqual({
       imported: 2,
@@ -853,6 +887,13 @@ describe("what a restore answers", () => {
       sources_added: 0,
       sources_skipped: 0,
       sources_skipped_reasons: {},
+      settings_added: 0,
+      settings_skipped: 0,
+      connector_states_added: 0,
+      connector_states_skipped: 0,
+      connector_agreements_added: 0,
+      connector_agreements_skipped: 0,
+      set_up_again: expect.any(String),
     });
     await expectMatchesSchema("POST", "/restore", 200, first.data);
 
@@ -892,6 +933,13 @@ describe("what a restore answers", () => {
       sources_added: 0,
       sources_skipped: 0,
       sources_skipped_reasons: {},
+      settings_added: 0,
+      settings_skipped: 0,
+      connector_states_added: 0,
+      connector_states_skipped: 0,
+      connector_agreements_added: 0,
+      connector_agreements_skipped: 0,
+      set_up_again: expect.any(String),
     });
     await expectMatchesSchema("POST", "/restore", 200, again.data);
   });
@@ -916,10 +964,10 @@ describe("what a restore answers", () => {
       edge_type: edgeTypeId,
       properties,
     });
-    const archive = withEntry(
-      withEntry(
+    const archive = withLines(
+      withLines(
         base,
-        "edges.ndjson",
+        "edges",
         [
           edge(fits, b, { label: "fits" }),
           edge(wrongType, c, { label: "x", weight: "heavy" }),
@@ -928,7 +976,7 @@ describe("what a restore answers", () => {
           .map((line) => `${JSON.stringify({ edge: line })}\n`)
           .join(""),
       ),
-      "types.ndjson",
+      "instance",
       `${JSON.stringify({
         edge_type: {
           ...edgeType(edgeTypeId),
@@ -964,7 +1012,7 @@ describe("what a restore answers", () => {
       uuidv7(),
       uuidv7(),
     ];
-    const archive = withEntry(
+    const archive = withLines(
       itemsArchive(
         [a, b].map((id) => ({
           id,
@@ -973,7 +1021,7 @@ describe("what a restore answers", () => {
           properties: { body: `refused ${id}` },
         })),
       ),
-      "edges.ndjson",
+      "edges",
       [
         { id: fits, source_id: a, target_id: b, edge_type: "references" },
         { id: loop, source_id: a, target_id: a, edge_type: "references" },
@@ -1048,7 +1096,7 @@ describe("what a restore answers", () => {
         },
       },
     ];
-    const redefining = withEntry(
+    const redefining = withLines(
       itemsArchive([
         {
           id: fresh.id,
@@ -1057,7 +1105,7 @@ describe("what a restore answers", () => {
           properties: { label: "a row of a type the archive registers" },
         },
       ]),
-      "types.ndjson",
+      "instance",
       types.map((line) => `${JSON.stringify(line)}\n`).join(""),
     );
     const refused = await owner.restoreArchive(redefining);
@@ -1097,9 +1145,9 @@ describe("a restore of a registration carrying a key the schema does not define"
       },
     ];
     const archive = (key: Record<string, unknown>, ids: [string, string]) =>
-      withEntry(
+      withLines(
         itemsArchive([]),
-        "types.ndjson",
+        "instance",
         lines(key, ids)
           .map((line) => `${JSON.stringify(line)}\n`)
           .join(""),
@@ -1114,9 +1162,9 @@ describe("a restore of a registration carrying a key the schema does not define"
       ["edge type", "property_schema.rank.exclusiveMinimum"],
     ] as const) {
       const refused = await owner.restoreArchive(
-        withEntry(
+        withLines(
           itemsArchive([]),
-          "types.ndjson",
+          "instance",
           `${JSON.stringify(
             lines({ exclusiveMinimum: 1 }, refusedIds)[what === "type" ? 0 : 1],
           )}\n`,
@@ -1153,9 +1201,9 @@ describe("a restore of a registration carrying a key the schema does not define"
 
 describe("a restore of an edge type's property formats", () => {
   const archiveOf = (id: string, property: Record<string, unknown>) =>
-    withEntry(
+    withLines(
       itemsArchive([]),
-      "types.ndjson",
+      "instance",
       `${JSON.stringify({
         edge_type: {
           id,
@@ -1244,9 +1292,9 @@ describe("a restore refused after it began", () => {
           },
         ],
       );
-      return withEntry(
+      return withLines(
         base,
-        "types.ndjson",
+        "instance",
         [
           {
             type: {
@@ -1360,9 +1408,9 @@ describe("type creator provenance in archives", () => {
     trackType(ctx, recorded);
     trackType(ctx, unknown);
     const creator = { kind: "key", id: "retired-key", name: "Original maker" };
-    const archive = withEntry(
+    const archive = withLines(
       itemsArchive([]),
-      "types.ndjson",
+      "instance",
       [
         {
           type: { id: recorded, label: "Recorded", version: 1, fields: {} },
@@ -1381,5 +1429,278 @@ describe("type creator provenance in archives", () => {
     expect(
       (await client.getType(unknown)).data.provenance?.created_by,
     ).toBeNull();
+  });
+});
+
+describe("a restore refused while its body is still arriving", () => {
+  /** A manifest the restore refuses on reading it, then `size` bytes more. */
+  const refusedEarly = (size: number): Uint8Array =>
+    tar([
+      {
+        name: "manifest.json",
+        body: JSON.stringify({ version: 99, format: "marfa-archive-v0" }),
+      },
+      { name: "padding.bin", body: new Uint8Array(size) },
+    ]);
+
+  /**
+   * Sends `body` the way `marfa restore` does, after `Expect: 100-continue`:
+   * it is sent only once the server says `100 Continue`, and not at all if
+   * the server answers first.
+   */
+  const sendAfterContinue = (
+    authorization: string,
+    body: Uint8Array,
+  ): Promise<{ status: number; sent: boolean; text: string }> =>
+    new Promise((resolve, reject) => {
+      const url = new URL(`${apiUrl}/restore`);
+      let sent = false;
+      const request = httpRequest(
+        url,
+        {
+          method: "POST",
+          headers: {
+            Authorization: authorization,
+            "Content-Type": "application/x-tar",
+            "Content-Length": String(body.length),
+            Expect: "100-continue",
+          },
+        },
+        (response) => {
+          let text = "";
+          response.setEncoding("utf8");
+          response.on("data", (chunk: string) => (text += chunk));
+          response.on("end", () =>
+            resolve({ status: response.statusCode ?? 0, sent, text }),
+          );
+        },
+      );
+      request.on("error", reject);
+      request.on("continue", () => {
+        sent = true;
+        request.end(body);
+      });
+      request.flushHeaders();
+    });
+
+  it("reads the rest of a large body and answers the refusal, to the owner, and answers a working key before the body", async () => {
+    const body = refusedEarly(64 * 1024 * 1024);
+    const keyResp = await client.createKey({
+      label: "restore-refused-early",
+      source: `${ctx.source}-refused-early`,
+      type_permissions: { "*": "write" },
+    });
+    expect(keyResp.ok).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const forbidden = await sendAfterContinue(
+        `Bearer ${keyResp.data.key}`,
+        body,
+      );
+      expect(forbidden.status).toBe(403);
+      expect(
+        (JSON.parse(forbidden.text) as { error: { code: string } }).error.code,
+      ).toBe("forbidden");
+      expect(forbidden.sent).toBe(false);
+
+      const refused = await owner.restoreArchive(body);
+      expect(refused.status, JSON.stringify(refused.error)).toBe(400);
+      expect(refused.error?.error.message).toContain("version 99");
+    }
+  });
+
+  it("answers a caller with no credential within two seconds and closes the connection while it keeps sending", async () => {
+    const url = new URL(apiUrl);
+    const started = Date.now();
+    const answer = await new Promise<{ head: string; at: number }>(
+      (resolve, reject) => {
+        const socket = connect(Number(url.port || 80), url.hostname);
+        let head = "";
+        const sender = setInterval(() => {
+          socket.write(Buffer.alloc(64 * 1024), () => {});
+        }, 50);
+        const stop = () => {
+          clearInterval(sender);
+          clearTimeout(giveUp);
+          socket.destroy();
+        };
+        const giveUp = setTimeout(() => {
+          stop();
+          reject(new Error(`no answer in 5 s; the server read on: ${head}`));
+        }, 5000);
+        socket.on("error", () => {});
+        socket.on("connect", () => {
+          socket.write(
+            `POST /restore HTTP/1.1\r\nHost: ${url.host}\r\n` +
+              `Content-Type: application/x-tar\r\n` +
+              `Content-Length: ${64 * 1024 * 1024 * 1024}\r\n\r\n`,
+          );
+        });
+        socket.on("data", (chunk) => {
+          head += chunk.toString("latin1");
+          if (head.includes("\r\n\r\n")) {
+            stop();
+            resolve({ head, at: Date.now() - started });
+          }
+        });
+      },
+    );
+    expect(answer.head).toMatch(/^HTTP\/1\.1 401 /);
+    expect(answer.head.toLowerCase()).toContain("connection: close");
+    expect(answer.at).toBeLessThan(3000);
+  });
+});
+
+describe("lines an archive holds that no instance writes", () => {
+  const note = (id: string) => ({
+    id,
+    type: "core.note",
+    source: ctx.source,
+    properties: { body: `line ${id}` },
+  });
+
+  it("refuses an item line that holds no item, naming its row, and writes nothing", async () => {
+    const kept = uuidv7();
+    const good = `${JSON.stringify({ item: note(kept), metadata: { tags: [], extensions: {} } })}\n`;
+    for (const line of [
+      { metadata: { tags: [], extensions: {} } },
+      { item: "a note", metadata: { tags: [], extensions: {} } },
+      { item: null },
+    ]) {
+      const refused = await owner.restoreArchive(
+        withLines(
+          itemsArchive([]),
+          "items",
+          good + JSON.stringify(line) + "\n",
+        ),
+      );
+      expect(refused.status, JSON.stringify(refused.error)).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+      expect(refused.error?.error.details?.row).toBe(2);
+      expect((await client.getItem(kept)).status).toBe(404);
+    }
+
+    // The witness: the item line alone restores.
+    const restored = await owner.restoreArchive(
+      withLines(itemsArchive([]), "items", good),
+    );
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, kept);
+    expect(restored.data.imported).toBe(1);
+  });
+
+  it("refuses an edge whose ID is not a lowercase UUIDv7, and writes nothing", async () => {
+    const [a, b] = [uuidv7(), uuidv7()];
+    const items = itemsArchive([note(a), note(b)]);
+    const edge = (id: unknown) =>
+      `${JSON.stringify({ edge: { id, source_id: a, target_id: b, edge_type: "references" } })}\n`;
+    for (const id of ["x", 7, uuidv7().toUpperCase(), ""]) {
+      const refused = await owner.restoreArchive(
+        withLines(items, "edges", edge(id)),
+      );
+      expect(
+        refused.status,
+        `${String(id)}: ${JSON.stringify(refused.error)}`,
+      ).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+      expect(refused.error?.error.details?.field).toBe("id");
+      expect((await client.getItem(a)).status).toBe(404);
+    }
+
+    // The witness: the same edge under a lowercase UUIDv7 restores, once.
+    const id = uuidv7();
+    const archive = withLines(items, "edges", edge(id));
+    const restored = await owner.restoreArchive(archive);
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, a);
+    trackItem(ctx, b);
+    expect(restored.data.edges_imported).toBe(1);
+    expect((await client.getEdge(id)).status).toBe(200);
+    const again = await owner.restoreArchive(archive);
+    expect(again.ok, JSON.stringify(again.error)).toBe(true);
+    expect(again.data.edges_imported).toBe(0);
+  });
+
+  it("refuses an archive that registers a type or an edge type twice, and writes nothing", async () => {
+    const id = uuidv7();
+    const type = {
+      type: {
+        id: `user.twice${ctx.runId.replace(/[^a-z0-9]/g, "")}`,
+        label: "Twice",
+        version: 1,
+        fields: { body: { type: "string" } },
+      },
+    };
+    const edgeType = {
+      edge_type: {
+        id: `twice.x${ctx.runId.replace(/[^a-z0-9]/g, "")}`,
+        label: "Twice",
+        cardinality: "many-to-many",
+        source_type_constraints: ["*"],
+        target_type_constraints: ["*"],
+        cascade_on_delete: "orphan",
+        property_schema: {},
+        written_at: "source",
+      },
+    };
+    for (const line of [type, edgeType]) {
+      const twice = `${JSON.stringify(line)}\n`.repeat(2);
+      const refused = await owner.restoreArchive(
+        withLines(itemsArchive([note(id)]), "instance", twice),
+      );
+      expect(refused.status, JSON.stringify(refused.error)).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+      expect(refused.error?.error.message).toContain("more than once");
+      expect((await client.getItem(id)).status).toBe(404);
+    }
+    expect((await client.getType(type.type.id)).status).toBe(404);
+
+    // The witness: each line once restores.
+    const restored = await owner.restoreArchive(
+      withLines(
+        itemsArchive([note(id)]),
+        "instance",
+        `${JSON.stringify(type)}\n${JSON.stringify(edgeType)}\n`,
+      ),
+    );
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, id);
+    trackType(ctx, type.type.id);
+    trackEdgeType(ctx, edgeType.edge_type.id);
+    expect(restored.data.types_registered).toBe(1);
+    expect(restored.data.edge_types_registered).toBe(1);
+  });
+
+  it("writes a snapshot's dates in UTC to the millisecond", async () => {
+    const id = uuidv7();
+    const spelled = "2019-12-31T23:59:59+01:00";
+    const line = {
+      item: { ...note(id), version: 2 },
+      metadata: { tags: [], extensions: {} },
+      versions: [
+        {
+          id: uuidv7(),
+          item_id: id,
+          version: 1,
+          properties: { body: "the first version" },
+          type: "core.note",
+          tier: "library",
+          created_at: spelled,
+          occurred_at: spelled,
+          source_id: null,
+          writer: null,
+        },
+      ],
+    };
+    const restored = await owner.restoreArchive(
+      withLines(itemsArchive([]), "items", `${JSON.stringify(line)}\n`),
+    );
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, id);
+    const versions = await client.getVersions(id);
+    expect(versions.status, JSON.stringify(versions.error)).toBe(200);
+    expect(versions.data.data).toHaveLength(1);
+    expect(versions.data.data[0]?.created_at).toBe("2019-12-31T22:59:59.000Z");
+    expect(versions.data.data[0]?.occurred_at).toBe("2019-12-31T22:59:59.000Z");
   });
 });
