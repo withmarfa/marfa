@@ -11,7 +11,7 @@ mod quiet;
 
 use door::{Answer, Door};
 
-const METRICS: &str = r#"{"items":{"total":3,"by_state":{"active":3}},"blobs":{"count":1,"total_bytes":10},"types":{"core":5,"registered":0},"keys":{"total":2},"webhooks":{"total":0},"uptime_seconds":42,"process":{"release":"v0.0.99","memory_rss_bytes":300000000,"memory_rss_peak_bytes":400000000,"heap_used_bytes":50000000,"heap_total_bytes":80000000,"cpu_user_seconds":12.5,"cpu_system_seconds":3.25},"storage":{"database_bytes":2000000,"wal_bytes":0,"rows":{"items":3,"versions":4,"event_log":5,"audit_log":6},"counted_at":"2026-11-03T10:00:00.000Z"},"cached_at":"2026-11-03T10:00:01.000Z"}"#;
+const METRICS: &str = r#"{"items":{"total":3,"by_state":{"active":3}},"blobs":{"count":1,"total_bytes":10},"types":{"core":5,"registered":0},"keys":{"total":2},"webhooks":{"total":0},"uptime_seconds":42,"process":{"release":"v0.0.99","memory_rss_bytes":300000000,"memory_rss_peak_bytes":400000000,"cpu_user_seconds":12.5,"cpu_system_seconds":3.25},"storage":{"database_bytes":2000000,"wal_bytes":0,"rows":{"items":3,"versions":4,"event_log":5,"audit_log":6}}}"#;
 
 fn run(url: &str, args: &[&str]) -> (i32, String, String) {
     let nowhere =
