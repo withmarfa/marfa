@@ -225,7 +225,7 @@ describe("a revoked key", () => {
     // agreement as they were left.
     const endpoints = await operator().listInboundEndpoints(own.id);
     expect(endpoints.data.data.map((row) => row.retired_at)).toEqual([null]);
-    const successor = await client.createKey({
+    const successor = await getOwnerClient().createKey({
       label: `${own.source}-successor`,
       source: own.source,
       default_tier: "library",

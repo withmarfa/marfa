@@ -2225,8 +2225,10 @@ impl<'t, 'c> Job<'_, 't, 'c> {
 
     fn retarget(&self, id: &str, settings: Map<String, Value>) -> Result<Done> {
         let row = rows::by_id(self.unit.tx(), id)?.ok_or_else(not_found)?;
-        if row.type_id == VIEW_TYPE {
-            views::check(&settings, &self.catalog)?;
+        match row.type_id.as_str() {
+            VIEW_TYPE => views::check(&settings, &self.catalog)?,
+            FOLDER_TYPE => folders::check_stored(&settings, &self.catalog)?,
+            _ => {}
         }
         let (item, _) = self.landed(
             &row,

@@ -354,6 +354,15 @@ impl Caller {
         }
     }
 
+    /// Whoever takes a held source as its own takes over what a connector keeps there.
+    pub fn check_held_source(&self, source: &str, held: bool) -> Result<()> {
+        if held && !self.manages_keys() {
+            Err(requires(Permission::KeysManage).with_detail("source", source))
+        } else {
+            Ok(())
+        }
+    }
+
     pub fn check_update(&self, target: &Key, change: &Change<'_>) -> Result<()> {
         if change.levers.is_some() {
             self.require(Permission::ConfigManage)?;
