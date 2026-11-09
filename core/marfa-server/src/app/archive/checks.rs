@@ -122,7 +122,7 @@ fn text<'a>(object: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
 fn is_instant(value: &Value) -> bool {
     value
         .as_str()
-        .is_some_and(|text| time::normalize(text, "at").is_ok())
+        .is_some_and(|text| time::rfc3339(text, "at").is_ok())
 }
 
 fn is_version(value: &Value) -> bool {
