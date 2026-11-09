@@ -29245,7 +29245,8 @@
             },
             "description": "The reach from a copy stream, for a working copy. Marfa reads the current data and checks the reach in one snapshot, and returns `409 reach_changed` if it has changed. Leave it out for an ordinary read."
           }
-        ]
+        ],
+        "x-marfa-local-command": true
       },
       "post": {
         "operationId": "registerType",
@@ -29610,7 +29611,8 @@
             },
             "description": "The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers."
           }
-        ]
+        ],
+        "x-marfa-local-command": true
       }
     },
     "/types/{id}": {
@@ -29909,7 +29911,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       },
       "put": {
         "operationId": "replaceType",
@@ -30314,7 +30317,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       },
       "delete": {
         "operationId": "deleteType",
@@ -31484,7 +31488,8 @@
             },
             "description": "The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers."
           }
-        ]
+        ],
+        "x-marfa-local-command": true
       }
     },
     "/types/{id}/icon": {
@@ -32608,7 +32613,8 @@
             },
             "description": "The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers."
           }
-        ]
+        ],
+        "x-marfa-local-command": true
       },
       "get": {
         "operationId": "listEdgeTypes",
@@ -32880,7 +32886,8 @@
             },
             "description": "The reach from a copy stream, for a working copy. Marfa reads the current data and checks the reach in one snapshot, and returns `409 reach_changed` if it has changed. Leave it out for an ordinary read."
           }
-        ]
+        ],
+        "x-marfa-local-command": true
       }
     },
     "/edge-types/{id}": {
@@ -33261,7 +33268,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/blobs": {
@@ -40691,7 +40699,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/views": {
@@ -53172,7 +53181,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/auth/grants/{id}": {
@@ -53873,7 +53883,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/owner": {
@@ -55040,7 +55051,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       },
       "patch": {
         "operationId": "updateProfile",
@@ -55411,7 +55423,8 @@
             },
             "description": "The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers."
           }
-        ]
+        ],
+        "x-marfa-local-command": true
       }
     },
     "/owner/picture": {
@@ -56462,7 +56475,8 @@
             },
             "description": "The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers."
           }
-        ]
+        ],
+        "x-marfa-local-command": true
       }
     },
     "/owner/sign-ins": {
@@ -59018,7 +59032,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       },
       "put": {
         "operationId": "replaceConfig",
@@ -59977,7 +59992,8 @@
             },
             "description": "The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers."
           }
-        ]
+        ],
+        "x-marfa-local-command": true
       }
     },
     "/health": {
@@ -60805,7 +60821,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/audit": {
@@ -61164,7 +61181,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       }
     },
     "/housekeeping": {
