@@ -5,6 +5,7 @@ use serde_json::Value;
 
 use super::Queued;
 use crate::app::access::Maker;
+use crate::app::items::Selected;
 use crate::app::refusal::{Refusal, Result};
 
 pub const QUEUED: &str = "queued";
@@ -63,7 +64,10 @@ fn unreadable(column: usize, error: serde_json::Error) -> rusqlite::Error {
 
 fn job_of(row: &Row<'_>) -> rusqlite::Result<Job> {
     let input: String = row.get(1)?;
-    let holder = match (row.get::<_, Option<String>>(2)?, row.get::<_, Option<String>>(3)?) {
+    let holder = match (
+        row.get::<_, Option<String>>(2)?,
+        row.get::<_, Option<String>>(3)?,
+    ) {
         (Some(id), _) => Maker::Key(id),
         (None, Some(id)) => Maker::Grant(id),
         (None, None) => {
@@ -105,7 +109,7 @@ pub fn insert(
     id: &str,
     queued: &Queued,
     holder: &Maker,
-    ids: &[String],
+    items: &[Selected],
     at: &str,
 ) -> Result<()> {
     let input = serde_json::to_string(queued)
@@ -120,15 +124,22 @@ pub fn insert(
             input,
             key_id,
             grant_id,
-            ids.len() as i64,
+            items.len() as i64,
             at
         ],
     )?;
     let mut statement = tx.prepare_cached(
-        "INSERT INTO bulk_job_items (job_id, position, item_id) VALUES (?1, ?2, ?3)",
+        "INSERT INTO bulk_job_items (job_id, position, item_id, version, state) \
+         VALUES (?1, ?2, ?3, ?4, ?5)",
     )?;
-    for (position, item) in ids.iter().enumerate() {
-        statement.execute(params![id, position as i64, item])?;
+    for (position, item) in items.iter().enumerate() {
+        statement.execute(params![
+            id,
+            position as i64,
+            item.id,
+            item.version,
+            item.state
+        ])?;
     }
     Ok(())
 }
@@ -159,12 +170,18 @@ pub fn claim(tx: &Transaction<'_>, id: &str, at: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn slice(tx: &Transaction<'_>, id: &str, from: i64, limit: i64) -> Result<Vec<String>> {
+pub fn slice(tx: &Transaction<'_>, id: &str, from: i64, limit: i64) -> Result<Vec<Selected>> {
     let mut statement = tx.prepare_cached(
-        "SELECT item_id FROM bulk_job_items WHERE job_id = ?1 AND position >= ?2 \
+        "SELECT item_id, version, state FROM bulk_job_items WHERE job_id = ?1 AND position >= ?2 \
          ORDER BY position LIMIT ?3",
     )?;
-    let rows = statement.query_map(params![id, from, limit], |row| row.get(0))?;
+    let rows = statement.query_map(params![id, from, limit], |row| {
+        Ok(Selected {
+            id: row.get(0)?,
+            version: row.get(1)?,
+            state: row.get(2)?,
+        })
+    })?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
@@ -182,7 +199,13 @@ pub fn advance(
     Ok(())
 }
 
-pub fn note(tx: &Transaction<'_>, id: &str, kind: Note, name: &str, body: Option<&str>) -> Result<()> {
+pub fn note(
+    tx: &Transaction<'_>,
+    id: &str,
+    kind: Note,
+    name: &str,
+    body: Option<&str>,
+) -> Result<()> {
     tx.prepare_cached(
         "INSERT INTO bulk_job_notes (job_id, kind, name, body) VALUES (?1, ?2, ?3, ?4) \
          ON CONFLICT (job_id, kind, name) DO NOTHING",

@@ -1040,11 +1040,19 @@ If the key sending `POST /types/{id}/move` lacks write on the type or on `to` in
 
 ### `types/move-settings`
 
-When no item of the type remains once a type move's job has run, the server MUST, in one transaction, rewrite to name `to` instead: a folder's `query.types`, `defaults.type` and `first_placement` key, a view's `query.types`, each `type eq` and `type neq` term naming the type in a folder's or view's `query.filter`, and a webhook's `type_filter` that is exactly the type.
+When no item of the type remains once a type move's job has run, and `types/move-settings-refused` does not hold the settings back, the server MUST, in one transaction, rewrite to name `to` instead: a folder's `query.types`, `defaults.type` and `first_placement` key, a view's `query.types`, each `type eq` and `type neq` term naming the type in a folder's or view's `query.filter`, and a webhook's `type_filter` that is exactly the type.
 
 **Reason:** a folder, view or webhook naming a type no item holds anymore would hold nothing, and the person who made it meant the items, not the identifier.
 
 **Tests:** `compliance/type-move.test.ts › rewrites the folders, views and webhooks that name the type once every item has moved`, `› writes nothing on a dry run, and the same move run for real writes`.
+
+### `types/move-settings-refused`
+
+If no item of the type remains once a type move's job has run, and `to` is no longer registered or a folder's or view's own operation would refuse its rewrite, then the server MUST rewrite no setting, set `result.settings_rewritten` to `false`, and answer that refusal's `code`, `message` and `details` in `result.settings_error`.
+
+**Reason:** a setting rewritten past its own checks would name a type nothing can hold, or refuse the person's next edit of it.
+
+**Tests:** `compliance/bulk-job-holds.test.ts › rewrites no setting, and says why, when the type it moves to is gone by then`.
 
 ### `types/move-settings-delivered`
 

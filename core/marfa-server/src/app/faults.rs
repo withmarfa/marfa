@@ -956,7 +956,9 @@ mod tests {
     #[test]
     fn a_fail_aimed_always_acts_on_every_reach_of_its_write() {
         let faults = Faults::default();
-        faults.set("fail:commit", Some("item.create@always")).unwrap();
+        faults
+            .set("fail:commit", Some("item.create@always"))
+            .unwrap();
         assert!(!faults.fail(FAIL_COMMIT, Some("item.update")));
         assert!(faults.fail(FAIL_COMMIT, Some("item.create")));
         assert!(faults.fail(FAIL_COMMIT, Some("item.create")));

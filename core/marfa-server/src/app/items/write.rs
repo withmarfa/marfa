@@ -21,8 +21,8 @@ use super::index;
 use super::plan::{self, Act, Asked, Gate, Moving, invalid_transition, require_version};
 use super::rows::{self, Landed, Moved, NewRow};
 use super::{
-    Item, Keys, Snapshot, Writer, check_keys, link_in, metadata_for, metadata_text, not_found,
-    parsed, summary_of, title_key,
+    Item, Keys, Selected, Snapshot, Writer, check_keys, link_in, metadata_for, metadata_text,
+    not_found, parsed, summary_of, title_key,
 };
 use crate::app::App;
 use crate::app::access::{Caller, Level};
@@ -300,7 +300,10 @@ pub(crate) fn apply_server_own(
 pub enum RowAct {
     Transition(String),
     Purge,
-    Tags { add: Vec<String>, remove: Vec<String> },
+    Tags {
+        add: Vec<String>,
+        remove: Vec<String>,
+    },
     Tier(String),
     Properties(Map<String, Value>),
     OccurredAt(String),
@@ -322,9 +325,10 @@ pub fn apply_row(
     unit: &Unit<'_, '_>,
     catalog: &Arc<Catalog>,
     read_only: &ReadOnly,
-    id: &str,
+    selected: &Selected,
     act: &RowAct,
 ) -> Result<RowDone> {
+    let id = selected.id.as_str();
     let job = Job {
         unit,
         catalog: catalog.clone(),
@@ -333,13 +337,10 @@ pub fn apply_row(
         server_own: false,
     };
     let row = rows::by_id(unit.tx(), id)?.ok_or_else(not_found)?;
-    if !unit
-        .caller
-        .lists(&catalog.rules, &row.type_id, &row.source)
-    {
+    if !unit.caller.lists(&catalog.rules, &row.type_id, &row.source) {
         return Err(not_found());
     }
-    let done = job.row_act(id, act)?;
+    let done = job.row_act(selected, act)?;
     index::settle(unit.tx(), &catalog.rules)?;
     Ok(done)
 }
@@ -458,6 +459,16 @@ pub(super) fn stale_bare(row: &Item, named: i64) -> Result<Refusal> {
         ),
     )
     .with_member("current", row.state_named()?))
+}
+
+/// A state change writes no version, so a job checks the state it matched as well.
+fn left_state(matched: &str, now: &str) -> Refusal {
+    Refusal::new(
+        Code::InvalidTransition,
+        format!(
+            "The item moved from {matched} to {now} after the job selected it, so the job left it."
+        ),
+    )
 }
 
 fn no_ancestor(row: &Item, named: i64) -> Result<Refusal> {
@@ -1943,7 +1954,12 @@ impl<'t, 'c> Job<'_, 't, 'c> {
     }
 
     /// The row moved, and the other rows its move took along.
-    fn transitioned(&self, id: &str, state: &str, version: Option<i64>) -> Result<(Item, Vec<String>)> {
+    fn transitioned(
+        &self,
+        id: &str,
+        state: &str,
+        version: Option<i64>,
+    ) -> Result<(Item, Vec<String>)> {
         let row = self.lifecycle_row(id, version)?;
         let to_bin = state == "trashed";
         let from_bin = row.state == "trashed";
@@ -2044,7 +2060,14 @@ impl<'t, 'c> Job<'_, 't, 'c> {
 
     /// Every row the purge took, the asked one first, and the blobs each named.
     fn purged(&self, id: String, version: Option<i64>) -> Result<RowDone> {
-        let plan = plan::plan(&self.gate(), Act::Purge, &[Asked { id: id.clone(), version }])?;
+        let plan = plan::plan(
+            &self.gate(),
+            Act::Purge,
+            &[Asked {
+                id: id.clone(),
+                version,
+            }],
+        )?;
         let mut done = RowDone::default();
         for purging in &plan.purging {
             let item = &purging.item;
@@ -2064,6 +2087,9 @@ impl<'t, 'c> Job<'_, 't, 'c> {
 
     fn retarget(&self, id: &str, settings: Map<String, Value>) -> Result<Done> {
         let row = rows::by_id(self.unit.tx(), id)?.ok_or_else(not_found)?;
+        if row.type_id == VIEW_TYPE {
+            views::check(&settings, &self.catalog)?;
+        }
         let (item, _) = self.landed(
             &row,
             &Writing {
@@ -2073,27 +2099,41 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 ..Writing::default()
             },
         )?;
-        self.unit
-            .audit_also("item.update", "item", &item.id, Some(json!({ "type": item.type_id })))?;
+        self.unit.audit_also(
+            "item.update",
+            "item",
+            &item.id,
+            Some(json!({ "type": item.type_id })),
+        )?;
         self.answer(200, &item, "")
     }
 
-    fn row_act(&self, id: &str, act: &RowAct) -> Result<RowDone> {
+    /// A job writes each item only as it stood when the job was queued, so it never undoes a
+    /// later edit: a changed item meets the conflict rules of a write naming that version.
+    fn row_act(&self, selected: &Selected, act: &RowAct) -> Result<RowDone> {
+        let (id, version) = (selected.id.as_str(), Some(selected.version));
         match act {
             RowAct::Transition(state) => {
-                let (_, carried) = self.transitioned(id, state, None)?;
+                let row = self.lifecycle_row(id, version)?;
+                if row.state != selected.state {
+                    return Err(left_state(&selected.state, &row.state));
+                }
+                let (_, carried) = self.transitioned(id, state, version)?;
                 Ok(RowDone {
                     carried,
                     blobs: Vec::new(),
                 })
             }
-            RowAct::Purge => self.purged(id.to_string(), None),
+            RowAct::Purge => self.purged(id.to_string(), version),
             RowAct::Tags { add, remove } => {
                 let tx = self.unit.tx();
-                let row = self.tag_row(id, None)?;
+                let row = self.tag_row(id, version)?;
                 let held = rows::tags(tx, row.seq)?;
-                let mut tags: Vec<String> =
-                    held.iter().filter(|tag| !remove.contains(tag)).cloned().collect();
+                let mut tags: Vec<String> = held
+                    .iter()
+                    .filter(|tag| !remove.contains(tag))
+                    .cloned()
+                    .collect();
                 for tag in distinct(add) {
                     if !tags.contains(&tag) {
                         tags.push(tag);
@@ -2104,46 +2144,46 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 self.tags_landed(&row, json!({ "tags": tags }))?;
                 Ok(RowDone::default())
             }
-            RowAct::Tier(tier) => self.row_update(id, |update| update.tier = Some(tier.clone())),
+            RowAct::Tier(tier) => {
+                self.row_update(selected, |update| update.tier = Some(tier.clone()))
+            }
             RowAct::Properties(patch) => {
-                self.row_update(id, |update| update.properties = Some(patch.clone()))
+                self.row_update(selected, |update| update.properties = Some(patch.clone()))
             }
             RowAct::OccurredAt(at) => {
-                self.row_update(id, |update| update.occurred_at = Some(at.clone()))
+                self.row_update(selected, |update| update.occurred_at = Some(at.clone()))
             }
-            RowAct::Retype { to, properties } => self.retyped(id, to, properties.clone()),
+            RowAct::Retype { to, properties } => self.retyped(selected, to, properties.clone()),
         }
     }
 
     /// A type move takes an item in any state, and leaves it in that state.
     fn retyped(
         &self,
-        id: &str,
+        selected: &Selected,
         to: &str,
         properties: Option<Map<String, Value>>,
     ) -> Result<RowDone> {
         let gate = self.gate();
-        let row = gate.readable_row(id)?;
+        let row = gate.readable_row(&selected.id)?;
         gate.row_gate(&row)?;
         gate.type_gate(to)?;
-        let version = row.version;
         self.change_row(
             row,
             Writing {
                 properties,
                 destination: Some(to.to_string()),
-                version: Some(version),
+                version: Some(selected.version),
                 ..Writing::default()
             },
         )?;
         Ok(RowDone::default())
     }
 
-    fn row_update(&self, id: &str, fill: impl FnOnce(&mut Update)) -> Result<RowDone> {
-        let row = self.gate().writable_row(id)?;
+    fn row_update(&self, selected: &Selected, fill: impl FnOnce(&mut Update)) -> Result<RowDone> {
         let mut update = Update {
-            id: id.to_string(),
-            version: row.version,
+            id: selected.id.clone(),
+            version: selected.version,
             ..Update::default()
         };
         fill(&mut update);

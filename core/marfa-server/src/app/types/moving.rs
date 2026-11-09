@@ -88,8 +88,13 @@ impl Named {
 }
 
 enum Rewrite {
-    Settings { id: String, settings: Map<String, Value> },
-    Webhook { id: String },
+    Settings {
+        id: String,
+        settings: Map<String, Value>,
+    },
+    Webhook {
+        id: String,
+    },
 }
 
 struct Plan {
@@ -144,7 +149,9 @@ fn setting_of(holder: Holder) -> Setting<'static> {
 fn settings_of(item: &items::Item) -> Result<Map<String, Value>> {
     match serde_json::from_str(&item.properties) {
         Ok(Value::Object(settings)) => Ok(settings),
-        _ => Err(Refusal::internal("a folder's or view's settings did not read")),
+        _ => Err(Refusal::internal(
+            "a folder's or view's settings did not read",
+        )),
     }
 }
 
@@ -263,13 +270,12 @@ fn judge(caller: &Caller, catalog: &Catalog, from: &str, to: &str) -> Result<()>
     }
     check_id(to, "to")?;
     if to == from {
-        return Err(Refusal::validation("to names the type the items are in.")
-            .with_detail("field", "to"));
+        return Err(
+            Refusal::validation("to names the type the items are in.").with_detail("field", "to")
+        );
     }
     if !catalog.holds(to) {
-        return Err(
-            Refusal::new(Code::UnknownType, format!("Unknown type: {to}")).with_detail("type", to)
-        );
+        return Err(unknown_type(to));
     }
     caller.require_type(from, Level::Write)?;
     caller.require_type(to, Level::Write)
@@ -332,6 +338,7 @@ pub async fn move_type(
                 return Err(plan.refusal(&from));
             }
             let ids = query::of_exact_type(tx, &unit.caller, &catalog, &from)?;
+            let selected = items::selected(tx, &ids)?;
             if let Some(claim) = &claim {
                 claim.note(Need::Reach);
                 for name in [&from, &asked.to] {
@@ -349,7 +356,7 @@ pub async fn move_type(
                 },
                 fanout: false,
             };
-            let body = jobs::enqueue(unit, &queued, &ids)?;
+            let body = jobs::enqueue(unit, &queued, &selected)?;
             if let Some(claim) = &claim {
                 idempotency::complete(unit, claim, 202, body.as_bytes())?;
             }
@@ -373,27 +380,64 @@ pub(crate) fn finish_move(
     let remaining = query::count_of_exact_type(tx, &unit.caller, &catalog, from)?;
     let hidden = items::count_of_type(tx, from)? > remaining;
     let plan = plan(tx, &unit.caller, from, to)?;
-    let rewritten = remaining == 0 && !hidden && !plan.blocked();
-    if rewritten {
-        for rewrite in &plan.rewrites {
-            match rewrite {
-                Rewrite::Settings { id, settings } => {
-                    apply_server_own(
-                        unit,
-                        cache,
-                        Change::Retarget {
-                            id: id.clone(),
-                            settings: settings.clone(),
-                        },
-                    )?;
-                }
-                Rewrite::Webhook { id } => webhooks::retarget(unit, &catalog.rules, id, to)?,
-            }
-        }
+    let mut rewritten = remaining == 0 && !hidden && !plan.blocked();
+    if rewritten && let Some(refusal) = rewrite(unit, cache, &catalog, &plan, to)? {
+        rewritten = false;
+        result.insert("settings_error".into(), refusal_entry(&refusal));
     }
     result.insert("settings".into(), plan.settings());
     result.insert("remaining".into(), json!(remaining));
     result.insert("remaining_hidden".into(), json!(hidden));
     result.insert("settings_rewritten".into(), json!(rewritten));
     Ok(())
+}
+
+/// Rewrites every setting the plan names, or none, answering what refused one.
+fn rewrite(
+    unit: &Unit<'_, '_>,
+    cache: &ArcSwap<Catalog>,
+    catalog: &Catalog,
+    plan: &Plan,
+    to: &str,
+) -> Result<Option<Refusal>> {
+    if !catalog.holds(to) {
+        return Ok(Some(unknown_type(to)));
+    }
+    let tx = unit.tx();
+    tx.execute_batch("SAVEPOINT type_move_settings")?;
+    let applied = plan.rewrites.iter().try_for_each(|rewrite| match rewrite {
+        Rewrite::Settings { id, settings } => apply_server_own(
+            unit,
+            cache,
+            Change::Retarget {
+                id: id.clone(),
+                settings: settings.clone(),
+            },
+        )
+        .map(drop),
+        Rewrite::Webhook { id } => webhooks::retarget(unit, &catalog.rules, id, to),
+    });
+    match applied {
+        Ok(()) => {
+            tx.execute_batch("RELEASE type_move_settings")?;
+            Ok(None)
+        }
+        Err(refusal) if !refusal.commit_failed && refusal.code.status() < 500 => {
+            tx.execute_batch("ROLLBACK TO type_move_settings; RELEASE type_move_settings")?;
+            Ok(Some(refusal))
+        }
+        Err(refusal) => Err(refusal),
+    }
+}
+
+fn unknown_type(type_id: &str) -> Refusal {
+    Refusal::new(Code::UnknownType, format!("Unknown type: {type_id}")).with_detail("type", type_id)
+}
+
+fn refusal_entry(refusal: &Refusal) -> Value {
+    let mut entry = json!({ "code": refusal.code.wire(), "message": refusal.message.to_string() });
+    if let Some(details) = &refusal.details {
+        entry["details"] = Value::Object((**details).clone());
+    }
+    entry
 }

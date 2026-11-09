@@ -278,11 +278,14 @@ CREATE INDEX IF NOT EXISTS bulk_jobs_open ON bulk_jobs (status)
 CREATE INDEX IF NOT EXISTS bulk_jobs_finished ON bulk_jobs (finished_at)
     WHERE finished_at IS NOT NULL;
 
--- The items a job matched when it was queued, in the order it takes them.
+-- The items a job matched when it was queued, in the order it takes them, each with the
+-- version and state it was matched at: a job writes an item only as it was then.
 CREATE TABLE IF NOT EXISTS bulk_job_items (
     job_id TEXT NOT NULL REFERENCES bulk_jobs (id) ON DELETE CASCADE,
     position INTEGER NOT NULL,
     item_id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    state TEXT NOT NULL,
     PRIMARY KEY (job_id, position)
 ) STRICT, WITHOUT ROWID;
 

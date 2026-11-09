@@ -2673,8 +2673,19 @@ export interface components {
             remaining?: number;
             /** @description On a type move, `true` if items your source filter hides are still of the old type. A move takes only items you can see. Absent otherwise. */
             remaining_hidden?: boolean;
-            /** @description On a type move, `true` if Marfa rewrote `settings` to name the new type. `false` if an item of the old type remains, counted in `remaining` or `remaining_hidden`, or a setting has a `reason`: Marfa then rewrote none of them. Absent otherwise. */
+            /** @description On a type move, `true` if Marfa rewrote `settings` to name the new type. `false` if an item of the old type remains, counted in `remaining` or `remaining_hidden`, or a setting has a `reason`, or a rewrite was refused, as `settings_error` says: Marfa then rewrote none of them. Absent otherwise. */
             settings_rewritten?: boolean;
+            /** @description On a type move, why Marfa rewrote none of `settings` once no item of the old type remained: the new type is gone, or a folder or view would refuse its rewrite. Change the setting or register the type, then run the move again. Absent otherwise. */
+            settings_error?: {
+                /** @description A machine-readable code for the refusal. Use it in your logic. */
+                code: string;
+                /** @description A description of the refusal for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the refusal, as the setting's own operation gives it. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
         };
         /** @description An item a bulk action left unchanged, and why. */
         BulkActionError: {

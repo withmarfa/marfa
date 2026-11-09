@@ -15,6 +15,7 @@ use super::access::Caller;
 use super::faults::HOLD_JOB_SELECTED;
 use super::housekeeping::{DAY_MS, Report, Run};
 use super::idempotency::{self, Claim, Need};
+use super::items::Selected;
 use super::items::write::RowAct;
 use super::query::{self, Ask};
 use super::refusal::{Code, Refusal, Result};
@@ -158,7 +159,9 @@ impl Jobs {
         let patience = budget.saturating_sub(CUT_BEFORE_END);
         let idle = tokio::time::timeout(patience, running.wait_for(|running| !*running));
         if idle.await.is_err() {
-            tracing::warn!("A bulk-action job outlived the stop's wait; it resumes at the next start");
+            tracing::warn!(
+                "A bulk-action job outlived the stop's wait; it resumes at the next start"
+            );
             self.closed.store(true, Ordering::Release);
             let idle = running.wait_for(|running| !*running);
             let _ = tokio::time::timeout(CUT_BEFORE_END / 2, idle).await;
@@ -270,7 +273,7 @@ pub async fn queue(
         fanout,
     } = asked;
     let purge = action.purges();
-    let (ids, form, types) = super::items::reading(app, caller, move |read| {
+    let (selected, form, types) = super::items::reading(app, caller, move |read| {
         read.caller.require_reach()?;
         if purge {
             read.caller.require(super::access::Permission::ItemsPurge)?;
@@ -280,7 +283,8 @@ pub async fn queue(
             return Err(over_cap(cap));
         }
         let types = super::items::types_of(read.tx, &ids)?;
-        Ok((ids, read.caller.source_filter_form(), types))
+        let selected = super::items::selected(read.tx, &ids)?;
+        Ok((selected, read.caller.source_filter_form(), types))
     })
     .await?;
     let needs = move |claim: &Claim| {
@@ -293,6 +297,7 @@ pub async fn queue(
         }
     };
     if dry_run {
+        let ids: Vec<String> = selected.into_iter().map(|item| item.id).collect();
         let body = dry_answer(&action, &ids).to_string();
         let Some(claim) = claim else {
             return Ok((200, body));
@@ -311,13 +316,12 @@ pub async fn queue(
     let answered = app
         .write(caller, "items.bulk_action", move |unit| {
             if purge {
-                unit.caller
-                    .require(super::access::Permission::ItemsPurge)?;
+                unit.caller.require(super::access::Permission::ItemsPurge)?;
             }
             if unit.caller.source_filter_form() != form {
                 return Err(selection_moved());
             }
-            let body = enqueue(unit, &queued, &ids)?;
+            let body = enqueue(unit, &queued, &selected)?;
             if let Some(claim) = &claim {
                 needs(claim);
                 idempotency::complete(unit, claim, 202, body.as_bytes())?;
@@ -330,17 +334,17 @@ pub async fn queue(
 }
 
 /// Writes a job and the items it will take, in the caller's transaction.
-pub(crate) fn enqueue(unit: &Unit<'_, '_>, queued: &Queued, ids: &[String]) -> Result<String> {
+pub(crate) fn enqueue(unit: &Unit<'_, '_>, queued: &Queued, items: &[Selected]) -> Result<String> {
     let holder = unit.caller.job_holder()?;
     let id = Uuid::now_v7().to_string();
     let tx = unit.tx();
-    store::insert(tx, &id, queued, &holder, ids, &unit.at)?;
+    store::insert(tx, &id, queued, &holder, items, &unit.at)?;
     unit.audit(
         "items.bulk_action",
         &id,
         Some(json!({
             "sub_action": queued.action.name(),
-            "matched": ids.len(),
+            "matched": items.len(),
             "job_id": id,
         })),
     )?;

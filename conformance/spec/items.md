@@ -2054,6 +2054,36 @@ When a fault ends a job's write partway through a chunk of items, the server MUS
 
 **Tests:** `compliance/job-chunk-faults.test.ts › reports the chunk's unwritten items in the job's errors with the fault's own cause, and goes on to the next chunk`.
 
+### `items/job-selected-version`
+
+When a bulk-action job writes an item, the server MUST hold the write to the version the item had when the job was queued, as the single-item operation holds a write naming that version, and report a refused item in the job's `errors` with the code that operation answers.
+
+**Reason:** a job carries what the person asked for when they queued it, and must not undo an edit made since.
+
+**Tests:** `compliance/bulk-job-holds.test.ts › leaves an item updated after it was selected and reports it with the code its own update answers (update_properties)`, `› leaves an item edited after it was selected and reports it with the code its own tag change answers (update_tags)`, `› leaves an item edited after it was selected and reports it with the code its own purge answers (purge)`, `› leaves an item moved to a third type after it was selected, and reports it with the code its own move answers (type move)`.
+
+### `items/job-selected-state`
+
+If a `transition` job reaches an item that has left the state it was in when the job was queued, then the server MUST leave the item and report it in the job's `errors` with `invalid_transition`.
+
+**Reason:** a change of state writes no new version, and a job queued to bring archived items back must not take an item out of the bin.
+
+**Tests:** `compliance/bulk-job-holds.test.ts › leaves an item moved out of its state after it was selected, and reports it invalid_transition (transition)`.
+
+### `items/job-retried`
+
+If a fault stops a job before it ends, then the server MUST try the job again from its last checkpoint without waiting for another request.
+
+**Reason:** a job left waiting for the next request may wait for good, and holds every job queued behind it.
+
+**Tests:** `compliance/job-chunk-faults.test.ts › tries the write again from the job's checkpoint, unasked, and the job ends completed`.
+
+### `items/job-fault-persists`
+
+If a job meets a fault on each of a bounded number of tries, then the server MUST end the job `failed` with an `error` naming the fault.
+
+**Tests:** `compliance/job-chunk-faults.test.ts › ends the job failed, with an error and the result it gathered, when the write fails every time it is tried`.
+
 ### `items/job-resumes`
 
 If the server stops while a job runs, then the server MUST finish the job on its return without writing or announcing an item twice.

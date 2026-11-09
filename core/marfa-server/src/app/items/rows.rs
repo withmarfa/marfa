@@ -331,6 +331,47 @@ pub(super) fn settings(tx: &Transaction<'_>) -> Result<Vec<Item>> {
     Ok(found.collect::<rusqlite::Result<_>>()?)
 }
 
+pub(super) fn weights(tx: &Transaction<'_>, ids: &[String], history: bool) -> Result<Vec<i64>> {
+    let mut statement = tx.prepare_cached(
+        "SELECT length(i.properties) + CASE WHEN ?2 THEN \
+         (SELECT total(length(v.properties)) FROM item_versions v WHERE v.item_seq = i.seq) \
+         ELSE 0 END FROM items i WHERE i.id = ?1",
+    )?;
+    ids.iter()
+        .map(|id| {
+            let weight: Option<f64> = statement
+                .query_row(params![id, history], |row| row.get(0))
+                .optional()?;
+            Ok(weight.map_or(0, |bytes| bytes as i64))
+        })
+        .collect()
+}
+
+pub(super) fn selected(tx: &Transaction<'_>, ids: &[String]) -> Result<Vec<super::Selected>> {
+    let listed = serde_json::to_string(ids)
+        .map_err(|_| crate::app::refusal::Refusal::internal("a list of IDs did not print"))?;
+    let mut statement = tx.prepare_cached(
+        "SELECT id, version, state FROM items WHERE id IN (SELECT value FROM json_each(?1))",
+    )?;
+    let mut found: std::collections::HashMap<String, (i64, String)> = statement
+        .query_map([listed], |row| {
+            Ok((row.get(0)?, (row.get(1)?, row.get(2)?)))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    ids.iter()
+        .map(|id| {
+            let (version, state) = found.remove(id).ok_or_else(|| {
+                crate::app::refusal::Refusal::internal("a matched item did not read")
+            })?;
+            Ok(super::Selected {
+                id: id.clone(),
+                version,
+                state,
+            })
+        })
+        .collect()
+}
+
 pub(super) fn types_of(tx: &Transaction<'_>, ids: &[String]) -> Result<Vec<String>> {
     let listed = serde_json::to_string(ids)
         .map_err(|_| crate::app::refusal::Refusal::internal("a list of IDs did not print"))?;

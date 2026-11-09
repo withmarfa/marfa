@@ -434,6 +434,25 @@ pub fn settings(tx: &Transaction<'_>) -> Result<Vec<Item>> {
     rows::settings(tx)
 }
 
+/// A matched item as a job found it when it was queued.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Selected {
+    pub id: String,
+    pub version: i64,
+    pub state: String,
+}
+
+/// How many bytes writing each named item moves, in the order named: its properties, and with
+/// `history` every version it keeps. An item that is gone weighs nothing.
+pub fn weights(tx: &Transaction<'_>, ids: &[String], history: bool) -> Result<Vec<i64>> {
+    rows::weights(tx, ids, history)
+}
+
+/// The named items as they stand, in the order named.
+pub fn selected(tx: &Transaction<'_>, ids: &[String]) -> Result<Vec<Selected>> {
+    rows::selected(tx, ids)
+}
+
 /// The types the named items hold now, each once.
 pub fn types_of(tx: &Transaction<'_>, ids: &[String]) -> Result<Vec<String>> {
     rows::types_of(tx, ids)
