@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Subcommand)]
 pub enum ProfileCommand {
+    /// Show the owner's name, email address and avatar, as far as profile read permission reaches.
+    Show,
     /// Change the owner's name or avatar with profile write permission for each field.
     Update(ProfileUpdateArgs),
 }
@@ -53,6 +55,7 @@ pub(super) fn picture_request(door: &[&str], file: &Path) -> Result<Request, Cli
 
 pub fn run(command: ProfileCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     match command {
+        ProfileCommand::Show => out.value(&remote.json(&Request::get(&["profile"]))?),
         ProfileCommand::Update(args) => {
             let picture = match &args.avatar {
                 Some(file) => Some(picture_request(&["profile", "picture"], file)?),

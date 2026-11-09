@@ -26,7 +26,7 @@ pub async fn list(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answ
     caller.require(Permission::AuditRead)?;
     query::only(&uri, &PARAMETERS)?;
     let filter = Filter::from_query(&query::pairs(&uri)?)?;
-    let (data, next_cursor) = app.db.read(move |tx| audit::page(tx, &filter)).await?;
+    let (data, next_cursor) = audit::list(&app, &caller, filter).await?;
     Ok(json_answer(
         StatusCode::OK,
         &json!({ "data": data, "next_cursor": next_cursor }),

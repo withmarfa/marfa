@@ -140,8 +140,85 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
     Ok(created)
 }
 
+/// What a change merges into a type's own definition: a field set to `null` is removed.
+pub struct Merge {
+    pub label: Option<String>,
+    pub description: Option<String>,
+    pub fields: Obj,
+}
+
+enum Replacement {
+    Whole(Obj),
+    Merge(Merge),
+}
+
+/// The nearest ancestor of `id` whose own definition has the field.
+fn inherited_from<'a>(catalog: &'a Catalog, stored: &'a Obj, field: &str) -> Option<&'a str> {
+    let mut seen: Vec<&str> = Vec::new();
+    let mut next = text_of(stored, "parent");
+    while let Some(parent) = next {
+        if seen.contains(&parent) {
+            return None;
+        }
+        seen.push(parent);
+        let definition = catalog.types.get(parent)?;
+        if definition
+            .get("fields")
+            .and_then(Value::as_object)
+            .is_some_and(|fields| fields.contains_key(field))
+        {
+            return Some(parent);
+        }
+        next = text_of(definition, "parent");
+    }
+    None
+}
+
+fn merged(catalog: &Catalog, id: &str, stored: &Obj, merge: Merge) -> Result<Obj> {
+    let mut definition = stored.clone();
+    definition.remove("provenance");
+    let mut fields = definition
+        .get("fields")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    for (name, value) in merge.fields {
+        if !value.is_null() {
+            fields.insert(name, value);
+        } else if fields.remove(&name).is_none()
+            && let Some(owner) = inherited_from(catalog, stored, &name)
+        {
+            return Err(Refusal::validation(format!(
+                "{id} inherits {name} from {owner}, so it cannot remove it. Removing {name} from {owner} removes it from every type that inherits it."
+            )));
+        }
+    }
+    definition.insert("fields".into(), Value::Object(fields));
+    if let Some(label) = merge.label {
+        definition.insert("label".into(), label.into());
+    }
+    if let Some(description) = merge.description {
+        definition.insert("description".into(), description.into());
+    }
+    Ok(definition)
+}
+
 /// Without `schema.write`, only changes that leave stored data valid.
 pub async fn replace(app: &App, caller: &Caller, id: String, body: Obj) -> Result<Value> {
+    replacing(app, caller, id, Replacement::Whole(body)).await
+}
+
+/// Merges into the definition the write commits, so a change made meanwhile is kept.
+pub async fn change(app: &App, caller: &Caller, id: String, merge: Merge) -> Result<Value> {
+    replacing(app, caller, id, Replacement::Merge(merge)).await
+}
+
+async fn replacing(
+    app: &App,
+    caller: &Caller,
+    id: String,
+    replacement: Replacement,
+) -> Result<Value> {
     let cache = app.catalog_handle();
     let replaced = app
         .write(caller, "type.replace", move |unit| {
@@ -155,7 +232,13 @@ pub async fn replace(app: &App, caller: &Caller, id: String, body: Obj) -> Resul
             }
             caller.require_type(&id, Level::Write)?;
             let stored = catalog.types.get(&id);
-            let mut definition = body;
+            let mut definition = match replacement {
+                Replacement::Whole(body) => body,
+                Replacement::Merge(merge) => {
+                    let held = stored.ok_or_else(|| not_found(&id))?;
+                    merged(&catalog, &id, held, merge)?
+                }
+            };
             definition.remove("provenance");
             definition.insert("id".into(), Value::String(id.clone()));
             let schema = validate_type(&Value::Object(definition), &catalog.types)

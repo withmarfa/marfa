@@ -844,15 +844,11 @@ describe("folder sync reports", () => {
         .status,
     ).toBe(401);
     expect(token.refresh_token).toBeTruthy();
-    const refreshed = await refresh(
-      server,
-      {
-        grant_type: "refresh_token",
-        refresh_token: token.refresh_token!,
-        client_id: app.clientId,
-      },
-      app,
-    );
+    const refreshed = await refresh(server, {
+      grant_type: "refresh_token",
+      refresh_token: token.refresh_token!,
+      client_id: app.clientId,
+    });
     expect(refreshed.status).toBe(200);
     await put(id, { ...report, sequence: 2 }, refreshed.body.access_token!);
     const afterRefresh = await get(id);

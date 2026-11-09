@@ -2,6 +2,7 @@
 //! what a later stream sends without reading a row that may have changed since.
 
 mod expiry;
+pub mod fanout;
 mod frame;
 mod page;
 mod stream;
@@ -17,7 +18,7 @@ use super::query::judge_type;
 use super::refusal::{Refusal, Result};
 
 pub use expiry::expire;
-pub use frame::Filter;
+pub use frame::{Filter, Head, Judge, Judged, Kind};
 pub use stream::{Hangup, Opening, PING, Viewer, Viewers, open};
 
 /// Judge each entry's syntax and access before proceeding to the next.

@@ -3,6 +3,7 @@
 mod kind;
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Map, Value, json};
@@ -115,7 +116,7 @@ impl App {
     }
 
     pub async fn put_picture(
-        &self,
+        self: &Arc<App>,
         caller: &Caller,
         door: Door,
         bytes: Vec<u8>,
@@ -133,11 +134,10 @@ impl App {
             intake.discard().await;
             return Err(refused);
         }
-        let placed = self.place_upload(intake).await?;
-        self.write(caller, door.action(), move |unit| {
+        self.keep_upload(caller, door.action(), intake, move |unit, recording| {
             door.admit(&unit.caller, &unit.at)?;
             let mut found = owner::read(unit.tx())?.ok_or_else(owner::not_found)?;
-            let blob = placed.record(unit.tx(), None, &unit.at)?;
+            let blob = recording.record(unit.tx(), None, &unit.at)?;
             set(
                 unit.tx(),
                 &unit.caller,
@@ -165,13 +165,12 @@ impl App {
 
     /// The owner's picture and the blob that holds it, read as one.
     pub async fn owner_picture(&self) -> Result<Option<(Picture, Found)>> {
-        let store_id = self.blobs.store_id();
         self.db
             .read(move |tx| {
                 let Some(picture) = stored(tx)? else {
                     return Ok(None);
                 };
-                let found = App::found_in(tx, None, &picture.hash, &store_id)?;
+                let found = App::found_in(tx, None, &picture.hash)?;
                 Ok(Some((picture, found)))
             })
             .await

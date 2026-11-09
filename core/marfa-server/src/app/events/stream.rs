@@ -222,7 +222,7 @@ fn read_page(
     let mut bytes = 0;
     page::scan(read.tx, after, PAGE_ROWS, |entry| {
         scanned += 1;
-        let Some(kind) = judge.wants(entry) else {
+        let Some(kind) = judge.wants(&entry.head()) else {
             page.position = entry.id;
             return Ok(Next::Continue);
         };
@@ -238,7 +238,7 @@ fn read_page(
                 payload = without_item_type(payload);
             }
         }
-        match judge.render(entry, kind, &payload)? {
+        match judge.render(&entry.head(), kind, &payload)? {
             Verdict::Send(text) => {
                 bytes += text.len();
                 page.frames.push((entry.id, text));

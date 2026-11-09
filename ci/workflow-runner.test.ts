@@ -18,7 +18,7 @@ const WORKFLOWS = resolve(
 const MAC_JOBS = new Set([
   "ci.yml:core-checks",
   "core-live.yml:live",
-  "release.yml:build",
+  "release.yml:programs-macos",
   "release.yml:sign",
   "ci.yml:control-socket",
 ]);
@@ -38,14 +38,19 @@ const NIGHTLY_MAC_JOBS = new Set([
   "ci.yml:cli-scenarios",
 ]);
 
-// The server image and the Linux command line are built on a runner of each
-// architecture they ship for, and both are standard GitHub-hosted runners.
-const PER_ARCHITECTURE_JOBS = new Set([
-  "release.yml:image",
-  "release.yml:cli-linux",
+// The server image is built, each Linux archive is run, and the install is
+// proved on a runner of each platform they ship for, and all are standard
+// GitHub-hosted runners. The install proof also runs on the Mac the archive is
+// signed on.
+const PER_ARCHITECTURE_JOBS = new Map([
+  ["release.yml:image", ["ubuntu-latest", "ubuntu-24.04-arm"]],
+  ["release.yml:run-linux", ["ubuntu-latest", "ubuntu-24.04-arm"]],
+  [
+    "release.yml:install-proof",
+    ["macos-26", "ubuntu-latest", "ubuntu-24.04-arm"],
+  ],
 ]);
 const PER_ARCHITECTURE_RUNNER = "${{ matrix.runner }}";
-const PER_ARCHITECTURE_RUNNERS = new Set(["ubuntu-latest", "ubuntu-24.04-arm"]);
 
 interface Workflow {
   jobs: Record<
@@ -91,17 +96,15 @@ describe("jobs use standard GitHub-hosted runners", () => {
         continue;
       }
       const key = `${file}:${job}`;
-      if (PER_ARCHITECTURE_JOBS.has(key)) {
+      const allowed = PER_ARCHITECTURE_JOBS.get(key);
+      if (allowed !== undefined) {
         expect(config["runs-on"], key).toEqual(PER_ARCHITECTURE_RUNNER);
         const runners = (config.strategy?.matrix?.include ?? []).map(
           (entry) => entry.runner,
         );
         expect(runners.length, key).toBeGreaterThan(0);
         for (const runner of runners) {
-          expect(
-            PER_ARCHITECTURE_RUNNERS.has(runner ?? ""),
-            `${key}: ${runner ?? ""}`,
-          ).toBe(true);
+          expect(allowed, `${key}: ${runner ?? ""}`).toContain(runner);
         }
         expect(config.concurrency, key).toBeUndefined();
         continue;
@@ -148,7 +151,7 @@ describe("jobs use standard GitHub-hosted runners", () => {
   });
 
   it("finds every per-architecture job named by the policy", () => {
-    for (const key of PER_ARCHITECTURE_JOBS) {
+    for (const key of PER_ARCHITECTURE_JOBS.keys()) {
       const [file = "", job = ""] = key.split(":");
       expect(
         jobsOf(readFileSync(join(WORKFLOWS, file), "utf8"))[job],

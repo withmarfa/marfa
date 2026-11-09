@@ -25,6 +25,7 @@ pub mod keys;
 pub mod mcp;
 pub mod oauth;
 pub mod occurrences;
+pub mod outbound;
 pub mod overview;
 pub mod provenance;
 pub mod query;
@@ -35,6 +36,7 @@ pub mod stored;
 pub mod types;
 pub mod unit;
 pub mod views;
+pub mod webhooks;
 
 use std::sync::{Arc, OnceLock};
 
@@ -70,6 +72,7 @@ pub struct App {
     pub key_limit: Limiter,
     pub passwords: Passwords,
     pub housekeeping: Housekeeping,
+    pub webhooks: webhooks::Webhooks,
     pub blobs: Blobs,
     pub mcp: mcp::Mcp,
     pub telemetry: Telemetry,
@@ -103,12 +106,19 @@ impl App {
         settings.apply_stored(&rows);
         let instance_id = instance::identity(&db).await.map_err(unreadable)?;
         let cursor_secret = instance::cursor_secret(&db).await.map_err(unreadable)?;
-        let blobs = Blobs::open(&start.blob_path, &start.auth_secret)?;
         let mcp = mcp::Mcp::new(&start.auth_secret)
             .map_err(|refused| Failure::start(refused.to_string()))?;
         let clock = Arc::new(Clock::new(start.clock_offset_ms));
         let at = clock.stamp();
-        blobs.register(&db, at.clone()).await?;
+        let blobs = Blobs::open(
+            &db,
+            &start.blob_path,
+            start.object_store.as_ref(),
+            &start.auth_secret,
+            faults.clone(),
+            at.clone(),
+        )
+        .await?;
         db.write(Write::own(), move |tx| catalog::reconcile(tx, &at))
             .await
             .map_err(|refused| Failure::start(refused.to_string()))?;
@@ -136,6 +146,7 @@ impl App {
             key_limit: Limiter::default(),
             passwords: Passwords::default(),
             housekeeping: Housekeeping::default(),
+            webhooks: webhooks::Webhooks::default(),
             blobs,
             mcp,
             telemetry: Telemetry::default(),

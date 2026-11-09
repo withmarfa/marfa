@@ -43,6 +43,7 @@ mod test_hooks;
 mod trash;
 mod types;
 mod views;
+mod webhooks;
 
 use std::sync::Arc;
 
@@ -83,6 +84,23 @@ fn key_doors(app: Arc<App>) -> Routes {
         .route("/keys/current", get(keys::current))
         .route("/keys/{id}", patch(keys::update).delete(keys::revoke))
         .route_layer(from_fn_with_state(app, keys::limited))
+}
+
+fn webhook_doors(app: Arc<App>) -> Routes {
+    Doors::new()
+        .route("/webhooks", post(webhooks::create).get(webhooks::list))
+        .route(
+            "/webhooks/{id}",
+            get(webhooks::get)
+                .patch(webhooks::update)
+                .delete(webhooks::delete),
+        )
+        .route("/webhooks/{id}/deliveries", get(webhooks::deliveries))
+        .route(
+            "/webhooks/{id}/deliveries/{delivery_id}/redeliver",
+            post(webhooks::redeliver),
+        )
+        .admitting(app, Admission::Presented)
 }
 
 fn schema_doors() -> Routes {
@@ -185,9 +203,11 @@ fn blob_doors() -> Routes {
     Doors::new()
         .route("/blobs", post(blobs::upload))
         .route("/blobs/stores", get(blobs::stores))
+        .route("/blobs/orphans", get(blobs::orphans))
         .route("/blobs/{hash}", get(blobs::download).head(blobs::head))
         .route("/blobs/{hash}/url", get(blobs::url))
         .route("/blobs/{hash}/copies", get(blobs::copies))
+        .route("/blobs/{hash}/copies/{store}", delete(blobs::drop_copy))
         .route(
             "/blobs/{hash}/fetch",
             get(blobs::fetch).head(blobs::fetch_head),
@@ -207,7 +227,7 @@ fn owner_item_doors() -> Routes {
 fn profile_doors() -> Routes {
     Doors::new()
         .route("/owner/picture", get(profile::read).put(profile::put_owner))
-        .route("/profile", patch(profile::update))
+        .route("/profile", get(profile::read_own).patch(profile::update))
         .route("/profile/picture", put(profile::put_profile))
 }
 
@@ -270,6 +290,7 @@ fn shared(app: Arc<App>) -> Routes {
         .route("/source", get(sources::read).patch(sources::update))
         .merge(schema_doors())
         .merge(key_doors(app.clone()))
+        .merge(webhook_doors(app.clone()))
         .merge(item_doors(app.clone()))
         .merge(folder_doors(app.clone()))
         .merge(blob_doors())
@@ -355,6 +376,10 @@ fn control_doors(app: &Arc<App>) -> Routes {
                 get(test_hooks::read_faults)
                     .put(test_hooks::set_fault)
                     .delete(test_hooks::clear_faults),
+            )
+            .route(
+                "/_control/test/blob-stores",
+                get(test_hooks::inspect_stores),
             );
     }
     routes
