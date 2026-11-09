@@ -1889,6 +1889,22 @@ fn a_tailnet_that_cannot_be_reached_does_not_cost_the_setup_link() {
     );
 }
 
+#[test]
+fn an_uninstall_says_when_the_tailnet_address_stays() {
+    let rig = Rig::new("uninstall-tailnet-down");
+    rig.installed(&["--access", "tailscale"]);
+    let broken = rig.root.join("tailscale-down");
+    fs::write(&broken, "#!/bin/sh\nexit 1\n").unwrap();
+    fs::set_permissions(&broken, fs::Permissions::from_mode(0o755)).unwrap();
+    let (code, _, stderr) = rig.marfa_with(&["uninstall"], &[("MARFA_TAILSCALE", &broken)]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stderr.contains("The address stays on your tailnet")
+            && stderr.contains("tailscale serve --https=443 off"),
+        "{stderr}"
+    );
+}
+
 // ---- a server run without Docker ----------------------------------------
 
 const MANAGER: &str = if cfg!(target_os = "macos") {

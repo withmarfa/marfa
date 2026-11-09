@@ -25,7 +25,54 @@ fn program() -> Option<PathBuf> {
     })
 }
 
+/// Whether the check below applies: the Mac app is installed, and the command
+/// line is not another program named by `MARFA_TAILSCALE`.
+fn checks_the_app(app_installed: bool, named: Option<&std::ffi::OsStr>) -> bool {
+    app_installed
+        && named.is_none_or(|named| std::path::Path::new(named) == std::path::Path::new(MAC_APP))
+}
+
+/// A process list (`ps -Axo comm=`) with the Mac app, or an open-source
+/// `tailscaled`, running.
+fn judge_processes(processes: &str) -> Result<(), CliError> {
+    let running = processes
+        .lines()
+        .map(str::trim)
+        .any(|line| line == MAC_APP || line == "tailscaled" || line.ends_with("/tailscaled"));
+    if running {
+        Ok(())
+    } else {
+        Err(CliError::Install(
+            "the Tailscale app is not running. Open Tailscale, make sure it is connected, and run this again".into(),
+        ))
+    }
+}
+
+/// On a Mac the command line is the app's own program, and started while the
+/// app is closed it can bring up Tailscale's network extension switched off.
+fn require_the_app_running() -> Result<(), CliError> {
+    let named = std::env::var_os("MARFA_TAILSCALE");
+    if !cfg!(target_os = "macos")
+        || !checks_the_app(std::path::Path::new(MAC_APP).is_file(), named.as_deref())
+    {
+        return Ok(());
+    }
+    let listed = Command::new("/bin/ps")
+        .args(["-Axo", "comm="])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| CliError::Install(format!("cannot list processes: {error}")))?;
+    if !listed.status.success() {
+        return Err(CliError::Install(format!(
+            "cannot list processes: `ps` exited with {}",
+            listed.status
+        )));
+    }
+    judge_processes(&String::from_utf8_lossy(&listed.stdout))
+}
+
 fn run(args: &[&str]) -> Result<String, CliError> {
+    require_the_app_running()?;
     let program = program().ok_or_else(|| {
         CliError::Install(
             "Tailscale is not installed, or its command line is not on the PATH. Install it from tailscale.com and sign in, then run this again".into(),
@@ -138,6 +185,33 @@ mod tests {
     use super::*;
 
     const STATUS: &str = r#"{"TCP":{"443":{"HTTPS":true}},"Web":{"host.example.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:8600"}}}}}"#;
+
+    #[test]
+    fn only_a_running_app_or_tailscaled_lets_a_command_through() {
+        assert!(judge_processes(&format!("/usr/sbin/cfprefsd\n  {MAC_APP}\n")).is_ok());
+        assert!(judge_processes("/usr/sbin/cfprefsd\ntailscaled\n").is_ok());
+        assert!(judge_processes("/opt/homebrew/bin/tailscaled\n").is_ok());
+        let refused = judge_processes(
+            "/usr/sbin/cfprefsd\n/Applications/Tailscale.app/Contents/PlugIns/IPNExtension.appex/Contents/MacOS/IPNExtension\n",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            refused.contains("Tailscale app is not running"),
+            "{refused}"
+        );
+        assert!(judge_processes("").is_err());
+    }
+
+    #[test]
+    fn the_check_applies_where_the_app_is_installed_and_runs_its_program() {
+        let other = std::ffi::OsStr::new("/opt/stand-in/tailscale");
+        let app = std::ffi::OsStr::new(MAC_APP);
+        assert!(checks_the_app(true, None));
+        assert!(checks_the_app(true, Some(app)));
+        assert!(!checks_the_app(true, Some(other)));
+        assert!(!checks_the_app(false, None));
+    }
 
     #[test]
     fn what_a_port_serves_is_read_from_the_status() {
