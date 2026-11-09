@@ -25,8 +25,6 @@
 # Optional settings:
 #   MARFA_NATIVE_WORK       where the PDFium checkout goes on a Mac (default: inside the folder).
 #   MARFA_RELEASE_PREFIX    the name for the container image and volume (default marfa-release).
-#   MARFA_VERIFY_MEMORY     see native/verify.sh; set to 2147483648 on an Apple silicon Mac
-#                           when the target is x86_64 Linux.
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 needs() {
@@ -147,24 +145,35 @@ case "$TARGET" in
     ;;
   *)
     case "$TARGET" in aarch64-*) platform=linux/arm64 ;; *) platform=linux/amd64 ;; esac
-    smoke="$ROOT/work/smoke-$TARGET"
-    rm -rf "$smoke"
-    mkdir -p "$smoke"
-    cp "$shipped" "$smoke/marfa-enrichment-read"
-    cp "$sample" "$smoke/sentence.png"
-    printf 'FROM scratch\nCOPY marfa-enrichment-read sentence.png /\n' >"$smoke/Dockerfile"
-    docker build --quiet --platform "$platform" -t "$prefix-smoke" "$smoke" >/dev/null || die "could not build the smoke image"
-    memory=()
-    [ -n "${MARFA_VERIFY_MEMORY:-}" ] && memory=(--max-memory "$MARFA_VERIFY_MEMORY")
-    said=$(docker run --rm --platform "$platform" --read-only --user 65534:65534 "$prefix-smoke" \
-      /marfa-enrichment-read read /sentence.png ${memory[@]+"${memory[@]}"} 2>&1) \
-      || { docker rmi "$prefix-smoke" >/dev/null 2>&1; die "the program could not read the sample: $said"; }
-    docker rmi "$prefix-smoke" >/dev/null 2>&1 || true
-    rm -rf "$smoke"
+    # An emulator cannot install the reader's seccomp filter, so the reader refuses to read
+    # there; the read waits for a machine that runs the program itself.
+    case "$(uname -m):$platform" in
+      arm64:linux/arm64 | aarch64:linux/arm64 | x86_64:linux/amd64) ;;
+      *) platform= ;;
+    esac
+    if [ -z "$platform" ]; then
+      echo "release: $TARGET does not run on this machine (the machine is $(uname -m)); the sample is read by a machine that runs it"
+      said=
+    else
+      smoke="$ROOT/work/smoke-$TARGET"
+      rm -rf "$smoke"
+      mkdir -p "$smoke"
+      cp "$shipped" "$smoke/marfa-enrichment-read"
+      cp "$sample" "$smoke/sentence.png"
+      printf 'FROM scratch\nCOPY marfa-enrichment-read sentence.png /\n' >"$smoke/Dockerfile"
+      docker build --quiet --platform "$platform" -t "$prefix-smoke" "$smoke" >/dev/null || die "could not build the smoke image"
+      said=$(docker run --rm --platform "$platform" --read-only --user 65534:65534 "$prefix-smoke" \
+        /marfa-enrichment-read read /sentence.png 2>&1) \
+        || { docker rmi "$prefix-smoke" >/dev/null 2>&1; die "the program could not read the sample: $said"; }
+      docker rmi "$prefix-smoke" >/dev/null 2>&1 || true
+      rm -rf "$smoke"
+    fi
     ;;
 esac
-echo "$said" | head -5
-echo "$said" | grep -q "Marfa reads this sentence upright." || die "the program read the sample but did not find its text"
+if [ -n "$said" ]; then
+  echo "$said" | head -5
+  echo "$said" | grep -q "Marfa reads this sentence upright." || die "the program read the sample but did not find its text"
+fi
 
 if [ -n "$full" ]; then
   stage "verify the programs on the whole matrix (native/verify.sh)"

@@ -109,7 +109,6 @@ fn read_one(file: &Path, mime: Option<&str>, options: &Options) -> Result<bool, 
             if reading.cut_short {
                 eprintln!("cut short: the time budget ran out");
             }
-            eprintln!("sandbox: {:?}", reading.sandbox);
             if let Some(refusal) = reading.text_refused {
                 eprintln!("refused: {refusal}");
                 return Ok(false);

@@ -10,8 +10,10 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use super::wire::{Answer, Frame, MAX_REQUEST_BYTES, Request};
-use super::{EXIT_BAD_REQUEST, EXIT_DEADLINE, EXIT_OVER_MEMORY, EXIT_PARENT_GONE, confine};
-use crate::read_here;
+use super::{
+    EXIT_BAD_REQUEST, EXIT_DEADLINE, EXIT_NOT_CONFINED, EXIT_OVER_MEMORY, EXIT_PARENT_GONE, confine,
+};
+use crate::{Sandbox, read_here};
 
 #[cfg(feature = "native")]
 unsafe extern "C" {
@@ -69,7 +71,13 @@ pub(super) fn serve(arguments: impl Iterator<Item = OsString>) -> ! {
     let filter = confine::CallFilter::ready(data_dir.is_some());
     start_watchdog(started + time_limit, parent);
     confine::start_no_more_processes();
-    write_out(&Frame::line(filter.apply(files)));
+    let state = filter.apply(files);
+    #[cfg(feature = "fault-injection")]
+    let state = super::fault::weaken(state);
+    write_out(&Frame::line(state));
+    if state != Sandbox::Full {
+        exit(EXIT_NOT_CONFINED);
+    }
 
     #[cfg(feature = "fault-injection")]
     if let Some(text) = super::fault::act(&super::fault::opening(&file, request.len)) {
@@ -80,7 +88,6 @@ pub(super) fn serve(arguments: impl Iterator<Item = OsString>) -> ! {
             dimensions: None,
             duration: None,
             text_refused: None,
-            sandbox: crate::Sandbox::Off,
         })));
     }
     answer(&Answer::of(read_here(

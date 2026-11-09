@@ -33,17 +33,14 @@ pub(crate) enum Kind {
         ocr: bool,
     },
     Pdf,
-    /// A sound or a video, read for its length and picture size and for no text.
-    /// `matroska` is whether the file is WebM or Matroska, which this crate reads
-    /// itself; every other container goes to Symphonia.
+    /// A sound or video, read for its length and picture size; `matroska` marks WebM and Matroska.
     Media {
         matroska: bool,
     },
 }
 
 impl Kind {
-    /// Whether the reader holds the whole file in memory. A media reader reads
-    /// headers and steps over the rest.
+    /// Whether the reader holds the whole file in memory.
     pub(crate) fn loads_whole_file(self) -> bool {
         !matches!(self, Self::Media { .. })
     }

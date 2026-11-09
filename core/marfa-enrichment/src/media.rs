@@ -1,5 +1,4 @@
-//! The length of a sound or a video, and the size of its picture, from the file's
-//! headers. Nothing is decoded and the file is never held in memory.
+//! Length and picture size of a sound or video, from its headers.
 
 use symphonia::core::codecs::CodecParameters;
 use symphonia::core::common::Limit;
@@ -12,8 +11,7 @@ use symphonia::core::meta::MetadataOptions;
 use crate::source::Source;
 use crate::{Refusal, matroska};
 
-/// The longest duration taken as real: about three centuries. A header that states
-/// more is damaged.
+/// The longest duration taken as real; a header stating more is damaged.
 pub(crate) const MAX_DURATION_SECONDS: f64 = 1e10;
 
 /// The most a tag may take in memory once read.
@@ -28,8 +26,7 @@ pub(crate) struct Media {
     pub(crate) size: Option<(u32, u32)>,
 }
 
-/// A duration that can be told to a person: a number from zero up to
-/// `MAX_DURATION_SECONDS`. A negative zero is zero, which prints as `0`, not `-0`.
+/// A duration from zero up to `MAX_DURATION_SECONDS`; negative zero becomes zero.
 pub(crate) fn checked_duration(seconds: f64) -> Result<f64, Refusal> {
     if (0.0..=MAX_DURATION_SECONDS).contains(&seconds) {
         Ok(if seconds == 0.0 { 0.0 } else { seconds })
@@ -48,8 +45,7 @@ pub(crate) fn read(mut source: Source, matroska: bool) -> Result<Media, Refusal>
     }
 }
 
-/// MP3, WAV, FLAC, Ogg and MP4, which Symphonia takes apart. It states no duration
-/// for WebM or Matroska.
+/// MP3, WAV, FLAC, Ogg and MP4, through Symphonia.
 fn containers(source: Source) -> Result<Media, Refusal> {
     let stream = MediaSourceStream::new(Box::new(source), MediaSourceStreamOptions::default());
     let tags = MetadataOptions::default()
