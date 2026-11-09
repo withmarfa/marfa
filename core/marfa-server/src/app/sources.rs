@@ -287,3 +287,11 @@ mod tests {
         }
     }
 }
+
+/// Every source with a name or a mark set, by code.
+pub(crate) fn named(tx: &Transaction<'_>) -> Result<Vec<(String, Option<String>, Option<String>)>> {
+    let mut statement =
+        tx.prepare_cached("SELECT source, name, mark FROM source_names ORDER BY source")?;
+    let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}

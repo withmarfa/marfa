@@ -38,6 +38,11 @@ impl Entry {
         }
     }
 
+    /// The value a stored row holds, as the configuration answers it.
+    pub fn row_json(&self, text: &str) -> Result<Json, String> {
+        self.parse(text).map(|value| value.to_json())
+    }
+
     pub fn row_text(&self, text: &str) -> Result<String, String> {
         self.parse(text).map(|value| value.row_text())
     }

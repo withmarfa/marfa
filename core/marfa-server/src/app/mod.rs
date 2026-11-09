@@ -2,6 +2,7 @@
 
 pub mod access;
 pub mod addresses;
+pub mod archive;
 pub mod audit;
 pub mod auth;
 pub mod blobs;

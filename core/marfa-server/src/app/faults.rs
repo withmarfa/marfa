@@ -102,6 +102,7 @@ points! {
     HOLD_BLOB_DELETE = Hold "blob-delete" None;
     HOLD_BLOB_PURGE = Hold "blob-orphans:purge" None;
     FAIL_HEALTH_WRITE = Fail "health-write" Nth;
+    FAIL_EXPORT_READ = Fail "export-read" Nth;
     REFUSE_READ = Refuse "read" None;
     REFUSE_WRITE = Refuse "write" None;
     REFUSE_WRITE_LOCK = Refuse "write-lock" None;

@@ -149,6 +149,40 @@ fn lineage_admits(lineage: &Lineage, constraints: &[String]) -> bool {
     lineage.admitted_by(constraints).unwrap_or(false)
 }
 
+/// The refusals of an edge that need only its ends' types, as a restore makes them: an end of a
+/// type that is not registered is not judged, and a placement in a revoked folder stands.
+pub(crate) fn judge_restored_ends(
+    catalog: &Catalog,
+    kind: &EdgeType,
+    source: (&str, &str),
+    target_type: &str,
+) -> Result<()> {
+    let (source_id, source_type) = source;
+    let lineage = |type_id: &str| lineage_of(catalog.types.rows(), type_id);
+    let held = lineage(source_type);
+    if let Some(held) = &held
+        && !lineage_admits(held, &kind.source_type_constraints)
+    {
+        return Err(constraint(edges::refused_end(kind, End::Source, source_type)));
+    }
+    if let Some(target) = lineage(target_type)
+        && !lineage_admits(&target, &kind.target_type_constraints)
+    {
+        return Err(constraint(edges::refused_end(kind, End::Target, target_type)));
+    }
+    if kind.flat
+        && held.is_some_and(|held| lineage_admits(&held, &kind.target_type_constraints))
+    {
+        let mut nesting = edges::refused_nesting(&kind.id, source_id, source_type);
+        nesting.message = format!(
+            "Edge \"{}\" does not nest collections; use \"parent-of\" for hierarchy",
+            kind.id
+        );
+        return Err(constraint(nesting));
+    }
+    Ok(())
+}
+
 struct Stands<'a> {
     kind: &'a EdgeType,
     source: &'a Item,

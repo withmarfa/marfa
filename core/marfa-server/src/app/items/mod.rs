@@ -1,5 +1,6 @@
 //! Every write goes through [`write::apply`]; only `rows` holds the SQL of the item tables.
 
+mod archived;
 pub mod bulk;
 pub mod expiry;
 mod index;
@@ -23,6 +24,7 @@ use super::connectors::ReadOnly;
 use super::edges::{self, Reach};
 use super::refusal::{Code, Refusal, Result};
 
+pub(crate) use archived::{Archived, archived};
 pub(crate) use plan::require_version;
 pub use read::{
     Caption, Detail, Listing, Many, Selector, bin, bin_selection, bulk_get, captions, detail,

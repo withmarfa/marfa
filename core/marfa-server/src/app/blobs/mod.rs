@@ -1,6 +1,7 @@
 //! Blobs: bytes named by the hash of what they hold, kept in every attached store, and who may
 //! read them.
 
+pub mod carry;
 mod digests;
 mod disk;
 mod hash;
@@ -40,7 +41,7 @@ use crate::settings::registry::{
     BLOB_MIN_COPIES, BLOB_READ_IDLE_TIMEOUT_MS, DISK_RESERVE_BYTES, UPLOAD_IDLE_TIMEOUT_MS,
 };
 use crate::settings::start::ObjectStoreSettings;
-pub use disk::MARKER;
+pub use disk::{MARKER, Scratch};
 use disk::{Disk, Staged};
 pub use hash::Hash;
 use rows::Held;

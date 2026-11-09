@@ -381,3 +381,18 @@ pub async fn redeliver(
     })
     .await
 }
+
+/// The subscriptions an archive carries for a caller: every one for the owner and the local
+/// command, and a key's or an app's own otherwise.
+pub fn archived(
+    tx: &rusqlite::Transaction<'_>,
+    caller: &super::access::Caller,
+) -> super::refusal::Result<Vec<store::Subscription>> {
+    use super::access::{Caller, Permission};
+    let reach = match caller {
+        Caller::Local(_) | Caller::Owner(_) | Caller::Server => None,
+        _ if !caller.holds(Permission::WebhooksManage) => return Ok(Vec::new()),
+        _ => Some(caller.webhook_maker()?),
+    };
+    store::list(tx, reach.as_ref())
+}

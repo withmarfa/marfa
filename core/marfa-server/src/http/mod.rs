@@ -20,6 +20,7 @@ mod doors;
 mod edge_types;
 mod edges;
 mod events;
+mod export;
 mod health;
 mod housekeeping;
 mod items;
@@ -130,6 +131,7 @@ fn overview_doors(app: Arc<App>) -> Routes {
 fn count_doors(app: Arc<App>) -> Routes {
     Doors::new()
         .route("/items/stats", get(listing::stats))
+        .route("/export", get(export::export))
         .admitting(app, Admission::Counted)
 }
 

@@ -1,0 +1,233 @@
+//! Sends a prepared archive. Before each segment of a line file and each run of a blob's bytes
+//! it asks whether the credential still stands and still reads what that part holds; a part it
+//! may not send, a read that fails and bytes that are not their blob's all end the response
+//! with an error, never a clean end. Whatever the outcome, the spool goes with the task.
+
+use std::fs::File;
+use std::io;
+use std::sync::Arc;
+
+use bytes::Bytes;
+use chrono::DateTime;
+use futures_util::StreamExt;
+use sha2::{Digest, Sha256};
+use tokio::sync::mpsc;
+
+use super::spool::{Spooled, read_chunk};
+use super::tar;
+use super::{EdgeNeed, ItemNeed, Prepared};
+use crate::app::App;
+use crate::app::access::Caller;
+use crate::app::blobs::carry::{self, Carried};
+use crate::app::blobs::Hash;
+use crate::app::items::{Reader, reading};
+
+/// How many bytes of a blob pass between asking whether the credential still reads it.
+const BLOB_CHECK_BYTES: usize = 1024 * 1024;
+
+enum Stop {
+    /// The client left or stopped reading; nobody is there to tell.
+    Gone,
+    Failed(io::Error),
+}
+
+impl From<io::Error> for Stop {
+    fn from(error: io::Error) -> Stop {
+        Stop::Failed(error)
+    }
+}
+
+fn failed(what: &str) -> Stop {
+    Stop::Failed(io::Error::other(what.to_string()))
+}
+
+struct Out<'a> {
+    app: &'a App,
+    caller: &'a Caller,
+    sender: mpsc::Sender<io::Result<Bytes>>,
+    mtime: u64,
+}
+
+pub async fn archive(
+    app: Arc<App>,
+    caller: Caller,
+    prepared: Prepared,
+    sender: mpsc::Sender<io::Result<Bytes>>,
+) {
+    let mtime = DateTime::parse_from_rfc3339(&prepared.created_at)
+        .map_or(0, |at| u64::try_from(at.timestamp()).unwrap_or(0));
+    let out = Out {
+        app: &app,
+        caller: &caller,
+        sender: sender.clone(),
+        mtime,
+    };
+    match out.whole(&prepared).await {
+        Ok(()) | Err(Stop::Gone) => {}
+        Err(Stop::Failed(error)) => {
+            tracing::warn!(%error, "An archive export ended short");
+            let _ = sender.send(Err(error)).await;
+        }
+    }
+    drop(prepared);
+}
+
+impl Out<'_> {
+    async fn emit(&self, bytes: Bytes) -> Result<(), Stop> {
+        let idle = self.app.blob_read_idle();
+        match tokio::time::timeout(idle, self.sender.send(Ok(bytes))).await {
+            Ok(Ok(())) => Ok(()),
+            _ => Err(Stop::Gone),
+        }
+    }
+
+    async fn header(&self, name: &str, size: u64) -> Result<(), Stop> {
+        let block = tar::header(name, size, self.mtime).ok_or_else(|| failed("a tar name did not fit"))?;
+        self.emit(Bytes::copy_from_slice(&block)).await
+    }
+
+    async fn pad(&self, size: u64) -> Result<(), Stop> {
+        let padding = tar::padding(size);
+        if padding > 0 {
+            self.emit(Bytes::from(vec![0; padding])).await?;
+        }
+        Ok(())
+    }
+
+    /// Asks, in one snapshot, whether the credential stands and `check` holds of it.
+    async fn holds<F>(&self, check: F) -> Result<(), Stop>
+    where
+        F: FnOnce(&Reader<'_, '_>) -> crate::app::refusal::Result<bool> + Send + 'static,
+    {
+        match reading(self.app, self.caller, check).await {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(failed("the export's credential no longer reads what it sends")),
+            Err(refusal) => Err(failed(&format!(
+                "the export's credential ended: {}",
+                refusal.message
+            ))),
+        }
+    }
+
+    async fn whole(&self, prepared: &Prepared) -> Result<(), Stop> {
+        self.holds(|_| Ok(true)).await?;
+        self.header("manifest.json", prepared.manifest.len() as u64)
+            .await?;
+        self.emit(Bytes::copy_from_slice(&prepared.manifest)).await?;
+        self.pad(prepared.manifest.len() as u64).await?;
+        self.lines("instance.ndjson.gz", &prepared.instance, |_| Box::new(|_| true))
+        .await?;
+        self.lines("items.ndjson.gz", &prepared.items, items_need)
+            .await?;
+        self.lines("edges.ndjson.gz", &prepared.edges, edges_need)
+            .await?;
+        for (carried, store) in &prepared.blobs {
+            self.blob(carried, store).await?;
+        }
+        self.emit(Bytes::from_static(&tar::END)).await
+    }
+
+    async fn lines<N>(
+        &self,
+        name: &str,
+        spooled: &Spooled<N>,
+        need: impl Fn(&N) -> Box<dyn Fn(&Reader<'_, '_>) -> bool + Send>,
+    ) -> Result<(), Stop> {
+        self.header(name, spooled.size).await?;
+        let mut file = Some(spooled.open()?);
+        let mut at = 0;
+        for (end, needs) in &spooled.segments {
+            let judge = need(needs);
+            self.holds(move |read| Ok(judge(read))).await?;
+            while at < *end {
+                let (back, chunk) = read(file.take(), at, *end).await?;
+                file = Some(back);
+                at += chunk.len() as u64;
+                self.emit(Bytes::from(chunk)).await?;
+            }
+        }
+        self.pad(spooled.size).await
+    }
+
+    async fn blob(&self, carried: &Carried, store: &str) -> Result<(), Stop> {
+        let blob = carried.blob.clone();
+        self.blob_readable(&blob.hash).await?;
+        let mut bytes = self
+            .app
+            .carried_bytes(&blob, store)
+            .await
+            .map_err(|refusal| failed(&refusal.message))?;
+        self.header(&format!("blobs/{}", blob.hash.as_str()), blob.size_bytes)
+            .await?;
+        let mut digest = Sha256::new();
+        let mut read = 0u64;
+        let mut held: Option<Bytes> = None;
+        let mut since = 0usize;
+        while let Some(chunk) = bytes.stream.next().await {
+            let chunk = chunk?;
+            read += chunk.len() as u64;
+            if read > blob.size_bytes {
+                return Err(failed("a store sent more bytes than the blob holds"));
+            }
+            digest.update(&chunk);
+            if let Some(previous) = held.replace(chunk) {
+                since += previous.len();
+                self.emit(previous).await?;
+                if since >= BLOB_CHECK_BYTES {
+                    since = 0;
+                    self.blob_readable(&blob.hash).await?;
+                }
+            }
+        }
+        if read < blob.size_bytes {
+            return Err(failed("a store ended a blob's bytes short"));
+        }
+        if Hash::from_digest(&digest.finalize()) != blob.hash {
+            if let Err(refusal) = self.app.judge_damaged(bytes, &blob).await {
+                tracing::warn!(message = %refusal.message, "A damaged copy was not judged");
+            }
+            return Err(failed("a blob's bytes do not hash to its name"));
+        }
+        if let Some(last) = held {
+            self.emit(last).await?;
+        }
+        self.pad(blob.size_bytes).await
+    }
+
+    async fn blob_readable(&self, hash: &Hash) -> Result<(), Stop> {
+        let hash = hash.clone();
+        self.holds(move |read| carry::readable(read.tx, &read.caller, &hash))
+            .await
+    }
+}
+
+fn items_need(need: &ItemNeed) -> Box<dyn Fn(&Reader<'_, '_>) -> bool + Send> {
+    let need = need.clone();
+    Box::new(move |read| {
+        let caller = &read.caller;
+        need.rows.iter().all(|(type_id, source)| {
+            caller.may_read_type(type_id) && caller.lists(&read.catalog.rules, type_id, source)
+        }) && need.namespaces.iter().all(|name| caller.may_read_extension(name))
+            && need.types.iter().all(|type_id| caller.may_read_type(type_id))
+    })
+}
+
+fn edges_need(need: &EdgeNeed) -> Box<dyn Fn(&Reader<'_, '_>) -> bool + Send> {
+    let need = need.clone();
+    Box::new(move |read| {
+        need.0
+            .iter()
+            .all(|(edge_type, source_type)| read.caller.may_read_edge(edge_type, source_type))
+    })
+}
+
+async fn read(file: Option<File>, at: u64, end: u64) -> Result<(File, Vec<u8>), Stop> {
+    let mut file = file.ok_or_else(|| failed("a spool file was lost"))?;
+    let read = tokio::task::spawn_blocking(move || {
+        let chunk = read_chunk(&mut file, at, end);
+        chunk.map(|chunk| (file, chunk))
+    })
+    .await
+    .map_err(|_| failed("a spool read stopped"))??;
+    Ok(read)
+}

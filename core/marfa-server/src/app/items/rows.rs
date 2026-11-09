@@ -552,6 +552,35 @@ pub(super) fn snapshots_after(
     Ok(found.collect::<rusqlite::Result<_>>()?)
 }
 
+/// Every snapshot of the item below `version`, oldest first.
+pub(super) fn snapshots_below(
+    tx: &Transaction<'_>,
+    seq: i64,
+    version: i64,
+) -> Result<Vec<Snapshot>> {
+    let mut statement = tx.prepare_cached(&format!(
+        "{SNAPSHOT} WHERE v.item_seq = ?1 AND v.version < ?2 ORDER BY v.version"
+    ))?;
+    let found = statement.query_map([seq, version], snapshot_of)?;
+    Ok(found.collect::<rusqlite::Result<_>>()?)
+}
+
+/// Who wrote the item's current version, and when it last left the bin.
+pub(super) fn writer_and_restored(
+    tx: &Transaction<'_>,
+    seq: i64,
+) -> Result<(Option<Writer>, Option<String>)> {
+    let mut statement = tx.prepare_cached(
+        "SELECT writer_kind, writer_id, writer_name, restored_at FROM items WHERE seq = ?1",
+    )?;
+    Ok(statement.query_row([seq], |row| {
+        Ok((
+            writer_of(row.get(0)?, row.get(1)?, row.get(2)?),
+            row.get(3)?,
+        ))
+    })?)
+}
+
 pub(super) fn tags(tx: &Transaction<'_>, seq: i64) -> Result<Vec<String>> {
     let mut statement =
         tx.prepare_cached("SELECT tag FROM item_tags WHERE item_seq = ?1 ORDER BY position")?;

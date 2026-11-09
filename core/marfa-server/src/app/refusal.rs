@@ -115,7 +115,6 @@ codes! {
     RateLimited = "rate_limited", 429;
     InternalError = "internal_error", 500;
     BlobStoreUnavailable = "blob_store_unavailable", 503;
-    ExportUnrestorable = "export_unrestorable", 503;
     InboundUnavailable = "inbound_unavailable", 503;
     StreamCapacityExhausted = "stream_capacity_exhausted", 503;
     WriteContention = "write_contention", 503;

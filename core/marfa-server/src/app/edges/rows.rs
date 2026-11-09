@@ -332,3 +332,41 @@ impl Graph for Store<'_, '_> {
         )
     }
 }
+
+/// An edge's end, as an export judges the edge.
+#[derive(Clone, Debug)]
+pub struct End {
+    pub seq: i64,
+    pub type_id: String,
+    pub state: String,
+}
+
+/// A page of edges after `after`, in `seq` order, each with its two ends.
+pub(super) fn with_ends(
+    tx: &Transaction<'_>,
+    after: i64,
+    limit: i64,
+) -> Result<Vec<(Edge, End, End)>> {
+    let mut statement = tx.prepare_cached(
+        "SELECT e.seq, e.id, e.source_id, e.target_id, e.edge_type, json(e.properties), \
+         e.version, e.created_at, e.updated_at, s.seq, s.type, s.state, t.seq, t.type, t.state \
+         FROM edges e JOIN items s ON s.id = e.source_id JOIN items t ON t.id = e.target_id \
+         WHERE e.seq > ?1 ORDER BY e.seq LIMIT ?2",
+    )?;
+    let found = statement.query_map([after, limit], |row| {
+        Ok((
+            edge_of(row)?,
+            End {
+                seq: row.get(9)?,
+                type_id: row.get(10)?,
+                state: row.get(11)?,
+            },
+            End {
+                seq: row.get(12)?,
+                type_id: row.get(13)?,
+                state: row.get(14)?,
+            },
+        ))
+    })?;
+    Ok(found.collect::<rusqlite::Result<_>>()?)
+}

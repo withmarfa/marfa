@@ -106,7 +106,7 @@ where
         .await
 }
 
-impl Reader<'_, '_> {
+impl<'a, 'c> Reader<'a, 'c> {
     /// Whether the item belongs to the inventory the credential's source filter leaves it.
     fn lists(&self, row: &Item) -> bool {
         self.caller
@@ -122,6 +122,22 @@ impl Reader<'_, '_> {
 
     pub(crate) fn hydrating(&self) {
         self.faults.hold_blocking(HOLD_READ_HYDRATION);
+    }
+
+    /// The same snapshot, read as `caller` reads it.
+    pub(crate) fn as_caller(&self, caller: Caller) -> Reader<'a, 'c> {
+        Reader {
+            tx: self.tx,
+            caller,
+            catalog: self.catalog.clone(),
+            read_only: self.read_only.clone(),
+            faults: self.faults,
+            certified: false,
+        }
+    }
+
+    pub(crate) fn faults(&self) -> &Faults {
+        self.faults
     }
 
     fn history_page(&self, row: &Item, after: i64, limit: i64) -> Result<String> {
@@ -635,7 +651,7 @@ fn batch_size(limit: i64, passes_over: bool) -> i64 {
     if passes_over { WALK_BATCH } else { limit + 1 }
 }
 
-impl Reader<'_, '_> {
+impl<'a, 'c> Reader<'a, 'c> {
     /// A name exists only once worked out from the row, so a search walks the rows.
     fn named_page(&self, listing: Listing, trashed: bool) -> Result<(Vec<Item>, Option<String>)> {
         let q = listing.q.trim().to_lowercase();
@@ -756,7 +772,7 @@ pub enum Selector {
     Ids(Vec<String>),
 }
 
-impl Reader<'_, '_> {
+impl<'a, 'c> Reader<'a, 'c> {
     fn found_by(&self, type_id: &str, selector: &Selector) -> Result<Vec<Item>> {
         let mut found = Vec::new();
         match selector {
