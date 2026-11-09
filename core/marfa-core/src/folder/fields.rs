@@ -180,9 +180,11 @@ pub fn read(front: &Map<String, Value>, edge_types: &EdgeTypes) -> Result<Read, 
                 read.lines.occurred_at = Some(
                     value
                         .as_str()
-                        .and_then(|time| marfa_rules::time::normalize(time, OCCURRED_AT_FIELD).ok())
+                        .and_then(|time| marfa_rules::time::normalize_bound(time, OCCURRED_AT_FIELD).ok())
                         .ok_or_else(|| {
-                            format!("{OCCURRED_AT_FIELD} is a date or a date and time, not {value}")
+                            format!(
+                                "{OCCURRED_AT_FIELD} is a date or a date and time with a zone, not {value}"
+                            )
                         })?,
                 );
             }
@@ -333,7 +335,7 @@ pub(super) fn presentation(
             VERSION_FIELD => super::version_named(value).map(Value::from),
             OCCURRED_AT_FIELD => value
                 .as_str()
-                .and_then(|time| marfa_rules::time::normalize(time, OCCURRED_AT_FIELD).ok())
+                .and_then(|time| marfa_rules::time::normalize_bound(time, OCCURRED_AT_FIELD).ok())
                 .map(Value::String),
             TAGS_FIELD => tags_of(value).ok().map(|mut tags| {
                 tags.sort();
@@ -527,9 +529,7 @@ mod tests {
     fn an_occurred_at_line_is_the_items_own_time_in_any_form_the_server_reads() {
         for (line, stored) in [
             ("2026-10-06", "2026-10-06T00:00:00.000Z"),
-            ("2026-10", "2026-10-01T00:00:00.000Z"),
             ("2026-10-06T09:30:00+01:00", "2026-10-06T08:30:00.000Z"),
-            ("2026-10-06T09:30:00", "2026-10-06T09:30:00.000Z"),
             ("2026-10-06T09:30:00.123456Z", "2026-10-06T09:30:00.123Z"),
         ] {
             let read = read(
@@ -542,6 +542,21 @@ mod tests {
                 read.properties.keys().collect::<Vec<_>>(),
                 ["status"],
                 "the line {line} was also read as a property"
+            );
+        }
+    }
+
+    #[test]
+    fn an_occurred_at_line_with_no_zone_or_a_partial_date_is_not_a_time() {
+        for line in [
+            "2026-10",
+            "2026",
+            "2026-10-06T09:30:00",
+            "2026-10-06T09:30+0100",
+        ] {
+            assert!(
+                read(&front(json!({ "occurred_at": line })), &edge_types()).is_err(),
+                "{line}"
             );
         }
     }

@@ -183,11 +183,11 @@ Where enrichment is on, if reading a document needs more memory than `MARFA_ENRI
 
 ### `housekeeping/enrichment-text-whole`
 
-Where enrichment is on, if the text of a file is longer than `MARFA_ENRICHMENT_MAX_TEXT_CHARS` UTF-16 code units, then the server MUST write an `extracted_text` that ends before any character the limit would cut in two.
+Where enrichment is on, if the text of a file is longer than `MARFA_ENRICHMENT_MAX_TEXT_CHARS` characters, then the server MUST write an `extracted_text` of exactly that many characters.
 
-**Reason:** a character outside the Basic Multilingual Plane takes two code units, and half of one is text that is not well-formed (`items/json-text-well-formed`).
+**Reason:** the limit counts Unicode characters, so a character outside the Basic Multilingual Plane counts once and is never cut in two.
 
-**Tests:** `compliance/enrichment-text-cut.test.ts › cuts extracted text at the limit without cutting a character in two`.
+**Tests:** `compliance/enrichment-text-cut.test.ts › cuts extracted text at a number of characters, counting an emoji once`.
 
 ### `housekeeping/enrichment-document-no-text`
 

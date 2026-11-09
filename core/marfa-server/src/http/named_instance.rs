@@ -55,7 +55,7 @@ pub(super) fn judge(app: &App, headers: &HeaderMap) -> Result<(), Refusal> {
 #[derive(Clone)]
 pub struct Judging {
     pub app: Arc<App>,
-    pub writes: Arc<HashMap<&'static str, (Vec<Method>, Admission)>>,
+    pub writes: Arc<HashMap<&'static str, Vec<(Method, Admission)>>>,
 }
 
 /// A door that takes no credential judges the header itself.
@@ -64,7 +64,7 @@ pub async fn judged(State(judging): State<Judging>, request: Request, next: Next
         .extensions()
         .get::<MatchedPath>()
         .and_then(|path| judging.writes.get(path.as_str()))
-        .filter(|(methods, _)| methods.contains(request.method()))
+        .and_then(|doors| doors.iter().find(|(method, _)| method == request.method()))
         .map(|(_, rule)| *rule);
     let Some(rule) = rule else {
         return next.run(request).await;
@@ -207,7 +207,7 @@ mod tests {
             let (method, path) = route.split_once(' ').unwrap();
             judged
                 .get(path)
-                .is_some_and(|(methods, _)| methods.iter().any(|served| served.as_str() == method))
+                .is_some_and(|doors| doors.iter().any(|(served, _)| served.as_str() == method))
         })
     }
 

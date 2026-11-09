@@ -82,13 +82,13 @@ If `PUT /folders/{id}/status` names undeclared fields, caller identities, file p
 
 If a report to `PUT /folders/{id}/status` names a problem code outside `conflict`, `refused`, `credential_refused`, `unreadable`, `held_file`, `unavailable`, `root_gone`, and `settings_invalid`, or repeats a code, then the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/folder-status.test.ts › rejects caller identities, file details, unknown codes, and unsafe counts without changing the report`.
+**Tests:** `compliance/folder-status.test.ts › rejects caller identities, file details, unknown codes, and unsafe counts without changing the report`, `› takes each of the eight problem codes once, and a sequence and counts at the largest whole number`.
 
 ### `folder-status/number-bounds`
 
 If `PUT /folders/{id}/status` names a sequence outside the integers from 1 through 9007199254740991, or a count outside the integers from 0 through 9007199254740991, then the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/folder-status.test.ts › rejects caller identities, file details, unknown codes, and unsafe counts without changing the report`.
+**Tests:** `compliance/folder-status.test.ts › rejects caller identities, file details, unknown codes, and unsafe counts without changing the report`, `› takes each of the eight problem codes once, and a sequence and counts at the largest whole number`.
 
 ### `folder-status/last-success-time`
 
@@ -130,7 +130,7 @@ When an authenticated caller that can read a `system.folder` asks for `GET /fold
 
 ### `folder-status/sign-in-order`
 
-When `GET /folders/{id}/status` answers, the server MUST order `sign_ins` by `sign_in.kind` as `app`, then `key`, and within a kind by ascending `sign_in.id`.
+When `GET /folders/{id}/status` answers, the server MUST order `sign_ins` by `sign_in.kind` as `app` then `key`, and within a kind by ascending `sign_in.id`.
 
 **Tests:** `compliance/folder-status.test.ts › orders sign-ins by kind and ID and total problems as they first appear`.
 
@@ -159,6 +159,14 @@ When `GET /folders/{id}/status` returns totals, the server MUST sum only reports
 When an API key is revoked or expires, the server MUST retain its latest folder-copy reports as `current: false`.
 
 **Tests:** `compliance/folder-status.test.ts › retains revoked and expired key reports immediately as history and excludes them from totals`.
+
+### `folder-status/browser-session`
+
+When a request to a folder operation carries an owner's browser session and no key or token, the server MUST answer `401 unauthorized`.
+
+**Reason:** an owner's browser session reaches only the sign-in pages and their own posts. The owner reads and changes folders from the command line, by the private local command or by a key.
+
+**Tests:** `compliance/folder-status.test.ts › ignores an owner's browser session on every folder door`.
 
 ### `folder-status/app-token-expiry`
 
@@ -218,7 +226,7 @@ When the instance restarts or is restored from a physical database backup, the s
 
 When the server exports a portable item archive, the server MUST exclude operational folder-copy reports from that archive.
 
-**Tests:** `compliance/folder-status.test.ts › keeps witnessed reports outside portable item archives`.
+**Tests:** `compliance/folder-status-archive.test.ts › keeps witnessed reports outside portable item archives`.
 
 ### `folder-status/read-none`
 
@@ -230,17 +238,17 @@ When a credential that reads no type asks for `GET /folders/{id}/status` or `PUT
 
 ### `folder-status/inventory`
 
-When the private local command asks for `GET /folders`, the server MUST return a page of active `system.folder` summaries, newest first, as `data` and `next_cursor`.
+When a private local command asks for `GET /folders`, the server MUST return a page of active `system.folder` summaries, newest first, as `data` and `next_cursor`.
 
-**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the local command with bounded pages`, `› lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token`.
+**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the local command with bounded pages, and refuses every other caller`, `› lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token`.
 
 ### `folder-status/inventory-summary`
 
 When `GET /folders` returns a folder summary, the server MUST include only `id`, `title`, and `created_at`.
 
-**Reason:** the inventory lists folders without exposing folder settings or the content of items they hold. Reported copies are read through `GET /folders/{id}/status`.
+**Reason:** the command line lists folders without exposing folder settings or the content of items they hold. Reported copies are read through `GET /folders/{id}/status`.
 
-**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the local command with bounded pages`, `› lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token`.
+**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the local command with bounded pages, and refuses every other caller`, `› lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token`.
 
 ### `folder-status/inventory-title`
 
@@ -250,13 +258,13 @@ When `GET /folders` returns a folder summary, the server MUST answer `title` as 
 
 ### `folder-status/inventory-limit`
 
-When the private local command asks for `GET /folders`, the server MUST answer at most `limit` folders, 50 when `limit` is absent.
+When a private local command asks for `GET /folders`, the server MUST answer at most `limit` folders, 50 when `limit` is absent.
 
 **Tests:** `compliance/folder-status.test.ts › pages the folder inventory 50 at a time unless a limit from 1 to 200 is named`.
 
 ### `folder-status/inventory-limit-range`
 
-If the private local command names a `limit` that is not a whole number of 1 to 200 on `GET /folders`, then the server MUST answer `400 validation_error` naming `limit`.
+If a private local command names a `limit` that is not a whole number of 1 to 200 on `GET /folders`, then the server MUST answer `400 validation_error` naming `limit`.
 
 **Reason:** a `limit` above 200 is refused here, where `search-and-filters/limit-listing-capped` caps one on `GET /items`.
 
@@ -264,7 +272,7 @@ If the private local command names a `limit` that is not a whole number of 1 to 
 
 ### `folder-status/inventory-cursor`
 
-When the private local command sends back the `next_cursor` of a page of `GET /folders`, the server MUST answer the page that follows it, so that walking to the end delivers every active folder exactly once.
+When a private local command sends back the `next_cursor` of a page of `GET /folders`, the server MUST answer the page that follows it, so that walking to the end delivers every active folder exactly once.
 
 **Reason:** this is `search-and-filters/cursor-continues` and `search-and-filters/cursor-last-page` for this listing, whose page has the shape `search-and-filters/page-envelope` gives every list.
 
@@ -272,7 +280,7 @@ When the private local command sends back the `next_cursor` of a page of `GET /f
 
 ### `folder-status/inventory-cursor-invalid`
 
-If the private local command sends `GET /folders` a `cursor` that is malformed or that another ordering issued, then the server MUST answer `400 validation_error`.
+If a private local command sends `GET /folders` a `cursor` that is malformed or that another ordering issued, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/folder-status.test.ts › pages the folder inventory 50 at a time unless a limit from 1 to 200 is named`.
 
@@ -280,10 +288,10 @@ If the private local command sends `GET /folders` a `cursor` that is malformed o
 
 When an API key or delegated token asks for `GET /folders`, the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the local command with bounded pages`, `› lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token`.
+**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the local command with bounded pages, and refuses every other caller`, `› lists folders newest first under a trimmed, collapsed or placeholder title, and refuses an app's token`.
 
 ### `folder-status/inventory-authentication`
 
 When an unauthenticated caller asks for `GET /folders`, the server MUST answer `401 unauthorized`.
 
-**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the local command with bounded pages`.
+**Tests:** `compliance/folder-status.test.ts › lists active folder summaries for the local command with bounded pages, and refuses every other caller`.

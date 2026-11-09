@@ -15,15 +15,15 @@ const AT_ONCE: usize = 2;
 const DECOYS_AT_ONCE: usize = 1;
 const DECOY_PLACES: usize = 8;
 const DECOY_WAIT_MS: i64 = 1_000;
-const MIN_UNITS: usize = 8;
-const MAX_UNITS: usize = 128;
+const MIN_LENGTH: usize = 8;
+const MAX_LENGTH: usize = 128;
 
 pub fn check_new(password: &str) -> Result<()> {
-    let units = password.encode_utf16().count();
-    let message = if units < MIN_UNITS {
-        format!("Password must be at least {MIN_UNITS} characters.")
-    } else if units > MAX_UNITS {
-        format!("Password must be at most {MAX_UNITS} characters.")
+    let length = password.chars().count();
+    let message = if length < MIN_LENGTH {
+        format!("Password must be at least {MIN_LENGTH} characters.")
+    } else if length > MAX_LENGTH {
+        format!("Password must be at most {MAX_LENGTH} characters.")
     } else {
         return Ok(());
     };
@@ -234,11 +234,14 @@ mod tests {
     }
 
     #[test]
-    fn a_new_password_is_measured_in_utf16_units() {
+    fn a_new_password_is_measured_in_characters() {
         assert!(check_new("1234567").is_err());
         assert!(check_new("12345678").is_ok());
         assert!(check_new(&"x".repeat(128)).is_ok());
         assert!(check_new(&"x".repeat(129)).is_err());
-        assert!(check_new(&"😀".repeat(65)).is_err());
+        assert!(check_new(&"😀".repeat(7)).is_err());
+        assert!(check_new(&"😀".repeat(8)).is_ok());
+        assert!(check_new(&"😀".repeat(128)).is_ok());
+        assert!(check_new(&"😀".repeat(129)).is_err());
     }
 }

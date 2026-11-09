@@ -3031,7 +3031,7 @@ describe("a local read answers the listing grammar as the server does", () => {
       { "parent-of": [child] },
     );
     // Text a numeric bound casts, text a REAL matches by affinity (source_id)
-    // or never (`t`), and floats in a container JavaScript spells in full.
+    // or never (`t`), and floats in a container printed in full.
     // A part of root, for the `part` term.
     const five = await seed(
       { title: "five", s: "5", note: "webby back\\slash" },

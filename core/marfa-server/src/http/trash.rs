@@ -203,7 +203,7 @@ fn listing_of(uri: &Uri, page: i64) -> Result<Listing> {
         check_id(type_id, "type")?;
     }
     let q = named_in(uri, "q")?.unwrap_or_default();
-    if q.encode_utf16().count() > MAX_QUERY_CHARS {
+    if q.chars().count() > MAX_QUERY_CHARS {
         return Err(invalid_field(
             "q",
             format!("q holds at most {MAX_QUERY_CHARS} characters."),

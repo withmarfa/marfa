@@ -224,4 +224,4 @@ When a request to an operation other than those of the sign-in pages carries the
 
 **Reason:** Marfa has no owner console, so a session is good only for signing in and approving. A browser left signed in, a copied cookie or a page that rides on the owner's cookie reaches no data and no management operation.
 
-**Tests:** `compliance/browser-sessions.test.ts › answers the owner's live session on every door but the sign-in pages' own as a request with no credential`, `compliance/folder-status.test.ts › answers the owner's browser session on the folder report, inventory and sign-in doors as no credential`.
+**Tests:** `compliance/browser-sessions.test.ts › answers the owner's live session on every door but the sign-in pages' own as a request with no credential`, `compliance/folder-status.test.ts › ignores an owner's browser session on every folder door`.

@@ -340,14 +340,14 @@ describe("a source's code", () => {
   it("refuses a name an archive could not carry, and keeps what was set", async () => {
     const source = `${ctx.source}-name-length`;
     await nameSource(owner, source, { name: "Kept" });
-    for (const name of ["😀".repeat(150), "x".repeat(201), "   ", "a\u202eb"]) {
+    for (const name of ["x".repeat(201), "   ", "a\u202eb"]) {
       const refused = await nameSource(owner, source, { name });
       expect(refused.status, JSON.stringify(name)).toBe(400);
       expect(refused.error?.error.code).toBe("validation_error");
     }
     expect((await readSource(owner, source)).data.name).toBe("Kept");
     // The witness: the longest name that fits is taken.
-    const fits = await nameSource(owner, source, { name: "😀".repeat(100) });
+    const fits = await nameSource(owner, source, { name: "x".repeat(200) });
     expect(fits.status, JSON.stringify(fits.error)).toBe(200);
   });
 

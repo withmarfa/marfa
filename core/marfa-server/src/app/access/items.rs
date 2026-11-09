@@ -97,6 +97,11 @@ impl Caller {
         self.require_type_map("system.view", Level::Write)
     }
 
+    pub fn require_folder_write(&self) -> Result<()> {
+        self.require_reach()?;
+        self.require_type_map("system.folder", Level::Write)
+    }
+
     pub fn may_read_extension(&self, namespace: &str) -> bool {
         self.level_on(Axis::Extension, namespace) >= Level::Read
     }

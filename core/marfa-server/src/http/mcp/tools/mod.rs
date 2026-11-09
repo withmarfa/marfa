@@ -15,9 +15,11 @@ mod sources;
 mod types;
 mod update;
 mod views;
+mod webhooks;
 
 use std::sync::Arc;
 
+use chrono::{DateTime, SecondsFormat};
 use marfa_rules::validation;
 use serde_json::{Map, Value};
 
@@ -74,6 +76,8 @@ fn definitions() -> Vec<(Group, Definition)> {
         (Group::Admin, keys::list_definition()),
         (Group::Admin, keys::manage_definition()),
         (Group::Admin, revoke::definition()),
+        (Group::Admin, webhooks::list_definition()),
+        (Group::Admin, webhooks::manage_definition()),
     ]
 }
 
@@ -104,6 +108,7 @@ fn offered(caller: &Caller, name: &str) -> bool {
         health::NAME => caller.may_read_health(),
         audit::NAME => caller.may_read_audit(),
         keys::LIST_NAME | keys::MANAGE_NAME | revoke::NAME => caller.may_use_key_door(),
+        webhooks::LIST_NAME | webhooks::MANAGE_NAME => caller.may_manage_webhooks(),
         _ => false,
     }
 }
@@ -199,8 +204,16 @@ async fn run(
         keys::LIST_NAME => keys::list(app, caller).await,
         keys::MANAGE_NAME => keys::manage(app, caller, arguments).await,
         revoke::NAME => revoke::run(app, caller, arguments).await,
+        webhooks::LIST_NAME => webhooks::list(app, caller).await,
+        webhooks::MANAGE_NAME => webhooks::manage(app, caller, arguments).await,
         _ => Err(Stop::invalid("No tool has this name.")),
     }
+}
+
+fn instant(ms: i64) -> String {
+    DateTime::from_timestamp_millis(ms)
+        .unwrap_or(DateTime::<chrono::Utc>::MAX_UTC)
+        .to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
 /// An argument that must be a UUIDv7 item identifier.

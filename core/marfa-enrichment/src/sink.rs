@@ -15,7 +15,7 @@ enum Pending {
 /// stop.
 pub(crate) struct Sink {
     text: String,
-    units: usize,
+    length: usize,
     cap: usize,
     pending: Pending,
     overflowed: bool,
@@ -25,7 +25,7 @@ impl Sink {
     pub(crate) fn new(max_text_chars: usize) -> Self {
         Self {
             text: String::new(),
-            units: 0,
+            length: 0,
             cap: max_text_chars.saturating_add(MARGIN),
             pending: Pending::Nothing,
             overflowed: false,
@@ -39,12 +39,11 @@ impl Sink {
     }
 
     fn put(&mut self, c: char) {
-        let width = c.len_utf16();
-        if self.units + width > self.cap {
+        if self.length == self.cap {
             self.overflowed = true;
             return;
         }
-        self.units += width;
+        self.length += 1;
         self.text.push(c);
     }
 
@@ -110,8 +109,8 @@ impl Sink {
         }
     }
 
-    /// The text trimmed and cut to `max_text_chars` UTF-16 code units without
-    /// splitting a character, and whether anything was cut off.
+    /// The text trimmed and cut to `max_text_chars` characters, and whether anything
+    /// was cut off.
     pub(crate) fn finish(self, max_text_chars: usize) -> (String, bool) {
         let mut text = self.text;
         let end = text.trim_end().len();
@@ -119,15 +118,10 @@ impl Sink {
         let start = text.len() - text.trim_start().len();
         text.drain(..start);
 
-        let mut units = 0;
-        let mut cut = None;
-        for (index, c) in text.char_indices() {
-            units += c.len_utf16();
-            if units > max_text_chars {
-                cut = Some(index);
-                break;
-            }
-        }
+        let cut = text
+            .char_indices()
+            .nth(max_text_chars)
+            .map(|(index, _)| index);
         let truncated = self.overflowed || cut.is_some();
         if let Some(index) = cut {
             text.truncate(index);

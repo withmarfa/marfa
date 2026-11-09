@@ -10,7 +10,7 @@ use marfa_rules::conflict::{
     self, Detection, ItemFields, MergePolicy, Precondition, Stale, Strategy,
 };
 use marfa_rules::error::RuleError;
-use marfa_rules::{js, validation};
+use marfa_rules::{number, validation};
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
@@ -33,6 +33,7 @@ use crate::app::connectors::ReadOnly;
 use crate::app::edges::write::{self as edges, Inline, Writing as EdgeWriting};
 use crate::app::events::Event;
 use crate::app::faults::HOLD_BULK_PAGE;
+use crate::app::folders::{self, FOLDER_TYPE};
 use crate::app::idempotency::{self, Claim, Need};
 use crate::app::instance;
 use crate::app::query::VIEW_TYPE;
@@ -42,7 +43,7 @@ use crate::app::views;
 
 const COPY_TAG: &str = "conflicted-copy";
 const RESERVED_NAMESPACES: [&str; 3] = ["core", "marfa", "system"];
-const MAX_EXTENSION_UNITS: usize = 102_400;
+const MAX_EXTENSION_LENGTH: usize = 102_400;
 const FILE_TYPE: &str = "core.file";
 const FILE_BYTES: &str = "blob_ref";
 const FILE_SIZE: &str = "size_bytes";
@@ -106,8 +107,26 @@ pub enum ViewChange {
 }
 
 #[derive(Debug)]
+pub enum FolderChange {
+    Create {
+        settings: Map<String, Value>,
+        patterns: folders::Patterns,
+    },
+    Update {
+        id: String,
+        settings: Map<String, Value>,
+        patterns: folders::Patterns,
+        version: i64,
+    },
+    Revoke {
+        id: String,
+    },
+}
+
+#[derive(Debug)]
 pub enum Change {
     View(ViewChange),
+    Folder(FolderChange),
     Put(Box<Put>),
     Update(Box<Update>),
     SetTags {
@@ -185,6 +204,9 @@ impl Change {
             Change::View(ViewChange::Create { .. }) => "view.create",
             Change::View(ViewChange::Update { .. }) => "view.update",
             Change::View(ViewChange::Delete { .. }) => "view.delete",
+            Change::Folder(FolderChange::Create { .. }) => "folder.create",
+            Change::Folder(FolderChange::Update { .. }) => "folder.update",
+            Change::Folder(FolderChange::Revoke { .. }) => "folder.revoke",
             Change::Put(_) => "item.create",
             Change::Update(_) => "item.update",
             Change::SetTags { .. } => "item.metadata.replace",
@@ -580,6 +602,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
     fn run(self, change: Change) -> Result<Done> {
         let done = match change {
             Change::View(change) => self.view(change),
+            Change::Folder(change) => self.folder(change),
             Change::Put(put) => self.put(*put),
             Change::Update(update) => self.update(*update),
             Change::SetTags { id, tags, version } => self.set_tags(&id, tags, version),
@@ -849,6 +872,105 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         }
     }
 
+    /// Item doors fence `system.*` off from every key, so folder doors ask write on `system.folder`.
+    fn folder(&self, change: FolderChange) -> Result<Done> {
+        self.caller().require_folder_write()?;
+        match change {
+            FolderChange::Create { settings, patterns } => {
+                folders::check(&settings, &self.catalog, &patterns)?;
+                folders::judge(&settings, &self.catalog)?;
+                let source = self.source_of(None)?;
+                let item = self.created(
+                    Put {
+                        type_id: FOLDER_TYPE.to_string(),
+                        properties: Some(settings),
+                        ..Put::default()
+                    },
+                    &source,
+                )?;
+                self.unit.audit("item", &item.id, None)?;
+                self.answer(201, &item, "")
+            }
+            FolderChange::Update {
+                id,
+                settings,
+                patterns,
+                version,
+            } => {
+                let row = self.folder_row(&id)?;
+                folders::check(&settings, &self.catalog, &patterns)?;
+                self.refuse_revoked(&row)?;
+                let (item, resolution) = self.landed(
+                    &row,
+                    &Writing {
+                        properties: Some(settings),
+                        version: Some(version),
+                        ..Writing::default()
+                    },
+                )?;
+                self.unit.audit("item", &item.id, None)?;
+                let also = match resolution {
+                    Some(resolution) => format!(",\"conflict_resolution\":{resolution}"),
+                    None => String::new(),
+                };
+                self.answer(200, &item, &also)
+            }
+            FolderChange::Revoke { id } => {
+                let row = self.folder_row(&id)?;
+                self.refuse_revoked(&row)?;
+                let tx = self.unit.tx();
+                let at = self.unit.at.as_str();
+                let mut properties = parsed(&row.properties)?;
+                properties.insert("revoked_at".to_string(), Value::from(at));
+                let stamped = self.land(
+                    &row,
+                    &row.type_id,
+                    &Settled {
+                        properties,
+                        base: None,
+                        fields: ItemFields::default(),
+                        resolution: None,
+                        copy: None,
+                    },
+                )?;
+                let writer = self.writer();
+                let item = rows::move_state(
+                    tx,
+                    &stamped,
+                    &Moved {
+                        state: "revoked",
+                        trashed_at: Some(at),
+                        trashed_by: writer.as_ref(),
+                        mark: None,
+                        at,
+                    },
+                )?;
+                self.unit.audit("item", &item.id, None)?;
+                self.announce("item.state_changed", &item)?;
+                self.answer(200, &item, "")
+            }
+        }
+    }
+
+    fn folder_row(&self, id: &str) -> Result<Item> {
+        rows::by_id(self.unit.tx(), id)?
+            .filter(|row| row.type_id == FOLDER_TYPE)
+            .ok_or_else(|| Refusal::new(Code::ItemNotFound, format!("Folder {id} not found")))
+    }
+
+    fn refuse_revoked(&self, row: &Item) -> Result<()> {
+        if row.state != "revoked" {
+            return Ok(());
+        }
+        Err(Refusal::new(
+            Code::InvalidTransition,
+            format!(
+                "Folder {} is revoked, and a revoked folder does not change",
+                row.id
+            ),
+        ))
+    }
+
     fn view_row(&self, id: &str) -> Result<Item> {
         rows::by_id(self.unit.tx(), id)?
             .filter(|row| row.type_id == VIEW_TYPE)
@@ -991,7 +1113,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 tier: Some(tier),
                 source,
                 source_id: put.source_id.as_deref(),
-                properties: &js::canonical(&properties),
+                properties: &number::object(&properties),
                 title_key: key.as_deref(),
                 schema_version: self.schema_version(&put.type_id),
                 occurred_at: put.occurred_at.as_deref().unwrap_or(at),
@@ -1134,6 +1256,9 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         }
         let resulting = writing.destination.as_deref().unwrap_or(&row.type_id);
         let mut settled = self.settled(row, resulting, writing)?;
+        if resulting == FOLDER_TYPE && writing.judged() {
+            folders::judge(&settled.properties, &self.catalog)?;
+        }
         if resulting != row.type_id {
             let replaced = writing.edges.as_deref().unwrap_or_default();
             edges::judge_retype(&self.edge_writing(), row, resulting, replaced)?;
@@ -1363,7 +1488,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 tier: row.tier.as_deref(),
                 source: &row.source,
                 source_id: None,
-                properties: &js::canonical(&properties),
+                properties: &number::object(&properties),
                 title_key: key.as_deref(),
                 schema_version: self.schema_version(&row.type_id),
                 occurred_at: at,
@@ -1526,7 +1651,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 tier: fields.tier.as_deref().or(row.tier.as_deref()),
                 source_id: fields.source_id.as_deref().or(row.source_id.as_deref()),
                 link: link.as_deref(),
-                properties: &js::canonical(&settled.properties),
+                properties: &number::object(&settled.properties),
                 title_key: key.as_deref(),
                 schema_version: self.schema_version(resulting),
                 occurred_at: fields.occurred_at.as_deref().unwrap_or(&row.occurred_at),
@@ -1619,8 +1744,8 @@ impl<'t, 'c> Job<'_, 't, 'c> {
 
     fn set_extension(&self, id: &str, namespace: &str, data: &Map<String, Value>) -> Result<Done> {
         let row = self.extension_row(id, namespace)?;
-        let text = js::canonical(data);
-        if text.encode_utf16().count() > MAX_EXTENSION_UNITS {
+        let text = number::object(data);
+        if text.chars().count() > MAX_EXTENSION_LENGTH {
             return Err(Refusal::validation(
                 "Extension data exceeds maximum size of 100KB",
             ));

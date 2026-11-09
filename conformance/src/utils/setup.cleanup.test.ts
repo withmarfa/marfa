@@ -22,6 +22,7 @@ let typeDeleteResult: Result = okResult;
 let typeDeleteById = new Map<string, Result>();
 let itemDeleteResult: Result = okResult;
 let itemPurgeResult: Result = okResult;
+let folderRevokeResult: Result = okResult;
 let webhookDeleteResult: Result = okResult;
 /** Answers consumed in order, per id, ahead of the blanket results above. */
 let itemDeleteById = new Map<string, Result[]>();
@@ -81,7 +82,7 @@ const scopedStub = {
   },
   revokeFolder: (id: string) => {
     calls.push(`folder-revoke:${id}`);
-    return Promise.resolve(okResult);
+    return Promise.resolve(folderRevokeResult);
   },
   deleteView: (id: string) => {
     calls.push(`view-delete:${id}`);
@@ -124,6 +125,7 @@ beforeEach(() => {
   typeDeleteById = new Map();
   itemDeleteResult = okResult;
   itemPurgeResult = okResult;
+  folderRevokeResult = okResult;
   webhookDeleteResult = okResult;
   itemDeleteById = new Map();
   itemPurgeById = new Map();
@@ -172,13 +174,22 @@ describe("cleanup", () => {
     expect(calls).toContain("view-delete:v1");
   });
 
-  it("revokes a tracked folder before purging it", async () => {
+  it("revokes a tracked folder and leaves it revoked, since no item door purges a system row", async () => {
     const { cleanup } = await import("./setup.js");
     await cleanup(contextWithFixtures() as Parameters<typeof cleanup>[0]);
-    expect(calls.indexOf("folder-revoke:f1")).toBeGreaterThan(-1);
-    expect(calls.indexOf("folder-revoke:f1")).toBeLessThan(
-      calls.indexOf("item-purge:f1"),
-    );
+    expect(calls).toContain("folder-revoke:f1");
+    expect(calls).not.toContain("item-purge:f1");
+  });
+
+  it("fails the run when a folder could not be revoked, and not when it was revoked already", async () => {
+    const { cleanup } = await import("./setup.js");
+    folderRevokeResult = { ok: false, status: 400 };
+    await cleanup(contextWithFixtures() as Parameters<typeof cleanup>[0]);
+
+    folderRevokeResult = refusedResult;
+    await expect(
+      cleanup(contextWithFixtures() as Parameters<typeof cleanup>[0]),
+    ).rejects.toThrow(/Cleanup left fixtures on the target.*Folder 1\/1/s);
   });
 
   it("fails the run when an item could not be purged", async () => {

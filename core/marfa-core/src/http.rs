@@ -361,10 +361,6 @@ pub enum Replacement {
 /// The names `POST /items/titles` takes in one call.
 pub(crate) const TITLE_LOOKUP_NAMES: usize = 200;
 
-/// The longest name, in UTF-16 code units, `POST /items/titles` takes, and the
-/// longest title it finds: a name over it matches no item.
-pub(crate) const TITLE_LOOKUP_UNITS: usize = 1000;
-
 /// An item `POST /items/titles` found for a name.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub(crate) struct TitledItem {

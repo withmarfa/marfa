@@ -33,15 +33,14 @@ fn utf_16_is_read_with_or_without_a_byte_order_mark() {
 }
 
 #[test]
-fn text_is_cut_between_characters_and_says_so() {
+fn text_is_cut_to_a_number_of_characters_and_says_so() {
     let source = format!("{}\u{1f600}tail", "a".repeat(9));
     let mut limits = options();
-    // The emoji is two UTF-16 units and would straddle the limit of ten.
-    limits.max_text_chars = 10;
+    limits.max_text_chars = 9;
     let reading = read_here(source.as_bytes(), "text/plain", &limits).unwrap();
     assert_eq!(reading.text, "aaaaaaaaa");
     assert!(reading.truncated);
-    limits.max_text_chars = 11;
+    limits.max_text_chars = 10;
     let reading = read_here(source.as_bytes(), "text/plain", &limits).unwrap();
     assert_eq!(reading.text, "aaaaaaaaa\u{1f600}");
     assert!(reading.truncated);

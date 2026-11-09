@@ -56,6 +56,11 @@ pub fn parse(token: &str) -> Option<Parsed> {
     })
 }
 
+/// Whether the token is well formed and its time has passed.
+pub fn is_expired(token: &str, now_ms: i64) -> bool {
+    parse(token).is_some_and(|parsed| parsed.expires_at_ms <= now_ms)
+}
+
 /// What a preview covered, as text: the same items in any order give the same text.
 pub fn subject_digest(ids: &[String], digest: &str) -> String {
     let mut sorted: Vec<&str> = ids.iter().map(String::as_str).collect();
