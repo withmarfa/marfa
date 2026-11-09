@@ -42,6 +42,8 @@ import type {
   TypeMoveDryRun,
   BulkActionResponse,
   RestoreArchiveResponse,
+  BackupRow,
+  BackupRun,
   ErrorResponse,
   LookupInput,
   LookupResponse,
@@ -1033,6 +1035,26 @@ export class MarfaClient {
     return this.request<HousekeepingRun>(`/housekeeping/${name}/run`, {
       method: "POST",
     });
+  }
+
+  /** `GET /backups`: the backups in the object store, newest first. */
+  async listBackups(): Promise<ApiResponse<PaginatedResult<BackupRow>>> {
+    return this.request<PaginatedResult<BackupRow>>("/backups");
+  }
+
+  /** `POST /backups`: a backup, now. */
+  async runBackup(): Promise<ApiResponse<BackupRun>> {
+    return this.request<BackupRun>("/backups", { method: "POST" });
+  }
+
+  /** `POST /backups/{name}/restore`: the named backup, read by the server. */
+  async restoreBackup(
+    name: string,
+  ): Promise<ApiResponse<RestoreArchiveResponse & { backup: string }>> {
+    return this.request<RestoreArchiveResponse & { backup: string }>(
+      `/backups/${encodeURIComponent(name)}/restore`,
+      { method: "POST" },
+    );
   }
 
   /** `POST /connectors`: register this client's key, or update the

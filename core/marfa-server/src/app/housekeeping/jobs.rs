@@ -130,7 +130,7 @@ pub(super) const JOBS: &[Job] = &[
         HOUR,
         |app, run| Box::pin(upkeep::integrity(app, run)),
     ),
-    Job::new("backup", BACKUP_INTERVAL_MS, 60_000, HOUR, |app, run| {
+    Job::new("backup", BACKUP_INTERVAL_MS, 300_000, HOUR, |app, run| {
         Box::pin(backups::job(app, run))
     })
     .switched_by(backups::scheduled),

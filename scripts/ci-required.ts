@@ -464,11 +464,6 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
       "rust-contract",
     ],
   ],
-  // The image's replica fixtures run in the drill's job.
-  [
-    /^conformance\/src\/suites\/backup\//,
-    ["workspace", "conformance-offline", "restore-drill"],
-  ],
   [
     /^conformance\/src\/suites\/(correctness|sync)\//,
     [

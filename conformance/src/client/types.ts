@@ -353,6 +353,21 @@ export interface HousekeepingRun {
   error: string | null;
 }
 
+/** One backup in the instance's object store, as `GET /backups` lists it. */
+export interface BackupRow {
+  name: string;
+  created_at: string;
+  size_bytes: number;
+}
+
+/** What `POST /backups` answers. */
+export interface BackupRun {
+  outcome: "put";
+  backup: BackupRow;
+  removed: number;
+  unremoved: number;
+}
+
 export interface ConnectorRun {
   id: string;
   connector_id: string;

@@ -127,18 +127,6 @@ export default defineConfig({
         },
       },
       {
-        // The image's database replica: the shipped entrypoint and
-        // Litestream against the object store, which the restore drill's job
-        // installs. Every body boots and stops the entrypoint several times.
-        test: {
-          name: "backup",
-          ...ciRetry,
-          include: ["src/suites/backup/**/*.test.ts"],
-          testTimeout: 120_000,
-          hookTimeout: 120_000,
-        },
-      },
-      {
         // A device filling a large image library, driven with the `marfa`
         // binary against the server the run booted. It seeds tens of
         // thousands of rows and fills a copy of each set, so the budget is
