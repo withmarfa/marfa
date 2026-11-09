@@ -2677,7 +2677,7 @@ export interface components {
             remaining?: number;
             /** @description On a type move, `true` if items your source filter hides are still of the old type. A move takes only items you can see. Absent otherwise. */
             remaining_hidden?: boolean;
-            /** @description On a type move, `true` if Marfa rewrote `settings` to name the new type. `false` if an item of the old type remains, counted in `remaining` or `remaining_hidden`, or a setting has a `reason`, or a rewrite was refused, as `settings_error` says: Marfa then rewrote none of them. Absent otherwise. */
+            /** @description On a type move, `true` if Marfa rewrote `settings` to name the new type. `false` if an item of the old type remains, a setting has a `reason`, or `settings_error` names a refusal; then none was rewritten. Absent otherwise. */
             settings_rewritten?: boolean;
             /** @description On a type move, why Marfa rewrote none of `settings` once no item of the old type remained: the new type is gone, or a folder or view would refuse its rewrite. Change the setting or register the type, then run the move again. Absent otherwise. */
             settings_error?: {
