@@ -294,6 +294,10 @@ impl Restoring {
     pub fn registered(&self) -> usize {
         self.fresh.len()
     }
+
+    pub fn rows(&self) -> Vec<Obj> {
+        self.fresh.clone()
+    }
 }
 
 /// Judges each edge type an archive carries as `POST /edge-types` would register it.

@@ -1,7 +1,7 @@
 //! Types: judgement of a definition is `marfa_rules::schema`'s; this module reads the catalog and writes.
 
 mod read;
-mod write;
+pub mod write;
 
 pub use read::{get, list, normalize};
 pub use write::{Merge, change, clear_icon, delete, register, replace, set_icon};

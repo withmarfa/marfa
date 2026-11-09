@@ -37,6 +37,7 @@ mod overview;
 pub mod pages;
 mod profile;
 mod query;
+mod restore;
 mod root;
 mod sources;
 mod test_hooks;
@@ -132,6 +133,7 @@ fn count_doors(app: Arc<App>) -> Routes {
     Doors::new()
         .route("/items/stats", get(listing::stats))
         .route("/export", get(export::export))
+        .route("/restore", post(restore::restore))
         .admitting(app, Admission::Counted)
 }
 

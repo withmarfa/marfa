@@ -73,6 +73,7 @@ points! {
     HOLD_THINNING_ITEM = Hold "version-thinning:item" None;
     HOLD_BULK_PAGE = Hold "bulk-page" Nth;
     HOLD_EXPORT_PAGE = Hold "export-page" Nth;
+    HOLD_RESTORE_COMMIT = Hold "restore:before-commit" None;
     HOLD_STREAM_OPEN = Hold "stream-open" None;
     HOLD_STREAM_HEAD = Hold "stream-head" None;
     HOLD_STREAM_REPLAY = Hold "stream-replay" None;

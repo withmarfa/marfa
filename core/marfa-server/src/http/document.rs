@@ -203,7 +203,6 @@ const NOT_YET_SERVED: &[&str] = &[
     "POST /folders/{id}/revoke",
     "POST /items/bulk-actions",
     "POST /items/bulk-actions/jobs/{id}/cancel",
-    "POST /restore",
     "POST /types/{id}/move",
     "PUT /folders/{id}/status",
 ];

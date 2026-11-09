@@ -3,6 +3,7 @@
 
 pub mod checks;
 mod lines;
+pub mod restore;
 mod send;
 mod spool;
 mod tar;

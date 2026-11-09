@@ -477,6 +477,11 @@ impl Restoring {
     pub fn registered(&self) -> usize {
         self.fresh.len()
     }
+
+    /// The definitions the plan registers.
+    pub fn rows(&self) -> Vec<Obj> {
+        self.fresh.iter().map(|(_, schema, _)| schema.clone()).collect()
+    }
 }
 
 fn reserved(id: &str, why: String) -> Refusal {

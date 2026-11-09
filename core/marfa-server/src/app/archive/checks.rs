@@ -44,6 +44,8 @@ pub struct Refused {
     pub field: Option<String>,
     /// The refusal a restore answers, or for a line it skips, the reason under `code`.
     pub refusal: Refusal,
+    /// Where a restore skips the line rather than refusing the archive, the reason it counts.
+    pub skip: Option<String>,
 }
 
 impl Refused {
@@ -82,6 +84,7 @@ impl At<'_> {
                 Some(field) => refusal.with_detail("field", field),
                 None => refusal,
             },
+            skip: None,
         })
     }
 
@@ -103,6 +106,17 @@ impl At<'_> {
         );
         let mut refused = self.refused(field, Refusal::validation(message));
         refused.refusal = refused.refusal.with_detail("reason", reason);
+        refused.skip = Some(reason.to_string());
+        refused
+    }
+}
+
+impl At<'_> {
+    /// An edge a restore skips, counted under the code `POST /edges` refuses it with.
+    fn skipping(&self, refusal: Refusal) -> Box<Refused> {
+        let reason = refusal.code.wire().to_string();
+        let mut refused = self.refused(None, refusal);
+        refused.skip = Some(reason);
         refused
     }
 }
@@ -193,19 +207,37 @@ pub fn item(catalog: &Catalog, line: &Value, row: usize) -> Result<(), Box<Refus
         type_id,
         row,
     };
-    if item.get("id").is_some_and(|id| !id.is_string()) {
+    if item
+        .get("id")
+        .is_some_and(|id| !id.as_str().is_some_and(|id| marfa_rules::validation::id("id", id).is_ok()))
+    {
         return Err(at.invalid("id", "an item ID"));
     }
     let Some(type_id) = type_id.filter(|type_id| is_type_id(type_id)) else {
         return Err(at.invalid("type", "a type identifier"));
     };
-    for field in ["created_at", "updated_at"] {
+    for field in ["created_at", "updated_at", "occurred_at"] {
         if item.get(field).is_some_and(|value| !is_instant(value)) {
             return Err(at.invalid(field, "an instant"));
         }
     }
     if item.get("version").is_some_and(|value| !is_version(value)) {
         return Err(at.invalid("version", "a positive safe integer"));
+    }
+    if item
+        .get("source")
+        .is_some_and(|source| !source.as_str().is_some_and(|code| crate::app::sources::check_code(code).is_ok()))
+    {
+        return Err(at.invalid("source", "a source code"));
+    }
+    let binned = matches!(item.get("state").and_then(Value::as_str), Some("trashed" | "revoked"));
+    if let Some(trashed_at) = item.get("trashed_at").filter(|value| !value.is_null()) {
+        if !is_instant(trashed_at) {
+            return Err(at.invalid("trashed_at", "an instant or null"));
+        }
+        if !binned {
+            return Err(at.invalid("trashed_at", "null outside the bin and the revoked state"));
+        }
     }
     if item
         .get("tier")
@@ -267,7 +299,6 @@ pub fn item(catalog: &Catalog, line: &Value, row: usize) -> Result<(), Box<Refus
             }
         }
     }
-    lending(&at, line)?;
     let empty = Map::new();
     shape(catalog, &at, type_id, properties.unwrap_or(&empty))
 }
@@ -359,27 +390,6 @@ fn history(
     Ok(())
 }
 
-fn lending(at: &At<'_>, line: &Value) -> Result<(), Box<Refused>> {
-    let digests = |value: &Value| {
-        value
-            .as_array()
-            .is_some_and(|list| list.iter().all(Value::is_string))
-    };
-    if line
-        .get("lending_blobs")
-        .is_some_and(|value| !digests(value))
-    {
-        return Err(at.invalid("lending_blobs", "an array of digests"));
-    }
-    if line.get("lending_extensions").is_some_and(|value| {
-        !value
-            .as_object()
-            .is_some_and(|namespaces| namespaces.values().all(digests))
-    }) {
-        return Err(at.invalid("lending_extensions", "an object of digest arrays"));
-    }
-    Ok(())
-}
 
 /// An edge's end, as a restore finds it once the archive's items are written.
 pub struct End<'a> {
@@ -430,13 +440,6 @@ pub fn edge<'a>(
     {
         return Err(refused);
     }
-    if line.get("lending_blobs").is_some_and(|value| {
-        !value
-            .as_array()
-            .is_some_and(|list| list.iter().all(Value::is_string))
-    }) {
-        return Err(at.invalid("lending_blobs", "an array of digests"));
-    }
     let (Some(source_id), Some(target_id), Some(edge_type)) =
         (text(edge, "source_id"), text(edge, "target_id"), edge_type)
     else {
@@ -455,13 +458,13 @@ pub fn edge<'a>(
     };
     if source_id == target_id {
         let message = "Edge source and target must be different items";
-        return Err(at.refused(None, Refusal::new(Code::EdgeCycle, message)));
+        return Err(at.skipping(Refusal::new(Code::EdgeCycle, message)));
     }
     let Some(kind) = catalog.edge_kind(edge_type) else {
         return Ok(());
     };
     judge_restored_ends(catalog, kind, (source_id, source.type_id), target.type_id)
-        .map_err(|refusal| at.refused(None, refusal))
+        .map_err(|refusal| at.skipping(refusal))
 }
 
 #[cfg(test)]

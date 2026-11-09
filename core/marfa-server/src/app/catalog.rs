@@ -104,6 +104,44 @@ impl Catalog {
         }
     }
 
+    /// This catalog with `types` and `edge_types` registered beside it, as a restore judges
+    /// the rows of an archive before it writes the archive's registrations.
+    pub fn with_registered(&self, types: &[Obj], edge_types: &[Obj]) -> Result<Catalog> {
+        let mut rows: Vec<Obj> = self.types.rows().values().cloned().collect();
+        let mut provenance = self.provenance.clone();
+        for row in types {
+            let Some(id) = row.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            rows.retain(|held| held.get("id").and_then(Value::as_str) != Some(id));
+            rows.push(row.clone());
+            provenance.entry(id.to_string()).or_insert(Provenance {
+                origin: "user",
+                created_by: None,
+            });
+        }
+        let icons = rows
+            .iter()
+            .filter_map(|row| row.get("id").and_then(Value::as_str))
+            .filter_map(|id| Some((id.to_string(), self.types.icon_of(id)?.to_string())))
+            .collect();
+        let mut registered = self.edge_types.clone();
+        for row in edge_types {
+            let id = row.get("id").and_then(Value::as_str);
+            registered.retain(|held| held.get("id").and_then(Value::as_str) != id);
+            registered.push(row.clone());
+        }
+        Ok(Catalog {
+            generation: -1,
+            rules: rules_of(&rows),
+            types: Registry::new(rows).with_icons(icons),
+            provenance,
+            unreadable: self.unreadable.clone(),
+            edge_kinds: edge_kinds_of(&registered)?,
+            edge_types: registered,
+        })
+    }
+
     pub fn with_hosts_types(&self) -> Vec<&str> {
         self.edge_kinds
             .values()

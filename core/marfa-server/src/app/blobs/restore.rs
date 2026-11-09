@@ -118,6 +118,11 @@ pub fn record(
     Ok(())
 }
 
+/// The refusal for a spool the restore could not write.
+pub fn unwritten(error: io::Error) -> crate::app::refusal::Refusal {
+    unwritable(error)
+}
+
 /// The stored length of a blob the instance records.
 pub fn stored_size(tx: &rusqlite::Transaction<'_>, hash: &Hash) -> Result<Option<u64>> {
     Ok(rows::find(tx, hash)?.map(|blob| blob.size_bytes))
