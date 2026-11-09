@@ -85,7 +85,7 @@ The instance draws no owner console, so each task an owner has is a command. Mos
 | List the browsers, apps and keys that can sign in | `marfa sign-ins list` |
 | Rename a sign-in | `marfa sign-ins rename` |
 | End one sign-in | `marfa sign-ins end` |
-| End every browser, or every other sign-in | `marfa sign-ins end-all` |
+| End every sign-in of a kind at once | `marfa sign-ins end-all` |
 | List, narrow and disconnect a connected app | `marfa apps list`, `marfa apps narrow`, `marfa apps disconnect` |
 | Read and change the owner's email, name and picture, or clear the picture | `marfa owner show`, `marfa owner update`, `marfa owner picture` |
 | Manage the owner's passkeys | `marfa owner passkeys list`, `marfa owner passkeys rename`, `marfa owner passkeys remove` |
