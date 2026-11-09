@@ -2256,8 +2256,14 @@ fn a_restart_that_failed_is_tried_again_by_running_install_again() {
 fn a_stopped_server_whose_settings_changed_is_started_once_not_restarted() {
     let rig = Rig::new("n-stopped-changed");
     rig.native_installed(&["--access", "local"]);
-    let (code, _, stderr) = rig.marfa(&["stop"]);
-    assert_eq!(code, 0, "{stderr}");
+    // `marfa server stop` unloads a launchd agent, which then loads as a
+    // changed definition; a loaded agent whose process exited does not.
+    if cfg!(target_os = "macos") {
+        fs::write(rig.home().join("stopped-marfa"), "").unwrap();
+    } else {
+        let (code, _, stderr) = rig.marfa(&["stop"]);
+        assert_eq!(code, 0, "{stderr}");
+    }
     let restarts = rig.restarts();
     rig.native_installed(&[
         "--access",
