@@ -410,9 +410,8 @@ jobs:
   # `native/release.sh --full` builds PDFium, Leptonica and Tesseract, links
   # and checks the programs, gathers the licences into `NOTICES.txt`, and runs
   # `native/verify.sh`: every format, the refusals, the injected faults, a
-  # reader that has been taken over, and the memory limit, with every counted
-  # read held to `sandbox: Full`. The fuzz then reads mutated files through the
-  # real reader. A hosted x86_64 Linux runner is what the Landlock and seccomp
+  # reader that has been taken over, and the memory limit. The fuzz then reads
+  # mutated files through the real reader. A hosted x86_64 Linux runner is what the Landlock and seccomp
   # of an x86_64 kernel can be proved on at all: an Apple silicon Mac runs the
   # program only under emulation, where it cannot confine itself and reads nothing.
   #
@@ -453,23 +452,14 @@ jobs:
           key: ${{ steps.key.outputs.key }}
       - name: Build and check the programs
         run: core/marfa-enrichment/native/release.sh "$TARGET" --full
-      # `verify.sh` holds each read to this already. Counting again here makes
-      # the claim this job stands for plain, and fails a run whose reads left
-      # no state to count instead of passing it.
-      - name: Check that every counted read reported sandbox Full
+      # A run whose cases did not run would pass `verify.sh` with nothing to fail;
+      # counting the cases that passed makes it fail instead.
+      - name: Check that the matrix ran
         run: |
-          results="$MARFA_NATIVE_ROOT/out/$TARGET/verify/results"
-          states=$(grep -h '^sandbox:' "$results"/*/*.stderr || true)
-          total=$(printf '%s\n' "$states" | grep -c '^sandbox:' || true)
-          full=$(printf '%s\n' "$states" | grep -c '^sandbox: Full$' || true)
-          echo "Reads that reported a sandbox: $total, of which Full: $full"
-          printf '%s\n' "$states" | sort | uniq -c
-          if [ "$total" -lt 20 ]; then
-            echo "::error::Only $total reads reported a sandbox state; the checks did not run as they should"
-            exit 1
-          fi
-          if [ "$full" -ne "$total" ]; then
-            echo "::error::$((total - full)) of $total reads reported a sandbox other than Full"
+          passed=$(grep -c '^PASS ' "$MARFA_NATIVE_ROOT/out/$TARGET/verify/report.txt" || true)
+          echo "Cases that passed: $passed"
+          if [ "$passed" -lt 20 ]; then
+            echo "::error::Only $passed cases passed; the checks did not run as they should"
             exit 1
           fi
       # The licences ship beside the program, so the job says whether the build

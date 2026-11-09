@@ -21,7 +21,7 @@ The file must be a regular file open for reading only. The child reads it by pos
 
 `read` blocks until the child answers, so an async caller runs it on a blocking thread. Several threads can call it at once. A program that forgets `serve_child_if_asked` panics at its first `read`, and nothing is started or read.
 
-A child that cannot shut itself off from the system reads nothing: `read` answers `ReaderUnavailable` before the file is parsed, and `Reading::sandbox` is always `Full`.
+A child that cannot shut itself off from the system reads nothing: `read` answers `ReaderUnavailable` before the file is parsed.
 
 ## What it reads
 
@@ -59,7 +59,7 @@ A file the reader cannot take apart is `Refusal::Malformed`, and so is one that 
 
 1. The parent starts the program with an empty environment, the working directory `/`, and a process group of its own. The file is the child's stdin, and the limits and the request are on the command line, so the child sets the limits before it reads a byte.
 2. The child closes every inherited descriptor above 2, turns on Landlock or `sandbox_init`, starts a watchdog, loads the seccomp filter on Linux, and states in a first frame on stdout which sandbox holds.
-3. The child reads the file only after that frame, with `pread` and the length from the request, so it asks the file for nothing else. The parent keeps what the frame said. Nothing the child writes later can change `Reading::sandbox`.
+3. The child reads the file only after that frame, with `pread` and the length from the request, so it asks the file for nothing else. Nothing the child writes later can change what the parent believed of it.
 4. The child answers with one JSON document and ends. The parent checks the answer against what was asked.
 5. The parent runs one `poll` loop on the calling thread. It kills the child's whole group at the deadline, when the child's memory passes the limit, and when stdout passes the largest answer `max_text_chars` allows. It always reaps the child.
 
@@ -162,7 +162,7 @@ cargo nextest run -p marfa-enrichment --features fault-injection
 
 `tests/isolation.rs` is a program of its own that calls `serve_child_if_asked` first, so every test starts the real child and can count this process's children, descriptors, and threads. `tests/forgotten.rs` is a program that does not call it.
 
-The `fault-injection` feature makes a child misbehave on marked bytes. `src/isolated/fault.rs` lists the faults, among them each call the sandbox must refuse and each thing a taken-over child could say. On Linux these tests need a kernel with seccomp and require `Sandbox::Full`. `build.rs` stops a release build that has the feature, unless `MARFA_ENRICHMENT_ALLOW_FAULTS` is set for a build that exists to prove the child.
+The `fault-injection` feature makes a child misbehave on marked bytes. `src/isolated/fault.rs` lists the faults, among them each call the sandbox must refuse and each thing a taken-over child could say. On Linux these tests need a kernel with seccomp. `build.rs` stops a release build that has the feature, unless `MARFA_ENRICHMENT_ALLOW_FAULTS` is set for a build that exists to prove the child.
 
 `fixtures/` holds the files the tests read, among them a short sound and video of each format. `sample.ogv` is `sample.ogg` behind the first header of a Theora stream, since no encoder for Theora was at hand: it shows that a video stream the reader does not read does not stop the sound beside it from being measured. Four generated pictures (a sentence in three languages, an upright sentence as a CMYK JPEG, an EXIF-rotated JPEG, and a two-page TIFF), a binary workbook, and a password-protected PDF from PDFium's own test files are ones nothing else here can write. No test covers `.xlsb`.
 

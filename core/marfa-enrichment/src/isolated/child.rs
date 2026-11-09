@@ -88,7 +88,6 @@ pub(super) fn serve(arguments: impl Iterator<Item = OsString>) -> ! {
             dimensions: None,
             duration: None,
             text_refused: None,
-            sandbox: crate::Sandbox::Off,
         })));
     }
     answer(&Answer::of(read_here(

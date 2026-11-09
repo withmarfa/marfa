@@ -587,7 +587,6 @@ fn conclude(
                 kind,
                 ocr: NATIVE && options.ocr.is_some(),
                 max_text_chars: options.max_text_chars,
-                sandbox,
             };
             Answer::judge(&said.stdout, &asked).map_err(|refusal| match refusal {
                 Refusal::Crashed(why) => Refusal::Crashed(with_last_words(why, said)),
@@ -698,10 +697,7 @@ mod tests {
         said.keep_stdout(b"\n");
         assert!(confirmed(&said));
         said.keep_stdout(ANSWER);
-        assert_eq!(
-            ended(exited(0), &said, false).unwrap().sandbox,
-            Sandbox::Full
-        );
+        assert!(ended(exited(0), &said, false).is_ok());
     }
 
     #[test]

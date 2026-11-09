@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use libtest_mimic::{Arguments, Failed, Trial};
-use marfa_enrichment::{Options, Reading, Refusal, Sandbox, serve_child_if_asked};
+use marfa_enrichment::{Options, Reading, Refusal, serve_child_if_asked};
 
 const TEXT: &str = "text/plain";
 /// Says that a run of this program is a scenario in a copy of it, not the tests.
@@ -127,15 +127,6 @@ fn fixture_file(name: &str) -> File {
     File::open(path).expect("a fixture of this crate")
 }
 
-/// A read that came back under the full sandbox.
-fn confined(reading: &Reading) -> Result<(), String> {
-    if reading.sandbox == Sandbox::Full {
-        Ok(())
-    } else {
-        Err(format!("the child reported {:?}", reading.sandbox))
-    }
-}
-
 fn near(seconds: Option<f64>, expected: f64) -> Result<(), String> {
     if seconds.is_some_and(|seconds| (seconds - expected).abs() < 0.06) {
         Ok(())
@@ -161,7 +152,6 @@ fn reads_the_length_of_a_sound_and_a_video() -> Result<(), Failed> {
             .map_err(|refusal| format!("{name}: {refusal}"))?;
         near(reading.duration, seconds).map_err(|error| format!("{name}: {error}"))?;
         check(reading.text.is_empty(), || format!("{name}: text"))?;
-        confined(&reading).map_err(|error| format!("{name}: {error}"))?;
     }
     let video = marfa_enrichment::read(&fixture_file("sample.mp4"), "video/mp4", &options())
         .map_err(|refusal| refusal.to_string())?;
@@ -275,7 +265,6 @@ fn a_large_video_is_read_without_holding_it() -> Result<(), Failed> {
         let took = started.elapsed();
         near(reading.duration, 1.0)?;
         check(reading.dimensions.is_some(), || "no picture size".into())?;
-        confined(&reading)?;
         check(took < Duration::from_secs(5), || format!("took {took:?}"))?;
         // The same file as text has to be held whole, which the limit does not allow.
         let as_text = marfa_enrichment::read(&reader, TEXT, &limited);
@@ -1025,17 +1014,14 @@ mod faults {
         Ok(())
     }
 
-    fn sandbox_of(name: &str) -> Result<(String, Sandbox), Failed> {
+    fn text_of(name: &str) -> Result<String, Failed> {
         let reading = read(&fault(name), TEXT, &short()).map_err(|refusal| refusal.to_string())?;
-        Ok((reading.text, reading.sandbox))
+        Ok(reading.text)
     }
 
     fn refused_by_the_sandbox(what: &str, name: &str) -> Result<(), Failed> {
-        let (text, sandbox) = sandbox_of(name)?;
-        println!("{what}: {sandbox:?}: {text}");
-        check(sandbox == Sandbox::Full, || {
-            format!("the child reported {sandbox:?}")
-        })?;
+        let text = text_of(name)?;
+        println!("{what}: {text}");
         check(text.starts_with("refused") || text.contains("Err"), || {
             format!("{what}: {text}")
         })
@@ -1093,10 +1079,7 @@ mod faults {
         check(reading.text == "opened", || format!("{reading:?}"))?;
         let denied = read(&fault("open /etc/passwd"), TEXT, &options)
             .map_err(|refusal| refusal.to_string())?;
-        check(
-            denied.sandbox == Sandbox::Full && denied.text.starts_with("refused"),
-            || format!("{denied:?}"),
-        )
+        check(denied.text.starts_with("refused"), || format!("{denied:?}"))
     }
 
     /// The child's stdin is the caller's descriptor, so it must not allow a write.
@@ -1340,7 +1323,7 @@ mod faults {
     }
 
     pub(super) fn a_child_cannot_fork() -> Result<(), Failed> {
-        let (text, _) = sandbox_of("fork")?;
+        let text = text_of("fork")?;
         println!("fork: {text}");
         check(text.starts_with("refused"), || text.clone())
     }

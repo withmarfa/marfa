@@ -144,15 +144,12 @@ pub struct Reading {
     /// good and `text` is empty, and the file is to be treated as this refusal says.
     /// An image with no readable size is a plain refusal instead.
     pub text_refused: Option<Refusal>,
-    /// How far the process that read the file was shut off from the system. Always
-    /// `Full`: a process that cannot confine itself reads no file.
-    pub sandbox: Sandbox,
 }
 
 /// How far a child process says it is shut off from the system. Only `Full` reads the file.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Sandbox {
+pub(crate) enum Sandbox {
     /// It could read only the OCR data folder, reach no socket, start no process and
     /// change nothing on disk. On Linux this is the seccomp filter, with Landlock of
     /// any version for a reading that has a data folder. On macOS it is `sandbox_init`.
@@ -281,7 +278,6 @@ fn read_file(
                 .map(|(width, height)| Dimensions { width, height }),
             duration: media.duration,
             text_refused: None,
-            sandbox: Sandbox::Off,
         });
     }
     let bytes = source
@@ -342,7 +338,6 @@ fn read_bytes(
         dimensions,
         duration: None,
         text_refused,
-        sandbox: Sandbox::Off,
     })
 }
 

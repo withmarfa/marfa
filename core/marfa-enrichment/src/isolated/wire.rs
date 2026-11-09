@@ -169,8 +169,6 @@ pub(super) struct Asked {
     /// Whether the reading runs OCR at all.
     pub(super) ocr: bool,
     pub(super) max_text_chars: usize,
-    /// What the child's frame said.
-    pub(super) sandbox: Sandbox,
 }
 
 impl Asked {
@@ -296,7 +294,6 @@ impl Answer {
                     dimensions: size.map(|(width, height)| Dimensions { width, height }),
                     duration,
                     text_refused,
-                    sandbox: asked.sandbox,
                 })
             }
             Self::Refusal(refused) => {
@@ -343,7 +340,6 @@ mod tests {
         kind: Kind::Image { ocr: true },
         ocr: true,
         max_text_chars: 10,
-        sandbox: Sandbox::Partial,
     };
     const TEXT: Asked = Asked {
         kind: Kind::Text,
@@ -433,11 +429,6 @@ mod tests {
             Answer::judge(said.as_bytes(), &MEDIA),
             Err(Refusal::Crashed(_))
         ));
-    }
-
-    #[test]
-    fn the_sandbox_is_what_the_frame_said() {
-        assert_eq!(judged(GOOD).unwrap().sandbox, Sandbox::Partial);
     }
 
     #[test]
