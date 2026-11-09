@@ -21,6 +21,10 @@ use crate::settings::{Environment, Settings};
 
 /// Routes served and not published, each with why.
 const UNPUBLISHED: &[(&str, &str)] = &[
+    (
+        "POST /inbound/{token}",
+        "a sender's delivery, which its address authorizes",
+    ),
     ("GET /openapi.json", "the document itself"),
     (
         "GET /.well-known/oauth-authorization-server/auth",
@@ -175,17 +179,7 @@ const UNPUBLISHED: &[(&str, &str)] = &[
 
 /// Published operations the router does not serve yet. An entry that becomes
 /// served fails the test, so the list only shrinks.
-const NOT_YET_SERVED: &[&str] = &[
-    "DELETE /connectors/{id}/endpoints/{endpoint_id}",
-    "GET /connectors/{id}/deliveries",
-    "GET /connectors/{id}/deliveries/{delivery_id}/body",
-    "GET /connectors/{id}/endpoints",
-    "GET /export",
-    "GET /metrics",
-    "POST /connectors/{id}/deliveries/handled",
-    "POST /connectors/{id}/endpoints",
-    "POST /restore",
-];
+const NOT_YET_SERVED: &[&str] = &["GET /export", "GET /metrics", "POST /restore"];
 
 const METHODS: [&str; 8] = [
     "get", "put", "post", "delete", "options", "head", "patch", "trace",

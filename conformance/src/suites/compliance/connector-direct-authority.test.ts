@@ -100,11 +100,13 @@ function doors(): Door[] {
   ];
 }
 
-async function refusesDirectAuthority(): Promise<void> {
+async function refusesPrivateSocket(): Promise<void> {
   for (const door of doors()) {
     const path = `/connectors/${id}${door.path}`;
     const response = await controlRequest(server.controlSocket, path, door);
-    expect(response.status, `${door.method} ${door.path}`).toBe(403);
+    expect(response.status, `private socket: ${door.method} ${door.path}`).toBe(
+      403,
+    );
     expect(response.body).toMatchObject({ error: { code: "forbidden" } });
   }
   expect((await own.getConnectorState(id)).data.state).toEqual({
@@ -128,7 +130,7 @@ async function refusesDirectAuthority(): Promise<void> {
 
 describe("direct authority on own-key connector operations", () => {
   it("refuses private socket 403 on every own-key read and write", async () => {
-    await refusesDirectAuthority();
+    await refusesPrivateSocket();
   });
 
   it("keeps missing credentials at 401 and another key at 403", async () => {

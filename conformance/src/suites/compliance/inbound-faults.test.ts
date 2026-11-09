@@ -148,8 +148,23 @@ describe("a receipt whose storing fails on a database fault", () => {
       body: sentinel("body"),
     };
     const token = path.split("/").at(-1)!;
-    const requestId = sentinel(`receipt-${which}`);
-    const headers = ["X-Sentinel", content.header, "X-Request-ID", requestId];
+    // The request id and trace context a sender chooses are its content too.
+    const callerId = sentinel(`receipt-${which}`);
+    const trace = randomBytes(16).toString("hex");
+    const state = sentinel("tracestate");
+    const baggage = sentinel("baggage");
+    const headers = [
+      "X-Sentinel",
+      content.header,
+      "X-Request-ID",
+      callerId,
+      "traceparent",
+      `00-${trace}-${randomBytes(8).toString("hex")}-01`,
+      "tracestate",
+      `vendor=${state}`,
+      "baggage",
+      `key=${baggage}`,
+    ];
     const to = `${path}?q=${content.query}`;
 
     // The witness: with no fault the same receipt is stored with its
@@ -173,6 +188,9 @@ describe("a receipt whose storing fails on a database fault", () => {
     await server.setFault(`fail:inbound-receipt=${reach}`);
     const refused = await send(server.apiUrl, to, content.body, headers);
     expect(refused.status).toBe(500);
+    const requestId = String(refused.headers["x-request-id"]);
+    expect(requestId).toMatch(/^[A-Za-z0-9_-]{1,128}$/);
+    expect(requestId).not.toBe(callerId);
     expect(await firedCount("fail:inbound-receipt")).toBe(1);
     const listed = await client.listInboundDeliveries(id, {
       state: "any",
@@ -181,7 +199,16 @@ describe("a receipt whose storing fails on a database fault", () => {
     // Only the receipt that landed; the refused one stored nothing.
     expect(listed.data.data.map((candidate) => candidate.id)).toEqual([landed]);
 
-    const secrets = [content.query, content.header, content.body, token];
+    const secrets = [
+      content.query,
+      content.header,
+      content.body,
+      token,
+      callerId,
+      trace,
+      state,
+      baggage,
+    ];
     const holdsNone = (text: string) => {
       for (const secret of secrets) expect(text).not.toContain(secret);
       for (const statement of ["Failed query", "params", "disk I/O error"])

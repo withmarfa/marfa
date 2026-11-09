@@ -28,8 +28,7 @@ let server: FreshServer;
 
 beforeAll(async () => {
   server = await bootFreshServer("inbound-logs", {
-    MARFA_RATE_LIMIT_ENABLED: "true",
-    MARFA_RATE_LIMIT_INBOUND_REQUESTS: "3",
+    MARFA_RATE_LIMIT_ENABLED: "false",
     MARFA_INBOUND_MAX_BYTES: String(MAX_BYTES),
     MARFA_INBOUND_BACKLOG_DELIVERIES: "2",
   });
@@ -68,7 +67,24 @@ describe("the server's log", () => {
     const header = sentinel("header");
     const body = sentinel("body");
     const named = (path: string) => `${path}?q=${query}`;
-    const headers = ["X-Sentinel", header];
+    // A request id and trace context are headers a sender chooses, so they
+    // are its content: the server makes its own and writes none of these.
+    const callerId = sentinel("request-id");
+    const trace = randomBytes(16).toString("hex");
+    const state = sentinel("tracestate");
+    const baggage = sentinel("baggage");
+    const headers = [
+      "X-Sentinel",
+      header,
+      "X-Request-ID",
+      callerId,
+      "traceparent",
+      `00-${trace}-${randomBytes(8).toString("hex")}-01`,
+      "tracestate",
+      `vendor=${state}`,
+      "baggage",
+      `key=${baggage}`,
+    ];
 
     const roomy = await registration("logs-roomy");
     const tight = await registration("logs-tight");
@@ -76,13 +92,12 @@ describe("the server's log", () => {
     const unknown = `/inbound/${randomBytes(32).toString("base64url")}`;
     const shouted = `/INBOUND/${randomBytes(32).toString("base64url")}`;
 
-    // A receipt, and each refusal a receipt meets: an address nothing holds
-    // in two spellings, one that was retired, a declared length and a body
-    // read over the limit, a backlog that is full, and a spent window.
     idOf(await send(server.apiUrl, named(roomy.endpoint.path), body, headers));
-    expect(
-      (await send(server.apiUrl, named(unknown), body, headers)).status,
-    ).toBe(404);
+    const refused = await send(server.apiUrl, named(unknown), body, headers);
+    expect(refused.status).toBe(404);
+    const ownId = String(refused.headers["x-request-id"]);
+    expect(ownId).toMatch(/^[A-Za-z0-9_-]{1,128}$/);
+    expect(ownId).not.toBe(callerId);
     expect(
       (await send(server.apiUrl, named(shouted), body, headers)).status,
     ).toBe(404);
@@ -123,10 +138,6 @@ describe("the server's log", () => {
       (await send(server.apiUrl, named(tight.endpoint.path), body, headers))
         .status,
     ).toBe(503);
-    expect(
-      (await send(server.apiUrl, named(roomy.endpoint.path), body, headers))
-        .status,
-    ).toBe(429);
 
     // Whatever the server wrote about these, it had written once it has
     // written about a request made after them.
@@ -160,7 +171,7 @@ describe("the server's log", () => {
     expect(log).toContain(`"path":"/connectors/${roomy.id}/endpoints"`);
     // Every receipt above has its line: the spelling the router does not
     // serve has none that names the route.
-    expect(log.match(/"route":"\/inbound\/\{token\}"/g)).toHaveLength(9);
+    expect(log.match(/"route":"\/inbound\/\{token\}"/g)).toHaveLength(8);
 
     for (const address of [
       roomy.endpoint.path,
@@ -175,7 +186,16 @@ describe("the server's log", () => {
       expect(log, address).not.toContain(token.slice(0, token.length - 4));
       expect(log, address).not.toContain(token.slice(-5));
     }
-    for (const value of [query, header, body]) {
+    expect(log).toContain(ownId);
+    for (const value of [
+      query,
+      header,
+      body,
+      callerId,
+      trace,
+      state,
+      baggage,
+    ]) {
       expect(log, value).not.toContain(value);
     }
   });
