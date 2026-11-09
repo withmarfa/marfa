@@ -15,8 +15,7 @@ use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::blobs::{Blob, DEFAULT_TYPE};
 use crate::app::limiter::{FILE_FETCHES, Lane, retry_seconds};
-use crate::app::oauth::metadata_document::Pinned;
-use crate::app::outbound::{self, Reach};
+use crate::app::outbound::{self, Pinned, Reach};
 use crate::app::provenance;
 use crate::app::refusal::Refusal;
 use crate::settings::registry::{

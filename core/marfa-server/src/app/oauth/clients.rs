@@ -51,7 +51,7 @@ fn busy() -> Problem {
 }
 
 pub async fn resolve(app: &Arc<App>, id: &str, visit: &Visit) -> Result<Answered<Client>> {
-    let fetcher = Fetcher::default();
+    let fetcher = Fetcher::new(app.faults.clone());
     resolve_by(app, id, visit, move |id| fetcher.fetch(id)).await
 }
 

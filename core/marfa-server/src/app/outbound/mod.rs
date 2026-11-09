@@ -1,4 +1,5 @@
-//! Connects directly to checked addresses to prevent DNS rebinding.
+//! Every outbound request goes through here: public addresses only, judged once, and connected to
+//! directly to prevent DNS rebinding.
 
 pub mod address;
 
@@ -17,6 +18,10 @@ use rustls_platform_verifier::BuilderVerifierExt;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
+use ureq::config::Config;
+use ureq::http::Uri;
+use ureq::unversioned::resolver::{ResolvedSocketAddrs, Resolver};
+use ureq::unversioned::transport::NextTimeout;
 use url::{Host, Url};
 
 use super::faults::Faults;
@@ -136,6 +141,25 @@ fn literal(ip: IpAddr) -> Target {
     Target {
         checked: ip,
         connected: ip,
+    }
+}
+
+/// So nothing between the check and the connection can look the name up again.
+#[derive(Debug)]
+pub struct Pinned(pub Vec<SocketAddr>);
+
+impl Resolver for Pinned {
+    fn resolve(
+        &self,
+        _uri: &Uri,
+        _config: &Config,
+        _timeout: NextTimeout,
+    ) -> Result<ResolvedSocketAddrs, ureq::Error> {
+        let mut answers = self.empty();
+        for address in &self.0 {
+            answers.push(*address);
+        }
+        Ok(answers)
     }
 }
 
