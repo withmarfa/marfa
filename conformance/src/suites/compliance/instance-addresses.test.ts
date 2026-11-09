@@ -6,6 +6,7 @@ import {
   stopFreshServers,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { expectMatchesSchema } from "../../utils/openapi.js";
 
 /**
  * The instance's addresses and the list of its settings (the instance
@@ -217,6 +218,12 @@ describe("an address check", () => {
       sign_in_address: "https://checked.example",
       requires_confirmation: true,
     });
+    await expectMatchesSchema(
+      "POST",
+      "/config/address-check",
+      200,
+      answer.body,
+    );
     expect(answer.body.addresses).toContain("https://checked.example");
     for (const consequence of answer.body.consequences) {
       expect(consequence).toEqual({
@@ -287,6 +294,7 @@ describe("the list of settings", () => {
   it("names every stored setting with its value, default and rule, and every start-only setting by environment name", async () => {
     const answer = await call("key", "GET", "/config/settings");
     expect(answer.status, JSON.stringify(answer.body)).toBe(200);
+    await expectMatchesSchema("GET", "/config/settings", 200, answer.body);
     const stored = new Map<string, any>(
       answer.body.data.map((entry: { key: string }) => [entry.key, entry]),
     );
