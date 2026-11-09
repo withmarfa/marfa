@@ -63,6 +63,13 @@ fn problems_json(problems: &[(String, i64)]) -> Value {
     )
 }
 
+fn no_sign_in() -> Refusal {
+    Refusal::new(
+        Code::Forbidden,
+        "Only a key or an app grant has a sign-in to report under.",
+    )
+}
+
 /// A repeated or older sequence preserves the receipt time too.
 pub async fn report(
     app: &App,
@@ -75,14 +82,13 @@ pub async fn report(
         let tx = unit.tx();
         unit.caller.require_reach()?;
         readable_of(tx, &unit.caller, &folder_id, FOLDER_TYPE)?;
-        let by = match unit.caller.writer() {
-            Some(by) if by.kind != "local" => by,
-            _ => {
-                return Err(Refusal::new(
-                    Code::Forbidden,
-                    "A local command has no sign-in to report under.",
-                ));
-            }
+        let Some(by) = unit.caller.writer() else {
+            return Err(no_sign_in());
+        };
+        let (key_id, grant_id) = match by.kind.as_str() {
+            "key" => (Some(by.id.as_str()), None),
+            "app" => (None, Some(by.id.as_str())),
+            _ => return Err(no_sign_in()),
         };
         let held: Option<(i64, String)> = tx
             .query_row(
@@ -113,7 +119,7 @@ pub async fn report(
                     .map(|(code, count)| ((*code).to_string(), *count))
                     .collect();
                 tx.execute(
-                    "INSERT INTO folder_status (folder_id, sign_in_kind, sign_in_id, \
+                    "INSERT INTO folder_status (folder_id, key_id, grant_id, \
                      sign_in_name, folder_store_id, sequence, received_at, last_success_at, \
                      pending_uploads, pending_downloads, paused_removals, first_sync_waiting, \
                      problems) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) \
@@ -123,8 +129,8 @@ pub async fn report(
                      paused_removals = ?11, first_sync_waiting = ?12, problems = ?13",
                     params![
                         folder_id,
-                        by.kind,
-                        by.id,
+                        key_id,
+                        grant_id,
                         by.name,
                         report.folder_store_id,
                         report.sequence,
@@ -151,15 +157,6 @@ pub async fn report(
         .to_string())
     })
     .await
-}
-
-/// A sign-in's reports go with the sign-in's own record.
-pub fn remove_of(tx: &Transaction<'_>, kind: &str, id: &str) -> Result<()> {
-    tx.execute(
-        "DELETE FROM folder_status WHERE sign_in_kind = ?1 AND sign_in_id = ?2",
-        params![kind, id],
-    )?;
-    Ok(())
 }
 
 fn stored_rows(tx: &Transaction<'_>, folder_id: &str) -> Result<Vec<Stored>> {

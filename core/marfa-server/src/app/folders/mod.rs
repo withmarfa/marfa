@@ -10,6 +10,6 @@ pub use report::Report;
 pub use settings::{
     Patterns, SETTINGS, check, check_stored, compile_patterns, judge, refuse_null, undeclared,
 };
-pub use status::{Concern, concerns, read, remove_of as remove_reports_of, report};
+pub use status::{Concern, concerns, read, report};
 
 pub const FOLDER_TYPE: &str = "system.folder";

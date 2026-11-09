@@ -9,7 +9,6 @@ use uuid::Uuid;
 use super::scope::{ScopeSet, combined};
 use super::store::{self, Client, Consent, ms_of};
 use crate::app::catalog::Catalog;
-use crate::app::folders;
 use crate::app::items::write::{Change, Put, Update, apply_server_own};
 use crate::app::refusal::{Refusal, Result};
 use crate::app::unit::Unit;
@@ -282,7 +281,6 @@ pub(super) fn forget(
     let Some(consent) = store::consent(tx, client_id, user_id)? else {
         return Ok(());
     };
-    folders::remove_reports_of(tx, "app", &consent.grant_id)?;
     if version_of(unit, &consent.grant_id)?.is_some() {
         let id = consent.grant_id;
         applied(
