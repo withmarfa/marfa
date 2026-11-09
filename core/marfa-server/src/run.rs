@@ -12,6 +12,7 @@ use crate::app::{App, housekeeping, jobs, webhooks};
 use crate::control_socket::Claim;
 use crate::failure::Failure;
 use crate::http;
+use crate::http::Caps;
 use crate::http::listening::{
     CONTROL_HEADER_READ_TIMEOUT, PUBLIC_HEADER_READ_TIMEOUT, Socket, Tcp,
 };
@@ -87,6 +88,11 @@ fn listen(
             http::public(app.clone()),
             stopped(app.stopping()),
             PUBLIC_HEADER_READ_TIMEOUT,
+            Some(Caps {
+                total: app.settings.start.max_connections,
+                per_address: app.settings.start.max_connections_per_address,
+                trust: app.settings.start.public_listener.trust.clone(),
+            }),
         ));
     }
     servers.spawn(http::serve(
@@ -94,6 +100,7 @@ fn listen(
         http::control(app.clone()),
         stopped(app.stopping()),
         CONTROL_HEADER_READ_TIMEOUT,
+        None,
     ));
 }
 

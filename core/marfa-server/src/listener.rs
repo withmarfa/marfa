@@ -1,6 +1,8 @@
 //! What a listener says about itself, and whom it believes about a caller's
 //! address. Names no HTTP type: `http` acts on these.
 
+use std::net::{IpAddr, Ipv6Addr};
+
 use ipnet::IpNet;
 
 const RANGES_RULE: &str =
@@ -60,6 +62,31 @@ impl Declaration {
             name: "control",
             transport: Transport::LocalSocket,
             trust: Trust::Nothing,
+        }
+    }
+}
+
+/// Who shares a count with an address: itself, or for IPv6 the /64 it sits in, since one
+/// household holds a whole /64 and a caller can choose any address in it.
+pub fn network(address: IpAddr) -> IpAddr {
+    match address.to_canonical() {
+        IpAddr::V6(address) => IpAddr::V6(Ipv6Addr::from(
+            u128::from(address) & !(u128::from(u64::MAX)),
+        )),
+        address => address,
+    }
+}
+
+impl Trust {
+    /// Whether this listener believes an address a peer forwards for its callers.
+    pub fn believes(&self, peer: IpAddr) -> bool {
+        let peer = peer.to_canonical();
+        match self {
+            Trust::Nothing => false,
+            Trust::EdgeHeader(_) => true,
+            Trust::EdgeHeaderFrom { ranges, .. } | Trust::Proxies(ranges) => {
+                ranges.iter().any(|range| range.contains(&peer))
+            }
         }
     }
 }

@@ -7,6 +7,7 @@ use super::owner::MAX_EMAIL_CHARS;
 use crate::app::App;
 use crate::app::limiter::{Lane, Limiter, retry_seconds};
 use crate::app::refusal::{Code, Refusal, Result};
+use crate::listener::network;
 use crate::settings::registry::RATE_LIMIT_ENABLED;
 
 const MINUTE_MS: i64 = 60_000;
@@ -30,12 +31,9 @@ fn bucket(address: Option<IpAddr>) -> String {
     let Some(address) = address else {
         return NO_ADDRESS.to_string();
     };
-    match address.to_canonical() {
+    match network(address) {
         IpAddr::V4(address) => address.to_string(),
-        IpAddr::V6(address) => {
-            let [a, b, c, d, ..] = address.segments();
-            format!("{a:x}:{b:x}:{c:x}:{d:x}::/64")
-        }
+        IpAddr::V6(address) => format!("{address}/64"),
     }
 }
 

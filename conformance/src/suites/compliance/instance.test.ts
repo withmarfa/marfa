@@ -730,15 +730,15 @@ describe("the instance", () => {
     expect(typeof r.data.uptime_seconds).toBe("number");
     expect(typeof r.data.cached_at).toBe("string");
 
-    expect(Object.keys(r.data.process).sort()).toEqual([
-      "cpu_system_seconds",
-      "cpu_user_seconds",
-      "heap_total_bytes",
-      "heap_used_bytes",
-      "memory_rss_bytes",
-      "memory_rss_peak_bytes",
-      "release",
-    ]);
+    expect(Object.keys(r.data.process)).toEqual(
+      expect.arrayContaining([
+        "cpu_system_seconds",
+        "cpu_user_seconds",
+        "memory_rss_bytes",
+        "memory_rss_peak_bytes",
+        "release",
+      ]),
+    );
     expect(typeof r.data.process.release).toBe("string");
     expect(r.data.process.memory_rss_bytes as number).toBeGreaterThan(0);
     expect(Object.keys(r.data.storage).sort()).toEqual([

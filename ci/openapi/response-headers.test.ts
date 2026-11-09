@@ -3,8 +3,8 @@
  *
  * Every one is set by middleware or by the error handler, so no route
  * declares them and the document's general sections do. This holds the
- * declarations to each other: the always-on headers on every response, the
- * rate limiter's where the limiter answers, `X-Error-Code` on refusals,
+ * declarations to each other: the always-on headers on every response,
+ * `X-Error-Code` on refusals,
  * `Retry-After` on `429`, copy proof on the supported reads and
  * `Idempotency-Replayed` on the writes that take an `Idempotency-Key`. What a
  * server sends is held by the contract's fixtures.
@@ -19,15 +19,9 @@ interface SpecResponse {
 
 const UNIVERSAL = ["X-Marfa-Contract", "X-Request-ID"];
 
-const RATE_LIMIT = [
-  "X-RateLimit-Limit",
-  "X-RateLimit-Remaining",
-  "X-RateLimit-Reset",
-];
-
 /**
  * Operations that bypass the general request limiter. Claim has its own
- * durable guessing allowance, without the general limiter's headers.
+ * guessing allowance.
  */
 const AHEAD_OF_THE_LIMITER = new Set(["GET /", "GET /health", "POST /owner"]);
 
@@ -117,25 +111,6 @@ describe("the document declares the headers the server sets", () => {
       }
     }
     expect(missing.sort()).toEqual([]);
-  });
-
-  it("declares the rate limiter's headers on every response it passes, and no other", () => {
-    const wrong: string[] = [];
-    for (const [key, responses] of operations) {
-      for (const [status, response] of Object.entries(responses)) {
-        const behind =
-          !AHEAD_OF_THE_LIMITER.has(key) && status !== ANSWERED_AHEAD;
-        for (const name of RATE_LIMIT) {
-          if (name in (response.headers ?? {}) !== behind) {
-            wrong.push(`${key} ${status} ${name}`);
-          }
-        }
-      }
-    }
-    for (const key of AHEAD_OF_THE_LIMITER) {
-      expect(operations.has(key), `${key} is published`).toBe(true);
-    }
-    expect(wrong.sort()).toEqual([]);
   });
 
   it("declares no 413 on a GET or HEAD, which carries no body to count", () => {

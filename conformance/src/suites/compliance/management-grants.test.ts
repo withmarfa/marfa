@@ -48,7 +48,7 @@ it("instance.read grants reports to keys and apps without granting maintenance",
     expect((await reader.listHousekeeping()).status).toBe(200);
     expect((await reader.listBlobStores()).status).toBe(200);
     expect((await reader.listBlobOrphans()).status).toBe(200);
-    expect((await reader.runHousekeeping("rate-limit-cleanup")).status).toBe(
+    expect((await reader.runHousekeeping("audit-cleanup")).status).toBe(
       403,
     );
   }
@@ -58,12 +58,12 @@ it("instance.read grants reports to keys and apps without granting maintenance",
 it("instance.maintain grants maintenance to keys and apps without granting reports", async () => {
   for (const maintainer of await callers("instance.maintain")) {
     expect(
-      (await maintainer.runHousekeeping("rate-limit-cleanup")).status,
+      (await maintainer.runHousekeeping("audit-cleanup")).status,
     ).toBe(200);
     expect((await maintainer.listHousekeeping()).status).toBe(403);
     expect((await maintainer.listBlobStores()).status).toBe(403);
   }
-  expect((await working.runHousekeeping("rate-limit-cleanup")).status).toBe(
+  expect((await working.runHousekeeping("audit-cleanup")).status).toBe(
     403,
   );
 });

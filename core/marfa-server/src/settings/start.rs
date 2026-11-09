@@ -74,6 +74,8 @@ pub struct Fixed {
     #[cfg(feature = "test-hooks")]
     pub contract_version: Option<u32>,
     pub write_wait: Duration,
+    pub max_connections: usize,
+    pub max_connections_per_address: usize,
     pub blob_path: PathBuf,
     /// A folder of OCR language models read beside the ones the server carries.
     pub enrichment_tessdata_dir: Option<PathBuf>,
@@ -315,6 +317,12 @@ impl Fixed {
         let write_wait = reader
             .whole("MARFA_WRITE_WAIT_MS", 0, rule::DAY_MS)
             .unwrap_or(5_000);
+        let max_connections = reader
+            .whole("MARFA_MAX_CONNECTIONS", 1, rule::MILLION)
+            .unwrap_or(1_024) as usize;
+        let max_connections_per_address = reader
+            .whole("MARFA_MAX_CONNECTIONS_PER_ADDRESS", 1, rule::MILLION)
+            .unwrap_or(128) as usize;
         let given = Given {
             key_salt: reader.secret("MARFA_KEY_SALT", 1),
             auth_secret: reader.secret("MARFA_AUTH_SECRET", MIN_AUTH_SECRET),
@@ -345,6 +353,8 @@ impl Fixed {
             #[cfg(feature = "test-hooks")]
             contract_version,
             write_wait: Duration::from_millis(write_wait),
+            max_connections,
+            max_connections_per_address,
             blob_path: PathBuf::from(environment.get("MARFA_BLOB_PATH").unwrap_or("./data/blobs")),
             enrichment_tessdata_dir: environment
                 .get("MARFA_ENRICHMENT_TESSDATA_DIR")

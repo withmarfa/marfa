@@ -100,3 +100,33 @@ pub(super) const JOBS: &[Job] = &[
         |app, run| Box::pin(upkeep::integrity(app, run)),
     ),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_contract_tables_each_job_the_server_runs_and_lists_each_once() {
+        let spec = include_str!("../../../../../conformance/spec/housekeeping.md");
+        let table = spec
+            .split("<!-- housekeeping-table:start -->")
+            .nth(1)
+            .and_then(|rest| rest.split("<!-- housekeeping-table:end -->").next())
+            .expect("housekeeping.md holds the table");
+        let tabled: Vec<&str> = table
+            .lines()
+            .filter_map(|line| line.strip_prefix("| `"))
+            .filter_map(|rest| rest.split('`').next())
+            .collect();
+        assert!(JOBS.len() > 5);
+        for job in JOBS {
+            assert!(tabled.contains(&job.name), "{} is not tabled", job.name);
+        }
+        for (index, name) in tabled.iter().enumerate() {
+            assert!(
+                !tabled[index + 1..].contains(name),
+                "{name} is tabled twice"
+            );
+        }
+    }
+}

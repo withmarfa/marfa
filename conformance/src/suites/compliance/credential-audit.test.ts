@@ -240,7 +240,7 @@ describe("a grant retired for inactivity", () => {
     // audit entry rather than counting every retirement.
     await movedClock(server).advance(366 * DAY_MS);
     // The scheduler finds the job due after the move and may be running it.
-    expect((await runJob(server, "grant-inactivity-retirement")).outcome).toBe(
+    expect((await runJob(server, "credential-cleanup")).outcome).toBe(
       "ok",
     );
     expect(await logged("auth.grant.retired", app.clientId)).toBe(1);

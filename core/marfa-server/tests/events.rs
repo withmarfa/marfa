@@ -103,6 +103,7 @@ impl Instance {
                 let _ = stopping.await;
             },
             PUBLIC_HEADER_READ_TIMEOUT,
+            None,
         ));
         Instance {
             _dir: dir,

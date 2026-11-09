@@ -1121,19 +1121,13 @@ If a signed-in app mints a key naming any extension namespace, then the server M
 
 **Tests:** `compliance/key-reach.test.ts › a signed-in app gives a key within its reach a permission its grant holds, and no other`.
 
-## The limit on the key operations
+## The rate limiter
 
-The limiter is off for a run, so these rules are asserted against a server booted with it on.
+One limiter, held in the server's memory, counts every limit in this chapter. Every count starts afresh when the server starts. The limits on a credential's requests are off for a run, so their rules are asserted against a server booted with the limiter on.
 
 ### `keys-and-oauth/keys-rate-cap`
 
-Where the limiter is on, when a credential's requests to the operations under `/keys` pass the cap `rate_limit_keys_requests` names, the server MUST answer `429 rate_limited` with `Retry-After` in seconds.
-
-**Tests:** `compliance/key-rate-limit.test.ts › refuses past the limit the instance set, and the key doors share one window`.
-
-### `keys-and-oauth/keys-rate-header`
-
-Where the limiter is on, the server MUST name the cap in force in `X-RateLimit-Limit` on every answer from the operations under `/keys`.
+Where the limiter is on, when a credential's requests to the operations under `/keys` pass the cap `rate_limit_keys_requests` names within a window, the server MUST answer `429 rate_limited`.
 
 **Tests:** `compliance/key-rate-limit.test.ts › refuses past the limit the instance set, and the key doors share one window`.
 
@@ -1148,6 +1142,40 @@ Where the limiter is on and the instance names no cap for the key operations, th
 Where the limiter is on, when a credential has passed the cap on the key operations, the server MUST still answer it on an operation outside `/keys`.
 
 **Tests:** `compliance/key-rate-limit.test.ts › closes the key doors while a data-plane read on the same credential is answered`.
+
+### `keys-and-oauth/credential-rate-cap`
+
+Where the limiter is on, when one key's or one app's requests to all operations together pass `rate_limit_requests` within a window, the server MUST answer each further request in that window `429 rate_limited`.
+
+**Reason:** A key or an app that loops cannot take the instance's attention from the others, and the key operations have a cap of their own beneath it.
+
+**Tests:** `compliance/credential-rate-limit.test.ts › refuses a key past the cap across operations, and counts none of its refused requests against another key`.
+
+### `keys-and-oauth/credential-rate-default`
+
+Where the limiter is on and the instance names no cap for a credential's requests, the server MUST hold a key or an app to 4000 requests per window.
+
+**Tests:** `compliance/credential-rate-limit.test.ts › falls back to 4000 when the instance names no number`.
+
+### `keys-and-oauth/credential-rate-own-window`
+
+Where the limiter is on, when one credential has passed `rate_limit_requests`, the server MUST still answer another credential's requests.
+
+**Tests:** `compliance/credential-rate-limit.test.ts › refuses a key past the cap across operations, and counts none of its refused requests against another key`.
+
+### `keys-and-oauth/rate-limit-retry-after`
+
+When the server answers `429 rate_limited`, the server MUST carry in `Retry-After` the whole seconds, from 1 to 86400, until the latest end among the limits that are spent, rounded up.
+
+**Reason:** The wait is a real number of seconds and not an invitation to retry at once. A request refused by one limit can meet another that is spent for longer, so a client that waits less meets a second refusal.
+
+**Tests:** `compliance/key-rate-limit.test.ts › refuses past the limit the instance set, and the key doors share one window`, `compliance/credential-rate-limit.test.ts › refuses a key past the cap across operations, and counts none of its refused requests against another key`.
+
+### `keys-and-oauth/rate-limit-retry-detail`
+
+When the server answers `429 rate_limited` in the error envelope to a request made with a key or an app's access token, the server MUST name in `details.retry_after` the number of seconds `Retry-After` carries.
+
+**Tests:** `compliance/key-rate-limit.test.ts › refuses past the limit the instance set, and the key doors share one window`, `compliance/credential-rate-limit.test.ts › refuses a key past the cap across operations, and counts none of its refused requests against another key`.
 
 ## Discovery
 
@@ -1345,7 +1373,7 @@ When a registration at `POST /auth/oauth2/register` carries the owner's browser 
 
 ### `keys-and-oauth/register-idle-removed`
 
-When the `dcr-client-cleanup` job runs, the server MUST remove each registered client that no grant names, that holds no access or refresh token, and that was neither registered nor offered on the consent screen or the device approval page within `dcr_client_retention_days`.
+When the `credential-cleanup` job runs, the server MUST remove each registered client that no grant names, that holds no access or refresh token, and that was neither registered nor offered on the consent screen or the device approval page within `dcr_client_retention_days`.
 
 **Reason:** Registration takes no credential and answers every origin, so any page the owner visits can add registrations; a short retention bounds what is left behind without a cap that a page could fill to block real registrations.
 
@@ -2519,7 +2547,7 @@ If a device code lookup is refused by a device lookup limit, then the server MUS
 
 **Reason:** The anonymous address limit, the anonymous instance limit and the two owner limits each end at their own time, and a lookup refused by one can meet another that is spent for longer, so the page can say how long to wait only if the redirect names the later end.
 
-**Tests:** `compliance/sign-in-surface.test.ts › limits anonymous device code entry per address and owner consent per owner`, `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes, and keeps the budget after restart`, `compliance/sign-in-limits.test.ts › names the later end when a lookup meets a spent address limit and a spent instance limit`.
+**Tests:** `compliance/sign-in-surface.test.ts › limits anonymous device code entry per address and owner consent per owner`, `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes`, `compliance/sign-in-limits.test.ts › names the later end when a lookup meets a spent address limit and a spent instance limit`.
 
 ### `keys-and-oauth/device-lookup-page`
 
@@ -2569,7 +2597,7 @@ When a caller with a verified, live browser session of the claimed owner acting 
 
 If the claimed owner has made ten counted device code lookups in fifteen minutes, across browser sessions, addresses, the entry form, the consent screen and its decision, then the server MUST redirect the owner's next lookup with `error=too_many_attempts` before the code is looked up.
 
-**Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes, and keeps the budget after restart`.
+**Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes`.
 
 ### `keys-and-oauth/device-lookup-owner-instance-limit`
 
@@ -2589,19 +2617,13 @@ If a device code lookup carries only an unverified, expired or revoked owner coo
 
 When concurrent device code lookups use direct owner browser authority, the server MUST admit no more lookups than remain in the owner's fifteen-minute allowance.
 
-**Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes, and keeps the budget after restart`.
-
-### `keys-and-oauth/device-lookup-owner-persistent`
-
-When the server restarts within a device code lookup window, the server MUST retain the owner's counted lookups and the owner lane's counted lookups for the rest of that window.
-
-**Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes, and keeps the budget after restart`, `› holds the owner lane aggregate to its limit and resets its fifteen-minute window`.
+**Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes`.
 
 ### `keys-and-oauth/device-lookup-owner-window`
 
 When an owner's device code lookup window or the owner lane's collective window reaches fifteen minutes, the server MUST count its next lookup in a fresh window.
 
-**Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes, and keeps the budget after restart`, `› holds the owner lane aggregate to its limit and resets its fifteen-minute window`.
+**Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes`, `› holds the owner lane aggregate to its limit and resets its fifteen-minute window`.
 
 ## The sign-in library's routes
 
@@ -3199,7 +3221,7 @@ When the private local command issues a setup code, or a browser exchanges one, 
 
 **Reason:** The owner claim the proof leads to is held by `instance-claim/concurrent-claim`.
 
-**Tests:** `compliance/owner.test.ts › keeps code-attempt counters through restart and replaces unclaimed setup proof`.
+**Tests:** `compliance/owner.test.ts › replaces unclaimed setup proof on restart`.
 
 ### `keys-and-oauth/audit-registration`
 

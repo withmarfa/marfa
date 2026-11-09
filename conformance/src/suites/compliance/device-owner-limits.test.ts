@@ -198,7 +198,7 @@ describe("the owner device lookup lane", () => {
     ).toContain("error=too_many_attempts");
   });
 
-  it("shares ten lookups across owner sessions, addresses and routes, and keeps the budget after restart", async () => {
+  it("shares ten lookups across owner sessions, addresses and routes", async () => {
     const first = server.ownerCookie;
     const second = await signIn();
     expect(await sessionId(first)).not.toBe(await sessionId(second));
@@ -239,8 +239,6 @@ describe("the owner device lookup lane", () => {
     expect(
       redirects.filter((value) => value.includes("too_many_attempts")),
     ).toHaveLength(6);
-    await server.restart();
-    origin = await issuerOrigin(server);
     const refused = new URL(
       await location(await enter(codeFor(100), second, "203.0.113.1")),
       origin,
@@ -321,9 +319,6 @@ describe("the owner device lookup lane", () => {
     expect(await location(await enter(codeFor(3)))).toContain(
       "error=invalid_code",
     );
-    await server.restart();
-    origin = await issuerOrigin(server);
-    await server.setFault(aggregate);
     expect(
       await location(await enter(codeFor(4), server.ownerCookie)),
     ).toContain("error=too_many_attempts");

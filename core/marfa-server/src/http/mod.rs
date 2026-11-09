@@ -12,6 +12,7 @@ mod caller_address;
 mod compression;
 mod conditional;
 mod config;
+mod connections;
 mod connectors;
 mod control;
 #[cfg(test)]
@@ -62,6 +63,7 @@ use crate::app::refusal::{Code, Refusal};
 use crate::listener::Declaration;
 use admission::Admission;
 use answer::{panicked, refusal_answer};
+pub use connections::Caps;
 pub use listening::serve;
 use observe::{Observed, Unmatched, observe as observe_request, remember_route};
 

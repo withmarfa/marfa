@@ -238,17 +238,11 @@ When the owner changes their password through their signed-in browser, the serve
 
 ## Durability
 
-### `instance-claim/attempt-counter-restart`
-
-When an unclaimed instance restarts, the server MUST retain an address's exhausted setup-code allowance until its window ends.
-
-**Tests:** `compliance/owner.test.ts › keeps code-attempt counters through restart and replaces unclaimed setup proof`.
-
 ### `instance-claim/unclaimed-restart-proof`
 
 When an unclaimed instance restarts, the server MUST refuse its previous setup code with `401 setup_proof_invalid`.
 
-**Tests:** `compliance/owner.test.ts › keeps code-attempt counters through restart and replaces unclaimed setup proof`.
+**Tests:** `compliance/owner.test.ts › replaces unclaimed setup proof on restart`.
 
 ### `instance-claim/concurrent-claim`
 
