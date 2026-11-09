@@ -237,20 +237,18 @@ fn safe(refusal: Refusal) -> Refusal {
     if refusal.commit_failed {
         return Refusal::new(
             Code::InternalError,
-            "The change may have completed, but its result could not be confirmed. Refresh the \
-             page before trying again.",
+            "The change may have completed, but its result could not be confirmed. Read the \
+             item again before trying again.",
         )
         .with_detail("write_outcome", "unknown");
     }
     let message = match refusal.code {
-        Code::InvalidTransition => {
-            "This item is no longer in the required state. Refresh the page."
-        }
+        Code::InvalidTransition => "This item is no longer in the required state. Read it again.",
         Code::EdgeConstraintViolation => {
             "Another item prevents this item from moving to the trash."
         }
         Code::ItemNotFound => "This item is no longer available.",
-        _ => "The change could not be completed. Refresh the page before trying again.",
+        _ => "The change could not be completed. Read the item again before trying again.",
     };
     Refusal::new(refusal.code, message)
 }
