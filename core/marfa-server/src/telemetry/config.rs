@@ -17,7 +17,6 @@ const DEFAULT_SERVICE: &str = "marfa-server";
 const DEFAULT_RATIO: f64 = 0.05;
 const DEFAULT_ENVIRONMENT: &str = "production";
 const DEFAULT_WEBHOOK_TIMEOUT_MS: u64 = 5_000;
-const MAX_I32: u64 = 2_147_483_647;
 const PAIRS_RULE: &str = "must be comma-separated key=value pairs with percent-encoded values";
 const URL_RULE: &str = "must be an absolute http or https URL";
 const POSTHOG_HOST: &str = "MARFA_POSTHOG_HOST";
@@ -148,23 +147,25 @@ impl Config {
 
         let timeout = match text(&get, "MARFA_ERROR_WEBHOOK_TIMEOUT_MS") {
             None => DEFAULT_WEBHOOK_TIMEOUT_MS,
-            Some(given) => rule::whole_number(&given, 1, MAX_I32).unwrap_or_else(|rule_text| {
-                refuse(rule::line(
-                    "MARFA_ERROR_WEBHOOK_TIMEOUT_MS",
-                    &rule_text,
-                    &given,
-                ));
-                DEFAULT_WEBHOOK_TIMEOUT_MS
-            }),
+            Some(given) => {
+                rule::whole_number(&given, 1, rule::DAY_MS).unwrap_or_else(|rule_text| {
+                    refuse(rule::line(
+                        "MARFA_ERROR_WEBHOOK_TIMEOUT_MS",
+                        &rule_text,
+                        &given,
+                    ));
+                    DEFAULT_WEBHOOK_TIMEOUT_MS
+                })
+            }
         };
-        let webhook = text(&get, "ERROR_WEBHOOK_URL").and_then(|address| {
+        let webhook = text(&get, "MARFA_ERROR_WEBHOOK_URL").and_then(|address| {
             if is_web_address(&address) {
                 Some(Webhook {
                     url: address,
                     timeout: Duration::from_millis(timeout),
                 })
             } else {
-                refuse(format!("ERROR_WEBHOOK_URL {URL_RULE}"));
+                refuse(format!("MARFA_ERROR_WEBHOOK_URL {URL_RULE}"));
                 None
             }
         });
@@ -317,7 +318,7 @@ mod tests {
             ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4318"),
             ("MARFA_POSTHOG_HOST", "http://example.test"),
             ("MARFA_POSTHOG_PROJECT_TOKEN", "phc_x"),
-            ("ERROR_WEBHOOK_URL", "http://127.0.0.1:9/errors"),
+            ("MARFA_ERROR_WEBHOOK_URL", "http://127.0.0.1:9/errors"),
         ]);
         assert!(problems.is_empty());
         assert!(config.off);
@@ -395,7 +396,7 @@ mod tests {
             ("OTEL_RESOURCE_ATTRIBUTES", "team"),
             ("MARFA_OTEL_SAMPLE_RATIO", "1.5"),
             ("MARFA_ERROR_WEBHOOK_TIMEOUT_MS", "0"),
-            ("ERROR_WEBHOOK_URL", "nope-secret"),
+            ("MARFA_ERROR_WEBHOOK_URL", "nope-secret"),
             ("OTEL_EXPORTER_OTLP_ENDPOINT", "ftp://collector-secret"),
             ("OTEL_EXPORTER_OTLP_HEADERS", "broken-secret"),
         ]);
@@ -414,7 +415,7 @@ mod tests {
                 .iter()
                 .any(|line| line.starts_with("MARFA_ERROR_WEBHOOK_TIMEOUT_MS "))
         );
-        assert!(lines.contains(&format!("ERROR_WEBHOOK_URL {URL_RULE}")));
+        assert!(lines.contains(&format!("MARFA_ERROR_WEBHOOK_URL {URL_RULE}")));
         assert!(lines.contains(&format!("OTEL_EXPORTER_OTLP_ENDPOINT {URL_RULE}")));
         assert!(lines.contains(&format!("OTEL_EXPORTER_OTLP_HEADERS {PAIRS_RULE}")));
         assert_eq!(lines.len(), 6);

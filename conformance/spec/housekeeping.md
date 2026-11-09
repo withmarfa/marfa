@@ -29,7 +29,7 @@ The server registers the following jobs when their settings and required stores 
 | `blob-integrity`              | Checks blob copies and removes copies whose bytes are missing or altered.        |
 | `blob-orphans`                | Reports unreferenced blobs and purges them after the grace period.               |
 | `enrichment-sweep`            | Extracts searchable text and image dimensions from uploaded files.               |
-| `bulk-action-gc`              | Removes completed bulk action jobs after their retention window.                 |
+| `bulk-action-gc`              | Removes finished bulk action jobs after 7 days.                                  |
 
 <!-- housekeeping-table:end -->
 
@@ -167,7 +167,7 @@ If the enrichment sweep cannot read an image, then the server MUST NOT write a `
 
 ### `housekeeping/enrichment-document-inflated`
 
-Where enrichment is on, if the parts of a document together inflate past `MARFA_ENRICHMENT_MAX_INFLATED_BYTES`, then the server MUST count the item as skipped in the result of the `enrichment-sweep` run.
+Where enrichment is on, if the parts of a document together inflate past `enrichment_max_inflated_bytes`, then the server MUST count the item as skipped in the result of the `enrichment-sweep` run.
 
 **Reason:** an Office document is a zip file, and a few hundred kilobytes can inflate to a gigabyte. A skip is final until a limit changes, so the item does not take the same time and memory at every sweep.
 
@@ -175,7 +175,7 @@ Where enrichment is on, if the parts of a document together inflate past `MARFA_
 
 ### `housekeeping/enrichment-document-memory`
 
-Where enrichment is on, if reading a document needs more memory than `MARFA_ENRICHMENT_MAX_MEMORY_BYTES`, then the server MUST count the item as skipped in the result of the `enrichment-sweep` run.
+Where enrichment is on, if reading a document needs more memory than `enrichment_max_memory_bytes`, then the server MUST count the item as skipped in the result of the `enrichment-sweep` run.
 
 **Reason:** a document of many small parts can fill a heap without inflating far, so the inflated size alone does not bound it.
 
@@ -183,7 +183,7 @@ Where enrichment is on, if reading a document needs more memory than `MARFA_ENRI
 
 ### `housekeeping/enrichment-text-whole`
 
-Where enrichment is on, if the text of a file is longer than `MARFA_ENRICHMENT_MAX_TEXT_CHARS` characters, then the server MUST write an `extracted_text` of exactly that many characters.
+Where enrichment is on, if the text of a file is longer than `enrichment_max_text_chars` characters, then the server MUST write an `extracted_text` of exactly that many characters.
 
 **Reason:** the limit counts Unicode characters, so a character outside the Basic Multilingual Plane counts once and is never cut in two.
 
@@ -209,13 +209,13 @@ If the enrichment sweep has skipped a document for a limit, then the server MUST
 
 ### `housekeeping/enrichment-document-limit-raised`
 
-When `MARFA_ENRICHMENT_MAX_INFLATED_BYTES` or `MARFA_ENRICHMENT_MAX_MEMORY_BYTES` is raised to cover a document the sweep skipped for it, the server MUST write the document's `extracted_text` at the next `enrichment-sweep` run.
+When `enrichment_max_inflated_bytes` or `enrichment_max_memory_bytes` is raised to cover a document the sweep skipped for it, the server MUST write the document's `extracted_text` at the next `enrichment-sweep` run.
 
 **Tests:** `compliance/enrichment-document-bounds.test.ts › is read once the limits are raised`.
 
 ### `housekeeping/enrichment-interrupted-counted`
 
-If the server is stopped, as many times as `MARFA_ENRICHMENT_MAX_ATTEMPTS`, while the enrichment sweep extracts the text of an item, then the server MUST NOT offer that item to the next `enrichment-sweep` run.
+If the server is stopped, as many times as `enrichment_max_attempts`, while the enrichment sweep extracts the text of an item, then the server MUST NOT offer that item to the next `enrichment-sweep` run.
 
 **Reason:** an item that stops the server every time is otherwise offered again at every start, as if it had never been tried, and takes the server down each time.
 
@@ -243,7 +243,7 @@ Where enrichment is on, the server MUST write the text a person would read in th
 
 ### `housekeeping/enrichment-html-bounds`
 
-Where enrichment is on, if a file item whose `mime_type` is `text/html` or `application/xhtml+xml` holds a page with more than 8 MiB of source, more than 512 open elements at one point, or more text than `MARFA_ENRICHMENT_MAX_TEXT_CHARS`, then the server MUST write as the item's `extracted_text` only the text of the page before the first limit it passes.
+Where enrichment is on, if a file item whose `mime_type` is `text/html` or `application/xhtml+xml` holds a page with more than 8 MiB of source, more than 512 open elements at one point, or more text than `enrichment_max_text_chars`, then the server MUST write as the item's `extracted_text` only the text of the page before the first limit it passes.
 
 **Reason:** a page is written by anyone and read by a parser whose work grows with the depth of its elements, so an unbounded page can hold the server for as long as its author likes. Text found before the limit is still the words a person would search for, and the item is stored either way.
 
@@ -277,7 +277,7 @@ Where enrichment is on, the server MUST write `width` and `height` for a well-fo
 
 ## Retention
 
-`PUT /config` sets how long the server keeps some records, and settings give the defaults. Settings alone set how long it keeps others, such as revoked grants and finished bulk-action jobs.
+`PUT /config` sets how long the server keeps some records, and settings give the defaults. Settings alone set how long it keeps others, such as revoked grants.
 
 ### `housekeeping/retention-days-range`
 
@@ -317,6 +317,14 @@ While items in the bin are older than the trash retention and a run of `trash-pu
 
 **Tests:** `compliance/housekeeping-retention.test.ts › empties it without waiting the job's interval for each batch, and audits every run`.
 
+### `housekeeping/trash-purge-passed-over`
+
+When a run of `trash-purge` cannot purge some of the items it selected, the server MUST give the number it left for the next run as `passed_over` in the run's `result`, and leave `passed_over` out of a result that passed over none.
+
+**Reason:** an owner reading a job's result can then tell a purge that is catching up from one that is stuck.
+
+**Tests:** `compliance/trash-purge-passed-over.test.ts › gives the number of items it left for the next run as passed_over, and leaves passed_over out of a run that passed over none`.
+
 ### `housekeeping/retention-maximum-runs`
 
 Where a retention `PUT /config` sets is at the largest value it accepts, the server MUST finish each cleanup job that reads that retention with `last_outcome` `ok`.
@@ -333,7 +341,7 @@ Where a retention setting is at the largest value it accepts, the server MUST fi
 
 ### `housekeeping/retention-setting-days-range`
 
-If `AUDIT_RETENTION_DAYS`, `TRASH_RETENTION_DAYS`, `MARFA_INBOUND_HANDLED_RETENTION_DAYS`, `MARFA_INBOUND_PENDING_RETENTION_DAYS`, `MARFA_REVOKED_GRANT_RETENTION_DAYS`, `MARFA_GRANT_INACTIVITY_DAYS` or `MARFA_DCR_CLIENT_RETENTION_DAYS` holds a value that is neither empty nor an integer from 0 through 36500 when the server starts, then the server MUST refuse to start and name the setting.
+If `MARFA_AUDIT_RETENTION_DAYS`, `MARFA_TRASH_RETENTION_DAYS`, `MARFA_INBOUND_HANDLED_RETENTION_DAYS`, `MARFA_INBOUND_PENDING_RETENTION_DAYS`, `MARFA_REVOKED_GRANT_RETENTION_DAYS`, `MARFA_GRANT_INACTIVITY_DAYS` or `MARFA_DCR_CLIENT_RETENTION_DAYS` holds a value that is neither empty nor an integer from 0 through 36500 when the server starts, then the server MUST refuse to start and name the setting.
 
 **Tests:** `compliance/housekeeping-settings.test.ts › refuses a value of the day settings that is not a whole number from 0 through 36500, and names the setting`, `› starts with each setting empty, and with each at its smallest`.
 
@@ -342,12 +350,6 @@ If `AUDIT_RETENTION_DAYS`, `TRASH_RETENTION_DAYS`, `MARFA_INBOUND_HANDLED_RETENT
 If `MARFA_EVENT_LOG_RETENTION_HOURS` holds a value that is neither empty nor an integer from 0 through 876000 when the server starts, then the server MUST refuse to start and name the setting.
 
 **Tests:** `compliance/housekeeping-settings.test.ts › refuses MARFA_EVENT_LOG_RETENTION_HOURS outside 0 through 876000, and names the setting`, `› starts with each setting empty, and with each at its smallest`.
-
-### `housekeeping/retention-setting-ms-range`
-
-If `MARFA_BULK_ACTION_JOB_RETENTION_MS` holds a value that is neither empty nor an integer from 0 through 3153600000000 when the server starts, then the server MUST refuse to start and name the setting.
-
-**Tests:** `compliance/housekeeping-settings.test.ts › refuses MARFA_BULK_ACTION_JOB_RETENTION_MS outside 0 through 3153600000000, and names the setting`, `› starts with each setting empty, and with each at its smallest`.
 
 ## Version thinning
 
@@ -399,7 +401,7 @@ When a type is replaced while the `version-thinning` job thins its items, the se
 
 ## Feed expiry
 
-The `feed-expiry` job moves feed items to the bin by their type's `retention_policy` (`types/retention-policy-merge`). Its interval is `FEED_EXPIRY_INTERVAL_MS`. A moved item is in the bin as a deleted one is, and the `trash-purge` job removes it for good after the trash's own retention.
+The `feed-expiry` job moves feed items to the bin by their type's `retention_policy` (`types/retention-policy-merge`). Its interval is `feed_expiry_interval_ms`. A moved item is in the bin as a deleted one is, and the `trash-purge` job removes it for good after the trash's own retention.
 
 ### `housekeeping/feed-expiry-window`
 
@@ -553,7 +555,7 @@ When a run of the `feed-expiry` job finishes, the server MUST report in its `res
 
 The server MUST NOT shorten how long the event log keeps an event because of a type's `retention_policy`.
 
-**Reason:** the event log keeps its own retention (`MARFA_EVENT_LOG_RETENTION_HOURS`), which a device that catches up depends on.
+**Reason:** the event log keeps its own retention (`event_log_retention_hours`), which a device that catches up depends on.
 
 **Tests:** `compliance/housekeeping-feed-expiry.test.ts › is the event log's own, whatever window a type names`.
 

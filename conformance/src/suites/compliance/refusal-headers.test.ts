@@ -45,8 +45,8 @@ beforeAll(async () => {
     "refusal-headers",
   ));
   limited = await bootFreshServer("refusal-headers", {
-    RATE_LIMIT_ENABLED: "true",
-    RATE_LIMIT_KEYS_REQUESTS: String(KEYS_LIMIT),
+    MARFA_RATE_LIMIT_ENABLED: "true",
+    MARFA_RATE_LIMIT_KEYS_REQUESTS: String(KEYS_LIMIT),
     MARFA_SSE_MAX_VIEWERS: "1",
   });
 }, 2 * FRESH_SERVER_TIMEOUT_MS);

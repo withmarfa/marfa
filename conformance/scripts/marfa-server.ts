@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
  *
  *   tsx scripts/marfa-server.ts up [--state <dir>] [--port <n>] [--env K=V ...]
  *
- * The port is `--port`, else `PORT`, else zero for the server to bind an
+ * The port is `--port`, else `MARFA_PORT`, else zero for the server to bind an
  * assigned port on IPv4 loopback. Readiness comes from this boot's log before
  * any health request is sent. Each `--env K=V` is a setting for the boot
  * (`conformance/README.md` lists the ones a fixture may pass), and wins over
@@ -69,7 +69,9 @@ import { tmpdir } from "node:os";
  * With `MARFA_SERVER_BIN=<program>` it starts that program instead, a server
  * of another implementation, with the same settings, supervisor, state
  * directory and log, and with the state directory as its working directory.
- * Nothing in the workspace is built for it. The claim and the keys go through
+ * Nothing in the workspace is built for it. It must carry its test hooks (a
+ * Rust server built with `--features test-hooks`), which the settings below
+ * switch on. The claim and the keys go through
  * the private socket as for this server. A target whose sign-in door answers
  * `404 not_found` has no owner sign-in, and the env file then carries no
  * owner cookie or session file. `clock` and `fault` fail plainly against a
@@ -127,6 +129,66 @@ const RUN_SERVER = resolve(
  */
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
+/**
+ * The settings the TypeScript server reads under other names, by the name the
+ * contract gives them. This is the only place the old names appear.
+ */
+const TYPESCRIPT_SETTING_NAMES: ReadonlyMap<string, string> = new Map([
+  ["MARFA_PORT", "PORT"],
+  ["MARFA_DATABASE_PATH", "SQLITE_PATH"],
+  ["MARFA_BLOB_PATH", "BLOB_PATH"],
+  ["MARFA_KEY_SALT", "API_KEY_SALT"],
+  ["MARFA_TRUSTED_PROXY_CIDRS", "TRUSTED_PROXY_CIDRS"],
+  ["MARFA_TRUSTED_PROXY_HEADER", "TRUSTED_PROXY_HEADER"],
+  ["MARFA_ERROR_WEBHOOK_URL", "ERROR_WEBHOOK_URL"],
+  ["MARFA_WRITE_WAIT_MS", "SQLITE_BUSY_BUDGET_MS"],
+  ["MARFA_SIGN_IN_ADDRESS", "MARFA_AUTH_BASE_URL"],
+  ...[
+    "RATE_LIMIT_ENABLED",
+    "RATE_LIMIT_KEYS_REQUESTS",
+    "RATE_LIMIT_WINDOW_MS",
+    "RATE_LIMIT_REQUESTS",
+    "RATE_LIMIT_AGGREGATE_MULTIPLIER",
+    "RATE_LIMIT_INBOUND_REQUESTS",
+    "AUDIT_RETENTION_DAYS",
+    "TRASH_RETENTION_DAYS",
+    "VERSION_RECENT_DAYS",
+    "VERSION_DAILY_SNAPSHOT_DAYS",
+    "VERSION_WEEKLY_SNAPSHOT_DAYS",
+    "VERSION_MAX_VERSIONS",
+    "AUDIT_CLEANUP_INTERVAL_MS",
+    "AUTH_SESSION_CLEANUP_INTERVAL_MS",
+    "FEED_EXPIRY_INTERVAL_MS",
+    "TRASH_PURGE_INTERVAL_MS",
+    "VERSION_THINNING_INTERVAL_MS",
+    "CORS_ORIGINS",
+    "ENABLE_HSTS",
+  ].map((name): [string, string] => [`MARFA_${name}`, name]),
+]);
+
+/** The environment with each setting under the name the TypeScript server reads. */
+export function typeScriptSettingNames(
+  env: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  const renamed: [string, string | undefined][] = [];
+  for (const [name, value] of Object.entries(env)) {
+    const own = TYPESCRIPT_SETTING_NAMES.get(name);
+    if (own === undefined) out[name] = value;
+    else renamed.push([own, value]);
+  }
+  for (const [name, value] of renamed) out[name] = value;
+  return out;
+}
+
+/** The contract's name for a setting the TypeScript server names otherwise. */
+export function contractSettingName(typeScriptName: string): string {
+  for (const [name, own] of TYPESCRIPT_SETTING_NAMES) {
+    if (own === typeScriptName) return name;
+  }
+  return typeScriptName;
+}
+
 interface Args {
   command:
     | "up"
@@ -142,7 +204,6 @@ interface Args {
   /** For `image`: the directory the copy is made into. */
   to?: string;
   port?: number;
-  nodeEnv?: string;
   env: Record<string, string>;
   signal: StopSignal;
   /** What follows the options: the subcommand of `clock` and `fault`. */
@@ -154,15 +215,6 @@ export interface BootOptions {
   state: string;
   port?: number;
   controlOnly?: boolean;
-  /**
-   * The `NODE_ENV` the server starts under, for a boot meant to be refused
-   * over a rule that holds only in one. Left out, the server starts as it
-   * does on the run's own, with none set. Named, the script also leaves the
-   * two settings production requires, the auth secret and the public URL,
-   * to the environment, so the boot reads what the fixture says and not a
-   * stand-in.
-   */
-  nodeEnv?: string;
   /**
    * Settings for this boot, by name. They win over the script's defaults
    * and over the environment the script was started in.
@@ -207,8 +259,6 @@ function parseArgs(argv: string[]): Args {
       }
     } else if (arg === "--to" && args.command === "image") {
       args.to = resolve(rest[++i] ?? "");
-    } else if (arg === "--node-env") {
-      args.nodeEnv = rest[++i] ?? "";
     } else if (arg === "--env") {
       const pair = rest[++i] ?? "";
       const eq = pair.indexOf("=");
@@ -247,13 +297,13 @@ function paths(state: string) {
   };
 }
 
-/** A port named by `PORT`, when it names one. */
+/** A port named by `MARFA_PORT`, when it names one. */
 function namedPort(raw: string | undefined): number | undefined {
   if (raw === undefined || raw.trim() === "") return undefined;
   const port = Number(raw);
   if (!Number.isInteger(port) || port < 0 || port > 65_535) {
     throw new Error(
-      `PORT is set to ${raw}, which is not a port; unset it or give a number`,
+      `MARFA_PORT is set to ${raw}, which is not a port; unset it or give a number`,
     );
   }
   return port;
@@ -500,7 +550,10 @@ async function startServer(args: BootOptions): Promise<Started> {
   }
 
   const port =
-    args.port ?? namedPort(args.env?.PORT) ?? namedPort(process.env.PORT) ?? 0;
+    args.port ??
+    namedPort(args.env?.MARFA_PORT) ??
+    namedPort(process.env.MARFA_PORT) ??
+    0;
   // A caller that names the socket owns its folder and what stands there.
   const named = args.env?.MARFA_CONTROL_SOCKET;
   let controlSocket: string;
@@ -525,17 +578,17 @@ async function startServer(args: BootOptions): Promise<Started> {
     randomBytes(32).toString("hex");
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    PORT: String(port),
+    MARFA_PORT: String(port),
     MARFA_LISTEN_HOST: "127.0.0.1",
     MARFA_CONTROL_SOCKET: controlSocket,
     ...(args.controlOnly !== undefined && {
       MARFA_CONTROL_ONLY: String(args.controlOnly),
     }),
     MARFA_AUTH_SECRET: authSecret,
-    SQLITE_PATH: p.db,
-    BLOB_PATH: p.blobs,
-    // The listener derives the development origin from its assigned port.
-    MARFA_AUTH_BASE_URL: undefined,
+    MARFA_DATABASE_PATH: p.db,
+    MARFA_BLOB_PATH: p.blobs,
+    // The sign-in address is the server's own, on its assigned port.
+    MARFA_SIGN_IN_ADDRESS: undefined,
     // Enrichment rewrites file items in the background, which would make
     // exact-property assertions on blobs depend on timing. Off unless the
     // caller says otherwise, as the limiter below is, so a fixture about
@@ -562,26 +615,16 @@ async function startServer(args: BootOptions): Promise<Started> {
     // with no limiter at all. The run's own server does not rely on the
     // default here: `marfa:up` says `false` outright, so an ambient
     // variable cannot flip the instance every other file shares.
-    RATE_LIMIT_ENABLED: process.env.RATE_LIMIT_ENABLED || "false",
+    MARFA_RATE_LIMIT_ENABLED: process.env.MARFA_RATE_LIMIT_ENABLED || "false",
     // Every webhook fixture delivers to a receiver on loopback, which a
     // server refuses by default. On unless the caller says otherwise, so the
     // fixture about that refusal can boot a server of its own with it off.
     MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES:
       process.env.MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES || "true",
   };
-  if (args.nodeEnv === undefined) {
-    delete env.NODE_ENV;
-  } else {
-    env.NODE_ENV = args.nodeEnv;
-    for (const name of ["MARFA_AUTH_SECRET", "MARFA_AUTH_BASE_URL"] as const) {
-      if (process.env[name] === undefined) delete env[name];
-      else env[name] = process.env[name];
-    }
-  }
-  // Production refuses test hooks, so only nonproduction boots enable them
-  // by default. Explicit settings below can exercise that refusal.
-  // The built server is started as a person starts it, without them.
-  const hooks = args.nodeEnv !== "production" && !built;
+  // The built TypeScript server is started as a person starts it, without the
+  // hooks. Any other target is built with them.
+  const hooks = !built;
   env.MARFA_TEST_HOOKS = String(hooks);
   delete env.MARFA_TEST_CLOCK_OFFSET_MS;
   // A throwaway server reports nothing, whatever the shell sets; a setting the
@@ -589,8 +632,8 @@ async function startServer(args: BootOptions): Promise<Started> {
   silenceTelemetry(env);
   // What the caller names wins over every default above.
   Object.assign(env, args.env);
-  // The command-line port wins over the environment, including --env PORT.
-  env.PORT = String(port);
+  // The command-line port wins over the environment, including --env MARFA_PORT.
+  env.MARFA_PORT = String(port);
   // A restart inherits the latest move, never the original boot setting.
   if (hooks && existsSync(p.clock)) {
     env.MARFA_TEST_CLOCK_OFFSET_MS = String(readClockOffset(p.clock));
@@ -611,7 +654,7 @@ async function startServer(args: BootOptions): Promise<Started> {
     [RUN_SERVER, p.exit, ...(program ? [program] : serverCommand(built))],
     {
       cwd: program ? args.state : resolve(REPO_ROOT, "packages/server"),
-      env,
+      env: program ? env : typeScriptSettingNames(env),
       detached: true,
       stdio: ["ignore", logFd, errFd],
     },
@@ -1150,7 +1193,6 @@ if (
   const boot: BootOptions = {
     state: args.state,
     port: args.port,
-    nodeEnv: args.nodeEnv,
     env: args.env,
   };
   try {

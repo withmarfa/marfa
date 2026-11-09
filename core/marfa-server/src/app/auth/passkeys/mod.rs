@@ -154,7 +154,7 @@ fn ask_for_a_resident_key(options: &mut Value, excluded: Vec<String>) {
 
 pub async fn begin_adding(app: Arc<App>, caller: &Caller) -> Result<Begun> {
     caller.require_owner()?;
-    let salt = app.settings.start.api_key_salt.clone();
+    let salt = app.settings.start.key_salt.clone();
     let now_app = app.clone();
     app.write(caller, CHALLENGE_ISSUED, move |unit| {
         unit.caller.require_recent(&unit.at)?;
@@ -197,7 +197,7 @@ pub struct Adding {
 pub async fn add(app: Arc<App>, caller: &Caller, adding: Adding) -> Result<Listed> {
     caller.require_owner()?;
     let name = adding.name.as_deref().map(passkey_name).transpose()?;
-    let salt = app.settings.start.api_key_salt.clone();
+    let salt = app.settings.start.key_salt.clone();
     let now_app = app.clone();
     app.write(caller, ADDED, move |unit| {
         unit.caller.require_recent(&unit.at)?;
@@ -256,7 +256,7 @@ pub async fn begin_proving(app: Arc<App>, visit: &Visit) -> Result<Begun> {
         "Too many sign-in attempts. Try again later.",
     )
     .await?;
-    let salt = app.settings.start.api_key_salt.clone();
+    let salt = app.settings.start.key_salt.clone();
     let now_app = app.clone();
     app.db
         .write(Write::caller(CHALLENGE_ISSUED), move |tx| {
@@ -407,7 +407,7 @@ fn prove(
 }
 
 pub async fn sign_in(app: Arc<App>, assertion: Assertion, visit: Visit) -> Result<Opened> {
-    let salt = app.settings.start.api_key_salt.clone();
+    let salt = app.settings.start.key_salt.clone();
     let now_app = app.clone();
     app.db
         .write(Write::caller(SIGNED_IN), move |tx| {
@@ -465,7 +465,7 @@ pub async fn confirm(
     visit: Visit,
 ) -> Result<Opened> {
     let session = caller.session().ok_or_else(unauthorized)?.clone();
-    let salt = app.settings.start.api_key_salt.clone();
+    let salt = app.settings.start.key_salt.clone();
     let now_app = app.clone();
     app.write(caller, SIGNED_IN, move |unit| {
         let tx = unit.tx();

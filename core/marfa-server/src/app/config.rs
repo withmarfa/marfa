@@ -16,7 +16,6 @@ use super::consequences::{self, Consequence};
 use super::refusal::{Code, Refusal, Result};
 use super::sources;
 use super::{App, instance, stored};
-use crate::settings::Snapshot;
 use crate::settings::registry::{ADDRESSES, CORS_ORIGINS, ENTRIES, Entry, SIGN_IN_ADDRESS};
 use crate::settings::together::{self, Breach};
 
@@ -365,12 +364,13 @@ impl Plan {
     }
 
     /// Refuses a change that breaks a rule across settings.
-    fn judge(&self, app: &App) -> Result<Snapshot> {
+    fn judge(&self, app: &App) -> Result<()> {
         self.refuse_unread_rows(app)?;
-        let after = app.settings.candidate(&pairs(&self.after));
-        let breaches = together::judge(&after, &self.touched, &app.settings.start);
+        let after = Arc::new(app.settings.candidate(&pairs(&self.after)));
+        let sign_in = app.addresses_in(after.clone()).sign_in();
+        let breaches = together::judge(&after, &self.touched, &app.settings.start, Some(sign_in));
         if breaches.is_empty() {
-            return Ok(after);
+            return Ok(());
         }
         Err(
             Refusal::validation("The settings cannot be used together").with_detail(

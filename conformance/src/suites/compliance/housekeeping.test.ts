@@ -61,7 +61,7 @@ describe("the housekeeping the server runs on itself", () => {
 
   it("runs a housekeeping job on demand and the listing records the run", async () => {
     const server = await bootFreshServer("housekeeping-cleanup", {
-      TRASH_PURGE_INTERVAL_MS: "3153600000000",
+      MARFA_TRASH_PURGE_INTERVAL_MS: "31536000000",
     });
     try {
       const operator = new MarfaClient({

@@ -32,15 +32,15 @@ COPY ${TARGETARCH}/NOTICES.txt /usr/share/doc/marfa/NOTICES.txt
 # The server listens on every interface of the container; the volume mounted at /data
 # holds the database, the files and the private control socket.
 ENV MARFA_LISTEN_HOST=0.0.0.0 \
-    PORT=8600 \
-    SQLITE_PATH=/data/marfa.db \
-    BLOB_PATH=/data/blobs \
+    MARFA_PORT=8600 \
+    MARFA_DATABASE_PATH=/data/marfa.db \
+    MARFA_BLOB_PATH=/data/blobs \
     MARFA_CONTROL_SOCKET=/data/control/marfa.sock
 
 USER 65532:65532
 WORKDIR /data
 EXPOSE 8600
-# Asks `/health` of the server in this container, with no key. It follows `PORT`'s default.
+# Asks `/health` of the server in this container, with no key. It follows `MARFA_PORT`'s default.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD ["/usr/local/bin/marfa", "--no-keychain", "--url", "http://127.0.0.1:8600", "status"]
 # `marfa server run` supervises the server: a database the server refuses leaves the

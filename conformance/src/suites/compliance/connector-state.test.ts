@@ -1923,3 +1923,101 @@ describe("what a connector keeps on the instance", () => {
     expect(await found(later, [row.id])).toEqual([]);
   });
 });
+
+describe("the hold window changed while the instance runs", () => {
+  let server: FreshServer | undefined;
+
+  beforeAll(async () => {
+    server = await bootFreshServer("connector-hold-changed");
+  }, 2 * FRESH_SERVER_TIMEOUT_MS);
+
+  afterAll(async () => {
+    await server?.stop();
+  }, 2 * FRESH_SERVER_TIMEOUT_MS);
+
+  async function setWindow(ms: number): Promise<Response> {
+    if (server === undefined) throw new Error("no server");
+    return fetch(`${server.apiUrl}/config`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${server.managementKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ connector_hold_ms: ms }),
+    });
+  }
+
+  async function registered(label: string) {
+    if (server === undefined) throw new Error("no server");
+    const minter = new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: server.workingKey,
+    });
+    const minted = await minter.createKey({
+      label,
+      source: `hold-window-${label}`,
+      default_tier: "library",
+    });
+    expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+    const own = new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: minted.data.key,
+    });
+    const registration = await own.registerConnector({ name: label });
+    expect(registration.status).toBe(201);
+    return { own, id: registration.data.id };
+  }
+
+  it("stamps a hold taken after a write to connector_hold_ms with the new window, and refuses a window outside its rule", async () => {
+    const { own, id } = await registered("hold-changed");
+    const process = randomUUID();
+
+    // The witness: before the write, a hold lasts the default window.
+    const before = Date.now();
+    const first = await own.takeConnectorHold(id, process);
+    expect(first.status).toBe(200);
+    expect(first.data.ttl_ms).toBe(180_000);
+    expect(Date.parse(first.data.expires_at) - before).toBeGreaterThanOrEqual(
+      179_000,
+    );
+
+    const refused = await setWindow(999);
+    expect(refused.status).toBe(400);
+    expect(((await refused.json()) as any).error.code).toBe("validation_error");
+    expect((await own.takeConnectorHold(id, process)).data.ttl_ms).toBe(
+      180_000,
+    );
+
+    const changed = await setWindow(2_000);
+    expect(changed.status, await changed.clone().text()).toBe(200);
+    const renewedAt = Date.now();
+    const renewed = await own.takeConnectorHold(id, process);
+    expect(renewed.status).toBe(200);
+    expect(renewed.data.ttl_ms).toBe(2_000);
+    const window = Date.parse(renewed.data.expires_at) - renewedAt;
+    expect(window).toBeGreaterThanOrEqual(1_000);
+    expect(window).toBeLessThanOrEqual(3_000);
+
+    // The hold lapses at the new window, so another process takes it.
+    await sleep(Date.parse(renewed.data.expires_at) - Date.now() + 250);
+    const other = await own.takeConnectorHold(id, randomUUID());
+    expect(other.status).toBe(200);
+  });
+
+  it("stamps a hold that waited for the writer with the window committed while it waited", async () => {
+    if (server === undefined) throw new Error("no server");
+    const { own, id } = await registered("hold-waited");
+    const process = randomUUID();
+
+    await server.setFault("hold:write=connector.hold");
+    const pending = own.takeConnectorHold(id, process);
+    await server.waitForHold("hold:write");
+    const changed = await setWindow(3_000);
+    expect(changed.status, await changed.clone().text()).toBe(200);
+    await server.clearFault("hold:write");
+
+    const taken = await pending;
+    expect(taken.status).toBe(200);
+    expect(taken.data.ttl_ms).toBe(3_000);
+  });
+});

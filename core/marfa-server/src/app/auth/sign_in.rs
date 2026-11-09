@@ -139,7 +139,7 @@ pub async fn with_password(
         Err(refusal) => return Err(refusal),
     };
     let clock = app.clock.clone();
-    let salt = app.settings.start.api_key_salt.clone();
+    let salt = app.settings.start.key_salt.clone();
     let audited = visit.clone();
     let named = email.clone();
     let opened = app
@@ -192,7 +192,7 @@ pub async fn confirm(app: &App, caller: &Caller, password: String, visit: Visit)
     let proven = prove(app, &owner.email, password)
         .await?
         .ok_or_else(|| Refusal::new(Code::Unauthorized, "That password is not right."))?;
-    let salt = app.settings.start.api_key_salt.clone();
+    let salt = app.settings.start.key_salt.clone();
     app.write(caller, SIGNED_IN, move |unit| {
         let tx = unit.tx();
         if !proven.stands(tx, &unit.at)? {

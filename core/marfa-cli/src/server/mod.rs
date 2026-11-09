@@ -713,7 +713,7 @@ mod tests {
     #[test]
     fn a_native_proxy_range_covers_the_loopback_the_proxy_calls_from() {
         let mut settings = EnvFile::parse("");
-        settings.set(names::API_KEY_SALT, "a").unwrap();
+        settings.set(names::KEY_SALT, "a").unwrap();
         settings.set(names::AUTH_SECRET, "b").unwrap();
         settings
             .set(names::PROXY_CIDRS, native::LOOPBACK_PROXIES)

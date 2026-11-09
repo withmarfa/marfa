@@ -60,7 +60,7 @@ When `GET /` is answered with the description, the server MUST give it an `insta
 
 ### `instance/request-limit-at-root`
 
-When `GET /` is answered with the description, the server MUST give it a `max_request_bytes` equal to the request cap, which is 1048576 unless `MARFA_MAX_REQUEST_BYTES` sets another.
+When `GET /` is answered with the description, the server MUST give it a `max_request_bytes` equal to the request cap, which is 1048576 unless `max_request_bytes` sets another.
 
 **Reason:** the root needs no credential, so a device can learn the limit before it sends a body the server would close the connection on. A size is no secret.
 
@@ -444,7 +444,7 @@ The server MUST cut each description and title in the `GET /overview` answer at 
 
 ## Backing up
 
-An owner backs up an instance by backing up the machine it runs on. The data directory is the one thing the instance keeps: the database file, the log beside it that holds the writes not yet moved into the file, and the folder of blob files. The setting `API_KEY_SALT` is not in it.
+An owner backs up an instance by backing up the machine it runs on. The data directory is the one thing the instance keeps: the database file, the log beside it that holds the writes not yet moved into the file, and the folder of blob files. The setting `MARFA_KEY_SALT` is not in it.
 
 ### `instance/image-starts`
 
@@ -494,31 +494,31 @@ When the server starts on a copy of the data directory that read the database fi
 
 ### `instance/salt-refuses-credentials`
 
-When the server starts on a data directory with an `API_KEY_SALT` other than the one its keys were minted under, the server MUST answer `401 unauthorized` to a request that carries an ordinary key or an app's access token, minted under the original salt.
+When the server starts on a data directory with a `MARFA_KEY_SALT` other than the one its keys were minted under, the server MUST answer `401 unauthorized` to a request that carries an ordinary key or an app's access token, minted under the original salt.
 
 **Reason:** the database holds a hash of each key, made with the salt, and the salt is a setting outside the data directory. A restore without it has every row and no credential that opens one.
 
-**Tests:** `compliance/instance-lifecycle.test.ts › refuses the working key, the management key and an app's access token with 401 unauthorized, and accepts all three again under the original salt`, `compliance/backup-restore.test.ts › refuses a key it holds when started with a different API_KEY_SALT`.
+**Tests:** `compliance/instance-lifecycle.test.ts › refuses the working key, the management key and an app's access token with 401 unauthorized, and accepts all three again under the original salt`, `compliance/backup-restore.test.ts › refuses a key it holds when started with a different MARFA_KEY_SALT`.
 
 ### `instance/salt-original-accepted`
 
-When the server starts again under the `API_KEY_SALT` that an ordinary key or an app's access token was minted under, the server MUST accept that credential as it did before a start under another salt refused it.
+When the server starts again under the `MARFA_KEY_SALT` that an ordinary key or an app's access token was minted under, the server MUST accept that credential as it did before a start under another salt refused it.
 
 **Tests:** `compliance/instance-lifecycle.test.ts › refuses the working key, the management key and an app's access token with 401 unauthorized, and accepts all three again under the original salt`.
 
 ### `instance/salt-no-setup-proof`
 
-When the server starts on a claimed database, under an `API_KEY_SALT` other than the one its keys were minted under, the server MUST NOT print a setup code.
+When the server starts on a claimed database, under a `MARFA_KEY_SALT` other than the one its keys were minted under, the server MUST NOT print a setup code.
 
 **Reason:** the completed claim is independent of key hashes, so an incorrect salt cannot reopen setup.
 
-**Tests:** `compliance/instance-lifecycle.test.ts › keeps the completed claim and offers no setup code or unauthenticated key mint under another API_KEY_SALT`.
+**Tests:** `compliance/instance-lifecycle.test.ts › keeps the completed claim and offers no setup code or unauthenticated key mint under another MARFA_KEY_SALT`.
 
 ### `instance/salt-no-unauthenticated-mint`
 
-When the server starts on a claimed database, under an `API_KEY_SALT` other than the one its keys were minted under, and a request that carries no credential sends `POST /keys`, the server MUST answer `401 unauthorized`.
+When the server starts on a claimed database, under a `MARFA_KEY_SALT` other than the one its keys were minted under, and a request that carries no credential sends `POST /keys`, the server MUST answer `401 unauthorized`.
 
-**Tests:** `compliance/instance-lifecycle.test.ts › keeps the completed claim and offers no setup code or unauthenticated key mint under another API_KEY_SALT`.
+**Tests:** `compliance/instance-lifecycle.test.ts › keeps the completed claim and offers no setup code or unauthenticated key mint under another MARFA_KEY_SALT`.
 
 ### `instance/claim-survives-missing-credentials`
 
@@ -598,7 +598,7 @@ If the disk store refuses to look for a blob, or its folder or its `.marfa-store
 
 If the write that the `database_write` probe makes is refused with `write_contention`, then the server MUST answer the `database_write` component as `degraded`, not `down`.
 
-**Reason:** a lock held past the busy budget is a busy instance rather than a broken one. An archive restore holds it until it commits (`search-and-filters/restore-writers-wait`).
+**Reason:** a lock held past the write wait is a busy instance rather than a broken one. An archive restore holds it until it commits (`search-and-filters/restore-writers-wait`).
 
 **Tests:** `compliance/health.test.ts › answers 200 and degraded while the write is refused, and ok once the lock is released`.
 
@@ -618,7 +618,7 @@ If the bytes available on the database's volume and on the disk store's volume c
 
 ### `instance/health-disk-degraded`
 
-If the bytes available on the database's volume and on the disk store's volume can both be read, and the lesser of the two is at least 1 MiB and below the greater of 64 MiB and the instance's disk reserve (`MARFA_DISK_RESERVE_BYTES`, 128 MiB unless set), then the server MUST answer the `disk` component of `GET /health` as `degraded`.
+If the bytes available on the database's volume and on the disk store's volume can both be read, and the lesser of the two is at least 1 MiB and below the greater of 64 MiB and the instance's disk reserve (`disk_reserve_bytes`, 128 MiB unless set), then the server MUST answer the `disk` component of `GET /health` as `degraded`.
 
 **Tests:** `compliance/disk-space-faults.test.ts › answers the disk component degraded, and the status 200, when the lesser of the two volumes has 1 MiB or more and under 64 MiB`, `compliance/disk-reserve-health.test.ts › answers the disk component degraded below a reserve above 64 MiB, and ok at it`.
 
@@ -677,6 +677,20 @@ While the database cannot read the table of keys, the server MUST NOT answer an 
 When a request that carries a credential the instance does not hold sends `GET /health`, the server MUST answer it as it answers a request that carries no credential.
 
 **Tests:** `compliance/instance.test.ts › answers /health to a request that names a key the instance does not hold as it does to one that names none`, `compliance/health.test.ts › is given to a key with instance.read and withheld without that permission`.
+
+### `instance/health-housekeeping`
+
+When a credential holding `instance.read` sends `GET /health`, the server MUST answer a `housekeeping` object with `failed`, the name, finish time and error of each job whose last run failed (`null` when the schedule cannot be read in time), and `unreadable_settings`, the keys of the stored settings that no longer read.
+
+**Reason:** an owner needs to see that background work has stopped, or that a setting has fallen back to its default, without reading every job. A request without `instance.read` is given no such object, as it is given no `error`.
+
+**Tests:** `compliance/health.test.ts › names a job whose last run failed to a key with instance.read, and clears it once the job runs well`, `compliance/health.test.ts › names a stored setting that no longer reads, and the setting stands at its default`.
+
+### `instance/health-housekeeping-withheld`
+
+When a request without `instance.read` sends `GET /health`, the server MUST answer without a `housekeeping` object.
+
+**Tests:** `compliance/health.test.ts › gives no housekeeping object to a request without instance.read, though a job has failed`.
 
 ## A database this build did not write
 
@@ -846,7 +860,7 @@ If a bulk action or a housekeeping run outlives the stop's wait for it while the
 
 While the server runs an archive export, an archive restore, an NDJSON export, a bulk action, the blob orphan sweep, version thinning or the retirement of inactive grants, the server MUST answer `GET /health` between two steps of the job, without waiting for the job to end.
 
-**Reason:** the database driver runs each statement synchronously behind a promise, so a job that never hands the process to other requests stops every request, `/health` included, for as long as it runs, and a container whose health check waits five seconds restarts a server that is working. The fixture checks the order of the answer and a later step of the job, which the server records, where a time would measure the machine. A restore also holds the write lock, which makes the write probe `degraded` and is not a held process.
+**Reason:** a long job that held up other requests would stop every request, `/health` included, for as long as it runs, and a container whose health check waits five seconds restarts a server that is working. The fixture checks the order of the answer and a later step of the job, which the server records, where a time would measure the machine. A restore also holds the write lock, which makes the write probe `degraded` and is not a held process.
 
 **Tests:** `compliance/long-job-health.test.ts › is answered between two pages of an archive export`, `› is answered between the first and the last row of an archive restore`, `› is answered between two pages of an NDJSON export`, `› is answered between two chunks of a bulk action`, `› is answered between two pages of the blob orphan sweep`, `› is answered between two pages of version thinning`, `› is answered between two grants of the retirement of inactive grants`.
 
@@ -1138,7 +1152,7 @@ If a request to `GET /config` or `PUT /config` carries a query key, then the ser
 
 If a key holding `config.manage` sends `PUT /config` with a body larger than the request cap, then the server MUST answer `413 request_too_large`.
 
-**Reason:** no setting bounds its own size, so the lists in a lever are held only by the cap on the body, which is 1048576 bytes unless `MARFA_MAX_REQUEST_BYTES` sets another.
+**Reason:** no setting bounds its own size, so the lists in a lever are held only by the cap on the body, which is 1048576 bytes unless `max_request_bytes` sets another.
 
 **Tests:** `compliance/instance-config.test.ts › refuses a body past the request cap with 413 request_too_large, and keeps the configuration`.
 
@@ -1188,7 +1202,7 @@ When the configured private control socket path holds a file that is not a socke
 
 ## Test hooks
 
-A test hook is a route on the private control socket that moves the server's clock or sets a fault, or a setting that starts the server at another time or contract version. The conformance harness drives them through the target interface (`conformance/README.md`, "Target interface"). They exist only to test the server, so each rule here keeps them out of an instance that holds data.
+A test hook is a route on the private control socket that moves the server's clock or sets a fault, or a setting that starts the server at another time or contract version. The conformance harness drives them through the target interface (`conformance/README.md`, "Target interface"). They exist only to test the server, so a release build does not contain them, and each rule here keeps them out of an instance that holds data.
 
 ### `instance/test-hooks-off`
 
@@ -1204,11 +1218,13 @@ The server MUST NOT serve a test hook on its HTTP listener, whatever `MARFA_TEST
 
 **Tests:** `compliance/test-hooks.test.ts › serves no test hook on the HTTP listener, even with MARFA_TEST_HOOKS true`.
 
-### `instance/test-hooks-production-refused`
+### `instance/test-hooks-not-built`
 
-If `MARFA_TEST_HOOKS` is true and `NODE_ENV` is `production` when the server starts, then the server MUST refuse to start and name `MARFA_TEST_HOOKS`.
+If `MARFA_TEST_HOOKS` is true when the server starts and the server was built without test hooks, then the server MUST refuse to start and name `MARFA_TEST_HOOKS`.
 
-**Tests:** `compliance/test-hooks.test.ts › refuses to start in production with MARFA_TEST_HOOKS true, naming the setting`.
+**Reason:** the fault registry, the clock offset and the test routes are compiled into a server only when it is built with the cargo feature `test-hooks`. A release build leaves them out, so an instance that holds data has no code a hook could reach. A setting that cannot take effect is refused, never ignored.
+
+**Tests:** `compliance/hook-free-server.test.ts › refuses to start with MARFA_TEST_HOOKS true and names the setting`.
 
 ### `instance/test-clock-offset-needs-hooks`
 
@@ -1260,13 +1276,13 @@ When the server starts, the server MUST hold no fault.
 
 ## Telemetry
 
-Telemetry has two parts, each with settings of its own. Traces and log records are on when `OTEL_EXPORTER_OTLP_ENDPOINT` is set. Exception reports to error tracking are on when `MARFA_POSTHOG_HOST` and `MARFA_POSTHOG_PROJECT_TOKEN` are set. One being unset, or unusable, leaves the other as it was.
+Telemetry has two parts, each with settings of its own. Traces and log records are on when `OTEL_EXPORTER_OTLP_ENDPOINT` is set. Exception reports to error tracking are on when `MARFA_POSTHOG_HOST` and `MARFA_POSTHOG_PROJECT_TOKEN` are set. One being unset, or unusable, leaves the other as it was. `OTEL_SDK_DISABLED` set to `true` in any case turns both parts off; any other value, including `1`, leaves them as they were. The error webhook is not telemetry, so `OTEL_SDK_DISABLED` does not turn it off.
 
 ### `instance/telemetry-exception-report`
 
 When `MARFA_POSTHOG_HOST` is an `https` address, or an `http` address on this machine, with no user name or password, `MARFA_POSTHOG_PROJECT_TOKEN` is set, `OTEL_SDK_DISABLED` is not `true`, the effective reporting preference `error_reporting_enabled` is on, and a request ends in an unhandled fault, the server MUST send one exception report, whatever the `OTEL_EXPORTER_OTLP_*` settings are.
 
-**Reason:** an operator who wants error tracking should not have to run an OTLP collector for it, and a collector that cannot be reached is the traces' trouble alone. This is the rule the command line follows (`device/cli-exception-report`), so one set of shell settings means the same to both. The effective preference is the stored `error_reporting_enabled` choice where there is one, otherwise `MARFA_ERROR_REPORTING_ENABLED`, which is on by default.
+**Reason:** an operator who wants error tracking should not have to run an OTLP collector for it, and a collector that cannot be reached is the traces' trouble alone. This is the rule the command line follows (`device/cli-exception-report`), so one set of shell settings means the same to both. The stored `error_reporting_enabled` choice defaults to on.
 
 **Tests:** `compliance/telemetry-exception-alone.test.ts › are sent with the PostHog host and project token alone, and no trace or log record`.
 
@@ -1278,9 +1294,25 @@ While the effective reporting preference `error_reporting_enabled` is off, the s
 
 ### `instance/telemetry-disabled`
 
-When `OTEL_SDK_DISABLED` is `true`, the server MUST export no trace, no log record and no exception report.
+When `OTEL_SDK_DISABLED` is `true` in any case, the server MUST export no trace, no log record and no exception report.
 
 **Tests:** `compliance/telemetry-exception-alone.test.ts › are not sent, nor is anything else, when OTEL_SDK_DISABLED is true`.
+
+### `instance/telemetry-disabled-only-true`
+
+If `OTEL_SDK_DISABLED` holds a value other than `true` in any case, then the server MUST export traces, log records and exception reports as the other telemetry settings say.
+
+**Reason:** OpenTelemetry's own rule, which operators' tools follow: only `true` disables the SDK, so `1` does not.
+
+**Tests:** `compliance/telemetry-exception-alone.test.ts › are still sent, with traces and logs, when OTEL_SDK_DISABLED is any value but true, 1 included`.
+
+### `instance/telemetry-disabled-webhook`
+
+While `OTEL_SDK_DISABLED` is `true` in any case and `MARFA_ERROR_WEBHOOK_URL` is set, the server MUST still post an error notification for a request that fails with a 500 error.
+
+**Reason:** the notice is how an owner hears of a fault, and it is not telemetry.
+
+**Tests:** `compliance/telemetry-exception-alone.test.ts › still post an error notification when OTEL_SDK_DISABLED is true in any case`.
 
 ### `instance/telemetry-exception-host-unusable`
 
@@ -1336,7 +1368,7 @@ Where anything is exported and `OTEL_SERVICE_NAME` is set, the server MUST carry
 
 ### `instance/telemetry-error-environment`
 
-Where `ERROR_WEBHOOK_URL` is set and `OTEL_RESOURCE_ATTRIBUTES` names `deployment.environment.name` or `deployment.environment`, the server MUST name the value of the first of them it names, in that order, as the `environment` of each notification it posts.
+Where `MARFA_ERROR_WEBHOOK_URL` is set and `OTEL_RESOURCE_ATTRIBUTES` names `deployment.environment.name` or `deployment.environment`, the server MUST name the value of the first of them it names, in that order, as the `environment` of each notification it posts.
 
 **Reason:** a notification from a test instance that said `production` would send the person reading it to the wrong place.
 
@@ -1344,7 +1376,7 @@ Where `ERROR_WEBHOOK_URL` is set and `OTEL_RESOURCE_ATTRIBUTES` names `deploymen
 
 ## Settings refused at boot
 
-The server reads its settings once, when it starts, and the table at the end of this chapter gives each one's rule. A client meets a refused setting as a process that exits, so these rules are about the exit status, the log message and the files left behind.
+The server reads its start-only settings once, when it starts, and the tables under "Settings" give each one's rule. While test hooks are on, it also reads the seed of each stored setting, and refuses one outside the setting's rule in the same way. A client meets a refused setting as a process that exits, so these rules are about the exit status, the log message and the files left behind.
 
 ### `instance/settings-edge-accepted`
 
@@ -1354,7 +1386,7 @@ When every setting is inside its rule, one at the edge of its rule and a pair at
 
 ### `instance/settings-refused-exit`
 
-If a setting is outside the rule the table gives it, then the server MUST exit with status 1 instead of starting.
+If a setting is outside the rule its table gives it, then the server MUST exit with status 1 instead of starting.
 
 **Reason:** status 78 is for an incompatible database, so a supervisor can tell a stop that editing the settings will mend from one that exporting and restoring will.
 
@@ -1398,13 +1430,13 @@ If a setting that does not hold a secret is outside its rule, then the server MU
 
 If a setting that holds a secret is outside its rule, then the server MUST NOT print its value anywhere in its refusal.
 
-**Reason:** the log is read by more people than the secret is meant for. The settings that hold a secret include `API_KEY_SALT`, `MARFA_AUTH_SECRET`, `S3_ENDPOINT` and `S3_SECRET_ACCESS_KEY`, since an address can carry a credential.
+**Reason:** the log is read by more people than the secret is meant for. The settings that hold a secret include `MARFA_KEY_SALT`, `MARFA_AUTH_SECRET`, `S3_ENDPOINT` and `S3_SECRET_ACCESS_KEY`, since an address can carry a credential.
 
 **Tests:** `compliance/instance-lifecycle.test.ts › refuses to start with status 1, naming %s and no other setting, when it is %s`, `› refuses a secret with whitespace around it without printing it, where it prints the value of a setting that is not one`, `› refuses a MARFA_AUTH_SECRET of 31 characters, without printing it`.
 
 ### `instance/settings-secret-padded`
 
-If a setting whose allowed values the settings table gives as text with no whitespace around it has whitespace around its value, then the server MUST refuse to start and name the setting.
+If a setting whose allowed values the start-only table gives as text with no whitespace around it has whitespace around its value, then the server MUST refuse to start and name the setting.
 
 **Reason:** a secret is used as written, never trimmed, so the whitespace would be part of it.
 
@@ -1418,27 +1450,27 @@ If `MARFA_AUTH_SECRET` is set to fewer than 32 characters, then the server MUST 
 
 ### `instance/settings-cross-field`
 
-If every setting is inside its own rule and a setting the table says must be at least another is lower than it, then the server MUST refuse to start and name the lower setting.
+If every setting is inside its own rule and a setting that a rule across settings says must be at least another is lower than it, then the server MUST refuse to start and name the lower setting.
 
 **Tests:** `compliance/instance-lifecycle.test.ts › refuses to start with status 1, naming %s, when each setting is inside its own rule and the two disagree`.
 
 ### `instance/settings-cross-field-last`
 
-While any setting is outside its own rule, the server MUST NOT report in the same refusal a rule that compares two settings or that holds only in production.
+While any setting is outside its own rule, the server MUST NOT report in the same refusal a rule that compares two settings.
 
-**Reason:** a rule between two settings, or one that `NODE_ENV` decides, cannot be read until every setting parses.
+**Reason:** a rule between two settings cannot be read until every setting parses.
 
 **Tests:** `compliance/instance-lifecycle.test.ts › names only the setting outside its rule, and holds back the cross-field rule until every setting parses`.
 
 ## Settings
 
-The server reads each of these environment variables once, when it starts, and a blank value counts as unset. What a value outside its allowed values does is under "Settings refused at boot".
+A setting is either stored or start-only. A **stored** setting lives in the database and changes while the server runs, through `PUT /config` and `PATCH /config`, with no restart; its key is the field those operations read and write, and the environment never overrides it. A **start-only** setting is an environment variable the server needs before its database opens, and the server reads it once, when it starts. A blank environment value counts as unset. What a value outside its rule does is under "Settings refused at boot".
 
-<!-- settings-table:start -->
+## Stored settings
 
 | Setting                                     | Default                       | Allowed values                                                     | What it sets                                                                                                                                                                                                                                                                                                                                                                |
 | ------------------------------------------- | ----------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NODE_ENV`                                  | `development`                 | `production`, `development` or `test`                              | The environment the server runs in. Production makes `API_KEY_SALT`, `MARFA_AUTH_SECRET` and `MARFA_AUTH_BASE_URL` mandatory, and the two secrets strong.                                                                                                                                                                                                                   |
+| `NODE_ENV`                                  | `development`                 | `production`, `development` or `test`                              | The environment the server runs in. Production makes `MARFA_KEY_SALT`, `MARFA_AUTH_SECRET` and `MARFA_AUTH_BASE_URL` mandatory, and the two secrets strong.                                                                                                                                                                                                                 |
 | `PORT`                                      | `8600`                        | Whole number, 0 to 65535                                           | The port the server listens on. Zero lets the operating system assign a port.                                                                                                                                                                                                                                                                                               |
 | `MARFA_LISTEN_HOST`                         | None                          | Any text                                                           | The IP address or hostname the public HTTP listener binds to. Unset uses the runtime's unspecified address: IPv6 when available, otherwise IPv4.                                                                                                                                                                                                                            |
 | `SQLITE_PATH`                               | `./data/marfa.db`             | Any text                                                           | The path of the database file. A value starting with `file:` is passed to the database as written, and `:memory:` opens a database held in memory.                                                                                                                                                                                                                          |
@@ -1483,7 +1515,7 @@ The server reads each of these environment variables once, when it starts, and a
 | `MARFA_ENRICHMENT_MAX_ATTEMPTS`             | `3`                           | Whole number, 1 or more                                            | How many times the server tries to extract text from a failing item before it stops.                                                                                                                                                                                                                                                                                        |
 | `TRUSTED_PROXY_CIDRS`                       | None                          | Comma-separated CIDR ranges, IPv4 or IPv6                          | The address ranges of the proxies whose `X-Forwarded-For` header the server believes. When empty, the header is ignored.                                                                                                                                                                                                                                                    |
 | `TRUSTED_PROXY_HEADER`                      | None                          | An HTTP header name                                                | The name of a header that the platform's edge overwrites with the client address. It takes precedence over `TRUSTED_PROXY_CIDRS`.                                                                                                                                                                                                                                           |
-| `API_KEY_SALT`                              | None. Required in production. | Text with no whitespace around it                                  | The salt for hashing API keys and app tokens. Changing it invalidates every existing key and token. Outside production, an unset salt falls back to a built-in one.                                                                                                                                                                                                         |
+| `MARFA_KEY_SALT`                            | None. Required in production. | Text with no whitespace around it                                  | The salt for hashing API keys and app tokens. Changing it invalidates every existing key and token. Outside production, an unset salt falls back to a built-in one.                                                                                                                                                                                                         |
 | `MARFA_AUTH_SECRET`                         | None. Required in production. | Text of at least 32 characters, with no whitespace around it       | The secret that signs sign-in cookies, authorize queries, reach proofs and credential-free blob links. It must be at least 32 characters. Outside production, an unset secret falls back to a random one for each process.                                                                                                                                                  |
 | `MARFA_AUTH_BASE_URL`                       | None. Required in production. | Absolute `http` or `https` URL                                     | The public URL for OAuth, cookies, and links. It has no user name, password or query string. Outside production, an unset URL uses the assigned port with `http://127.0.0.1` when `MARFA_LISTEN_HOST` is `127.0.0.1`, otherwise `http://localhost`.                                                                                                                         |
 | `CORS_ORIGINS`                              | None                          | Comma-separated origins, each `scheme://host[:port]` with no path  | The browser origins allowed to call the API across origins, beside the web pages the owner approves, and trusted by the sign-in forms. Each is an exact scheme and host with no trailing slash.                                                                                                                                                                             |
@@ -1554,13 +1586,232 @@ The server reads each of these environment variables once, when it starts, and a
 | `MARFA_POSTHOG_HOST`                        | None                          | Absolute `http` or `https` URL                                     | The PostHog host that receives exception reports, which OTLP cannot carry into error tracking. With `MARFA_POSTHOG_PROJECT_TOKEN` it turns exception reports on; no OTLP setting is needed. It must be an `https` address, or an `http` address on this machine, with no user name or password; any other value turns off exception reports alone and the boot log says so. |
 | `MARFA_POSTHOG_PROJECT_TOKEN`               | None                          | Text with no whitespace around it                                  | The PostHog project token for exception reports. It needs `MARFA_POSTHOG_HOST` set too; no OTLP setting is needed.                                                                                                                                                                                                                                                          |
 
-<!-- settings-table:end -->
+Each bound is wide enough that no owner meets it and narrow enough that a slip of a digit is refused: an interval to a year (31536000000 milliseconds), a timeout to a day, a poll interval to an hour, a count to a million, a byte count to a terabyte and a retention to a hundred years (36500 days). Where a setting differs, the row says so in its bound: a rate-limit window runs to a day, an unreferenced blob's grace to a year as an interval does, a retry count to 100, a rate-limit multiplier to 1000 and extracted text to a hundred million characters.
+
+| Key                                | Default            | Allowed values                                            | What it sets                                                                                                                                                                                                                                                                                                                                                                                               |
+| ---------------------------------- | ------------------ | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `disk_reserve_bytes`               | `134217728` bytes  | Whole number of bytes, 0 to 1099511627776                 | The free space on the disk store's volume that uploads, restores, and archive exports must leave. An export's temporary files are included. A request that would take the volume below it is refused `507 insufficient_storage`. At 0 nothing is held back.                                                                                                                                                |
+| `upload_idle_timeout_ms`           | `60000` ms         | Whole number of milliseconds, 1 to 86400000               | How long a restore or a blob upload may receive no bytes before the server ends it `408 request_timeout`. An upload has no other time limit while bytes keep arriving.                                                                                                                                                                                                                                     |
+| `max_request_bytes`                | `1048576` bytes    | Whole number of bytes, 1 to 1099511627776                 | The largest ordinary JSON request body. A larger body is answered `413 request_too_large`. Bulk writes, connector state, client registration, blob uploads and inbound webhook deliveries have separate limits.                                                                                                                                                                                            |
+| `max_bulk_request_bytes`           | `16777216` bytes   | Whole number of bytes, 1 to 1099511627776                 | The largest body the bulk operations accept.                                                                                                                                                                                                                                                                                                                                                               |
+| `blob_min_copies`                  | `1`                | Whole number, 1 to 1000000                                | The fewest live copies a blob keeps. A drop that would leave fewer is refused.                                                                                                                                                                                                                                                                                                                             |
+| `blob_read_idle_timeout_ms`        | `30000` ms         | Whole number of milliseconds, 1 to 86400000               | How long a blob read may make no progress before its stream and file or socket are closed. Slow consumers must read within this interval.                                                                                                                                                                                                                                                                  |
+| `blob_replicate_interval_ms`       | `60000` ms         | Whole number of milliseconds, 1 to 31536000000            | How often the `blob-replicate` job gives every attached store its copies. The job has no off switch.                                                                                                                                                                                                                                                                                                       |
+| `blob_replicate_batch`             | `100`              | Whole number, 1 to 1000000                                | The most blobs one replication run copies.                                                                                                                                                                                                                                                                                                                                                                 |
+| `blob_replicate_batch_bytes`       | `1073741824` bytes | Whole number of bytes, 1 to 1099511627776                 | The most bytes one replication run copies.                                                                                                                                                                                                                                                                                                                                                                 |
+| `blob_integrity_interval_ms`       | `3600000` ms       | Whole number of milliseconds, 1 to 31536000000            | How often the `blob-integrity` job checks the copies it holds. The job has no off switch.                                                                                                                                                                                                                                                                                                                  |
+| `blob_integrity_batch`             | `500`              | Whole number, 1 to 1000000                                | The most copies one integrity run checks.                                                                                                                                                                                                                                                                                                                                                                  |
+| `blob_integrity_batch_bytes`       | `1073741824` bytes | Whole number of bytes, 1 to 1099511627776                 | The most bytes one integrity run checks.                                                                                                                                                                                                                                                                                                                                                                   |
+| `blob_cleanup_interval_ms`         | `86400000` ms      | Whole number of milliseconds, 0 to 31536000000            | How often the `blob-orphans` job sweeps for unreferenced blobs. At 0 the sweep is off.                                                                                                                                                                                                                                                                                                                     |
+| `blob_cleanup_grace_ms`            | `86400000` ms      | Whole number of milliseconds, 0 to 31536000000            | How long an unreferenced blob stands in the orphan report before a later run purges it. At 0 the next run purges it.                                                                                                                                                                                                                                                                                       |
+| `enrichment_enabled`               | `true`             | `true` or `false`                                         | Whether the server extracts text from uploaded files.                                                                                                                                                                                                                                                                                                                                                      |
+| `enrichment_ocr_enabled`           | `true`             | `true` or `false`                                         | Whether the server reads text from images with OCR. When off, images are recorded as unsupported.                                                                                                                                                                                                                                                                                                          |
+| `enrichment_interval_ms`           | `30000` ms         | Whole number of milliseconds, 1 to 31536000000            | How often the enrichment sweep runs.                                                                                                                                                                                                                                                                                                                                                                       |
+| `enrichment_batch_size`            | `8`                | Whole number, 1 to 1000000                                | The most items one enrichment sweep extracts.                                                                                                                                                                                                                                                                                                                                                              |
+| `enrichment_item_timeout_ms`       | `60000` ms         | Whole number of milliseconds, 1 to 86400000               | How long the extraction of one item may take.                                                                                                                                                                                                                                                                                                                                                              |
+| `enrichment_max_blob_bytes`        | `20971520` bytes   | Whole number of bytes, 1 to 1099511627776                 | The largest blob the server extracts text from. A larger blob gets no extracted text.                                                                                                                                                                                                                                                                                                                      |
+| `enrichment_max_text_chars`        | `100000`           | Whole number, 1 to 100000000                              | The most Unicode characters of extracted text the server keeps, counted as characters, not UTF-16 code units. Longer text is cut short.                                                                                                                                                                                                                                                                    |
+| `enrichment_max_inflated_bytes`    | `67108864` bytes   | Whole number of bytes, 1 to 1099511627776                 | The most a document may inflate to when the server extracts its text, all of its parts together. A document that inflates past it is skipped.                                                                                                                                                                                                                                                              |
+| `enrichment_max_memory_bytes`      | `1073741824` bytes | Whole number of bytes, 1 to 1099511627776                 | The most memory reading one file may use. A file that needs more is skipped.                                                                                                                                                                                                                                                                                                                               |
+| `enrichment_max_attempts`          | `3`                | Whole number, 1 to 100                                    | How many times the server tries to extract text from a failing item before it stops.                                                                                                                                                                                                                                                                                                                       |
+| `sign_in_address`                  | None               | An origin with no path, or empty                          | The address people sign in at, which OAuth, cookies and links use. An origin has a scheme, a host and an optional port, with no user name, password, path, query or fragment. Empty uses this computer's own address: `http://127.0.0.1` when `MARFA_LISTEN_HOST` is `127.0.0.1`, otherwise `http://localhost`, each with the port the server listens on. It joins `addresses` without being listed there. |
+| `cors_origins`                     | None               | List of origins, each `scheme://host[:port]` with no path | The browser origins allowed to call the API across origins, beside the web pages the owner approves, and trusted by the sign-in forms.                                                                                                                                                                                                                                                                     |
+| `permission_bundles`               | None               | JSON array of permission bundles                          | The permission bundles the consent screen offers, replacing the built-in ones. Each entry has a string `id`, an array of `scopes` and a boolean `default_on`.                                                                                                                                                                                                                                              |
+| `enable_hsts`                      | `false`            | `true` or `false`                                         | Whether the server sends the `Strict-Transport-Security` header.                                                                                                                                                                                                                                                                                                                                           |
+| `rate_limit_enabled`               | `true`             | `true` or `false`                                         | Whether the rate limiter is on.                                                                                                                                                                                                                                                                                                                                                                            |
+| `rate_limit_requests`              | `1000`             | Whole number, 1 to 1000000                                | The requests one credential may make to one group of operations in each window. A `GET` may make twice as many, except in a group that another setting caps.                                                                                                                                                                                                                                               |
+| `rate_limit_window_ms`             | `60000` ms         | Whole number of milliseconds, 1 to 86400000               | The length of a rate-limit window.                                                                                                                                                                                                                                                                                                                                                                         |
+| `rate_limit_keys_requests`         | `200`              | Whole number, 1 to 1000000                                | The requests one credential may make in each window to the operations under `/keys`.                                                                                                                                                                                                                                                                                                                       |
+| `rate_limit_aggregate_multiplier`  | `4`                | Whole number, 0 to 1000                                   | The multiplier of `rate_limit_requests` that caps a credential across every operation in a window. At 0 there is no such cap.                                                                                                                                                                                                                                                                              |
+| `rate_limit_cleanup_interval_ms`   | `3600000` ms       | Whole number of milliseconds, 1 to 31536000000            | How often the `rate-limit-cleanup` job drops expired rate-limit windows.                                                                                                                                                                                                                                                                                                                                   |
+| `connector_hold_ms`                | `180000` ms        | Whole number of milliseconds, 1000 to 3600000             | How long a connector's hold on its registration lasts after its last take or renewal.                                                                                                                                                                                                                                                                                                                      |
+| `inbound_max_bytes`                | `26214400` bytes   | Whole number of bytes, 1 to 1099511627776                 | The largest inbound webhook delivery the server stores.                                                                                                                                                                                                                                                                                                                                                    |
+| `rate_limit_inbound_requests`      | `600`              | Whole number, 1 to 1000000                                | The deliveries one inbound endpoint accepts in each rate-limit window.                                                                                                                                                                                                                                                                                                                                     |
+| `inbound_backlog_deliveries`       | `10000`            | Whole number, 1 to 1000000                                | The unhandled deliveries one registration may hold before the server refuses more deliveries for it.                                                                                                                                                                                                                                                                                                       |
+| `inbound_backlog_bytes`            | `1073741824` bytes | Whole number of bytes, 1 to 1099511627776                 | The bytes of unhandled deliveries one registration may hold before the server refuses more deliveries for it.                                                                                                                                                                                                                                                                                              |
+| `inbound_retained_deliveries`      | `10000`            | Whole number, 1 to 1000000                                | The most deliveries the server retains across live and retired endpoints.                                                                                                                                                                                                                                                                                                                                  |
+| `inbound_retained_bytes`           | `1073741824` bytes | Whole number of bytes, 1 to 1099511627776                 | The most bytes of deliveries the server retains across live and retired endpoints.                                                                                                                                                                                                                                                                                                                         |
+| `inbound_cleanup_interval_ms`      | `60000` ms         | Whole number of milliseconds, 1 to 31536000000            | How often the `inbound-delivery-cleanup` job runs.                                                                                                                                                                                                                                                                                                                                                         |
+| `inbound_in_flight_bytes`          | `104857600` bytes  | Whole number of bytes, 1 to 1099511627776                 | The most bytes of inbound webhook deliveries the server holds in memory at once.                                                                                                                                                                                                                                                                                                                           |
+| `inbound_read_timeout_ms`          | `30000` ms         | Whole number of milliseconds, 1 to 86400000               | How long a delivery's body has to arrive whole.                                                                                                                                                                                                                                                                                                                                                            |
+| `inbound_handled_retention_days`   | `7` days           | Whole number of days, 0 to 36500                          | How long the server keeps a handled delivery. At 0 age does not expire a delivery.                                                                                                                                                                                                                                                                                                                         |
+| `inbound_pending_retention_days`   | `30` days          | Whole number of days, 0 to 36500                          | How long the server keeps an unhandled delivery. At 0 age does not expire a delivery.                                                                                                                                                                                                                                                                                                                      |
+| `housekeeping_poll_interval_ms`    | `1000` ms          | Whole number of milliseconds, 1 to 3600000                | How often the housekeeping scheduler asks its table which jobs are due.                                                                                                                                                                                                                                                                                                                                    |
+| `audit_retention_days`             | `90` days          | Whole number of days, 0 to 36500                          | How long the server keeps audit entries and webhook delivery history. At 0 no entry expires by age.                                                                                                                                                                                                                                                                                                        |
+| `audit_cleanup_interval_ms`        | `86400000` ms      | Whole number of milliseconds, 1 to 31536000000            | How often the `audit-cleanup` job runs.                                                                                                                                                                                                                                                                                                                                                                    |
+| `revoked_grant_retention_days`     | `90` days          | Whole number of days, 0 to 36500                          | How long a revoked application grant is kept. At 0 the job that purges them is off.                                                                                                                                                                                                                                                                                                                        |
+| `grant_inactivity_days`            | `365` days         | Whole number of days, 0 to 36500                          | How long an application grant may go unused before the server retires it. At 0 grants are never retired. `/config` overrides it.                                                                                                                                                                                                                                                                           |
+| `event_log_retention_hours`        | `720` hours        | Whole number of hours, 0 to 876000                        | The least time an event stays in the event log, which bounds how far back a stream can replay. At 0 no event expires by age.                                                                                                                                                                                                                                                                               |
+| `event_log_cleanup_interval_ms`    | `3600000` ms       | Whole number of milliseconds, 1 to 31536000000            | How often the `event-log-cleanup` job runs.                                                                                                                                                                                                                                                                                                                                                                |
+| `version_thinning_interval_ms`     | `3600000` ms       | Whole number of milliseconds, 1 to 31536000000            | How often the `version-thinning` job runs.                                                                                                                                                                                                                                                                                                                                                                 |
+| `feed_expiry_interval_ms`          | `3600000` ms       | Whole number of milliseconds, 1 to 31536000000            | How often the `feed-expiry` job runs.                                                                                                                                                                                                                                                                                                                                                                      |
+| `version_recent_days`              | `30` days          | Whole number of days, 0 to 36500                          | The window in which the version policy keeps every version of an item.                                                                                                                                                                                                                                                                                                                                     |
+| `version_daily_snapshot_days`      | `90` days          | Whole number of days, 0 to 36500                          | The window in which the version policy keeps one version a day. It must be at least `version_recent_days`.                                                                                                                                                                                                                                                                                                 |
+| `version_weekly_snapshot_days`     | `365` days         | Whole number of days, 0 to 36500                          | The window in which the version policy keeps one version a week. It must be at least `version_daily_snapshot_days`.                                                                                                                                                                                                                                                                                        |
+| `version_max_versions`             | `500`              | Whole number, 1 to 1000000                                | The most versions the version policy keeps for one item.                                                                                                                                                                                                                                                                                                                                                   |
+| `trash_retention_days`             | `60` days          | Whole number of days, 0 to 36500                          | How long an item stays in the trash before the server deletes it. At 0 nothing in the trash expires by age.                                                                                                                                                                                                                                                                                                |
+| `trash_purge_interval_ms`          | `86400000` ms      | Whole number of milliseconds, 1 to 31536000000            | How often the `trash-purge` job runs.                                                                                                                                                                                                                                                                                                                                                                      |
+| `revoked_key_reap_interval_ms`     | `3600000` ms       | Whole number of milliseconds, 1 to 31536000000            | How often the `revoked-key-reap` job runs.                                                                                                                                                                                                                                                                                                                                                                 |
+| `auth_session_cleanup_interval_ms` | `3600000` ms       | Whole number of milliseconds, 1 to 31536000000            | How often the `auth-session-cleanup` job drops expired sign-in sessions.                                                                                                                                                                                                                                                                                                                                   |
+| `dcr_client_retention_days`        | `1` day            | Whole number of days, 0 to 36500                          | How long a dynamically registered client with no grants is kept, counted from its registration or the last time an approval page offered it. At 0 the job that removes them is off.                                                                                                                                                                                                                        |
+| `dcr_client_cleanup_interval_ms`   | `3600000` ms       | Whole number of milliseconds, 1 to 31536000000            | How often the job that removes dynamically registered clients with no grants runs.                                                                                                                                                                                                                                                                                                                         |
+| `sse_max_viewers`                  | `0`                | Whole number, 0 to 1000000                                | The most event-stream viewers one server instance serves at once. At 0 there is no limit.                                                                                                                                                                                                                                                                                                                  |
+| `mcp_fetch_enabled`                | `true`             | `true` or `false`                                         | Whether MCP tools fetch a file from a web address, or a file a chat attached, to save it. When off, a tool asked to fetch one is refused.                                                                                                                                                                                                                                                                  |
+| `mcp_fetch_max_bytes`              | `52428800` bytes   | Whole number of bytes, 1 to 1099511627776                 | The largest file an MCP tool fetches from a web address to save. A larger file is refused and nothing is stored.                                                                                                                                                                                                                                                                                           |
+| `mcp_fetch_timeout_ms`             | `60000` ms         | Whole number of milliseconds, 1 to 3600000                | How long an MCP tool's fetch of a file from a web address may take, from connecting to the last byte.                                                                                                                                                                                                                                                                                                      |
+| `error_reporting_enabled`          | `true`             | `true` or `false`                                         | Send error alerts and exception reports to the receivers the environment names.                                                                                                                                                                                                                                                                                                                            |
+| `heartbeat_enabled`                | `true`             | `true` or `false`                                         | Send scheduled requests to the heartbeat receiver the environment names.                                                                                                                                                                                                                                                                                                                                   |
+| `heartbeat_interval_ms`            | `60000` ms         | Whole number of milliseconds, 1 to 31536000000            | How often the server requests `MARFA_HEARTBEAT_URL`.                                                                                                                                                                                                                                                                                                                                                       |
+| `placement_region`                 | None               | Any text                                                  | Free text naming the region the server runs in, reported at `/health` as `placement.region`.                                                                                                                                                                                                                                                                                                               |
+| `placement_location`               | None               | Any text                                                  | Free text naming the location the server runs in, reported at `/health` as `placement.location`.                                                                                                                                                                                                                                                                                                           |
+| `placement_country`                | None               | Any text                                                  | Free text naming the country the server runs in, reported at `/health` as `placement.country`.                                                                                                                                                                                                                                                                                                             |
+| `addresses`                        | None               | List of origins, each `scheme://host[:port]` with no path | The addresses people reach this instance at, such as `https://marfa.example`. Each is an origin: a scheme, a host and an optional port, with no path. Links the server builds and browser origins it accepts for sign-in come from this list and the sign-in address.                                                                                                                                      |
+
+### `instance/settings-listed`
+
+When a caller holding `config.manage` or `instance.read`, or the private local process, sends `GET /config/settings`, the server MUST answer `200` with `data`, an entry for each stored setting holding its `key`, `description`, `value`, `default`, `stored`, `rule` and `together`; `rules`, an entry for each rule across settings holding its `name`, `description` and `keys`; and `start_only`, an entry for each start-only setting holding its `name`, `description`, `secret` and `set`.
+
+**Reason:** an app or the command line lists the settings from this one answer, so it keeps no copy of the tables. `value` is the one in force, `stored` the value held in the database or `null`, and `together` the keys of the other settings a rule across settings ties to this one.
+
+**Tests:** `compliance/instance-addresses.test.ts › names every stored setting with its value, default and rule, and every start-only setting by environment name`, `› is read through a private socket as it is through a key`.
+
+### `instance/settings-listed-no-value`
+
+When the server answers `GET /config/settings`, the server MUST NOT include the value of a start-only setting.
+
+**Reason:** some start-only settings hold a secret, and the rest are the machine's own. The entry says only whether the environment sets the setting.
+
+**Tests:** `compliance/instance-addresses.test.ts › shows no value of a start-only setting`.
+
+### `instance/settings-listed-needs-read`
+
+If a caller holding neither `config.manage` nor `instance.read` sends `GET /config/settings`, then the server MUST answer `403 forbidden`.
+
+**Tests:** `compliance/instance-addresses.test.ts › is refused to a key that holds neither config.manage nor instance.read`.
+
+### `instance/settings-seed`
+
+While `MARFA_TEST_HOOKS` is true, the server MUST take the default of a stored setting from the environment variable `MARFA_` plus the setting's key in capitals, and a value stored for the setting stays in force over that variable.
+
+**Reason:** a stored setting has one home, so a change made through `/config` always takes effect. The seed lets a harness start a server with a short retention or interval without a write.
+
+**Tests:** `compliance/settings-seed.test.ts › starts at the value the environment gives, and a value stored for it stays in force over the variable`.
+
+### `instance/addresses-origin`
+
+If a write names an address with a path, a query, a fragment, a user name or password, or a scheme other than `http` or `https`, in `addresses`, `cors_origins` or `sign_in_address`, then the server MUST answer `400 validation_error` and store none of the write.
+
+**Reason:** an address is an origin: a scheme, a host and an optional port. Links and browser origins are built from it, so a path would be carried into every one of them.
+
+**Tests:** `compliance/instance-addresses.test.ts › is an origin: one with a path, a query, a fragment, a user name or another scheme is refused`.
+
+### `instance/addresses-plain-spelling`
+
+When the server stores an address, the server MUST store its plainest spelling, with a lowercase host, no default port and no trailing slash.
+
+**Tests:** `compliance/instance-addresses.test.ts › is stored in its plainest spelling, with a lowercase host, no default port and no trailing slash`.
+
+### `instance/addresses-once`
+
+When a write names the same origin in more than one spelling, the server MUST store the origin once, in the place of its first spelling.
+
+**Tests:** `compliance/instance-addresses.test.ts › is stored in its plainest spelling, with a lowercase host, no default port and no trailing slash`.
+
+### `instance/addresses-hold-sign-in`
+
+If a write sets `addresses` to a list that leaves out the sign-in address in force, then the server MUST answer `400 validation_error` naming `addresses` and the sign-in address, and store none of the write.
+
+**Reason:** the sign-in address is always one of the instance's addresses, stored or not. The sign-in address in force is the stored one or, while none is stored, the instance's own address.
+
+**Tests:** `compliance/instance-addresses.test.ts › are refused together when the list leaves out the sign-in address`, `compliance/instance-addresses.test.ts › are refused together when the list leaves out the instance's own address, though no sign-in address is stored`.
+
+### `instance/sign-in-address-joins`
+
+When a write sets `sign_in_address` and does not name `addresses`, the server MUST answer `addresses` at `GET /config` with the sign-in address among them.
+
+**Tests:** `compliance/instance-addresses.test.ts › is always among the addresses, whether or not the list names it`.
+
+### `instance/sign-in-address-authority`
+
+If a key, even one holding `config.manage`, sends `PUT /config` or `PATCH /config` that would change `sign_in_address` or `cors_origins`, then the server MUST answer `403 forbidden` and store none of the write.
+
+**Reason:** these two settings decide where sign-in cookies are valid and which web pages may call the API, so only a person at the instance, through an owner browser session or the private local process, may change them.
+
+**Tests:** `compliance/instance-addresses.test.ts › is refused to a key, which holds config.manage but not direct authority`.
+
+### `instance/sign-in-address-authority-unchanged`
+
+If a key sends `PUT /config` or `PATCH /config` that names `sign_in_address` or `cors_origins` at the value it already has, then the server MUST apply the write as it would for any other setting.
+
+**Reason:** a client that sends the whole configuration back changes neither setting, and refusing it would make every such client need direct authority.
+
+**Tests:** `compliance/instance-addresses.test.ts › is refused to a key, which holds config.manage but not direct authority`.
+
+### `instance/sign-in-address-unconfirmed`
+
+If an owner browser session or the private local process moves the sign-in address of a claimed instance, the first sign-in address stored included, without `confirm_sign_in_address_change` set to `true`, then the server MUST answer `409 sign_in_address_change_unconfirmed` with the consequences of the change in `details.consequences`, and store none of the write.
+
+**Reason:** the change signs everyone out and can strand passkeys and apps, so the person is told what it will do before it does it.
+
+**Tests:** `compliance/instance-addresses.test.ts › is not moved, and the answer names the consequences, until a write confirms it`.
+
+### `instance/sign-in-address-confirmed`
+
+When an owner browser session or the private local process sends `confirm_sign_in_address_change` set to `true` with a new sign-in address, the server MUST store the address.
+
+**Tests:** `compliance/instance-addresses.test.ts › is not moved, and the answer names the consequences, until a write confirms it`.
+
+### `instance/address-check`
+
+When a key holding `config.manage` sends `POST /config/address-check` with `sign_in_address`, `addresses` or both, the server MUST answer `200` with the `sign_in_address` and the `addresses` as they would be after the change, `requires_confirmation`, and `consequences`, each of them `code`, `sentence` and `count`.
+
+**Reason:** an app shows the person what a change does before it asks for the write. `requires_confirmation` is `true` when a write of the same change needs `confirm_sign_in_address_change`.
+
+**Tests:** `compliance/instance-addresses.test.ts › writes nothing, and answers the addresses after the change, whether it needs confirming and what it does`.
+
+### `instance/address-check-writes-nothing`
+
+When the server answers `POST /config/address-check`, the server MUST store nothing.
+
+**Tests:** `compliance/instance-addresses.test.ts › writes nothing, and answers the addresses after the change, whether it needs confirming and what it does`.
+
+### `instance/address-check-sessions`
+
+When the sign-in address in a check differs from the one in force and a browser session is live, the server MUST list the consequence `browser_sessions_end` with the number of live sessions as its `count`.
+
+**Tests:** `compliance/instance-addresses.test.ts › writes nothing, and answers the addresses after the change, whether it needs confirming and what it does`.
+
+### `instance/address-check-apps-and-passkeys`
+
+When the sign-in address in a check differs from the one in force, the server MUST list the consequence `passkeys_unusable` while a passkey is registered for a host other than the new one and `apps_sign_in_again` while an app is connected, each with its number as its `count` and each left out while its number is 0.
+
+**Tests:** `compliance/address-check-consequences.test.ts › names the passkeys that would stop working, with their number, only while one is registered for another host`, `compliance/address-check-consequences.test.ts › names the apps that would have to sign in again, with their number, only while one is connected`.
+
+### `instance/address-check-removed`
+
+When a check drops an address that is in force, the server MUST list a consequence `address_removed` for each address dropped, with a `count` of `null`, and a check that drops an address and moves nothing else needs no confirmation.
+
+**Reason:** links that use a dropped address stop working, but nobody is signed out.
+
+**Tests:** `compliance/instance-addresses.test.ts › names a dropped address as address_removed with no count, and needs no confirming for it`.
+
+### `instance/address-check-spelling`
+
+If the sign-in address in a check is the one in force spelled another way, then the server MUST answer `requires_confirmation` as `false` and list no consequence for the sign-in address.
+
+**Tests:** `compliance/instance-addresses.test.ts › does not ask for confirming when the sign-in address is only spelled another way`.
+
+### `instance/address-check-refused`
+
+If a check names an address that is not an origin, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/instance-addresses.test.ts › is refused for an address that is not an origin`.
 
 ### `instance/live-settings`
 
-When an authorized caller replaces or updates the configuration, the server MUST accept `version_recent_days`, `version_daily_snapshot_days`, `version_weekly_snapshot_days`, `version_max_versions`, `grant_inactivity_days`, `enrichment_enabled`, `enrichment_ocr_enabled`, `error_reporting_enabled` and `heartbeat_enabled` as persisted overrides of their environment defaults.
+When an authorized caller replaces or updates the configuration, the server MUST accept `version_recent_days`, `version_daily_snapshot_days`, `version_weekly_snapshot_days`, `version_max_versions`, `grant_inactivity_days`, `enrichment_enabled`, `enrichment_ocr_enabled`, `error_reporting_enabled` and `heartbeat_enabled` as stored settings.
 
-**Reason:** the owner can change version retention, unused-app retirement, file reading and reporting without changing machine configuration.
+**Reason:** the owner can change version retention, unused-app retirement, file reading and reporting without restarting the server.
 
 **Tests:** `compliance/instance-config.test.ts › keeps live settings across restart, preserves omitted choices and clears to the environment`.
 
@@ -1568,14 +1819,141 @@ When an authorized caller replaces or updates the configuration, the server MUST
 
 If a configuration write would make the effective recent, daily and weekly version windows decrease in that order, set a negative window or inactivity period, set a version count below one, or enable reporting without a configured receiver, then the server MUST refuse it with `400 validation_error` without changing the stored configuration.
 
-**Reason:** validation includes environment defaults exposed by clearing an override. Addresses and credentials remain machine settings.
+**Reason:** validation includes the defaults exposed by clearing a stored setting. The receivers' addresses and credentials are start-only settings.
 
 **Tests:** `compliance/instance-config.test.ts › keeps live settings across restart, preserves omitted choices and clears to the environment`.
 
 ### `instance/live-work`
 
-When a persisted override changes, the server MUST use the effective choice for future work without a restart, including a job disabled when the process started.
+When a stored setting changes, the server MUST use the effective choice for future work without a restart, including a job disabled when the process started.
 
 **Reason:** disabling does not promise to cancel an extraction or request already in flight. Version deletion and unused-app retirement recheck the effective policy in the transaction that removes the versions or revokes the grant. A zero version window is empty; a zero inactivity period disables retirement. Type-specific version policies retain precedence.
 
 **Tests:** `compliance/live-settings.test.ts › starts disabled work after a live choice and stops it again without restarting`.
+
+## Start-only settings
+
+The environment variables below are read once, when the server starts. Each is named `MARFA_` and what it sets, except the `OTEL_*` settings, which keep OpenTelemetry's standard names because operators' tools already set them, and the `S3_*` settings, which name the object store as its own tools do.
+
+| Setting                                 | Default                                              | Allowed values                                                     | What it sets                                                                                                                                                                                                                                                                                                                                                                |
+| --------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MARFA_PORT`                            | `8600`                                               | Whole number, 0 to 65535                                           | The port the server listens on. Zero lets the operating system assign a port.                                                                                                                                                                                                                                                                                               |
+| `MARFA_LISTEN_HOST`                     | None                                                 | Any text                                                           | The IP address or hostname the public HTTP listener binds to. Unset uses the runtime's unspecified address: IPv6 when available, otherwise IPv4.                                                                                                                                                                                                                            |
+| `MARFA_DATABASE_PATH`                   | `./data/marfa.db`                                    | Any text                                                           | The path of the database file. A value starting with `file:` is passed to the database as written, and `:memory:` opens a database held in memory.                                                                                                                                                                                                                          |
+| `MARFA_CONTROL_SOCKET`                  | None                                                 | Any text                                                           | Absolute private Unix socket path. Defaults to control/marfa.sock beside the database. Its directory must belong to the server account with mode 0700. Linux requires getfacl.                                                                                                                                                                                              |
+| `MARFA_CONTROL_ONLY`                    | `false`                                              | `true`, `1`, `yes`, `on`, `false`, `0`, `no` or `off`, in any case | Start only the private control listener, without public HTTP or background jobs, for local recovery.                                                                                                                                                                                                                                                                        |
+| `MARFA_TEST_HOOKS`                      | `false`                                              | `true`, `1`, `yes`, `on`, `false`, `0`, `no` or `off`, in any case | Serve the clock and fault routes a conformance harness drives on the private control socket. Never on the public listener. A server built without test hooks refuses to start when it is true. Leave off on every instance that holds real data.                                                                                                                            |
+| `MARFA_TEST_CLOCK_OFFSET_MS`            | `0` ms                                               | Whole number of milliseconds, 0 to 3153600000000                   | How far ahead of the system clock the server's clock starts. Needs `MARFA_TEST_HOOKS`, so a harness that moved the clock can restart the server without the time going back.                                                                                                                                                                                                |
+| `MARFA_TEST_CONTRACT_VERSION`           | The build's contract version                         | Whole number, 0 to 1000000                                         | The contract version the server speaks instead of the build's, in the root's `contract`, the `X-Marfa-Contract` header and the document's `info.version`. Needs `MARFA_TEST_HOOKS`, so a harness can show what a change of contract does to what the server kept.                                                                                                           |
+| `MARFA_WRITE_WAIT_MS`                   | `5000` ms                                            | Whole number of milliseconds, 0 to 86400000                        | How long a write waits for the one writer before the server answers `503 write_contention`. At 0 a write that finds the writer busy is refused at once.                                                                                                                                                                                                                     |
+| `MARFA_BLOB_PATH`                       | `./data/blobs`                                       | Any text                                                           | The folder of the disk store, where every upload lands.                                                                                                                                                                                                                                                                                                                     |
+| `S3_BUCKET`                             | None                                                 | Any text                                                           | The bucket of an S3-compatible object store. The store is attached when this is set.                                                                                                                                                                                                                                                                                        |
+| `S3_REGION`                             | `us-east-1`                                          | Any text                                                           | The region of the object store.                                                                                                                                                                                                                                                                                                                                             |
+| `S3_ENDPOINT`                           | None                                                 | Absolute `http` or `https` URL                                     | The endpoint of the object store. When blank, the store's provider chooses it.                                                                                                                                                                                                                                                                                              |
+| `S3_ACCESS_KEY_ID`                      | None                                                 | Any text                                                           | The access key ID for the object store.                                                                                                                                                                                                                                                                                                                                     |
+| `S3_SECRET_ACCESS_KEY`                  | None                                                 | Text with no whitespace around it                                  | The secret access key for the object store.                                                                                                                                                                                                                                                                                                                                 |
+| `S3_FORCE_PATH_STYLE`                   | `true`                                               | `true`, `1`, `yes`, `on`, `false`, `0`, `no` or `off`, in any case | Whether the object store is addressed by path rather than by virtual host. Read only when `S3_ENDPOINT` is set.                                                                                                                                                                                                                                                             |
+| `S3_PREFIX`                             | `blobs`                                              | `/`-joined segments of letters, digits, `.`, `_` and `-`           | The key prefix the instance keeps its blobs under in the bucket. Each instance on a bucket needs its own. A `/` at either end is dropped; a `.` or `..` segment is refused.                                                                                                                                                                                                 |
+| `MARFA_ENRICHMENT_TESSDATA_DIR`         | None                                                 | Any text                                                           | A folder of OCR language models.                                                                                                                                                                                                                                                                                                                                            |
+| `MARFA_TRUSTED_PROXY_CIDRS`             | None                                                 | Comma-separated CIDR ranges, IPv4 or IPv6                          | The address ranges of the proxies whose `X-Forwarded-For` header the server believes. When empty, the header is ignored.                                                                                                                                                                                                                                                    |
+| `MARFA_TRUSTED_PROXY_HEADER`            | None                                                 | An HTTP header name                                                | The name of a header that the platform's edge overwrites with the client address. It takes precedence over `MARFA_TRUSTED_PROXY_CIDRS`.                                                                                                                                                                                                                                     |
+| `MARFA_KEY_SALT`                        | None. Generated on first start into `marfa.secrets`. | Text with no whitespace around it                                  | The salt for hashing API keys and app tokens. Changing it invalidates every existing key and token. Unset, the server uses the salt in `marfa.secrets`, which it generated on first start.                                                                                                                                                                                  |
+| `MARFA_AUTH_SECRET`                     | None. Generated on first start into `marfa.secrets`. | Text of at least 32 characters, with no whitespace around it       | The secret that signs sign-in cookies, authorize queries, reach proofs and credential-free blob links. It must be at least 32 characters. Unset, the server uses the secret in `marfa.secrets`, which it generated on first start.                                                                                                                                          |
+| `MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES` | `false`                                              | `true`, `1`, `yes`, `on`, `false`, `0`, `no` or `off`, in any case | Whether outbound webhooks may reach loopback, private and other non-public addresses.                                                                                                                                                                                                                                                                                       |
+| `MARFA_ERROR_WEBHOOK_URL`               | None                                                 | Absolute `http` or `https` URL                                     | The URL the server posts a notice to when a request fails with a 500 error. When blank, no notice is sent.                                                                                                                                                                                                                                                                  |
+| `MARFA_ERROR_WEBHOOK_TIMEOUT_MS`        | `5000` ms                                            | Whole number of milliseconds, 1 to 86400000                        | How long one post to `MARFA_ERROR_WEBHOOK_URL` may take.                                                                                                                                                                                                                                                                                                                    |
+| `MARFA_HEARTBEAT_URL`                   | None                                                 | Absolute `http` or `https` URL                                     | The URL the server requests on a schedule, so that something else can notice when the requests stop. When blank, there is no heartbeat.                                                                                                                                                                                                                                     |
+| `MARFA_OTEL_SAMPLE_RATIO`               | `0.05`                                               | Decimal number, 0 to 1                                             | The share of traces exported. A trace that contains an error is exported whatever this says: the span that failed, the spans held for the trace (at most 500) and every span after it.                                                                                                                                                                                      |
+| `OTEL_SDK_DISABLED`                     | `false`                                              | `true` in any case, or any other value                             | `true` in any case turns off traces, logs and exception reports together, whatever the other telemetry settings say. Any other value, including `1`, leaves them as they are. The error webhook stays on.                                                                                                                                                                   |
+| `OTEL_SERVICE_NAME`                     | `marfa-server`                                       | Any text                                                           | The service name on exported telemetry. It takes precedence over a `service.name` in `OTEL_RESOURCE_ATTRIBUTES`.                                                                                                                                                                                                                                                            |
+| `OTEL_RESOURCE_ATTRIBUTES`              | None                                                 | Comma-separated `key=value` pairs, values percent-encoded          | Attributes added to everything exported, as OpenTelemetry defines them. One named here replaces the server's own of the same name, such as `deployment.environment`, which an error notification names too.                                                                                                                                                                 |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`           | None                                                 | Absolute `http` or `https` URL                                     | The base URL of the OTLP receiver. Setting it turns traces and logs on: the server exports traces to `v1/traces` and logs to `v1/logs` under it. Unset, no trace or log is exported; exception reports have settings of their own (`MARFA_POSTHOG_HOST`).                                                                                                                   |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`    | None                                                 | Absolute `http` or `https` URL                                     | The URL traces post to, used as written. It takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`, which must also be set.                                                                                                                                                                                                                                                    |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`      | None                                                 | Absolute `http` or `https` URL                                     | The URL logs post to, used as written. It takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`, which must also be set.                                                                                                                                                                                                                                                      |
+| `OTEL_EXPORTER_OTLP_HEADERS`            | None                                                 | Comma-separated `key=value` pairs, values percent-encoded          | The headers sent with every OTLP export, as `key=value` pairs.                                                                                                                                                                                                                                                                                                              |
+| `OTEL_EXPORTER_OTLP_TRACES_HEADERS`     | None                                                 | Comma-separated `key=value` pairs, values percent-encoded          | The headers sent with trace exports, as `key=value` pairs. They override `OTEL_EXPORTER_OTLP_HEADERS`.                                                                                                                                                                                                                                                                      |
+| `OTEL_EXPORTER_OTLP_LOGS_HEADERS`       | None                                                 | Comma-separated `key=value` pairs, values percent-encoded          | The headers sent with log exports, as `key=value` pairs. They override `OTEL_EXPORTER_OTLP_HEADERS`.                                                                                                                                                                                                                                                                        |
+| `MARFA_POSTHOG_HOST`                    | None                                                 | Absolute `http` or `https` URL                                     | The PostHog host that receives exception reports, which OTLP cannot carry into error tracking. With `MARFA_POSTHOG_PROJECT_TOKEN` it turns exception reports on; no OTLP setting is needed. It must be an `https` address, or an `http` address on this machine, with no user name or password; any other value turns off exception reports alone and the boot log says so. |
+| `MARFA_POSTHOG_PROJECT_TOKEN`           | None                                                 | Text with no whitespace around it                                  | The PostHog project token for exception reports. It needs `MARFA_POSTHOG_HOST` set too; no OTLP setting is needed.                                                                                                                                                                                                                                                          |
+
+### `instance/secrets-generated`
+
+When the server starts for the first time and `MARFA_KEY_SALT` or `MARFA_AUTH_SECRET` is unset, the server MUST generate the unset secret into the file `marfa.secrets` beside the database, readable by its owner alone.
+
+**Reason:** an instance that is not configured by hand still has secrets of its own. A secret given in the environment is used as given and is not written to the file.
+
+**Tests:** `compliance/hook-free-server.test.ts › generates both into a file only its owner can read, and keeps them across a restart`, `compliance/hook-free-server.test.ts › writes only the secret the environment does not give, and none when it gives both`.
+
+### `instance/secrets-kept`
+
+When the server starts and `marfa.secrets` holds a secret that the environment does not give, the server MUST use the secret in the file and generates no other.
+
+**Reason:** regenerating the salt would end every key.
+
+**Tests:** `compliance/hook-free-server.test.ts › uses the secret in the file, and refuses to replace a file that was lost`.
+
+### `instance/secrets-missing-refused`
+
+If the database exists, `marfa.secrets` does not and `MARFA_KEY_SALT` is unset when the server starts, then the server MUST refuse to start and name `MARFA_KEY_SALT`.
+
+**Reason:** a new salt would end every key, so a lost file is for the owner to restore and never for the server to replace.
+
+**Tests:** `compliance/hook-free-server.test.ts › uses the secret in the file, and refuses to replace a file that was lost`.
+
+### `instance/secrets-not-exported`
+
+When the server writes an archive export, the server MUST NOT include `marfa.secrets` in it.
+
+**Reason:** an export is meant to be shared and restored elsewhere, and the secrets belong to the instance that made them.
+
+**Tests:** waiting on #2771.
+
+### `instance/proxy-header-trusted-peer`
+
+While both `MARFA_TRUSTED_PROXY_HEADER` and `MARFA_TRUSTED_PROXY_CIDRS` are set, the server MUST read a caller's address from the header only when the request's peer is inside the ranges, and the peer's address stands for any other request.
+
+**Tests:** `compliance/trusted-proxy.test.ts › is read only from a peer inside the ranges when ranges are set`.
+
+### `instance/proxy-header-alone`
+
+While `MARFA_TRUSTED_PROXY_HEADER` is set and `MARFA_TRUSTED_PROXY_CIDRS` is not, the server MUST read a caller's address from the header whatever the peer is.
+
+**Reason:** the header names an edge that overwrites it, which says nothing reaches the server except through that edge.
+
+**Tests:** `compliance/trusted-proxy.test.ts › is read whatever the peer is while no range is set, and only when it holds one address`.
+
+### `instance/proxy-header-single`
+
+If the header named by `MARFA_TRUSTED_PROXY_HEADER` holds a list, is sent more than once or does not hold one IP address, then the server MUST use the peer's address.
+
+**Reason:** an edge writes exactly one address, so anything else did not come from it.
+
+**Tests:** `compliance/trusted-proxy.test.ts › is read whatever the peer is while no range is set, and only when it holds one address`.
+
+### `instance/proxy-forwarded-walk`
+
+While `MARFA_TRUSTED_PROXY_CIDRS` is set and `MARFA_TRUSTED_PROXY_HEADER` is not, when a request's peer is inside the ranges, the server MUST read the entries of `X-Forwarded-For` from right to left, skip the entries inside the ranges, and take the first entry outside them as the caller's address, or the leftmost entry if every entry is inside, or the peer's address if there are none.
+
+**Reason:** each proxy appends the address it saw, so only the entries right of the first address outside the ranges were written by a proxy. Everything further left came from the caller.
+
+**Tests:** `compliance/trusted-proxy.test.ts › is read from the right, skipping the proxies, so that an address the caller wrote further left is never taken`, `compliance/trusted-proxy.test.ts › is ignored from a peer outside the ranges`.
+
+### `instance/proxy-forwarded-malformed`
+
+When the server walks `X-Forwarded-For` and meets an entry that is not an IP address, the server MUST stop there and take the last trusted address it read as the caller's address.
+
+**Tests:** `compliance/trusted-proxy.test.ts › stops at an entry that is not an address and takes the last proxy address it read`.
+
+### `instance/proxy-forwarded-limit`
+
+When the server walks `X-Forwarded-For`, the server MUST read at most 32 entries.
+
+**Reason:** more hops than any real chain of proxies has are not read, so a long header costs no more than a short one.
+
+**Tests:** `compliance/trusted-proxy.test.ts › reads at most 32 entries, however long the chain`.
+
+### `instance/proxy-mapped-address`
+
+When the server compares an address with `MARFA_TRUSTED_PROXY_CIDRS` or reads one from a header, the server MUST treat an IPv4-mapped IPv6 address as the IPv4 address it maps.
+
+**Tests:** `compliance/trusted-proxy.test.ts › treats an IPv4-mapped IPv6 address as the IPv4 address it maps, in the ranges and in the chain`.

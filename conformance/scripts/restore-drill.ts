@@ -492,7 +492,7 @@ async function main(): Promise<void> {
   process.env.S3_PREFIX = prefix;
   const sidecarEnv: NodeJS.ProcessEnv = {
     ...process.env,
-    SQLITE_PATH: sourceDb,
+    MARFA_DATABASE_PATH: sourceDb,
     S3_FORCE_PATH_STYLE: process.env.S3_FORCE_PATH_STYLE ?? "true",
   };
 

@@ -29,7 +29,7 @@ let tokens: { access_token: string; refresh_token: string; scope: string };
 
 beforeAll(async () => {
   server = await bootFreshServer("signed-in-apps", {
-    RATE_LIMIT_ENABLED: "true",
+    MARFA_RATE_LIMIT_ENABLED: "true",
   });
   const discovery = await fetch(
     `${server.apiUrl}/.well-known/oauth-authorization-server/auth`,

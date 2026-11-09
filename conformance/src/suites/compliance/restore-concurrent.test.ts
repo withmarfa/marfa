@@ -27,13 +27,13 @@ const RESTORED = 4_000;
 
 let ordered: FreshServer;
 let impatient: FreshServer;
-/** The busy budget the impatient server is booted with. */
+/** The write wait the impatient server is booted with. */
 const BUDGET_MS = 50;
 
 beforeAll(async () => {
   ordered = await bootFreshServer("restore-order");
   impatient = await bootFreshServer("restore-writers", {
-    SQLITE_BUSY_BUDGET_MS: String(BUDGET_MS),
+    MARFA_WRITE_WAIT_MS: String(BUDGET_MS),
   });
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
@@ -118,7 +118,7 @@ describe("a restore that commits", () => {
       );
 
       const restoring = ownerOf(ordered).restoreArchive(restore.bytes);
-      // A write the restore holds past the busy budget is refused
+      // A write the restore holds past the write wait is refused
       // `write_contention` and writes nothing (`search-and-filters/restore-writers-wait`);
       // only the writes that committed have events to order.
       const answers = await writesWhile(restoring, async () => {
@@ -171,7 +171,7 @@ describe("a restore that commits", () => {
 });
 
 describe("a write that meets a restore", () => {
-  it("is answered 201, or 503 write_contention carrying the busy budget, and nothing else", async () => {
+  it("is answered 201, or 503 write_contention carrying the write wait, and nothing else", async () => {
     const worker = new MarfaClient({
       baseUrl: impatient.apiUrl,
       apiKey: impatient.workingKey,
