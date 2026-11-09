@@ -5,6 +5,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { controlRequest } from "../../utils/control-request.js";
 
 let server: FreshServer;
 let key: string;
@@ -281,14 +282,13 @@ describe("connector interfaces", () => {
         (await call(`/keys/${keyId}`, "DELETE", undefined, server.workingKey))
           .status,
       ).toBe(200);
-      const minted = await call(
-        "/keys",
-        "POST",
-        { label: "successor", source },
-        server.workingKey,
-      );
+      const minted = await controlRequest(server.controlSocket, "/keys", {
+        method: "POST",
+        body: { label: "successor", source },
+      });
+      expect(minted.status).toBe(201);
       const oldKey = key;
-      ({ key } = (await minted.json()) as { key: string });
+      ({ key } = minted.body as { key: string });
       const successor = await call("/connectors", "POST", {
         name: "Successor",
       });
@@ -504,7 +504,12 @@ describe("connector interfaces", () => {
 
         // What the source holds is what the key wrote before it ended. A
         // successor under the source reads it through its own registration.
-        const successor = await mint("");
+        const minted = await controlRequest(server.controlSocket, "/keys", {
+          method: "POST",
+          body: { label, source: `fence-${String(number)}` },
+        });
+        expect(minted.status, label).toBe(201);
+        const successor = minted.body as { key: string; id: string };
         const successorRegistration = await call(
           "/connectors",
           "POST",

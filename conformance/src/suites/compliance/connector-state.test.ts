@@ -9,6 +9,7 @@ import {
   createTestContext,
   getClientFromEnv,
   getManagementClient,
+  getOwnerClient,
   trackItem,
   trackKey,
 } from "../../utils/setup.js";
@@ -108,8 +109,12 @@ async function note(body = "agreed"): Promise<MarfaItem> {
 }
 
 /** A key of its own under `source`, which a revoked key may have held. */
-async function mintUnder(source: string, label: string): Promise<MarfaClient> {
-  const minted = await getClientFromEnv().client.createKey({
+async function mintUnder(
+  source: string,
+  label: string,
+  minter: MarfaClient = getClientFromEnv().client,
+): Promise<MarfaClient> {
+  const minted = await minter.createKey({
     label: `${source}-${label}`,
     source,
     default_tier: "library",
@@ -1824,7 +1829,10 @@ describe("what a connector keeps on the instance", () => {
     expect((await operator.revokeKey(first.keyId)).status).toBe(200);
 
     // Revoked, not removed: the first registration stands beside the next.
-    const next = await register(await mintUnder(source, "second"), "successor");
+    const next = await register(
+      await mintUnder(source, "second", getOwnerClient()),
+      "successor",
+    );
     expect(next.id).not.toBe(first.id);
     expect(next.keyId).not.toBe(first.keyId);
     expect(next.source).toBe(source);
@@ -1908,7 +1916,10 @@ describe("what a connector keeps on the instance", () => {
     expect((await operator.revokeKey(gone.keyId)).status).toBe(200);
     expect((await operator.deleteConnector(gone.id)).status).toBe(200);
 
-    const later = await register(await mintUnder(source, "later"), "clearer");
+    const later = await register(
+      await mintUnder(source, "later", getOwnerClient()),
+      "clearer",
+    );
     // The witness: what the removed registration kept is still there.
     expect((await later.client.getConnectorState(later.id)).data.state).toEqual(
       { cursor: "left behind" },
