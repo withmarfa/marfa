@@ -56,11 +56,24 @@ fn verify(path: &Path) -> Result<(), CliError> {
         }
         current.push(component);
         let metadata = std::fs::symlink_metadata(&current)?;
-        match marfa_acl::grants_by_acl(&current) {
+        let private = current == path || Some(current.as_path()) == path.parent();
+        // Above the socket's folder, only an ACL that lets another account
+        // replace what a folder holds is a way in, as the server judges it.
+        let acl = if private {
+            marfa_acl::grants_by_acl(&current)
+        } else {
+            marfa_acl::others_may_write(&current, uid)
+        };
+        match acl {
             Ok(false) => {}
-            Ok(true) => {
+            Ok(true) if private => {
                 return Err(CliError::Invalid(
                     "the socket path has an access ACL".into(),
+                ));
+            }
+            Ok(true) => {
+                return Err(CliError::Invalid(
+                    "the socket path is writable by another account".into(),
                 ));
             }
             Err(error) => {
@@ -75,7 +88,7 @@ fn verify(path: &Path) -> Result<(), CliError> {
                 "--socket must not traverse symbolic links".into(),
             ));
         }
-        if current == path || Some(current.as_path()) == path.parent() {
+        if private {
             let expected = if current == path { 0o600 } else { 0o700 };
             if metadata.uid() != uid || metadata.mode() & 0o777 != expected {
                 return Err(CliError::Invalid("the socket must be owned by this account with mode 0600, in an owned directory with mode 0700".into()));
@@ -158,6 +171,7 @@ impl Transport for LocalTransport {
 mod tests {
     use super::*;
     use crate::remote::{Remote, request::Request};
+    use marfa_acl::testing::{Grant, let_another_account};
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::net::UnixListener;
 
@@ -469,57 +483,6 @@ mod tests {
         (root, path, listener)
     }
 
-    // Returns false when the file system cannot store the test ACL.
-    fn let_another_account_in(folder: &Path) -> bool {
-        #[cfg(target_os = "macos")]
-        {
-            let status = std::process::Command::new("/bin/chmod")
-                .args(["+a", "everyone allow read"])
-                .arg(folder)
-                .status()
-                .unwrap();
-            assert!(status.success());
-            true
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            use std::os::unix::ffi::OsStrExt;
-            // Version 2, then owner rwx, user 65534 rwx, group r-x, mask rwx and others none.
-            let mut value = 2u32.to_le_bytes().to_vec();
-            for (tag, permissions, id) in [
-                (0x01u16, 7u16, u32::MAX),
-                (0x02, 7, 65534),
-                (0x04, 5, u32::MAX),
-                (0x10, 7, u32::MAX),
-                (0x20, 0, u32::MAX),
-            ] {
-                value.extend_from_slice(&tag.to_le_bytes());
-                value.extend_from_slice(&permissions.to_le_bytes());
-                value.extend_from_slice(&id.to_le_bytes());
-            }
-            let name = std::ffi::CString::new(folder.as_os_str().as_bytes()).unwrap();
-            // SAFETY: the name and the buffer outlive the call, and the size is the buffer's.
-            let status = unsafe {
-                libc::setxattr(
-                    name.as_ptr(),
-                    c"system.posix_acl_access".as_ptr(),
-                    value.as_ptr().cast(),
-                    value.len(),
-                    0,
-                )
-            };
-            if status == 0 {
-                return true;
-            }
-            let error = std::io::Error::last_os_error();
-            assert!(
-                matches!(error.raw_os_error(), Some(libc::ENOTSUP | libc::EPERM)),
-                "{error}"
-            );
-            false
-        }
-    }
-
     #[test]
     fn a_private_socket_path_is_accepted() {
         let (root, path, _listener) = socket_folder("plain");
@@ -530,13 +493,51 @@ mod tests {
     #[test]
     fn a_socket_folder_with_an_acl_for_another_account_is_refused() {
         let (root, path, _listener) = socket_folder("acl");
-        if !let_another_account_in(&root) {
-            eprintln!("skipped: this file system keeps no POSIX ACLs");
+        if !let_another_account(&root, Grant::Read) {
+            eprintln!("skipped: this file system keeps no ACLs");
             std::fs::remove_dir_all(root).unwrap();
             return;
         }
         let said = verify(&path).unwrap_err().to_string();
         assert!(said.contains("access ACL"), "{said}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_folder_above_the_socket_folder_is_refused_only_for_an_acl_that_writes() {
+        // macOS binds a socket path of at most 103 bytes, and its temporary folder is long.
+        let (root, _, _listener) = socket_folder("up");
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
+        for (name, grant, refused) in [
+            ("r", Grant::Read, false),
+            ("ir", Grant::InheritRead, false),
+            ("w", Grant::Write, true),
+            ("iw", Grant::InheritWrite, true),
+        ] {
+            let above = root.join(name);
+            let folder = above.join("c");
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::set_permissions(&above, std::fs::Permissions::from_mode(0o755)).unwrap();
+            std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let path = folder.join("s");
+            let _held = UnixListener::bind(&path).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+            verify(&path).unwrap();
+            if !let_another_account(&above, grant) {
+                eprintln!("skipped: this file system keeps no ACLs");
+                break;
+            }
+            let checked = verify(&path);
+            if refused {
+                let said = checked.unwrap_err().to_string();
+                assert!(
+                    said.contains("writable by another account"),
+                    "{grant:?}: {said}"
+                );
+            } else {
+                checked.unwrap();
+            }
+        }
         std::fs::remove_dir_all(root).unwrap();
     }
 }

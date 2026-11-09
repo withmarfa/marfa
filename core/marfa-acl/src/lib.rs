@@ -8,60 +8,179 @@ fn c_path(path: &Path) -> std::io::Result<CString> {
         .map_err(|_| std::io::Error::from(ErrorKind::InvalidInput))
 }
 
-/// Deny entries only restrict access; any allow entry counts as a grant.
 #[cfg(target_os = "macos")]
-pub fn grants_by_acl(path: &Path) -> std::io::Result<bool> {
+mod darwin {
     use std::ffi::{c_char, c_int, c_void};
 
     #[allow(non_camel_case_types)]
     type acl_t = *mut c_void;
     #[allow(non_camel_case_types)]
-    type acl_entry_t = *mut c_void;
+    pub type acl_entry_t = *mut c_void;
     const ACL_TYPE_EXTENDED: c_int = 0x100;
     const ACL_FIRST_ENTRY: c_int = 0;
     const ACL_NEXT_ENTRY: c_int = -1;
     const ACL_EXTENDED_ALLOW: c_int = 1;
+    const ID_TYPE_UID: c_int = 0;
+
+    /// The rights that change a file or what a folder holds, from `sys/acl.h`:
+    /// write data or add a file, delete, append data or add a subdirectory,
+    /// delete a child, write attributes, write extended attributes, write
+    /// security and change owner.
+    pub const WRITE_RIGHTS: u64 =
+        (1 << 2) | (1 << 4) | (1 << 5) | (1 << 6) | (1 << 8) | (1 << 10) | (1 << 12) | (1 << 13);
+
     unsafe extern "C" {
         fn acl_get_link_np(path: *const c_char, kind: c_int) -> acl_t;
+        fn acl_get_fd_np(fd: c_int, kind: c_int) -> acl_t;
         fn acl_get_entry(acl: acl_t, entry_id: c_int, entry: *mut acl_entry_t) -> c_int;
         fn acl_get_tag_type(entry: acl_entry_t, tag: *mut c_int) -> c_int;
+        fn acl_get_permset_mask_np(entry: acl_entry_t, mask: *mut u64) -> c_int;
+        fn acl_get_qualifier(entry: acl_entry_t) -> *mut c_void;
         fn acl_free(object: *mut c_void) -> c_int;
+        fn mbr_uuid_to_id(uuid: *const u8, id: *mut libc::id_t, id_type: *mut c_int) -> c_int;
     }
 
-    let name = c_path(path)?;
-    // SAFETY: `name` is a live C string; entries borrow the ACL, freed below.
-    unsafe {
-        let acl = acl_get_link_np(name.as_ptr(), ACL_TYPE_EXTENDED);
-        if acl.is_null() {
-            let error = std::io::Error::last_os_error();
-            return match error.raw_os_error() {
-                Some(libc::ENOENT) => Ok(false),
-                _ => Err(error),
-            };
+    /// An ACL or a qualifier, freed when dropped.
+    struct Freed(*mut c_void);
+
+    impl Drop for Freed {
+        fn drop(&mut self) {
+            // SAFETY: the pointer came from an `acl_get_*` call that allocates.
+            unsafe { acl_free(self.0) };
         }
-        let mut grants = false;
-        let mut entry: acl_entry_t = std::ptr::null_mut();
-        let mut which = ACL_FIRST_ENTRY;
-        while acl_get_entry(acl, which, &mut entry) == 0 {
-            let mut tag: c_int = 0;
-            if acl_get_tag_type(entry, &mut tag) == 0 && tag == ACL_EXTENDED_ALLOW {
-                grants = true;
-                break;
+    }
+
+    pub struct Acl(Freed);
+
+    impl Acl {
+        /// `None` when the path has no extended ACL.
+        pub fn of_link(path: &std::ffi::CStr) -> std::io::Result<Option<Acl>> {
+            // SAFETY: `path` is a live C string.
+            let acl = unsafe { acl_get_link_np(path.as_ptr(), ACL_TYPE_EXTENDED) };
+            Self::taken(acl, &[libc::ENOENT])
+        }
+
+        /// `None` when the file has no extended ACL or its file system keeps none.
+        pub fn of_fd(fd: c_int) -> std::io::Result<Option<Acl>> {
+            // SAFETY: the caller keeps the descriptor open for the call.
+            let acl = unsafe { acl_get_fd_np(fd, ACL_TYPE_EXTENDED) };
+            Self::taken(acl, &[libc::ENOENT, libc::EOPNOTSUPP])
+        }
+
+        fn taken(acl: acl_t, absent: &[c_int]) -> std::io::Result<Option<Acl>> {
+            if !acl.is_null() {
+                return Ok(Some(Acl(Freed(acl))));
             }
-            which = ACL_NEXT_ENTRY;
+            let error = std::io::Error::last_os_error();
+            match error.raw_os_error() {
+                Some(code) if absent.contains(&code) => Ok(None),
+                _ => Err(error),
+            }
         }
-        acl_free(acl);
-        Ok(grants)
+
+        /// Whether any allow entry passes `counts`, given the entry and its rights.
+        /// Deny entries only take rights away, so they never count.
+        pub fn any_allow(
+            &self,
+            counts: impl Fn(acl_entry_t, u64) -> bool,
+        ) -> std::io::Result<bool> {
+            let mut entry: acl_entry_t = std::ptr::null_mut();
+            let mut which = ACL_FIRST_ENTRY;
+            // SAFETY: the ACL is live and `entry` is written before it is read.
+            while unsafe { acl_get_entry(self.0.0, which, &mut entry) } == 0 {
+                which = ACL_NEXT_ENTRY;
+                let mut tag = 0;
+                let mut rights = 0u64;
+                // SAFETY: `entry` belongs to the ACL, which outlives it.
+                unsafe {
+                    if acl_get_tag_type(entry, &mut tag) != 0
+                        || acl_get_permset_mask_np(entry, &mut rights) != 0
+                    {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                }
+                if tag == ACL_EXTENDED_ALLOW && counts(entry, rights) {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+    }
+
+    /// Whether the entry names the user `uid`. A group, or a name that cannot
+    /// be resolved, is someone else.
+    pub fn names_user(entry: acl_entry_t, uid: u32) -> bool {
+        // SAFETY: an extended entry's qualifier is a 16-byte UUID.
+        let qualifier = unsafe { acl_get_qualifier(entry) };
+        if qualifier.is_null() {
+            return false;
+        }
+        let qualifier = Freed(qualifier);
+        let mut id: libc::id_t = 0;
+        let mut kind = -1;
+        // SAFETY: the qualifier holds 16 bytes and both outputs are valid.
+        let resolved = unsafe { mbr_uuid_to_id(qualifier.0 as *const u8, &mut id, &mut kind) };
+        resolved == 0 && kind == ID_TYPE_UID && id == uid
     }
 }
 
-/// Named entries and default ACLs count as grants, regardless of their mask.
+/// Whether the path's ACL grants anyone anything: any allow entry counts.
+#[cfg(target_os = "macos")]
+pub fn grants_by_acl(path: &Path) -> std::io::Result<bool> {
+    match darwin::Acl::of_link(&c_path(path)?)? {
+        Some(acl) => acl.any_allow(|_, _| true),
+        None => Ok(false),
+    }
+}
+
+/// Whether the path's ACL lets an account other than `own` write to it, which
+/// for a folder means replacing what it holds. An inheritable entry counts as
+/// well, since it gives the same to what is made inside.
+#[cfg(target_os = "macos")]
+pub fn others_may_write(path: &Path, own: u32) -> std::io::Result<bool> {
+    match darwin::Acl::of_link(&c_path(path)?)? {
+        Some(acl) => acl.any_allow(|entry, rights| writes_for_others(entry, rights, own)),
+        None => Ok(false),
+    }
+}
+
+/// [`others_may_write`] for an open file, which its mode bits do not show on
+/// macOS.
+#[cfg(target_os = "macos")]
+pub fn others_may_write_file(file: &impl std::os::fd::AsRawFd, own: u32) -> std::io::Result<bool> {
+    match darwin::Acl::of_fd(file.as_raw_fd())? {
+        Some(acl) => acl.any_allow(|entry, rights| writes_for_others(entry, rights, own)),
+        None => Ok(false),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn writes_for_others(entry: darwin::acl_entry_t, rights: u64, own: u32) -> bool {
+    rights & darwin::WRITE_RIGHTS != 0 && !darwin::names_user(entry, own)
+}
+
+/// Whether the path's ACL names another user or group, or it has a default
+/// ACL, whatever the mask.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn grants_by_acl(path: &Path) -> std::io::Result<bool> {
     if read_xattr(path, c"system.posix_acl_default")?.is_some_and(|value| value.len() > 4) {
         return Ok(true);
     }
-    Ok(read_xattr(path, c"system.posix_acl_access")?.is_some_and(|value| names_others(&value)))
+    Ok(read_xattr(path, c"system.posix_acl_access")?
+        .is_some_and(|value| posix::names_others(&value)))
+}
+
+/// Whether the path's ACL lets an account other than `own` write to it, which
+/// for a folder means replacing what it holds, or its default ACL would give
+/// such write on what is made inside.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn others_may_write(path: &Path, own: u32) -> std::io::Result<bool> {
+    let access = read_xattr(path, c"system.posix_acl_access")?;
+    let default = read_xattr(path, c"system.posix_acl_default")?;
+    Ok(
+        access.is_some_and(|value| posix::lets_others_write(&value, own, false))
+            || default.is_some_and(|value| posix::lets_others_write(&value, own, true)),
+    )
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -100,88 +219,188 @@ fn read_xattr(path: &Path, name: &std::ffi::CStr) -> std::io::Result<Option<Vec<
     }
 }
 
-// The kernel format has a four-byte header and eight-byte entries, tag first.
 #[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
-fn names_others(value: &[u8]) -> bool {
-    const NAMED_USER: u16 = 0x02;
-    const NAMED_GROUP: u16 = 0x08;
-    value.get(4..).unwrap_or_default().chunks(8).any(|entry| {
-        let tag = u16::from_le_bytes([entry[0], *entry.get(1).unwrap_or(&0)]);
-        tag == NAMED_USER || tag == NAMED_GROUP
-    })
+mod posix {
+    #[cfg(any(test, feature = "testing"))]
+    pub const USER_OBJ: u16 = 0x01;
+    pub const NAMED_USER: u16 = 0x02;
+    pub const GROUP_OBJ: u16 = 0x04;
+    pub const NAMED_GROUP: u16 = 0x08;
+    pub const MASK: u16 = 0x10;
+    pub const OTHER: u16 = 0x20;
+    const WRITE: u16 = 0x02;
+
+    #[derive(Clone, Copy)]
+    struct Entry {
+        tag: u16,
+        permissions: u16,
+        id: u32,
+    }
+
+    // The kernel format has a four-byte header and eight-byte entries: tag,
+    // permissions and id, little-endian.
+    fn entries(value: &[u8]) -> impl Iterator<Item = Entry> + '_ {
+        value
+            .get(4..)
+            .unwrap_or_default()
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|&[t0, t1, p0, p1, i0, i1, i2, i3]| Entry {
+                tag: u16::from_le_bytes([t0, t1]),
+                permissions: u16::from_le_bytes([p0, p1]),
+                id: u32::from_le_bytes([i0, i1, i2, i3]),
+            })
+    }
+
+    pub fn names_others(value: &[u8]) -> bool {
+        entries(value).any(|entry| entry.tag == NAMED_USER || entry.tag == NAMED_GROUP)
+    }
+
+    /// In an access ACL the owning group and others show in the mode bits,
+    /// which the caller judges; in a default ACL they reach what is made inside.
+    pub fn lets_others_write(value: &[u8], own: u32, default: bool) -> bool {
+        let mask = entries(value)
+            .find(|entry| entry.tag == MASK)
+            .map_or(0o7, |entry| entry.permissions);
+        entries(value).any(|entry| {
+            let effective = match entry.tag {
+                NAMED_USER if entry.id != own => entry.permissions & mask,
+                NAMED_GROUP => entry.permissions & mask,
+                GROUP_OBJ if default => entry.permissions & mask,
+                OTHER if default => entry.permissions,
+                _ => 0,
+            };
+            effective & WRITE != 0
+        })
+    }
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
 pub fn grants_by_acl(_path: &Path) -> std::io::Result<bool> {
-    Err(std::io::Error::new(
-        ErrorKind::Unsupported,
-        "a private control socket needs macOS or Linux",
-    ))
+    Err(unsupported())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+pub fn others_may_write(_path: &Path, _own: u32) -> std::io::Result<bool> {
+    Err(unsupported())
+}
 
-    #[test]
-    fn an_acl_naming_another_account_is_seen() {
-        let entry = |tag: u16| {
-            let mut bytes = tag.to_le_bytes().to_vec();
-            bytes.extend_from_slice(&[7, 0, 0, 0, 0, 0]);
-            bytes
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+fn unsupported() -> std::io::Error {
+    std::io::Error::new(
+        ErrorKind::Unsupported,
+        "a private control socket needs macOS or Linux",
+    )
+}
+
+/// Gives another account an ACL entry on a folder, for tests of the callers.
+#[cfg(any(test, feature = "testing"))]
+pub mod testing {
+    use std::path::Path;
+
+    #[derive(Clone, Copy, Debug)]
+    pub enum Grant {
+        /// List and search the folder.
+        Read,
+        /// Add and remove what the folder holds.
+        Write,
+        /// List and search what is made inside.
+        InheritRead,
+        /// Add and remove inside what is made inside.
+        InheritWrite,
+    }
+
+    /// Sets `grant` for another account on `folder`, which the caller owns.
+    /// False when its file system keeps no ACLs, so the caller skips.
+    #[cfg(target_os = "macos")]
+    pub fn let_another_account(folder: &Path, grant: Grant) -> bool {
+        let entry = match grant {
+            Grant::Read => "everyone allow list,search",
+            Grant::Write => "everyone allow list,search,add_file,delete_child",
+            Grant::InheritRead => "everyone allow list,search,directory_inherit,only_inherit",
+            Grant::InheritWrite => "everyone allow add_subdirectory,directory_inherit,only_inherit",
         };
-        let acl = |tags: &[u16]| {
-            let mut bytes = 2u32.to_le_bytes().to_vec();
-            for tag in tags {
-                bytes.extend(entry(*tag));
-            }
-            bytes
-        };
-        assert!(!names_others(&acl(&[0x01, 0x04, 0x20])));
-        assert!(names_others(&acl(&[0x01, 0x02, 0x04, 0x10, 0x20])));
-        assert!(names_others(&acl(&[0x01, 0x04, 0x08, 0x10, 0x20])));
+        let status = std::process::Command::new("/bin/chmod")
+            .args(["+a", entry])
+            .arg(folder)
+            .status()
+            .expect("chmod runs");
+        assert!(status.success(), "chmod +a {entry:?}");
+        true
     }
 
-    fn folder(name: &str) -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!("marfa-acl-{}-{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).unwrap();
-        path
-    }
-
-    #[test]
-    fn a_plain_folder_grants_nothing() {
-        let path = folder("plain");
-        assert!(!grants_by_acl(&path).unwrap());
-        std::fs::remove_dir_all(&path).unwrap();
-    }
-
-    #[test]
-    fn a_missing_path_is_an_error_on_linux_and_nothing_on_macos() {
-        let path = folder("missing").join("absent");
-        let found = grants_by_acl(&path);
-        if cfg!(target_os = "macos") {
-            assert!(!found.unwrap());
-        } else {
-            assert!(found.is_err());
-        }
-        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
-    }
-
-    /// `None` when this file system keeps no ACLs, so the caller skips.
+    /// The access ACL's mask keeps the folder's group bits for a read, so a
+    /// folder's mode changes only where write needs it to.
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    fn set_posix_acl(
+    pub fn let_another_account(folder: &Path, grant: Grant) -> bool {
+        use crate::posix::{GROUP_OBJ, MASK, NAMED_USER, OTHER, USER_OBJ};
+        use std::os::unix::fs::MetadataExt;
+
+        const NOBODY: u32 = 65534;
+        const NONE: u32 = u32::MAX;
+        let mode = std::fs::metadata(folder).expect("folder").mode();
+        let (owner, group, others) = (
+            ((mode >> 6) & 7) as u16,
+            ((mode >> 3) & 7) as u16,
+            (mode & 7) as u16,
+        );
+        let (name, entries): (&std::ffi::CStr, [(u16, u16, u32); 5]) = match grant {
+            Grant::Read => (
+                c"system.posix_acl_access",
+                [
+                    (USER_OBJ, owner, NONE),
+                    (NAMED_USER, 5, NOBODY),
+                    (GROUP_OBJ, group, NONE),
+                    (MASK, group, NONE),
+                    (OTHER, others, NONE),
+                ],
+            ),
+            Grant::Write => (
+                c"system.posix_acl_access",
+                [
+                    (USER_OBJ, owner, NONE),
+                    (NAMED_USER, 7, NOBODY),
+                    (GROUP_OBJ, group, NONE),
+                    (MASK, group | 7, NONE),
+                    (OTHER, others, NONE),
+                ],
+            ),
+            Grant::InheritRead | Grant::InheritWrite => {
+                let named = if matches!(grant, Grant::InheritRead) {
+                    5
+                } else {
+                    7
+                };
+                (
+                    c"system.posix_acl_default",
+                    [
+                        (USER_OBJ, 7, NONE),
+                        (NAMED_USER, named, NOBODY),
+                        (GROUP_OBJ, 5, NONE),
+                        (MASK, named | 5, NONE),
+                        (OTHER, 5, NONE),
+                    ],
+                )
+            }
+        };
+        set_posix_acl(folder, name, &entries)
+    }
+
+    /// False when this file system keeps no POSIX ACLs.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) fn set_posix_acl(
         path: &Path,
         name: &std::ffi::CStr,
         entries: &[(u16, u16, u32)],
-    ) -> Option<()> {
+    ) -> bool {
         let mut value = 2u32.to_le_bytes().to_vec();
         for (tag, permissions, id) in entries {
             value.extend_from_slice(&tag.to_le_bytes());
             value.extend_from_slice(&permissions.to_le_bytes());
             value.extend_from_slice(&id.to_le_bytes());
         }
-        let file = c_path(path).unwrap();
+        let file = super::c_path(path).expect("a path without NUL");
         // SAFETY: the names and the buffer outlive the call, and the size is the buffer's.
         let status = unsafe {
             libc::setxattr(
@@ -193,39 +412,154 @@ mod tests {
             )
         };
         if status == 0 {
-            return Some(());
+            return true;
         }
         let error = std::io::Error::last_os_error();
         assert!(
             matches!(error.raw_os_error(), Some(libc::ENOTSUP | libc::EPERM)),
             "{error}"
         );
-        None
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::posix::*;
+    use super::*;
+
+    fn acl(entries: &[(u16, u16, u32)]) -> Vec<u8> {
+        let mut bytes = 2u32.to_le_bytes().to_vec();
+        for (tag, permissions, id) in entries {
+            bytes.extend_from_slice(&tag.to_le_bytes());
+            bytes.extend_from_slice(&permissions.to_le_bytes());
+            bytes.extend_from_slice(&id.to_le_bytes());
+        }
+        bytes
     }
 
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    const USER_OBJ: (u16, u16, u32) = (0x01, 7, u32::MAX);
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    const GROUP_OBJ: (u16, u16, u32) = (0x04, 5, u32::MAX);
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    const MASK: (u16, u16, u32) = (0x10, 7, u32::MAX);
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    const OTHER: (u16, u16, u32) = (0x20, 0, u32::MAX);
+    const NONE: u32 = u32::MAX;
+
+    #[test]
+    fn an_acl_naming_another_account_is_seen() {
+        let plain = [(USER_OBJ, 7, NONE), (GROUP_OBJ, 7, NONE), (OTHER, 7, NONE)];
+        assert!(!names_others(&acl(&plain)));
+        assert!(names_others(&acl(&[
+            (USER_OBJ, 7, NONE),
+            (NAMED_USER, 7, 7),
+            (GROUP_OBJ, 7, NONE),
+            (MASK, 7, NONE),
+            (OTHER, 7, NONE)
+        ])));
+        assert!(names_others(&acl(&[
+            (USER_OBJ, 7, NONE),
+            (GROUP_OBJ, 7, NONE),
+            (NAMED_GROUP, 7, 7),
+            (MASK, 7, NONE),
+            (OTHER, 7, NONE)
+        ])));
+    }
+
+    #[test]
+    fn only_write_that_the_mask_leaves_to_another_account_counts() {
+        let me = 501;
+        let with = |named: (u16, u16, u32), mask: u16| {
+            acl(&[
+                (USER_OBJ, 7, NONE),
+                named,
+                (GROUP_OBJ, 5, NONE),
+                (MASK, mask, NONE),
+                (OTHER, 5, NONE),
+            ])
+        };
+        for default in [false, true] {
+            assert!(!lets_others_write(
+                &with((NAMED_USER, 5, 7), 5),
+                me,
+                default
+            ));
+            assert!(!lets_others_write(
+                &with((NAMED_GROUP, 4, 7), 5),
+                me,
+                default
+            ));
+            assert!(lets_others_write(&with((NAMED_USER, 7, 7), 7), me, default));
+            assert!(lets_others_write(
+                &with((NAMED_GROUP, 6, 7), 7),
+                me,
+                default
+            ));
+            assert!(!lets_others_write(
+                &with((NAMED_USER, 7, 7), 5),
+                me,
+                default
+            ));
+            assert!(!lets_others_write(
+                &with((NAMED_USER, 7, me), 7),
+                me,
+                default
+            ));
+        }
+        let open_group = acl(&[(USER_OBJ, 7, NONE), (GROUP_OBJ, 7, NONE), (OTHER, 5, NONE)]);
+        let open_other = acl(&[(USER_OBJ, 7, NONE), (GROUP_OBJ, 5, NONE), (OTHER, 7, NONE)]);
+        assert!(!lets_others_write(&open_group, me, false));
+        assert!(!lets_others_write(&open_other, me, false));
+        assert!(lets_others_write(&open_group, me, true));
+        assert!(lets_others_write(&open_other, me, true));
+    }
+
+    fn folder(name: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!("marfa-acl-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn me() -> u32 {
+        // SAFETY: `geteuid` takes nothing and cannot fail.
+        unsafe { libc::geteuid() }
+    }
+
+    #[test]
+    fn a_plain_folder_grants_nothing() {
+        let path = folder("plain");
+        assert!(!grants_by_acl(&path).unwrap());
+        assert!(!others_may_write(&path, me()).unwrap());
+        std::fs::remove_dir_all(&path).unwrap();
+    }
+
+    #[test]
+    fn a_missing_path_is_an_error_on_linux_and_nothing_on_macos() {
+        let path = folder("missing").join("absent");
+        let found = grants_by_acl(&path);
+        let written = others_may_write(&path, me());
+        if cfg!(target_os = "macos") {
+            assert!(!found.unwrap());
+            assert!(!written.unwrap());
+        } else {
+            assert!(found.is_err());
+            assert!(written.is_err());
+        }
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
     fn a_named_user_or_group_or_a_default_acl_grants_and_the_owner_alone_does_not() {
+        use testing::set_posix_acl;
         let access = c"system.posix_acl_access";
         let default = c"system.posix_acl_default";
+        let user_obj = (USER_OBJ, 7, NONE);
+        let group_obj = (GROUP_OBJ, 5, NONE);
+        let mask = (MASK, 7, NONE);
+        let other = (OTHER, 0, NONE);
 
         let named_user = folder("named-user");
-        if set_posix_acl(
+        if !set_posix_acl(
             &named_user,
             access,
-            &[USER_OBJ, (0x02, 7, 65534), GROUP_OBJ, MASK, OTHER],
-        )
-        .is_none()
-        {
+            &[user_obj, (NAMED_USER, 7, 65534), group_obj, mask, other],
+        ) {
             eprintln!("skipped: this file system keeps no POSIX ACLs");
             std::fs::remove_dir_all(&named_user).unwrap();
             return;
@@ -234,49 +568,135 @@ mod tests {
         std::fs::remove_dir_all(&named_user).unwrap();
 
         let named_group = folder("named-group");
-        set_posix_acl(
+        assert!(set_posix_acl(
             &named_group,
             access,
-            &[USER_OBJ, GROUP_OBJ, (0x08, 7, 65534), MASK, OTHER],
-        )
-        .unwrap();
+            &[user_obj, group_obj, (NAMED_GROUP, 7, 65534), mask, other],
+        ));
         assert!(grants_by_acl(&named_group).unwrap());
         std::fs::remove_dir_all(&named_group).unwrap();
 
         let inherited = folder("default");
-        set_posix_acl(&inherited, default, &[USER_OBJ, GROUP_OBJ, OTHER]).unwrap();
+        assert!(set_posix_acl(
+            &inherited,
+            default,
+            &[user_obj, group_obj, other]
+        ));
         assert!(grants_by_acl(&inherited).unwrap());
         std::fs::remove_dir_all(&inherited).unwrap();
 
         // The kernel folds an ACL that only restates the mode into the mode.
         let minimal = folder("minimal");
-        set_posix_acl(&minimal, access, &[USER_OBJ, GROUP_OBJ, OTHER]).unwrap();
+        assert!(set_posix_acl(
+            &minimal,
+            access,
+            &[user_obj, group_obj, other]
+        ));
         assert!(!grants_by_acl(&minimal).unwrap());
         std::fs::remove_dir_all(&minimal).unwrap();
+    }
+
+    #[test]
+    fn read_for_another_account_does_not_write_and_write_or_inherited_write_does() {
+        use std::os::unix::fs::PermissionsExt;
+        use testing::{Grant, let_another_account};
+        for (grant, writes) in [
+            (Grant::Read, false),
+            (Grant::Write, true),
+            (Grant::InheritRead, false),
+            (Grant::InheritWrite, true),
+        ] {
+            let path = folder("grant");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            if !let_another_account(&path, grant) {
+                eprintln!("skipped: this file system keeps no POSIX ACLs");
+                std::fs::remove_dir_all(&path).unwrap();
+                return;
+            }
+            assert!(grants_by_acl(&path).unwrap(), "{grant:?}");
+            assert_eq!(others_may_write(&path, me()).unwrap(), writes, "{grant:?}");
+            std::fs::remove_dir_all(&path).unwrap();
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn chmod(arguments: &[&str], path: &Path) {
+        let status = std::process::Command::new("/bin/chmod")
+            .args(arguments)
+            .arg(path)
+            .status()
+            .unwrap();
+        assert!(status.success(), "chmod {arguments:?}");
     }
 
     #[cfg(target_os = "macos")]
     #[test]
     fn an_allow_entry_grants_and_a_deny_entry_does_not() {
-        let chmod = |path: &Path, entry: &str| {
-            let status = std::process::Command::new("/bin/chmod")
-                .args(["+a", entry])
-                .arg(path)
-                .status()
-                .unwrap();
-            assert!(status.success());
-        };
         let deny = folder("deny");
-        chmod(&deny, "everyone deny delete");
+        chmod(&["+a", "everyone deny delete"], &deny);
         assert!(!grants_by_acl(&deny).unwrap());
-        chmod(&deny, "everyone allow list,search");
+        chmod(&["+a", "everyone allow list,search"], &deny);
         assert!(grants_by_acl(&deny).unwrap());
-        let cleared = std::process::Command::new("/bin/chmod")
-            .arg("-N")
-            .arg(&deny)
-            .status()
-            .unwrap();
-        assert!(cleared.success());
+        chmod(&["-N"], &deny);
         std::fs::remove_dir_all(&deny).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn an_allow_entry_that_writes_counts_and_a_deny_entry_or_a_read_does_not() {
+        let at = folder("writes");
+        let path = at.join("file");
+        std::fs::write(&path, "x").unwrap();
+        let me = me();
+        let check = |path: &Path| {
+            let by_path = others_may_write(path, me).unwrap();
+            let by_file = others_may_write_file(&std::fs::File::open(path).unwrap(), me).unwrap();
+            assert_eq!(by_path, by_file, "{}", path.display());
+            by_path
+        };
+        assert!(!check(&path));
+        assert!(!check(&at));
+        chmod(&["+a", "everyone deny delete"], &path);
+        chmod(&["+a", "everyone deny delete"], &at);
+        assert!(!check(&path));
+        assert!(!check(&at));
+        chmod(&["+a", "everyone allow read"], &path);
+        chmod(&["+a", "everyone allow list,search"], &at);
+        assert!(!check(&path));
+        assert!(!check(&at));
+        for (right, on_folder) in [
+            ("write", false),
+            ("append", false),
+            ("writeattr", false),
+            ("writeextattr", false),
+            ("writesecurity", false),
+            ("chown", false),
+            ("delete", false),
+            ("add_file", true),
+            ("add_subdirectory", true),
+            ("delete_child", true),
+            ("delete", true),
+            ("writesecurity", true),
+            ("add_subdirectory,directory_inherit,only_inherit", true),
+        ] {
+            let target = if on_folder { &at } else { &path };
+            let entry = format!("everyone allow {right}");
+            chmod(&["+a", &entry], target);
+            assert!(check(target), "{right}");
+            chmod(&["-a", &entry], target);
+            assert!(!check(target), "{right} removed");
+        }
+        // The owner's own entry gives nobody else anything.
+        let user = std::env::var("USER").unwrap_or_default();
+        if !user.is_empty() {
+            chmod(&["+a", &format!("user:{user} allow write")], &path);
+            assert!(!check(&path));
+            chmod(&["+a", &format!("user:{user} allow add_file")], &at);
+            assert!(!check(&at));
+        }
+        // The deny entries keep even the owner from deleting.
+        chmod(&["-N"], &path);
+        chmod(&["-N"], &at);
+        std::fs::remove_dir_all(at).unwrap();
     }
 }

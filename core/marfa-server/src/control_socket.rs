@@ -131,7 +131,8 @@ fn refused_folder(folder: &Path, why: &str) -> Failure {
 }
 
 /// Makes each missing folder above the socket private, and refuses one that
-/// another account could change or reach into.
+/// another account could change, or the socket's own folder if another
+/// account could reach into it.
 fn prepare_folders(path: &Path, me: u32) -> Result<(), Failure> {
     let Some(holder) = path.parent() else {
         return Ok(());
@@ -157,12 +158,33 @@ fn prepare_folders(path: &Path, me: u32) -> Result<(), Failure> {
         }
         let found = std::fs::symlink_metadata(&folder)
             .map_err(|error| refused_folder(&folder, &format!("could not be read: {error}")))?;
-        if let Some(why) = folder_fault(Found::of(&found), me, folder == holder) {
+        let last = folder == holder;
+        if let Some(why) = folder_fault(Found::of(&found), me, last) {
             return Err(refused_folder(&folder, why));
         }
-        refuse_acl(&folder, "folder")?;
+        if last {
+            refuse_acl(&folder, "folder")?;
+        } else {
+            refuse_writable_acl(&folder, me)?;
+        }
     }
     Ok(())
+}
+
+/// Above the socket's own folder, only an ACL that lets another account
+/// replace what a folder holds is a way in.
+fn refuse_writable_acl(folder: &Path, me: u32) -> Result<(), Failure> {
+    match marfa_acl::others_may_write(folder, me) {
+        Ok(false) => Ok(()),
+        Ok(true) => Err(refused_folder(
+            folder,
+            "has an access control list that lets another account change what it holds",
+        )),
+        Err(error) => Err(refused_folder(
+            folder,
+            &format!("has an access control list that could not be read: {error}"),
+        )),
+    }
 }
 
 fn refused_lock(lock: &Path, why: impl std::fmt::Display) -> Failure {
@@ -410,6 +432,7 @@ fn refuse_acl(path: &Path, what: &str) -> Result<(), Failure> {
 mod tests {
     use std::os::unix::fs::symlink;
 
+    use marfa_acl::testing::{Grant, let_another_account};
     use tempfile::TempDir;
 
     use super::*;
@@ -661,6 +684,80 @@ mod tests {
         let _other = UnixListener::bind(&path).unwrap();
         claim.release();
         UnixStream::connect(&path).unwrap();
+    }
+
+    /// A folder `name` in `root` with mode 0755 and `grant` for another
+    /// account, or `None` when this file system keeps no ACLs.
+    fn granted(root: &Path, name: &str, grant: Grant) -> Option<PathBuf> {
+        let folder = root.join(name);
+        std::fs::create_dir(&folder).unwrap();
+        set_mode(&folder, 0o755);
+        if let_another_account(&folder, grant) {
+            Some(folder)
+        } else {
+            eprintln!("skipped: this file system keeps no ACLs");
+            None
+        }
+    }
+
+    #[test]
+    fn a_folder_above_whose_acl_lets_another_account_only_read_is_accepted() {
+        let (_dir, root) = private_root();
+        let Some(above) = granted(&root, "above", Grant::Read) else {
+            return;
+        };
+        let mut claim = Claim::take(&above.join("control").join("marfa.sock")).unwrap();
+        let _listener = claim.bind().unwrap();
+
+        let inherits = root.join("inherits");
+        std::fs::create_dir(&inherits).unwrap();
+        set_mode(&inherits, 0o755);
+        std::fs::create_dir(inherits.join("control")).unwrap();
+        set_mode(&inherits.join("control"), 0o700);
+        assert!(let_another_account(&inherits, Grant::InheritRead));
+        Claim::take(&inherits.join("control").join("marfa.sock")).unwrap();
+        // A socket folder made below it inherits the read, which its own rule refuses.
+        let said = refusal(&inherits.join("fresh").join("marfa.sock"));
+        assert!(said.contains("access control list"), "{said}");
+        assert!(
+            said.contains(&inherits.join("fresh").display().to_string()),
+            "{said}"
+        );
+    }
+
+    #[test]
+    fn a_folder_above_whose_acl_lets_another_account_write_is_refused_by_name() {
+        let (_dir, root) = private_root();
+        for grant in [Grant::Write, Grant::InheritWrite] {
+            let Some(above) = granted(&root, &format!("{grant:?}"), grant) else {
+                return;
+            };
+            let said = refusal(&above.join("control").join("marfa.sock"));
+            assert!(
+                said.contains(&format!("folder {} ", above.display())),
+                "{grant:?}: {said}"
+            );
+            assert!(!above.join("control").exists(), "{grant:?}");
+        }
+    }
+
+    #[test]
+    fn the_socket_folder_whose_acl_lets_another_account_read_is_refused() {
+        let (_dir, root) = private_root();
+        let folder = root.join("control");
+        std::fs::create_dir(&folder).unwrap();
+        set_mode(&folder, 0o700);
+        Claim::take(&folder.join("marfa.sock")).unwrap();
+        if !let_another_account(&folder, Grant::Read) {
+            eprintln!("skipped: this file system keeps no ACLs");
+            return;
+        }
+        assert_eq!(std::fs::metadata(&folder).unwrap().mode() & 0o777, 0o700);
+        let said = refusal(&folder.join("marfa.sock"));
+        assert!(
+            said.contains("access control list that grants access"),
+            "{said}"
+        );
     }
 
     #[cfg(target_os = "macos")]

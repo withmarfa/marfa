@@ -373,8 +373,9 @@ fn admit(
 
 /// Checks that nobody but `trusted` and root can swap `dir` for a link: every
 /// folder from `/` down to it that exists belongs to one of them and is not
-/// writable by group or others, apart from root's sticky folders such as
-/// `/tmp`. Every later write goes by path, and `O_NOFOLLOW` guards only its
+/// writable by group or others, by its mode, apart from root's sticky folders
+/// such as `/tmp`, or by its access control list, which the server judges the
+/// same way above its private socket's folder. Every later write goes by path, and `O_NOFOLLOW` guards only its
 /// last part. The path is expected to be real already; a link in it is refused.
 fn check_parents(dir: &Path, trusted: u32) -> Result<(), CliError> {
     let absolute = std::path::absolute(dir)?;
@@ -415,9 +416,9 @@ fn check_parents(dir: &Path, trusted: u32) -> Result<(), CliError> {
                 current.display()
             )));
         }
-        if marfa_acl::grants_by_acl(&current)? {
+        if marfa_acl::others_may_write(&current, trusted)? {
             return Err(CliError::Usage(format!(
-                "{} has an access control list that grants access, and the install folder lies below it: the server refuses to keep its private socket below such a folder. Choose another --dir",
+                "{} has an access control list that lets another account change what it holds, and the install folder lies below it: that account could swap the install folder for a link after it was checked. Choose another --dir",
                 current.display()
             )));
         }
@@ -642,24 +643,34 @@ mod tests {
         check_parents(&dir, me).unwrap();
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
-    fn a_folder_above_the_install_folder_with_an_acl_that_grants_is_refused() {
+    fn a_folder_above_the_install_folder_is_refused_only_for_an_acl_that_writes() {
+        use marfa_acl::testing::{Grant, let_another_account};
         let me = unsafe { libc::geteuid() };
         let top = scratch("acl-parents");
-        let parent = top.join("parent");
-        let dir = parent.join("marfa");
-        fs::create_dir_all(&parent).unwrap();
-        fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
-        check_parents(&dir, me).unwrap();
-        let granted = std::process::Command::new("/bin/chmod")
-            .args(["+a", "everyone allow read"])
-            .arg(&parent)
-            .status()
-            .unwrap();
-        assert!(granted.success());
-        let error = check_parents(&dir, me).unwrap_err().to_string();
-        assert!(error.contains("access control list"), "{error}");
+        for (grant, refused) in [
+            (Grant::Read, false),
+            (Grant::InheritRead, false),
+            (Grant::Write, true),
+            (Grant::InheritWrite, true),
+        ] {
+            let parent = top.join(format!("{grant:?}"));
+            let dir = parent.join("marfa");
+            fs::create_dir_all(&parent).unwrap();
+            fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
+            check_parents(&dir, me).unwrap();
+            if !let_another_account(&parent, grant) {
+                eprintln!("skipped: this file system keeps no ACLs");
+                return;
+            }
+            let checked = check_parents(&dir, me);
+            if !refused {
+                checked.unwrap();
+                continue;
+            }
+            let error = checked.unwrap_err().to_string();
+            assert!(error.contains(&parent.display().to_string()), "{error}");
+        }
     }
 
     #[test]

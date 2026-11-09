@@ -8,3 +8,7 @@ publish.workspace = true
 
 [dependencies]
 libc = "0.2"
+
+[features]
+# `testing::let_another_account`, for the callers' tests.
+testing = []
