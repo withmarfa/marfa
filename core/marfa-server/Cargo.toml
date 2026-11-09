@@ -65,6 +65,7 @@ uuid.workspace = true
 webauthn-rs = { version = "0.6.2", default-features = false, features = ["conditional-ui", "danger-allow-state-serialisation"] }
 
 [dev-dependencies]
+marfa-acl = { workspace = true, features = ["testing"] }
 libtest-mimic = "0.8"
 opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "logs", "testing"] }
 p256 = "0.14"

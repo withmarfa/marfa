@@ -1,6 +1,4 @@
-//! An item a restore writes as its archive line holds it: its id, version, dates, state,
-//! writer, tags, extensions and history, with each digest lending only where the line says
-//! it lent.
+//! An item written as its archive line holds it; a digest lends only where the line says.
 
 use std::collections::{BTreeSet, HashSet};
 
@@ -128,7 +126,7 @@ pub fn restore(
         let size = properties
             .get(FILE_BYTES)
             .and_then(Value::as_str)
-            .and_then(Hash::whole)
+            .and_then(|text| Hash::parse(text).ok())
             .filter(|hash| lent.contains(hash.as_str()))
             .map(|hash| crate::app::blobs::stored_size(tx, &hash))
             .transpose()?

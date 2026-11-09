@@ -1,7 +1,4 @@
-//! A restore's blobs: bytes the archive carries, staged as they arrive and placed on the disk
-//! unrecorded, and those it names without carrying, found in a store or answered missing.
-//! Nothing serves placed bytes until the restore's write records them; a restore that does not
-//! commit leaves them queued for deletion, which `blob-integrity` carries out.
+//! Placed bytes stay unrecorded and queued for deletion until the restore's write records them.
 
 use std::io;
 use std::sync::Arc;
@@ -270,9 +267,7 @@ impl App {
             })
     }
 
-    /// A blob the archive names and does not carry: held whole by a store that records it,
-    /// found under its name in the object store and recorded there, or missing. A store that
-    /// fails or stays silent, where none answers whole, refuses the restore.
+    /// A store that fails or stays silent, where none answers whole, refuses the restore.
     async fn find_absent(&self, named: &Named) -> Result<Option<Copy>> {
         let looked = named.hash.clone();
         let (record, holders) = self

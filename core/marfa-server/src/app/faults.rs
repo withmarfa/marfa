@@ -9,6 +9,7 @@ use std::time::Duration;
 use serde::Serialize;
 use tokio::sync::watch;
 
+use super::blobs::Hash;
 use super::housekeeping;
 use crate::db::Pulse;
 
@@ -79,6 +80,7 @@ points! {
     HOLD_STREAM_HEAD = Hold "stream-head" None;
     HOLD_STREAM_REPLAY = Hold "stream-replay" None;
     HOLD_STREAM_DRAIN = Hold "stream-drain" None;
+    HOLD_FOLDER_STATUS_READ = Hold "folder-status-read" None;
     HOLD_WEBHOOK_RESPONSE = Hold "webhook:response" None;
     HOLD_WEBHOOK_SCHEDULE = Hold "webhook-schedule" None;
     HOLD_WEBHOOK_SCHEDULE_QUEUED = Hold "webhook-schedule:queued" None;
@@ -106,6 +108,7 @@ points! {
     HOLD_BLOB_PURGE = Hold "blob-orphans:purge" None;
     FAIL_HEALTH_WRITE = Fail "health-write" Nth;
     FAIL_EXPORT_READ = Fail "export-read" Nth;
+    FAIL_FOLDER_STATUS_REPORT = Fail "folder-status-report" Nth;
     REFUSE_READ = Refuse "read" None;
     REFUSE_WRITE = Refuse "write" None;
     REFUSE_WRITE_LOCK = Refuse "write-lock" None;
@@ -291,18 +294,13 @@ fn deadline_of(job: &str, arg: Option<&str>) -> Result<u64, String> {
 }
 
 fn blob_hashes(arg: Option<&str>) -> Result<HashSet<String>, String> {
-    let named = |hash: &str| {
-        hash.strip_prefix("sha256:").is_some_and(|hex| {
-            hex.len() == 64
-                && hex
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        })
-    };
     let hashes: Vec<&str> = arg
         .filter(|arg| !arg.is_empty())
         .map_or_else(Vec::new, |arg| arg.split(',').collect());
-    if hashes.is_empty() || hashes.len() > MAX_BLOB_HASHES || !hashes.iter().all(|h| named(h)) {
+    if hashes.is_empty()
+        || hashes.len() > MAX_BLOB_HASHES
+        || !hashes.iter().all(|h| Hash::parse(h).is_ok())
+    {
         return Err(format!(
             "a blob fault takes up to {MAX_BLOB_HASHES} sha256: names separated by ,"
         ));

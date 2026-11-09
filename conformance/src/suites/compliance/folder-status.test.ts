@@ -1,17 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { readFileSync, rmSync } from "node:fs";
-import { readLineFile } from "../../utils/archive.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import {
-  DAY_MS,
-  HOUR_MS,
-  MINUTE_MS,
-  movedClock,
-} from "../../utils/moved-clock.js";
+import { HOUR_MS, MINUTE_MS, movedClock } from "../../utils/moved-clock.js";
 import {
   connect,
   issuerOrigin,
@@ -149,38 +143,18 @@ async function get(id: string): Promise<Status> {
 }
 
 describe("folder sync reports", () => {
-  it("keeps witnessed reports outside portable item archives", async () => {
-    const id = await folder();
-    const folder_store_id = "portable-archive-witness-copy";
-    await put(id, { ...report, folder_store_id });
-    expect((await get(id)).sign_ins[0]!.copies[0]!.folder_store_id).toBe(
-      folder_store_id,
-    );
-    const archive = await call("GET", "/export?format=archive");
-    expect(archive.status).toBe(200);
-    const bytes = new Uint8Array(await archive.arrayBuffer());
-    const text = (["instance", "items", "edges"] as const)
-      .map((name) => readLineFile(bytes, name))
-      .join("\n");
-    expect(text).toContain(id);
-    expect(text).not.toContain(folder_store_id);
-  });
-  it("lists active folder summaries for the owner and local command with bounded pages", async () => {
+  it("lists active folder summaries for the local command with bounded pages, and refuses every other caller", async () => {
     const firstId = await folder();
     const secondId = await folder();
-    const cookie = await signIn(server, origin);
     const ids = new Set<string>();
     let cursor: string | null = null;
     do {
-      const response = await call(
-        "GET",
+      const response = await controlRequest(
+        server.controlSocket,
         `/folders?limit=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
-        undefined,
-        "",
-        cookie,
       );
       expect(response.status).toBe(200);
-      const page = (await response.json()) as {
+      const page = response.body as {
         data: { id: string; title: string; created_at: string }[];
         next_cursor: string | null;
       };
@@ -205,16 +179,13 @@ describe("folder sync reports", () => {
     expect(await noCredential.json()).toMatchObject({
       error: { code: "unauthorized" },
     });
-    expect(
-      (await call("GET", "/folders?limit=0", undefined, "", cookie)).status,
-    ).toBe(400);
-    expect(
-      (await call("GET", "/folders?extra=1", undefined, "", cookie)).status,
-    ).toBe(400);
-    expect(
-      (await call("GET", "/folders?cursor=broken", undefined, "", cookie))
-        .status,
-    ).toBe(400);
+    for (const bad of ["limit=0", "extra=1", "cursor=broken"]) {
+      const refused = await controlRequest(
+        server.controlSocket,
+        `/folders?${bad}`,
+      );
+      expect(refused.status, bad).toBe(400);
+    }
     expect((await call("POST", `/folders/${secondId}/revoke`)).status).toBe(
       200,
     );
@@ -246,22 +217,19 @@ describe("folder sync reports", () => {
     const newestFirst = [...made].reverse();
     const cookie = await signIn(server, origin);
 
-    const owner = await call(
-      "GET",
+    const owner = await controlRequest(
+      server.controlSocket,
       "/folders?limit=200",
-      undefined,
-      "",
-      cookie,
     );
     expect(owner.status).toBe(200);
     const rows = (
-      (await owner.json()) as {
+      owner.body as {
         data: { id: string; title: string; created_at: string }[];
       }
     ).data;
     expect(
       rows.filter((row) => made.some((m) => m.id === row.id)),
-      "owner",
+      "local command",
     ).toMatchObject(newestFirst);
     const created = rows.map((row) => row.created_at);
     expect(created, "newest first").toEqual([...created].sort().reverse());
@@ -270,14 +238,11 @@ describe("folder sync reports", () => {
     const paged: string[] = [];
     let cursor: string | null = null;
     do {
-      const response = await call(
-        "GET",
+      const response = await controlRequest(
+        server.controlSocket,
         `/folders?limit=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
-        undefined,
-        "",
-        cookie,
       );
-      const page = (await response.json()) as {
+      const page = response.body as {
         data: { id: string }[];
         next_cursor: string | null;
       };
@@ -287,17 +252,6 @@ describe("folder sync reports", () => {
     expect(paged.filter((id) => made.some((m) => m.id === id))).toEqual(
       newestFirst.map((m) => m.id),
     );
-
-    const local = await controlRequest(
-      server.controlSocket,
-      "/folders?limit=200",
-    );
-    expect(local.status).toBe(200);
-    expect(
-      (local.body.data as { id: string; title: string }[]).filter((row) =>
-        made.some((m) => m.id === row.id),
-      ),
-    ).toMatchObject(newestFirst);
 
     // The witness: the app holds the permission the folder's own reads need,
     // and the token works there, so the refusal is the inventory's.
@@ -355,37 +309,17 @@ describe("folder sync reports", () => {
     }
     expect((await get(id)).sign_ins).toEqual([]);
   });
-  it("answers item_not_found to the owner and a local command for an ID that holds no folder", async () => {
+  it("answers item_not_found to a local command for an ID that holds no folder", async () => {
     const id = await folder();
     const note = await aNote();
-    const cookie = await signIn(server, origin);
-    const asOwner = (target: string) =>
-      call("GET", `/folders/${target}/status`, undefined, "", cookie);
     const asLocal = (target: string) =>
       controlRequest(server.controlSocket, `/folders/${target}/status`);
-    expect((await asOwner(id)).status).toBe(200);
     expect((await asLocal(id)).status).toBe(200);
     for (const target of [NO_SUCH_ID, note]) {
-      const owner = await asOwner(target);
-      expect(owner.status).toBe(404);
-      expect(await owner.json()).toMatchObject({
-        error: { code: "item_not_found" },
-      });
       const local = await asLocal(target);
       expect(local.status).toBe(404);
       expect(local.body).toMatchObject({ error: { code: "item_not_found" } });
     }
-    const ownerPut = await call(
-      "PUT",
-      `/folders/${NO_SUCH_ID}/status`,
-      report,
-      "",
-      cookie,
-    );
-    expect(ownerPut.status).toBe(404);
-    expect(await ownerPut.json()).toMatchObject({
-      error: { code: "item_not_found" },
-    });
   });
   it("keeps taking and answering reports for a revoked folder", async () => {
     const id = await folder();
@@ -449,8 +383,8 @@ describe("folder sync reports", () => {
   });
   it("orders sign-ins by kind and ID and total problems as they first appear", async () => {
     const id = await folder();
-    const [low, high] = [await key(), await key()].sort((a, b) =>
-      a.id < b.id ? -1 : 1,
+    const [low, second, high] = [await key(), await key(), await key()].sort(
+      (a, b) => (a.id < b.id ? -1 : 1),
     );
     const cookie = await signIn(server, origin);
     const app = await registerApp(server, "system.folder:read");
@@ -483,17 +417,14 @@ describe("folder sync reports", () => {
       ]),
       low!.key,
     );
-    const browser = await call(
-      "PUT",
-      `/folders/${id}/status`,
+    await put(
+      id,
       reporting([
         { code: "held_file", count: 2 },
         { code: "conflict", count: 1 },
       ]),
-      "",
-      cookie,
+      second.key,
     );
-    expect(browser.status).toBe(200);
     await put(
       id,
       reporting([{ code: "unavailable", count: 1 }]),
@@ -503,18 +434,21 @@ describe("folder sync reports", () => {
     const status = await get(id);
     expect(status.sign_ins.map((group) => group.sign_in.kind)).toEqual([
       "app",
-      "browser",
+      "key",
       "key",
       "key",
     ]);
-    expect(status.sign_ins[2]!.sign_in.id).toBe(low!.id);
-    expect(status.sign_ins[3]!.sign_in.id).toBe(high!.id);
+    expect(status.sign_ins.slice(1).map((group) => group.sign_in.id)).toEqual([
+      low!.id,
+      second!.id,
+      high!.id,
+    ]);
     expect(status.totals.problems).toEqual([
       { code: "unavailable", count: 1 },
-      { code: "held_file", count: 3 },
-      { code: "conflict", count: 1 },
       { code: "settings_invalid", count: 1 },
       { code: "refused", count: 2 },
+      { code: "held_file", count: 3 },
+      { code: "conflict", count: 1 },
     ]);
   });
   it("orders copies by latest receipt, and copies received together by copy ID", async () => {
@@ -547,9 +481,8 @@ describe("folder sync reports", () => {
     }
   });
   it("pages the folder inventory 50 at a time unless a limit from 1 to 200 is named", async () => {
-    const cookie = await signIn(server, origin);
-    const asOwner = (query: string) =>
-      call("GET", `/folders${query}`, undefined, "", cookie);
+    const asLocal = (query: string) =>
+      controlRequest(server.controlSocket, `/folders${query}`);
     interface Page {
       data: { id: string }[];
       next_cursor: string | null;
@@ -557,20 +490,18 @@ describe("folder sync reports", () => {
     const made = new Set<string>();
     for (let index = 0; index < 51; index++) made.add(await folder());
 
-    const standard = await asOwner("");
+    const standard = await asLocal("");
     expect(standard.status).toBe(200);
-    const first = (await standard.json()) as Page;
+    const first = standard.body as unknown as Page;
     expect(first.data).toHaveLength(50);
     expect(first.next_cursor).not.toBeNull();
-    const local = await controlRequest(server.controlSocket, "/folders");
-    expect(local.body.data as unknown[]).toHaveLength(50);
 
-    const two = (await (await asOwner("?limit=2")).json()) as Page;
+    const two = (await asLocal("?limit=2")).body as unknown as Page;
     expect(two.data).toHaveLength(2);
 
-    const whole = await asOwner("?limit=200");
+    const whole = await asLocal("?limit=200");
     expect(whole.status).toBe(200);
-    const wholePage = (await whole.json()) as Page;
+    const wholePage = whole.body as unknown as Page;
     expect(wholePage.data.length).toBeGreaterThan(50);
     expect(wholePage.data.length).toBeLessThanOrEqual(200);
 
@@ -580,9 +511,9 @@ describe("folder sync reports", () => {
       const query: string = cursor
         ? `?limit=20&cursor=${encodeURIComponent(cursor)}`
         : "?limit=20";
-      const answer = await asOwner(query);
+      const answer = await asLocal(query);
       expect(answer.status).toBe(200);
-      const page = (await answer.json()) as Page;
+      const page = answer.body as unknown as Page;
       walked.push(...page.data.map((row) => row.id));
       cursor = page.next_cursor;
     } while (cursor);
@@ -590,9 +521,9 @@ describe("folder sync reports", () => {
     for (const id of made) expect(walked).toContain(id);
 
     for (const limit of ["0", "201", "abc", "1.5"]) {
-      const refused = await asOwner(`?limit=${limit}`);
+      const refused = await asLocal(`?limit=${limit}`);
       expect(refused.status, String(limit)).toBe(400);
-      expect(await refused.json()).toMatchObject({
+      expect(refused.body).toMatchObject({
         error: {
           code: "validation_error",
           details: { errors: [{ path: "limit" }] },
@@ -607,9 +538,9 @@ describe("folder sync reports", () => {
     ).json()) as Page;
     expect(otherOrdering.next_cursor).not.toBeNull();
     for (const refused of ["broken", otherOrdering.next_cursor!]) {
-      const answer = await asOwner(`?cursor=${encodeURIComponent(refused)}`);
+      const answer = await asLocal(`?cursor=${encodeURIComponent(refused)}`);
       expect(answer.status, refused).toBe(400);
-      expect(await answer.json()).toMatchObject({
+      expect(answer.body).toMatchObject({
         error: { code: "validation_error" },
       });
     }
@@ -778,6 +709,45 @@ describe("folder sync reports", () => {
     }
     expect((await get(id)).sign_ins[0]!.copies[0]!.sequence).toBe(1);
   });
+  it("takes each of the eight problem codes once, and a sequence and counts at the largest whole number", async () => {
+    const id = await folder();
+    const codes = [
+      "conflict",
+      "refused",
+      "credential_refused",
+      "unreadable",
+      "held_file",
+      "unavailable",
+      "root_gone",
+      "settings_invalid",
+    ];
+    const largest = Number.MAX_SAFE_INTEGER;
+    const whole = {
+      ...report,
+      sequence: largest,
+      pending_uploads: largest,
+      pending_downloads: largest,
+      paused_removals: largest,
+      problems: codes.map((code) => ({ code, count: largest })),
+    };
+    expect(await put(id, whole)).toMatchObject({
+      accepted: true,
+      sequence: largest,
+    });
+    expect((await get(id)).sign_ins[0]!.copies[0]!.problems).toEqual(
+      codes.map((code) => ({ code, count: largest })),
+    );
+    // The witness: each code is refused when it is spelled another way.
+    for (const code of ["Conflict", "held-file", ""]) {
+      const r = await call("PUT", `/folders/${id}/status`, {
+        ...report,
+        sequence: 1,
+        folder_store_id: "other-copy",
+        problems: [{ code, count: 1 }],
+      });
+      expect(r.status, code).toBe(400);
+    }
+  });
   it("leaves newer reports and their receipt unchanged on equal and delayed retries", async () => {
     const id = await folder();
     const first = await put(id, { ...report, sequence: 9 });
@@ -829,32 +799,28 @@ describe("folder sync reports", () => {
       ).status,
     ).toBe(401);
   });
-  it("uses the browser session identity and makes its reports historical after logout or expiry", async () => {
+  it("ignores an owner's browser session on every folder door", async () => {
     const id = await folder();
+    await put(id);
     const cookie = await signIn(server, origin);
-    const r = await call("PUT", `/folders/${id}/status`, report, "", cookie);
-    expect(r.status).toBe(200);
-    const browser = (await get(id)).sign_ins[0]!;
-    expect(browser.sign_in.kind).toBe("browser");
-    expect(browser.current).toBe(true);
-    const listed = await call("GET", "/owner/sign-ins", undefined, "", cookie);
-    const own = (
-      (await listed.json()) as { data: { id: string; current: boolean }[] }
-    ).data.find((v) => v.current)!;
-    expect(browser.sign_in.id).toBe(own.id);
-    expect((await call("POST", "/auth/sign-out", {}, "", cookie)).status).toBe(
-      200,
-    );
-    expect((await get(id)).sign_ins[0]!.current).toBe(false);
-    const cookie2 = await signIn(server, origin);
+    for (const [method, path, body] of [
+      ["GET", "/folders", undefined],
+      ["POST", "/folders", { title: "From a browser" }],
+      ["PATCH", `/folders/${id}`, { version: 1, title: "From a browser" }],
+      ["POST", `/folders/${id}/revoke`, undefined],
+      ["GET", `/folders/${id}/status`, undefined],
+      ["PUT", `/folders/${id}/status`, report],
+    ] as const) {
+      const r = await call(method, path, body, "", cookie);
+      expect(r.status, `${method} ${path}`).toBe(401);
+      expect(await r.json()).toMatchObject({ error: { code: "unauthorized" } });
+    }
+    // The key can still read status and change settings.
+    expect((await get(id)).sign_ins).toHaveLength(1);
     expect(
-      (await call("PUT", `/folders/${id}/status`, report, "", cookie2)).status,
+      (await call("PATCH", `/folders/${id}`, { version: 1, title: "Renamed" }))
+        .status,
     ).toBe(200);
-    const current = (await get(id)).sign_ins.find((g) => g.current)!;
-    // A session ends a week and a minute after its last use.
-    expect(current.current).toBe(true);
-    await clock.advance(8 * DAY_MS);
-    expect((await get(id)).sign_ins.every((g) => !g.current)).toBe(true);
   });
   it("uses the app grant identity across token refresh and retains history after grant revocation", async () => {
     const id = await folder();
@@ -898,22 +864,25 @@ describe("folder sync reports", () => {
   });
   it("checks current folder read authority after writer admission", async () => {
     const id = await folder();
-    for (const method of ["GET", "PUT"]) {
+    for (const [method, fault, hold] of [
+      ["GET", "hold:folder-status-read", "hold:folder-status-read"],
+      ["PUT", "hold:write=folder.status@1", "hold:write"],
+    ] as const) {
       const reader = await key();
       await put(id, report, reader.key);
-      await server.setFault("hold:admission=1");
+      await server.setFault(fault);
       const pending = call(
         method,
         `/folders/${id}/status`,
         method === "PUT" ? { ...report, sequence: 2 } : undefined,
         reader.key,
       );
-      await server.waitForHold("hold:admission");
+      await server.waitForHold(hold);
       const narrowed = await call("PATCH", `/keys/${reader.id}`, {
         type_permissions: { "core.note": "read" },
       });
       expect(narrowed.status).toBe(200);
-      await server.clearFault("hold:admission");
+      await server.clearFault(hold);
       expect((await pending).status).toBe(404);
     }
     expect(

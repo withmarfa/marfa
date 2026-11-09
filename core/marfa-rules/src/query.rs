@@ -173,6 +173,32 @@ pub fn refuse_unknown_type(catalog: &Catalog, declared: Option<&str>) -> Result<
     ))
 }
 
+/// The states a query may name.
+pub const STATES: [&str; 2] = ["active", "archived"];
+
+/// Why a query's `state` list holds nothing a query can ask for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StateFault {
+    /// The list names no state, so the query would hold nothing.
+    Empty,
+    /// The entry at this index is no state a query holds.
+    Unknown(usize),
+}
+
+/// Whether a query's `state` list names at least one state and only `active` and `archived`.
+pub fn check_states(states: &[impl AsRef<str>]) -> std::result::Result<(), StateFault> {
+    if states.is_empty() {
+        return Err(StateFault::Empty);
+    }
+    match states
+        .iter()
+        .position(|state| !STATES.contains(&state.as_ref()))
+    {
+        Some(index) => Err(StateFault::Unknown(index)),
+        None => Ok(()),
+    }
+}
+
 /// Refuses a `state` list that names no state, and one beside `all_states`.
 pub fn refuse_states(named: Option<usize>, all_states: bool) -> Result<()> {
     match named {
