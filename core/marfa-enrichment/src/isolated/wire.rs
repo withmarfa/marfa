@@ -245,8 +245,8 @@ impl Answer {
                 duration,
                 text_refused,
             } => {
-                if text.len() > asked.max_text_chars.saturating_mul(3)
-                    || text.encode_utf16().count() > asked.max_text_chars
+                if text.len() > asked.max_text_chars.saturating_mul(4)
+                    || text.chars().count() > asked.max_text_chars
                 {
                     return Err(not_believed("more text than it may"));
                 }

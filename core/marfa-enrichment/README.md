@@ -44,7 +44,7 @@ RTF is not read: its control words would be searched as words. Other kinds of so
 
 ## Limits
 
-`Options` holds the limits. The defaults are a text of 1,000,000 UTF-16 code units, 64 MiB inflated, 1 GiB of memory, and 60 seconds.
+`Options` holds the limits. The defaults are a text of 1,000,000 characters, 64 MiB inflated, 1 GiB of memory, and 60 seconds.
 
 - `max_text_chars` cuts the text between characters. A reader stops once it holds enough.
 - `max_inflated_bytes` bounds all the parts of a package together. The sum of the sizes the zip states is checked when the package opens, and the bytes that come out of each part are counted against one shared budget. XML is read as events, nests at most 1,024 elements, never reads a document type declaration, and never expands an entity. A package has at most 10,000 parts.

@@ -2,8 +2,6 @@
 
 use serde_json::{Map, Value};
 
-use crate::js::is_space;
-
 const NAME_POINTS: usize = 120;
 const PREVIEW_POINTS: usize = 240;
 const BODY_PROPERTY: &str = "body";
@@ -120,7 +118,7 @@ fn name<'a>(
 fn plain_name(value: &str) -> Option<(usize, String)> {
     let (at, line) = lines(value)
         .enumerate()
-        .find(|(_, line)| line.chars().any(|c| !is_space(c)))?;
+        .find(|(_, line)| line.chars().any(|c| !c.is_whitespace()))?;
     let mut plain = Plain::new(NAME_POINTS);
     plain.push_str(line);
     plain.finish().map(|text| (at, text))
@@ -195,9 +193,9 @@ impl Plain {
         if self.full() {
             return;
         }
-        self.seen |= !is_space(c);
+        self.seen |= !c.is_whitespace();
         let c = if c.is_control() { ' ' } else { c };
-        if is_space(c) {
+        if c.is_whitespace() {
             self.space = self.points > 0;
             return;
         }
@@ -285,7 +283,7 @@ impl<'a> Iterator for Markdown<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             let (at, line) = self.lines.next()?;
-            let content = line.trim_start_matches(is_space);
+            let content = line.trim_start_matches(char::is_whitespace);
             if let Some((mark, length)) = self.fence {
                 if closes_fence(content, mark, length) {
                     self.fence = None;
@@ -317,17 +315,21 @@ fn opens_fence(content: &str) -> Option<(char, usize)> {
 }
 
 fn closes_fence(content: &str, mark: char, length: usize) -> bool {
-    let content = content.trim_end_matches(is_space);
+    let content = content.trim_end_matches(char::is_whitespace);
     content.chars().count() >= length && content.chars().all(|c| c == mark)
 }
 
 fn is_break(content: &str) -> bool {
-    let marks: Vec<char> = content.chars().filter(|&c| !is_space(c)).collect();
+    let marks: Vec<char> = content.chars().filter(|&c| !c.is_whitespace()).collect();
     let Some(&first) = marks.first() else {
         return false;
     };
     let same = marks.iter().all(|&c| c == first);
-    same && (first == '=' && content.trim_end_matches(is_space).chars().all(|c| c == '=')
+    same && (first == '='
+        && content
+            .trim_end_matches(char::is_whitespace)
+            .chars()
+            .all(|c| c == '=')
         || matches!(first, '-' | '*' | '_') && marks.len() >= 3)
 }
 
@@ -338,12 +340,14 @@ fn is_reference(content: &str) -> bool {
     let Some(close) = rest.find("]:") else {
         return false;
     };
-    close > 0 && !rest[..close].contains(']') && rest[close + 2..].chars().any(|c| !is_space(c))
+    close > 0
+        && !rest[..close].contains(']')
+        && rest[close + 2..].chars().any(|c| !c.is_whitespace())
 }
 
 fn marker<'a>(line: &'a str, prefix: &str) -> Option<&'a str> {
     let rest = line.strip_prefix(prefix)?;
-    (rest.is_empty() || rest.starts_with(is_space)).then_some(rest)
+    (rest.is_empty() || rest.starts_with(char::is_whitespace)).then_some(rest)
 }
 
 fn list_marker(line: &str) -> Option<&str> {
@@ -360,7 +364,7 @@ fn list_marker(line: &str) -> Option<&str> {
 
 fn strip_blocks(mut line: &str) -> &str {
     loop {
-        line = line.trim_start_matches(is_space);
+        line = line.trim_start_matches(char::is_whitespace);
         if let Some(rest) = line.strip_prefix('>') {
             line = rest;
             continue;
@@ -369,16 +373,16 @@ fn strip_blocks(mut line: &str) -> &str {
         if (1..=6).contains(&hashes)
             && let Some(rest) = marker(line, &line[..hashes])
         {
-            let rest = rest.trim_end_matches(is_space);
+            let rest = rest.trim_end_matches(char::is_whitespace);
             let kept = rest.trim_end_matches('#');
-            return if kept.is_empty() || kept.ends_with(is_space) {
+            return if kept.is_empty() || kept.ends_with(char::is_whitespace) {
                 kept
             } else {
                 rest
             };
         }
         if let Some(rest) = list_marker(line) {
-            let rest = rest.trim_start_matches(is_space);
+            let rest = rest.trim_start_matches(char::is_whitespace);
             line = ["[ ]", "[x]", "[X]"]
                 .iter()
                 .find_map(|box_| marker(rest, box_))
@@ -420,7 +424,7 @@ fn autolink_end(chars: &[char], open: usize) -> Option<usize> {
         match c {
             '>' => return Some(at),
             '<' => return None,
-            c if is_space(c) => return None,
+            c if c.is_whitespace() => return None,
             _ => at += 1,
         }
     }

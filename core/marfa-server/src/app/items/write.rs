@@ -10,7 +10,7 @@ use marfa_rules::conflict::{
     self, Detection, ItemFields, MergePolicy, Precondition, Stale, Strategy,
 };
 use marfa_rules::error::RuleError;
-use marfa_rules::{js, validation};
+use marfa_rules::{number, validation};
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
@@ -42,7 +42,7 @@ use crate::app::views;
 
 const COPY_TAG: &str = "conflicted-copy";
 const RESERVED_NAMESPACES: [&str; 3] = ["core", "marfa", "system"];
-const MAX_EXTENSION_UNITS: usize = 102_400;
+const MAX_EXTENSION_LENGTH: usize = 102_400;
 const FILE_TYPE: &str = "core.file";
 const FILE_BYTES: &str = "blob_ref";
 const FILE_SIZE: &str = "size_bytes";
@@ -991,7 +991,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 tier: Some(tier),
                 source,
                 source_id: put.source_id.as_deref(),
-                properties: &js::canonical(&properties),
+                properties: &number::object(&properties),
                 title_key: key.as_deref(),
                 schema_version: self.schema_version(&put.type_id),
                 occurred_at: put.occurred_at.as_deref().unwrap_or(at),
@@ -1363,7 +1363,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 tier: row.tier.as_deref(),
                 source: &row.source,
                 source_id: None,
-                properties: &js::canonical(&properties),
+                properties: &number::object(&properties),
                 title_key: key.as_deref(),
                 schema_version: self.schema_version(&row.type_id),
                 occurred_at: at,
@@ -1526,7 +1526,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 tier: fields.tier.as_deref().or(row.tier.as_deref()),
                 source_id: fields.source_id.as_deref().or(row.source_id.as_deref()),
                 link: link.as_deref(),
-                properties: &js::canonical(&settled.properties),
+                properties: &number::object(&settled.properties),
                 title_key: key.as_deref(),
                 schema_version: self.schema_version(resulting),
                 occurred_at: fields.occurred_at.as_deref().unwrap_or(&row.occurred_at),
@@ -1619,8 +1619,8 @@ impl<'t, 'c> Job<'_, 't, 'c> {
 
     fn set_extension(&self, id: &str, namespace: &str, data: &Map<String, Value>) -> Result<Done> {
         let row = self.extension_row(id, namespace)?;
-        let text = js::canonical(data);
-        if text.encode_utf16().count() > MAX_EXTENSION_UNITS {
+        let text = number::object(data);
+        if text.chars().count() > MAX_EXTENSION_LENGTH {
             return Err(Refusal::validation(
                 "Extension data exceeds maximum size of 100KB",
             ));

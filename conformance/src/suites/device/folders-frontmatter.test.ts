@@ -6782,7 +6782,12 @@ describe("what frontmatter says", () => {
       put(
         harness,
         "Quoted.md",
-        '---\noccurred_at: "2026-10-06T09:30:00"\n---\nq\n',
+        '---\noccurred_at: "2026-10-06T09:30:00Z"\n---\nq\n',
+      );
+      put(
+        harness,
+        "NoZone.md",
+        '---\noccurred_at: "2026-10-06T09:30:00"\n---\nz\n',
       );
       put(harness, "Plain.md", "---\ntitle: Plain\n---\np\n");
       const pushed = await harness.folder.push();
@@ -6797,8 +6802,12 @@ describe("what frontmatter says", () => {
       );
       expect(
         created.get("Quoted")?.occurred_at,
-        "a date and time with no offset is read as UTC",
+        "a date and time with a zone is read as the instant it names",
       ).toBe("2026-10-06T09:30:00.000Z");
+      expect(
+        created.has("NoZone"),
+        "a date and time with no zone was sent as a time",
+      ).toBe(false);
       expect(
         "occurred_at" in (created.get("Plain") ?? {}),
         "a file with no line gave the item a time of its own",

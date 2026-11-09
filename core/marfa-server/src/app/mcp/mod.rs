@@ -4,6 +4,7 @@ pub mod confirm;
 pub mod fetch;
 pub mod revoke;
 pub mod trash;
+pub mod webhook;
 
 use std::sync::Arc;
 

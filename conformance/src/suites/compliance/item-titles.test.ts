@@ -216,7 +216,7 @@ describe("POST /items/titles", () => {
     );
   });
 
-  it("takes at most 200 names of at most 1,000 UTF-16 code units", async () => {
+  it("takes at most 200 names of at most 1,000 characters", async () => {
     const most = await client.findItemsByTitle(
       Array.from({ length: 200 }, (_, at) => `absent ${String(at)}`),
     );
@@ -238,9 +238,17 @@ describe("POST /items/titles", () => {
     expect(tooLong.status).toBe(400);
   });
 
-  it("matches no name to a title longer than 1,000 UTF-16 code units after trimming", async () => {
-    // A decomposed `é` is two UTF-16 code units and folds to the composed
-    // one, so a name of fewer units than the limit folds to a title past it.
+  it("counts a name in characters, so 1,000 emoji are taken and 1,001 refused", async () => {
+    const emoji = "\u{1F600}";
+    const taken = await client.findItemsByTitle([emoji.repeat(1000)]);
+    expect(taken.status, JSON.stringify(taken.error)).toBe(200);
+    const refused = await client.findItemsByTitle([emoji.repeat(1001)]);
+    expect(refused.status).toBe(400);
+  });
+
+  it("matches no name to a title longer than 1,000 characters after trimming", async () => {
+    // A decomposed `é` is two characters and folds to the composed one, so a
+    // name of fewer characters than the limit folds to a title past it.
     const stem = `${uuidv7()} `;
     const decomposed = (count: number) => `${stem}${"e\u0301".repeat(count)}`;
     const composed = (count: number) => `${stem}${"\u00e9".repeat(count)}`;
@@ -253,7 +261,7 @@ describe("POST /items/titles", () => {
       await idsFor(
         `${composed(count)}${"x".repeat(1000 - stem.length - 2 * count)}`,
       ),
-      "a title of 1,000 units once trimmed was not found",
+      "a title of 1,000 characters once trimmed was not found",
     ).toEqual([withinId]);
 
     const past = decomposed(count + 1);

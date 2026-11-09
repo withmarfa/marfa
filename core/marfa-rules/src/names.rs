@@ -7,12 +7,12 @@ pub fn folded(name: &str) -> String {
     name.nfc().flat_map(char::to_lowercase).nfc().collect()
 }
 
-/// Longest name that has a title key.
-pub const MAX_NAME_UNITS: usize = 1000;
+/// Longest name, in characters, that has a title key.
+pub const MAX_NAME_LENGTH: usize = 1000;
 
 pub fn title_key(title: &str) -> Option<String> {
     let trimmed = title.trim();
-    let named = !trimmed.is_empty() && trimmed.encode_utf16().count() <= MAX_NAME_UNITS;
+    let named = !trimmed.is_empty() && trimmed.chars().count() <= MAX_NAME_LENGTH;
     named.then(|| folded(trimmed))
 }
 

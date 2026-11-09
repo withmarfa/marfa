@@ -84,7 +84,7 @@ pub fn insert(tx: &Transaction<'_>, subscription: &Subscription) -> Result<()> {
             subscription.updated_at,
         ],
     )?;
-    Ok(())
+    turn(tx, &subscription.maker)
 }
 
 pub fn update(tx: &Transaction<'_>, subscription: &Subscription) -> Result<()> {
@@ -103,9 +103,37 @@ pub fn update(tx: &Transaction<'_>, subscription: &Subscription) -> Result<()> {
     Ok(())
 }
 
-pub fn delete(tx: &Transaction<'_>, id: &str) -> Result<()> {
-    tx.execute("DELETE FROM webhooks WHERE id = ?1", [id])?;
+pub fn delete(tx: &Transaction<'_>, subscription: &Subscription) -> Result<()> {
+    tx.execute("DELETE FROM webhooks WHERE id = ?1", [&subscription.id])?;
+    turn(tx, &subscription.maker)
+}
+
+fn turn(tx: &Transaction<'_>, maker: &Maker) -> Result<()> {
+    let (column, id) = match maker {
+        Maker::Key(id) => ("key_id", id),
+        Maker::Grant(id) => ("grant_id", id),
+    };
+    tx.execute(
+        &format!(
+            "INSERT INTO webhook_turns ({column}, turns) VALUES (?1, 1) \
+             ON CONFLICT ({column}) WHERE {column} IS NOT NULL DO UPDATE SET turns = turns + 1"
+        ),
+        [id],
+    )?;
     Ok(())
+}
+
+/// How many webhooks `maker` has made or deleted.
+pub fn turns(tx: &Transaction<'_>, maker: &Maker) -> Result<i64> {
+    let (key_id, grant_id) = maker_columns(maker);
+    Ok(tx
+        .query_row(
+            "SELECT turns FROM webhook_turns WHERE key_id = ?1 OR grant_id = ?2",
+            params![key_id, grant_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .unwrap_or(0))
 }
 
 pub fn delete_for_grant(tx: &Transaction<'_>, grant_id: &str) -> Result<usize> {

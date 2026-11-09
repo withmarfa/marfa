@@ -110,7 +110,7 @@ fn a_page_far_past_the_limit_is_read_only_as_far_as_it_needs() {
     let mut limits = options();
     limits.max_text_chars = 1000;
     let reading = read_here(source.as_bytes(), "text/html", &limits).unwrap();
-    assert_eq!(reading.text.encode_utf16().count(), 1000);
+    assert_eq!(reading.text.chars().count(), 1000);
     assert!(reading.truncated);
     assert!(reading.text.starts_with("quokka quokka quokka\nquokka"));
 }

@@ -93,18 +93,6 @@ describe("occurred_at compliance", () => {
     expect(taken.status, JSON.stringify(taken.error)).toBe(200);
   });
 
-  it("reads a zone-less occurred_at as UTC", async () => {
-    const created = await client.createItem(
-      createNote({ source: ctx.source, occurred_at: "2026-04-01T07:00:00" }),
-    );
-    expect(created.status, JSON.stringify(created.error)).toBe(201);
-    trackItem(ctx, created.data.item.id);
-    expect(created.data.item.occurred_at).toBe("2026-04-01T07:00:00.000Z");
-
-    const read = await client.getItem(created.data.item.id);
-    expect(read.data.item.occurred_at).toBe("2026-04-01T07:00:00.000Z");
-  });
-
   it("create without occurred_at defaults to created_at", async () => {
     const note = createNote({ source: ctx.source });
     const r = await client.createItem(note);

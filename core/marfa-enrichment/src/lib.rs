@@ -43,9 +43,8 @@ pub use isolated::{read, serve_child_if_asked};
 /// What one reading may use.
 #[derive(Clone, Debug)]
 pub struct Options {
-    /// The text kept, counted in UTF-16 code units, so a character outside the Basic
-    /// Multilingual Plane counts as two. A reader stops once it holds enough, so a
-    /// file with far more text costs no more.
+    /// The most characters of text kept, counted as Unicode scalar values. A reader
+    /// stops once it holds enough, so a file with far more text costs no more.
     pub max_text_chars: usize,
     /// The most bytes a document may inflate to, all of its parts together.
     pub max_inflated_bytes: u64,

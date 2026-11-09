@@ -15,7 +15,7 @@ import {
 
 const BODY = 1_000_000;
 const OTHER = 100_000;
-// Two UTF-16 code units, and one Unicode code point.
+// One character, though two UTF-16 code units.
 const ASTRAL = "\u{1F600}";
 
 const RUN = randomUUID().replaceAll("-", "").slice(0, 8);
@@ -154,7 +154,7 @@ describe("the length a text field allows", () => {
   });
 
   it("answers the same at each limit for a character outside the Basic Multilingual Plane", async () => {
-    const ending = (units: number) => "x".repeat(units - 2) + ASTRAL;
+    const ending = (characters: number) => "x".repeat(characters - 1) + ASTRAL;
     expect(await verdict(PARENT, "description", ending(BODY))).toBe("accepted");
     expect(await verdict(PARENT, "description", ending(BODY + 1))).toEqual([
       "description",

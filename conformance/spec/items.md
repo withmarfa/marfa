@@ -110,6 +110,8 @@ When `POST /items` names a lowercase UUIDv7 `id` that no item holds, the server 
 
 If `POST /items` names an `id` that is not a lowercase UUIDv7, then the server MUST answer `400 invalid_id`.
 
+**Reason:** a lowercase UUIDv7 is 36 characters: groups of 8, 4, 4, 4 and 12 lowercase hexadecimal digits joined by hyphens, with the digit `7` first in the third group and one of `8`, `9`, `a` or `b` first in the fourth. Every statement that names an id as a lowercase UUIDv7 means this form.
+
 **Tests:** `compliance/validation.test.ts › refuses a client-minted id that is not a lowercase UUIDv7`.
 
 ### `items/create-repeat`
@@ -358,11 +360,13 @@ When the server compares an `occurred_at` in a write at a stale version with the
 
 **Tests:** `compliance/canonical-time.test.ts › normalizes a patch before comparing stale changes`.
 
-### `items/occurred-at-zoneless`
+### `items/occurred-at-form`
 
-When a write names an `occurred_at` date-time with no zone, the server MUST read it as UTC.
+If a write names an `occurred_at` that is not an RFC 3339 date-time, being one with no zone, no seconds, a date alone, an hour of 24, a second of 60 or an offset written without its colon, then the server MUST refuse it `validation_error` with `details.field` `occurred_at`; a lowercase `t` or `z`, which RFC 3339 section 5.6 allows, is none of these faults, and the stored time is answered in uppercase.
 
-**Tests:** `compliance/occurred-at.test.ts › reads a zone-less occurred_at as UTC`.
+**Reason:** a client states the instant it means, so the server guesses no zone, and every client reads one spelling the same way. A fraction of a second of any length is taken, and cut to milliseconds. The zone is `Z`, or `+` or `-` with hours and minutes as `hh:mm`.
+
+**Tests:** `compliance/occurred-at-form.test.ts › refuses an occurred_at that %s, as it is not an RFC 3339 date-time`, `› takes an occurred_at with a zone, however it is spelled, as the instant it names`.
 
 ### `items/occurred-at-invalid`
 
@@ -454,7 +458,7 @@ If a write leaves an item with a string property longer than the length its fiel
 
 ### `items/property-length-declared`
 
-Where a string field declares a `maxLength`, the server MUST allow it that many units and no more.
+Where a string field declares a `maxLength`, the server MUST allow it that many characters and no more.
 
 **Reason:** a field's own `maxLength` wins over either default, lower or higher.
 
@@ -462,15 +466,15 @@ Where a string field declares a `maxLength`, the server MUST allow it that many 
 
 ### `items/property-length-body`
 
-Where a string field declares no `maxLength` and its type names it as `display_hints.body_field`, the server MUST allow it 1,000,000 units and no more.
+Where a string field declares no `maxLength` and its type names it as `display_hints.body_field`, the server MUST allow it 1,000,000 characters and no more.
 
-**Reason:** a body holds a whole document. The hint is read nearest type first (`types/read-display-hint`), so a child naming another field gives its parent's body the default for other text. The next limit is the request size, which 1,000,000 units of multi-byte text, or of text JSON escapes, can pass.
+**Reason:** a body holds a whole document. The hint is read nearest type first (`types/read-display-hint`), so a child naming another field gives its parent's body the default for other text. The next limit is the request size, which 1,000,000 characters of multi-byte text, or of text JSON escapes, can pass.
 
 **Tests:** `compliance/validation.test.ts › stores a body at the field's length cap intact`, `compliance/body-field-length.test.ts › follows a body a type names, inherits or renames`, `compliance/body-field-length.test.ts › gives core.event's description the body's length, and a child that renames its body puts it back`, `compliance/body-field-length.test.ts › answers the same at each limit for a character outside the Basic Multilingual Plane`.
 
 ### `items/property-length-default`
 
-Where a string field declares no `maxLength` and its type does not name it as `display_hints.body_field`, the server MUST allow it 100,000 units and no more.
+Where a string field declares no `maxLength` and its type does not name it as `display_hints.body_field`, the server MUST allow it 100,000 characters and no more.
 
 **Reason:** the limit follows what a type names, not what a field is called, so a field called `body` on a type that names no body takes this default.
 
@@ -492,11 +496,11 @@ If an update leaves in place a value longer than its field now allows, then the 
 
 ### `items/property-length-units`
 
-When the server measures a string property against a length cap, the server MUST count UTF-16 code units.
+When the server measures a string property against a length cap, the server MUST count Unicode characters (scalar values).
 
-**Reason:** the server and a working copy give the same verdict for a character outside the Basic Multilingual Plane, which takes two units (`device/declared-checked`).
+**Reason:** a character outside the Basic Multilingual Plane counts once, however a client encodes it, so the server and a working copy give the same verdict (`device/declared-checked`).
 
-**Tests:** `device/property-validation-live.test.ts › matches a real server's field decisions and keeps queued writes across a catalog change`.
+**Tests:** `compliance/body-field-length.test.ts › answers the same at each limit for a character outside the Basic Multilingual Plane`, `device/property-validation-live.test.ts › matches a real server's field decisions and keeps queued writes across a catalog change`.
 
 ### `items/property-invalid`
 
@@ -506,9 +510,9 @@ If a write leaves out a property its type requires, or names one the type declar
 
 ### `items/property-number-exact`
 
-If a write to `POST /items`, `PATCH /items/{id}`, the `patch` of `POST /items/bulk-actions`, the `defaults.properties` of `POST /folders` or `PATCH /folders/{id}`, the `properties` of `POST /edges` or `PATCH /edges/{id}`, or the data of `PUT /items/{id}/extensions/{namespace}` names a value, at any depth, that is a whole number written with digits other than the shortest digits that name the 64-bit float it parses to, as JavaScript's `Number.prototype.toString` writes them, then the server MUST answer `400 invalid_properties` with `details.errors` naming the value in `field`, as `list.1`, and the message `Must be a whole number that Marfa serves back with the same digits, not <digits>, which it serves as <served>. Send it as a string.`, leaving out `, which it serves as <served>` where the float is infinite.
+If a write to `POST /items`, `PATCH /items/{id}`, the `patch` of `POST /items/bulk-actions`, the `defaults.properties` of `POST /folders` or `PATCH /folders/{id}`, the `properties` of `POST /edges` or `PATCH /edges/{id}`, or the data of `PUT /items/{id}/extensions/{namespace}` names a value, at any depth, that is a whole number written with digits other than the shortest decimal that reads back as the same IEEE 754 double (`items/property-number-kept`), then the server MUST answer `400 invalid_properties` with `details.errors` naming the value in `field`, as `list.1`, and the message `Must be a whole number that Marfa serves back with the same digits, not <digits>, which it serves as <served>. Send it as a string.`, leaving out `, which it serves as <served>` where the float is infinite.
 
-**Reason:** the server holds a number as a 64-bit float and serves it in those shortest digits, so `1500000000000000001` would be stored and served back as `1500000000000000000`, and `1152921504606846976` (2^60) as `1152921504606847000`, with nothing said. The same holds for `-0`, which the float keeps as negative zero and the server serves as `0`. An app that compares 64-bit integers reads either as a different number. A caller who needs the digits sends a string. A device refuses the same numbers with the same message (`device/number-exact`).
+**Reason:** the server holds a number as an IEEE 754 double, the number a JSON client in Swift or JavaScript holds, and serves it in those shortest digits, so `1500000000000000001` would be stored and served back as `1500000000000000000`, and `1152921504606846976` (2^60) as `1152921504606847000`, with nothing said. The same holds for `-0`, which the float keeps as negative zero and the server serves as `0`. An app that compares 64-bit integers reads either as a different number. A caller who needs the digits sends a string. A device refuses the same numbers with the same message (`device/number-exact`).
 
 **Tests:** `compliance/exact-integers.test.ts › refuses %s in a property of a create, nested at any depth, and stores nothing`, `› refuses %s in an update, a bulk entry, a bulk action's patch and a folder's defaults`, `› refuses %s in the properties of an edge, a bulk entry of edges and the data of an extension`, `device/property-validation-live.test.ts › refuses %s in a declared number, an undeclared property, an array and a nested object on both paths with one message`.
 
@@ -520,9 +524,9 @@ If an entry of `POST /items/bulk` or `POST /edges/bulk` names a value `items/pro
 
 ### `items/property-number-kept`
 
-When a write names a property whose value is a whole number written with the shortest digits that name the 64-bit float it parses to, as JavaScript's `Number.prototype.toString` writes them, or a number written with a fraction or an exponent, the server MUST take it as the float it names, whatever its size, and serve it back in those digits.
+When a write names a property whose value is a whole number written with the shortest decimal that reads back as the same IEEE 754 double, or a number written with a fraction or an exponent, the server MUST take it as the double it names, whatever its size, and serve it back as the shortest decimal that reads back as that double, in fixed notation from 1e-6 up to below 1e21 and otherwise with an exponent and its sign, such as `1e+21` and `1.5e-7`.
 
-**Reason:** every whole number a float holds exactly up to 2^53 is written in those digits, except `-0`, which `items/property-number-exact` refuses, and so is `1152921504606847000`, which the server serves for a stored 2^60, so a value read back can be written back and read again as the same number. A number with a fraction or an exponent names a float, not digits.
+**Reason:** every whole number a double holds exactly up to 2^53 is written in those digits, except `-0`, which `items/property-number-exact` refuses, and so is `1152921504606847000`, which the server serves for a stored 2^60, so a value read back can be written back and read again as the same number. A number with a fraction or an exponent names a float, not digits.
 
 **Tests:** `compliance/exact-integers.test.ts › keeps %s as the number a float holds`, `› leaves the digits of a string alone`, `device/property-validation-live.test.ts › keeps %s on both paths as the same stored number`, `› keeps a large number in the digits a float is served as inside an array and a nested object on both paths`, `› holds the digits %s as written on the server and in the local row, before and after a drain`.
 
@@ -560,11 +564,11 @@ When `PATCH /items/{id}` under `properties_mode: replace` names the version the 
 
 ### `items/property-order-index`
 
-The server MUST answer a property whose name is the canonical decimal of an integer from 0 to 4294967294 before every other property, in numeric order.
+The server MUST give a property whose name reads as a number no place of its own, ordering it as it orders any other property under `items/property-order-create`, `items/property-order-merge` and `items/property-order-replace`.
 
-**Reason:** a JavaScript object orders such names so, whatever the server stores.
+**Reason:** a client in any language gets the order the rules give; no name moves ahead of another for reading as a number.
 
-**Tests:** `compliance/validation.test.ts › puts a property named by an array index first, in numeric order`.
+**Tests:** `compliance/property-order.test.ts › answers the properties in the order they were written, names that read as numbers included`.
 
 ### `items/thumbnail-format`
 
@@ -602,7 +606,7 @@ If a write names more than 100 tags, or would leave an item more than 100 tags a
 
 ### `items/tag-text`
 
-If a write other than an archive restore carries a tag that is empty, holds only whitespace or exceeds 128 UTF-16 code units, then the server MUST answer `400 validation_error`.
+If a write other than an archive restore carries a tag that is empty, holds only Unicode `White_Space` or exceeds 128 characters, then the server MUST answer `400 validation_error`.
 
 **Reason:** every tag the server holds stays nameable in the path that removes it.
 
@@ -780,17 +784,17 @@ If the key sending `POST /items/titles` reaches no type, then the server MUST an
 
 ### `items/titles-limits`
 
-If `POST /items/titles` names more than 200 names, or a name longer than 1,000 UTF-16 code units, or is not a list of names, or carries a key the operation does not declare, then the server MUST answer `400` with `validation_error`.
+If `POST /items/titles` names more than 200 names, or a name longer than 1,000 characters, or is not a list of names, or carries a key the operation does not declare, then the server MUST answer `400` with `validation_error`.
 
-**Tests:** `compliance/item-titles.test.ts › takes at most 200 names of at most 1,000 UTF-16 code units`, `› refuses a body that is not a list of names`.
+**Tests:** `compliance/item-titles.test.ts › takes at most 200 names of at most 1,000 characters`, `› counts a name in characters, so 1,000 emoji are taken and 1,001 refused`, `› refuses a body that is not a list of names`.
 
 ### `items/titles-long-title`
 
-When an item's title is longer than 1,000 UTF-16 code units once the Unicode `White_Space` at its ends is removed, the server MUST match no name sent to `POST /items/titles` to that item.
+When an item's title is longer than 1,000 characters once the Unicode `White_Space` at its ends is removed, the server MUST match no name sent to `POST /items/titles` to that item.
 
-**Reason:** a name sent is at most 1,000 UTF-16 code units (`items/titles-limits`), yet a shorter name can fold to a longer title, and a title past that limit is a body typed into the wrong field, not a name anyone links by.
+**Reason:** a name sent is at most 1,000 characters (`items/titles-limits`), yet a shorter name can fold to a longer title, and a title past that limit is a body typed into the wrong field, not a name anyone links by.
 
-**Tests:** `compliance/item-titles.test.ts › matches no name to a title longer than 1,000 UTF-16 code units after trimming`.
+**Tests:** `compliance/item-titles.test.ts › matches no name to a title longer than 1,000 characters after trimming`.
 
 ### `items/titles-list`
 
@@ -2476,21 +2480,21 @@ If a request body, other than one sent to `POST /blobs`, `POST /restore` or an i
 
 ### `items/json-text-well-formed`
 
-If a request body, other than one sent to `POST /blobs`, `POST /restore` or an inbound endpoint, is JSON that holds a string or an object key that is not well-formed UTF-16, whatever its `Content-Type` states, then the server MUST answer `400 validation_error` with `details.errors[].path` naming one of them by its JSON pointer.
+If a request body, other than one sent to `POST /blobs`, `POST /restore` or an inbound endpoint, is JSON that holds a string or an object key with a surrogate escape that has no partner, whatever its `Content-Type` states, then the server MUST answer `400 validation_error` with `details.errors[].path` naming one of them by its JSON pointer.
 
 **Reason:** RFC 8259 section 8.2 lets a JSON string carry a surrogate code unit with no partner, which no UTF-8 text can carry. The server holds only text that UTF-8 can represent, so every client can decode what it holds.
 
-**Tests:** `compliance/well-formed-text.test.ts › refuses $name, naming where, and takes a surrogate pair there`, `› writes nothing when it refuses a create`, `› refuses a lone low surrogate and a reversed pair, in either letter case of the escape`, `› refuses it on every published operation that takes a JSON body, before any credential`, `› is refused for text that is not well-formed UTF-16, before any credential`, `device/well-formed-text-live.test.ts › refuses text that is not well-formed UTF-16 and leaves a device able to hydrate and catch up over the row that is`.
+**Tests:** `compliance/well-formed-text.test.ts › refuses $name, naming where, and takes a surrogate pair there`, `› writes nothing when it refuses a create`, `› refuses a lone low surrogate and a reversed pair, in either letter case of the escape`, `› refuses it on every published operation that takes a JSON body, before any credential`, `› is refused for a surrogate escape with no partner, before any credential`, `device/well-formed-text-live.test.ts › refuses a surrogate escape with no partner and leaves a device able to hydrate and catch up over the row that is`.
 
 ### `items/json-text-pointer`
 
-When the server names text that is not well-formed UTF-16 in a refusal, the server MUST write its JSON pointer with `~0` for each `~` and `~1` for each `/`, as RFC 6901 does.
+When the server names a surrogate escape with no partner in a refusal, the server MUST write its JSON pointer with `~0` for each `~` and `~1` for each `/`, as RFC 6901 does.
 
 **Tests:** `compliance/well-formed-text.test.ts › escapes a slash and a tilde in the pointer it names`.
 
 ### `items/json-text-pointer-key`
 
-When the server names text that is not well-formed UTF-16 in a refusal and the pointer passes through an object key that holds a lone surrogate, the server MUST write U+FFFD in the pointer in place of each lone surrogate.
+When the server names a surrogate escape with no partner in a refusal and the pointer passes through an object key that holds a lone surrogate, the server MUST write U+FFFD in the pointer in place of each lone surrogate.
 
 **Reason:** the pointer is itself text in the answer, so it follows the same rule.
 
@@ -2498,13 +2502,13 @@ When the server names text that is not well-formed UTF-16 in a refusal and the p
 
 ### `items/json-text-before-credential`
 
-If a request to an operation that requires a credential carries no credential and a body that is JSON holding text that is not well-formed UTF-16, then the server MUST answer `400 validation_error`, as `items/json-text-well-formed` says.
+If a request to an operation that requires a credential carries no credential and a body that is JSON holding a surrogate escape with no partner, then the server MUST answer `400 validation_error`, as `items/json-text-well-formed` says.
 
 **Tests:** `compliance/well-formed-text.test.ts › answers it before a missing credential, as it answers a body nested too deep`, `› refuses it on every published operation that takes a JSON body, before any credential`.
 
 ### `items/json-text-after-depth`
 
-If a request body nests more than 64 levels and holds text that is not well-formed UTF-16, then the server MUST answer as `items/json-depth` says.
+If a request body nests more than 64 levels and holds a surrogate escape with no partner, then the server MUST answer as `items/json-depth` says.
 
 **Tests:** `compliance/well-formed-text.test.ts › names the nesting before the text when a body is both too deep and not well-formed`.
 

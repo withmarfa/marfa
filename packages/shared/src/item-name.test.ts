@@ -36,6 +36,12 @@ const SHARED = JSON.parse(
   ),
 ) as Shared;
 
+// Cases whose rule the Rust server changed (whitespace is Unicode White_Space);
+// the frozen name code here keeps the old rule.
+const RUST_ONLY = new Set([
+  "passes over a first line that is only the next-line character, which is whitespace",
+]);
+
 it("names every built-in type through its display hints, and a highlight by none of its passage", () => {
   const fields: Record<string, string> = {
     "core.bookmark": "title",
@@ -116,6 +122,7 @@ it("names every case the core is held to as the core does, and Untitled where th
   };
   expect(SHARED.cases.length).toBeGreaterThan(0);
   for (const { description, type, properties, name, preview } of SHARED.cases) {
+    if (RUST_ONLY.has(description)) continue;
     const hints: DisplayHints = {};
     const title = nearest(type, "title_field");
     const body = nearest(type, "body_field");
