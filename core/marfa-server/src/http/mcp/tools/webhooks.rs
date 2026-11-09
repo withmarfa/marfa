@@ -16,7 +16,7 @@ use crate::http::mcp::results::{ANSWER_BUDGET_CHARS, Outcome, Stop, fit_list};
 pub const LIST_NAME: &str = "marfa_webhooks";
 pub const MANAGE_NAME: &str = "marfa_manage_webhook";
 
-const SENDS: &str = "Each event it names, signed with the webhook's secret. An item event carries the whole item after the change, as this credential can read it; metadata.changed also carries the item's tags and the extensions this credential can read; an edge event carries the edge.";
+const SENDS: &str = "Each event it names, signed with the webhook's secret. Item events and metadata.changed carry the item, its tags and the extensions this credential can read, after the change or before a purge. An edge event carries the edge.";
 
 pub fn list_definition() -> Definition {
     Definition {
@@ -45,7 +45,7 @@ pub fn manage_definition() -> Definition {
     Definition {
         name: MANAGE_NAME,
         title: "Make, change or delete a webhook",
-        description: "Use to have Marfa post events, such as new items, to a web address, or to change or delete such a webhook. Making one, or changing where one posts or what it sends, first previews what would leave Marfa: show the person, and call again with the same arguments and confirm. A confirmation works once. Making one returns the secret that signs each delivery, once. Pausing or deleting one takes one call.",
+        description: "Use to have Marfa post events, such as new items, to a web address, or to change or delete such a webhook. Making one, or changing where one posts or what it sends, first previews what would leave Marfa: show the person, and call again with the same arguments and confirm. A confirmation works once. Making one returns the secret that signs each delivery, once. Pausing, resuming or deleting one takes one call.",
         input: json!({
             "type": "object",
             "properties": {
