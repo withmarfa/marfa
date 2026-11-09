@@ -317,3 +317,58 @@ it("names a maker that no longer holds webhooks.manage as the reason a local red
     error: { code: "conflict", details: { reason: "credential_unavailable" } },
   });
 });
+
+it("refuses the 101st subscription of a key or an app with 409 conflict naming the cap, and accepts one again once one is deleted", async () => {
+  const minted = await owner("/keys", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      label: "Capped maker",
+      source: "capped-maker",
+      permissions: ["webhooks.manage"],
+      type_permissions: { "*": "read" },
+    }),
+  });
+  expect(minted.status).toBe(201);
+  const key = ((await minted.json()) as { key: string }).key;
+  const app = await approvedApp(server, ["core.note:read", "webhooks.manage"]);
+  const register = (token: string, label: string) =>
+    credential("/webhooks", token, "POST", {
+      url: receiver.hookUrl(label),
+      events: ["item.created"],
+    });
+  const held = async (token: string) =>
+    (
+      (await (await credential("/webhooks", token)).json()) as {
+        data: { id: string }[];
+      }
+    ).data;
+
+  // The key reaches the cap first, so each maker's registrations beside it
+  // show that the cap counts only a maker's own.
+  for (const [maker, token] of [
+    ["key", key],
+    ["app", app.token],
+  ] as const) {
+    while ((await held(token)).length < 100) {
+      expect((await register(token, `${maker}-cap`)).status).toBe(201);
+    }
+    const refused = await register(token, `${maker}-cap`);
+    expect(refused.status, maker).toBe(409);
+    expect(await refused.json(), maker).toMatchObject({
+      error: {
+        code: "conflict",
+        details: { reason: "webhook_cap", cap: 100 },
+      },
+    });
+    expect(await held(token), maker).toHaveLength(100);
+
+    const [first] = await held(token);
+    expect(
+      (await credential(`/webhooks/${first!.id}`, token, "DELETE")).status,
+      maker,
+    ).toBe(200);
+    expect((await register(token, `${maker}-cap`)).status, maker).toBe(201);
+    expect((await register(token, `${maker}-cap`)).status, maker).toBe(409);
+  }
+}, 60_000);

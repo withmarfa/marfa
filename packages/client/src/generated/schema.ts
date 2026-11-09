@@ -19118,7 +19118,10 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address. */
+            /**
+             * @description - `conflict`: You already hold 100 webhooks. Delete one, then register this one. `details.reason` is `webhook_cap` and `details.cap` is `100`.
+             *     - `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.
+             */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19130,7 +19133,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InstanceChangedRefusal"];
+                    "application/json": components["schemas"]["ConflictRefusal"] | components["schemas"]["InstanceChangedRefusal"];
                 };
             };
             /** @description `request_too_large`: the request body is larger than this instance accepts. */
