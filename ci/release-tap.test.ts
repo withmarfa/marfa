@@ -1,9 +1,4 @@
-/**
- * The Homebrew formula for the `marfa` command line and `marfa-server` is written from the
- * checksum file of a release, and pushed to the tap only after the release is
- * public. A formula that names a hash the archive does not have, or an archive
- * the release does not carry, fails for every person who installs it.
- */
+// Exercises the Homebrew formula and its push to the tap.
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

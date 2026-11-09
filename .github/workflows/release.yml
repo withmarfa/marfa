@@ -1,65 +1,6 @@
 name: Release
 
-# A release is a tag, and tags are the maintainer's. Pushing `v<version>`
-# builds Marfa's Rust server from that commit, runs what it built, and
-# publishes it: a GitHub release carrying three archives, `marfa-<version>-`
-# `darwin-arm64`, `-linux-x86_64` and `-linux-aarch64`, each holding `marfa`,
-# `marfa-server` and `NOTICES.txt`, with one checksum file for them and the two
-# npm packages `@withmarfa/core` and `@withmarfa/client`; and the server image
-# `ghcr.io/withmarfa/marfa-server` for linux/amd64 and linux/arm64, made from
-# the Linux archives' own programs. The macOS programs are signed with the
-# maintainer's Developer ID and notarized, and the signed server is made to
-# read a text file, a PDF and a picture; the Linux programs are static, so
-# they run on any distribution, and each runs on its own architecture before a
-# release is made. There is no Intel Mac build. A release is not published
-# unless every archive and the image built and ran, and the install proof held:
-# on a clean runner of each platform the collected archives go through
-# `scripts/install.sh` and `marfa server install` (the image too, on Linux)
-# behind HTTPS, in a dry run as in a release, and nothing is published by it.
-#
-# The Homebrew formula is written every run and held with the release's files.
-# It is pushed to `withmarfa/homebrew-tap` only when the repository variable
-# `HOMEBREW_TAP` is `publish`; otherwise the tap job says so and pushes nothing.
-#
-# A dispatch with a `version` is a dry run: it runs the same builds and checks
-# a tag would, the image's included, and skips only the publish job, the
-# tap job and the image's push. It is how the workflow is exercised without a
-# tag, which only the maintainer makes; the tag path reads the version off the
-# tag and never off an input.
-#
-# The version is the tag's, and nowhere else: `scripts/release/stamp-version.sh`
-# writes it into every manifest in this checkout, which is why no manifest in
-# the repository holds one (`ci/version-fields.test.ts`). Each version is the
-# one before it plus 0.0.1, from 0.0.70, the first Rust release, which may
-# follow any released version below it; the last TypeScript release is 0.0.66,
-# and this workflow releases nothing below 0.0.70.
-#
-# The TypeScript server's emergency path: a fix to it is released from a branch
-# made at `v0.0.66`, whose own `release.yml` builds and publishes it, because
-# GitHub runs the workflow of the tagged commit. Dispatch `ci.yml` on that
-# branch first, so that the release's CI check passes.
-#
-# The image is built and booted on a runner of each platform, and for a tag
-# each runner pushes it untagged, by digest, and boots the pushed digest. The
-# publish job then tags one manifest for both, `<version>` and `latest`, and
-# boots the tag as a stranger pulls it, signed out, after the draft release
-# and before npm. The registry is written with the job's own token,
-# `packages: write`.
-#
-# npm publishes by trusting this workflow's OIDC identity, with no stored
-# token; the GitHub release uses the job's own token. Trusted publishing is
-# configured per package at npmjs.com for `@withmarfa/core` and
-# `@withmarfa/client`, and only on a package that already exists. Each
-# package's first version is published by hand from a run's artifacts, its
-# trusted publisher configured, and only then does this workflow publish
-# it. A tag before that stops at the publish job's preflight, which names
-# the package it cannot publish, with nothing sent.
-#
-# Each trusted publisher names the owner `withmarfa`, the repository
-# `marfa`, the workflow `release.yml` and no environment, and must allow
-# `npm publish`. The registry does not check the ref: this file's condition
-# on the publish job keeps publication to tags. A branch that edits it can
-# publish, so only the maintainer's tags reach it and it is reviewed like code.
+# Builds, verifies, and publishes release artifacts.
 
 on:
   push:
@@ -71,8 +12,7 @@ on:
         description: "The version a tag would carry, for a dry run that publishes nothing"
         required: true
 
-# Never cancel a release in flight. The key is per ref, so a second push of
-# the same tag queues behind the first; two different tags run side by side.
+# Never cancel a release in flight.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
@@ -92,17 +32,8 @@ jobs:
       contents: read
       actions: read
     steps:
-      # A tag has to point at a commit that went through `ci.yml` on `main`.
-      # A pull request's head passes `ci.yml` too, and under squash merges it
-      # never reaches `main`, so the run asked for is a push to `main`, not
-      # any green run on the SHA. Verifying that run is stronger than
-      # recomputing it here: the steps below would pass against the tag's
-      # own tree either way. A dispatch on the tag also counts: like a push to
-      # `main`, it runs the tree as it is, which a pull request's head did not.
-      #
-      # A dry run publishes nothing, so it asks only that `ci.yml` passed at
-      # the commit by any event, which lets a branch that changes this
-      # workflow dry-run it before it merges.
+      # A pull request's head never reaches `main` under squash merges, so a tag
+      # needs a push or dispatch run; a dry run accepts any event.
       - name: Require a green CI run for this commit
         env:
           GH_TOKEN: ${{ github.token }}
@@ -131,9 +62,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Read through the environment and held to the version grammar before
-      # anything uses it: a ref name or an input may carry characters a shell
-      # would act on if it were substituted into a script.
+      # Read through the environment: a ref name or input may carry shell characters.
       - name: Read the version off the tag
         id: version
         env:
@@ -155,27 +84,19 @@ jobs:
             echo "::error::The tag names no major.minor.patch version."
             exit 1
           fi
-          # Each version is the one before it plus 0.0.1, and the first is
-          # 0.0.1, so every version is 0.0.N, follows the highest 0.0.M below
-          # it, and has none released above it: a tag re-made in a gap is not
-          # the next version. The tag being released is on the remote already,
-          # so it is set aside. Read off the remote, which needs no history,
-          # and never through a pipe whose empty answer would fail the step
-          # unexplained.
+          # Each version is the previous plus 0.0.1. The remote is read without
+          # a pipe, whose empty answer would fail the step unexplained.
           IFS=. read -r major minor patch <<< "$version"
           if [ "$major.$minor" != "0.0" ]; then
             echo "::error::$version is not 0.0.N; every version steps by 0.0.1."
             exit 1
           fi
-          # The first Rust release, the one version that may leave a gap; main
-          # releases nothing below it.
           first_rust=70
           if [ "$patch" -lt "$first_rust" ]; then
             echo "::error::$version is below 0.0.$first_rust, the first Rust release; this workflow releases only the Rust server."
             exit 1
           fi
-          # Whether a version has a public release: "true", "false", or the
-          # step fails, so a lookup that errs is never read as either.
+          # A lookup that errs fails the step; it is never read as true or false.
           released() {
             local answer
             if answer=$(gh release view "v0.0.$1" --json isDraft --jq .isDraft 2>&1); then
@@ -197,9 +118,7 @@ jobs:
             if [ "$n" -lt "$patch" ] && [ "$n" -gt "$previous" ]; then previous="$n"; fi
             if [ "$n" -gt "$patch" ]; then above+=("$n"); fi
           done <<< "$remote_tags"
-          # A version above this one that is only tagged is waiting on this
-          # one, as two tags pushed together are; one that is released means
-          # this tag was made in a gap.
+          # A higher version that is only tagged is waiting on this one.
           for n in "${above[@]}"; do
             state=$(released "$n")
             if [ "$state" = "true" ]; then
@@ -214,12 +133,7 @@ jobs:
             echo "::error::$version does not follow the tags before it; the next version is 0.0.$expected."
             exit 1
           fi
-          # The version before it has to be released, and this commit has to
-          # come after that one's. Two tags pushed together would otherwise
-          # run side by side, and a tag on an older commit of main would
-          # release less than the version it follows. Asked of the API, which
-          # needs no history in this shallow checkout. A compare that fails
-          # fails the step rather than reading as either answer.
+          # The API answers where this shallow checkout has no history.
           if [ "$previous" -ge 0 ]; then
             state=$(released "$previous")
             if [ "$state" != "true" ]; then
@@ -235,11 +149,8 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "building $version from $GITHUB_SHA"
 
-  # The programs for macOS, with the two npm packages, built unsigned. The
-  # native readers are built from pinned sources by `build-programs.sh`, which
-  # needs cmake and ninja on the Mac and the Rust version the pins name. A
-  # cold PDFium build is the long part. Only `ci.yml` on `main` saves the
-  # native cache, and only for x86_64 Linux, so this build is cold.
+  # Only `ci.yml` on `main` saves the native cache, and only for x86_64 Linux,
+  # so this build starts with a cold PDFium.
   programs-macos:
     name: Build the programs (macOS)
     needs: version
@@ -285,9 +196,6 @@ jobs:
       - name: Key the cache on the pins, the patches and the build scripts
         id: key
         run: echo "key=marfa-native-$RUNNER_OS-${{ hashFiles('core/marfa-enrichment/native/manifest.txt', 'core/marfa-enrichment/native/patches/**', 'core/marfa-enrichment/native/build.sh', 'core/marfa-enrichment/native/pdfium.sh', 'core/marfa-enrichment/native/tesseract.sh', 'core/marfa-enrichment/native/models.sh', 'core/marfa-enrichment/native/lib.sh', 'core/marfa-enrichment/native/linux/**') }}" >> "$GITHUB_OUTPUT"
-      # Restored from `main`, and saved only from `main`: a tag's own cache
-      # could never be restored by another ref, and would only crowd out the
-      # one that can.
       - name: Restore the downloads and the PDFium library
         id: cache
         uses: actions/cache/restore@v6
@@ -297,18 +205,14 @@ jobs:
             ${{ runner.temp }}/marfa-native/archives
           key: ${{ steps.key.outputs.key }}
 
-      # The stamp's `cargo update` runs offline, so it needs every crate the
-      # lockfiles name already in the cargo cache. `--locked` refuses rather
-      # than resolving anew.
+      # The stamp's `cargo update` runs offline, so the crates must be fetched first.
       - name: Fetch the crates the lockfiles name
         run: |
           cargo fetch --locked --manifest-path core/Cargo.toml
           cargo fetch --locked --manifest-path core/bindings/swift/Cargo.toml
 
-      # Before the install, because the install records every package's
-      # version and the workspace refuses a script once one differs from
-      # that record (`verifyDepsBeforeRun`). The lockfile holds no workspace
-      # version, so a frozen install passes over the stamped manifests.
+      # Before the install: pnpm refuses a script once a manifest's version
+      # differs from the install's record (`verifyDepsBeforeRun`).
       - name: Stamp the version into every manifest
         run: bash scripts/release/stamp-version.sh "$VERSION"
 
@@ -334,7 +238,6 @@ jobs:
           bash scripts/release/hold-tarball.sh "$RUNNER_TEMP/artifacts/withmarfa-client-$VERSION.tgz" \
             dist/index.js dist/index.d.ts
 
-      # Each program is asked its version before it goes to be signed.
       - name: Build the programs
         run: |
           target=aarch64-apple-darwin
@@ -349,7 +252,6 @@ jobs:
           done
           cp "$out/marfa" "$out/marfa-server" "$out/NOTICES.txt" "$RUNNER_TEMP/artifacts/"
 
-      # The programs go to the sign job unsigned, beside the two packages.
       - name: Hold the build to the programs and the two packages
         working-directory: ${{ runner.temp }}/artifacts
         run: |
@@ -364,16 +266,8 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Signing runs in a job of its own, which installs and builds nothing, so the
-  # signing identity never shares a machine with the build's dependencies. A
-  # dry run signs and notarizes too, so a change here is proved before a tag
-  # depends on it.
-  #
-  # After notarizing, the programs are asked their version from the archive a
-  # person unpacks, and the server unpacked from it reads a text file, a PDF
-  # and a picture (`prove-reading.sh`). The server does not report how far its
-  # reader was sandboxed, so the same script also runs the signed server as its
-  # own reading child and requires the full sandbox in the child's first frame.
+  # Signing stays in its own job so the identity never shares a machine with
+  # the build's dependencies. A dry run signs too.
   sign:
     name: Sign the programs
     needs: [version, programs-macos]
@@ -416,8 +310,6 @@ jobs:
             core/marfa-enrichment/fixtures
           cp "$RUNNER_TEMP/build/withmarfa-client-$VERSION.tgz" "$RUNNER_TEMP/build/withmarfa-core-$VERSION.tgz" "$RUNNER_TEMP/artifacts/"
 
-      # Exactly the three the collect job reads, by name: an upload that only
-      # refuses an empty folder would carry a run missing one.
       - name: Hold the artifacts to the three this job makes
         working-directory: ${{ runner.temp }}/artifacts
         run: |
@@ -432,12 +324,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # The programs for Linux, built in Docker on a runner of the architecture
-  # `build-programs.sh` needs (x86_64) for each target, in a job of its own
-  # apiece, because a cold PDFium build is the long part. Both targets are
-  # linked statically against musl, which needs no particular glibc of the
-  # machine they land on. Nothing is signed, so no secret is read. Each
-  # archive is run on its own architecture by the `run-linux` job.
+  # Both targets build on x86_64 in Docker, statically linked against musl.
   programs-linux:
     name: Build the programs (${{ matrix.arch }} Linux)
     needs: version
@@ -461,15 +348,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # The first build of a target asks for 40 GB of free disk, and the
-      # runner starts with less. These are the toolchains it does not use.
+      # The first build of a target needs 40 GB of free disk.
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           df -h /
 
-      # The host only fetches crates and stamps the version; the programs are
-      # built in the pinned image.
       - name: Install the Rust version the native pins name
         run: |
           rust=$(awk '$1 == "toolchain" && $2 == "rust" { print $3 }' core/marfa-enrichment/native/manifest.txt)
@@ -493,9 +377,7 @@ jobs:
 
       - name: Choose the folder for downloads and results
         run: echo "MARFA_NATIVE_ROOT=$RUNNER_TEMP/marfa-native" >> "$GITHUB_ENV"
-      # The x86_64 key is the one `ci.yml`'s `Core native (x86_64 Linux)` job
-      # saves from `main`, so that target restores its cache. Restored from
-      # `main`, and saved only from `main`.
+      # The x86_64 key is the one `ci.yml`'s `Core native (x86_64 Linux)` job saves.
       - name: Key the cache on the pins, the patches and the build scripts
         id: key
         run: echo "key=${{ matrix.cache }}-$RUNNER_OS-${{ hashFiles('core/marfa-enrichment/native/manifest.txt', 'core/marfa-enrichment/native/patches/**', 'core/marfa-enrichment/native/build.sh', 'core/marfa-enrichment/native/pdfium.sh', 'core/marfa-enrichment/native/tesseract.sh', 'core/marfa-enrichment/native/models.sh', 'core/marfa-enrichment/native/lib.sh', 'core/marfa-enrichment/native/linux/**') }}" >> "$GITHUB_OUTPUT"
@@ -537,12 +419,8 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Each Linux archive on a runner of its own architecture, unpacked as a
-  # person would: both programs report the version, the server boots with
-  # throwaway secrets and answers `/health`, and it reads a text file, a PDF
-  # and a picture under the full sandbox (`prove-reading.sh`). This is the only
-  # job that runs the arm64 programs on arm64: the build runs them under QEMU,
-  # which cannot install the reader's seccomp filter.
+  # The only job that runs the arm64 programs on arm64: the build runs them
+  # under QEMU, which cannot install the reader's seccomp filter.
   run-linux:
     name: Run the programs (${{ matrix.arch }} Linux)
     needs: [version, programs-linux]
@@ -574,10 +452,7 @@ jobs:
       - name: Read a text file, a PDF and a picture with the server unpacked from the archive
         run: bash scripts/release/prove-reading.sh "$RUNNER_TEMP/archive/marfa-$VERSION-linux-${{ matrix.arch }}.tar.gz" core/marfa-enrichment/fixtures
 
-  # Everything a release carries, in one folder, with the checksum file for
-  # the three archives, and the Homebrew formula the release would give the
-  # tap, kept apart because it is not part of the release. Publishing waits for
-  # this job, so a release with an archive missing is never made.
+  # The formula is kept apart from the release's files because it is not part of the release.
   collect:
     name: Collect the release
     needs: [version, sign, programs-linux]
@@ -640,13 +515,8 @@ jobs:
           path: ${{ runner.temp }}/formula/marfa.rb
           if-no-files-found: error
 
-  # The server image, built from `deploy/Dockerfile` out of the release's own
-  # Linux archives and booted on a runner of its own platform, so the arm64
-  # image is the one that ran on arm64. Never pushed by a dry run. A tag pushes
-  # each platform's image untagged, by digest, which names nothing a person
-  # could pull: the tags come in the publish job, once everything else has
-  # held. The push is the same build again, answered from the builder's cache,
-  # so what was booted is what is pushed.
+  # A tag pushes each image untagged, by digest; the publish job adds the tags.
+  # The push repeats the build from the builder's cache, so what booted is what is pushed.
   image:
     name: Build the server image (${{ matrix.platform }})
     needs: [version, programs-linux]
@@ -735,8 +605,6 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ env.VERSION }}
 
-      # The bytes the registry holds, by the digest it answered, booted on the
-      # platform they were built for.
       - name: Boot the pushed image
         if: github.event_name == 'push'
         env:
@@ -766,17 +634,7 @@ jobs:
           path: ${{ runner.temp }}/digests/${{ matrix.arch }}
           if-no-files-found: error
 
-  # What a person does with a release, on a clean runner of each platform and
-  # with the files this run collected, not the ones a tag would publish:
-  # `scripts/install.sh` installs them, `marfa server install` runs the server
-  # as a service of the machine, Caddy puts HTTPS in front with a certificate
-  # authority of its own, and the owner claims the instance on the private
-  # socket. The Linux x86_64 runner does the install as root, with the system
-  # unit and the `marfa` account, and again with Docker on an image built here
-  # from the same archives. The arm64 runner runs a systemd user unit. A Mac
-  # with Docker cannot run on GitHub, so Docker on a Mac is proved by hand.
-  # It publishes nothing, and a release waits for it: an archive that does not
-  # install is not a release.
+  # A Mac with Docker cannot run on GitHub, so Docker on a Mac is proved by hand.
   install-proof:
     name: Prove the install (${{ matrix.platform }})
     needs: [version, collect]
@@ -817,28 +675,12 @@ jobs:
           read -ra modes <<< "$MODES"
           bash scripts/release/install-proof.sh "$RUNNER_TEMP/release" "$VERSION" "${modes[@]}"
 
-  # Never reached by a dry run. Ordered so a failure part way leaves what a
-  # re-run of the same tag can finish, and never a version half out: the
-  # preflight asks every registry what it holds, and every registry that
-  # will be published to is shown to trust this run, before anything is
-  # made; the draft release, which can be undone, comes next, and the image's
-  # tags with their check; the npm registry, which never takes a version
-  # back, comes after them; and the
-  # release is made public only once everything is out. Every step asks
-  # whether its version is already there and skips if it is, so a re-run
-  # repeats nothing.
+  # Ordered so a failure part way leaves what a re-run can finish: preflight,
+  # the draft release, the image tags, npm (which never takes a version back),
+  # then public. Every step skips what is already there.
   #
-  # Publishing needs the GitHub-hosted OIDC identity trusted by npm.
-  #
-  # The image's tags come right after the draft release and before npm, and
-  # are checked signed out, so a private package or an image that will not
-  # boot stops the release before any registry that never takes a version
-  # back. The images themselves were pushed by the `image` jobs, which this
-  # job waits for, so a push that failed has already stopped the release
-  # before it was drafted. A package the first push created is private until
-  # its visibility is set once in GitHub's package settings; the check fails
-  # there, and re-running this job tags again, finds the tag made, and carries
-  # on.
+  # A package the first push created is private until its visibility is set once
+  # in GitHub's package settings; the signed-out check fails there until then.
   publish:
     name: Publish
     needs: [version, collect, run-linux, image, install-proof]
@@ -853,9 +695,7 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       IMAGE: ghcr.io/withmarfa/marfa-server
     steps:
-      # Node 24's npm, rather than a newer one installed into a job that can
-      # mint publishing identities. 11.5.1 is the first npm that publishes by
-      # trusted publishing, so an older one stops the job here.
+      # 11.5.1 is the first npm that publishes by trusted publishing.
       - uses: actions/setup-node@v7
         with:
           node-version: 24
@@ -871,11 +711,8 @@ jobs:
           fi
           echo "npm $version"
 
-      # Trusted publishing is configured per package, and only on a package
-      # that exists, so a package this workflow has never published stops
-      # the job here, before anything is sent, until its first version is
-      # published by hand and its trusted publisher configured. Said plainly:
-      # what will be published, what is already there, and what cannot be.
+      # Trusted publishing needs an existing package, so a never-published one
+      # stops here until its first version is published by hand.
       - name: Say what will be published
         id: plan
         run: |
@@ -883,10 +720,8 @@ jobs:
           present=()
           missing=()
           npm_packages=()
-          # `npm view` answers a version it has, nothing for a version it has
-          # not of a package it has, and E404 for a package it has not. Each
-          # answer is assigned before it is read, so a lookup that errs fails
-          # the step rather than reading as either answer.
+          # `npm view` answers E404 for a missing package and nothing for a
+          # missing version.
           npm_state() {
             local found err
             err=$(mktemp)
@@ -922,12 +757,8 @@ jobs:
           fi
           echo "npm=${npm_packages[*]}" >> "$GITHUB_OUTPUT"
 
-      # npm checks a trusted publisher only when a publish asks for one, so a
-      # package whose publisher is missing or misspelled would otherwise be
-      # found only after another package had gone out. This asks npm for the same
-      # exchange `npm publish` makes, for each package about to be
-      # published, and publishes nothing: the token it answers with expires
-      # unused.
+      # npm checks a trusted publisher only on publish, so this makes the same
+      # exchange first and publishes nothing; the token expires unused.
       - name: Require npm to trust this run
         if: steps.plan.outputs.npm != ''
         env:
@@ -967,17 +798,9 @@ jobs:
           name: release-${{ needs.version.outputs.version }}
           path: artifacts
 
-      # The notes open with what a build does to a database an earlier or
-      # later build wrote (`scripts/release/upgrade-note.md`), and the
-      # generated notes follow.
-      #
-      # A draft, so it can be removed, and seen by nobody until it is made
-      # public at the end. A release already there keeps every file it holds,
-      # which are the ones a registry may already have: re-running the failed
-      # job reads this run's artifacts, but a full re-run builds them again.
-      # A draft is given only the files it lacks; a public one is left alone.
-      # A lookup that errs fails the step rather than reading as no release,
-      # which would make a second draft for the same tag.
+      # A release already there keeps the files it holds, which a registry may
+      # already have: a full re-run rebuilds them. A draft is given only the
+      # files it lacks; a public one is left alone.
       - name: Draft the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1006,10 +829,7 @@ jobs:
             exit 1
           fi
 
-      # What the release holds, not what this run built: a re-run after a
-      # partial upload rebuilds the archives, and a draft keeps the files it
-      # already has, so the checksum file could describe other archives than
-      # the ones a person downloads.
+      # Read from the release, not this run: a draft keeps files from an earlier run's build.
       - name: Check the release's archives against its checksums
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1032,12 +852,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # One manifest for both platforms, under the version and `latest`. A
-      # version already tagged is left as it is, since a tag is not moved once
-      # made, and `latest` follows the version tag either way, so a re-run that
-      # stopped between the two finishes. The lookup answers "not found" for a
-      # tag that is not there, and any other answer fails the step rather than
-      # reading as either.
+      # A version tag is never moved once made; `latest` follows it either way.
       - name: Tag the server image
         run: |
           for arch in amd64 arm64; do
@@ -1058,10 +873,7 @@ jobs:
           fi
           docker buildx imagetools create -t "$IMAGE:latest" "$IMAGE:$VERSION"
 
-      # As a person pulls it: signed out, so a package that is private
-      # fails here, with what to change, and the draft release stays a draft.
-      # It names both platforms, `latest` is the version's own manifest, and
-      # the image boots and reports this release.
+      # Signed out, as a person pulls it, so a private package fails here.
       - name: Check the published server image
         run: |
           docker logout ghcr.io
@@ -1083,8 +895,6 @@ jobs:
           fi
           scripts/check-image.sh "$IMAGE:$VERSION" "$VERSION"
 
-      # By trusted publishing: npm exchanges the job's OIDC identity itself,
-      # so no token is set anywhere.
       - name: Publish @withmarfa/core and @withmarfa/client to npm
         run: |
           for package in core client; do
@@ -1108,16 +918,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release edit "v$VERSION" --draft=false
 
-  # The Homebrew formula follows the public release: `brew install
-  # withmarfa/tap/marfa` installs the archive of this version for the machine,
-  # by the checksum file the release carries. It runs after the release is
-  # public, so a formula never names an archive a person cannot download, and
-  # a failure here leaves the release as it is; run the job again.
-  #
-  # The formula is always written and shown. It is pushed only when the
-  # repository variable `HOMEBREW_TAP` is `publish`, because a push makes
-  # `brew upgrade` install this version, and a machine whose folder watch runs
-  # Homebrew's `marfa` against another server would break.
+  # Pushed only when `HOMEBREW_TAP` is `publish`: a push makes `brew upgrade`
+  # install this version, which would break a machine whose folder watch runs
+  # Homebrew's `marfa` against another server.
   tap:
     name: Update the Homebrew tap
     needs: [version, publish]
@@ -1150,8 +953,7 @@ jobs:
         run: |
           bash scripts/release/write-formula.sh "$VERSION" "marfa-$VERSION-checksums.txt" > "$RUNNER_TEMP/marfa.rb"
           cat "$RUNNER_TEMP/marfa.rb"
-      # A fine-grained token with Contents read and write on withmarfa/homebrew-tap
-      # only, kept as an Actions secret of this repository.
+      # Needs Contents read and write on withmarfa/homebrew-tap only.
       - name: Require the tap token
         if: steps.gate.outputs.push == 'true'
         env:

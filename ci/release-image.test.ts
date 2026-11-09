@@ -1,10 +1,4 @@
-/**
- * A release publishes the server image, and nothing about it can leave a
- * version half out. The image is built and booted on a runner of each
- * platform before a tag is spent; a dry run builds and boots the same image
- * and pushes nothing; and the image reaches the registry, and is checked
- * there, before the GitHub release is made public.
- */
+// Exercises the workflow's server image jobs.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
