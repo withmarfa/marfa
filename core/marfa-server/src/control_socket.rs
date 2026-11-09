@@ -676,10 +676,10 @@ mod tests {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
-    #[ignore = "sets ACLs on /: run it alone, as root, in a throwaway Linux container"]
+    #[ignore = "sets ACLs on /: run it alone, as root, in a throwaway Linux container, with MARFA_TEST_CHANGE_ROOT=1"]
     fn a_root_folder_whose_acl_lets_another_account_write_is_refused() {
-        if me() != 0 {
-            eprintln!("skipped: only root can set an ACL on /");
+        if me() != 0 || std::env::var_os("MARFA_TEST_CHANGE_ROOT").is_none_or(|set| set != "1") {
+            eprintln!("skipped: it changes /, so it needs root and MARFA_TEST_CHANGE_ROOT=1");
             return;
         }
         let (_dir, root) = private_root();
