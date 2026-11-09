@@ -203,6 +203,7 @@ fn queue(
         }
         let judge = Judge {
             caller: &each.caller,
+            levers: each.caller.levers()?,
             rules: &context.catalog.rules,
             read_only: context.read_only,
             filter: &UNFILTERED,

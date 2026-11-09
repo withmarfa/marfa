@@ -1,4 +1,4 @@
-//! Folder settings and sync status; browser cookies grant no access.
+//! Folder settings and sync status.
 
 use std::sync::Arc;
 
@@ -101,18 +101,10 @@ async fn updating(id: String, body: &ReadBody) -> Result<FolderChange> {
     })
 }
 
-/// A cookie is no credential here: the owner reaches these doors by the private socket or by a key.
-fn not_a_browser(caller: &Caller) -> Result<()> {
-    match caller {
-        Caller::Owner(_) => Err(unauthorized()),
-        _ => Ok(()),
-    }
-}
-
 /// A write answers to a key or an app's token, whose type map decides it.
 fn within_a_map(caller: &Caller) -> Result<()> {
     match caller {
-        Caller::Owner(_) | Caller::Local(_) => Err(unauthorized()),
+        Caller::Local(_) => Err(unauthorized()),
         _ => caller.require_folder_write(),
     }
 }
@@ -175,7 +167,6 @@ pub async fn report(
     uri: Uri,
     body: JsonBody,
 ) -> Answer {
-    not_a_browser(&caller)?;
     caller.require_reach()?;
     query::only(&uri, &[])?;
     let sent = body.read().await?.object(Bag::Properties)?;
@@ -191,7 +182,6 @@ pub async fn status(
     Named(id): Named<String>,
     uri: Uri,
 ) -> Answer {
-    not_a_browser(&caller)?;
     caller.require_reach()?;
     query::only(&uri, &[])?;
     check_item_id(&id)?;
@@ -203,7 +193,6 @@ pub async fn status(
 pub async fn inventory(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
     match &caller {
         Caller::Local(_) => {}
-        Caller::Owner(_) => return Err(unauthorized().into()),
         _ => {
             return Err(Refusal::new(
                 Code::Forbidden,

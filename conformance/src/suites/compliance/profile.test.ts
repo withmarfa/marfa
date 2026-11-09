@@ -8,7 +8,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { controlRequest } from "../../utils/control-request.js";
+import { controlRequest, localFetch } from "../../utils/control-request.js";
 import { TEST_OWNER } from "../../utils/target.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { png } from "../../utils/pictures.js";
@@ -26,13 +26,9 @@ afterAll(async () => {
   await server?.stop();
 }, FRESH_SERVER_TIMEOUT_MS);
 function owner(body: unknown) {
-  return fetch(server.apiUrl + "/owner", {
+  return localFetch(server.controlSocket, server.apiUrl + "/owner", {
     method: "PATCH",
-    headers: {
-      "content-type": "application/json",
-      origin: server.apiUrl,
-      cookie: server.ownerCookie,
-    },
+    headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
 }
@@ -86,7 +82,7 @@ describe("owner and delegated profile changes", () => {
     expect((await signin("changed.owner@example.test")).status).toBe(200);
     expect(
       (
-        await fetch(server.apiUrl + "/owner", {
+        await fetch(server.apiUrl + "/owner/passkeys", {
           headers: { cookie: server.ownerCookie },
         })
       ).status,
@@ -155,7 +151,7 @@ describe("owner and delegated profile changes", () => {
     expect(result).toEqual({ ok: true });
     await expectMatchesSchema("PATCH", "/profile", 200, result);
   });
-  it("requires a recent direct owner and refuses explicit email-write grants", async () => {
+  it("requires the private local command and refuses explicit email-write grants", async () => {
     for (const path of ["/owner", "/profile"]) {
       const unauthenticated = await fetch(server.apiUrl + path, {
         method: "PATCH",
@@ -167,20 +163,19 @@ describe("owner and delegated profile changes", () => {
       expect(body).toMatchObject({ error: { code: "unauthorized" } });
       await expectMatchesSchema("PATCH", path, 401, body);
     }
-    expect(
-      (
-        await fetch(server.apiUrl + "/owner", {
-          method: "PATCH",
-          headers: {
-            "content-type": "application/json",
-            authorization: `Bearer ${server.workingKey}`,
-            cookie: server.ownerCookie,
-            origin: server.apiUrl,
-          },
-          body: JSON.stringify({ name: "No" }),
-        })
-      ).status,
-    ).toBe(403);
+    // The owner's browser session counts here as no credential, and a key is
+    // refused.
+    for (const [headers, status] of [
+      [{ cookie: server.ownerCookie, origin: server.apiUrl }, 401],
+      [{ authorization: `Bearer ${server.workingKey}` }, 403],
+    ] as const) {
+      const refused = await fetch(server.apiUrl + "/owner", {
+        method: "PATCH",
+        headers: { "content-type": "application/json", ...headers },
+        body: JSON.stringify({ name: "No" }),
+      });
+      expect(refused.status).toBe(status);
+    }
     for (const profile_permissions of [
       { email: "write" },
       { unknown: "read" },
@@ -195,8 +190,6 @@ describe("owner and delegated profile changes", () => {
       });
       expect(refused.status).toBe(400);
     }
-    await server.advanceClock(300_001);
-    expect((await owner({ name: "Too old" })).status).toBe(403);
     const local = await controlRequest(server.controlSocket, "/owner", {
       method: "PATCH",
       body: { name: "Local owner" },

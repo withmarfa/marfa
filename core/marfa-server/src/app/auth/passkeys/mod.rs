@@ -153,7 +153,7 @@ fn ask_for_a_resident_key(options: &mut Value, excluded: Vec<String>) {
 }
 
 pub async fn begin_adding(app: Arc<App>, caller: &Caller) -> Result<Begun> {
-    caller.require_direct()?;
+    caller.require_owner()?;
     let salt = app.settings.start.key_salt.clone();
     let now_app = app.clone();
     app.write(caller, CHALLENGE_ISSUED, move |unit| {
@@ -195,7 +195,7 @@ pub struct Adding {
 }
 
 pub async fn add(app: Arc<App>, caller: &Caller, adding: Adding) -> Result<Listed> {
-    caller.require_direct()?;
+    caller.require_owner()?;
     let name = adding.name.as_deref().map(passkey_name).transpose()?;
     let salt = app.settings.start.key_salt.clone();
     let now_app = app.clone();
@@ -518,12 +518,12 @@ pub async fn confirm(
 }
 
 pub async fn list(app: &App, caller: &Caller) -> Result<Vec<Listed>> {
-    caller.require_direct()?;
+    caller.require_owner()?;
     app.db.read(store::all).await
 }
 
 pub async fn rename(app: &App, caller: &Caller, id: String, name: &str) -> Result<Listed> {
-    caller.require_direct()?;
+    caller.require_owner()?;
     let name = passkey_name(name)?;
     app.write(caller, RENAMED, move |unit| {
         unit.caller.require_recent(&unit.at)?;
@@ -535,7 +535,7 @@ pub async fn rename(app: &App, caller: &Caller, id: String, name: &str) -> Resul
 }
 
 pub async fn remove(app: &App, caller: &Caller, id: String) -> Result<()> {
-    caller.require_direct()?;
+    caller.require_owner()?;
     app.write(caller, REMOVED, move |unit| {
         unit.caller.require_recent(&unit.at)?;
         if !store::remove(unit.tx(), &id)? {

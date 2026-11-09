@@ -6,8 +6,15 @@ use std::time::Duration;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{HeaderMap, Method, Request, StatusCode, header};
+use marfa_server::app::access::Caller;
+use marfa_server::app::auth::Visit;
+use marfa_server::app::auth::sign_ins;
+use marfa_server::app::keys;
 use marfa_server::app::oauth::authorize::sign_in_then;
+use marfa_server::app::oauth::grants::{self, Narrowing};
+use marfa_server::app::oauth::scope::ScopeSet;
 use marfa_server::app::oauth::signed_link;
+use marfa_server::app::refusal::Code;
 use marfa_server::app::{App, housekeeping};
 use marfa_server::db::Write;
 use marfa_server::http::{control, public};
@@ -396,10 +403,8 @@ impl Instance {
     }
 
     async fn grant_and_browser_stand(&self, client: &str, scope: &str) {
-        let session = self
-            .send(get("/auth/get-session", Some(&self.cookie)))
-            .await;
-        assert_eq!(session.json()["user"]["email"], EMAIL, "{}", session.text);
+        let session = self.send(get("/owner/passkeys", Some(&self.cookie))).await;
+        assert_eq!(session.status, StatusCode::OK, "{}", session.text);
         let reply = self.authorize(client, scope, CALLBACK).await;
         assert!(code_in(&reply).is_some(), "{:?}", reply.location());
     }
@@ -952,7 +957,7 @@ async fn the_item_door_still_refuses_a_grant_a_person_did_not_approve() {
 }
 
 #[tokio::test]
-async fn a_browser_reads_counts_and_no_other_content_door() {
+async fn a_browser_session_reaches_no_content_door() {
     let instance = Instance::signed_in().await;
     let by_owner = |path: &str| {
         Request::builder()
@@ -961,9 +966,16 @@ async fn a_browser_reads_counts_and_no_other_content_door() {
             .body(Body::empty())
             .unwrap()
     };
-    let counts = instance.send(by_owner("/items/stats")).await;
-    assert_eq!(counts.status, StatusCode::OK, "{}", counts.text);
-    for path in ["/items", "/edges", "/search?q=kept", "/metadata/tags"] {
+    // The witness: the same session counts on the passkey page's list.
+    let page = instance.send(by_owner("/owner/passkeys")).await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.text);
+    for path in [
+        "/items/stats",
+        "/items",
+        "/edges",
+        "/search?q=kept",
+        "/metadata/tags",
+    ] {
         let refused = instance.send(by_owner(path)).await;
         assert_eq!(refused.status, StatusCode::UNAUTHORIZED, "{path}");
     }
@@ -1053,20 +1065,24 @@ async fn an_app_cannot_write_a_system_type_its_scope_names() {
 }
 
 #[tokio::test]
-async fn the_instance_levers_hold_for_an_owner_and_an_app() {
+async fn the_instance_levers_hold_for_a_key_and_an_app() {
     let instance = Instance::signed_in().await;
     let client = instance.register(OFFLINE_NOTES).await;
     let issued = instance.tokens(&client, OFFLINE_NOTES).await;
     let token = text_at(&issued, "access_token");
     let written = instance.write_note(token).await;
     assert_eq!(written.status, StatusCode::CREATED, "{}", written.text);
+    let body = json!({
+        "label": "a reader",
+        "source": "a-reader",
+        "type_permissions": { "core.note": "read" },
+    });
+    let minted = instance.local(post_json("/keys", &body)).await;
+    assert_eq!(minted.status, StatusCode::CREATED, "{}", minted.text);
+    let reader = text_at(&minted.json(), "key").to_string();
 
     let counted = async || {
-        let request = Request::builder()
-            .uri("/items/stats?type=core.note")
-            .header(header::COOKIE, &instance.cookie)
-            .body(Body::empty())
-            .unwrap();
+        let request = from_token(Method::GET, "/items/stats?type=core.note", &reader);
         let reply = instance.send(request).await;
         assert_eq!(reply.status, StatusCode::OK, "{}", reply.text);
         reply.json()
@@ -1658,12 +1674,9 @@ async fn registration_answers_a_page_only_for_the_post_it_serves() {
     );
 }
 
-fn from_owner(method: Method, path: &str, cookie: &str, body: Option<&Value>) -> Request<Body> {
-    let request = Request::builder()
-        .method(method)
-        .uri(path)
-        .header(header::ORIGIN, ORIGIN)
-        .header(header::COOKIE, cookie);
+/// A request through the private local command, which carries no credential.
+fn from_local(method: Method, path: &str, body: Option<&Value>) -> Request<Body> {
+    let request = Request::builder().method(method).uri(path);
     match body {
         Some(body) => request
             .header(header::CONTENT_TYPE, "application/json")
@@ -1683,9 +1696,13 @@ fn from_token(method: Method, path: &str, token: &str) -> Request<Body> {
 }
 
 impl Instance {
+    async fn local(&self, request: Request<Body>) -> Reply {
+        send(control(self.app.clone()), request).await
+    }
+
     async fn grant_of(&self, client: &str) -> Value {
         let listed = self
-            .send(from_owner(Method::GET, "/auth/grants", &self.cookie, None))
+            .local(from_local(Method::GET, "/auth/grants", None))
             .await;
         assert_eq!(listed.status, StatusCode::OK, "{}", listed.text);
         let rows = listed.json()["data"].as_array().unwrap().clone();
@@ -1697,24 +1714,18 @@ impl Instance {
     async fn narrow(&self, grant: &Value, scopes: &[&str], expected: &[&str]) -> Reply {
         let path = format!("/auth/grants/{}", text_at(grant, "id"));
         let body = json!({ "scopes": scopes, "expected_scopes": expected });
-        self.send(from_owner(Method::PATCH, &path, &self.cookie, Some(&body)))
+        self.local(from_local(Method::PATCH, &path, Some(&body)))
             .await
     }
 
     async fn end_grant(&self, grant: &Value) -> Reply {
         let path = format!("/auth/grants/{}", text_at(grant, "id"));
-        self.send(from_owner(Method::DELETE, &path, &self.cookie, None))
-            .await
+        self.local(from_local(Method::DELETE, &path, None)).await
     }
 
     async fn sign_ins(&self) -> Vec<Value> {
         let listed = self
-            .send(from_owner(
-                Method::GET,
-                "/owner/sign-ins",
-                &self.cookie,
-                None,
-            ))
+            .local(from_local(Method::GET, "/owner/sign-ins", None))
             .await;
         assert_eq!(listed.status, StatusCode::OK, "{}", listed.text);
         listed.json()["data"].as_array().unwrap().clone()
@@ -1722,8 +1733,7 @@ impl Instance {
 
     async fn end_sign_in(&self, id: &str) -> Reply {
         let path = format!("/owner/sign-ins/{id}");
-        self.send(from_owner(Method::DELETE, &path, &self.cookie, None))
-            .await
+        self.local(from_local(Method::DELETE, &path, None)).await
     }
 
     async fn key_holding(&self, permissions: &[&str]) -> Value {
@@ -2369,10 +2379,10 @@ async fn a_failed_audit_undoes_an_ending_through_either_door() {
 }
 
 #[tokio::test]
-async fn a_session_ending_itself_keeps_its_cookie_until_the_ending_commits() {
+async fn a_failed_audit_keeps_a_browser_session_and_a_retry_ends_it() {
     let instance = Instance::signed_in().await;
     let rows = instance.sign_ins().await;
-    let own = rows.iter().find(|row| row["current"] == true).unwrap();
+    let own = rows.iter().find(|row| row["kind"] == "browser").unwrap();
     let id = text_at(own, "id");
 
     let aim = Some("auth.session.delete");
@@ -2380,52 +2390,18 @@ async fn a_session_ending_itself_keeps_its_cookie_until_the_ending_commits() {
     let failed = instance.end_sign_in(id).await;
     instance.app.faults.clear(None);
     assert!(failed.status.is_server_error(), "{}", failed.text);
-    assert_eq!(failed.cookie(), None);
     assert_eq!(instance.sign_ins().await.len(), rows.len());
+    let page = instance
+        .send(get("/owner/passkeys", Some(&instance.cookie)))
+        .await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.text);
 
     let ended = instance.end_sign_in(id).await;
     assert_eq!(ended.status, StatusCode::OK, "{}", ended.text);
-    let cleared = ended.headers.get(header::SET_COOKIE).unwrap();
-    assert!(cleared.to_str().unwrap().contains("Max-Age=0"));
     let after = instance
-        .send(from_owner(
-            Method::GET,
-            "/owner/sign-ins",
-            &instance.cookie,
-            None,
-        ))
+        .send(get("/owner/passkeys", Some(&instance.cookie)))
         .await;
     assert_eq!(after.status, StatusCode::UNAUTHORIZED, "{}", after.text);
-}
-
-#[tokio::test]
-async fn an_older_session_ending_another_is_held_to_recency_and_ending_itself_is_not() {
-    let instance = Instance::signed_in().await;
-    let other = instance.sign_in_again().await;
-    let rows = instance.sign_ins().await;
-    let own = rows.iter().find(|row| row["current"] == true).unwrap();
-    let another = rows.iter().find(|row| row["current"] == false).unwrap();
-    assert_eq!(rows.len(), 2);
-    instance.app.clock.advance(6 * 60_000).unwrap();
-
-    let refused = instance.end_sign_in(text_at(another, "id")).await;
-    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.text);
-    let path = format!("/owner/sign-ins/{}?revoke_keys=true", text_at(own, "id"));
-    let asked_keys = instance
-        .send(from_owner(Method::DELETE, &path, &instance.cookie, None))
-        .await;
-    assert_eq!(
-        asked_keys.status,
-        StatusCode::FORBIDDEN,
-        "{}",
-        asked_keys.text
-    );
-    let ended = instance.end_sign_in(text_at(own, "id")).await;
-    assert_eq!(ended.status, StatusCode::OK, "{}", ended.text);
-    let still = instance
-        .send(from_owner(Method::GET, "/owner/sign-ins", &other, None))
-        .await;
-    assert_eq!(still.status, StatusCode::OK, "{}", still.text);
 }
 
 #[tokio::test]
@@ -2449,12 +2425,7 @@ async fn a_dead_key_is_no_sign_in_and_its_ending_names_nothing() {
     let path = format!("/owner/sign-ins/{id}");
     let body = json!({ "name": "too late" });
     let renamed = instance
-        .send(from_owner(
-            Method::PATCH,
-            &path,
-            &instance.cookie,
-            Some(&body),
-        ))
+        .local(from_local(Method::PATCH, &path, Some(&body)))
         .await;
     assert_eq!(renamed.status, StatusCode::NOT_FOUND, "{}", renamed.text);
 }
@@ -2608,7 +2579,7 @@ async fn a_foreign_form_neither_uses_nor_renews_a_session() {
 
     assert_eq!(instance.count(last_use).await, before);
     let own = instance
-        .send(get("/auth/get-session", Some(&instance.cookie)))
+        .send(get("/owner/passkeys", Some(&instance.cookie)))
         .await;
     assert_eq!(own.cookie().as_ref(), Some(&instance.cookie));
 }
@@ -3040,21 +3011,17 @@ async fn the_source_an_app_writes_under_shows_its_sign_in_name() {
     assert!(code.starts_with("oauth:"), "{code}");
 
     let path = format!("/source?{}", encoded(&[("source", &code)]));
-    let read = instance
-        .send(from_owner(Method::GET, &path, &instance.cookie, None))
-        .await;
+    let read = instance.local(from_local(Method::GET, &path, None)).await;
     assert_eq!(read.status, StatusCode::OK, "{}", read.text);
     assert_eq!(read.json(), *own);
 
     let grant = instance.grant_of(&client).await;
     let ended = instance.end_grant(&grant).await;
     assert!(ended.status.is_success(), "{}", ended.text);
-    let read = instance
-        .send(from_owner(Method::GET, &path, &instance.cookie, None))
-        .await;
+    let read = instance.local(from_local(Method::GET, &path, None)).await;
     assert_eq!(read.json()["name_from"], "code", "{}", read.text);
     let listed = instance
-        .send(from_owner(Method::GET, "/sources", &instance.cookie, None))
+        .local(from_local(Method::GET, "/sources", None))
         .await;
     assert!(!listed.text.contains(&code), "{}", listed.text);
 }
@@ -3530,4 +3497,96 @@ async fn the_error_page_explains_each_code_and_shows_nothing_of_the_request() {
         assert!(!page.text.contains(planted), "{code}: {}", page.text);
         assert!(!page.text.contains(unexplained), "{code}");
     }
+}
+
+impl Instance {
+    /// A key that holds the permission each of these writes asks, which only the private local command may use.
+    async fn key_caller(&self) -> (Caller, String) {
+        let key = self.key_holding(&["grants.manage", "keys.manage"]).await;
+        let found = keys::authenticate(&self.app, text_at(&key, "key"))
+            .await
+            .unwrap()
+            .unwrap();
+        (
+            Caller::Key(Box::new(found)),
+            text_at(&key, "id").to_string(),
+        )
+    }
+}
+
+fn only_local(refused: Result<impl std::fmt::Debug, marfa_server::app::refusal::Refusal>) {
+    let refusal = refused.unwrap_err();
+    assert_eq!(refusal.code, Code::Forbidden, "{refusal:?}");
+}
+
+#[tokio::test]
+async fn a_key_cannot_narrow_a_grant_inside_the_write() {
+    let instance = Instance::signed_in().await;
+    let client = instance.register("core.note:read core.note:write").await;
+    instance
+        .tokens(&client, "core.note:read core.note:write")
+        .await;
+    let grant = instance.grant_of(&client).await;
+    let (caller, _) = instance.key_caller().await;
+    let both = ScopeSet::parse("core.note:read core.note:write");
+    let asked = Narrowing {
+        scopes: ScopeSet::parse("core.note:read"),
+        expected: both.clone(),
+    };
+
+    let refused = grants::narrow(
+        &instance.app,
+        &caller,
+        text_at(&grant, "id").to_string(),
+        asked,
+    )
+    .await;
+    only_local(refused);
+    assert_eq!(instance.grant_of(&client).await["scopes"], grant["scopes"]);
+
+    let witness = instance
+        .narrow(
+            &grant,
+            &["core.note:read"],
+            &["core.note:read", "core.note:write"],
+        )
+        .await;
+    assert_eq!(witness.status, StatusCode::OK, "{}", witness.text);
+}
+
+#[tokio::test]
+async fn a_key_cannot_end_or_rename_a_sign_in_inside_the_write() {
+    let instance = Instance::signed_in().await;
+    let client = instance.register(NOTES).await;
+    instance.tokens(&client, NOTES).await;
+    let grant = instance.grant_of(&client).await;
+    let (caller, key_id) = instance.key_caller().await;
+    let before = instance.sign_ins().await;
+
+    for id in [text_at(&grant, "id"), key_id.as_str()] {
+        let ended = sign_ins::end(
+            &instance.app,
+            &caller,
+            id.to_string(),
+            false,
+            Visit::default(),
+        )
+        .await;
+        only_local(ended);
+        let renamed =
+            sign_ins::rename(&instance.app, &caller, id.to_string(), "taken".into()).await;
+        only_local(renamed);
+    }
+    assert_eq!(instance.sign_ins().await.len(), before.len());
+    assert!(
+        instance
+            .sign_ins()
+            .await
+            .iter()
+            .any(|row| row["id"] == grant["id"])
+    );
+    assert_eq!(instance.grant_of(&client).await["id"], grant["id"]);
+
+    let witness = instance.end_sign_in(text_at(&grant, "id")).await;
+    assert_eq!(witness.status, StatusCode::OK, "{}", witness.text);
 }

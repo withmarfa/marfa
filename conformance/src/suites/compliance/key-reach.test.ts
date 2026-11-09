@@ -8,7 +8,6 @@ import {
   trackKey,
   cleanup,
 } from "../../utils/setup.js";
-import { TEST_OWNER } from "../../utils/target.js";
 import {
   approvedAppToken,
   bootFreshServer,
@@ -391,8 +390,7 @@ describe("a key reaches only the keys it could have minted", () => {
         expect(made.status, JSON.stringify(made.error)).toBe(201);
         const owner = new MarfaClient({
           baseUrl: server.apiUrl,
-          ownerCookie: server.ownerCookie,
-          ownerCredentials: TEST_OWNER,
+          controlSocket: server.controlSocket,
         });
         const widened = await owner.updateKey(made.data.id, {
           permissions: ["audit.read"],

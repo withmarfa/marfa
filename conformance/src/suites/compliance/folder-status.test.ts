@@ -890,6 +890,12 @@ describe("folder sync reports", () => {
     const id = await folder();
     await put(id);
     const cookie = await signIn(server, origin);
+    // The witness: the same cookie is the owner on the passkey page's own door.
+    const own = await fetch(`${server.apiUrl}/owner/passkeys`, {
+      headers: { cookie },
+    });
+    expect(own.status).toBe(200);
+    await own.body?.cancel();
     for (const [method, path, body] of [
       ["GET", "/folders", undefined],
       ["POST", "/folders", { title: "From a browser" }],

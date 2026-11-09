@@ -89,7 +89,7 @@ it("restores an archive after writes land between its item pages", async () => {
     expect(items.map((item) => item.id)).not.toContain(added.data.item.id);
     const owner = new MarfaClient({
       baseUrl: target.apiUrl,
-      ownerCookie: target.ownerCookie,
+      controlSocket: target.controlSocket,
     });
     const restored = await owner.restoreArchive(exported.data);
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
@@ -177,7 +177,7 @@ it("restores a custom type retyped away and deleted between archive pages", asyn
       try {
         const owner = new MarfaClient({
           baseUrl: destination.apiUrl,
-          ownerCookie: destination.ownerCookie,
+          controlSocket: destination.controlSocket,
         });
         const restored = await owner.restoreArchive(archive.data);
         expect(
@@ -301,7 +301,7 @@ it("retries an incompatible selection from the beginning and restores every item
   expect(exported.status).toBe(200);
   const owner = new MarfaClient({
     baseUrl: target.apiUrl,
-    ownerCookie: target.ownerCookie,
+    controlSocket: target.controlSocket,
   });
   const restored = await owner.restoreArchive(exported.data);
   expect(restored.status, JSON.stringify(restored.error)).toBe(200);

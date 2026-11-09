@@ -1,6 +1,5 @@
 import { TEST_OWNER as OWNER } from "../../utils/target.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { MarfaClient } from "../../client/api.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -9,10 +8,9 @@ import {
 import { issuerOrigin } from "../../utils/signed-in.js";
 
 /**
- * The sign-in library's routes Marfa does not use, and the password check
- * that remains on one it does. Each case needs the owner signed in, and the
- * password limits count per address over a window, so this file boots a
- * server of its own that believes a header naming the client's address.
+ * The sign-in library's routes Marfa does not use. The case needs the owner
+ * signed in, so this file boots a server of its own that believes a header
+ * naming the client's address.
  */
 let server: FreshServer;
 let origin: string;
@@ -68,6 +66,10 @@ const UNUSED = [
   "/update-user",
   "/delete-user",
   "/delete-user/callback",
+  "/get-session",
+  "/revoke-sessions",
+  "/revoke-other-sessions",
+  "/change-password",
   "/list-sessions",
   "/list-accounts",
   "/revoke-session",
@@ -82,8 +84,7 @@ const UNUSED = [
   // And a path nobody registered.
   "/not-a-route",
   // Served routes spelled with a percent-escape, which name no route.
-  "/change%2Dpassword",
-  "/revoke%2Dsessions",
+  "/sign%2Dout",
   "/sign%2Din/email",
   "/oauth2/%74oken",
 ];
@@ -91,14 +92,12 @@ const UNUSED = [
 describe("the sign-in library's routes", () => {
   it("answer 404 not_found on every path no Marfa client uses, either spelling, to a signed-in owner", async () => {
     const cookie = await cookieFrom("192.0.2.1");
-    // The witness: the same session is answered where Marfa serves the library.
-    const session = await fetch(`${server.apiUrl}/auth/get-session`, {
-      headers: { cookie },
+    // The witness: the same session is answered where Marfa serves a page.
+    const session = await fetch(`${server.apiUrl}/owner/passkeys`, {
+      headers: { cookie, [CLIENT_HEADER]: "192.0.2.1" },
     });
     expect(session.status).toBe(200);
-    expect(
-      ((await session.json()) as { user?: { email?: string } }).user?.email,
-    ).toBe(OWNER.email);
+    await session.body?.cancel();
 
     for (const path of UNUSED) {
       for (const spelling of [path, `${path}/`]) {
@@ -127,75 +126,5 @@ describe("the sign-in library's routes", () => {
         }
       }
     }
-  });
-});
-
-describe("the owner's password change", () => {
-  async function change(
-    cookie: string,
-    from: string,
-    to: string,
-    address: string,
-  ): Promise<Response> {
-    return fetch(`${server.apiUrl}/auth/change-password`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        origin,
-        cookie,
-        [CLIENT_HEADER]: address,
-      },
-      body: JSON.stringify({ currentPassword: from, newPassword: to }),
-    });
-  }
-
-  const failures = async (): Promise<number> => {
-    const page = await new MarfaClient({
-      baseUrl: server.apiUrl,
-      apiKey: server.managementKey,
-    }).listAudit({ action: "owner.password.change_failed", limit: 200 });
-    expect(page.status, JSON.stringify(page.error)).toBe(200);
-    return page.data.data.length;
-  };
-
-  it("holds the current password to the sign-in limits and records each refusal", async () => {
-    const guesser = "203.0.113.40";
-    const cookie = await cookieFrom(guesser);
-    // The witness: the right current password changes it, and back.
-    const changed = await change(
-      cookie,
-      OWNER.password,
-      `${OWNER.password} again`,
-      guesser,
-    );
-    expect(changed.status).toBe(200);
-    expect(
-      (await change(cookie, `${OWNER.password} again`, OWNER.password, guesser))
-        .status,
-    ).toBe(200);
-
-    const before = await failures();
-    for (let i = 0; i < 10; i++) {
-      const wrong = await change(
-        cookie,
-        `guess ${String(i)}`,
-        "x".repeat(20),
-        guesser,
-      );
-      expect(wrong.status, `guess ${String(i)}`).toBe(401);
-      await wrong.body?.cancel();
-    }
-    expect(await failures()).toBe(before + 10);
-    const limited = await change(cookie, "guess 10", "x".repeat(20), guesser);
-    expect(limited.status).toBe(429);
-    expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(0);
-    // Answered before the password is judged.
-    const right = await change(cookie, OWNER.password, "x".repeat(20), guesser);
-    expect(right.status).toBe(429);
-    expect(await failures()).toBe(before + 12);
-    // The guesses count where a sign-in counts.
-    expect((await signIn(OWNER.password, guesser)).status).toBe(429);
-    // The owner, elsewhere, signs in.
-    expect((await signIn(OWNER.password, "198.51.100.41")).status).toBe(200);
   });
 });

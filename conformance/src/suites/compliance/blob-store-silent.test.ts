@@ -14,7 +14,6 @@ import {
   runJob,
 } from "../../utils/own-blob-server.js";
 import { damageBlobs } from "../../utils/store-faults.js";
-import { TEST_OWNER } from "../../utils/target.js";
 import { waitFor } from "../../utils/wait.js";
 
 /**
@@ -127,8 +126,7 @@ function owner(): MarfaClient {
   return new MarfaClient({
     baseUrl: server.apiUrl,
     apiKey: "",
-    ownerCookie: server.ownerCookie,
-    ownerCredentials: TEST_OWNER,
+    controlSocket: server.controlSocket,
   });
 }
 
@@ -213,7 +211,7 @@ describe("a store's delete that does not answer", () => {
     const content = bytesOf("deleted while the store hangs", 120);
     const hash = await replicated("deleted while the store hangs", content);
     const s3 = await objectStore();
-    const exported = await owner().exportArchive();
+    const exported = await working.exportArchive();
     expect(exported.status, JSON.stringify(exported.error)).toBe(200);
     const archive = exported.data;
     // The drop's own delete fails, so the deletion stays queued for a run.

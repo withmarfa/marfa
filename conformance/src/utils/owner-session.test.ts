@@ -2,38 +2,42 @@ import { afterEach, expect, it, vi } from "vitest";
 import { authenticateOwner } from "../client/owner-session.js";
 
 afterEach(() => {
-  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
-it.each([0, 120_000])(
-  "checks freshness after a lookup taking %i ms",
-  async (delay) => {
-    vi.useFakeTimers();
-    const start = Date.parse("2026-01-01T12:00:00Z");
-    vi.setSystemTime(start);
-    const request = vi.fn(async (url: string) => {
-      if (url.endsWith("/get-session")) {
-        vi.setSystemTime(start + delay);
-        return Response.json({
-          session: { createdAt: new Date(start - 239_000).toISOString() },
-        });
-      }
-      return new Response(null, {
-        headers: { "set-cookie": "marfa.auth.session_token=new; Path=/" },
-      });
+const OWNER = { email: "owner@example.test", password: "test-password" };
+
+function serving(passkeys: number) {
+  return vi.fn(async (url: string) => {
+    if (url.endsWith("/owner/passkeys"))
+      return new Response(null, { status: passkeys });
+    return new Response(null, {
+      headers: { "set-cookie": "marfa.auth.session_token=new; Path=/" },
     });
-    vi.stubGlobal("fetch", request);
-    const session = await authenticateOwner("http://instance.test", "old", {
-      email: "owner@example.test",
-      password: "test-password",
-    });
-    expect(session.cookie).toBe(
-      delay === 0 ? "old" : "marfa.auth.session_token=new",
-    );
-    expect(request).toHaveBeenCalledTimes(delay === 0 ? 1 : 2);
-    expect(session.authenticatedAt).toBe(
-      delay === 0 ? start - 239_000 : start + delay,
-    );
-  },
-);
+  });
+}
+
+it("keeps a cookie the passkey page still admits", async () => {
+  const request = serving(200);
+  vi.stubGlobal("fetch", request);
+  expect(await authenticateOwner("http://instance.test", "old", OWNER)).toBe(
+    "old",
+  );
+  expect(request).toHaveBeenCalledTimes(1);
+});
+
+it("signs in again for a cookie that has ended", async () => {
+  const request = serving(401);
+  vi.stubGlobal("fetch", request);
+  expect(await authenticateOwner("http://instance.test", "old", OWNER)).toBe(
+    "marfa.auth.session_token=new",
+  );
+  expect(request).toHaveBeenCalledTimes(2);
+});
+
+it("stops on any other answer to the check", async () => {
+  vi.stubGlobal("fetch", serving(500));
+  await expect(
+    authenticateOwner("http://instance.test", "old", OWNER),
+  ).rejects.toThrow("answered 500");
+});

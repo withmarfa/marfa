@@ -1,4 +1,3 @@
-import { TEST_OWNER } from "./target.js";
 import { randomUUID } from "node:crypto";
 import { MarfaClient } from "../client/api.js";
 import type { TestContext, TrackedResource } from "../client/types.js";
@@ -566,20 +565,15 @@ export function getManagementClient(): MarfaClient {
   return new MarfaClient({ baseUrl: requireApiUrl(), apiKey: key });
 }
 
+/** The owner, through the private local listener. */
 export function getOwnerClient(): MarfaClient {
-  const key = process.env.MARFA_OWNER_COOKIE;
-  if (!key) {
+  const socket = process.env.MARFA_CONTROL_SOCKET;
+  if (!socket) {
     throw new Error(
-      "MARFA_OWNER_COOKIE is required for direct owner fixtures. " +
-        "`pnpm marfa:up` writes it to its env file when the target has an owner sign-in.",
+      "MARFA_CONTROL_SOCKET is required for owner fixtures; boot the fixture server first",
     );
   }
-  return new MarfaClient({
-    baseUrl: requireApiUrl(),
-    ownerCookie: key,
-    ownerSessionFile: process.env.MARFA_OWNER_SESSION_FILE,
-    ownerCredentials: TEST_OWNER,
-  });
+  return new MarfaClient({ baseUrl: requireApiUrl(), controlSocket: socket });
 }
 
 /**

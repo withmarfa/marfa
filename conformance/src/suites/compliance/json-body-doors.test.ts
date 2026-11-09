@@ -15,6 +15,7 @@ import {
 } from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
 import { servedDocument } from "../../utils/openapi.js";
+import { localFetch } from "../../utils/control-request.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -114,11 +115,11 @@ async function itemTags(id: string): Promise<unknown> {
   return { tags: metadata.tags, extensions: metadata.extensions };
 }
 
-/** The run owner's browser session, which `pnpm marfa:up` writes. */
-function ownerCookie(): string {
-  const cookie = process.env.MARFA_OWNER_COOKIE;
-  expect(cookie, "MARFA_OWNER_COOKIE is required").toBeTruthy();
-  return cookie!;
+/** The run's private local socket, which `pnpm marfa:up` writes. */
+function socket(): string {
+  const path = process.env.MARFA_CONTROL_SOCKET;
+  expect(path, "MARFA_CONTROL_SOCKET is required").toBeTruthy();
+  return path!;
 }
 
 async function send(
@@ -130,21 +131,27 @@ async function send(
   const [method, template] = door.split(" ") as [string, string];
   const path =
     options.path ?? template.replace(/\{[^}]+\}/g, () => randomUUID());
-  // Owner updates, sign-in management, and grant narrowing refuse every key,
-  // so the owner's browser is what reaches their body. Public claims keep
-  // their own proof.
-  const credential: Record<string, string> =
-    door === "PATCH /owner" ||
-    door === "PATCH /auth/grants/{id}" ||
-    template.startsWith("/owner/")
-      ? { cookie: ownerCookie(), origin: new URL(apiUrl).origin }
-      : { Authorization: `Bearer ${key}` };
-  return fetch(`${apiUrl}${path}`, {
+  const init = {
     method,
-    headers: { ...credential, ...way.headers },
     ...(way.body === undefined
       ? {}
       : { body: way.body(JSON.stringify(options.payload ?? {})) }),
+  };
+  // Owner updates, sign-in management, and grant narrowing refuse every key,
+  // so the private local command is what reaches their body. Public claims
+  // keep their own proof.
+  if (
+    door === "PATCH /owner" ||
+    door === "PATCH /auth/grants/{id}" ||
+    template.startsWith("/owner/")
+  )
+    return localFetch(socket(), `${apiUrl}${path}`, {
+      ...init,
+      headers: way.headers,
+    });
+  return fetch(`${apiUrl}${path}`, {
+    ...init,
+    headers: { Authorization: `Bearer ${key}`, ...way.headers },
   });
 }
 
@@ -495,7 +502,7 @@ describe("a request the door would refuse before it reads the body", () => {
     expect(wrong).toEqual([]);
   }, 120_000);
 
-  it("keeps owner update behind direct authority before body validation", async () => {
+  it("keeps owner update behind local authority before body validation", async () => {
     for (const contentType of ["text/plain", "application/json"]) {
       const refused = await fetch(`${apiUrl}/owner`, {
         method: "PATCH",

@@ -100,11 +100,7 @@ import {
   TEST_OWNER,
   renderEnvFile,
 } from "../src/utils/target.js";
-import {
-  authenticateOwner,
-  writeOwnerSession,
-  type SharedOwnerSession,
-} from "../src/client/owner-session.js";
+import { authenticateOwner } from "../src/client/owner-session.js";
 import { silenceTelemetry } from "../../vitest.shared.js";
 import { FRESH_SERVER_LOGS } from "../src/utils/fresh-server.js";
 import {
@@ -297,7 +293,6 @@ function paths(state: string) {
     db: resolve(state, "marfa.db"),
     blobs: resolve(state, "blobs"),
     env: resolve(state, "env"),
-    ownerSession: resolve(state, "owner-session.json"),
     statusLogs: resolve(state, FRESH_SERVER_LOGS),
   };
 }
@@ -727,11 +722,9 @@ const SIGN_IN_DOOR = "/auth/sign-in/email";
 async function signInOwner(
   url: string,
   retained: string | undefined,
-  serverNow: () => number,
 ): Promise<string | undefined> {
   try {
-    return (await authenticateOwner(url, retained, TEST_OWNER, serverNow))
-      .cookie;
+    return await authenticateOwner(url, retained, TEST_OWNER);
   } catch (error) {
     if (await signInDoorAbsent(url)) return undefined;
     throw error;
@@ -832,19 +825,7 @@ export async function bootServer(args: BootOptions): Promise<void> {
     apiKey = working.body.key;
     managementKey = management.body.key;
   }
-  const retainedSession = existsSync(p.ownerSession)
-    ? (JSON.parse(readFileSync(p.ownerSession, "utf8")) as SharedOwnerSession)
-        .cookie
-    : previous.MARFA_OWNER_COOKIE;
-  const ownerCookie = await signInOwner(
-    url,
-    retainedSession,
-    () =>
-      Date.now() +
-      (existsSync(p.clock)
-        ? readClockOffset(p.clock)
-        : Number(args.env?.MARFA_TEST_CLOCK_OFFSET_MS ?? 0)),
-  );
+  const ownerCookie = await signInOwner(url, previous.MARFA_OWNER_COOKIE);
   maskInActions(
     apiKey,
     managementKey,
@@ -853,15 +834,9 @@ export async function bootServer(args: BootOptions): Promise<void> {
     authSecret,
   );
   if (ownerCookie === undefined) {
-    rmSync(p.ownerSession, { force: true });
     console.log(
-      "[marfa-server] the target has no owner sign-in (its sign-in door answered 404 not_found); the env file carries no owner cookie or session file",
+      "[marfa-server] the target has no owner sign-in (its sign-in door answered 404 not_found); the env file carries no owner cookie",
     );
-  } else {
-    await writeOwnerSession(p.ownerSession, {
-      baseUrl: url,
-      cookie: ownerCookie,
-    });
   }
   writeFileSync(
     p.env,
@@ -872,8 +847,6 @@ export async function bootServer(args: BootOptions): Promise<void> {
         managementKey,
         controlSocket,
         ownerCookie,
-        ownerSessionFile:
-          ownerCookie === undefined ? undefined : p.ownerSession,
         authSecret,
       },
       p.blobs,
@@ -1001,8 +974,6 @@ function clearState(state: string): void {
     `${p.db}-wal`,
     `${p.db}-shm`,
     p.env,
-    p.ownerSession,
-    `${p.ownerSession}.lock`,
     p.log,
     p.stderr,
     p.clock,

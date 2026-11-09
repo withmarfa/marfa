@@ -24,7 +24,6 @@ import {
   type SseEvent,
 } from "../../utils/sse.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
-import { TEST_OWNER } from "../../utils/target.js";
 
 const COPY_QUERY: Array<[string, string]> = [
   ["edges", "all"],
@@ -67,8 +66,7 @@ beforeAll(async () => {
   });
   owner = new MarfaClient({
     baseUrl: server.apiUrl,
-    ownerCookie: server.ownerCookie,
-    ownerCredentials: TEST_OWNER,
+    controlSocket: server.controlSocket,
   });
   ctx = {
     runId: newRunId(),

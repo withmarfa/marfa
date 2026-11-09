@@ -702,7 +702,7 @@ While a component is `degraded` or `down` and the database can read the table of
 
 ### `instance/health-error-others`
 
-When a request without direct owner/local authority or `instance.read` sends `GET /health`, the server MUST NOT answer an `error` on any component.
+When a request without local authority or `instance.read` sends `GET /health`, the server MUST NOT answer an `error` on any component.
 
 **Reason:** the text is the database's or the operating system's own and carries paths and driver detail.
 
@@ -936,54 +936,6 @@ The server MUST send a `Vary` header that names `Accept` on every answer to `GET
 
 **Tests:** `compliance/instance.test.ts › answers a browser at the root with a page and a program with the JSON`, `› sends Vary: Accept on a refusal at the root as on the answers it varies`.
 
-### `instance/root-home`
-
-When the owner's browser session requests `GET /` and the request is one `instance/root-page` answers with a page, the server MUST answer a page headed by the instance's name.
-
-**Reason:** the owner who opens the server's address needs the way into every console page, not the notice a visitor is given.
-
-**Tests:** `compliance/console-pages.test.ts › is shown to the owner's browser, headed by the instance's name`.
-
-### `instance/root-home-search`
-
-When the owner's browser session requests `GET /` and the request is one `instance/root-page` answers with a page, the server MUST include in the page a search field named `q`.
-
-**Reason:** the owner finds a page or a setting by name from Home, without knowing which page holds it.
-
-**Tests:** `compliance/console-pages.test.ts › holds a search for pages and settings`.
-
-### `instance/root-home-no-store`
-
-The server MUST send `Cache-Control: no-store` on the page it answers to the owner's browser session at `GET /`.
-
-**Reason:** the page is the owner's, and a cache must not hand it to a browser without the session.
-
-**Tests:** `compliance/console-pages.test.ts › is not cached`.
-
-### `instance/settings-owner-read`
-
-When the owner's browser session sends `GET /auth/owner/settings.json`, the server MUST answer `200` with a `data` list that holds, for each setting in the tables under "Settings", an entry with its `name`, `label`, `group`, `description`, `secret`, `live` and `set`, and its `value` in words unless it holds a secret.
-
-**Reason:** the console's All settings pages and its search read the settings from this one answer. `secret` is true for every setting that holds a credential, `live` is true for a setting the owner can also change while the server runs, and `set` says whether the environment states the setting. Nothing returns a secret's value (`authentication/console-settings-no-secret`).
-
-**Tests:** `compliance/console-pages.test.ts › show the owner the log and every setting, and carry no secret's value`.
-
-### `instance/root-search-key`
-
-When the owner's browser session requests `GET /` for a page with the query key `q`, the server MUST NOT refuse `q` as undeclared.
-
-**Reason:** the search on Home is a form that submits `q` to the root.
-
-**Tests:** `compliance/console-pages.test.ts › takes a search from the owner's browser`.
-
-### `instance/root-search-key-other`
-
-If a request to `GET /` that is not the owner's browser session asking for a page carries the query key `q`, then the server MUST refuse `q` as `search-and-filters/undeclared-key` refuses an undeclared key.
-
-**Reason:** the root declares no query key to a program, and `q` belongs to the page it shows the owner alone.
-
-**Tests:** `compliance/console-pages.test.ts › refuses a search from anybody else, and any other key from everybody`.
-
 ## Pages
 
 The root is not the only page. The sign-in, consent and device approval pages are pages too, and so is what a refusal or an unserved path renders for a request that accepts `text/html`.
@@ -994,7 +946,7 @@ When the server answers with an HTML page, a page a refusal renders and one give
 
 **Reason:** the sign-in, consent, device approval and error pages act on the owner's signed-in session, so a policy limits what an injection into one of them can do. A refusal renders a page like any other, so a refusal a middleware makes before any operation has run carries the policy too.
 
-**Tests:** `compliance/instance.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`, `› sends the page policy on the page a refusal renders, and none on the refusal a program is sent`.
+**Tests:** `compliance/page-policy.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`, `compliance/instance.test.ts › sends the page policy on the page a refusal renders, and none on the refusal a program is sent`.
 
 ### `instance/page-policy-nonce-only`
 
@@ -1002,29 +954,21 @@ The server MUST write the `Content-Security-Policy` of an HTML page so that it a
 
 **Reason:** no script or style source is allowed by origin, `'self'` included, because the same origin serves a blob's bytes at its link without a credential and under the type its uploader named, and a source allowed by origin would run them. A blob's bytes are not a page of this server and keep the policy of `blobs/download-sandbox`.
 
-**Tests:** `compliance/instance.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`, `› names in its policy the one nonce its page carries, a new one on each answer at one address`.
+**Tests:** `compliance/page-policy.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`, `compliance/instance.test.ts › names in its policy the one nonce its page carries, a new one on each answer at one address`.
 
 ### `instance/page-policy-default-none`
 
 The server MUST write the `Content-Security-Policy` of an HTML page with `default-src 'none'`.
 
-**Tests:** `compliance/instance.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`.
-
-### `instance/page-policy-images-console`
-
-When the server writes the `Content-Security-Policy` of an owner's console page, the server MUST write the page's `img-src` as `'self' data:`.
-
-**Reason:** the console pages show the owner's picture from the server's own address. The picture is served with `sandbox` and `nosniff`, so an image source by origin cannot become a script or a style. The console pages are listed under Console pages in `authentication`.
-
-**Tests:** `compliance/instance.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`.
+**Tests:** `compliance/page-policy.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`.
 
 ### `instance/page-policy-images-other`
 
-When the server writes the `Content-Security-Policy` of an HTML page that is not an owner's console page, the server MUST write the page's `img-src` as `data:`, whether or not the page has a `connect-src`.
+When the server writes the `Content-Security-Policy` of an HTML page, the server MUST write the page's `img-src` as `data:`, whether or not the page has a `connect-src`.
 
-**Reason:** no other page shows the picture, so none has a reason to load an image from the server's address.
+**Reason:** no page shows a picture from the server's address, so none has a reason to load an image from it.
 
-**Tests:** `compliance/instance.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`.
+**Tests:** `compliance/page-policy.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`.
 
 ### `instance/page-policy-json-none`
 
@@ -1032,7 +976,7 @@ When the server answers the root or a refusal as JSON, the server MUST NOT send 
 
 **Reason:** the policy is the page's, and a JSON answer is not a page.
 
-**Tests:** `compliance/instance.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`, `› sends the page policy on the page a refusal renders, and none on the refusal a program is sent`.
+**Tests:** `compliance/page-policy.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`, `compliance/instance.test.ts › sends the page policy on the page a refusal renders, and none on the refusal a program is sent`.
 
 ### `instance/page-nonce-fresh`
 
@@ -1040,7 +984,7 @@ The server MUST name in the `Content-Security-Policy` of each HTML page a nonce 
 
 **Reason:** a nonce that repeats across responses can be read from one page and carried by an injection into the next.
 
-**Tests:** `compliance/instance.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`, `› sends the page policy on the page a refusal renders, and none on the refusal a program is sent`, `› names in its policy the one nonce its page carries, a new one on each answer at one address`.
+**Tests:** `compliance/page-policy.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`, `compliance/instance.test.ts › sends the page policy on the page a refusal renders, and none on the refusal a program is sent`, `› names in its policy the one nonce its page carries, a new one on each answer at one address`.
 
 ### `instance/page-nonce-carried`
 
@@ -1224,7 +1168,7 @@ If a key holding `config.manage` sends `PATCH /config` with a key the server doe
 
 ### `instance/config-audit`
 
-When the server accepts `PUT /config`, the server MUST record an audit entry with the `action` `config.update`, the `resource_type` `config` and as `key_id` the credential that wrote: the key's id, `owner:<session ID>` for an owner browser session or `local:process` for the private local process.
+When the server accepts `PUT /config`, the server MUST record an audit entry with the `action` `config.update`, the `resource_type` `config` and as `key_id` the credential that wrote: the key's id or `local:process` for the private local process.
 
 **Tests:** `compliance/instance-config.test.ts › records a config.update audit entry for the key that wrote, and none for a refused write`.
 
@@ -1719,7 +1663,7 @@ When a write sets `sign_in_address` and does not name `addresses`, the server MU
 
 If a key, even one holding `config.manage`, sends `PUT /config` or `PATCH /config` that would change `sign_in_address` or `cors_origins`, then the server MUST answer `403 forbidden` and store none of the write.
 
-**Reason:** these two settings decide where sign-in cookies are valid and which web pages may call the API, so only a person at the instance, through an owner browser session or the private local process, may change them.
+**Reason:** these two settings decide where sign-in cookies are valid and which web pages may call the API, so only a person at the instance, through the private local process, may change them.
 
 **Tests:** `compliance/instance-addresses.test.ts › is refused to a key, which holds config.manage but not direct authority`.
 
@@ -1733,7 +1677,7 @@ If a key sends `PUT /config` or `PATCH /config` that names `sign_in_address` or 
 
 ### `instance/sign-in-address-unconfirmed`
 
-If an owner browser session or the private local process moves the sign-in address of a claimed instance, the first sign-in address stored included, without `confirm_sign_in_address_change` set to `true`, then the server MUST answer `409 sign_in_address_change_unconfirmed` with the consequences of the change in `details.consequences`, and store none of the write.
+If the private local process moves the sign-in address of a claimed instance, the first sign-in address stored included, without `confirm_sign_in_address_change` set to `true`, then the server MUST answer `409 sign_in_address_change_unconfirmed` with the consequences of the change in `details.consequences`, and store none of the write.
 
 **Reason:** the change signs everyone out and can strand passkeys and apps, so the person is told what it will do before it does it.
 
@@ -1741,7 +1685,7 @@ If an owner browser session or the private local process moves the sign-in addre
 
 ### `instance/sign-in-address-confirmed`
 
-When an owner browser session or the private local process sends `confirm_sign_in_address_change` set to `true` with a new sign-in address, the server MUST store the address.
+When the private local process sends `confirm_sign_in_address_change` set to `true` with a new sign-in address, the server MUST store the address.
 
 **Tests:** `compliance/instance-addresses.test.ts › is not moved, and the answer names the consequences, until a write confirms it`.
 

@@ -51,7 +51,7 @@ pub async fn narrow(
     caller: Caller,
     body: JsonBody,
 ) -> Answer {
-    caller.require_direct()?;
+    caller.require_local()?;
     let body = body.object(&NARROW_FIELDS).await?;
     let asked = Narrowing {
         scopes: scopes_in(&body, "scopes")?,

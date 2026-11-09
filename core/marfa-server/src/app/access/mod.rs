@@ -26,7 +26,7 @@ use super::oauth;
 use super::refusal::{Code, Refusal, Result};
 pub use items::printable;
 pub use jobs::{Setting, standing_holder};
-pub use levers::{Levers, OwnLevers, Standing, report_unread};
+pub use levers::{Holding, Levers, OwnLevers, Standing, report_unread};
 pub use maps::{Axis, Level, Map};
 pub use overview::Described;
 pub use schema::{Door, SchemaKind};
@@ -237,8 +237,8 @@ impl Caller {
         }
     }
 
-    pub fn is_direct(&self) -> bool {
-        matches!(self, Caller::Local(_) | Caller::Owner(_))
+    pub fn is_local(&self) -> bool {
+        matches!(self, Caller::Local(_))
     }
 
     pub fn session(&self) -> Option<&Session> {
@@ -264,9 +264,11 @@ impl Caller {
         }
     }
 
+    /// A browser session holds nothing: it acts only on the sign-in pages, as the owner.
     pub fn holds(&self, permission: Permission) -> bool {
         match self {
-            Caller::Local(_) | Caller::Owner(_) | Caller::Server => true,
+            Caller::Local(_) | Caller::Server => true,
+            Caller::Owner(_) => false,
             Caller::Key(key) | Caller::App { key, .. } => key.grants.holds(permission),
         }
     }
@@ -279,8 +281,20 @@ impl Caller {
         }
     }
 
-    pub fn require_direct(&self) -> Result<()> {
-        if self.is_direct() {
+    pub fn require_local(&self) -> Result<()> {
+        if self.is_local() {
+            Ok(())
+        } else {
+            Err(Refusal::new(
+                Code::Forbidden,
+                "Only the private local command can do this.",
+            ))
+        }
+    }
+
+    /// For the owner's passkeys, which the passkey page and the local command manage.
+    pub fn require_owner(&self) -> Result<()> {
+        if matches!(self, Caller::Local(_) | Caller::Owner(_)) {
             Ok(())
         } else {
             Err(Refusal::new(Code::Forbidden, "Only the owner can do this."))
@@ -301,7 +315,8 @@ impl Caller {
 
     pub fn reaches(&self, target: &Key) -> bool {
         match self {
-            Caller::Local(_) | Caller::Owner(_) | Caller::Server => true,
+            Caller::Local(_) | Caller::Server => true,
+            Caller::Owner(_) => false,
             Caller::Key(key) | Caller::App { key, .. } => {
                 key.id == target.id
                     || key.grants.holds(Permission::KeysManage)
@@ -315,19 +330,21 @@ impl Caller {
 
     pub fn whole_set(&self) -> Grants {
         match self {
-            Caller::Local(_) | Caller::Owner(_) | Caller::Server => Grants::everything(),
+            Caller::Local(_) | Caller::Server => Grants::everything(),
+            Caller::Owner(_) => Grants::default(),
             Caller::Key(key) | Caller::App { key, .. } => key.grants.clone(),
         }
     }
 
     pub fn check_ceiling(&self, wanted: &Grants) -> Result<()> {
-        let Some(key) = self.key() else {
-            return Ok(());
+        let beyond = match self {
+            Caller::Local(_) | Caller::Server => None,
+            Caller::Owner(_) => Grants::default().first_beyond("", wanted),
+            Caller::Key(key) | Caller::App { key, .. } => {
+                key.grants.first_beyond(&key.source, wanted)
+            }
         };
-        match key.grants.first_beyond(&key.source, wanted) {
-            Some(beyond) => Err(beyond.into()),
-            None => Ok(()),
-        }
+        beyond.map_or(Ok(()), |beyond| Err(beyond.into()))
     }
 
     pub fn check_life(&self, wanted: Option<&str>) -> Result<()> {
@@ -341,7 +358,8 @@ impl Caller {
 
     pub fn may_grant(&self, source: &str) -> bool {
         match self {
-            Caller::Local(_) | Caller::Owner(_) | Caller::Server => true,
+            Caller::Local(_) | Caller::Server => true,
+            Caller::Owner(_) => false,
             Caller::Key(key) | Caller::App { key, .. } => key.grants.may_grant(&key.source, source),
         }
     }
@@ -367,7 +385,7 @@ impl Caller {
         if change.levers.is_some() {
             self.require(Permission::ConfigManage)?;
         }
-        let acting_by_manage = !self.is_direct() && self.manages_keys();
+        let acting_by_manage = !self.is_local() && self.manages_keys();
         if change.narrow_only || acting_by_manage || target.oauth_client_id.is_some() {
             if let Some(beyond) = target.grants.first_beyond(&target.source, change.grants) {
                 return Err(beyond.into());
@@ -388,7 +406,7 @@ impl Caller {
             )
             .with_detail("field", "enforcement_override"));
         }
-        if !self.is_direct() && !self.manages_keys() {
+        if !self.is_local() && !self.manages_keys() {
             self.require(Permission::KeysMint)?;
             self.check_ceiling(change.grants)?;
             if let Some(wanted) = change.life {

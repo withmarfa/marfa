@@ -89,10 +89,6 @@ export const SIGN_IN_ROUTE_STATUSES: Readonly<
   "GET /auth/forgot-password": [200],
   "POST /auth/sign-in/email": [200, 400, 401, 403],
   "POST /auth/sign-out": [200, 500],
-  "GET /auth/get-session": [200],
-  "POST /auth/revoke-sessions": [200, 401, 403],
-  "POST /auth/revoke-other-sessions": [200, 401, 403],
-  "POST /auth/change-password": [200, 400, 401],
   "GET /auth/passkey/generate-register-options": [200, 400, 401, 403],
   "POST /auth/passkey/verify-registration": [200, 400, 401, 403, 409, 500],
   "GET /auth/passkey/generate-authenticate-options": [200, 403],
@@ -112,28 +108,6 @@ export const SIGN_IN_ROUTE_STATUSES: Readonly<
   "POST /auth/device/consent": [200, 302, 400, 403, 404],
   "GET /auth/static/pages.css": [200],
   "GET /auth/static/pages.js": [200],
-  "GET /auth/owner/trash": [200, 302, 400, 401, 403],
-  "GET /auth/owner/items": [200, 302, 400, 401, 403, 404],
-  "GET /auth/owner/types/{id}": [200, 302, 400, 401, 403, 404],
-  "GET /auth/owner/export": [200, 302, 401, 403],
-  "GET /auth/owner/folders": [200, 302, 401, 403],
-  "GET /auth/owner/folders/{id}": [200, 302, 401, 403, 404],
-  "GET /auth/owner/connectors": [200, 302, 401, 403],
-  "GET /auth/owner/connectors/{id}": [200, 302, 401, 403, 404],
-  "GET /auth/owner/profile": [200, 302, 401, 403],
-  "GET /auth/owner/general": [200, 302, 401, 403],
-  "GET /auth/owner/health": [200, 302, 401, 403],
-  "GET /auth/owner/activity": [200, 302, 401, 403],
-  "GET /auth/owner/settings": [200, 302, 401, 403],
-  "GET /auth/owner/settings.json": [200, 302, 401, 403],
-  "GET /auth/owner/settings/{group}": [200, 302, 401, 403, 404],
-  "GET /auth/owner/keys": [200, 302, 401, 403],
-  "GET /auth/owner/keys/new": [200, 302, 401, 403],
-  "GET /auth/owner/keys/{id}": [200, 302, 401, 403, 404],
-  "GET /auth/owner/keys/{id}/copy": [200, 302, 401, 403],
-  "GET /auth/owner/apps": [200, 302, 401, 403],
-  "GET /auth/owner/apps/{id}": [200, 302, 401, 403, 404],
-  "GET /auth/owner/browsers": [200, 302, 401, 403],
   "GET /auth/owner/passkeys": [200, 302, 401, 403],
 };
 
@@ -413,33 +387,6 @@ export function declaredStatuses(
   return out;
 }
 
-/**
- * The route template a concrete request names, such as `GET /auth/owner/keys/{id}`
- * for `GET /auth/owner/keys/7c1d…`: a catch-all mount logs its own pattern,
- * so only the path says which route it was. A path no template matches
- * answers `undefined`.
- */
-function templateOf(
-  operation: string,
-  templates: readonly string[],
-): string | undefined {
-  const [method = "", path = ""] = operation.split(" ");
-  const segments = path.split("/");
-  return templates.find((template) => {
-    const [templateMethod = "", templatePath = ""] = template.split(" ");
-    const parts = templatePath.split("/");
-    return (
-      templateMethod === method &&
-      parts.length === segments.length &&
-      parts.every(
-        (part, i) =>
-          (part.startsWith("{") && part.endsWith("}") && segments[i] !== "") ||
-          part === segments[i],
-      )
-    );
-  });
-}
-
 /** The status the request log gives a request its client dropped. */
 const CLIENT_CLOSED_REQUEST = 499;
 
@@ -457,9 +404,6 @@ export function reportStatuses(
   > = SIGN_IN_ROUTE_STATUSES,
 ): StatusReport {
   const declared = declaredStatuses(document);
-  const templates = Object.keys(signInStatuses).filter((operation) =>
-    operation.includes("{"),
-  );
   const observed = new Map<string, Map<number, Set<string>>>();
   const unpublished = new Map<string, Set<number>>();
   const local = new Map<string, Set<number>>();
@@ -484,9 +428,7 @@ export function reportStatuses(
     const byRoute = `${method} ${line.route}`;
     const byPath = `${method} ${line.path}`;
     const operation =
-      !declared.has(byRoute) && line.route.includes("*")
-        ? (templateOf(byPath, templates) ?? byPath)
-        : byRoute;
+      !declared.has(byRoute) && line.route.includes("*") ? byPath : byRoute;
     if (
       !declared.has(operation) &&
       line.transport === "local_socket" &&

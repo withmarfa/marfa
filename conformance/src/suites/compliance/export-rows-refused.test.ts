@@ -26,7 +26,7 @@ beforeAll(async () => {
   });
   owner = new MarfaClient({
     baseUrl: server.apiUrl,
-    ownerCookie: server.ownerCookie,
+    controlSocket: server.controlSocket,
   });
 }, FRESH_SERVER_TIMEOUT_MS);
 

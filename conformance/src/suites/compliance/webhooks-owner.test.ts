@@ -5,7 +5,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { controlRequest } from "../../utils/control-request.js";
+import { controlRequest, localFetch } from "../../utils/control-request.js";
 import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
 import { waitFor } from "../../utils/wait.js";
 let server: FreshServer;
@@ -15,6 +15,10 @@ let ids: string[];
 let second: string;
 const privateBody = "owner-history-private-body";
 function owner(path: string, init: RequestInit = {}) {
+  return localFetch(server.controlSocket, server.apiUrl + path, init);
+}
+/** The owner's browser session, which counts only on the sign-in pages. */
+function browser(path: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers);
   headers.set("cookie", server.ownerCookie);
   headers.set("origin", server.apiUrl);
@@ -130,8 +134,10 @@ it("reads every maker through local authority while ordinary keys stay isolated"
 });
 
 it("refuses an owner's browser session on every webhook door with 401", async () => {
-  // The witness: the same session is the owner's, and other doors admit it.
-  expect((await owner("/keys")).status).toBe(200);
+  // The witness: the same session is the owner's on the passkey page's door.
+  const own = await browser("/owner/passkeys");
+  expect(own.status).toBe(200);
+  await own.body?.cancel();
   const id = ids[0]!;
   const doors: [string, string, unknown?][] = [
     ["GET", "/webhooks"],
@@ -147,7 +153,7 @@ it("refuses an owner's browser session on every webhook door with 401", async ()
     ["POST", `/webhooks/${id}/deliveries/whd_unknown/redeliver`],
   ];
   for (const [method, path, body] of doors) {
-    const response = await owner(path, {
+    const response = await browser(path, {
       method,
       ...(body === undefined
         ? {}

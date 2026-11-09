@@ -15,7 +15,6 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
 } from "../../utils/fresh-server.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
-import { TEST_OWNER } from "../../utils/target.js";
 
 /**
  * A key may claim sources besides its own, and a write may name one it
@@ -1516,8 +1515,7 @@ describe("a key's claims", () => {
         });
         const own = new MarfaClient({
           baseUrl: server.apiUrl,
-          ownerCookie: server.ownerCookie,
-          ownerCredentials: TEST_OWNER,
+          controlSocket: server.controlSocket,
         });
 
         const appKey = await app.createKey({

@@ -214,6 +214,7 @@ fn read_page(
     }
     let judge = Judge {
         caller: &read.caller,
+        levers: read.caller.levers()?,
         rules: &read.catalog.rules,
         read_only: &read.read_only,
         filter,

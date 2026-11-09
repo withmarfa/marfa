@@ -316,23 +316,22 @@ fn require_evolution(
     .with_detail("changes", changes))
 }
 
-/// `force` is the owner console's leave to delete a type that items hold.
+/// `force` keeps a type's items, unregistered; the local command removes only unused types.
 pub async fn delete(app: &App, caller: &Caller, id: String, force: bool) -> Result<()> {
     let cache = app.catalog_handle();
     app.write(caller, "type.delete", move |unit| {
         let caller = &unit.caller;
         caller.require(Permission::SchemaWrite)?;
-        caller.require_recent(&unit.at)?;
         let catalog = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
         platform_locked(&catalog, &id, "delete")?;
         if !catalog.holds(&id) {
             return Err(not_found(&id));
         }
-        if caller.is_direct() {
+        if caller.is_local() {
             if force {
                 return Err(Refusal::new(
                     Code::Forbidden,
-                    "The owner console removes only unused types. Move their items to another type, and change the folders, views and webhooks that name them, first.",
+                    "The local command removes only unused types. Move their items to another type, and change the folders, views and webhooks that name them, first.",
                 ));
             }
         } else {

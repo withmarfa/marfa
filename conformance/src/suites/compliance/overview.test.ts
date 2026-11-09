@@ -5,7 +5,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { controlRequest } from "../../utils/control-request.js";
+import { controlRequest, localFetch } from "../../utils/control-request.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
 interface Overview {
@@ -61,15 +61,15 @@ async function mintKey(
   source: string,
   grant: Record<string, unknown>,
 ): Promise<string> {
-  const response = await fetch(`${server.apiUrl}/keys`, {
-    method: "POST",
-    headers: {
-      cookie: server.ownerCookie,
-      origin: new URL(server.apiUrl).origin,
-      "content-type": "application/json",
+  const response = await localFetch(
+    server.controlSocket,
+    `${server.apiUrl}/keys`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ label: source, source, ...grant }),
     },
-    body: JSON.stringify({ label: source, source, ...grant }),
-  });
+  );
   expect(response.status, await response.clone().text()).toBe(201);
   return ((await response.json()) as { key: string }).key;
 }

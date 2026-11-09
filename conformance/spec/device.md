@@ -4680,7 +4680,7 @@ When a device names an item by `device/item-name-part`, a device MUST compute it
 
 When no name candidate produces nonblank text, a device MUST answer that the item has no name.
 
-**Reason:** An app chooses its own placeholder, in its own language and style. The server's `Untitled` (`types/item-name-empty`) is a word for the owner console, not the item's name.
+**Reason:** An app chooses its own placeholder, in its own language and style. The server's `Untitled` (`types/item-name-empty`) is a placeholder in its summaries, not the item's name.
 
 **Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
 
@@ -4688,7 +4688,7 @@ When no name candidate produces nonblank text, a device MUST answer that the ite
 
 When an app asks a device for an item's preview, a device MUST compute it from the string under the type's effective `display_hints.body_field`, or under `body` where no type in its chain declares one.
 
-**Reason:** The server answers no preview. Its only summary of an item, `GET /items/summaries`, has one caller, the owner console, which shows names, and it leaves item content out by design (`search-and-filters/owner-summaries-projection`).
+**Reason:** The server answers no preview. Its item summaries at `GET /items/summaries` serve the private local command and leave item content out by design (`search-and-filters/owner-summaries-projection`).
 
 **Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
 
