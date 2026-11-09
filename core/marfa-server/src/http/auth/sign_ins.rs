@@ -57,7 +57,8 @@ pub async fn end(
     visit: Visit,
 ) -> Answer {
     caller.require_local()?;
-    query::only(&uri, &[])?;
-    sign_ins::end(&app, &caller, id, visit).await?;
+    query::only(&uri, &["revoke_keys"])?;
+    let with_keys = query::flag(&uri, "revoke_keys")?.unwrap_or(false);
+    sign_ins::end(&app, &caller, id, with_keys, visit).await?;
     Ok(json_answer(StatusCode::OK, &json!({ "ok": true })))
 }

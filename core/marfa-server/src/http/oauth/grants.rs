@@ -72,8 +72,11 @@ pub async fn revoke(
     caller: Caller,
 ) -> Answer {
     caller.require(Permission::GrantsManage)?;
-    query::only(&uri, &[])?;
-    grants::revoke(&app, &caller, id).await?;
+    query::only(&uri, &["revoke_keys"])?;
+    let with_keys = query::pairs(&uri)?
+        .iter()
+        .any(|(name, value)| name == "revoke_keys" && matches!(value.as_str(), "1" | "true"));
+    grants::revoke(&app, &caller, id, with_keys).await?;
     let mut answer = Response::new(axum::body::Body::empty());
     *answer.status_mut() = StatusCode::NO_CONTENT;
     Ok(answer)

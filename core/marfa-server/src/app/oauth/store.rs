@@ -421,16 +421,6 @@ pub fn note_consent_used(tx: &Connection, client_id: &str, user_id: &str, now: i
     Ok(())
 }
 
-/// A use of a key the app minted, which counts as a use of its grant.
-pub fn note_app_used(tx: &Connection, client_id: &str, now: i64) -> Result<()> {
-    tx.execute(
-        "UPDATE auth_oauth_consent SET last_used_at = MAX(COALESCE(last_used_at, 0), ?2) \
-         WHERE client_id = ?1 AND withdrawn_at IS NULL",
-        params![client_id, now],
-    )?;
-    Ok(())
-}
-
 #[derive(Clone, Debug)]
 pub struct Code {
     pub digest: String,

@@ -53565,7 +53565,7 @@
           }
         ],
         "summary": "Revoke an app grant",
-        "description": "Revokes the app's tokens and consent, and every key the app minted and every key those keys minted. Requires `grants.manage`.",
+        "description": "Revokes the app's tokens and consent. Requires `grants.manage`.",
         "parameters": [
           {
             "schema": {
@@ -53576,6 +53576,16 @@
             "description": "The ID of the app's grant.",
             "name": "id",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "`true` or `1` also revokes keys the app minted. Every other value, or omission, leaves those keys working."
+            },
+            "required": false,
+            "description": "`true` or `1` also revokes keys the app minted. Every other value, or omission, leaves those keys working.",
+            "name": "revoke_keys",
+            "in": "query"
           }
         ],
         "responses": {
@@ -57092,7 +57102,7 @@
           "Sign-ins and passkeys"
         ],
         "summary": "End a sign-in",
-        "description": "Ends a sign-in at once: it can't refresh or make another request. Ending an app also revokes every key it minted and every key those keys minted. Needs the private local command.",
+        "description": "Ends a sign-in at once: it can't refresh or make another request. An app's keys stay unless `revoke_keys` is `true`. Needs the private local command.",
         "parameters": [
           {
             "schema": {
@@ -57103,6 +57113,20 @@
             "description": "The ID of the sign-in.",
             "name": "id",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "For an app, also revoke every key it minted, as its `minted_by` rows show. Only an app takes it."
+            },
+            "required": false,
+            "description": "For an app, also revoke every key it minted, as its `minted_by` rows show. Only an app takes it.",
+            "name": "revoke_keys",
+            "in": "query"
           },
           {
             "name": "X-Marfa-Instance-Id",
@@ -57144,7 +57168,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: the query has a parameter this endpoint doesn't take.",
+            "description": "- `validation_error`: `revoke_keys` is `true` and the ID names a browser or a key.",
             "content": {
               "application/json": {
                 "schema": {

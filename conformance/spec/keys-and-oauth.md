@@ -2005,14 +2005,6 @@ When an app revokes its refresh token at `POST /auth/oauth2/revoke`, the server 
 
 **Tests:** `compliance/oauth-tokens.test.ts › of a refresh token ends the app's grant: its tokens, its listing and the person's consent`.
 
-### `keys-and-oauth/revoke-refresh-token-keys`
-
-When an app revokes its refresh token at `POST /auth/oauth2/revoke`, the server MUST revoke in the same write every key the app minted and every key those keys minted.
-
-**Reason:** A key an app minted is held to the app's grant, however the grant ends.
-
-**Tests:** `compliance/auth-grants.test.ts › ends every key the app minted, a key's descendant included, and no other app's key`.
-
 ### `keys-and-oauth/revoke-unknown-token`
 
 When a revocation names a token the server does not hold, never issued, already revoked or already gone, the server MUST answer `200` as RFC 7009 has it, whatever `token_type_hint` says.
@@ -2113,41 +2105,29 @@ If a request with no credential sends `GET /auth/grants`, then the server MUST a
 
 When a caller holding `grants.manage` revokes a grant at `DELETE /auth/grants/{id}`, the server MUST answer `204`.
 
-**Tests:** `compliance/auth-grants.test.ts › ends the app's tokens, the person's consent and every key the app minted, a key's descendant included`, `compliance/oauth-refusals.test.ts › answers 404 oauth_grant_not_found for an id that is no app's grant, and revokes one that is`.
+**Tests:** `compliance/auth-grants.test.ts › ends the app's tokens and the person's consent, and leaves the keys it minted working`, `compliance/oauth-refusals.test.ts › answers 404 oauth_grant_not_found for an id that is no app's grant, and revokes one that is`.
 
 ### `keys-and-oauth/grant-revoke-ends-grant`
 
 When a grant is revoked at `DELETE /auth/grants/{id}`, the server MUST end it: refuse the app's tokens `401 unauthorized`, stop listing the grant and show the consent screen to the app's next authorization request.
 
-**Tests:** `compliance/auth-grants.test.ts › ends the app's tokens, the person's consent and every key the app minted, a key's descendant included`.
+**Tests:** `compliance/auth-grants.test.ts › ends the app's tokens and the person's consent, and leaves the keys it minted working`.
+
+### `keys-and-oauth/grant-revoke-keeps-keys`
+
+When a grant is revoked without `revoke_keys`, the server MUST leave every key the app minted, and every key those keys minted, working.
+
+**Reason:** A key an app made is a key like any other once minted, and the caller of this operation has nobody to ask whether those keys should go too.
+
+**Tests:** `compliance/auth-grants.test.ts › ends the app's tokens and the person's consent, and leaves the keys it minted working`.
 
 ### `keys-and-oauth/grant-revoke-keys`
 
-When a grant is revoked at `DELETE /auth/grants/{id}`, the server MUST revoke in the same write every key the app minted and every key those keys minted, whatever the caller's reach.
+When a grant is revoked with `revoke_keys=1`, the server MUST revoke in the same write every key the app minted and every key those keys minted, whatever the caller's reach.
 
-**Reason:** A key an app minted is held to the app's grant, so it ends with the grant, and taking it reaches no further than revoking the grant does. A key that outlived its app would keep the app's access with no approval behind it.
+**Reason:** A key an app minted is held to the app's grant, so taking those keys with the grant reaches no further than revoking the grant does.
 
-**Tests:** `compliance/auth-grants.test.ts › ends the app's tokens, the person's consent and every key the app minted, a key's descendant included`.
-
-### `keys-and-oauth/grant-key-use`
-
-When the server records the use of a key that an app minted, or of a key that such a key minted, the server MUST record the same time as a use of the app's grant.
-
-**Reason:** The inactivity retirement retires a grant by its last use, and an app whose keys are in use is in use.
-
-**Tests:** `compliance/auth-grants.test.ts › counts the use of a key the app minted, or that key's key, and retires an idle app with its keys`.
-
-### `keys-and-oauth/grant-retire-keys`
-
-When the inactivity retirement retires a grant, the server MUST revoke in the same write every key the app minted and every key those keys minted.
-
-**Tests:** `compliance/auth-grants.test.ts › counts the use of a key the app minted, or that key's key, and retires an idle app with its keys`.
-
-### `keys-and-oauth/grant-revoke-query`
-
-If `DELETE /auth/grants/{id}` names a query parameter, then the server MUST answer `400 validation_error` and revoke nothing.
-
-**Tests:** `compliance/auth-grants.test.ts › refuses a query parameter 400 and revokes nothing`.
+**Tests:** `compliance/auth-grants.test.ts › with revoke_keys=1 also revokes every key the app minted, a key's descendant included`.
 
 ### `keys-and-oauth/grant-unknown`
 
@@ -2839,17 +2819,23 @@ When `DELETE /owner/sign-ins/{id}` has ended an app, the server MUST answer `400
 
 ### `keys-and-oauth/sign-in-end-app-keys`
 
-When `DELETE /owner/sign-ins/{id}` ends an app, the server MUST revoke in the same write every key that app minted and every key those keys minted, and answer `401` to the next request that carries one.
+When `DELETE /owner/sign-ins/{id}` ends an app without `revoke_keys` set to `true`, the server MUST keep every key that app minted, and every key those keys minted, working.
 
-**Reason:** As at `DELETE /auth/grants/{id}`, a key an app minted is held to the app's grant and ends with it.
+**Reason:** As at `DELETE /auth/grants/{id}`, a key is minted on purpose and listed as a sign-in of its own, so ending an app ends its own tokens and leaves its keys to be ended with it or on their own.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › end with the app, a key's descendant included, and no other key does`.
+**Tests:** `compliance/owner-sign-ins.test.ts › stay working when the app ends without revoke_keys`.
 
-### `keys-and-oauth/sign-in-end-query`
+### `keys-and-oauth/sign-in-end-app-revoke-keys`
 
-If `DELETE /owner/sign-ins/{id}` names a query parameter, then the server MUST answer `400 validation_error` and end nothing.
+When `DELETE /owner/sign-ins/{id}` with `revoke_keys` set to `true` ends an app, the server MUST answer `401` to the next request that carries a key that app minted or a key that such a key minted.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › refuses a query parameter 400 and ends nothing`.
+**Tests:** `compliance/owner-sign-ins.test.ts › end with the app when revoke_keys is true, a key's descendant included, and no other key does`.
+
+### `keys-and-oauth/sign-in-end-revoke-keys-not-app`
+
+If `DELETE /owner/sign-ins/{id}` has `revoke_keys` set to `true` and names a live browser session or a live key, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/owner-sign-ins.test.ts › refuses revoke_keys on a browser and a key 400, and ends neither`.
 
 ### `keys-and-oauth/sign-in-end-key`
 
@@ -2861,7 +2847,7 @@ When `DELETE /owner/sign-ins/{id}` has ended a key, the server MUST answer `401`
 
 When `DELETE /owner/sign-ins/{id}` ends a sign-in, the server MUST keep every other sign-in of the owner signed in.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › ends that browser's session, whose next request is refused, and leaves the other signed in`, `› ends an app at once: its next request is refused and its refresh token is dead, and nothing else is`, `› ends a key at once, and leaves every other sign-in`, `› end with the app, a key's descendant included, and no other key does`.
+**Tests:** `compliance/owner-sign-ins.test.ts › ends that browser's session, whose next request is refused, and leaves the other signed in`, `› ends an app at once: its next request is refused and its refresh token is dead, and nothing else is`, `› ends a key at once, and leaves every other sign-in`, `› end with the app when revoke_keys is true, a key's descendant included, and no other key does`.
 
 ### `keys-and-oauth/sign-in-end-versions`
 

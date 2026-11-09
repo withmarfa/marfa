@@ -216,7 +216,6 @@ pub(super) fn end(
     };
     store::end_grant_credentials(tx, client_id, user_id, now)?;
     store::withdraw_consent(tx, client_id, user_id, now)?;
-    crate::app::keys::end_all_of_app(unit, client_id)?;
     if let Some(version) = version_of(unit, &consent.grant_id)? {
         update_item(
             unit,
