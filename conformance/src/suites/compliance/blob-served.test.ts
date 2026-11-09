@@ -432,7 +432,7 @@ describe("how a blob's bytes are served", () => {
     );
     expect(archive.headers.get("content-type")).toBe("application/x-tar");
     expect(archive.headers.get("content-disposition")).toMatch(
-      /^attachment; filename="marfa-export-\d{4}-\d{2}-\d{2}\.tar\.gz"$/,
+      /^attachment; filename="marfa-export-\d{4}-\d{2}-\d{2}\.tar"$/,
     );
     expect(archive.headers.get("content-disposition")).not.toContain(
       hash.slice("sha256:".length),

@@ -44,7 +44,7 @@ it("waits for an archive whose first byte comes after the usual answer budget, s
   const path = join(dir, "nightly.tar");
   writeFileSync(path, "an earlier backup");
 
-  await source.setFault("hold:export-validation");
+  await source.setFault("hold:export-page");
   let ended = false;
   const pending = cli
     .run(["export", "--format", "archive", "--output", path])
@@ -52,7 +52,7 @@ it("waits for an archive whose first byte comes after the usual answer budget, s
       ended = true;
     });
   try {
-    await source.waitForHold("hold:export-validation");
+    await source.waitForHold("hold:export-page");
     await new Promise((resolve) =>
       setTimeout(resolve, USUAL_ANSWER_BUDGET_MS + 5_000),
     );
