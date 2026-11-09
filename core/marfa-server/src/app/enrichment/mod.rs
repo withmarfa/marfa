@@ -1,6 +1,6 @@
 mod queue;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,11 +12,11 @@ use serde_json::json;
 
 use super::App;
 use super::access::Caller;
-use super::blobs::{Blob, Hash, Opened};
+use super::blobs::{Blob, CopyRecord, Hash, Opened};
 use super::catalog::{self, Snapshot};
 use super::housekeeping::{Report, Run};
 use super::items::write::{Enriched, Offer, Offered, Written, apply_enrichment, offer};
-use super::refusal::{Refusal, Result};
+use super::refusal::{Code, Refusal, Result};
 use crate::settings::registry::{
     ENRICHMENT_BATCH_SIZE, ENRICHMENT_ENABLED, ENRICHMENT_ITEM_TIMEOUT_MS, ENRICHMENT_MAX_ATTEMPTS,
     ENRICHMENT_MAX_BLOB_BYTES, ENRICHMENT_MAX_INFLATED_BYTES, ENRICHMENT_MAX_MEMORY_BYTES,
@@ -320,33 +320,79 @@ async fn settle(app: &Arc<App>, plan: &Plan, seq: i64, hash: &Hash, fate: Fate) 
     .await
 }
 
-/// The object stores that failed during a run. A remote store that failed is not asked again
-/// in the run; a disk that cannot open one file may open the next.
+/// Failed opens in a row after which an object store counts as down for the rest of a run.
+const STORE_MISSES: u32 = 2;
+
+/// What a run learned about the object stores. A remote store is asked no more once it is down;
+/// a disk that cannot open one file may open the next.
 #[derive(Default)]
 struct Outage {
-    stores: HashSet<String>,
+    down: HashSet<String>,
+    /// Failed opens in a row for each remote store, which any file it serves ends.
+    misses: HashMap<String, u32>,
+    /// Files that failed alone, put behind every other file when the run ends.
+    stranded: Vec<(i64, Hash)>,
 }
 
 impl Outage {
-    /// Whether every copy of the file is in a store that failed.
-    async fn holds(&self, app: &Arc<App>, hash: &Hash) -> bool {
-        if self.stores.is_empty() {
-            return false;
-        }
-        let Ok(copies) = app.blob_copies(&Caller::Server, hash).await else {
-            return false;
-        };
-        let mut live = copies.iter().filter(|copy| !copy.detached).peekable();
-        live.peek().is_some() && live.all(|copy| self.stores.contains(&copy.store_id))
+    async fn live_copies(app: &Arc<App>, hash: &Hash) -> Vec<CopyRecord> {
+        let copies = app.blob_copies(&Caller::Server, hash).await;
+        let mut live = copies.unwrap_or_default();
+        live.retain(|copy| !copy.detached);
+        live
     }
 
-    async fn note(&mut self, app: &Arc<App>, hash: &Hash) {
-        if let Ok(copies) = app.blob_copies(&Caller::Server, hash).await {
-            let remote = copies
-                .into_iter()
-                .filter(|copy| !copy.detached && copy.kind != "disk");
-            self.stores.extend(remote.map(|copy| copy.store_id));
+    /// Whether every copy of the file is in a store that is down.
+    async fn holds(&self, app: &Arc<App>, hash: &Hash) -> bool {
+        if self.down.is_empty() {
+            return false;
         }
+        let live = Self::live_copies(app, hash).await;
+        !live.is_empty() && live.iter().all(|copy| self.down.contains(&copy.store_id))
+    }
+
+    /// A file served by its only store shows that the store answers.
+    async fn opened(&mut self, app: &Arc<App>, hash: &Hash) {
+        if self.misses.is_empty() {
+            return;
+        }
+        if let [only] = Self::live_copies(app, hash).await.as_slice() {
+            self.misses.remove(&only.store_id);
+        }
+    }
+
+    /// A store counts as down when it fails to open files one after another; one file that will
+    /// not open, or a shortage of room here, says nothing of the stores.
+    async fn failed(&mut self, app: &Arc<App>, seq: i64, hash: &Hash, refusal: &Refusal) {
+        self.stranded.push((seq, hash.clone()));
+        if refusal.code != Code::BlobStoreUnavailable {
+            return;
+        }
+        for copy in Self::live_copies(app, hash).await {
+            if copy.kind == "disk" {
+                continue;
+            }
+            let misses = self.misses.entry(copy.store_id.clone()).or_default();
+            *misses += 1;
+            if *misses >= STORE_MISSES {
+                self.down.insert(copy.store_id);
+            }
+        }
+    }
+
+    /// Hands the files that failed alone to the back of the line, behind the files deferred this run.
+    async fn put_behind(&mut self, app: &Arc<App>) -> Result<()> {
+        let stranded = std::mem::take(&mut self.stranded);
+        if stranded.is_empty() {
+            return Ok(());
+        }
+        app.write(&Caller::Server, ACTION, move |unit| {
+            for (seq, hash) in &stranded {
+                queue::behind(unit.tx(), *seq, hash.as_str(), &unit.at)?;
+            }
+            Ok(())
+        })
+        .await
     }
 }
 
@@ -406,12 +452,13 @@ async fn one(
             let fate = Fate::Skip(Why::Missing);
             return counted(settle(app, plan, seq, &hash, fate).await);
         }
-        Err(_) => {
-            outage.note(app, &hash).await;
+        Err(refusal) => {
+            outage.failed(app, seq, &hash, &refusal).await;
             settle(app, plan, seq, &hash, Fate::Unreached).await?;
             return Ok(Step::Refunded);
         }
     };
+    outage.opened(app, &hash).await;
     let mime = offered
         .mime_type
         .clone()
@@ -458,6 +505,7 @@ pub async fn sweep(app: Arc<App>, run: Run) -> Result<Report> {
         }
         again = more && progressed;
     }
+    outage.put_behind(&app).await?;
     Ok(Report {
         result: tally.result(),
         again,

@@ -183,6 +183,37 @@ impl Instance {
     }
 }
 
+/// Copies each file to the object store and leaves it there alone.
+async fn keep_only_far_away(one: &Instance, ids: &[String]) {
+    let ended = housekeeping::run_now(&one.app, "blob-replicate")
+        .await
+        .unwrap();
+    assert_eq!(ended.outcome, "ok", "{:?}", ended.error);
+    for id in ids {
+        std::fs::remove_file(one.blob_path(&one.hash_of(id).await)).unwrap();
+    }
+    let ended = housekeeping::run_now(&one.app, "blob-integrity")
+        .await
+        .unwrap();
+    assert_eq!(ended.outcome, "ok", "{:?}", ended.error);
+}
+
+/// The object store's key for a file's bytes.
+fn object_of(s3: &fake_s3::FakeS3, hash: &str) -> String {
+    let hex = hash.strip_prefix("sha256:").unwrap();
+    let keys = s3.objects_under("");
+    keys.into_iter().find(|key| key.contains(hex)).unwrap()
+}
+
+async fn far_instance(s3: &fake_s3::FakeS3) -> Instance {
+    let named = s3.settings("marfa", "blobs");
+    let named: Vec<(&str, &str)> = named
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.as_str()))
+        .collect();
+    Instance::start(&named).await
+}
+
 fn counts(extracted: u64, skipped: u64, failed: u64) -> Value {
     json!({ "extracted": extracted, "skipped": skipped, "failed": failed })
 }
@@ -367,28 +398,13 @@ async fn reads_a_file_added_after_files_whose_bytes_cannot_be_opened() {
 
 async fn reads_files_held_elsewhere_while_an_object_store_fails() {
     let s3 = fake_s3::FakeS3::start().await;
-    let named = s3.settings("marfa", "blobs");
-    let named: Vec<(&str, &str)> = named
-        .iter()
-        .map(|(name, value)| (name.as_str(), value.as_str()))
-        .collect();
-    let one = Instance::start(&named).await;
+    let one = far_instance(&s3).await;
     let mut far = Vec::new();
     for number in 0..3 {
         let bytes = format!("a ledger kept far away, number {number}");
         far.push(one.file(bytes.as_bytes(), "text/plain", json!({})).await);
     }
-    let ended = housekeeping::run_now(&one.app, "blob-replicate")
-        .await
-        .unwrap();
-    assert_eq!(ended.outcome, "ok", "{:?}", ended.error);
-    for id in &far {
-        std::fs::remove_file(one.blob_path(&one.hash_of(id).await)).unwrap();
-    }
-    let ended = housekeeping::run_now(&one.app, "blob-integrity")
-        .await
-        .unwrap();
-    assert_eq!(ended.outcome, "ok", "{:?}", ended.error);
+    keep_only_far_away(&one, &far).await;
     let near = one.file(b"the okapi ledger", "text/plain", json!({})).await;
     s3.set_mode(fake_s3::Mode::AllNotFound);
     assert_eq!(one.sweep().await, counts(1, 0, 0));
@@ -401,8 +417,64 @@ async fn reads_files_held_elsewhere_while_an_object_store_fails() {
     for id in &far {
         assert_eq!(one.count(waiting, id), 1);
     }
+    let mut asked = 0;
+    for id in &far {
+        let key = object_of(&s3, &one.hash_of(id).await);
+        asked += s3.requests(&Method::GET, &key);
+    }
+    assert_eq!(asked, 2, "the store was asked about every file");
     s3.set_mode(fake_s3::Mode::Normal);
     assert_eq!(one.sweep().await, counts(3, 0, 0));
+}
+
+async fn reads_the_files_around_an_object_that_will_not_open() {
+    let s3 = fake_s3::FakeS3::start().await;
+    let one = far_instance(&s3).await;
+    let mut far = Vec::new();
+    for number in 0..3 {
+        let bytes = format!("a ledger kept far away, number {number}");
+        far.push(one.file(bytes.as_bytes(), "text/plain", json!({})).await);
+    }
+    keep_only_far_away(&one, &far).await;
+    let key = object_of(&s3, &one.hash_of(&far[0]).await);
+    let object = s3.stored(&key).unwrap();
+    s3.remove_object(&key);
+    assert_eq!(one.sweep().await, counts(2, 0, 0));
+    for id in &far[1..] {
+        assert!(one.item(id).await["properties"]["extracted_text"].is_string());
+    }
+    let waiting = "SELECT count(*) FROM enrichment_files f JOIN items i ON i.seq = f.item_seq \
+                   WHERE i.id = ?1 AND f.state = 'waiting' AND f.attempts = 0";
+    assert_eq!(one.count(waiting, &far[0]), 1);
+    assert_eq!(one.sweep().await, counts(0, 0, 0));
+    s3.restore(&key, object);
+    assert_eq!(one.sweep().await, counts(1, 0, 0));
+}
+
+async fn reads_the_files_behind_objects_that_will_not_open() {
+    let s3 = fake_s3::FakeS3::start().await;
+    let one = far_instance(&s3).await;
+    let mut far = Vec::new();
+    for number in 0..4 {
+        let bytes = format!("a ledger kept far away, number {number}");
+        far.push(one.file(bytes.as_bytes(), "text/plain", json!({})).await);
+    }
+    keep_only_far_away(&one, &far).await;
+    for id in &far[..2] {
+        s3.remove_object(&object_of(&s3, &one.hash_of(id).await));
+    }
+    let mut read = 0;
+    for _ in 0..2 {
+        let swept = one.sweep().await;
+        read += swept["extracted"].as_u64().unwrap();
+        assert_eq!(swept["failed"], 0);
+    }
+    assert_eq!(read, 2);
+    let waiting = "SELECT count(*) FROM enrichment_files f JOIN items i ON i.seq = f.item_seq \
+                   WHERE i.id = ?1 AND f.state = 'waiting' AND f.attempts = 0";
+    for id in &far[..2] {
+        assert_eq!(one.count(waiting, id), 1);
+    }
 }
 
 async fn reads_a_file_again_when_its_type_is_corrected_after_its_attempts_ran_out() {
@@ -770,6 +842,13 @@ fn main() {
             "does_not_run_again_at_once_for_files_it_handed_back",
             || Box::pin(does_not_run_again_at_once_for_files_it_handed_back()),
         ),
+        trial(
+            "reads_the_files_around_an_object_that_will_not_open",
+            || Box::pin(reads_the_files_around_an_object_that_will_not_open()),
+        ),
+        trial("reads_the_files_behind_objects_that_will_not_open", || {
+            Box::pin(reads_the_files_behind_objects_that_will_not_open())
+        }),
         trial(
             "reads_a_file_again_when_its_bytes_are_uploaded_again",
             || Box::pin(reads_a_file_again_when_its_bytes_are_uploaded_again()),

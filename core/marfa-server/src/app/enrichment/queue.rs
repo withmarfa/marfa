@@ -199,3 +199,14 @@ pub fn defer(tx: &Transaction<'_>, seq: i64, hash: &str, at: &str) -> Result<()>
     .execute(params![seq, hash, at])?;
     Ok(())
 }
+
+/// Moves a file behind every file moved at or before `at`, without counting an attempt.
+pub fn behind(tx: &Transaction<'_>, seq: i64, hash: &str, at: &str) -> Result<()> {
+    tx.prepare_cached(
+        "UPDATE enrichment_files \
+         SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', ?3, '+0.001 seconds') \
+         WHERE item_seq = ?1 AND hash = ?2",
+    )?
+    .execute(params![seq, hash, at])?;
+    Ok(())
+}
