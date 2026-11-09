@@ -63,7 +63,7 @@ pub fn raise() -> Option<u64> {
             break;
         }
     }
-    (limit.rlim_cur != libc::RLIM_INFINITY).then_some(limit.rlim_cur as u64)
+    (limit.rlim_cur != libc::RLIM_INFINITY).then_some(limit.rlim_cur)
 }
 
 /// The caps that fit inside `limit` beside the reserve, each at least one.
@@ -122,7 +122,7 @@ mod tests {
         assert_eq!(after.rlim_cur, before.rlim_max);
         assert_eq!(
             raised,
-            (after.rlim_cur != libc::RLIM_INFINITY).then_some(after.rlim_cur as u64)
+            (after.rlim_cur != libc::RLIM_INFINITY).then_some(after.rlim_cur)
         );
     }
 }
