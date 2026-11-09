@@ -1,4 +1,5 @@
 pub mod apps;
+pub mod attention;
 pub mod audit;
 pub mod blobs;
 pub mod config;

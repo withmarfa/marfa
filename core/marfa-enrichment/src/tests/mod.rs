@@ -1,5 +1,4 @@
-//! Behaviour tests: a file goes in by `read_here`, and the text, the size, the length
-//! or the refusal come out.
+//! Behaviour tests through `read_here`.
 
 mod formats;
 mod html;

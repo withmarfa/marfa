@@ -483,6 +483,45 @@ describe("GET /health when the free space cannot be read", () => {
     expect(after.body.components.disk?.status).toBe("ok");
     expect(after.body.components.blob_storage?.status).toBe("ok");
   }, 120_000);
+
+  it("answers the disk and blob storage components degraded within two seconds when the filesystem does not answer, while other requests are served, and ok once it does", async () => {
+    // The witness: with the filesystem answering, the same call is quick and `ok`.
+    const before = await ask();
+    expect(before.body.components.disk?.status).toBe("ok");
+    expect(before.body.components.blob_storage?.status).toBe("ok");
+
+    await own.setFault("hold:disk-probe");
+    let held: Answer;
+    let elapsedMs: number;
+    let meanwhile: Response[];
+    try {
+      const started = Date.now();
+      const asking = ask();
+      // Calls that arrive while the probes are blocked are served and not queued behind them.
+      meanwhile = await Promise.all(
+        Array.from({ length: 64 }, () => fetch(`${own.apiUrl}/`)),
+      );
+      held = await asking;
+      elapsedMs = Date.now() - started;
+    } finally {
+      await own.clearFault("hold:disk-probe");
+    }
+    expect(meanwhile.map((response) => response.status)).toEqual(
+      meanwhile.map(() => 200),
+    );
+    expect(held.body.components.disk?.status).toBe("degraded");
+    expect(held.body.components.disk?.error).toMatch(/within 2000ms$/);
+    expect(held.body.components.blob_storage?.status).toBe("degraded");
+    expect(held.body.components.blob_storage?.error).toMatch(/within 2000ms$/);
+    expect(othersOf(held, "disk")).toEqual(["degraded", "ok", "ok"]);
+    expect(held.httpStatus).toBe(200);
+    expect(elapsedMs).toBeLessThan(5_000);
+
+    const after = await ask();
+    expect(after.body.status).toBe("ok");
+    expect(after.body.components.disk?.status).toBe("ok");
+    expect(after.body.components.blob_storage?.status).toBe("ok");
+  }, 120_000);
 });
 
 describe("the housekeeping object of GET /health", () => {

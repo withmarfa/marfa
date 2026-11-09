@@ -2113,7 +2113,7 @@ export interface paths {
         };
         /**
          * List attention items
-         * @description Returns current concerns for the private local command. Failed or timed-out checks appear as unavailable items alongside known concerns. An empty list means every check completed without a concern.
+         * @description Returns what needs the owner's attention, to the private local command. A check that fails or runs out of time appears as an unavailable item beside the known concerns. An empty list means every check completed without a concern.
          */
         get: operations["listAttention"];
         put?: never;
@@ -5240,21 +5240,16 @@ export interface components {
         /** @description One known concern or unavailable check. */
         AttentionConcern: {
             /**
-             * @description health: degraded or down; job: failed last run; connector: failed, problems, or quiet; folder: sync concern; key: expires within seven days; unavailable: check failed or timed out.
+             * @description health: a component is degraded or down; job: a job failed its last run; connector: failed, reports problems, or quiet over a day; folder: sync problems; key: expires within seven days; unavailable: a check failed or ran out of time.
              * @enum {string}
              */
             kind: "health" | "job" | "connector" | "folder" | "key" | "unavailable";
-            /** @description The component or job name, connector, folder, or key ID, or unavailable check name. */
+            /** @description The component, job, connector, folder, or key ID, or the name of the check that could not answer. */
             reference: string;
             /** @description A short name for the concern. */
             title: string;
             /** @description What needs attention or remains unknown. */
             description: string;
-            /**
-             * @description warn: needs a look; danger: a component or connector failed. Present when the concern has a severity.
-             * @enum {string}
-             */
-            tone?: "warn" | "danger";
         };
         /** @description An error response. */
         InvalidPropertiesOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal: {
@@ -31077,7 +31072,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: only the private local command can read this inventory. */
+            /** @description - `forbidden`: only the private local command can read what needs attention. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

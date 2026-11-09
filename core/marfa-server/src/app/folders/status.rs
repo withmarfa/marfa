@@ -4,11 +4,12 @@ use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 
 use super::FOLDER_TYPE;
+use super::inventory::shown;
 use super::report::{MOST, Report};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::faults::{FAIL_FOLDER_STATUS_REPORT, HOLD_FOLDER_STATUS_READ};
-use crate::app::items::{readable_of, reading};
+use crate::app::items::{parsed, readable_of, reading};
 use crate::app::keys;
 use crate::app::oauth::grants;
 use crate::app::oauth::store::ms_of;
@@ -243,7 +244,8 @@ fn copy_json(copy: &Copy, at_ms: i64) -> Result<Value> {
     }))
 }
 
-fn status_of(tx: &Transaction<'_>, folder_id: &str, at: &str) -> Result<String> {
+/// Each sign-in's copies, and the totals of the sign-ins that still stand.
+fn gathered(tx: &Transaction<'_>, folder_id: &str, at: &str) -> Result<(Vec<Value>, Totals)> {
     let at_ms = ms_of(at)?;
     let mut totals = Totals::default();
     let mut groups: Vec<Value> = Vec::new();
@@ -276,6 +278,11 @@ fn status_of(tx: &Transaction<'_>, folder_id: &str, at: &str) -> Result<String> 
         copies.push(copy_json(&row.copy, at_ms)?);
     }
     close(&at_group, &named.2, &mut copies);
+    Ok((groups, totals))
+}
+
+fn status_of(tx: &Transaction<'_>, folder_id: &str, at: &str) -> Result<String> {
+    let (groups, totals) = gathered(tx, folder_id, at)?;
     Ok(json!({
         "folder_id": folder_id,
         "sign_ins": groups,
@@ -300,4 +307,47 @@ pub async fn read(app: &App, caller: &Caller, folder_id: String) -> Result<Strin
         status_of(read.tx, &folder_id, &at)
     })
     .await
+}
+
+/// An active folder whose standing sign-ins report something to look at.
+pub struct Concern {
+    pub id: String,
+    pub title: String,
+    pub problems: i64,
+    pub paused_removals: i64,
+    pub first_sync_waiting: bool,
+}
+
+/// Every active folder with a report that needs a look, in one snapshot.
+pub fn concerns(tx: &Transaction<'_>, at: &str) -> Result<Vec<Concern>> {
+    let mut statement = tx.prepare_cached(
+        "SELECT i.id, json(i.properties) FROM items i WHERE i.type = ?1 AND i.state = 'active' \
+         AND EXISTS (SELECT 1 FROM folder_status s WHERE s.folder_id = i.id) \
+         ORDER BY i.created_at DESC, i.id DESC",
+    )?;
+    let folders = statement
+        .query_map([FOLDER_TYPE], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut found = Vec::new();
+    for (id, properties) in folders {
+        let (_, totals) = gathered(tx, &id, at)?;
+        let problems = totals
+            .problems
+            .iter()
+            .fold(0_i64, |sum, (_, count)| sum.saturating_add(*count));
+        if problems == 0 && totals.paused_removals == 0 && totals.first_sync_waiting == 0 {
+            continue;
+        }
+        let properties = parsed(&properties)?;
+        found.push(Concern {
+            title: shown(properties.get("title").and_then(Value::as_str)),
+            id,
+            problems,
+            paused_removals: totals.paused_removals,
+            first_sync_waiting: totals.first_sync_waiting > 0,
+        });
+    }
+    Ok(found)
 }
