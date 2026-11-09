@@ -54,16 +54,14 @@ impl Ids {
 
     pub fn contains(&self, id: &str) -> bool {
         match uuid::Uuid::parse_str(id) {
-            Ok(held) if held.hyphenated().to_string() == id => {
-                self.uuids.contains(&held.as_u128())
-            }
+            Ok(held) if held.hyphenated().to_string() == id => self.uuids.contains(&held.as_u128()),
             _ => self.other.contains(id),
         }
     }
 }
 
 /// The manifest's blobs, by hash: those carried and those it says the archive lacks.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct Manifest {
     pub blobs: BTreeMap<String, (String, u64)>,
     pub missing: BTreeMap<String, (Option<String>, Option<u64>)>,
@@ -202,7 +200,9 @@ impl Rows {
             .with_detail("row", row)
             .with_detail("pointer", pointer);
             return Err(match named {
-                Some((kind, id)) => refusal.with_detail(&format!("{}_id", kind.to_ascii_lowercase()), id),
+                Some((kind, id)) => {
+                    refusal.with_detail(&format!("{}_id", kind.to_ascii_lowercase()), id)
+                }
                 None => refusal,
             });
         }
@@ -248,7 +248,9 @@ impl Rows {
             }
             "edge_type" => {
                 let definition = body.as_object().ok_or_else(|| {
-                    invalid(format!("Line {row} of {INSTANCE} holds an edge type that is not an object."))
+                    invalid(format!(
+                        "Line {row} of {INSTANCE} holds an edge type that is not an object."
+                    ))
                 })?;
                 registrations.edge_types.push(definition.clone());
             }
@@ -261,21 +263,32 @@ impl Rows {
                         damaged_schema("The archive carries a type icon with an invalid type identifier.")
                             .with_detail("errors", json!([{ "path": "type_icon.type_id", "message": "Not a type identifier." }]))
                     })?;
-                let icon = body.get("icon").filter(|icon| icon.is_string()).ok_or_else(|| {
-                    damaged_schema(format!("The archive carries an icon for {type_id} that is not a string."))
-                        .with_detail("errors", json!([{ "path": "type_icon.icon", "message": "Not a string." }]))
-                })?;
+                let icon = body
+                    .get("icon")
+                    .filter(|icon| icon.is_string())
+                    .ok_or_else(|| {
+                        damaged_schema(format!(
+                            "The archive carries an icon for {type_id} that is not a string."
+                        ))
+                        .with_detail(
+                            "errors",
+                            json!([{ "path": "type_icon.icon", "message": "Not a string." }]),
+                        )
+                    })?;
                 if !self.icon_types.insert(type_id.to_string()) {
-                    return Err(invalid(format!("The archive carries more than one icon for {type_id}.")));
+                    return Err(invalid(format!(
+                        "The archive carries more than one icon for {type_id}."
+                    )));
                 }
                 let drawn = icon_issue(Some(icon), "type_icon.icon")
                     .is_none()
                     .then(|| icon.as_str().unwrap_or_default().to_string());
                 registrations.icons.push((type_id.to_string(), drawn));
             }
-            "source" => registrations
-                .sources
-                .push(sources::archived(body, crate::app::items::restored::restored_source)?),
+            "source" => registrations.sources.push(sources::archived(
+                body,
+                crate::app::items::restored::restored_source,
+            )?),
             "setting" => registrations.settings.push(stored::archived(body)?),
             "connector_state" => {
                 let source = body.get("source").and_then(Value::as_str);
@@ -285,7 +298,9 @@ impl Rows {
                         "Line {row} of {INSTANCE} holds a connector state with no source or no state object."
                     )));
                 };
-                registrations.states.push((source.to_string(), state.clone()));
+                registrations
+                    .states
+                    .push((source.to_string(), state.clone()));
             }
             _ => {
                 let held = body.get("source").is_some_and(Value::is_string)
@@ -315,7 +330,9 @@ impl Rows {
         if !conflicting.is_empty() {
             return Err(super::conflicting(conflicting));
         }
-        let catalog = self.committed.with_registered(&types.rows(), &edges.rows())?;
+        let catalog = self
+            .committed
+            .with_registered(&types.rows(), &edges.rows())?;
         for (type_id, _) in &self.registrations.icons {
             if !catalog.holds(type_id) && !catalog.types.contains(type_id) {
                 return Err(damaged_schema(format!(
@@ -350,7 +367,10 @@ impl Rows {
         let id = item.get("id").and_then(Value::as_str);
         if let Some(Value::Array(versions)) = line.get("versions") {
             for (index, snapshot) in versions.iter().enumerate() {
-                let held = snapshot.get("id").and_then(Value::as_str).unwrap_or_default();
+                let held = snapshot
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 if !self.snapshots.insert(held) {
                     let field = format!("versions.{index}.id");
                     return Err(invalid(format!(
@@ -424,8 +444,9 @@ fn mended(text: &[u8]) -> Vec<u8> {
                 at += 1;
             }
             b'\\' => match surrogate(at) {
-                Some(high) if (0xD800..0xDC00).contains(&high)
-                    && surrogate(at + 6).is_some_and(|low| low >= 0xDC00) =>
+                Some(high)
+                    if (0xD800..0xDC00).contains(&high)
+                        && surrogate(at + 6).is_some_and(|low| low >= 0xDC00) =>
                 {
                     out.extend_from_slice(&text[at..at + 12]);
                     at += 12;
@@ -451,7 +472,11 @@ fn mended(text: &[u8]) -> Vec<u8> {
 /// What row a line holds, by kind and id, where its text reads once mended.
 fn named_by(file: LineFile, text: &[u8]) -> Option<(&'static str, String)> {
     let line: Value = serde_json::from_slice(&mended(text)).ok()?;
-    let named = |pointer: &str| line.pointer(pointer).and_then(Value::as_str).map(str::to_string);
+    let named = |pointer: &str| {
+        line.pointer(pointer)
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    };
     match file {
         LineFile::Items => Some(("Item", named("/item/id")?)),
         LineFile::Edges => Some(("Edge", named("/edge/id")?)),
@@ -630,8 +655,10 @@ impl Intake {
     fn begin(&mut self, name: String) -> Result<()> {
         let tracked = ENTRIES.contains(&name.as_str()) || name.starts_with(BLOBS);
         if tracked && !self.seen.insert(name.clone()) {
-            return Err(invalid(format!("The archive carries {name} more than once."))
-                .with_detail("entry", name));
+            return Err(
+                invalid(format!("The archive carries {name} more than once."))
+                    .with_detail("entry", name),
+            );
         }
         if let Some(rank) = ENTRIES.iter().position(|held| *held == name) {
             if rank != self.stage || self.disorder.is_some() {
@@ -707,7 +734,11 @@ impl Intake {
                 spool.write_all(bytes).map_err(spooled)?;
                 if decoder.write_all(bytes).is_err() {
                     let file = decoder.get_ref().file;
-                    return Err(decoder.get_mut().failed.take().unwrap_or_else(|| not_gzip(file)));
+                    return Err(decoder
+                        .get_mut()
+                        .failed
+                        .take()
+                        .unwrap_or_else(|| not_gzip(file)));
                 }
                 Ok(())
             }
@@ -727,7 +758,11 @@ impl Intake {
                 let mut decoder = *decoder;
                 if decoder.try_finish().is_err() {
                     let file = decoder.get_ref().file;
-                    return Err(decoder.get_mut().failed.take().unwrap_or_else(|| not_gzip(file)));
+                    return Err(decoder
+                        .get_mut()
+                        .failed
+                        .take()
+                        .unwrap_or_else(|| not_gzip(file)));
                 }
                 let mut splitter = decoder
                     .finish()
@@ -827,7 +862,9 @@ fn manifest(bytes: &[u8]) -> Result<Manifest> {
         .with_detail("pointer", pointer));
     }
     let Ok(Value::Object(held)) = serde_json::from_slice::<Value>(bytes) else {
-        return Err(invalid(format!("{MANIFEST} is not a JSON object.")).with_detail("entry", MANIFEST));
+        return Err(
+            invalid(format!("{MANIFEST} is not a JSON object.")).with_detail("entry", MANIFEST)
+        );
     };
     if let Some(version) = held
         .get("version")
@@ -838,7 +875,8 @@ fn manifest(bytes: &[u8]) -> Result<Manifest> {
         )));
     }
     let mut errors = Vec::new();
-    let mut wrong = |path: String, message: &str| errors.push(json!({ "path": path, "message": message }));
+    let mut wrong =
+        |path: String, message: &str| errors.push(json!({ "path": path, "message": message }));
     if held.get("version").and_then(Value::as_u64) != Some(VERSION) {
         wrong("version".into(), "Must be a number.");
     }
@@ -855,10 +893,15 @@ fn manifest(bytes: &[u8]) -> Result<Manifest> {
                     wrong(format!("blobs.{hash}.mime_type"), "Must be a string.");
                 }
                 if size.is_none() {
-                    wrong(format!("blobs.{hash}.size_bytes"), "Must be a non-negative integer.");
+                    wrong(
+                        format!("blobs.{hash}.size_bytes"),
+                        "Must be a non-negative integer.",
+                    );
                 }
                 if let (Some(mime), Some(size)) = (mime, size) {
-                    manifest.blobs.insert(hash.clone(), (served_type(mime), size));
+                    manifest
+                        .blobs
+                        .insert(hash.clone(), (served_type(mime), size));
                 }
             }
         }
@@ -873,10 +916,16 @@ fn manifest(bytes: &[u8]) -> Result<Manifest> {
                 let mime_ok = mime.is_some_and(|mime| mime.is_null() || mime.is_string());
                 let size_ok = size.is_some_and(|size| size.is_null() || size.as_u64().is_some());
                 if !mime_ok {
-                    wrong(format!("missing_blobs.{hash}.mime_type"), "Must be a string or null.");
+                    wrong(
+                        format!("missing_blobs.{hash}.mime_type"),
+                        "Must be a string or null.",
+                    );
                 }
                 if !size_ok {
-                    wrong(format!("missing_blobs.{hash}.size_bytes"), "Must be a non-negative integer or null.");
+                    wrong(
+                        format!("missing_blobs.{hash}.size_bytes"),
+                        "Must be a non-negative integer or null.",
+                    );
                 }
                 if mime_ok && size_ok {
                     manifest.missing.insert(
@@ -904,4 +953,60 @@ fn manifest(bytes: &[u8]) -> Result<Manifest> {
         .with_detail("errors", errors));
     }
     Ok(manifest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unpaired_surrogate_is_mended_and_a_pair_is_kept() {
+        let line = br#"{"item":{"id":"a","b":"x\ud83d y","c":"\ud83d\ude00","d":"\\ud83d"}}"#;
+        let mended = String::from_utf8(mended(line)).unwrap();
+        assert!(mended.contains(r#""x\ufffd y""#), "{mended}");
+        assert!(mended.contains(r#""\ud83d\ude00""#), "{mended}");
+        assert!(mended.contains(r#""\\ud83d""#), "{mended}");
+        assert_eq!(
+            named_by(LineFile::Items, line),
+            Some(("Item", "a".to_string()))
+        );
+    }
+
+    #[test]
+    fn a_manifest_at_another_version_is_refused_for_its_version_alone() {
+        let refused = manifest(br#"{"version":1,"blobs":[]}"#).unwrap_err();
+        assert!(
+            refused
+                .message
+                .contains("read only by the build that wrote it")
+        );
+        let refused = manifest(br#"{"version":0,"format":"marfa-archive-v0","blobs":{"h":{"mime_type":null,"size_bytes":-1}}}"#).unwrap_err();
+        let paths: Vec<String> = refused.details.unwrap()["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|error| error["path"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(paths, ["blobs.h.mime_type", "blobs.h.size_bytes"]);
+    }
+
+    #[test]
+    fn a_type_no_header_carries_is_kept_as_bytes_of_no_named_type() {
+        assert_eq!(served_type("text/plain"), "text/plain");
+        assert_eq!(
+            served_type("text/caf\u{e9}"),
+            crate::app::blobs::DEFAULT_TYPE
+        );
+        assert_eq!(served_type(""), crate::app::blobs::DEFAULT_TYPE);
+    }
+
+    #[test]
+    fn ids_tell_uuids_and_other_ids_apart_without_keeping_text() {
+        let mut ids = Ids::default();
+        assert!(ids.insert("01a1bdba-8640-72ba-b7d6-9e27d94e7540"));
+        assert!(!ids.insert("01a1bdba-8640-72ba-b7d6-9e27d94e7540"));
+        assert!(ids.insert("not-a-uuid"));
+        assert!(ids.contains("not-a-uuid"));
+        assert!(!ids.contains("01A1BDBA-8640-72BA-B7D6-9E27D94E7540"));
+    }
 }

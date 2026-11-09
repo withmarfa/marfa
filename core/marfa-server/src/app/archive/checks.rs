@@ -232,10 +232,10 @@ pub fn item(catalog: &Catalog, line: &Value, row: usize) -> Result<(), Box<Refus
         type_id,
         row,
     };
-    if item
-        .get("id")
-        .is_some_and(|id| !id.as_str().is_some_and(|id| marfa_rules::validation::id("id", id).is_ok()))
-    {
+    if item.get("id").is_some_and(|id| {
+        !id.as_str()
+            .is_some_and(|id| marfa_rules::validation::id("id", id).is_ok())
+    }) {
         return Err(at.invalid("id", "an item ID"));
     }
     let Some(type_id) = type_id.filter(|type_id| is_type_id(type_id)) else {
@@ -249,7 +249,10 @@ pub fn item(catalog: &Catalog, line: &Value, row: usize) -> Result<(), Box<Refus
     if item.get("version").is_some_and(|value| !is_version(value)) {
         return Err(at.invalid("version", "a positive safe integer"));
     }
-    let binned = matches!(item.get("state").and_then(Value::as_str), Some("trashed" | "revoked"));
+    let binned = matches!(
+        item.get("state").and_then(Value::as_str),
+        Some("trashed" | "revoked")
+    );
     if let Some(trashed_at) = item.get("trashed_at").filter(|value| !value.is_null()) {
         if !is_instant(trashed_at) {
             return Err(at.invalid("trashed_at", "an instant or null"));
@@ -412,7 +415,6 @@ fn history(
     Ok(())
 }
 
-
 /// An edge's end, as a restore finds it once the archive's items are written.
 pub struct End<'a> {
     pub type_id: &'a str,
@@ -531,6 +533,32 @@ mod tests {
     }
 
     #[test]
+    fn a_writer_is_judged_field_by_field() {
+        assert_eq!(writer_fault(&Value::Null), None);
+        assert_eq!(
+            writer_fault(&json!({ "kind": "key", "id": "k", "name": "Desk" })),
+            None
+        );
+        assert_eq!(writer_fault(&json!("a key")), Some(""));
+        assert_eq!(
+            writer_fault(&json!({ "kind": "robot", "id": "k", "name": "x" })),
+            Some("kind")
+        );
+        assert_eq!(
+            writer_fault(&json!({ "kind": "key", "id": "", "name": "x" })),
+            Some("id")
+        );
+        assert_eq!(
+            writer_fault(&json!({ "kind": "key", "id": "k", "name": "a\u{7}b" })),
+            Some("name")
+        );
+        assert_eq!(
+            writer_fault(&json!({ "kind": "key", "id": "k", "name": " x" })),
+            Some("name")
+        );
+    }
+
+    #[test]
     fn a_row_its_type_takes_passes() {
         let catalog = Catalog::shipped();
         assert!(item(&catalog, &line(note(json!({}))), 1).is_ok());
@@ -566,11 +594,12 @@ mod tests {
     fn properties_past_the_bulk_cap_are_refused_and_at_it_pass() {
         let catalog = Catalog::shipped();
         let at = BULK_REQUEST_BYTES - r#"{"t":""}"#.len();
-        let fits =
-            line(json!({ "id": "x", "type": "user.thing", "properties": { "t": "a".repeat(at) } }));
+        let fits = line(
+            json!({ "id": "01a1bdba-8640-72ba-b7d6-9e27d94e7540", "type": "user.thing", "properties": { "t": "a".repeat(at) } }),
+        );
         assert!(item(&catalog, &fits, 1).is_ok());
         let over = line(
-            json!({ "id": "x", "type": "user.thing", "properties": { "t": "a".repeat(at + 1) } }),
+            json!({ "id": "01a1bdba-8640-72ba-b7d6-9e27d94e7540", "type": "user.thing", "properties": { "t": "a".repeat(at + 1) } }),
         );
         let refused = item(&catalog, &over, 1).unwrap_err();
         assert_eq!(refused.refusal.code, Code::RequestTooLarge);
@@ -580,7 +609,9 @@ mod tests {
     #[test]
     fn a_row_of_a_type_nothing_registers_keeps_its_shape_and_a_shipped_type_does_not() {
         let catalog = Catalog::shipped();
-        let orphan = line(json!({ "id": "x", "type": "user.gone", "properties": { "n": 1 } }));
+        let orphan = line(
+            json!({ "id": "01a1bdba-8640-72ba-b7d6-9e27d94e7540", "type": "user.gone", "properties": { "n": 1 } }),
+        );
         assert!(item(&catalog, &orphan, 1).is_ok());
         let wrong = line(note(json!({ "properties": { "title": 7 } })));
         let refused = item(&catalog, &wrong, 1).unwrap_err();

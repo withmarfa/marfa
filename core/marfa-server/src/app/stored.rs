@@ -166,12 +166,24 @@ pub async fn change(app: &Arc<App>, write: Write, changes: Vec<Change>) -> Resul
 /// Reads a `setting` line as the row it stores. The two addresses name where an instance
 /// answers, which a move changes, so a line naming either is a damaged archive.
 pub fn archived(line: &serde_json::Value) -> Result<(String, String)> {
-    let key = line.get("key").and_then(serde_json::Value::as_str).unwrap_or_default();
-    let refused = |why: String| Refusal::validation(format!("The archive carries a setting {why}."));
+    let key = line
+        .get("key")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let refused =
+        |why: String| Refusal::validation(format!("The archive carries a setting {why}."));
     let entry = registry::entry(key)
-        .filter(|entry| ![registry::ADDRESSES.entry.key, registry::SIGN_IN_ADDRESS.entry.key].contains(&entry.key))
+        .filter(|entry| {
+            ![
+                registry::ADDRESSES.entry.key,
+                registry::SIGN_IN_ADDRESS.entry.key,
+            ]
+            .contains(&entry.key)
+        })
         .ok_or_else(|| refused(format!("this instance does not take: {key}")))?;
-    let value = line.get("value").ok_or_else(|| refused(format!("with no value: {key}")))?;
+    let value = line
+        .get("value")
+        .ok_or_else(|| refused(format!("with no value: {key}")))?;
     let text = entry
         .row_text_of_json(value)
         .and_then(|text| entry.row_text(&text))

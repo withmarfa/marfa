@@ -619,7 +619,8 @@ impl<'c> Writing<'_, '_, 'c> {
                     .collect()
             })
             .unwrap_or_default();
-        references::archived(&properties, &lent).apply(self.tx(), Referencing::Edge(written.seq()))?;
+        references::archived(&properties, &lent)
+            .apply(self.tx(), Referencing::Edge(written.seq()))?;
         announce(self.unit, "edge.created", &written, &source, None)?;
         Ok(None)
     }
@@ -658,7 +659,12 @@ impl<'c> Writing<'_, '_, 'c> {
         if kind.id == FOLDER_EDGE {
             judge_folder(properties)?;
         }
-        judge_restored_ends(self.catalog, kind, (&source.id, &source.type_id), &target.type_id)?;
+        judge_restored_ends(
+            self.catalog,
+            kind,
+            (&source.id, &source.type_id),
+            &target.type_id,
+        )?;
         if held {
             return Err(duplicate(edge_type, &source.id, &target.id));
         }
@@ -680,7 +686,10 @@ impl<'c> Writing<'_, '_, 'c> {
         if parts(&kind.id) && edges::closes_cycle(&store, &proposed, parts)? {
             return Err(Refusal::new(
                 Code::EdgeConstraintViolation,
-                format!("Edge \"{}\" would make an item a part of its own part", kind.id),
+                format!(
+                    "Edge \"{}\" would make an item a part of its own part",
+                    kind.id
+                ),
             ));
         }
         Ok(())

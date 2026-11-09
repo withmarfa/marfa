@@ -480,7 +480,10 @@ impl Restoring {
 
     /// The definitions the plan registers.
     pub fn rows(&self) -> Vec<Obj> {
-        self.fresh.iter().map(|(_, schema, _)| schema.clone()).collect()
+        self.fresh
+            .iter()
+            .map(|(_, schema, _)| schema.clone())
+            .collect()
     }
 }
 
@@ -496,14 +499,16 @@ fn reserved(id: &str, why: String) -> Refusal {
 pub fn plan_restored(catalog: &Catalog, archived: &[Archived]) -> Result<Restoring> {
     let mut raw = Vec::new();
     for line in archived {
-        let definition = line
-            .definition
-            .as_object()
-            .ok_or_else(|| Refusal::new(Code::InvalidSchema, "An archived type is not an object"))?;
+        let definition = line.definition.as_object().ok_or_else(|| {
+            Refusal::new(Code::InvalidSchema, "An archived type is not an object")
+        })?;
         let id = text_of(definition, "id").unwrap_or_default();
         check_id(id, "type.id")?;
         if let Some(root) = grammar::platform_root(id) {
-            return Err(reserved(id, format!("a type in the reserved {root}.* namespace")));
+            return Err(reserved(
+                id,
+                format!("a type in the reserved {root}.* namespace"),
+            ));
         }
         raw.push(definition.clone());
     }
@@ -524,8 +529,8 @@ pub fn plan_restored(catalog: &Catalog, archived: &[Archived]) -> Result<Restori
         }
     }
     for (line, definition) in archived.iter().zip(&raw) {
-        let schema = validate_type(&Value::Object(definition.clone()), &registry)
-            .map_err(schema_refusal)?;
+        let schema =
+            validate_type(&Value::Object(definition.clone()), &registry).map_err(schema_refusal)?;
         let schema = labelled(schema);
         let id = text_of(&schema, "id")
             .ok_or_else(|| Refusal::internal("an archived type has no id"))?
@@ -545,7 +550,9 @@ pub fn plan_restored(catalog: &Catalog, archived: &[Archived]) -> Result<Restori
     let written = plan
         .fresh
         .iter()
-        .fold(catalog.types.clone(), |held, (_, schema, _)| held.with(schema.clone()));
+        .fold(catalog.types.clone(), |held, (_, schema, _)| {
+            held.with(schema.clone())
+        });
     let broken = broken_compatible_dependents(&written, &ids);
     if !broken.is_empty() {
         return Err(dependents_refusal(broken));

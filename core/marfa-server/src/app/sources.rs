@@ -272,11 +272,15 @@ pub fn archived(value: &Value, restored: impl Fn(&str) -> String) -> Result<Arch
         .ok_or_else(|| damaged("a source line with no source code".into()))?;
     let source = restored(code);
     if check_code(code).is_err() || check_code(&source).is_err() {
-        return Err(damaged(format!("a source line with an invalid code: {code}")));
+        return Err(damaged(format!(
+            "a source line with an invalid code: {code}"
+        )));
     }
     let name = match line.get("name") {
         None | Some(Value::Null) => None,
-        Some(Value::String(held)) if name(&Value::from(held.as_str())).ok().flatten().as_deref() == Some(held) => {
+        Some(Value::String(held))
+            if name(&Value::from(held.as_str())).ok().flatten().as_deref() == Some(held) =>
+        {
             Some(held.clone())
         }
         Some(_) => return Err(damaged(format!("an invalid name for source {code}"))),
@@ -287,7 +291,9 @@ pub fn archived(value: &Value, restored: impl Fn(&str) -> String) -> Result<Arch
         Some(_) => return Err(damaged(format!("an invalid mark for source {code}"))),
     };
     if name.is_none() && mark.is_none() {
-        return Err(damaged(format!("a source line for {code} with neither a name nor a mark")));
+        return Err(damaged(format!(
+            "a source line for {code} with neither a name nor a mark"
+        )));
     }
     Ok(Archived {
         line: code.to_string(),

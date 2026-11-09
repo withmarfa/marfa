@@ -330,7 +330,10 @@ pub fn record_found(tx: &Transaction<'_>, blob: &Blob, at: &str) -> Result<()> {
          ON CONFLICT (hash) DO NOTHING",
         params![blob.hash.as_str(), blob.mime_type, size, at],
     )?;
-    tx.execute("DELETE FROM blob_orphans WHERE hash = ?1", [blob.hash.as_str()])?;
+    tx.execute(
+        "DELETE FROM blob_orphans WHERE hash = ?1",
+        [blob.hash.as_str()],
+    )?;
     Ok(())
 }
 

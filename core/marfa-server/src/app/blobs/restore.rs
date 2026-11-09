@@ -178,7 +178,7 @@ impl App {
             let looked = hash.clone();
             let recorded = self
                 .db
-                .read(move |tx| Ok(rows::holders(tx, &looked)?))
+                .read(move |tx| rows::holders(tx, &looked))
                 .await?
                 .iter()
                 .any(|copy| copy.store_id == disk_id);
@@ -202,7 +202,10 @@ impl App {
                 continue;
             }
             if let Err(failure) = self.finish_deletion(&disk, &blob.hash).await {
-                tracing::warn!(?failure, "A queued deletion of restored bytes did not finish");
+                tracing::warn!(
+                    ?failure,
+                    "A queued deletion of restored bytes did not finish"
+                );
                 return Err(unavailable());
             }
             placing.push((sealed.staged, blob, recorded));
@@ -224,7 +227,8 @@ impl App {
                 .await?;
         }
         for (staged, blob, _) in placing {
-            self.publish_restored(staged, &blob.hash, blob.size_bytes).await?;
+            self.publish_restored(staged, &blob.hash, blob.size_bytes)
+                .await?;
             copies.push(Copy {
                 blob,
                 store_id: self.blobs.disk.id().to_string(),
@@ -285,7 +289,11 @@ impl App {
                     Ok(Answer::Holds(size)) if size == blob.size_bytes => return Ok(None),
                     Ok(_) => {}
                     Err(failure) => {
-                        tracing::warn!(?failure, store = store.kind(), "A store did not answer for a restored blob");
+                        tracing::warn!(
+                            ?failure,
+                            store = store.kind(),
+                            "A store did not answer for a restored blob"
+                        );
                         failed = true;
                     }
                 }
@@ -307,7 +315,9 @@ impl App {
                 let named = object
                     .strip_prefix(hash.hex())
                     .and_then(|rest| rest.strip_prefix('/'))
-                    .is_some_and(|write| !write.is_empty() && write.bytes().all(|byte| byte.is_ascii_hexdigit()));
+                    .is_some_and(|write| {
+                        !write.is_empty() && write.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    });
                 if !named {
                     continue;
                 }

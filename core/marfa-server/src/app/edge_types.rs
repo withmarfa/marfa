@@ -335,7 +335,9 @@ pub fn plan_restored(catalog: &Catalog, archived: &[Obj]) -> Result<Restoring> {
                 .iter()
                 .find(|(held, _)| held == name)
                 .map(|(_, owner)| owner.clone())
-                .or_else(|| holder_of(catalog, name).filter(|owner| *owner != id || existing.is_none()))
+                .or_else(|| {
+                    holder_of(catalog, name).filter(|owner| *owner != id || existing.is_none())
+                })
         };
         let built = edge_type_from_request(body, &taken).map_err(refusal_of)?;
         match existing {

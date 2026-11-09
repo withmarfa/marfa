@@ -28,7 +28,8 @@ use crate::app::{connectors, edge_types, sources, stored, types};
 use intake::{Intake, Received};
 
 /// What every answer says of what an archive does not hold.
-pub const SET_UP_AGAIN: &str = "An archive holds no sign-in, keys, apps or webhooks. Set them up again on this instance.";
+pub const SET_UP_AGAIN: &str =
+    "An archive holds no sign-in, keys, apps or webhooks. Set them up again on this instance.";
 const QUEUED: usize = 8;
 const SETTLE_EVERY: usize = 1000;
 
@@ -63,7 +64,9 @@ impl Receiving {
         match (&mut self.reading).await {
             Ok(Err(refusal)) => Err(refusal),
             Ok(Ok(_)) => Err(Refusal::internal("a restore's reader ended early")),
-            Err(error) => Err(Refusal::internal(&format!("a restore's reader stopped: {error}"))),
+            Err(error) => Err(Refusal::internal(&format!(
+                "a restore's reader stopped: {error}"
+            ))),
         }
     }
 

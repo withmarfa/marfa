@@ -99,7 +99,8 @@ pub fn restore(
         .get("item")
         .and_then(Value::as_object)
         .ok_or_else(|| Refusal::internal("a checked item line holds no item"))?;
-    let type_id = text(item, "type").ok_or_else(|| Refusal::internal("a checked item has no type"))?;
+    let type_id =
+        text(item, "type").ok_or_else(|| Refusal::internal("a checked item has no type"))?;
     let named = text(item, "id");
     let source = restored_source(text(item, "source").unwrap_or(unit.caller.own_source()));
     let source_id = text(item, "source_id");
@@ -148,7 +149,8 @@ pub fn restore(
     }
     let created_at = instant(item.get("created_at"), "created_at")?.unwrap_or(unit.at.clone());
     let updated_at = instant(item.get("updated_at"), "updated_at")?.unwrap_or(created_at.clone());
-    let occurred_at = instant(item.get("occurred_at"), "occurred_at")?.unwrap_or(created_at.clone());
+    let occurred_at =
+        instant(item.get("occurred_at"), "occurred_at")?.unwrap_or(created_at.clone());
     let trashed_at = instant(item.get("trashed_at"), "trashed_at")?;
     let restored_at = instant(line.get("restored_at"), "restored_at")?;
     let state = text(item, "state").unwrap_or("active");
@@ -230,8 +232,8 @@ pub fn restore(
             restore_snapshot(tx, row.seq, snapshot, held)?;
         }
     }
-    let item = rows::by_seq(tx, row.seq)?
-        .ok_or_else(|| Refusal::internal("a restored row is gone"))?;
+    let item =
+        rows::by_seq(tx, row.seq)?.ok_or_else(|| Refusal::internal("a restored row is gone"))?;
     super::write::announce(unit, "item.created", &item)?;
     Ok(Restored::Written)
 }
@@ -245,11 +247,14 @@ fn restore_snapshot(
     let snapshot = snapshot
         .as_object()
         .ok_or_else(|| Refusal::internal("a checked snapshot is no object"))?;
-    let id = text(snapshot, "id").ok_or_else(|| Refusal::internal("a checked snapshot has no id"))?;
+    let id =
+        text(snapshot, "id").ok_or_else(|| Refusal::internal("a checked snapshot has no id"))?;
     if held.contains(id) {
         return Err(Refusal::new(
             Code::Conflict,
-            format!("The archive holds snapshot {id}, which this instance's history already holds."),
+            format!(
+                "The archive holds snapshot {id}, which this instance's history already holds."
+            ),
         )
         .with_detail("snapshot_id", id));
     }

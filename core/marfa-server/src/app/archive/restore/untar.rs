@@ -6,7 +6,10 @@ use super::super::tar::BLOCK;
 /// What a part of the body held.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Part<'a> {
-    Begins { name: String, size: u64 },
+    Begins {
+        name: String,
+        size: u64,
+    },
     Bytes(&'a [u8]),
     Ends,
     /// The two zero blocks that close the archive.
@@ -16,7 +19,11 @@ pub enum Part<'a> {
 #[derive(Debug)]
 enum State {
     Header,
-    Body { left: u64, padding: usize, file: bool },
+    Body {
+        left: u64,
+        padding: usize,
+        file: bool,
+    },
     Padding(usize),
     Closed,
 }
@@ -53,7 +60,10 @@ fn octal(field: &[u8]) -> Option<u64> {
 }
 
 fn text(field: &[u8]) -> String {
-    let end = field.iter().position(|byte| *byte == 0).unwrap_or(field.len());
+    let end = field
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(field.len());
     String::from_utf8_lossy(&field[..end]).into_owned()
 }
 
@@ -115,10 +125,7 @@ impl Reader {
                     }
                     let (name, size, file) = parse(&block).ok_or(NotTar).map_err(&not_tar)?;
                     if file {
-                        each(Part::Begins {
-                            name,
-                            size,
-                        })?;
+                        each(Part::Begins { name, size })?;
                     }
                     self.state = if size == 0 {
                         if file {
@@ -138,7 +145,9 @@ impl Reader {
                     padding,
                     file,
                 } => {
-                    let take = usize::try_from(*left).unwrap_or(usize::MAX).min(bytes.len());
+                    let take = usize::try_from(*left)
+                        .unwrap_or(usize::MAX)
+                        .min(bytes.len());
                     let (file, padding) = (*file, *padding);
                     if file {
                         each(Part::Bytes(&bytes[..take]))?;
