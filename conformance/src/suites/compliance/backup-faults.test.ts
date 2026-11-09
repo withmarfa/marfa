@@ -80,9 +80,8 @@ describe("a backup the object store does not take", () => {
     }).rawRequest<{ backups: Record<string, unknown> }>("/health");
     expect(anonymous.data.backups).toEqual({ status: "failing" });
 
-    const scheduled = await clientsFor(server).operator.runHousekeeping(
-      "backup",
-    );
+    const scheduled =
+      await clientsFor(server).operator.runHousekeeping("backup");
     expect(scheduled.status, JSON.stringify(scheduled.error)).toBe(200);
     expect(scheduled.data.outcome).toBe("error");
     seen = await health(server);
@@ -126,9 +125,8 @@ describe("a backup cut short", () => {
     const second = await owner.runBackup();
     expect(second.status, JSON.stringify(second.data)).toBe(409);
     expect(second.error?.error.code).toBe("housekeeping_job_running");
-    const scheduled = await clientsFor(server).operator.runHousekeeping(
-      "backup",
-    );
+    const scheduled =
+      await clientsFor(server).operator.runHousekeeping("backup");
     expect(scheduled.status, JSON.stringify(scheduled.error)).toBe(200);
     expect(scheduled.data.result).toEqual({ outcome: "running" });
     await server.clearFault();

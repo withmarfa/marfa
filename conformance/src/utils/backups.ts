@@ -69,7 +69,10 @@ export function bucketAt(prefix: string): Bucket {
     },
     async unfinishedUploads() {
       const found = await client.send(
-        new ListMultipartUploadsCommand({ Bucket: bucket, Prefix: `${prefix}/` }),
+        new ListMultipartUploadsCommand({
+          Bucket: bucket,
+          Prefix: `${prefix}/`,
+        }),
       );
       return (found.Uploads ?? []).map((upload) => upload.Key!).sort();
     },

@@ -103,9 +103,9 @@ async function contents(server: FreshServer) {
 let made: Awaited<ReturnType<typeof contents>>;
 let firstName: string;
 
-function sortedById<
-  T extends { item?: { id: string }; edge?: { id: string } },
->(lines: T[]): T[] {
+function sortedById<T extends { item?: { id: string }; edge?: { id: string } }>(
+  lines: T[],
+): T[] {
   const key = (line: T) =>
     line.item?.id ?? line.edge?.id ?? JSON.stringify(line);
   return [...lines].sort((a, b) => key(a).localeCompare(key(b)));
