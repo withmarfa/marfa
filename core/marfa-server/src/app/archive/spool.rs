@@ -1,5 +1,6 @@
 //! A gzip-compressed line file in the disk store's `tmp`, cut into segments that end on a line,
-//! so a sender can ask before each segment whether it may still send it.
+//! so a sender can ask before each segment whether it may still send it. Each cut is held to the
+//! disk reserve.
 
 use std::fs::File;
 use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
@@ -7,7 +8,8 @@ use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
 use flate2::Compression;
 use flate2::write::GzEncoder;
 
-use crate::app::blobs::Scratch;
+use crate::app::blobs::{Room, Scratch, out_of_room};
+use crate::app::refusal::{Refusal, Result};
 
 /// How much line text a segment holds before it is cut.
 const SEGMENT_BYTES: usize = 1024 * 1024;
@@ -30,9 +32,16 @@ impl<W: Write> Write for Counted<W> {
     }
 }
 
+fn written(error: io::Error) -> Refusal {
+    out_of_room(&error).unwrap_or_else(|| {
+        Refusal::internal(&format!("an export's spool was not written: {error}"))
+    })
+}
+
 /// A line file being written, with what each segment's lines need of the reader.
 pub struct Lines<N> {
     scratch: Scratch,
+    room: Room,
     encoder: GzEncoder<Counted<BufWriter<File>>>,
     segments: Vec<(u64, N)>,
     open: N,
@@ -41,14 +50,15 @@ pub struct Lines<N> {
 }
 
 impl<N: Default> Lines<N> {
-    pub fn new(mut scratch: Scratch) -> io::Result<Lines<N>> {
-        let file = scratch.file().try_clone()?;
+    pub fn new(mut scratch: Scratch, room: Room) -> Result<Lines<N>> {
+        let file = scratch.file().try_clone().map_err(written)?;
         let counted = Counted {
             inner: BufWriter::with_capacity(CHUNK, file),
             written: 0,
         };
         Ok(Lines {
             scratch,
+            room,
             encoder: GzEncoder::new(counted, Compression::default()),
             segments: Vec::new(),
             open: N::default(),
@@ -58,9 +68,11 @@ impl<N: Default> Lines<N> {
     }
 
     /// Writes one line, adding what it needs of the reader to its segment's needs.
-    pub fn push(&mut self, line: &str, need: impl FnOnce(&mut N)) -> io::Result<()> {
-        self.encoder.write_all(line.as_bytes())?;
-        self.encoder.write_all(b"\n")?;
+    pub fn push(&mut self, line: &str, need: impl FnOnce(&mut N)) -> Result<()> {
+        self.encoder
+            .write_all(line.as_bytes())
+            .and_then(|()| self.encoder.write_all(b"\n"))
+            .map_err(written)?;
         need(&mut self.open);
         self.pending += line.len() + 1;
         self.lines += 1;
@@ -70,20 +82,21 @@ impl<N: Default> Lines<N> {
         Ok(())
     }
 
-    fn cut(&mut self) -> io::Result<()> {
-        self.encoder.flush()?;
+    fn cut(&mut self) -> Result<()> {
+        self.encoder.flush().map_err(written)?;
+        self.room.check()?;
         let end = self.encoder.get_ref().written;
         self.segments.push((end, std::mem::take(&mut self.open)));
         self.pending = 0;
         Ok(())
     }
 
-    pub fn finish(mut self) -> io::Result<Spooled<N>> {
+    pub fn finish(mut self) -> Result<Spooled<N>> {
         if self.pending > 0 || self.segments.is_empty() {
             self.cut()?;
         }
-        let mut counted = self.encoder.finish()?;
-        counted.flush()?;
+        let mut counted = self.encoder.finish().map_err(written)?;
+        counted.flush().map_err(written)?;
         let size = counted.written;
         if let Some(last) = self.segments.last_mut() {
             last.0 = size;
@@ -135,17 +148,29 @@ pub fn read_chunk(file: &mut File, at: u64, end: u64) -> io::Result<Vec<u8>> {
 mod tests {
     use flate2::read::MultiGzDecoder;
 
+    use std::sync::Arc;
+
     use super::*;
-    use crate::app::blobs::Scratch;
+    use crate::app::faults::Faults;
+    use crate::app::refusal::Code;
 
     fn scratch(dir: &std::path::Path) -> Scratch {
         Scratch::at(dir.join("spool")).unwrap()
     }
 
+    fn room(dir: &std::path::Path, faults: Arc<Faults>, reserve: u64) -> Room {
+        Room::at(faults, dir.to_path_buf(), reserve)
+    }
+
+    fn unreserved(dir: &std::path::Path) -> Room {
+        room(dir, Arc::default(), 0)
+    }
+
     #[test]
     fn segments_end_on_lines_and_the_file_reads_back_whole() {
         let dir = tempfile::tempdir().unwrap();
-        let mut lines: Lines<Vec<usize>> = Lines::new(scratch(dir.path())).unwrap();
+        let mut lines: Lines<Vec<usize>> =
+            Lines::new(scratch(dir.path()), unreserved(dir.path())).unwrap();
         let long = "x".repeat(400 * 1024);
         for at in 0..7 {
             lines
@@ -182,10 +207,35 @@ mod tests {
     fn the_file_goes_with_the_spool() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("spool");
-        let lines: Lines<()> = Lines::new(Scratch::at(path.clone()).unwrap()).unwrap();
+        let lines: Lines<()> =
+            Lines::new(Scratch::at(path.clone()).unwrap(), unreserved(dir.path())).unwrap();
         let spooled = lines.finish().unwrap();
         assert!(path.exists());
         drop(spooled);
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn a_segment_cut_below_the_reserve_is_refused_507_naming_both() {
+        let dir = tempfile::tempdir().unwrap();
+        let faults = Arc::new(Faults::default());
+        let mut lines: Lines<()> =
+            Lines::new(scratch(dir.path()), room(dir.path(), faults.clone(), 4096)).unwrap();
+        let long = "x".repeat(SEGMENT_BYTES);
+        lines.push(&long, |_| ()).unwrap();
+        faults.set("free:blobs", Some("4095")).unwrap();
+        let refused = lines.push(&long, |_| ()).unwrap_err();
+        assert_eq!(refused.code, Code::InsufficientStorage);
+        let details = refused.details.unwrap();
+        assert_eq!(details["reserve_bytes"], 4096);
+        assert_eq!(details["available_bytes"], 4095);
+    }
+
+    #[test]
+    fn a_full_volume_is_507() {
+        let full = written(io::ErrorKind::StorageFull.into());
+        assert_eq!(full.code, Code::InsufficientStorage);
+        let other = written(io::ErrorKind::PermissionDenied.into());
+        assert_eq!(other.code, Code::InternalError);
     }
 }

@@ -21,7 +21,7 @@ use tokio::sync::{mpsc, oneshot};
 use super::App;
 use super::access::{Caller, Permission};
 use super::blobs::carry::{self, Carried, Copy};
-use super::blobs::{Hash, references};
+use super::blobs::{Hash, Room, references};
 use super::faults::{FAIL_EXPORT_READ, HOLD_EXPORT_PAGE};
 use super::items::{self, Archived, Reader, reading};
 use super::query::{self, Ask};
@@ -136,10 +136,6 @@ struct Selected {
     missing: BTreeMap<String, Value>,
 }
 
-fn written(error: io::Error) -> Refusal {
-    Refusal::internal(&format!("an export's spool was not written: {error}"))
-}
-
 fn print(value: &impl serde::Serialize) -> Result<String> {
     serde_json::to_string(value).map_err(|_| Refusal::internal("an export line did not print"))
 }
@@ -208,7 +204,8 @@ impl App {
             self.scratch().await?,
             self.scratch().await?,
         ];
-        let selected = reading(self, caller, move |read| select(read, &ask, scratch)).await?;
+        let room = self.room();
+        let selected = reading(self, caller, move |read| select(read, &ask, scratch, room)).await?;
         let copies = if files {
             self.whole_copies(&selected.listed).await?
         } else {
@@ -265,10 +262,11 @@ fn select(
     read: &Reader<'_, '_>,
     ask: &Ask,
     [instance, items, edges]: [crate::app::blobs::Scratch; 3],
+    room: Room,
 ) -> Result<Selected> {
-    let mut items: Lines<ItemNeed> = Lines::new(items).map_err(written)?;
-    let mut edges: Lines<EdgeNeed> = Lines::new(edges).map_err(written)?;
-    let mut instance: Lines<InstanceNeed> = Lines::new(instance).map_err(written)?;
+    let mut items: Lines<ItemNeed> = Lines::new(items, room.clone())?;
+    let mut edges: Lines<EdgeNeed> = Lines::new(edges, room.clone())?;
+    let mut instance: Lines<InstanceNeed> = Lines::new(instance, room)?;
     let caller = &read.caller;
     let catalog = &read.catalog;
     if let Some(type_id) = catalog.unreadable.first() {
@@ -307,14 +305,12 @@ fn select(
             let line = line_value(&row.line)?;
             checks::item(catalog, &line, items.lines as usize + 1)
                 .map_err(|refused| unrestorable(&refused))?;
-            items
-                .push(&row.line, |need| {
-                    need.rows.insert((row.type_id.clone(), row.source.clone()));
-                    need.namespaces.extend(row.namespaces.iter().cloned());
-                    need.types.extend(row.snapshot_types.iter().cloned());
-                    need.types.extend(row.mark_type.iter().cloned());
-                })
-                .map_err(written)?;
+            items.push(&row.line, |need| {
+                need.rows.insert((row.type_id.clone(), row.source.clone()));
+                need.namespaces.extend(row.namespaces.iter().cloned());
+                need.types.extend(row.snapshot_types.iter().cloned());
+                need.types.extend(row.mark_type.iter().cloned());
+            })?;
             if agreed.contains(row.id.as_str()) {
                 carried_ids.insert(row.id.clone());
             }
@@ -367,12 +363,10 @@ fn select(
             };
             checks::edge(catalog, &line, edges.lines as usize + 1, ends)
                 .map_err(|refused| unrestorable(&refused))?;
-            edges
-                .push(&text, |need| {
-                    need.0
-                        .insert((edge.edge_type.clone(), source.type_id.clone()));
-                })
-                .map_err(written)?;
+            edges.push(&text, |need| {
+                need.0
+                    .insert((edge.edge_type.clone(), source.type_id.clone()));
+            })?;
             digests.extend(references::digests(&items::parsed(&edge.properties)?));
         }
     }
@@ -400,16 +394,14 @@ fn select(
      -> Result<()> {
         counts.insert(name.into(), values.len().into());
         for (value, need) in values {
-            lines
-                .push(&value, |open| {
-                    for permission in need.permissions {
-                        open.permission(permission);
-                    }
-                    for (source, types) in need.sources {
-                        open.sources.entry(source).or_default().extend(types);
-                    }
-                })
-                .map_err(written)?;
+            lines.push(&value, |open| {
+                for permission in need.permissions {
+                    open.permission(permission);
+                }
+                for (source, types) in need.sources {
+                    open.sources.entry(source).or_default().extend(types);
+                }
+            })?;
         }
         Ok(())
     };
@@ -527,9 +519,9 @@ fn select(
         .collect::<Result<_>>()?;
     count("webhook_count", &mut instance, hooks)?;
     Ok(Selected {
-        instance: instance.finish().map_err(written)?,
-        items: items.finish().map_err(written)?,
-        edges: edges.finish().map_err(written)?,
+        instance: instance.finish()?,
+        items: items.finish()?,
+        edges: edges.finish()?,
         counts,
         listed,
         missing,

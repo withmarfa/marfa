@@ -2212,6 +2212,14 @@ When the process starts, the server MUST remove whatever an export that a stoppe
 
 **Tests:** `compliance/export-spool.test.ts › keeps the spool of an export a stopped process was writing until the next start, and then clears it`.
 
+### `search-and-filters/archive-spool-reserve`
+
+Where an instance keeps a reserve of free space, if the files that a `GET /export?format=archive` writes before its first byte would leave less free on the volume that holds the disk store's folder than the reserve, then the server MUST answer `507 insufficient_storage` without sending archive bytes.
+
+**Reason:** the export keeps what it has read in the disk store's `tmp` folder, and the shipped image puts the database on the same volume, so the export of a large instance could take the room every other write needs (`blobs/upload-reserve`).
+
+**Tests:** `compliance/export-reserve.test.ts › is refused 507 insufficient_storage before any archive byte, naming the reserve and the room, and leaves nothing on disk`, `› is sent whole while the volume has room beside the reserve, which is the witness for the refusal below`.
+
 ### `search-and-filters/archive-failed-read`
 
 If a read fails after the body of `GET /export?format=archive` has begun, then the server MUST end the response with an error and not with a clean end.
