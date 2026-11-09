@@ -201,7 +201,7 @@ mod tests {
     }
 
     #[test]
-    fn the_contract_tables_each_name_declared() {
+    fn the_contract_tables_exactly_the_names_declared() {
         let spec = include_str!("../../../../conformance/spec/instance.md");
         let section = spec
             .split("\n## Start-only settings\n")
@@ -216,6 +216,24 @@ mod tests {
         let held: Vec<&str> = DECLARED.iter().map(|declared| declared.name).collect();
         for name in &held {
             assert!(tabled.contains(name), "{name} is not tabled");
+        }
+        for (index, name) in tabled.iter().enumerate() {
+            assert!(held.contains(name), "{name} is tabled and not declared");
+            assert!(
+                !tabled[index + 1..].contains(name),
+                "{name} is tabled twice"
+            );
+        }
+        let stored = spec
+            .split("\n## Stored settings\n")
+            .nth(1)
+            .and_then(|rest| rest.split("\n## ").next())
+            .expect("instance.md holds the section");
+        for name in &held {
+            assert!(
+                !stored.contains(&format!("| `{name}` ")),
+                "{name} is tabled as stored"
+            );
         }
     }
 
