@@ -139,9 +139,9 @@ describe("a restore of files the archive names and does not carry", () => {
     const held = await fileInTheBucket("held by the instance that exported it");
     const archive = await ownerOf(origin).exportArchive({ files: "false" });
     expect(archive.status).toBe(200);
-    const manifest = archiveManifest<{ missing_blobs: Record<string, unknown> }>(
-      archive.data,
-    );
+    const manifest = archiveManifest<{
+      missing_blobs: Record<string, unknown>;
+    }>(archive.data);
     // The witness: the archive names the file and carries none of its bytes.
     expect(Object.keys(manifest.missing_blobs)).toContain(held.hash);
 

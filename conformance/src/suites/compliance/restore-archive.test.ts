@@ -1568,7 +1568,11 @@ describe("lines an archive holds that no instance writes", () => {
       { item: null },
     ]) {
       const refused = await owner.restoreArchive(
-        withLines(itemsArchive([]), "items", good + JSON.stringify(line) + "\n"),
+        withLines(
+          itemsArchive([]),
+          "items",
+          good + JSON.stringify(line) + "\n",
+        ),
       );
       expect(refused.status, JSON.stringify(refused.error)).toBe(400);
       expect(refused.error?.error.code).toBe("validation_error");
@@ -1594,7 +1598,10 @@ describe("lines an archive holds that no instance writes", () => {
       const refused = await owner.restoreArchive(
         withLines(items, "edges", edge(id)),
       );
-      expect(refused.status, `${String(id)}: ${JSON.stringify(refused.error)}`).toBe(400);
+      expect(
+        refused.status,
+        `${String(id)}: ${JSON.stringify(refused.error)}`,
+      ).toBe(400);
       expect(refused.error?.error.code).toBe("validation_error");
       expect(refused.error?.error.details?.field).toBe("id");
       expect((await client.getItem(a)).status).toBe(404);
