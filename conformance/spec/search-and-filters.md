@@ -2872,6 +2872,14 @@ If the manifest of an archive names for a blob a `mime_type` that is empty or ho
 
 **Tests:** `compliance/restore-archive.test.ts › keeps a blob whose manifest names a type no header can carry under application/octet-stream`.
 
+### `search-and-filters/restore-blob-held`
+
+When an archive carries a blob that the disk store holds a recorded copy of whole, the server MUST keep that copy and not write the blob's bytes again.
+
+**Reason:** content addressing means the copy is already those bytes, and another request can be reading it while the restore runs.
+
+**Tests:** `compliance/restore-faults.test.ts › keeps the copy the disk holds and writes the bytes no second time`.
+
 ### `search-and-filters/restore-blob-hash`
 
 When an entry of an archive holds bytes that do not hash to its name, the server MUST leave the entry out and not count it in `blobs_imported`.

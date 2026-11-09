@@ -181,26 +181,26 @@ describe("restore", () => {
   it("keeps a blob whose manifest names a type no header can carry under application/octet-stream", async () => {
     const data = new Uint8Array(randomBytes(40));
     const hash = blobHash(data);
-    const id = uuidv7();
     const restored = await owner.restoreArchive(
-      itemsArchive(
-        [
-          {
-            id,
-            type: "core.file",
-            source: ctx.source,
-            properties: { blob_ref: hash, mime_type: "text/plain" },
-          },
-        ],
-        [{ data, mime_type: "text/plain; name=caf\u00e9" }],
-      ),
+      itemsArchive([], [{ data, mime_type: "text/\ud83d\ude00" }]),
     );
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
-    trackItem(ctx, id);
-    const read = await client.downloadBlob(hash);
+    const read = await owner.downloadBlob(hash);
     expect(read.status).toBe(200);
     expect(read.headers.get("content-type")).toBe("application/octet-stream");
     expect(new Uint8Array(read.data)).toEqual(data);
+    // An object store takes the type as a header too, so the blob is copied
+    // there, and replication has nothing left.
+    for (let run = 0; run < 20; run++) {
+      const ran = await owner.runHousekeeping("blob-replicate");
+      if (ran.status === 409) continue;
+      expect(ran.status, JSON.stringify(ran.error)).toBe(200);
+      const left = (ran.data.result as { remaining: number }).remaining;
+      const copies = await owner.listBlobCopies(hash);
+      if (left === 0 && copies.data.data.some((copy) => copy.kind === "s3"))
+        return;
+    }
+    throw new Error("replication never copied the restored blob");
   });
 
   it("refuses an archive recording a state the type's lifecycle cannot produce, and writes nothing", async () => {

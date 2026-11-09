@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
@@ -13,7 +14,12 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { clientsFor, DISK_ONLY, runJob } from "../../utils/own-blob-server.js";
+import {
+  clientsFor,
+  diskPath,
+  DISK_ONLY,
+  runJob,
+} from "../../utils/own-blob-server.js";
 import {
   diskHolds,
   loseBlobs,
@@ -398,6 +404,27 @@ describe("a restore that is still writing", () => {
         }
       }
     });
+  });
+});
+
+describe("an archive whose blob the instance holds", () => {
+  it("keeps the copy the disk holds and writes the bytes no second time", async () => {
+    const rows = carrying();
+    const first = await ownerClient().restoreArchive(rows.archive);
+    expect(first.status, JSON.stringify(first.error)).toBe(200);
+    const placed = statSync(diskPath(server, rows.hash));
+    // The witness that a restore writes the bytes it carries: the first did.
+    expect(placed.size).toBe(rows.bytes.length);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const again = await ownerClient().restoreArchive(rows.archive);
+    expect(again.status, JSON.stringify(again.error)).toBe(200);
+    expect(again.data.blobs_imported).toBe(1);
+    const held = statSync(diskPath(server, rows.hash));
+    expect(held.ino).toBe(placed.ino);
+    expect(held.mtimeMs).toBe(placed.mtimeMs);
+    const copies = await operator.listBlobCopies(rows.hash);
+    expect(copies.data.data.map((copy) => copy.kind)).toEqual(["disk"]);
   });
 });
 
