@@ -401,6 +401,36 @@ describe("a restore that is still writing", () => {
   });
 });
 
+describe("a writer while a restore writes", () => {
+  it("waits for the restore, and is answered 503 write_contention naming the busy budget once it has waited that long", async () => {
+    const rows = carrying();
+    await server.setFault("hold:restore:before-commit");
+    const restoring = ownerClient().restoreArchive(rows.archive);
+    await server.waitForHold("hold:restore:before-commit");
+    const started = performance.now();
+    const waited = await working.createItem({
+      type: "core.note",
+      properties: { body: "written while a restore holds the writer" },
+    });
+    expect(waited.status, JSON.stringify(waited.error)).toBe(503);
+    expect(waited.error?.error.code).toBe("write_contention");
+    const budget = waited.error?.error.details?.budget_ms as number;
+    expect(typeof budget).toBe("number");
+    expect(performance.now() - started).toBeGreaterThanOrEqual(budget * 0.9);
+    await server.clearFault();
+    const done = await restoring;
+    expect(done.status, JSON.stringify(done.error)).toBe(200);
+    await expectAllOf(rows);
+
+    // The witness: the same write is taken once the restore has committed.
+    const after = await working.createItem({
+      type: "core.note",
+      properties: { body: "written after the restore" },
+    });
+    expect(after.status, JSON.stringify(after.error)).toBe(201);
+  });
+});
+
 describe("a restore that does not commit and removes the bytes it placed", () => {
   it("keeps the bytes a committed row names, and removes those no row names", async () => {
     // A blob the instance holds a row for whose bytes are gone from the disk:

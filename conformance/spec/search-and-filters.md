@@ -2286,11 +2286,19 @@ When `POST /restore` answers `marfa restore` with `set_up_again`, the CLI MUST p
 
 ### `search-and-filters/restore-blobs-missing`
 
-When `POST /restore` succeeds, the server MUST answer in `blobs_missing` the hash of each blob that the archive's manifest names in `blobs` or `missing_blobs`, that no entry of the archive carries bytes hashing to, and that no attached store of the instance holds a recorded copy of whole.
+When `POST /restore` succeeds, the server MUST answer in `blobs_missing` the hash of each blob that the archive's manifest names in `blobs` or `missing_blobs`, that no entry of the archive carries bytes hashing to, that no attached store of the instance holds a recorded copy of whole, and that the object store does not hold under its name (`search-and-filters/restore-blob-from-store`).
 
 **Reason:** an archive that lacks a file says so on the restore rather than restoring as though it were complete. Uploading the bytes again through `POST /blobs` restores the file.
 
-**Tests:** `compliance/export-missing-blob.test.ts › answers in blobs_missing a blob the archive names and lacks, and none the instance holds`, `› answers in blobs_missing a blob the manifest lists that the archive carries no bytes for`.
+**Tests:** `compliance/export-missing-blob.test.ts › answers in blobs_missing a blob the archive names and lacks, and none the instance holds`, `› answers in blobs_missing a blob the manifest lists that the archive carries no bytes for`, `compliance/restore-from-store.test.ts › answers in blobs_missing a file the object store does not hold`.
+
+### `search-and-filters/restore-blob-from-store`
+
+When `POST /restore` reads an archive that names a blob it does not carry and that no attached store holds a recorded copy of, if the attached object store holds an object under the blob's name whose bytes hash to it and that names that store as its writer, then the server MUST record that object as the store's copy of the blob.
+
+**Reason:** a backup or an archive exported with `files=false` leaves the files where the instance kept them, so a new instance started on the same bucket gets them back by restoring the archive. The bytes are read and checked before the copy is recorded, so an object that is not the blob is never served as it.
+
+**Tests:** `compliance/restore-from-store.test.ts › takes each file from the object store it was kept in, checked against its name, and records the copy`.
 
 ### `search-and-filters/restore-store-unavailable`
 
@@ -2298,7 +2306,7 @@ If a store fails, or does not answer within 15 seconds, while `POST /restore` ch
 
 **Reason:** a store that cannot answer is no evidence that the instance lacks the blob, so the restore does not answer it in `blobs_missing`.
 
-**Tests:** `compliance/export-missing-blob.test.ts › answers 503 blob_store_unavailable to an export and a restore when the disk cannot be read for a blob`, `› restores an archive lacking a blob that the object store holds whole while the disk cannot be read for it`.
+**Tests:** `compliance/export-missing-blob.test.ts › answers 503 blob_store_unavailable to an export and a restore when the disk cannot be read for a blob`, `› restores an archive lacking a blob that the object store holds whole while the disk cannot be read for it`, `compliance/restore-from-store.test.ts › takes each file from the object store it was kept in, checked against its name, and records the copy`.
 
 ### `search-and-filters/restore-store-unfinished`
 
@@ -2848,6 +2856,14 @@ When `POST /restore` takes a blob that the archive carries, the server MUST answ
 
 **Tests:** `compliance/restore-archive.test.ts › restores an archive carrying a blob larger than the request cap, byte for byte, and leaves out an entry that does not hash to its name`.
 
+### `search-and-filters/restore-blob-type`
+
+If the manifest of an archive names for a blob a `mime_type` that is empty or holds a character outside printable ASCII, then the server MUST keep the blob under `application/octet-stream`.
+
+**Reason:** a blob's type is served as a response header and sent to an object store as one, and a header carries only printable ASCII. An upload names its type in a header, so only a restore can bring such a type, and a blob kept under it could be neither served nor copied to another store.
+
+**Tests:** `compliance/restore-archive.test.ts › keeps a blob whose manifest names a type no header can carry under application/octet-stream`.
+
 ### `search-and-filters/restore-blob-hash`
 
 When an entry of an archive holds bytes that do not hash to its name, the server MUST leave the entry out and not count it in `blobs_imported`.
@@ -2950,7 +2966,7 @@ While a restore writes, if another request has to write and waits for the restor
 
 **Reason:** the restore holds the write lock until it commits, and a caller retries a `503` (`errors/contention`), whose `details.budget_ms` names the budget (`errors/contention-budget`).
 
-**Tests:** `compliance/restore-concurrent.test.ts › is answered 201, or 503 write_contention carrying the busy budget, and nothing else`.
+**Tests:** `compliance/restore-concurrent.test.ts › is answered 201, or 503 write_contention carrying the busy budget, and nothing else`, `compliance/restore-faults.test.ts › waits for the restore, and is answered 503 write_contention naming the busy budget once it has waited that long`.
 
 ### `search-and-filters/restore-bytes-kept`
 

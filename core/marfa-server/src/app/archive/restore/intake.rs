@@ -807,6 +807,16 @@ fn spooled(error: io::Error) -> Refusal {
     crate::app::blobs::restore::unwritten(error)
 }
 
+/// A blob's type as a response header can carry it: one that is not printable ASCII is kept
+/// as bytes of no named type, as an upload that names none is.
+fn served_type(mime: &str) -> String {
+    if !mime.is_empty() && mime.bytes().all(|byte| (0x20..0x7f).contains(&byte)) {
+        mime.to_string()
+    } else {
+        crate::app::blobs::DEFAULT_TYPE.to_string()
+    }
+}
+
 /// Reads and checks the manifest: a version this build reads, and the blobs it names.
 fn manifest(bytes: &[u8]) -> Result<Manifest> {
     if let Some(pointer) = marfa_rules::json_text::ill_formed_at(bytes) {
@@ -848,7 +858,7 @@ fn manifest(bytes: &[u8]) -> Result<Manifest> {
                     wrong(format!("blobs.{hash}.size_bytes"), "Must be a non-negative integer.");
                 }
                 if let (Some(mime), Some(size)) = (mime, size) {
-                    manifest.blobs.insert(hash.clone(), (mime.to_string(), size));
+                    manifest.blobs.insert(hash.clone(), (served_type(mime), size));
                 }
             }
         }
@@ -872,7 +882,7 @@ fn manifest(bytes: &[u8]) -> Result<Manifest> {
                     manifest.missing.insert(
                         hash.clone(),
                         (
-                            mime.and_then(Value::as_str).map(str::to_string),
+                            mime.and_then(Value::as_str).map(served_type),
                             size.and_then(Value::as_u64),
                         ),
                     );

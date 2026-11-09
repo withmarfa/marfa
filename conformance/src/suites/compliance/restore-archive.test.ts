@@ -178,6 +178,31 @@ describe("restore", () => {
     }
   });
 
+  it("keeps a blob whose manifest names a type no header can carry under application/octet-stream", async () => {
+    const data = new Uint8Array(randomBytes(40));
+    const hash = blobHash(data);
+    const id = uuidv7();
+    const restored = await owner.restoreArchive(
+      itemsArchive(
+        [
+          {
+            id,
+            type: "core.file",
+            source: ctx.source,
+            properties: { blob_ref: hash, mime_type: "text/plain" },
+          },
+        ],
+        [{ data, mime_type: "text/plain; name=caf\u00e9" }],
+      ),
+    );
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, id);
+    const read = await client.downloadBlob(hash);
+    expect(read.status).toBe(200);
+    expect(read.headers.get("content-type")).toBe("application/octet-stream");
+    expect(new Uint8Array(read.data)).toEqual(data);
+  });
+
   it("refuses an archive recording a state the type's lifecycle cannot produce, and writes nothing", async () => {
     // `revoked` is a state, and not one the canonical lifecycle reaches, so
     // a note recorded in it is a row no door could have written. The whole

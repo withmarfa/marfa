@@ -322,6 +322,18 @@ pub fn record_upload(
     find(tx, &blob.hash)?.ok_or_else(|| unread("blob"))
 }
 
+/// Records a blob whose only copy is an object a store already holds, which `record_copy` names.
+pub fn record_found(tx: &Transaction<'_>, blob: &Blob, at: &str) -> Result<()> {
+    let size = i64::try_from(blob.size_bytes).map_err(|_| unread("blob size"))?;
+    tx.execute(
+        "INSERT INTO blobs (hash, mime_type, size_bytes, recorded_at) VALUES (?1, ?2, ?3, ?4) \
+         ON CONFLICT (hash) DO NOTHING",
+        params![blob.hash.as_str(), blob.mime_type, size, at],
+    )?;
+    tx.execute("DELETE FROM blob_orphans WHERE hash = ?1", [blob.hash.as_str()])?;
+    Ok(())
+}
+
 pub fn copies(tx: &Transaction<'_>, hash: &Hash) -> Result<Vec<CopyRecord>> {
     let mut statement = tx.prepare_cached(
         "SELECT c.store_id, s.kind, s.detached_at IS NOT NULL, c.recorded_at, c.verified_at \

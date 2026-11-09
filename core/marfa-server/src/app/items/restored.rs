@@ -169,10 +169,6 @@ pub fn restore(
     let minted = Uuid::now_v7().to_string();
     let id = named.unwrap_or(&minted);
     let key = title_key(&catalog.rules, type_id, &properties);
-    let marked = item
-        .get("trashed_by_cascade")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
     let row = rows::insert_restored(
         tx,
         &NewRow {
@@ -198,7 +194,6 @@ pub fn restore(
             version: item.get("version").and_then(Value::as_i64).unwrap_or(1),
             updated_at: &updated_at,
             restored_at: restored_at.as_deref(),
-            trashed_with: text(item, "trashed_with").filter(|_| marked),
         },
     )?;
     references::archived(&properties, &lent).apply(tx, Row::Item(row.seq))?;
@@ -320,9 +315,7 @@ fn refuse_undeclared(
     .with_detail("item_id", id))
 }
 
-/// Brings the search index up to the rows written so far, and names the type of the row each
-/// cascade mark points at, which may have been written after the marked row.
+/// Brings the search index up to the rows written so far.
 pub fn settle(tx: &Transaction<'_>, catalog: &Catalog) -> Result<()> {
-    rows::name_mark_types(tx)?;
     index::settle(tx, &catalog.rules)
 }

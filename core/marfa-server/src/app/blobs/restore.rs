@@ -11,7 +11,7 @@ use futures_util::StreamExt;
 use super::disk::{Disk, Staged};
 use super::store::{self, Answer, Failed, Held, Store};
 use super::{App, Blob, Hash, REPLICATE, Scratch, joined, room, rows, unavailable, unwritable};
-use crate::app::faults::Faults;
+use crate::app::faults::{Faults, HOLD_BLOB_HAS};
 use crate::app::refusal::Result;
 use crate::db::Write;
 use crate::settings::registry::DISK_RESERVE_BYTES;
@@ -105,15 +105,16 @@ pub fn record(
         super::housekeeping::bring_forward(tx, REPLICATE, at)?;
     }
     for copy in copies {
-        if rows::find(tx, &copy.blob.hash)?.is_none() {
+        let held = rows::find(tx, &copy.blob.hash)?.is_some();
+        if !held && copy.object.is_empty() {
             rows::record_upload(tx, &copy.blob, &copy.store_id, Some(holder), at)?;
-            rows::deleted(tx, &copy.blob.hash, &copy.store_id, &copy.object)?;
         } else {
+            if !held {
+                rows::record_found(tx, &copy.blob, at)?;
+            }
             rows::record_copy(tx, &copy.blob.hash, &copy.store_id, &copy.object, at)?;
         }
-        if copy.object.is_empty() {
-            rows::deleted(tx, &copy.blob.hash, &copy.store_id, "")?;
-        }
+        rows::deleted(tx, &copy.blob.hash, &copy.store_id, &copy.object)?;
     }
     Ok(())
 }
@@ -298,9 +299,18 @@ impl App {
         };
         let check = self.blobs.check();
         let hash = named.hash.clone();
+        let faults = self.faults.clone();
         let found = async {
+            faults.hold(HOLD_BLOB_HAS, None).await;
             let objects = s3.objects_of(&hash).await?;
             for (object, size) in objects {
+                let named = object
+                    .strip_prefix(hash.hex())
+                    .and_then(|rest| rest.strip_prefix('/'))
+                    .is_some_and(|write| !write.is_empty() && write.bytes().all(|byte| byte.is_ascii_hexdigit()));
+                if !named {
+                    continue;
+                }
                 if !matches!(s3.answer_for(&object).await?, Answer::Holds(held) if held == size) {
                     continue;
                 }
