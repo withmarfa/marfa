@@ -490,8 +490,7 @@ pub async fn integrity(app: Arc<App>, run: Run) -> Result<Report> {
     })))
 }
 
-/// Empty while the sweep is off, and never a blob a kept backup may name. Read from `tx`, since
-/// the live settings lag a committed change.
+/// Read from `tx`, since the live settings lag a committed change.
 fn purgeable(tx: &rusqlite::Transaction<'_>, app: &App) -> Result<Vec<Hash>> {
     let mut found = past_grace(tx, app)?;
     if let Some(bucket) = app.blobs.s3()

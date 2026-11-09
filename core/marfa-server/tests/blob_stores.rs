@@ -1394,6 +1394,50 @@ async fn a_drop_is_not_confirmed_by_another_bucket_holding_the_same_object() {
     assert_eq!(fetched.bytes, bytes);
 }
 
+#[tokio::test]
+async fn a_bucket_copy_a_retained_backup_names_is_not_dropped_while_the_disk_copy_is() {
+    let s3 = FakeS3::start().await;
+    let env = s3.settings(BUCKET, "blobs");
+    let instance = Instance::start(&pairs(&env)).await;
+    let held = instance.replicated(&s3, b"named by a backup").await;
+    instance.note(&format!("see {held}")).await;
+    let backup = instance.call(Method::POST, "/backups", None).await;
+    assert_eq!(backup.status, StatusCode::OK, "{}", backup.body);
+    assert_eq!(backup.body["outcome"], "put", "{}", backup.body);
+    let witness = instance.replicated(&s3, b"named by no backup").await;
+    let listed = instance.call(Method::GET, "/blobs/stores", None).await;
+    let bucket = listed.body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|store| store["kind"] == "s3")
+        .and_then(|store| store["id"].as_str())
+        .unwrap()
+        .to_string();
+    let door = |hash: &str, store: &str| format!("/blobs/{hash}/copies/{store}");
+
+    let dropped = instance
+        .call(Method::DELETE, &door(&witness, &bucket), None)
+        .await;
+    assert_eq!(dropped.status, StatusCode::OK, "{}", dropped.body);
+    assert!(s3.objects_under(&objects_of("blobs", &witness)).is_empty());
+
+    let refused = instance
+        .call(Method::DELETE, &door(&held, &bucket), None)
+        .await;
+    assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.body);
+    assert_eq!(refused.code(), "copy_held_by_backup");
+    assert_eq!(instance.copies(&held).await.len(), 2);
+    object_key(&s3, "blobs", &held);
+
+    let disk = instance.disk().await;
+    let dropped = instance
+        .call(Method::DELETE, &door(&held, &disk), None)
+        .await;
+    assert_eq!(dropped.status, StatusCode::OK, "{}", dropped.body);
+    assert_eq!(instance.fetch(&held).await.bytes, b"named by a backup");
+}
+
 /// Holds the writer and keeps its heartbeat alive until the sender releases it.
 fn occupy_writer(
     app: &Arc<App>,

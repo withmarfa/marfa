@@ -12,13 +12,6 @@ import {
   runJob,
 } from "../../utils/own-blob-server.js";
 
-/**
- * The files a backup names, which it does not carry, outlive the backup's
- * own references. The server runs at a grace of zero, so the run after a
- * report purges; one file is named by a backup and one, the witness, by
- * none. The server's clock is the fixture's until the last test pauses and
- * moves it past the backups' retention.
- */
 const DAY = 24 * 3_600_000;
 const store = ownObjectStore();
 const bucket = bucketAt(store.S3_PREFIX);
@@ -115,6 +108,28 @@ describe("the files a backup names", () => {
     expect(new Uint8Array(read.data)).toEqual(kept.bytes);
     await fresh.stop();
     fresh = undefined;
+  });
+
+  it("refuses to drop the object store's copy of a file a retained backup names, and drops its disk copy", async () => {
+    const { operator } = clientsFor(origin);
+    const stores = (await operator.listBlobStores()).data.data;
+    const s3 = stores.find((store) => store.kind === "s3")!;
+    const disk = stores.find((store) => store.kind === "disk")!;
+    const witness = await namedFile(origin, "a file no backup holds a copy of");
+    const dropped = await operator.deleteBlobCopy(witness.hash, s3.id);
+    expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
+    expect(await objectsOf(witness.hash)).toEqual([]);
+
+    const refused = await operator.deleteBlobCopy(kept.hash, s3.id);
+    expect(refused.status).toBe(409);
+    expect(refused.error?.error.code).toBe("copy_held_by_backup");
+    expect((await objectsOf(kept.hash)).length).toBeGreaterThan(0);
+
+    const fromDisk = await operator.deleteBlobCopy(kept.hash, disk.id);
+    expect(fromDisk.status, JSON.stringify(fromDisk.error)).toBe(200);
+    const read = await operator.downloadBlob(kept.hash);
+    expect(read.status).toBe(200);
+    expect(new Uint8Array(read.data)).toEqual(kept.bytes);
   });
 
   it("purges a file once thinning has deleted every backup that names it", async () => {

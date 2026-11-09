@@ -4969,6 +4969,23 @@ export interface components {
                 };
             };
         };
+        /** @description An error response. */
+        CopyHeldByBackupRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "copy_held_by_backup";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
         /** @description A page holding every housekeeping job. */
         HousekeepingJobPage: {
             /** @description Every housekeeping job. */
@@ -16666,7 +16683,10 @@ export interface operations {
                     "application/json": components["schemas"]["BlobCopyNotFoundOrBlobNotFoundRefusal"];
                 };
             };
-            /** @description - `copies_below_minimum`: deleting the copy would leave fewer live copies than `min_copies`, or fewer that their stores confirm they hold within 15 seconds. Nothing changes. */
+            /**
+             * @description - `copies_below_minimum`: deleting the copy would leave fewer live copies than `min_copies`, or fewer that their stores confirm they hold within 15 seconds. Nothing changes.
+             *     - `copy_held_by_backup`: a backup kept in that object store names the blob, so its copy there stays until thinning deletes every such backup. Nothing changes.
+             */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16675,7 +16695,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CopiesBelowMinimumRefusal"] | components["schemas"]["InstanceChangedRefusal"];
+                    "application/json": components["schemas"]["CopiesBelowMinimumRefusal"] | components["schemas"]["CopyHeldByBackupRefusal"] | components["schemas"]["InstanceChangedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */

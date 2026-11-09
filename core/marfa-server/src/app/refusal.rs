@@ -88,6 +88,7 @@ codes! {
     Conflict = "conflict", 409;
     ConnectorHeld = "connector_held", 409;
     CopiesBelowMinimum = "copies_below_minimum", 409;
+    CopyHeldByBackup = "copy_held_by_backup", 409;
     EdgeTypeInUse = "edge_type_in_use", 409;
     ExportRowsUnrestorable = "export_rows_unrestorable", 409;
     HousekeepingJobRunning = "housekeeping_job_running", 409;

@@ -46,6 +46,8 @@ const REMOVED_FROM_CONTRACT: Record<string, string> = {
  */
 const RUST_SERVER_ONLY: Record<string, string> = {
   backup_not_found: "`POST /backups/{instance_id}/{name}/restore`",
+  copy_held_by_backup:
+    "`DELETE /blobs/{hash}/copies/{store}`, for a backed-up copy",
   no_bucket: "the backup doors, `/backups`",
   too_many_connections: "any door, past the connection cap",
 };

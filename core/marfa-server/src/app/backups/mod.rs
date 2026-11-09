@@ -1,5 +1,4 @@
 //! Backups: an archive without files, put as one object under `<prefix>/backups/<instance id>/`.
-//! The files a backup names are held from purging until thinning deletes it.
 
 mod names;
 
@@ -81,7 +80,15 @@ fn state(tx: &Transaction<'_>) -> Result<State> {
     Ok(found.unwrap_or_default())
 }
 
-fn record_put(tx: &Transaction<'_>, changes: i64, name: &str, at: Stamp) -> Result<()> {
+fn record_put(
+    tx: &Transaction<'_>,
+    store: &str,
+    changes: i64,
+    name: &str,
+    at: Stamp,
+) -> Result<()> {
+    tx.prepare_cached("UPDATE backups SET confirmed = 1 WHERE store_id = ?1 AND name = ?2")?
+        .execute(params![store, name])?;
     tx.execute(
         "INSERT INTO backup_state (id, backed_up, last_backup, last_backup_at) \
          VALUES (1, ?1, ?2, ?3) ON CONFLICT (id) DO UPDATE SET \
@@ -110,10 +117,20 @@ fn open_files(tx: &Transaction<'_>, store: &str) -> Result<HashSet<String>> {
         .collect::<rusqlite::Result<_>>()?)
 }
 
-/// Records the backup `name` about to be put in `store`, answering its place in the order.
+/// Records the backup `name` about to be put in `store`, refusing a name already recorded.
 fn begin(tx: &Transaction<'_>, store: &str, name: &str) -> Result<i64> {
-    tx.prepare_cached("DELETE FROM backups WHERE store_id = ?1 AND name = ?2")?
-        .execute(params![store, name])?;
+    let taken = tx
+        .prepare_cached("SELECT 1 FROM backups WHERE store_id = ?1 AND name = ?2")?
+        .exists(params![store, name])?;
+    if taken {
+        return Err(Refusal::new(
+            Code::Conflict,
+            format!(
+                "The object store already keeps a backup named {name}; the next run takes \
+                 another name."
+            ),
+        ));
+    }
     tx.prepare_cached("INSERT INTO backups (store_id, name) VALUES (?1, ?2)")?
         .execute(params![store, name])?;
     Ok(tx.last_insert_rowid())
@@ -197,7 +214,6 @@ async fn hold(app: &Arc<App>, store: &str, name: &str, files: Vec<String>) -> Re
 }
 
 /// Forgets the backups of `store` not in `kept`, and each of its holds no backup left covers.
-/// Another bucket's backups and holds wait for that bucket's own thinning.
 fn release(tx: &Transaction<'_>, store: &str, kept: &HashSet<String>) -> Result<()> {
     let recorded: Vec<(i64, String)> = tx
         .prepare_cached("SELECT seq, name FROM backups WHERE store_id = ?1")?
@@ -209,6 +225,11 @@ fn release(tx: &Transaction<'_>, store: &str, kept: &HashSet<String>) -> Result<
             forget.execute([seq])?;
         }
     }
+    drop_uncovered(tx, store)
+}
+
+/// Deletes each ended hold of `store` that no backup it records covers.
+fn drop_uncovered(tx: &Transaction<'_>, store: &str) -> Result<()> {
     tx.prepare_cached(
         "DELETE FROM backup_files WHERE store_id = ?1 AND last_seq IS NOT NULL \
          AND NOT EXISTS (SELECT 1 FROM backups b WHERE b.store_id = backup_files.store_id \
@@ -217,6 +238,51 @@ fn release(tx: &Transaction<'_>, store: &str, kept: &HashSet<String>) -> Result<
     )?
     .execute([store])?;
     Ok(())
+}
+
+/// The backups of `store` begun and not yet seen in it.
+fn unconfirmed(tx: &Transaction<'_>, store: &str) -> Result<Vec<(i64, String)>> {
+    Ok(tx
+        .prepare_cached("SELECT seq, name FROM backups WHERE store_id = ?1 AND confirmed = 0")?
+        .query_map([store], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+/// Confirms each unconfirmed backup of `store` that `listed` names and forgets the rest.
+fn settle(tx: &Transaction<'_>, store: &str, listed: &HashSet<String>) -> Result<()> {
+    let mut confirm = tx.prepare_cached("UPDATE backups SET confirmed = 1 WHERE seq = ?1")?;
+    let mut forget = tx.prepare_cached("DELETE FROM backups WHERE seq = ?1")?;
+    for (seq, name) in unconfirmed(tx, store)? {
+        if listed.contains(&name) {
+            confirm.execute([seq])?;
+        } else {
+            forget.execute([seq])?;
+        }
+    }
+    drop_uncovered(tx, store)
+}
+
+/// Settles earlier attempts by the store's listing, refusing to go on while it does not answer.
+async fn settle_attempts(app: &Arc<App>, bucket: &Arc<S3>) -> Result<()> {
+    let store = bucket.id().to_string();
+    let looked = store.clone();
+    let pending = app
+        .db
+        .read(move |tx| Ok(!unconfirmed(tx, &looked)?.is_empty()))
+        .await?;
+    if !pending {
+        return Ok(());
+    }
+    let own = format!("{FOLDER}/{}", app.instance_id);
+    let listed: HashSet<String> = super::blobs::store::within(LIST_DEADLINE, bucket.list_in(&own))
+        .await
+        .map_err(|error| unreachable("checking the last backup", &error))?
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    app.db
+        .write(Write::own(), move |tx| settle(tx, &store, &listed))
+        .await
 }
 
 /// Of `hashes`, those a backup of `store` that this instance keeps may name.
@@ -500,10 +566,10 @@ async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
     wake_replication(app).await;
     match put(app, &bucket).await {
         Ok((taken, name, size, changes)) => {
-            let recorded = name.clone();
+            let (store, recorded) = (bucket.id().to_string(), name.clone());
             app.db
                 .write(Write::own(), move |tx| {
-                    record_put(tx, changes, &recorded, taken)
+                    record_put(tx, &store, changes, &recorded, taken)
                 })
                 .await?;
             let (removed, unremoved) = thin(app, &bucket, taken, &name).await;
@@ -547,6 +613,7 @@ async fn wake_replication(app: &Arc<App>) {
 
 /// Writes the archive and puts it whole.
 async fn put(app: &Arc<App>, bucket: &Arc<S3>) -> Result<(Stamp, String, u64, i64)> {
+    settle_attempts(app, bucket).await?;
     let began = std::time::Instant::now();
     let mut backup = app.backup_archive(bucket.id(), app.blobs.check()).await?;
     let read_ms = began.elapsed().as_millis() as u64;
@@ -569,7 +636,6 @@ async fn put(app: &Arc<App>, bucket: &Arc<S3>) -> Result<(Stamp, String, u64, i6
     Ok((taken, name, size, changes))
 }
 
-/// Deletes the backups the plan leaves out, then releases the files of every backup not kept.
 /// Only names it listed in its own folder and could read as a backup are deleted.
 async fn thin(app: &Arc<App>, bucket: &Arc<S3>, taken: Stamp, put: &str) -> (usize, usize) {
     let own = format!("{FOLDER}/{}", app.instance_id);
@@ -704,6 +770,49 @@ mod tests {
         assert_eq!(held_of(&tx, &[&a]), ['a']);
         release(&tx, BUCKET, &kept(&["4.tar"])).unwrap();
         assert!(held_of(&tx, &[&a]).is_empty());
+    }
+
+    #[test]
+    fn a_name_a_kept_backup_has_is_not_taken_again_and_its_holds_stay() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        let tx = conn.transaction().unwrap();
+        let a = hash('a');
+        registered(&tx, &[&a]);
+
+        hold(&tx, BUCKET, "1.tar", &files(&[&a])).unwrap();
+        hold(&tx, BUCKET, "2.tar", &[]).unwrap();
+        let refused = hold(&tx, BUCKET, "1.tar", &[]).unwrap_err();
+        assert_eq!(refused.code, Code::Conflict);
+        assert_eq!(held_of(&tx, &[&a]), ['a']);
+    }
+
+    #[test]
+    fn failed_attempts_settled_by_the_listing_leave_one_attempt_and_only_its_holds() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        let tx = conn.transaction().unwrap();
+        let named: Vec<Hash> = (0..1_000)
+            .map(|index| Hash::parse(&format!("sha256:{index:064x}")).unwrap())
+            .collect();
+        registered(&tx, &named.iter().collect::<Vec<_>>());
+        hold(&tx, BUCKET, "kept.tar", &[]).unwrap();
+
+        for (index, hash) in named.iter().enumerate() {
+            settle(&tx, BUCKET, &kept(&["kept.tar"])).unwrap();
+            hold(&tx, BUCKET, &format!("{index}.tar"), &files(&[hash])).unwrap();
+        }
+        let recorded: i64 = tx
+            .query_row("SELECT COUNT(*) FROM backups", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(recorded, 2);
+        let still = held(&tx, BUCKET, &named).unwrap();
+        assert_eq!(still.len(), 1);
+        assert!(still.contains(&named[999]));
+
+        settle(&tx, BUCKET, &kept(&["kept.tar", "999.tar"])).unwrap();
+        hold(&tx, BUCKET, "next.tar", &[]).unwrap();
+        assert!(held(&tx, BUCKET, &named).unwrap().contains(&named[999]));
     }
 
     #[test]

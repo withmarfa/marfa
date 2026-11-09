@@ -301,3 +301,36 @@ async fn a_put_that_runs_out_of_time_aborts_its_multipart_upload() {
         Some(9 * 1024 * 1024)
     );
 }
+
+#[tokio::test]
+async fn failed_puts_leave_one_attempt_recorded_and_an_unreachable_store_adds_none() {
+    let store = FakeS3::start().await;
+    let instance = Instance::backing_up_to(&store).await;
+    let recorded = || async {
+        instance
+            .app
+            .db
+            .read(|tx| {
+                Ok(tx.query_row("SELECT count(*) FROM backups", [], |row| {
+                    row.get::<_, i64>(0)
+                })?)
+            })
+            .await
+            .unwrap()
+    };
+    let (status, body) = instance.local(Method::POST, "/backups", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(recorded().await, 1i64);
+
+    store.refuse_writes("/marfa/backups-test/backups/");
+    for _ in 0..4 {
+        let (status, body) = instance.local(Method::POST, "/backups", None).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert_eq!(recorded().await, 2i64);
+    }
+
+    store.set_mode(Mode::AllNotFound);
+    let (status, body) = instance.local(Method::POST, "/backups", None).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(recorded().await, 2i64);
+}
