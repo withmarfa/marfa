@@ -103,8 +103,7 @@ fn record_failure(tx: &Transaction<'_>, error: &str, at: Stamp) -> Result<()> {
     Ok(())
 }
 
-/// The files the newest backup of `store` named, held since. Only a backup run, one at a time,
-/// changes them.
+/// The files the newest backup of `store` named; only one backup run at a time changes them.
 fn open_files(tx: &Transaction<'_>, store: &str) -> Result<HashSet<String>> {
     Ok(tx
         .prepare_cached("SELECT hash FROM backup_files WHERE store_id = ?1 AND last_seq IS NULL")?
@@ -121,8 +120,7 @@ fn begin(tx: &Transaction<'_>, store: &str, name: &str) -> Result<i64> {
     Ok(tx.last_insert_rowid())
 }
 
-/// Holds files backup `seq` names that the newest before it did not, refusing when one its
-/// snapshot held is gone from the registry already.
+/// Holds `hashes` from backup `seq` on, refusing when one is already gone from the registry.
 fn open(tx: &Transaction<'_>, store: &str, seq: i64, hashes: &[String]) -> Result<()> {
     for hash in hashes {
         if !super::blobs::registered(tx, hash)? {
@@ -199,8 +197,7 @@ async fn hold(app: &Arc<App>, store: &str, name: &str, files: Vec<String>) -> Re
     Ok(())
 }
 
-/// Forgets every backup but those of `store` named in `kept`, and stops holding each file no
-/// backup left may name.
+/// Forgets every backup but those of `store` in `kept`, and each hold no backup left covers.
 fn release(tx: &Transaction<'_>, store: &str, kept: &HashSet<String>) -> Result<()> {
     tx.prepare_cached("DELETE FROM backups WHERE store_id <> ?1")?
         .execute([store])?;
