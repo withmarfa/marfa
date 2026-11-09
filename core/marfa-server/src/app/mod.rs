@@ -96,6 +96,9 @@ impl App {
             busy_budget: start.busy_budget,
             readers: READERS,
             migrations: MIGRATIONS,
+            reserve: settings
+                .live()
+                .get(crate::settings::registry::DISK_RESERVE_BYTES),
         };
         let opening = faults.clone();
         let db = tokio::task::spawn_blocking(move || Db::open(&options, opening))

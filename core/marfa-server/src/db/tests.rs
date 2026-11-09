@@ -29,6 +29,17 @@ const TWO: &[Migration] = &[
         sql: "ALTER TABLE notes ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;",
     },
 ];
+const THREE: &[Migration] = &[
+    BASE,
+    Migration {
+        version: 2,
+        sql: "ALTER TABLE notes ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;",
+    },
+    Migration {
+        version: 3,
+        sql: "CREATE INDEX notes_pinned ON notes (pinned);",
+    },
+];
 const INDEXED: &[Migration] = &[Migration {
     version: 1,
     sql: "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL) STRICT;
@@ -55,6 +66,7 @@ fn options(file: &Path, migrations: &'static [Migration]) -> Options {
         busy_budget: Duration::from_millis(200),
         readers: 2,
         migrations,
+        reserve: 0,
     }
 }
 
@@ -357,12 +369,171 @@ async fn a_path_outside_ascii_opens_as_the_same_file_again() {
     assert_eq!(names, 1, "a second file was made beside the first");
 }
 
+fn copy_of(file: &Path) -> PathBuf {
+    let mut name = file.as_os_str().to_owned();
+    name.push(super::open::BEFORE_UPGRADE);
+    PathBuf::from(name)
+}
+
+fn version_of(file: &Path) -> u32 {
+    Connection::open(file)
+        .unwrap()
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap()
+}
+
+fn names_beside(file: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(file.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+fn opened(file: &Path, migrations: &'static [Migration], faults: Arc<Faults>) -> Db {
+    Db::open(&options(file, migrations), faults)
+        .map_err(|f| f.message)
+        .unwrap()
+}
+
 #[tokio::test]
-async fn an_older_database_is_refused_and_left_as_it_was() {
+async fn an_older_database_holding_rows_is_copied_beside_it_then_upgraded() {
     let place = folder();
     let db = open(&place.file);
     db.write(WRITE, |tx| add(tx, 1)).await.unwrap();
     db.close().await;
+
+    let db = opened(&place.file, TWO, Arc::default());
+    assert_eq!(ids(&db).await, [1]);
+    let pinned: i64 = db
+        .read(|tx| {
+            Ok(
+                tx.query_row("SELECT pinned FROM notes WHERE id = 1", [], |row| {
+                    row.get(0)
+                })?,
+            )
+        })
+        .await
+        .unwrap();
+    assert_eq!(pinned, 0);
+    db.close().await;
+    assert_eq!(version_of(&place.file), 2);
+
+    let copy = copy_of(&place.file);
+    assert_eq!(version_of(&copy), 1);
+    let kept: Vec<String> = Connection::open(&copy)
+        .unwrap()
+        .prepare("SELECT name FROM pragma_table_info('notes')")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(kept, ["id", "body"]);
+}
+
+#[tokio::test]
+async fn only_the_copy_from_before_the_last_upgrade_is_kept() {
+    let place = folder();
+    let db = open(&place.file);
+    db.write(WRITE, |tx| add(tx, 1)).await.unwrap();
+    db.close().await;
+    opened(&place.file, TWO, Arc::default()).close().await;
+    assert_eq!(version_of(&copy_of(&place.file)), 1);
+
+    opened(&place.file, THREE, Arc::default()).close().await;
+    assert_eq!(version_of(&copy_of(&place.file)), 2);
+    assert_eq!(
+        names_beside(&place.file)
+            .iter()
+            .filter(|name| name.contains("before-upgrade"))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn an_older_database_holding_no_rows_is_upgraded_with_no_copy() {
+    let place = folder();
+    open(&place.file).close().await;
+
+    opened(&place.file, TWO, Arc::default()).close().await;
+    assert_eq!(version_of(&place.file), 2);
+    assert!(!copy_of(&place.file).exists());
+}
+
+#[tokio::test]
+async fn an_upgrade_with_no_room_for_its_copy_is_refused_and_changes_nothing() {
+    let place = folder();
+    let db = open(&place.file);
+    db.write(WRITE, |tx| add(tx, 1)).await.unwrap();
+    db.close().await;
+    let before = std::fs::read(&place.file).unwrap();
+    let names = names_beside(&place.file);
+
+    let faults = Arc::new(Faults::default());
+    faults.set("free:database", Some("4096")).unwrap();
+    let failure = match Db::open(&options(&place.file, TWO), faults) {
+        Ok(_) => panic!("the upgrade was not refused"),
+        Err(failure) => failure,
+    };
+    assert_eq!(failure.status, 1);
+    assert!(
+        failure.message.contains("before-upgrade"),
+        "{}",
+        failure.message
+    );
+    assert!(
+        failure.message.contains("4096 bytes are free"),
+        "{}",
+        failure.message
+    );
+    assert_eq!(std::fs::read(&place.file).unwrap(), before);
+    assert_eq!(names_beside(&place.file), names);
+    assert_eq!(version_of(&place.file), 1);
+
+    let witness = Arc::new(Faults::default());
+    witness.set("free:database", Some("1073741824")).unwrap();
+    opened(&place.file, TWO, witness).close().await;
+    assert_eq!(version_of(&place.file), 2);
+}
+
+#[tokio::test]
+async fn an_upgrade_whose_copy_fails_to_write_is_refused_and_changes_nothing() {
+    let place = folder();
+    let db = open(&place.file);
+    db.write(WRITE, |tx| add(tx, 1)).await.unwrap();
+    db.close().await;
+    let before = std::fs::read(&place.file).unwrap();
+    let mut blocked = place.file.as_os_str().to_owned();
+    blocked.push(".before-upgrade.partial");
+    let blocked = PathBuf::from(blocked);
+    std::fs::create_dir(&blocked).unwrap();
+    std::fs::write(blocked.join("held"), b"x").unwrap();
+
+    let failure = refused(&place.file, TWO);
+    assert_eq!(failure.status, 1);
+    assert!(
+        failure.message.contains("Nothing was changed"),
+        "{}",
+        failure.message
+    );
+    assert_eq!(std::fs::read(&place.file).unwrap(), before);
+    assert!(!copy_of(&place.file).exists());
+    assert_eq!(version_of(&place.file), 1);
+}
+
+#[tokio::test]
+async fn an_older_database_whose_schema_is_not_that_versions_is_refused() {
+    let place = folder();
+    let db = open(&place.file);
+    db.write(WRITE, |tx| add(tx, 1)).await.unwrap();
+    db.close().await;
+    Connection::open(&place.file)
+        .unwrap()
+        .execute_batch("CREATE INDEX stray ON notes (body);")
+        .unwrap();
     let before = std::fs::read(&place.file).unwrap();
 
     let failure = refused(&place.file, TWO);
@@ -372,14 +543,8 @@ async fn an_older_database_is_refused_and_left_as_it_was() {
         "{}",
         failure.message
     );
-    assert!(
-        failure.message.contains("restore the archive there"),
-        "{}",
-        failure.message
-    );
     assert_eq!(std::fs::read(&place.file).unwrap(), before);
-    let beside = std::fs::read_dir(place.file.parent().unwrap()).unwrap();
-    assert_eq!(beside.filter(|entry| entry.is_ok()).count(), 1);
+    assert!(!copy_of(&place.file).exists());
 }
 
 #[tokio::test]

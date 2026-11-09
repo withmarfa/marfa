@@ -72,7 +72,7 @@ pub struct Db {
 impl Db {
     /// Blocks while it judges and updates the file, so it runs before the server takes requests.
     pub fn open(options: &Options, faults: Arc<Faults>) -> std::result::Result<Db, Failure> {
-        let opened = open::open(options)?;
+        let opened = open::open(options, &faults)?;
         let writer = writer::Writer::start(opened.writer, faults.clone())
             .map_err(|error| Failure::start(format!("The writer did not start: {error}")))?;
         Ok(Db {
