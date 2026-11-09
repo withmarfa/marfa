@@ -170,7 +170,8 @@ it("shares private-socket attention, keeps known concerns, and refuses every oth
   // A job whose last run failed.
   await server.setFault("fail:housekeeping:audit-cleanup");
   try {
-    await local.run(["housekeeping", "run", "audit-cleanup"]);
+    const ended = await local.json(["housekeeping", "run", "audit-cleanup"]);
+    expect(ended).toMatchObject({ name: "audit-cleanup", outcome: "error" });
   } finally {
     await server.clearFault();
   }

@@ -3,9 +3,7 @@ use std::sync::Arc;
 
 use axum::extract::State;
 use axum::http::{StatusCode, Uri};
-use marfa_rules::query::{
-    SortDirection, SortField, declared_type, list_entry, refuse_states, type_entries,
-};
+use marfa_rules::query::{SortDirection, SortField, list_entry, refuse_states, type_entries};
 use marfa_rules::{filter, time, validation};
 use serde_json::Value;
 
@@ -194,13 +192,6 @@ fn types_of(value: &str) -> Result<Vec<String>> {
     let refused = |error: marfa_rules::error::RuleError| invalid_field("type", error.message);
     let sent: Vec<String> = value.split(',').map(str::to_string).collect();
     let entries = type_entries(&sent).map_err(refused)?;
-    if let [only] = entries.as_slice() {
-        return Ok(declared_type(Some(only))
-            .map_err(refused)?
-            .map(str::to_string)
-            .into_iter()
-            .collect());
-    }
     entries
         .into_iter()
         .map(|entry| list_entry(entry).map(str::to_string).map_err(refused))
@@ -466,4 +457,17 @@ pub(super) async fn search_from(app: &App, caller: &Caller, params: &Params) -> 
         include,
     };
     run_search(app, caller, found).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::types_of;
+
+    #[test]
+    fn a_bare_star_is_refused_and_a_type_or_a_wildcard_under_one_is_taken() {
+        assert!(types_of("*").is_err());
+        assert!(types_of("core.note,*").is_err());
+        assert_eq!(types_of("core.note").unwrap(), vec!["core.note"]);
+        assert_eq!(types_of("core.*").unwrap(), vec!["core.*"]);
+    }
 }
