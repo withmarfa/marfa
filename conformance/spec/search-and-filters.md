@@ -2872,11 +2872,11 @@ When the server refuses `POST /restore` after it has started to read the body, t
 
 ### `search-and-filters/restore-refused-early`
 
-When the server refuses `POST /restore` before it has started to read the body, the server MUST answer at once with `Connection: close`.
+When the server refuses `POST /restore` before it has started to read the body, the server MUST answer with `Connection: close` within 2 seconds, after reading at most `max_request_bytes` of the body.
 
-**Reason:** a caller that is not the direct owner has proved nothing, so the server spends no time reading what it sends. A client that sent `Expect: 100-continue`, as `marfa restore` does, has sent no body and hears the refusal.
+**Reason:** a caller that is not the direct owner has proved nothing, so the server reads no more of what it sends than a client already sending a small archive has in flight, which lets that client hear the refusal instead of a reset. A client that sent `Expect: 100-continue`, as `marfa restore` does, has sent no body, and the server reads none.
 
-**Tests:** `compliance/restore-archive.test.ts › answers a caller with no credential at once and closes the connection while it keeps sending`, `› reads the rest of a large body and answers the refusal, to the owner, and answers a working key before the body`.
+**Tests:** `compliance/restore-archive.test.ts › answers a caller with no credential within two seconds and closes the connection while it keeps sending`, `› reads the rest of a large body and answers the refusal, to the owner, and answers a working key before the body`.
 
 ### `search-and-filters/restore-idle-unwritten`
 

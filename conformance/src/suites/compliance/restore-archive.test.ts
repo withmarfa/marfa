@@ -1509,7 +1509,7 @@ describe("a restore refused while its body is still arriving", () => {
     }
   });
 
-  it("answers a caller with no credential at once and closes the connection while it keeps sending", async () => {
+  it("answers a caller with no credential within two seconds and closes the connection while it keeps sending", async () => {
     const url = new URL(apiUrl);
     const started = Date.now();
     const answer = await new Promise<{ head: string; at: number }>(
