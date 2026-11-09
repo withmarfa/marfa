@@ -182,3 +182,38 @@ export function idOf(answer: RawAnswer): string {
   }
   return (JSON.parse(answer.body) as { id: string }).id;
 }
+
+/** What `openCounted` needs of a fresh server. */
+interface Faultable {
+  apiUrl: string;
+  setFault(spec: string): Promise<void>;
+  clearFault(name?: string): Promise<void>;
+  waitForHold(name: string): Promise<void>;
+}
+
+/**
+ * Like `openBody`, but resolves once the server counts the body's bytes among
+ * those in flight, which `hold:inbound-reserved` marks. Rejects if the body
+ * is answered first, as a body the server refused is never counted.
+ */
+export async function openCounted(
+  server: Faultable,
+  path: string,
+  declared: number,
+  first: Buffer | string,
+): Promise<OpenBody> {
+  await server.setFault("hold:inbound-reserved=1");
+  const body = openBody(server.apiUrl, path, declared, first);
+  const refused = body.answer.then((answer) => {
+    throw new Error(
+      `the body was answered ${String(answer.status)} before its bytes were counted`,
+    );
+  });
+  try {
+    await Promise.race([server.waitForHold("hold:inbound-reserved"), refused]);
+  } finally {
+    refused.catch(() => undefined);
+    await server.clearFault("hold:inbound-reserved");
+  }
+  return body;
+}

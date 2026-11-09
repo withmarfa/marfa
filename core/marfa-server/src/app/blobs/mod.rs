@@ -31,9 +31,9 @@ use super::faults::{
     FAIL_BLOB_DELETE, FAIL_BLOB_READ, FAIL_BLOB_WRITE, Faults, HOLD_BLOB_DELETE, HOLD_BLOB_HAS,
     HOLD_BLOB_READ, HOLD_BLOB_WRITE, Lie, Volume,
 };
-use super::housekeeping;
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
+use super::{housekeeping, stored};
 use crate::db::{Db, Write, volume};
 use crate::failure::Failure;
 use crate::settings::registry::{
@@ -1175,14 +1175,10 @@ impl App {
     }
 
     async fn dropping(&self, caller: &Caller, hash: &Hash, store_id: &str) -> Result<()> {
-        let min_copies = self.settings.live().get(BLOB_MIN_COPIES);
         let blob = hash.clone();
         let (found, holders) = self
             .db
-            .read(move |tx| {
-                let found = rows::find(tx, &blob)?;
-                Ok((found, rows::holders(tx, &blob)?))
-            })
+            .read(move |tx| Ok((rows::find(tx, &blob)?, rows::holders(tx, &blob)?)))
             .await?;
         let Some(found) = found else {
             return Err(not_found());
@@ -1195,6 +1191,11 @@ impl App {
             .store(store_id)
             .filter(|_| holders.iter().any(|held| held.store_id == store_id))
             .ok_or_else(copy_not_found)?;
+        let seeds = self.settings.seeds();
+        let min_copies = self
+            .db
+            .read(move |tx| stored::deciding(tx, &seeds, BLOB_MIN_COPIES))
+            .await?;
         if ((holders.len() - 1) as u64) < min_copies {
             return Err(below(holders.len(), min_copies));
         }
@@ -1230,14 +1231,19 @@ impl App {
             return Err(below(confirmed + 1, min_copies));
         }
         let (blob, dropped) = (hash.clone(), store_id.to_string());
+        let seeds = self.settings.seeds();
         self.write(caller, "blob.copy_dropped", move |unit| {
             unit.caller.require(Permission::BlobsManage)?;
             let holders = rows::holders(unit.tx(), &blob)?;
             if !holders.iter().any(|held| held.store_id == dropped) {
                 return Err(copy_not_found());
             }
+            let min_copies = stored::deciding(unit.tx(), &seeds, BLOB_MIN_COPIES)?;
             if ((holders.len() - 1) as u64) < min_copies {
                 return Err(below(holders.len(), min_copies));
+            }
+            if (confirmed as u64) < min_copies {
+                return Err(below(confirmed + 1, min_copies));
             }
             let object = holders
                 .iter()

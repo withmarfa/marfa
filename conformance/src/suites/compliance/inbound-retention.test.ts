@@ -66,7 +66,6 @@ function minter(): MarfaClient {
 interface World {
   readonly client: MarfaClient;
   id: string;
-  source: string;
   path: string;
   /** Sends one body and answers the delivery it made. */
   deliver(body: string, headers?: string[]): Promise<string>;
@@ -86,12 +85,9 @@ interface World {
 
 /** A registration and an address of its own, removed with its deliveries
  *  when the test is done, so no test's rows reach the next one's pass. */
-async function world(
-  duplicateHeader?: string,
-  sourcePrefix = "retention",
-): Promise<World> {
+async function world(duplicateHeader?: string): Promise<World> {
   serial += 1;
-  const label = `${sourcePrefix}-${String(serial)}`;
+  const label = `retention-${String(serial)}`;
   const minted = await minter().createKey({
     label,
     source: label,
@@ -129,7 +125,6 @@ async function world(
   return {
     client: current,
     id,
-    source: registered.data.source,
     path: made.data.path,
     async deliver(body, headers = []) {
       const delivered = idOf(
@@ -349,36 +344,22 @@ describe("the pass that removes deliveries, by the bytes they charge", () => {
   const MIB = 1024 * 1024;
   const TARGET = 32 * MIB;
 
-  /** The charge of a pending delivery: its body, the canonical text of what is
-   *  stored beside it, and thirty-two bytes. */
-  function charge(row: InboundDeliveryRow, source: string, size: number) {
-    const metadata = {
-      id: row.id,
-      endpoint_id: row.endpoint_id,
-      source,
-      received_at: row.received_at,
-      method: row.method,
-      query: row.query,
-      headers: row.headers,
-      size: row.size,
-      sha256: row.sha256,
-      dedupe_key: null,
-      handled_at: null,
-      outcome: null,
-    };
-    return size + Buffer.byteLength(JSON.stringify(metadata)) + 32;
+  function charge(row: InboundDeliveryRow, size: number) {
+    const headers = row.headers.reduce(
+      (sum, [name, value]) =>
+        sum + Buffer.byteLength(name) + Buffer.byteLength(value),
+      0,
+    );
+    return size + Buffer.byteLength(row.query) + headers;
   }
 
-  /** A size at which one delivery charges exactly `total` bytes. The text
-   *  stored beside a body is as long for one size as for another with as many
-   *  digits, so one measurement of it settles the size. The intended source
-   *  is supplied because its serialized length can differ between registrations. */
-  async function sizeCharging(total: number, source: string): Promise<number> {
+  /** Content-Length has the same width for sizes with the same digit count. */
+  async function sizeCharging(total: number): Promise<number> {
     const probe = await world();
     try {
       const size = total - 1000;
       const row = await probe.deliverSized("probe", size);
-      return total - (charge(row, source, size) - size);
+      return total - (charge(row, size) - size);
     } finally {
       await probe.client.deleteConnector(probe.id);
     }
@@ -394,12 +375,10 @@ describe("the pass that removes deliveries, by the bytes they charge", () => {
     // Two that charge exactly 32 MiB together are removed, and the next, which
     // would pass it, is left for the pass after.
     const exact = await world();
-    const half = await sizeCharging(TARGET / 2, exact.source);
+    const half = await sizeCharging(TARGET / 2);
     const a = await exact.deliverSized("a", half);
     const b = await exact.deliverSized("b", half);
-    expect(charge(a, exact.source, half) + charge(b, exact.source, half)).toBe(
-      TARGET,
-    );
+    expect(charge(a, half) + charge(b, half)).toBe(TARGET);
     await exact.deliver("small");
     await pastPendingRetention();
     expect(await sweep()).toEqual({ deleted: 2, remaining: true });
@@ -409,13 +388,11 @@ describe("the pass that removes deliveries, by the bytes they charge", () => {
     expect((await exact.client.deleteConnector(exact.id)).status).toBe(200);
 
     // One byte more, and only the oldest of them goes.
-    const over = await world(undefined, "retention-longer-source");
-    const overHalf = await sizeCharging(TARGET / 2, over.source);
+    const over = await world();
+    const overHalf = await sizeCharging(TARGET / 2);
     const c = await over.deliverSized("c", overHalf);
     const d = await over.deliverSized("d", overHalf + 1);
-    expect(
-      charge(c, over.source, overHalf) + charge(d, over.source, overHalf + 1),
-    ).toBe(TARGET + 1);
+    expect(charge(c, overHalf) + charge(d, overHalf + 1)).toBe(TARGET + 1);
     await pastPendingRetention();
     expect(await sweep()).toEqual({ deleted: 1, remaining: true });
     expect(await over.kept()).toEqual(["d"]);
@@ -427,7 +404,7 @@ describe("the pass that removes deliveries, by the bytes they charge", () => {
   it("removes a delivery that alone charges more than 32 MiB, the oldest of those past their retention", async () => {
     const w = await world();
     const large = await w.deliverSized("large", TARGET);
-    expect(charge(large, w.source, TARGET)).toBeGreaterThan(TARGET);
+    expect(charge(large, TARGET)).toBeGreaterThan(TARGET);
     await w.deliver("small");
     await pastPendingRetention();
 

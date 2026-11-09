@@ -60,6 +60,20 @@ pub fn setting<T: Kind>(tx: &Transaction<'_>, seeds: &Seeds, setting: Setting<T>
     Ok(value)
 }
 
+/// A setting that decides what is deleted, as this transaction holds it. A row that does not
+/// read refuses, since a fallback could delete what the stored value keeps; an absent row takes
+/// the seed or default.
+pub fn deciding<T: Kind>(tx: &Transaction<'_>, seeds: &Seeds, setting: Setting<T>) -> Result<T> {
+    let row = get(tx, setting.entry.key)?;
+    match setting.resolve(seeds, row.as_deref()) {
+        (_, Reading::Unreadable) => Err(Refusal::internal(&format!(
+            "the stored setting {} does not read, so nothing it decides is deleted",
+            setting.entry.key
+        ))),
+        (value, _) => Ok(value),
+    }
+}
+
 pub fn remove(tx: &Transaction<'_>, key: &str) -> Result<()> {
     tx.execute("DELETE FROM settings WHERE key = ?1", [key])?;
     Ok(())
@@ -181,6 +195,7 @@ mod tests {
     use rusqlite::Connection;
 
     use super::*;
+    use crate::app::refusal::Code;
     use crate::settings::registry::{CONNECTOR_HOLD_MS, ENTRIES, RATE_LIMIT_ENABLED, Value};
 
     fn table() -> Connection {
@@ -221,6 +236,21 @@ mod tests {
                 "{broken}"
             );
             assert_eq!(live.get(CONNECTOR_HOLD_MS), 5_000);
+        }
+    }
+
+    #[test]
+    fn a_deciding_row_that_does_not_read_refuses_and_an_absent_one_takes_its_seed() {
+        let mut conn = table();
+        let tx = conn.transaction().unwrap();
+        let seeded = Seeds::from([(CONNECTOR_HOLD_MS.entry.key, Value::Whole(5_000))]);
+        assert_eq!(deciding(&tx, &seeded, CONNECTOR_HOLD_MS).unwrap(), 5_000);
+        write_row(&tx, "connector_hold_ms", "").unwrap();
+        assert_eq!(deciding(&tx, &seeded, CONNECTOR_HOLD_MS).unwrap(), 5_000);
+        for broken in ["soon", "-1", "999", "99999999999"] {
+            write_row(&tx, "connector_hold_ms", broken).unwrap();
+            let refused = deciding(&tx, &seeded, CONNECTOR_HOLD_MS).unwrap_err();
+            assert_eq!(refused.code, Code::InternalError, "{broken}");
         }
     }
 

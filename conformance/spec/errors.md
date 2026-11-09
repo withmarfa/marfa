@@ -74,7 +74,9 @@ The server MUST carry an `X-Request-ID` header on every answer to `POST /auth/oa
 
 ### `errors/request-id-echo`
 
-When a request to `POST /auth/oauth2/register` or to a path outside `/auth/` and `/.well-known/` carries an `X-Request-ID` of 1 to 128 letters, digits, underscores and hyphens, the server MUST answer with that value in `X-Request-ID`, whether it serves the request or refuses it.
+When a request to `POST /auth/oauth2/register` or to a path outside `/auth/`, `/.well-known/` and `/inbound/` carries an `X-Request-ID` of 1 to 128 letters, digits, underscores and hyphens, the server MUST answer with that value in `X-Request-ID`, whether it serves the request or refuses it.
+
+**Reason:** a request to `/inbound/` comes from a sender and not a Marfa client, and its headers are content (`inbound-webhooks/request-id-own`).
 
 **Tests:** `compliance/refusal-headers.test.ts › is the caller's own, on a served answer and on a refusal, when the caller sent one of 1 to 128 letters, digits, underscores and hyphens`, `› answers a body that is not JSON with a 415 that carries X-Request-ID and no X-Error-Code, where Marfa's own doors carry both`.
 
