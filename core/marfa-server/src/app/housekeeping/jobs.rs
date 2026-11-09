@@ -1,13 +1,13 @@
 use std::time::Duration;
 
 use super::super::blobs::upkeep;
-use super::super::{enrichment, items, jobs};
+use super::super::{enrichment, inbound, items, jobs};
 use super::{Job, cleanups, heartbeat};
 use crate::settings::registry::{
     AUDIT_CLEANUP_INTERVAL_MS, BLOB_CLEANUP_INTERVAL_MS, BLOB_INTEGRITY_INTERVAL_MS,
     BLOB_REPLICATE_INTERVAL_MS, CREDENTIAL_CLEANUP_INTERVAL_MS, ENRICHMENT_INTERVAL_MS,
     EVENT_LOG_CLEANUP_INTERVAL_MS, FEED_EXPIRY_INTERVAL_MS, HEARTBEAT_INTERVAL_MS,
-    TRASH_PURGE_INTERVAL_MS, VERSION_THINNING_INTERVAL_MS,
+    INBOUND_CLEANUP_INTERVAL_MS, TRASH_PURGE_INTERVAL_MS, VERSION_THINNING_INTERVAL_MS,
 };
 
 const HOUR: Duration = Duration::from_secs(3_600);
@@ -66,6 +66,13 @@ pub(super) const JOBS: &[Job] = &[
         10_000,
         HOUR,
         |app, run| Box::pin(cleanups::event_log(app, run)),
+    ),
+    Job::new(
+        "inbound-delivery-cleanup",
+        INBOUND_CLEANUP_INTERVAL_MS,
+        15_000,
+        HOUR,
+        |app, run| Box::pin(inbound::delivery_cleanup(app, run)),
     ),
     Job::fixed("bulk-action-gc", HOUR_MS, 30_000, HOUR, |app, run| {
         Box::pin(jobs::gc(app, run))
