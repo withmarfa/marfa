@@ -687,6 +687,11 @@ export interface BulkActionResponse {
   remaining_hidden?: boolean;
   settings?: TypeSetting[];
   settings_rewritten?: boolean;
+  settings_error?: {
+    code: string;
+    message: string;
+    details?: Record<string, unknown>;
+  };
 }
 
 /** A folder, view or webhook setting that names a type. */

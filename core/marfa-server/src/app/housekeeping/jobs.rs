@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use super::super::blobs::upkeep;
-use super::super::{enrichment, items, oauth};
+use super::super::{enrichment, items, jobs, oauth};
 use super::{Job, cleanups, heartbeat};
 use crate::settings::registry::{
     AUDIT_CLEANUP_INTERVAL_MS, AUTH_SESSION_CLEANUP_INTERVAL_MS, BLOB_CLEANUP_INTERVAL_MS,
@@ -99,6 +99,9 @@ pub(super) const JOBS: &[Job] = &[
     ),
     Job::fixed("revoked-grant-purge", HOUR_MS, 20_000, HOUR, |app, run| {
         Box::pin(oauth::sweep::purge_withdrawn_grants(app, run))
+    }),
+    Job::fixed("bulk-action-gc", HOUR_MS, 30_000, HOUR, |app, run| {
+        Box::pin(jobs::gc(app, run))
     }),
     Job::fixed(
         "grant-inactivity-retirement",

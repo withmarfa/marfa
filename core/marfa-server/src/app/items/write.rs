@@ -21,8 +21,8 @@ use super::index;
 use super::plan::{self, Act, Asked, Gate, Moving, invalid_transition, require_version};
 use super::rows::{self, Landed, Moved, NewRow};
 use super::{
-    Item, Keys, Snapshot, Writer, check_keys, link_in, metadata_for, metadata_text, not_found,
-    parsed, summary_of, title_key,
+    Item, Keys, Selected, Snapshot, Writer, check_keys, link_in, metadata_for, metadata_text,
+    not_found, parsed, summary_of, title_key,
 };
 use crate::app::App;
 use crate::app::access::{Caller, Level};
@@ -189,6 +189,11 @@ pub enum Change {
         entry: Box<Entry>,
         note: Note,
     },
+    /// A type move's rewrite of a folder's or view's settings, laid over it as it stands.
+    Retarget {
+        id: String,
+        settings: Map<String, Value>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -233,6 +238,7 @@ impl Change {
             } => "item.purge",
             Change::Settle { .. } => "items.tombstones",
             Change::Page(_) | Change::Entry { .. } => "items.bulk",
+            Change::Retarget { .. } => "item.update",
         }
     }
 
@@ -309,6 +315,69 @@ pub(crate) fn apply_server_own(
         server_own: true,
     };
     job.run(change)
+}
+
+/// What a bulk-action job does to one matched item.
+#[derive(Clone, Debug)]
+pub enum RowAct {
+    Transition(String),
+    Purge,
+    Tags {
+        add: Vec<String>,
+        remove: Vec<String>,
+    },
+    Tier(String),
+    Properties(Map<String, Value>),
+    OccurredAt(String),
+    Retype {
+        to: String,
+        properties: Option<Map<String, Value>>,
+    },
+}
+
+/// What one row's write did beyond the row: the other rows it moved, the blobs a purge took, and
+/// the bytes it wrote or purged (`rows::weight` of every row it touched, whole for a purge).
+#[derive(Debug, Default)]
+pub struct RowDone {
+    pub carried: Vec<String>,
+    pub blobs: Vec<String>,
+    pub bytes: i64,
+}
+
+/// A source filter hides the same items from a job as from a listing.
+pub fn apply_row(
+    unit: &Unit<'_, '_>,
+    catalog: &Arc<Catalog>,
+    read_only: &ReadOnly,
+    selected: &Selected,
+    act: &RowAct,
+) -> Result<RowDone> {
+    let id = selected.id.as_str();
+    let job = Job {
+        unit,
+        catalog: catalog.clone(),
+        read_only: read_only.clone(),
+        claim: None,
+        server_own: false,
+    };
+    let row = rows::by_id(unit.tx(), id)?.ok_or_else(not_found)?;
+    if !unit
+        .caller
+        .levers()?
+        .lists(&catalog.rules, &row.type_id, &row.source)
+    {
+        return Err(not_found());
+    }
+    let mut done = job.row_act(selected, act)?;
+    if !matches!(act, RowAct::Purge) {
+        for touched in std::iter::once(id).chain(done.carried.iter().map(String::as_str)) {
+            done.bytes = done
+                .bytes
+                .saturating_add(rows::weight(unit.tx(), touched, false)?);
+        }
+    }
+    index::settle(unit.tx(), &catalog.rules)?;
+    Ok(done)
 }
 
 pub fn ruled(error: RuleError) -> Refusal {
@@ -425,6 +494,16 @@ pub(super) fn stale_bare(row: &Item, named: i64) -> Result<Refusal> {
         ),
     )
     .with_member("current", row.state_named()?))
+}
+
+/// A state change writes no version, so a job checks the state it matched as well.
+fn left_state(matched: &str, now: &str) -> Refusal {
+    Refusal::new(
+        Code::InvalidTransition,
+        format!(
+            "The item moved from {matched} to {now} after the job selected it, so the job left it."
+        ),
+    )
 }
 
 fn no_ancestor(row: &Item, named: i64) -> Result<Refusal> {
@@ -627,6 +706,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             } => self.settle(&type_id, &keys, &settled_at),
             Change::Page(page) => self.page(*page),
             Change::Entry { entry, note } => self.lone_entry(*entry, &note),
+            Change::Retarget { id, settings } => self.retarget(&id, settings),
         }?;
         index::settle(self.unit.tx(), &self.catalog.rules)?;
         Ok(done)
@@ -1263,6 +1343,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             let replaced = writing.edges.as_deref().unwrap_or_default();
             edges::judge_retype(&self.edge_writing(), row, resulting, replaced)?;
             instance::raise_reach(self.unit.tx())?;
+            rows::retype_marks(self.unit.tx(), &row.id, resulting)?;
         }
         let decided = self.referenced(
             Some(Referencing::Item(row.seq)),
@@ -1973,7 +2054,8 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         )
     }
 
-    fn brought_back(&self, row: &Item) -> Result<()> {
+    fn brought_back(&self, row: &Item) -> Result<Vec<String>> {
+        let mut carried = Vec::new();
         for back in plan::returning(&self.gate(), row)? {
             let item = self.moved_out(&back.item, "active")?;
             self.unit.audit("item", &item.id, None)?;
@@ -1991,8 +2073,9 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                     Value::from(back.with_type)
                 ),
             })?;
+            carried.push(item.id);
         }
-        Ok(())
+        Ok(carried)
     }
 
     fn lifecycle_row(&self, id: &str, version: Option<i64>) -> Result<Item> {
@@ -2004,6 +2087,17 @@ impl<'t, 'c> Job<'_, 't, 'c> {
     }
 
     fn transition(&self, id: &str, state: &str, version: Option<i64>) -> Result<Done> {
+        let (item, _) = self.transitioned(id, state, version)?;
+        self.answer(200, &item, "")
+    }
+
+    /// The row moved, and the other rows its move took along.
+    fn transitioned(
+        &self,
+        id: &str,
+        state: &str,
+        version: Option<i64>,
+    ) -> Result<(Item, Vec<String>)> {
         let row = self.lifecycle_row(id, version)?;
         let to_bin = state == "trashed";
         let from_bin = row.state == "trashed";
@@ -2034,17 +2128,19 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             Some(json!({ "from_state": row.state, "to_state": state })),
         )?;
         self.announce("item.state_changed", &item)?;
+        let mut carried = Vec::new();
         if to_bin {
             for row in &taken {
                 self.unit.audit("item", &row.id, None)?;
                 self.announce("item.deleted", row)?;
+                carried.push(row.id.clone());
             }
             self.announce("item.deleted", &item)?;
         } else if from_bin {
             self.announce("item.restored", &item)?;
-            self.brought_back(&row)?;
+            carried = self.brought_back(&row)?;
         }
-        self.answer(200, &item, "")
+        Ok((item, carried))
     }
 
     fn delete(&self, id: String, version: Option<i64>) -> Result<Done> {
@@ -2096,16 +2192,144 @@ impl<'t, 'c> Job<'_, 't, 'c> {
     }
 
     fn purge(&self, id: String, version: Option<i64>) -> Result<Done> {
-        let plan = plan::plan(&self.gate(), Act::Purge, &[Asked { id, version }])?;
+        self.purged(id, version)?;
+        Ok(done_ok())
+    }
+
+    /// Every row the purge took, the asked one first, and the blobs each named.
+    fn purged(&self, id: String, version: Option<i64>) -> Result<RowDone> {
+        let plan = plan::plan(
+            &self.gate(),
+            Act::Purge,
+            &[Asked {
+                id: id.clone(),
+                version,
+            }],
+        )?;
+        let mut done = RowDone::default();
         for purging in &plan.purging {
             let item = &purging.item;
+            done.bytes = done
+                .bytes
+                .saturating_add(rows::weight(self.unit.tx(), &item.id, true)?);
+            done.blobs
+                .extend(references::held(self.unit.tx(), Referencing::Item(item.seq))?.into_keys());
             for (edge, source) in &purging.edges {
                 edges::purge_edge(self.unit, edge, source, &item.id)?;
             }
             purge(self.unit, item)?;
             self.unit.audit("item", &item.id, None)?;
+            if item.id != id {
+                done.carried.push(item.id.clone());
+            }
         }
-        Ok(done_ok())
+        Ok(done)
+    }
+
+    fn retarget(&self, id: &str, settings: Map<String, Value>) -> Result<Done> {
+        let row = rows::by_id(self.unit.tx(), id)?.ok_or_else(not_found)?;
+        if row.type_id == VIEW_TYPE {
+            views::check(&settings, &self.catalog)?;
+        }
+        let (item, _) = self.landed(
+            &row,
+            &Writing {
+                properties: Some(settings),
+                replace: true,
+                version: Some(row.version),
+                ..Writing::default()
+            },
+        )?;
+        self.unit.audit_also(
+            "item.update",
+            "item",
+            &item.id,
+            Some(json!({ "type": item.type_id })),
+        )?;
+        self.answer(200, &item, "")
+    }
+
+    /// A job writes each item only as it stood when the job was queued, so it never undoes a
+    /// later edit: a changed item meets the conflict rules of a write naming that version.
+    fn row_act(&self, selected: &Selected, act: &RowAct) -> Result<RowDone> {
+        let (id, version) = (selected.id.as_str(), Some(selected.version));
+        match act {
+            RowAct::Transition(state) => {
+                let row = self.lifecycle_row(id, version)?;
+                if row.state != selected.state {
+                    return Err(left_state(&selected.state, &row.state));
+                }
+                let (_, carried) = self.transitioned(id, state, version)?;
+                Ok(RowDone {
+                    carried,
+                    ..RowDone::default()
+                })
+            }
+            RowAct::Purge => self.purged(id.to_string(), version),
+            RowAct::Tags { add, remove } => {
+                let tx = self.unit.tx();
+                let row = self.tag_row(id, version)?;
+                let held = rows::tags(tx, row.seq)?;
+                let mut tags: Vec<String> = held
+                    .iter()
+                    .filter(|tag| !remove.contains(tag))
+                    .cloned()
+                    .collect();
+                for tag in distinct(add) {
+                    if !tags.contains(&tag) {
+                        tags.push(tag);
+                    }
+                }
+                validation::tag_count(held.len(), tags.len()).map_err(ruled)?;
+                rows::set_tags(tx, row.seq, &tags)?;
+                self.tags_landed(&row, json!({ "tags": tags }))?;
+                Ok(RowDone::default())
+            }
+            RowAct::Tier(tier) => {
+                self.row_update(selected, |update| update.tier = Some(tier.clone()))
+            }
+            RowAct::Properties(patch) => {
+                self.row_update(selected, |update| update.properties = Some(patch.clone()))
+            }
+            RowAct::OccurredAt(at) => {
+                self.row_update(selected, |update| update.occurred_at = Some(at.clone()))
+            }
+            RowAct::Retype { to, properties } => self.retyped(selected, to, properties.clone()),
+        }
+    }
+
+    /// A type move takes an item in any state, and leaves it in that state.
+    fn retyped(
+        &self,
+        selected: &Selected,
+        to: &str,
+        properties: Option<Map<String, Value>>,
+    ) -> Result<RowDone> {
+        let gate = self.gate();
+        let row = gate.readable_row(&selected.id)?;
+        gate.row_gate(&row)?;
+        gate.type_gate(to)?;
+        self.change_row(
+            row,
+            Writing {
+                properties,
+                destination: Some(to.to_string()),
+                version: Some(selected.version),
+                ..Writing::default()
+            },
+        )?;
+        Ok(RowDone::default())
+    }
+
+    fn row_update(&self, selected: &Selected, fill: impl FnOnce(&mut Update)) -> Result<RowDone> {
+        let mut update = Update {
+            id: selected.id.clone(),
+            version: selected.version,
+            ..Update::default()
+        };
+        fill(&mut update);
+        self.update(update)?;
+        Ok(RowDone::default())
     }
 
     /// Answers with the summary alone, so nothing of the item's content leaves through this door.
