@@ -109,7 +109,8 @@ describe("a time the server keeps", () => {
       expect(made.status).toBe(201);
       await mintKey(server);
       expect(
-        (await send(server, "/owner", { cookie: server.ownerCookie })).status,
+        (await send(server, "/owner/passkeys", { cookie: server.ownerCookie }))
+          .status,
       ).toBe(200);
 
       const held = storedTimes(server);
@@ -168,12 +169,13 @@ describe("a time the server keeps", () => {
           db.prepare("UPDATE auth_session SET expires_at = ?").run(value),
         );
       expect(
-        (await send(server, "/owner", { cookie: server.ownerCookie })).status,
+        (await send(server, "/owner/passkeys", { cookie: server.ownerCookie }))
+          .status,
       ).toBe(200);
 
       for (const damaged of ["soon", "4070908800", "2099-01-01T00:00:00Z"]) {
         ending(damaged);
-        const refused = await send(server, "/owner", {
+        const refused = await send(server, "/owner/passkeys", {
           cookie: server.ownerCookie,
         });
         expect(refused.status, damaged).toBe(500);
@@ -182,7 +184,8 @@ describe("a time the server keeps", () => {
 
       ending("2099-01-01T00:00:00.000Z");
       expect(
-        (await send(server, "/owner", { cookie: server.ownerCookie })).status,
+        (await send(server, "/owner/passkeys", { cookie: server.ownerCookie }))
+          .status,
       ).toBe(200);
     },
     FRESH_SERVER_TIMEOUT_MS,

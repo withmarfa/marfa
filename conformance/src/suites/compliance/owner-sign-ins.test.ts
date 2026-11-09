@@ -323,7 +323,7 @@ async function pass(ms: number): Promise<void> {
   await server.advanceClock(ms);
 }
 
-/** A session's last use and expiry in whole seconds, as the local command's
+/** A session's last use and expiry in milliseconds, as the local command's
  *  listing shows them, so reading them does not use the session. */
 async function stored(
   id: string,
@@ -331,10 +331,12 @@ async function stored(
   const row = (await signIns()).find((r) => r.id === id);
   expect(row, `session ${id} is not listed`).toBeDefined();
   return {
-    updated_at: Math.floor(Date.parse(row!.last_used_at) / 1000),
-    expires_at: Math.floor(Date.parse(row!.expires_at) / 1000),
+    updated_at: Date.parse(row!.last_used_at),
+    expires_at: Date.parse(row!.expires_at),
   };
 }
+
+const IDLE_WEEK_MS = (7 * 24 * 3600 + 60) * 1000;
 
 describe("the owner's sign-ins", () => {
   it("lists every live browser session of the owner", async () => {
@@ -935,17 +937,14 @@ describe("a browser session's idle week", () => {
     // The sign-in library renews a session only once a day has passed, so
     // a request 23 hours on would leave it alone.
     await pass(23 * HOUR);
-    const before = Math.floor(serverNow() / 1000);
+    const before = Math.floor(serverNow());
     const response = await use(browser);
     expect(response.status).toBe(200);
-    const after = Math.ceil(serverNow() / 1000);
+    const after = Math.ceil(serverNow());
     const row = await stored(id);
     expect(row.updated_at).toBeGreaterThanOrEqual(before);
     expect(row.updated_at).toBeLessThanOrEqual(after);
-    expect(row.expires_at - row.updated_at).toBe(7 * 24 * 3600 + 60);
-    const listed = (await signIns()).find((r) => r.id === id)!;
-    expect(Date.parse(listed.last_used_at) / 1000).toBe(row.updated_at);
-    expect(Date.parse(listed.expires_at) / 1000).toBe(row.expires_at);
+    expect(row.expires_at - row.updated_at).toBe(IDLE_WEEK_MS);
   });
 
   it("gives a new session a week and a minute, and its cookie 400 days", async () => {
@@ -969,7 +968,7 @@ describe("a browser session's idle week", () => {
     expect(missing.status).toBe(404);
     expect(cookieMaxAge(missing, browser.cookie)).toBe(COOKIE_SECONDS);
     expect((await stored(id)).updated_at).toBeGreaterThan(
-      Math.floor((serverNow() - MINUTE) / 1000),
+      Math.floor(serverNow() - MINUTE),
     );
     await pass(2 * MINUTE);
     const listed = await use(browser);
@@ -1038,7 +1037,7 @@ describe("a browser session's idle week", () => {
     ).toBe(7 * 24 * 3600 + 60);
 
     await pass(2 * MINUTE);
-    const before = Math.floor(serverNow() / 1000);
+    const before = Math.floor(serverNow());
     const used = await use(browser);
     expect(used.status).toBe(200);
     expect(cookieMaxAge(used, session)).toBeUndefined();
@@ -1047,7 +1046,7 @@ describe("a browser session's idle week", () => {
     ).toBe(false);
     const row = await stored(id);
     expect(row.updated_at).toBeGreaterThanOrEqual(before);
-    expect(row.expires_at - row.updated_at).toBe(7 * 24 * 3600 + 60);
+    expect(row.expires_at - row.updated_at).toBe(IDLE_WEEK_MS);
   });
 
   it("does not record a use within a minute of the last one", async () => {
@@ -1134,9 +1133,7 @@ describe("a restart", () => {
     expect((await use(live)).status).toBe(200);
     const listed = (await signIns()).find((row) => row.id === liveId)!;
     // The session's use after the restart is recorded.
-    expect(Date.parse(listed.last_used_at)).toBeGreaterThan(
-      before.updated_at * 1000,
-    );
+    expect(Date.parse(listed.last_used_at)).toBeGreaterThan(before.updated_at);
     expect(
       (Date.parse(listed.expires_at) - Date.parse(listed.last_used_at)) / 1000,
     ).toBe(7 * 24 * 3600 + 60);
