@@ -2112,12 +2112,32 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             RowAct::OccurredAt(at) => {
                 self.row_update(id, |update| update.occurred_at = Some(at.clone()))
             }
-            RowAct::Retype { to, properties } => self.row_update(id, |update| {
-                update.type_id = Some(to.clone());
-                update.retype = true;
-                update.properties = properties.clone();
-            }),
+            RowAct::Retype { to, properties } => self.retyped(id, to, properties.clone()),
         }
+    }
+
+    /// A type move takes an item in any state, and leaves it in that state.
+    fn retyped(
+        &self,
+        id: &str,
+        to: &str,
+        properties: Option<Map<String, Value>>,
+    ) -> Result<RowDone> {
+        let gate = self.gate();
+        let row = gate.readable_row(id)?;
+        gate.row_gate(&row)?;
+        gate.type_gate(to)?;
+        let version = row.version;
+        self.change_row(
+            row,
+            Writing {
+                properties,
+                destination: Some(to.to_string()),
+                version: Some(version),
+                ..Writing::default()
+            },
+        )?;
+        Ok(RowDone::default())
     }
 
     /// Laid over the row as it stands in this transaction, so no other write is stale against it.

@@ -113,7 +113,16 @@ impl Plan {
                 "A folder, view or webhook names \"{from}\" in a way the move can't rewrite. Change each setting listed, then move."
             ),
         )
-        .with_detail("settings", self.settings())
+        .with_detail(
+            "settings",
+            Value::Array(
+                self.named
+                    .iter()
+                    .filter(|named| named.why.is_some())
+                    .map(Named::to_json)
+                    .collect(),
+            ),
+        )
     }
 }
 
