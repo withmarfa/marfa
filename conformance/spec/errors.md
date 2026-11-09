@@ -532,6 +532,14 @@ If a request meets a fault for which the server holds no refusal, and the fault 
 
 **Tests:** `compliance/internal-error.test.ts › answers 500 internal_error with the code and a fixed message and nothing else, and the instance answers again once it is gone`.
 
+### `errors/stored-time-unreadable`
+
+If the server needs a stored time as an instant to answer a request, such as to judge an expiry, a lease or a retention window, and that time is not RFC 3339 UTC text with milliseconds, as `YYYY-MM-DDTHH:mm:ss.sssZ`, then the server MUST answer `500 internal_error`.
+
+**Reason:** the server stores every time in that one form (`instance/stored-time-form`), so a time in any other form was not written by it. Read as some other time, an expiry could keep a key or a sign-in open past its end, or end it early.
+
+**Tests:** `compliance/stored-times.test.ts › answers 500 internal_error to a key whose stored expiry does not read, and answers again once it reads`, `› answers 500 internal_error to a browser session whose stored end does not read, and answers again once it reads`.
+
 ### `errors/client-closed-request`
 
 When a client closes its connection while the server is still reading the request body, the server MUST NOT report the request as an unhandled fault.
@@ -798,12 +806,13 @@ Every code the server answers over HTTP is a row of the table below, and a serve
 | `compatible_with_violation`          | 422                 | A `compatible_with` claim is invalid, or a change breaks another type's claim. `details.dependent_type_ids` names dependents whose claims the change would break.                              |
 | `idempotency_key_reused`             | 422                 | An `Idempotency-Key` is sent with a different request than the one it first named.                                                                                                             |
 | `idempotency_result_not_retained`    | 422                 | An `Idempotency-Key` repeats a request whose first answer was too large to keep. `details.original_status` is the status it carried.                                                           |
-| `rate_limited`                       | 429                 | The credential, or an inbound endpoint, is past its request cap for the current window.                                                                                                        |
+| `rate_limited`                       | 429                 | A credential, an address or an inbound endpoint is past a limit for its current window. `Retry-After` names the wait.                                                                          |
 | `internal_error`                     | 500                 | A fault that nothing else names a refusal for. The answer says nothing of what failed.                                                                                                         |
 | `blob_store_unavailable`             | 503                 | A blob store failed, or did not answer in time, while Marfa checked, read, wrote or deleted a blob's copy. Nothing was written. Retry later.                                                   |
 | `export_unrestorable`                | 503                 | Writes changed the row an archive export refused, or its type, between two reads. No archive bytes were sent. Retry the export.                                                                |
 | `inbound_unavailable`                | 503                 | An inbound endpoint cannot take a delivery now, because its connector's backlog is full or the instance holds as many bodies in flight as it allows. Retry later.                              |
 | `stream_capacity_exhausted`          | 503                 | The instance is serving as many live event streams as it allows. `details.reason` is `viewer_cap`.                                                                                             |
+| `too_many_connections`               | 503                 | The public listener holds as many open connections as it allows, or the caller's address does. Answered before any request is read; retry later.                                               |
 | `write_contention`                   | 503                 | A write could not get the store's write lock within the busy budget. Retry it unchanged.                                                                                                       |
 | `insufficient_storage`               | 507                 | The volume the instance writes to has no room for the request, or the request would leave less free than the instance's reserve. Nothing was kept unless `details.write_outcome` is `unknown`. |
 

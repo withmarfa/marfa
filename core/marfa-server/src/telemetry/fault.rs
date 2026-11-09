@@ -66,6 +66,15 @@ impl Fault {
         self.database_code
     }
 
+    pub fn retold(&self, message: String) -> Fault {
+        Fault {
+            kind: self.kind,
+            message,
+            database_code: self.database_code,
+            stack: self.stack.clone(),
+        }
+    }
+
     pub fn internal(context: &str) -> Fault {
         Fault::new(Kind::Internal, context.to_string(), None)
     }

@@ -77,7 +77,7 @@ where
     if !metadata_document::is_url(id) {
         return Ok(stored.ok_or_else(no_such_client));
     }
-    let now = app.clock.now_ms();
+    let now = app.clock.instant();
     if let (Some(client), true) = (&stored, fresh_until.is_some_and(|until| until > now)) {
         return Ok(Ok(client.clone()));
     }
@@ -85,11 +85,7 @@ where
         return Ok(Err(refused_document()));
     }
     let keep_or_busy = |stored: Option<Client>| Ok(stored.ok_or_else(busy));
-    let lanes = document_lanes(visit.address);
-    let wait = app
-        .db
-        .write(Write::own(), move |tx| admit(tx, now, &lanes))
-        .await?;
+    let wait = admit(app, &document_lanes(visit.address));
     let permit = app.documents.permits.clone().try_acquire_owned();
     let (None, Ok(permit)) = (wait, permit) else {
         return keep_or_busy(stored);
@@ -136,8 +132,8 @@ async fn keep_document(
 ) -> Result<Client> {
     let id = id.to_string();
     let ip = visit.client_ip();
-    let now = app.clock.now_ms();
-    let at = app.clock.stamp();
+    let now = app.clock.instant();
+    let at = now.text();
     app.db
         .write(Write::caller(CLIENT_CREATED), move |tx| {
             let before = store::client(tx, &id)?;
@@ -148,7 +144,7 @@ async fn keep_document(
             }
             store::put_client(tx, &id, &registration, now)?;
             store::narrow_destinations(tx, &id, &registration)?;
-            store::note_document(tx, &id, now, now + DOCUMENT_FRESH_MS)?;
+            store::note_document(tx, &id, now, now.plus_ms(DOCUMENT_FRESH_MS)?)?;
             if before.is_none() {
                 audit::record_from(
                     tx,
@@ -299,6 +295,7 @@ mod tests {
 
     use super::super::redirect::AppKind;
     use super::*;
+    use crate::app::clock::Stamp;
     use crate::settings::{Environment, Settings};
 
     type FetchResult = std::result::Result<Vec<u8>, Failure>;
@@ -360,7 +357,7 @@ mod tests {
         let client = Client {
             id: "c".to_string(),
             registration: registration("*:read", vec![GrantType::AuthorizationCode]),
-            created_at: 0,
+            created_at: Stamp::from_ms(0).unwrap(),
         };
         assert!(
             ceiling_lacks(&client, &ScopeSet::parse("user.recipe:read"), &registries)
@@ -466,13 +463,13 @@ mod tests {
             .write(Write::own(), move |tx| {
                 tx.execute(
                     "INSERT INTO auth_user (id, name, email, created_at, updated_at) \
-                     VALUES ('u', 'u', 'u@example.test', 0, 0)",
+                     VALUES ('u', 'u', 'u@example.test', '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z')",
                     [],
                 )?;
                 tx.execute(
                     "INSERT INTO auth_oauth_consent \
                      (client_id, user_id, grant_id, scopes, created_at, updated_at) \
-                     VALUES (?1, 'u', 'g', '[]', 0, 0)",
+                     VALUES (?1, 'u', 'g', '[]', '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z')",
                     [&client.id],
                 )?;
                 store::approve_destinations(tx, &client, "u")

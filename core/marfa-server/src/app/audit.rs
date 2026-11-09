@@ -105,19 +105,12 @@ pub struct Filter {
     words: Vec<String>,
     created_after: Option<String>,
     created_before: Option<String>,
+    cursor: Option<String>,
     after: Option<(String, String)>,
     limit: u32,
 }
 
-fn cursor_of(created_at: &str, id: &str) -> String {
-    hex::encode(format!("{created_at}|{id}"))
-}
-
-fn from_cursor(cursor: &str) -> Option<(String, String)> {
-    let text = String::from_utf8(hex::decode(cursor).ok()?).ok()?;
-    let (created_at, id) = text.split_once('|')?;
-    Some((created_at.to_string(), id.to_string()))
-}
+const SCOPE: &str = "audit";
 
 fn instant(value: &str, field: &str) -> Result<String> {
     marfa_rules::time::normalize_bound(value, field)
@@ -157,12 +150,7 @@ impl Filter {
                             Refusal::validation("limit must be a whole number from 1 to 200.")
                         })?;
                 }
-                "cursor" => {
-                    filter.after = Some(
-                        from_cursor(value)
-                            .ok_or_else(|| Refusal::validation("cursor is not a cursor."))?,
-                    );
-                }
+                "cursor" => filter.cursor = Some(value.clone()),
                 _ => {}
             }
         }
@@ -170,7 +158,7 @@ impl Filter {
     }
 }
 
-fn entry_json(row: &Row<'_>) -> rusqlite::Result<(Value, String)> {
+fn entry_json(row: &Row<'_>) -> rusqlite::Result<(Value, (String, String))> {
     let json_column = |column: &str| -> rusqlite::Result<Value> {
         let text: Option<String> = row.get(column)?;
         Ok(text
@@ -179,7 +167,7 @@ fn entry_json(row: &Row<'_>) -> rusqlite::Result<(Value, String)> {
     };
     let id: String = row.get("id")?;
     let created_at: String = row.get("created_at")?;
-    let cursor = cursor_of(&created_at, &id);
+    let position = (created_at.clone(), id.clone());
     let mut out = Map::new();
     out.insert("actor".into(), json_column("actor")?);
     out.insert("id".into(), id.into());
@@ -193,10 +181,12 @@ fn entry_json(row: &Row<'_>) -> rusqlite::Result<(Value, String)> {
         out.insert(column.into(), row.get::<_, Option<String>>(column)?.into());
     }
     out.insert("details".into(), json_column("details")?);
-    Ok((Value::Object(out), cursor))
+    Ok((Value::Object(out), position))
 }
 
-pub fn page(tx: &Transaction<'_>, filter: &Filter) -> Result<(Vec<Value>, Option<String>)> {
+type Page = (Vec<Value>, Option<(String, String)>);
+
+fn page(tx: &Transaction<'_>, filter: &Filter) -> Result<Page> {
     let mut clauses: Vec<String> = Vec::new();
     let mut values: Vec<&dyn ToSql> = Vec::new();
     for (column, value) in [
@@ -257,7 +247,7 @@ pub fn page(tx: &Transaction<'_>, filter: &Filter) -> Result<(Vec<Value>, Option
     let more = rows.len() > filter.limit as usize;
     rows.truncate(filter.limit as usize);
     let next = more
-        .then(|| rows.last().map(|(_, cursor)| cursor.clone()))
+        .then(|| rows.last().map(|(_, position)| position.clone()))
         .flatten();
     Ok((rows.into_iter().map(|(entry, _)| entry).collect(), next))
 }
@@ -266,16 +256,27 @@ pub fn page(tx: &Transaction<'_>, filter: &Filter) -> Result<(Vec<Value>, Option
 pub async fn list(
     app: &App,
     caller: &Caller,
-    filter: Filter,
+    mut filter: Filter,
 ) -> Result<(Vec<Value>, Option<String>)> {
+    let secret = app.cursor_secret.clone();
+    filter.after = filter
+        .cursor
+        .as_deref()
+        .map(|cursor| secret.open_at(SCOPE, cursor))
+        .transpose()?;
     let caller = caller.clone();
     let at = app.clock.stamp();
-    app.db
+    let (entries, next) = app
+        .db
         .read(move |tx| {
             caller.current(tx, &at)?.require(Permission::AuditRead)?;
             page(tx, &filter)
         })
-        .await
+        .await?;
+    let next = next
+        .map(|(created_at, id)| secret.issue_at(SCOPE, &created_at, &id))
+        .transpose()?;
+    Ok((entries, next))
 }
 
 #[cfg(test)]
@@ -296,16 +297,5 @@ mod tests {
         ] {
             assert_eq!(kind_of(action), kind, "{action}");
         }
-    }
-
-    #[test]
-    fn a_cursor_reads_back_and_rubbish_is_not_one() {
-        let cursor = cursor_of("2026-01-01T00:00:00.000Z", "abc");
-        assert_eq!(
-            from_cursor(&cursor),
-            Some(("2026-01-01T00:00:00.000Z".to_string(), "abc".to_string()))
-        );
-        assert_eq!(from_cursor("not-a-cursor"), None);
-        assert_eq!(from_cursor(&hex::encode("no bar")), None);
     }
 }

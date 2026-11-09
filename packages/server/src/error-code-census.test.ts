@@ -125,6 +125,9 @@ function declaredCodes(): Set<string> {
   return declared;
 }
 
+/** Codes of the Rust server alone, which this server never sends. */
+const RUST_ONLY = ["too_many_connections"];
+
 describe("the codes the server sends and the error chapter", () => {
   const sent = codesSent();
   const answered = [...sent.keys()];
@@ -167,7 +170,9 @@ describe("the codes the server sends and the error chapter", () => {
 
   it("has no row for a code the server does not send", () => {
     const rows = rowsOf(ERRORS_CHAPTER);
-    expect(rows.filter((code) => !sent.has(code))).toEqual([]);
+    expect(
+      rows.filter((code) => !sent.has(code) && !RUST_ONLY.includes(code)),
+    ).toEqual([]);
   });
 
   it("declares every code answered in the published document, but for those on doors it does not publish", () => {

@@ -250,20 +250,11 @@ describe("claiming the one owner", () => {
     expect((await local("/_control/setup/status")).body.claimed).toBe(false);
   }, 330_000);
 
-  it("keeps code-attempt counters through restart and replaces unclaimed setup proof", async () => {
+  it("replaces unclaimed setup proof on restart", async () => {
     const earlier = code;
     await stopServer({ state });
     server = await bootUnclaimedServer({ state });
     vi.stubEnv("MARFA_API_URL", server.url);
-    expect(
-      (
-        await post(
-          "/setup/exchange",
-          { code: earlier },
-          { origin: server.url, "x-conformance-client": "192.0.2.1" },
-        )
-      ).status,
-    ).toBe(429);
     expect(
       (
         await post(

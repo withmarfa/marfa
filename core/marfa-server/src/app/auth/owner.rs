@@ -1,8 +1,9 @@
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 use serde_json::{Map, Value, json};
 
-use super::{Note, Visit, limits, note, password, picture, seconds_of, session, stamp_of};
+use super::{Note, Visit, limits, note, password, picture, session};
 use crate::app::access::{Caller, Level};
+use crate::app::clock::Stamp;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::{App, instance};
 
@@ -15,7 +16,7 @@ pub struct Owner {
     pub id: String,
     pub email: String,
     pub name: String,
-    pub created_at: i64,
+    pub created_at: Stamp,
     /// Whether the owner holds a picture, which `GET /owner/picture` serves.
     pub avatar: bool,
 }
@@ -28,7 +29,7 @@ impl Owner {
             "email": self.email,
             "name": self.name,
             "avatar": self.avatar.then(|| format!("{origin}/owner/picture")),
-            "created_at": stamp_of(self.created_at),
+            "created_at": self.created_at,
         })
     }
 }
@@ -82,7 +83,7 @@ pub(super) fn set_password(
     tx: &Transaction<'_>,
     owner_id: &str,
     hash: &str,
-    now: i64,
+    now: Stamp,
 ) -> Result<()> {
     tx.execute(
         "UPDATE auth_account SET password = ?2, updated_at = ?3 WHERE user_id = ?1",
@@ -156,7 +157,7 @@ pub(super) fn create(
     tx: &Transaction<'_>,
     details: &Details,
     hash: &str,
-    now: i64,
+    now: Stamp,
 ) -> Result<Owner> {
     let id = uuid::Uuid::now_v7().to_string();
     tx.execute(
@@ -233,7 +234,7 @@ pub async fn update(app: &App, caller: &Caller, update: Update, visit: Visit) ->
             "UPDATE auth_user SET email = ?2, name = ?3, updated_at = ?4, \
              email_verified = CASE WHEN email = ?2 THEN email_verified ELSE 0 END \
              WHERE id = ?1",
-            params![owner.id, owner.email, owner.name, seconds_of(&unit.at)?],
+            params![owner.id, owner.email, owner.name, unit.instant],
         )?;
         note(
             unit.tx(),
@@ -319,7 +320,7 @@ pub async fn update_profile(
         if let Some(name) = &update.name {
             unit.tx().execute(
                 "UPDATE auth_user SET name = ?2, updated_at = ?3 WHERE id = ?1",
-                params![owner.id, name, seconds_of(&unit.at)?],
+                params![owner.id, name, unit.instant],
             )?;
         }
         if update.clear_avatar {
@@ -347,20 +348,23 @@ pub async fn recover(app: &App, new_password: String) -> Result<()> {
         return Err(not_found());
     }
     let hash = app.passwords.hash(new_password).await?;
-    app.write(&Caller::local(), "owner.password.recovered", move |unit| {
-        let tx = unit.tx();
-        let owner = read(tx)?.ok_or_else(not_found)?;
-        set_password(tx, &owner.id, &hash, seconds_of(&unit.at)?)?;
-        session::end_all(
-            tx,
-            &unit.at,
-            &unit.caller,
-            &Visit::default(),
-            &owner.id,
-            None,
-        )?;
-        limits::clear_account(tx, &owner.email)?;
-        unit.audit("owner", &owner.id, None)
-    })
-    .await
+    let email = app
+        .write(&Caller::local(), "owner.password.recovered", move |unit| {
+            let tx = unit.tx();
+            let owner = read(tx)?.ok_or_else(not_found)?;
+            set_password(tx, &owner.id, &hash, unit.instant)?;
+            session::end_all(
+                tx,
+                &unit.at,
+                &unit.caller,
+                &Visit::default(),
+                &owner.id,
+                None,
+            )?;
+            unit.audit("owner", &owner.id, None)?;
+            Ok(owner.email)
+        })
+        .await?;
+    limits::clear_account(&app.limiter, &email);
+    Ok(())
 }

@@ -24,10 +24,11 @@ use super::limits::{hold_to, passkey_challenge_lanes};
 use super::owner::{self, Owner, checked_name};
 use super::session::{self, New, Opened};
 use super::sign_in::{SIGN_IN_FAILED, SIGNED_IN};
-use super::{Note, Visit, carries_sessions, note, seconds_of};
+use super::{Note, Visit, carries_sessions, note};
 use crate::app::App;
 use crate::app::access::{Caller, unauthorized};
 use crate::app::addresses::Address;
+use crate::app::clock::Stamp;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::db::Write;
 
@@ -171,7 +172,7 @@ pub async fn begin_adding(app: Arc<App>, caller: &Caller) -> Result<Begun> {
         let token = challenge::issue(
             tx,
             &salt,
-            now_app.clock.now_ms(),
+            now_app.clock.instant(),
             challenge::New {
                 purpose: Purpose::Add,
                 origin: &party.origin,
@@ -210,7 +211,7 @@ pub async fn add(app: Arc<App>, caller: &Caller, adding: Adding) -> Result<Liste
             &salt,
             adding.token.as_deref(),
             Purpose::Add,
-            now_app.clock.now_ms(),
+            now_app.clock.instant(),
         )?;
         let Some(taken) = taken else {
             return Ok(Verdict::Refused(challenge_spent()));
@@ -254,8 +255,7 @@ pub async fn begin_proving(app: Arc<App>, visit: &Visit) -> Result<Begun> {
         &app,
         passkey_challenge_lanes(visit.address),
         "Too many sign-in attempts. Try again later.",
-    )
-    .await?;
+    )?;
     let salt = app.settings.start.key_salt.clone();
     let now_app = app.clone();
     app.db
@@ -269,7 +269,7 @@ pub async fn begin_proving(app: Arc<App>, visit: &Visit) -> Result<Begun> {
             let token = challenge::issue(
                 tx,
                 &salt,
-                now_app.clock.now_ms(),
+                now_app.clock.instant(),
                 challenge::New {
                     purpose: Purpose::Prove,
                     origin: &party.origin,
@@ -336,7 +336,7 @@ struct Proven {
 
 struct Judging<'a> {
     at: &'a str,
-    now_ms: i64,
+    now: Stamp,
     party: &'a Party,
     salt: &'a str,
     user_id: Option<&'a str>,
@@ -357,7 +357,7 @@ fn prove(
         judging.salt,
         assertion.token.as_deref(),
         Purpose::Prove,
-        judging.now_ms,
+        judging.now,
     )?;
     let Some(taken) = taken else {
         return spent();
@@ -415,7 +415,7 @@ pub async fn sign_in(app: Arc<App>, assertion: Assertion, visit: Visit) -> Resul
             let party = Party::now(&now_app)?;
             let judging = Judging {
                 at: &at,
-                now_ms: now_app.clock.now_ms(),
+                now: now_app.clock.instant(),
                 party: &party,
                 salt: &salt,
                 user_id: None,
@@ -428,7 +428,7 @@ pub async fn sign_in(app: Arc<App>, assertion: Assertion, visit: Visit) -> Resul
             };
             let opened = session::open(
                 tx,
-                seconds_of(&at)?,
+                Stamp::read(&at)?,
                 New {
                     salt: &salt,
                     user_id: &proven.owner.id,
@@ -472,7 +472,7 @@ pub async fn confirm(
         let party = Party::now(&now_app)?;
         let judging = Judging {
             at: &unit.at,
-            now_ms: now_app.clock.now_ms(),
+            now: now_app.clock.instant(),
             party: &party,
             salt: &salt,
             user_id: Some(&session.user_id),
@@ -485,7 +485,7 @@ pub async fn confirm(
         };
         let opened = session::open(
             tx,
-            seconds_of(&unit.at)?,
+            unit.instant,
             New {
                 salt: &salt,
                 user_id: &session.user_id,

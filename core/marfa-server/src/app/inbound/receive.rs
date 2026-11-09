@@ -6,15 +6,17 @@ use std::sync::{Arc, Mutex, PoisonError};
 use sha2::{Digest, Sha256};
 
 use super::super::App;
-use super::super::auth;
 use super::super::faults::FAIL_INBOUND_RECEIPT;
+use super::super::limiter::{INBOUND_DELIVERIES, Lane, retry_seconds};
 use super::super::refusal::{Code, Refusal, Result};
 use super::store;
+use crate::app::clock::Stamp;
 use crate::db::{Write, io_refusal};
 use crate::settings::Snapshot;
 use crate::settings::registry::{
     INBOUND_BACKLOG_BYTES, INBOUND_BACKLOG_DELIVERIES, INBOUND_MAX_BYTES, INBOUND_RETAINED_BYTES,
-    INBOUND_RETAINED_DELIVERIES,
+    INBOUND_RETAINED_DELIVERIES, RATE_LIMIT_ENABLED, RATE_LIMIT_INBOUND_REQUESTS,
+    RATE_LIMIT_WINDOW_MS,
 };
 
 const RETRY_AFTER_SECONDS: i64 = 60;
@@ -160,19 +162,42 @@ fn room_for(tally: &store::Tally, size: i64, charge: i64, live: &Snapshot) -> Re
     Ok(())
 }
 
+/// Every request to a live address spends its endpoint's window, whatever it is answered.
+fn spend_window(app: &App, endpoint_id: &str, live: &Snapshot) -> Result<()> {
+    if !live.get(RATE_LIMIT_ENABLED) {
+        return Ok(());
+    }
+    let lane = Lane::credential(
+        INBOUND_DELIVERIES,
+        endpoint_id,
+        live.get(RATE_LIMIT_INBOUND_REQUESTS),
+        live.get(RATE_LIMIT_WINDOW_MS),
+    );
+    match app.limiter.admit(app.clock.now_ms(), &[lane]) {
+        None => Ok(()),
+        Some(wait) => Err(Refusal::new(
+            Code::RateLimited,
+            "Too many deliveries to this address; try again later.",
+        )
+        .with_detail("retry_after", retry_seconds(wait))),
+    }
+}
+
 /// Oversized declarations reach the caller's 413 after only the backlog count check.
-pub async fn admit(app: &App, token: &str, arrival: Arrival) -> Result<Place> {
+pub async fn admit(app: &Arc<App>, token: &str, arrival: Arrival) -> Result<Place> {
     let token_hash = super::hash_token(token);
     let looked = token_hash.clone();
-    let clock = app.clock.clone();
     let live = app.settings.live();
+    let held = app.clone();
     app.db
         .read(move |tx| {
-            let at = clock.stamp();
+            let app = held;
+            let at = app.clock.stamp();
             let (target, expires_at) = store::target(tx, &looked)?.ok_or_else(not_found)?;
             if lapsed(expires_at.as_deref(), &at)? {
                 return Err(not_found());
             }
+            spend_window(&app, &target.endpoint_id, &live)?;
             let tally = store::tally(tx, &target.source)?;
             backlog_room(&tally, &live)?;
             if arrival
@@ -196,7 +221,7 @@ pub async fn admit(app: &App, token: &str, arrival: Arrival) -> Result<Place> {
 fn lapsed(expires_at: Option<&str>, at: &str) -> Result<bool> {
     match expires_at {
         None => Ok(false),
-        Some(expires_at) => Ok(auth::millis_of(expires_at)? <= auth::millis_of(at)?),
+        Some(expires_at) => Ok(Stamp::read(expires_at)?.ms() <= Stamp::read(at)?.ms()),
     }
 }
 

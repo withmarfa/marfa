@@ -81,7 +81,7 @@ impl Signatures {
 }
 
 const BACK: &str = "state = 'skipped' AND ((reason = 'unsupported' AND signature <> ?1) \
-     OR (reason = 'over_limit' AND capped_at < CASE capped_by WHEN 'blob' THEN ?2 \
+     OR (reason = 'over_limit' AND cap < CASE capped_by WHEN 'blob' THEN ?2 \
          WHEN 'inflated' THEN ?3 WHEN 'memory' THEN ?4 ELSE -1 END) \
      OR (reason = 'ocr' AND signature <> ?5))";
 
@@ -102,7 +102,7 @@ pub fn due(tx: &Transaction<'_>, max_attempts: i64, signatures: &Signatures) -> 
 pub fn requeue(tx: &Transaction<'_>, signatures: &Signatures) -> Result<()> {
     tx.prepare_cached(&format!(
         "UPDATE enrichment_files SET state = 'waiting', attempts = 0, reason = NULL, \
-         signature = '', capped_by = NULL, capped_at = NULL, refill = 0 WHERE {BACK}"
+         signature = '', capped_by = NULL, cap = NULL, refill = 0 WHERE {BACK}"
     ))?
     .execute(rusqlite::params_from_iter(signatures.bound()))?;
     Ok(())
@@ -152,7 +152,7 @@ pub fn drop_row(tx: &Transaction<'_>, seq: i64, hash: &str) -> Result<()> {
 pub fn read(tx: &Transaction<'_>, seq: i64, hash: &str, at: &str) -> Result<()> {
     tx.prepare_cached(
         "UPDATE enrichment_files SET state = 'read', reason = NULL, signature = '', \
-         capped_by = NULL, capped_at = NULL, refill = 0, updated_at = ?3 \
+         capped_by = NULL, cap = NULL, refill = 0, updated_at = ?3 \
          WHERE item_seq = ?1 AND hash = ?2",
     )?
     .execute(params![seq, hash, at])?;
@@ -167,7 +167,7 @@ pub fn skip(
     signature: &str,
     at: &str,
 ) -> Result<()> {
-    let (capped_by, capped_at) = match why {
+    let (capped_by, cap) = match why {
         Why::OverLimit(cap) => {
             let (by, at) = cap.stored();
             (Some(by), Some(at))
@@ -176,7 +176,7 @@ pub fn skip(
     };
     tx.prepare_cached(
         "UPDATE enrichment_files SET state = 'skipped', reason = ?3, signature = ?4, \
-         capped_by = ?5, capped_at = ?6, refill = 0, updated_at = ?7 \
+         capped_by = ?5, cap = ?6, refill = 0, updated_at = ?7 \
          WHERE item_seq = ?1 AND hash = ?2",
     )?
     .execute(params![
@@ -185,7 +185,7 @@ pub fn skip(
         why.word(),
         signature,
         capped_by,
-        capped_at,
+        cap,
         at
     ])?;
     Ok(())

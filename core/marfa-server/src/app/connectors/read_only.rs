@@ -6,8 +6,8 @@ use rusqlite::{OptionalExtension, Transaction};
 
 use super::store;
 use crate::app::access::{Axis, Level};
-use crate::app::auth;
 use crate::app::catalog::Snapshot;
+use crate::app::clock::Stamp;
 use crate::app::keys;
 use crate::app::refusal::Result;
 
@@ -41,7 +41,11 @@ impl Registry {
                 .into_iter()
                 .filter(|name| Axis::Type.level(map, name) == Level::Write)
                 .collect();
-            let until = key.expires_at.as_deref().map(auth::millis_of).transpose()?;
+            let until = key
+                .expires_at
+                .as_deref()
+                .map(|at| Stamp::read(at).map(Stamp::ms))
+                .transpose()?;
             let reached: HashSet<&String> = std::iter::once(&key.source)
                 .chain(&key.grants.sources)
                 .collect();
@@ -114,7 +118,7 @@ pub fn current(
     };
     Ok(ReadOnly {
         registry,
-        now: auth::millis_of(now)?,
+        now: Stamp::read(now)?.ms(),
     })
 }
 

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 
-use super::{Definition, instant, item_id, text};
+use super::{Definition, item_id, text};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::mcp::confirm;
@@ -150,7 +150,7 @@ fn preview_body(plan: &Plan, token: &confirm::Token, made: bool) -> Map<String, 
     let mut body = Map::new();
     body.insert("preview".into(), Value::Object(shown));
     body.insert("confirm".into(), token.text.clone().into());
-    body.insert("expires_at".into(), instant(token.expires_at_ms).into());
+    body.insert("expires_at".into(), token.expires_at.text().into());
     body.insert(
         "next".into(),
         format!(

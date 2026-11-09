@@ -3,6 +3,7 @@
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 
 use crate::app::access::Maker;
+use crate::app::clock::Stamp;
 use crate::app::refusal::{Refusal, Result};
 
 #[derive(Clone, Debug)]
@@ -308,7 +309,7 @@ pub fn queue(tx: &Transaction<'_>, queued: &Queued<'_>) -> Result<bool> {
             queued.type_id,
             queued.source,
             queued.payload,
-            queued.due_at,
+            Stamp::from_ms(queued.due_at)?,
             queued.at,
         ],
     )?;
@@ -415,8 +416,9 @@ pub fn due(
     let share = i64::try_from(share).unwrap_or(i64::MAX);
     let limit = i64::try_from(limit).unwrap_or(i64::MAX);
     let beyond_share = i64::try_from(beyond_share).unwrap_or(i64::MAX);
+    let now = Stamp::from_ms(now_ms)?;
     let rows = statement.query_map(
-        params![now_ms, busy, holding, share, limit, beyond_share],
+        params![now, busy, holding, share, limit, beyond_share],
         |row| {
             Ok(Due {
                 seq: row.get(0)?,
@@ -431,27 +433,34 @@ pub fn due(
 pub fn next_due(tx: &Transaction<'_>, now_ms: i64, busy: &[i64]) -> Result<Option<i64>> {
     let busy =
         serde_json::to_string(busy).map_err(|_| Refusal::internal("a list did not print"))?;
-    Ok(tx.query_row(
+    let next: Option<Stamp> = tx.query_row(
         "SELECT MIN(due_at) FROM webhook_deliveries WHERE status = 'pending' AND due_at > ?1 \
          AND webhook_id NOT IN (SELECT webhook_id FROM webhook_deliveries \
          WHERE seq IN (SELECT value FROM json_each(?2)))",
-        params![now_ms, busy],
+        params![Stamp::from_ms(now_ms)?, busy],
         |row| row.get(0),
-    )?)
+    )?;
+    Ok(next.map(Stamp::ms))
 }
 
 #[test]
 fn due_takes_one_turn_per_subscription_and_shares_attempts_between_makers() {
     let mut db = rusqlite::Connection::open_in_memory().unwrap();
     let tx = db.transaction().unwrap();
-    tx.execute_batch(
+    tx.execute_batch(&format!(
         "CREATE TABLE webhooks (id TEXT, key_id TEXT, grant_id TEXT);
-         CREATE TABLE webhook_deliveries (seq INTEGER, webhook_id TEXT, status TEXT, due_at INTEGER);
+         CREATE TABLE webhook_deliveries (seq INTEGER, webhook_id TEXT, status TEXT, due_at TEXT);
          INSERT INTO webhooks VALUES ('a', 'k1', NULL), ('b', 'k1', NULL), ('c', 'k1', NULL),
          ('d', NULL, 'g1');
-         INSERT INTO webhook_deliveries VALUES (1, 'a', 'pending', 0), (2, 'a', 'pending', 0),
-         (3, 'b', 'pending', 0), (4, 'c', 'pending', 5), (5, 'd', 'pending', 1);",
-    )
+         INSERT INTO webhook_deliveries VALUES {};",
+        deliveries(&[
+            (1, "a", "pending", 0),
+            (2, "a", "pending", 0),
+            (3, "b", "pending", 0),
+            (4, "c", "pending", 5),
+            (5, "d", "pending", 1),
+        ])
+    ))
     .unwrap();
     let seqs = |found: Vec<Due>| found.into_iter().map(|due| due.seq).collect::<Vec<_>>();
     assert_eq!(
@@ -488,15 +497,16 @@ fn due_takes_one_turn_per_subscription_and_shares_attempts_between_makers() {
 #[test]
 fn due_lets_a_maker_nobody_waits_behind_pass_its_share_within_the_room_beyond_it() {
     let held = ["key:k1".to_string(), "key:k1".to_string()];
-    let ask = |inserts: &str, beyond_share: usize| {
+    let ask = |rows: &[(i64, &str, &str, i64)], beyond_share: usize| {
         let mut db = rusqlite::Connection::open_in_memory().unwrap();
         let tx = db.transaction().unwrap();
         tx.execute_batch(&format!(
             "CREATE TABLE webhooks (id TEXT, key_id TEXT, grant_id TEXT);
-             CREATE TABLE webhook_deliveries (seq INTEGER, webhook_id TEXT, status TEXT, due_at INTEGER);
+             CREATE TABLE webhook_deliveries (seq INTEGER, webhook_id TEXT, status TEXT, due_at TEXT);
              INSERT INTO webhooks VALUES ('a', 'k1', NULL), ('b', 'k1', NULL), ('c', NULL, 'g1'),
              ('d', 'k2', NULL), ('e', 'k1', NULL);
-             {inserts}"
+             INSERT INTO webhook_deliveries VALUES {};",
+            deliveries(rows)
         ))
         .unwrap();
         let started: Vec<i64> = due(&tx, 10, &[], &held, 2, 10, beyond_share)
@@ -507,8 +517,12 @@ fn due_lets_a_maker_nobody_waits_behind_pass_its_share_within_the_room_beyond_it
         let next = next_due(&tx, 10, &started).unwrap();
         (started, next)
     };
-    let alone = "INSERT INTO webhook_deliveries VALUES (1, 'a', 'pending', 0),
-         (2, 'b', 'pending', 0), (3, 'e', 'pending', 0), (4, 'd', 'pending', 50);";
+    let alone: &[(i64, &str, &str, i64)] = &[
+        (1, "a", "pending", 0),
+        (2, "b", "pending", 0),
+        (3, "e", "pending", 0),
+        (4, "d", "pending", 50),
+    ];
     assert_eq!(
         ask(alone, 10),
         (vec![1, 2, 3], Some(50)),
@@ -526,8 +540,12 @@ fn due_lets_a_maker_nobody_waits_behind_pass_its_share_within_the_room_beyond_it
     );
     assert_eq!(
         ask(
-            "INSERT INTO webhook_deliveries VALUES (1, 'a', 'pending', 0), (2, 'b', 'pending', 0),
-             (3, 'c', 'pending', 0), (4, 'a', 'pending', 50);",
+            &[
+                (1, "a", "pending", 0),
+                (2, "b", "pending", 0),
+                (3, "c", "pending", 0),
+                (4, "a", "pending", 50),
+            ],
             10,
         ),
         (vec![3], Some(50)),
@@ -535,8 +553,13 @@ fn due_lets_a_maker_nobody_waits_behind_pass_its_share_within_the_room_beyond_it
     );
     assert_eq!(
         ask(
-            "INSERT INTO webhook_deliveries VALUES (1, 'a', 'pending', 0), (2, 'b', 'pending', 0),
-             (3, 'c', 'pending', 50), (4, 'd', 'pending', 0), (5, 'd', 'pending', 0);",
+            &[
+                (1, "a", "pending", 0),
+                (2, "b", "pending", 0),
+                (3, "c", "pending", 50),
+                (4, "d", "pending", 0),
+                (5, "d", "pending", 0),
+            ],
             10,
         ),
         (vec![4], Some(50)),
@@ -544,13 +567,42 @@ fn due_lets_a_maker_nobody_waits_behind_pass_its_share_within_the_room_beyond_it
     );
     assert_eq!(
         ask(
-            "INSERT INTO webhook_deliveries VALUES (1, 'a', 'pending', 0), (2, 'b', 'success', 0),
-             (3, 'c', 'pending', 50);",
+            &[
+                (1, "a", "pending", 0),
+                (2, "b", "success", 0),
+                (3, "c", "pending", 50),
+            ],
             10,
         ),
         (vec![1], Some(50)),
         "a settled delivery is not one due"
     );
+}
+
+#[test]
+fn a_due_time_that_does_not_read_is_refused() {
+    let mut db = rusqlite::Connection::open_in_memory().unwrap();
+    let tx = db.transaction().unwrap();
+    tx.execute_batch(
+        "CREATE TABLE webhooks (id TEXT, key_id TEXT, grant_id TEXT);
+         CREATE TABLE webhook_deliveries (seq INTEGER, webhook_id TEXT, status TEXT, due_at TEXT);
+         INSERT INTO webhooks VALUES ('a', 'k1', NULL);
+         INSERT INTO webhook_deliveries VALUES (1, 'a', 'pending', 'soon');",
+    )
+    .unwrap();
+    assert!(next_due(&tx, 0, &[]).is_err());
+}
+
+/// Delivery rows `(seq, webhook_id, status, due_at in ms)` as SQL values, each time stamped.
+#[cfg(test)]
+fn deliveries(rows: &[(i64, &str, &str, i64)]) -> String {
+    rows.iter()
+        .map(|(seq, id, status, ms)| {
+            let due = Stamp::from_ms(*ms).unwrap().text();
+            format!("({seq}, '{id}', '{status}', '{due}')")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Preserves earlier attempts and leaves settled deliveries unchanged.
@@ -592,7 +644,7 @@ pub fn record(tx: &Transaction<'_>, seq: i64, recorded: &Recorded<'_>, at: &str)
             recorded.status.wire(),
             recorded.status_code,
             recorded.error,
-            recorded.due_at,
+            Stamp::from_ms(recorded.due_at)?,
             at
         ],
     )?;
@@ -603,7 +655,7 @@ pub fn redeliver(tx: &Transaction<'_>, seq: i64, due_at: i64, at: &str) -> Resul
     tx.execute(
         "UPDATE webhook_deliveries SET status = 'pending', cycle_attempt = 0, due_at = ?2, \
          updated_at = ?3 WHERE seq = ?1 AND status = 'dead_letter'",
-        params![seq, due_at, at],
+        params![seq, Stamp::from_ms(due_at)?, at],
     )?;
     Ok(())
 }

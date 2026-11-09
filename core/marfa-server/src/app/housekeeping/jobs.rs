@@ -1,19 +1,17 @@
 use std::time::Duration;
 
 use super::super::blobs::upkeep;
-use super::super::{enrichment, inbound, items, jobs, oauth};
+use super::super::{enrichment, inbound, items, jobs};
 use super::{Job, cleanups, heartbeat};
 use crate::settings::registry::{
-    AUDIT_CLEANUP_INTERVAL_MS, AUTH_SESSION_CLEANUP_INTERVAL_MS, BLOB_CLEANUP_INTERVAL_MS,
-    BLOB_INTEGRITY_INTERVAL_MS, BLOB_REPLICATE_INTERVAL_MS, DCR_CLIENT_CLEANUP_INTERVAL_MS,
-    ENRICHMENT_INTERVAL_MS, EVENT_LOG_CLEANUP_INTERVAL_MS, FEED_EXPIRY_INTERVAL_MS,
-    HEARTBEAT_INTERVAL_MS, INBOUND_CLEANUP_INTERVAL_MS, RATE_LIMIT_CLEANUP_INTERVAL_MS,
-    REVOKED_KEY_REAP_INTERVAL_MS, TRASH_PURGE_INTERVAL_MS, VERSION_THINNING_INTERVAL_MS,
+    AUDIT_CLEANUP_INTERVAL_MS, BLOB_CLEANUP_INTERVAL_MS, BLOB_INTEGRITY_INTERVAL_MS,
+    BLOB_REPLICATE_INTERVAL_MS, CREDENTIAL_CLEANUP_INTERVAL_MS, ENRICHMENT_INTERVAL_MS,
+    EVENT_LOG_CLEANUP_INTERVAL_MS, FEED_EXPIRY_INTERVAL_MS, HEARTBEAT_INTERVAL_MS,
+    INBOUND_CLEANUP_INTERVAL_MS, TRASH_PURGE_INTERVAL_MS, VERSION_THINNING_INTERVAL_MS,
 };
 
 const HOUR: Duration = Duration::from_secs(3_600);
 const HOUR_MS: u64 = 3_600_000;
-const DAY_MS: u64 = 86_400_000;
 const SIX_HOURS: Duration = Duration::from_secs(6 * 3_600);
 const HEARTBEAT_DEADLINE: Duration = Duration::from_secs(30);
 
@@ -76,46 +74,15 @@ pub(super) const JOBS: &[Job] = &[
         HOUR,
         |app, run| Box::pin(inbound::delivery_cleanup(app, run)),
     ),
-    Job::new(
-        "rate-limit-cleanup",
-        RATE_LIMIT_CLEANUP_INTERVAL_MS,
-        20_000,
-        HOUR,
-        |app, run| Box::pin(cleanups::rate_limit(app, run)),
-    ),
-    Job::new(
-        "revoked-key-reap",
-        REVOKED_KEY_REAP_INTERVAL_MS,
-        45_000,
-        HOUR,
-        |app, run| Box::pin(cleanups::revoked_keys(app, run)),
-    ),
-    Job::new(
-        "auth-session-cleanup",
-        AUTH_SESSION_CLEANUP_INTERVAL_MS,
-        10_000,
-        HOUR,
-        |app, run| Box::pin(oauth::sweep::sweep_expired(app, run)),
-    ),
-    Job::new(
-        "dcr-client-cleanup",
-        DCR_CLIENT_CLEANUP_INTERVAL_MS,
-        25_000,
-        HOUR,
-        |app, run| Box::pin(oauth::sweep::remove_idle_clients(app, run)),
-    ),
-    Job::fixed("revoked-grant-purge", HOUR_MS, 20_000, HOUR, |app, run| {
-        Box::pin(oauth::sweep::purge_withdrawn_grants(app, run))
-    }),
     Job::fixed("bulk-action-gc", HOUR_MS, 30_000, HOUR, |app, run| {
         Box::pin(jobs::gc(app, run))
     }),
-    Job::fixed(
-        "grant-inactivity-retirement",
-        DAY_MS,
-        40_000,
+    Job::new(
+        "credential-cleanup",
+        CREDENTIAL_CLEANUP_INTERVAL_MS,
+        20_000,
         HOUR,
-        |app, run| Box::pin(oauth::sweep::retire_idle_grants(app, run)),
+        |app, run| Box::pin(cleanups::credentials(app, run)),
     ),
     Job::new(
         "blob-replicate",
@@ -140,3 +107,33 @@ pub(super) const JOBS: &[Job] = &[
         |app, run| Box::pin(upkeep::integrity(app, run)),
     ),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_contract_tables_each_job_the_server_runs_and_lists_each_once() {
+        let spec = include_str!("../../../../../conformance/spec/housekeeping.md");
+        let table = spec
+            .split("<!-- housekeeping-table:start -->")
+            .nth(1)
+            .and_then(|rest| rest.split("<!-- housekeeping-table:end -->").next())
+            .expect("housekeeping.md holds the table");
+        let tabled: Vec<&str> = table
+            .lines()
+            .filter_map(|line| line.strip_prefix("| `"))
+            .filter_map(|rest| rest.split('`').next())
+            .collect();
+        assert!(JOBS.len() > 5);
+        for job in JOBS {
+            assert!(tabled.contains(&job.name), "{} is not tabled", job.name);
+        }
+        for (index, name) in tabled.iter().enumerate() {
+            assert!(
+                !tabled[index + 1..].contains(name),
+                "{name} is tabled twice"
+            );
+        }
+    }
+}

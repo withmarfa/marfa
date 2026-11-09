@@ -1,9 +1,9 @@
 //! Deciding takes the rows and the time and touches nothing, so that a moved clock, a changed
 //! interval and an unreadable row are all one question.
 
-use chrono::{DateTime, SecondsFormat, Utc};
 use rusqlite::{OptionalExtension, Row as Sql, Transaction, params};
 
+use super::super::clock::Stamp;
 use super::super::refusal::Result;
 
 #[derive(Clone, Debug)]
@@ -42,19 +42,11 @@ pub fn rows(tx: &Transaction<'_>) -> Result<Vec<Row>> {
 }
 
 fn parsed_ms(text: &str) -> Option<i64> {
-    DateTime::parse_from_rfc3339(text)
-        .ok()
-        .map(|instant| instant.timestamp_millis())
+    Stamp::parsed(text).map(Stamp::ms)
 }
 
 pub fn readable(text: &str) -> bool {
-    parsed_ms(text).is_some()
-}
-
-fn stamp_of(ms: i64) -> String {
-    DateTime::from_timestamp_millis(ms)
-        .unwrap_or(DateTime::<Utc>::MAX_UTC)
-        .to_rfc3339_opts(SecondsFormat::Millis, true)
+    Stamp::parsed(text).is_some()
 }
 
 #[derive(Clone, Debug)]
@@ -133,13 +125,13 @@ pub fn apply(
             Step::Enter { name, next_ms } => {
                 tx.execute(
                     "INSERT OR IGNORE INTO housekeeping_jobs (name, next_run_at) VALUES (?1, ?2)",
-                    params![name, stamp_of(*next_ms)],
+                    params![name, Stamp::from_ms(*next_ms)?],
                 )?;
             }
             Step::Bring { name, next_ms } => {
                 tx.execute(
                     "UPDATE housekeeping_jobs SET next_run_at = ?2 WHERE name = ?1",
-                    params![name, stamp_of(*next_ms)],
+                    params![name, Stamp::from_ms(*next_ms)?],
                 )?;
             }
             Step::Claim { name, seen } => {
@@ -206,10 +198,10 @@ pub fn finish(tx: &Transaction<'_>, run: &Finish<'_>) -> Result<()> {
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?;
-    let finished = parsed_ms(run.finished_at).unwrap_or(0);
+    let finished = Stamp::read(run.finished_at)?.ms();
     let next = next_after(
         held.as_ref().and_then(|(at, _)| parsed_ms(at)),
-        parsed_ms(run.started_at).unwrap_or(0),
+        Stamp::read(run.started_at)?.ms(),
         finished,
         run.interval_ms,
         run.again || held.is_some_and(|(_, requested)| requested),
@@ -220,7 +212,7 @@ pub fn finish(tx: &Transaction<'_>, run: &Finish<'_>) -> Result<()> {
          WHERE name = ?1",
         params![
             run.name,
-            stamp_of(next),
+            Stamp::from_ms(next)?,
             run.finished_at,
             run.outcome,
             run.error,
@@ -233,6 +225,10 @@ pub fn finish(tx: &Transaction<'_>, run: &Finish<'_>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn at(ms: i64) -> String {
+        Stamp::from_ms(ms).unwrap().text()
+    }
 
     const NOW: i64 = 1_800_000_000_000;
 
@@ -252,12 +248,12 @@ mod tests {
                 None,
             )
             .unwrap();
-            assert!(claim(&tx, "job", None, &stamp_of(NOW)).unwrap());
-            bring_forward(&tx, "job", &stamp_of(NOW + offset)).unwrap();
+            assert!(claim(&tx, "job", None, &at(NOW)).unwrap());
+            bring_forward(&tx, "job", &at(NOW + offset)).unwrap();
             let end = Finish {
                 name: "job",
-                started_at: &stamp_of(NOW),
-                finished_at: &stamp_of(NOW + 10),
+                started_at: &at(NOW),
+                finished_at: &at(NOW + 10),
                 interval_ms: 60_000,
                 again: false,
                 outcome: "ok",
@@ -269,12 +265,12 @@ mod tests {
                 plan(&rows(&tx).unwrap(), &[JOB], NOW + 10).as_slice(),
                 [Step::Claim { .. }]
             ));
-            assert!(claim(&tx, "job", None, &stamp_of(NOW + 10)).unwrap());
+            assert!(claim(&tx, "job", None, &at(NOW + 10)).unwrap());
             finish(
                 &tx,
                 &Finish {
-                    started_at: &stamp_of(NOW + 10),
-                    finished_at: &stamp_of(NOW + 20),
+                    started_at: &at(NOW + 10),
+                    finished_at: &at(NOW + 20),
                     ..end
                 },
             )
@@ -287,7 +283,7 @@ mod tests {
         Row {
             name: name.to_string(),
             next_run_at: next.to_string(),
-            running_since: running.then(|| stamp_of(NOW)),
+            running_since: running.then(|| at(NOW)),
             last_started_at: None,
             last_finished_at: None,
             last_outcome: None,
@@ -334,7 +330,7 @@ mod tests {
 
     #[test]
     fn a_job_due_long_ago_is_one_claim() {
-        let seen = stamp_of(NOW - 400 * 86_400_000);
+        let seen = at(NOW - 400 * 86_400_000);
         assert_eq!(
             planned(row("job", &seen, false)),
             [Step::Claim { name: "job", seen }]
@@ -343,19 +339,19 @@ mod tests {
 
     #[test]
     fn a_due_job_that_is_running_is_left() {
-        assert!(planned(row("job", &stamp_of(NOW), true)).is_empty());
+        assert!(planned(row("job", &at(NOW), true)).is_empty());
     }
 
     #[test]
     fn a_job_not_yet_due_is_left() {
-        assert!(planned(row("job", &stamp_of(NOW + 1), false)).is_empty());
-        assert!(planned(row("job", &stamp_of(NOW + 60_000), false)).is_empty());
+        assert!(planned(row("job", &at(NOW + 1), false)).is_empty());
+        assert!(planned(row("job", &at(NOW + 60_000), false)).is_empty());
     }
 
     #[test]
     fn a_shortened_interval_brings_the_next_run_in() {
         assert_eq!(
-            planned(row("job", &stamp_of(NOW + 60_001), false)),
+            planned(row("job", &at(NOW + 60_001), false)),
             [Step::Bring {
                 name: "job",
                 next_ms: NOW + 60_000

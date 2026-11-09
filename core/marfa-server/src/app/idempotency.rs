@@ -7,7 +7,6 @@ mod expiry;
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-use chrono::DateTime;
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -20,6 +19,7 @@ use super::connectors::{ReadOnly, read_only};
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
 use super::{edges, items};
+use crate::app::clock::Stamp;
 use crate::db::Write;
 
 pub use expiry::expire;
@@ -179,14 +179,8 @@ fn held(tx: &Transaction<'_>, credential: &str, key: &str) -> Result<Option<Held
         .optional()?)
 }
 
-fn elapsed_ms(from: &str, to: &str) -> i64 {
-    match (
-        DateTime::parse_from_rfc3339(from),
-        DateTime::parse_from_rfc3339(to),
-    ) {
-        (Ok(from), Ok(to)) => (to - from).num_milliseconds(),
-        _ => i64::MAX,
-    }
+fn elapsed_ms(from: &str, to: &str) -> Result<i64> {
+    Ok(Stamp::read(to)?.ms() - Stamp::read(from)?.ms())
 }
 
 pub async fn enter(app: &App, caller: &Caller, key: &str, fingerprint: String) -> Result<Entry> {
@@ -217,7 +211,7 @@ pub async fn enter(app: &App, caller: &Caller, key: &str, fingerprint: String) -
             if record.state == "complete" {
                 return Ok(Ok(record));
             }
-            if elapsed_ms(&record.created_at, &at) < LEASE_MS {
+            if elapsed_ms(&record.created_at, &at)? < LEASE_MS {
                 return Err(Refusal::new(
                     Code::IdempotencyKeyInFlight,
                     format!(

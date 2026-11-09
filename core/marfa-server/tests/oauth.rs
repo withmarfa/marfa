@@ -42,12 +42,22 @@ const DEVICE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
 const DAY_MS: u64 = 86_400_000;
 const AN_APPROVED_PAGE: &str = "https://approved.example";
 
-async fn swept(app: &Arc<App>, job: &str) -> u64 {
-    let ended = housekeeping::run_now(app, job).await.unwrap();
-    assert_eq!(ended.outcome, "ok", "{job}: {:?}", ended.error);
+struct Cleaned {
+    deleted: u64,
+    retired: u64,
+}
+
+async fn cleaned(app: &Arc<App>) -> Cleaned {
+    let ended = housekeeping::run_now(app, "credential-cleanup")
+        .await
+        .unwrap();
+    assert_eq!(ended.outcome, "ok", "{:?}", ended.error);
     let result = ended.result.unwrap();
-    let taken = result.get("deleted").or_else(|| result.get("retired"));
-    taken.and_then(Value::as_u64).unwrap()
+    let count = |name: &str| result[name].as_u64().unwrap();
+    Cleaned {
+        deleted: count("deleted"),
+        retired: count("retired"),
+    }
 }
 
 struct Instance {
@@ -512,7 +522,7 @@ async fn a_spent_code_stays_until_its_expiry_and_ends_nothing_after() {
     let tokens = "SELECT count(*) FROM auth_oauth_access_token";
     assert_eq!(instance.count(tokens).await, 1);
 
-    swept(&instance.app, "auth-session-cleanup").await;
+    cleaned(&instance.app).await;
     assert_eq!(instance.count(rows).await, 0);
 }
 
@@ -1174,7 +1184,10 @@ async fn cleanup_takes_only_the_clients_nothing_holds() {
         .revoke(&revoked, text_at(&issued, "refresh_token"))
         .await;
     let offered = instance.register(NOTES).await;
-    assert_eq!(swept(&instance.app, "dcr-client-cleanup").await, 0);
+    let clients = "SELECT count(*) FROM auth_oauth_client";
+    assert_eq!(instance.count(clients).await, 4);
+    cleaned(&instance.app).await;
+    assert_eq!(instance.count(clients).await, 4);
 
     instance.app.clock.advance(2 * DAY_MS).unwrap();
     let link = instance.consent_link(&offered, NOTES).await;
@@ -1185,7 +1198,8 @@ async fn cleanup_takes_only_the_clients_nothing_holds() {
         ))
         .await;
     assert_eq!(page.status, StatusCode::OK, "{}", page.text);
-    assert_eq!(swept(&instance.app, "dcr-client-cleanup").await, 1);
+    cleaned(&instance.app).await;
+    assert_eq!(instance.count(clients).await, 3);
 
     let held = async |client: &str| {
         let fields = [
@@ -1207,21 +1221,47 @@ async fn cleanup_takes_only_the_clients_nothing_holds() {
 }
 
 #[tokio::test]
+async fn a_failing_stage_leaves_the_later_stages_to_run_and_fails_the_run() {
+    let instance = Instance::signed_in().await;
+    let kept = instance.register(OFFLINE_NOTES).await;
+    instance.tokens(&kept, OFFLINE_NOTES).await;
+    instance.register(NOTES).await;
+    let app = &instance.app;
+    app.clock.advance(366 * DAY_MS).unwrap();
+    let clients = "SELECT count(*) FROM auth_oauth_client";
+    assert_eq!(instance.count(clients).await, 2);
+
+    app.faults
+        .set("fail:commit", Some("auth.grant.retired"))
+        .unwrap();
+    let ended = housekeeping::run_now(app, "credential-cleanup")
+        .await
+        .unwrap();
+    assert_eq!(instance.count(clients).await, 1);
+    assert_eq!(ended.outcome, "error");
+    let error = ended.error.unwrap();
+    assert!(error.starts_with("idle grants: "), "{error}");
+
+    app.faults.clear(None);
+    assert_eq!(cleaned(app).await.retired, 1);
+}
+
+#[tokio::test]
 async fn an_idle_grant_retires_then_goes_and_its_client_can_follow() {
     let instance = Instance::signed_in().await;
     let client = instance.register(OFFLINE_NOTES).await;
     let issued = instance.tokens(&client, OFFLINE_NOTES).await;
     let app = &instance.app;
-    assert_eq!(swept(app, "grant-inactivity-retirement").await, 0);
+    assert_eq!(cleaned(app).await.retired, 0);
     let named_by_nobody = "SELECT count(*) FROM items \
                            WHERE type = 'system.connection' AND writer_kind IS NULL";
     assert_eq!(instance.count(named_by_nobody).await, 0);
 
     app.clock.advance(364 * DAY_MS).unwrap();
-    assert_eq!(swept(app, "grant-inactivity-retirement").await, 0);
+    assert_eq!(cleaned(app).await.retired, 0);
     app.clock.advance(2 * DAY_MS).unwrap();
-    assert_eq!(swept(app, "grant-inactivity-retirement").await, 1);
-    assert_eq!(swept(app, "grant-inactivity-retirement").await, 0);
+    assert_eq!(cleaned(app).await.retired, 1);
+    assert_eq!(cleaned(app).await.retired, 0);
     let refused = instance
         .refresh(&client, text_at(&issued, "refresh_token"))
         .await;
@@ -1232,22 +1272,48 @@ async fn an_idle_grant_retires_then_goes_and_its_client_can_follow() {
     let grants = "SELECT count(*) FROM items WHERE type = 'system.connection'";
     assert_eq!(instance.count(grants).await, 1);
 
+    let consents = "SELECT count(*) FROM auth_oauth_consent";
+    let clients = "SELECT count(*) FROM auth_oauth_client";
     app.clock.advance(89 * DAY_MS).unwrap();
-    assert_eq!(swept(app, "revoked-grant-purge").await, 0);
-    assert_eq!(swept(app, "dcr-client-cleanup").await, 0);
+    cleaned(app).await;
+    assert_eq!(instance.count(consents).await, 1);
+    assert_eq!(instance.count(clients).await, 1);
     app.clock.advance(2 * DAY_MS).unwrap();
-    assert_eq!(swept(app, "revoked-grant-purge").await, 1);
+    cleaned(app).await;
     assert_eq!(instance.count(grants).await, 0);
-    assert_eq!(
-        instance
-            .count("SELECT count(*) FROM auth_oauth_consent")
-            .await,
-        0
-    );
+    assert_eq!(instance.count(consents).await, 0);
+    assert_eq!(instance.count(clients).await, 0);
+}
 
-    assert_eq!(swept(app, "dcr-client-cleanup").await, 0);
-    assert!(swept(app, "auth-session-cleanup").await > 0);
-    assert_eq!(swept(app, "dcr-client-cleanup").await, 1);
+#[tokio::test]
+async fn a_refreshed_token_spends_the_allowance_of_the_one_before_it() {
+    let instance = Instance::signed_in().await;
+    instance.app.settings.apply_stored(&[
+        ("rate_limit_enabled".to_string(), "true".to_string()),
+        ("rate_limit_requests".to_string(), "3".to_string()),
+    ]);
+    let client = instance.register(OFFLINE_NOTES).await;
+    let issued = instance.tokens(&client, OFFLINE_NOTES).await;
+    let first = text_at(&issued, "access_token").to_string();
+    let refreshed = instance
+        .refresh(&client, text_at(&issued, "refresh_token"))
+        .await;
+    let second = text_at(&refreshed.json(), "access_token").to_string();
+    assert_ne!(first, second);
+
+    let read = async |token: &str| {
+        let request = Request::builder()
+            .uri("/items?type=core.note")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap();
+        instance.send(request).await.status
+    };
+    assert_eq!(read(&first).await, StatusCode::OK);
+    assert_eq!(read(&second).await, StatusCode::OK);
+    assert_eq!(read(&first).await, StatusCode::OK);
+    assert_eq!(read(&second).await, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(read(&first).await, StatusCode::TOO_MANY_REQUESTS);
 }
 
 #[tokio::test]
@@ -1305,10 +1371,12 @@ async fn a_purged_grant_takes_the_folder_reports_it_made() {
         StatusCode::NO_CONTENT
     );
     instance.app.clock.advance(89 * DAY_MS).unwrap();
-    assert_eq!(swept(&instance.app, "revoked-grant-purge").await, 0);
+    cleaned(&instance.app).await;
+    assert_eq!(instance.count(WITHDRAWN).await, 1);
     assert_eq!(instance.count(reports).await, 1);
     instance.app.clock.advance(2 * DAY_MS).unwrap();
-    assert_eq!(swept(&instance.app, "revoked-grant-purge").await, 1);
+    cleaned(&instance.app).await;
+    assert_eq!(instance.count(WITHDRAWN).await, 0);
     assert_eq!(instance.count(reports).await, 0);
 }
 
@@ -1323,13 +1391,11 @@ async fn a_grant_in_use_is_not_idle() {
         .await;
     assert_eq!(renewed.status, StatusCode::OK, "{}", renewed.text);
     instance.app.clock.advance(350 * DAY_MS).unwrap();
-    assert_eq!(swept(&instance.app, "grant-inactivity-retirement").await, 0);
+    assert_eq!(cleaned(&instance.app).await.retired, 0);
 }
 
-#[tokio::test]
-async fn the_sweeps_keep_what_a_retention_committed_before_it_is_live_keeps() {
+async fn idle_revoked_and_unused() -> Instance {
     let instance = Instance::signed_in().await;
-    let app = &instance.app;
     let idle = instance.register(OFFLINE_NOTES).await;
     instance.tokens(&idle, OFFLINE_NOTES).await;
     let revoked = instance.register(OFFLINE_NOTES).await;
@@ -1338,77 +1404,70 @@ async fn the_sweeps_keep_what_a_retention_committed_before_it_is_live_keeps() {
         .revoke(&revoked, text_at(&issued, "refresh_token"))
         .await;
     instance.register(NOTES).await;
-    app.clock.advance(366 * DAY_MS).unwrap();
+    instance.app.clock.advance(366 * DAY_MS).unwrap();
+    instance
+}
 
-    let mut taken = Vec::new();
-    for (job, write, key) in [
-        (
-            "grant-inactivity-retirement",
-            "auth.grant.retired",
-            "grant_inactivity_days",
-        ),
-        (
-            "revoked-grant-purge",
-            "auth.grants.purged",
-            "revoked_grant_retention_days",
-        ),
+const STANDING: &str = "SELECT count(*) FROM auth_oauth_consent WHERE withdrawn_at IS NULL";
+const WITHDRAWN: &str = "SELECT count(*) FROM auth_oauth_consent WHERE withdrawn_at IS NOT NULL";
+const CLIENTS: &str = "SELECT count(*) FROM auth_oauth_client";
+
+#[tokio::test]
+async fn the_cleanup_keeps_what_a_retention_committed_before_it_is_live_keeps() {
+    let instance = idle_revoked_and_unused().await;
+    let app = &instance.app;
+    app.faults
+        .set("hold:write", Some("auth.grant.retired"))
+        .unwrap();
+    let running = app.clone();
+    let run = tokio::spawn(async move { cleaned(&running).await });
+    for (key, next) in [
+        ("grant_inactivity_days", Some("auth.grants.purged")),
+        ("revoked_grant_retention_days", Some("auth.clients.purged")),
+        ("dcr_client_retention_days", None),
     ] {
-        app.faults.set("hold:write", Some(write)).unwrap();
-        let running = app.clone();
-        let run = tokio::spawn(async move { swept(&running, job).await });
         instance.when_held().await;
         commit_unpublished(app, key, "0").await;
         app.faults.clear(Some("hold:write"));
-        taken.push(run.await.unwrap());
+        if let Some(next) = next {
+            app.faults.set("hold:write", Some(next)).unwrap();
+        }
     }
-    commit_unpublished(app, "dcr_client_retention_days", "0").await;
+    assert_eq!(run.await.unwrap().retired, 0);
     let live = app.settings.live();
     assert_eq!(live.get(GRANT_INACTIVITY_DAYS), 365);
     assert_eq!(live.get(REVOKED_GRANT_RETENTION_DAYS), 90);
     assert_eq!(live.get(DCR_CLIENT_RETENTION_DAYS), 1);
-    taken.push(swept(app, "dcr-client-cleanup").await);
-    assert_eq!(taken, [0, 0, 0]);
-    let standing = "SELECT count(*) FROM auth_oauth_consent WHERE withdrawn_at IS NULL";
-    assert_eq!(instance.count(standing).await, 1);
-    let withdrawn = "SELECT count(*) FROM auth_oauth_consent WHERE withdrawn_at IS NOT NULL";
-    assert_eq!(instance.count(withdrawn).await, 1);
-    let clients = "SELECT count(*) FROM auth_oauth_client";
-    assert_eq!(instance.count(clients).await, 3);
+    assert_eq!(instance.count(STANDING).await, 1);
+    assert_eq!(instance.count(WITHDRAWN).await, 1);
+    assert_eq!(instance.count(CLIENTS).await, 3);
 }
 
 #[tokio::test]
-async fn a_retention_that_does_not_read_ends_each_sweep_in_error_and_deletes_nothing() {
-    let instance = Instance::signed_in().await;
+async fn a_retention_that_does_not_read_ends_the_cleanup_in_error_and_deletes_nothing_it_decides() {
+    let instance = idle_revoked_and_unused().await;
     let app = &instance.app;
-    let idle = instance.register(OFFLINE_NOTES).await;
-    instance.tokens(&idle, OFFLINE_NOTES).await;
-    let revoked = instance.register(OFFLINE_NOTES).await;
-    let issued = instance.tokens(&revoked, OFFLINE_NOTES).await;
-    instance
-        .revoke(&revoked, text_at(&issued, "refresh_token"))
-        .await;
-    instance.register(NOTES).await;
-    app.clock.advance(366 * DAY_MS).unwrap();
-    let rows = [
-        "SELECT count(*) FROM auth_oauth_consent WHERE withdrawn_at IS NULL",
-        "SELECT count(*) FROM auth_oauth_consent WHERE withdrawn_at IS NOT NULL",
-        "SELECT count(*) FROM auth_oauth_client",
-    ];
+    let rows = [STANDING, WITHDRAWN, CLIENTS];
     let mut before = Vec::new();
     for sql in rows {
         before.push(instance.count(sql).await);
     }
 
-    let sweeps = [
-        ("grant-inactivity-retirement", "grant_inactivity_days"),
-        ("revoked-grant-purge", "revoked_grant_retention_days"),
-        ("dcr-client-cleanup", "dcr_client_retention_days"),
+    let keys = [
+        "grant_inactivity_days",
+        "revoked_grant_retention_days",
+        "dcr_client_retention_days",
     ];
-    for (job, key) in sweeps {
+    for key in keys {
         commit_unpublished(app, key, "soon").await;
-        let ended = housekeeping::run_now(app, job).await.unwrap();
-        assert_eq!(ended.outcome, "error", "{job}");
-        assert!(ended.error.unwrap().contains(key), "{job}");
+    }
+    let ended = housekeeping::run_now(app, "credential-cleanup")
+        .await
+        .unwrap();
+    assert_eq!(ended.outcome, "error");
+    let error = ended.error.unwrap();
+    for key in keys {
+        assert!(error.contains(key), "{key}: {error}");
     }
     let mut kept = Vec::new();
     for sql in rows {
@@ -1416,12 +1475,14 @@ async fn a_retention_that_does_not_read_ends_each_sweep_in_error_and_deletes_not
     }
     assert_eq!(kept, before);
 
-    let mut taken = Vec::new();
-    for (job, key) in sweeps {
+    for key in keys {
         remove_unpublished(app, key).await;
-        taken.push(swept(app, job).await);
     }
-    assert!(taken.iter().all(|count| *count > 0), "{taken:?}");
+    assert_eq!(cleaned(app).await.retired, 1);
+    assert_eq!(instance.count(STANDING).await, 0);
+    let purged = "SELECT count(*) FROM audit_log WHERE action = 'auth.grants.purged'";
+    assert_eq!(instance.count(purged).await, 1);
+    assert_eq!(instance.count(CLIENTS).await, 1);
 }
 
 #[tokio::test]
@@ -1435,12 +1496,12 @@ async fn the_expired_go_and_a_rotated_token_waits_for_its_own_end() {
     assert_eq!(refreshed.status, StatusCode::OK, "{}", refreshed.text);
     instance.code(&client, OFFLINE_NOTES).await;
     let app = &instance.app;
-    assert_eq!(swept(app, "auth-session-cleanup").await, 0);
+    assert_eq!(cleaned(app).await.deleted, 0);
 
     app.clock.advance(2 * 3_600_000).unwrap();
     let both_codes_and_both_access_tokens = 4;
     assert_eq!(
-        swept(app, "auth-session-cleanup").await,
+        cleaned(app).await.deleted,
         both_codes_and_both_access_tokens
     );
     let rotated = "SELECT count(*) FROM auth_oauth_refresh_token WHERE rotated_at IS NOT NULL";
@@ -1448,7 +1509,7 @@ async fn the_expired_go_and_a_rotated_token_waits_for_its_own_end() {
     app.clock.advance(31 * DAY_MS).unwrap();
     let both_tokens_and_the_browser_session = 3;
     assert_eq!(
-        swept(app, "auth-session-cleanup").await,
+        cleaned(app).await.deleted,
         both_tokens_and_the_browser_session
     );
     assert_eq!(instance.count(rotated).await, 0);
@@ -1466,7 +1527,7 @@ async fn an_expired_browser_session_goes_and_a_live_one_stays() {
     app.db
         .write(Write::own(), |tx| {
             tx.execute(
-                "UPDATE auth_session SET expires_at = 0 \
+                "UPDATE auth_session SET expires_at = '2000-01-01T00:00:00.000Z' \
                  WHERE id = (SELECT id FROM auth_session LIMIT 1)",
                 [],
             )?;
@@ -1475,33 +1536,8 @@ async fn an_expired_browser_session_goes_and_a_live_one_stays() {
         .await
         .unwrap();
 
-    assert_eq!(swept(app, "auth-session-cleanup").await, 1);
+    assert_eq!(cleaned(app).await.deleted, 1);
     assert_eq!(instance.count(sessions).await, 1);
-}
-
-#[tokio::test]
-async fn an_ended_rate_limit_window_goes_and_a_running_one_stays() {
-    let instance = Instance::signed_in().await;
-    let app = &instance.app;
-    app.db
-        .write(Write::own(), |tx| {
-            tx.execute(
-                "INSERT INTO rate_limit_windows (family, window_key, count, expires_at) VALUES \
-                 ('a test', 'ended', 1, '2000-01-01T00:00:00.000Z'), \
-                 ('a test', 'running', 1, '2999-01-01T00:00:00.000Z')",
-                [],
-            )?;
-            Ok(())
-        })
-        .await
-        .unwrap();
-
-    swept(app, "rate-limit-cleanup").await;
-    let left = "SELECT count(*) FROM rate_limit_windows \
-                WHERE family = 'a test' AND window_key = 'running'";
-    assert_eq!(instance.count(left).await, 1);
-    let all = "SELECT count(*) FROM rate_limit_windows WHERE family = 'a test'";
-    assert_eq!(instance.count(all).await, 1);
 }
 
 #[tokio::test]
@@ -1519,28 +1555,30 @@ async fn a_pass_works_through_more_than_one_batch() {
             tx.execute(
                 "INSERT INTO auth_oauth_consent \
                  (client_id, user_id, grant_id, scopes, created_at, updated_at) \
-                 SELECT client_id, ?1, client_id, '[]', 0, 0 FROM auth_oauth_client",
-                [&user],
+                 SELECT client_id, ?1, client_id, '[]', ?2, ?2 FROM auth_oauth_client",
+                [user.as_str(), "2000-01-01T00:00:00.000Z"],
             )?;
             tx.execute(
                 "INSERT INTO auth_oauth_code (digest, client_id, user_id, session_id, grant_id, \
                  redirect_uri, scopes, challenge, resources, expires_at) \
-                 SELECT client_id, client_id, ?1, 's', client_id, 'r', '[]', 'c', '[]', 0 \
+                 SELECT client_id, client_id, ?1, 's', client_id, 'r', '[]', 'c', '[]', ?2 \
                  FROM auth_oauth_client",
-                [&user],
+                [user.as_str(), "2000-01-01T00:00:00.000Z"],
             )?;
             Ok(())
         })
         .await
         .unwrap();
-    assert_eq!(swept(app, "auth-session-cleanup").await, MORE_THAN_A_BATCH);
-    assert_eq!(
-        swept(app, "grant-inactivity-retirement").await,
-        MORE_THAN_A_BATCH
-    );
+    let first = cleaned(app).await;
+    assert_eq!(first.deleted, MORE_THAN_A_BATCH);
+    assert_eq!(first.retired, MORE_THAN_A_BATCH);
     app.clock.advance(91 * DAY_MS).unwrap();
-    assert_eq!(swept(app, "revoked-grant-purge").await, MORE_THAN_A_BATCH);
-    assert_eq!(swept(app, "dcr-client-cleanup").await, MORE_THAN_A_BATCH);
+    let second = cleaned(app).await;
+    let grants_the_clients_they_kept_and_the_browser_session = 2 * MORE_THAN_A_BATCH + 1;
+    assert_eq!(
+        second.deleted,
+        grants_the_clients_they_kept_and_the_browser_session
+    );
 }
 
 fn from_page(method: Method, path: &str, page: &str) -> axum::http::request::Builder {
@@ -1749,12 +1787,12 @@ impl Instance {
             .status
     }
 
-    async fn last_use(&self) -> i64 {
-        let query = "SELECT coalesce(max(last_used_at), 0) FROM auth_oauth_consent";
-        self.count(query).await
+    async fn last_use(&self) -> String {
+        let query = "SELECT coalesce(max(last_used_at), '') FROM auth_oauth_consent";
+        self.text_of(query).await
     }
 
-    async fn when_use_moves_from(&self, last: i64) -> i64 {
+    async fn when_use_moves_from(&self, last: String) -> String {
         for _ in 0..500 {
             let now = self.last_use().await;
             if now != last {
@@ -1830,7 +1868,7 @@ async fn an_ended_grant_keeps_no_destination_and_a_narrowed_one_keeps_them() {
     let grant = instance.grant_of(&other).await;
     assert!(instance.end_grant(&grant).await.status.is_success());
     app.clock.advance(91 * DAY_MS).unwrap();
-    assert!(swept(app, "revoked-grant-purge").await > 0);
+    assert!(cleaned(app).await.deleted > 0);
     assert_eq!(instance.count(destinations).await, 0);
 }
 
@@ -2498,7 +2536,7 @@ async fn a_grant_records_its_use_at_most_once_a_minute_and_starts_over_when_stoo
     let issued = instance.tokens(&client, NOTES).await;
     let token = text_at(&issued, "access_token");
     let issuing = instance.last_use().await;
-    assert!(issuing > 0);
+    assert!(!issuing.is_empty());
 
     instance.app.clock.advance(30_000).unwrap();
     assert_eq!(instance.reads(token).await, StatusCode::OK);
@@ -2506,7 +2544,7 @@ async fn a_grant_records_its_use_at_most_once_a_minute_and_starts_over_when_stoo
     assert_eq!(instance.last_use().await, issuing);
     instance.app.clock.advance(31_000).unwrap();
     assert_eq!(instance.reads(token).await, StatusCode::OK);
-    assert!(instance.when_use_moves_from(issuing).await > issuing);
+    assert!(instance.when_use_moves_from(issuing.clone()).await > issuing);
 
     let grant = instance.grant_of(&client).await;
     let ended = instance.end_grant(&grant).await;
@@ -2552,7 +2590,7 @@ async fn a_foreign_form_neither_uses_nor_renews_a_session() {
     let instance = Instance::signed_in().await;
     instance.app.clock.advance(120_000).unwrap();
     let last_use = "SELECT updated_at FROM auth_session";
-    let before = instance.count(last_use).await;
+    let before = instance.text_of(last_use).await;
 
     for door in [
         "/auth/authorize/decision",
@@ -2577,7 +2615,7 @@ async fn a_foreign_form_neither_uses_nor_renews_a_session() {
         assert!(reply.cookie().is_none(), "{door}");
     }
 
-    assert_eq!(instance.count(last_use).await, before);
+    assert_eq!(instance.text_of(last_use).await, before);
     let own = instance
         .send(get("/owner/passkeys", Some(&instance.cookie)))
         .await;
@@ -2682,13 +2720,14 @@ async fn registrations_from_one_address_stop_at_their_limit() {
 async fn an_expired_device_code_answers_its_poll_then_goes() {
     let instance = Instance::signed_in().await;
     let app = &instance.app;
+    commit_unpublished(app, "dcr_client_retention_days", "0").await;
     let client = instance.register_device(NOTES).await;
     let device_code = instance.device_requested(&client, NOTES).await;
     let left_alone = instance.device_requested(&client, NOTES).await;
     let codes = "SELECT count(*) FROM auth_oauth_device_code";
 
     app.clock.advance(11 * 60_000).unwrap();
-    swept(app, "auth-session-cleanup").await;
+    cleaned(app).await;
     assert_eq!(instance.count(codes).await, 2);
     let expired = instance.poll(&client, &device_code).await;
     refused_as(&expired, "expired_token");
@@ -2696,10 +2735,10 @@ async fn an_expired_device_code_answers_its_poll_then_goes() {
     refused_as(&instance.poll(&client, &device_code).await, "invalid_grant");
 
     app.clock.advance(DAY_MS - 2 * 60_000).unwrap();
-    swept(app, "auth-session-cleanup").await;
+    cleaned(app).await;
     assert_eq!(instance.count(codes).await, 1);
     app.clock.advance(2 * 60_000).unwrap();
-    swept(app, "auth-session-cleanup").await;
+    cleaned(app).await;
     assert_eq!(instance.count(codes).await, 0);
     refused_as(&instance.poll(&client, &left_alone).await, "invalid_grant");
 }
@@ -2777,7 +2816,10 @@ async fn a_device_code_outlives_its_client_and_its_page_says_so() {
     app.clock.advance(DAY_MS - 5 * 60_000).unwrap();
     let asked = instance.device_asked(&client, NOTES).await;
     app.clock.advance(6 * 60_000).unwrap();
-    assert_eq!(swept(app, "dcr-client-cleanup").await, 1);
+    let clients = "SELECT count(*) FROM auth_oauth_client";
+    assert_eq!(instance.count(clients).await, 1);
+    cleaned(app).await;
+    assert_eq!(instance.count(clients).await, 0);
 
     let page_of = |asked: &Value| {
         let code = text_at(asked, "user_code").to_string();
@@ -2800,7 +2842,7 @@ async fn a_device_code_outlives_its_client_and_its_page_says_so() {
     let codes = "SELECT count(*) FROM auth_oauth_device_code";
     assert_eq!(instance.count(codes).await, 2);
     app.clock.advance(DAY_MS + 15 * 60_000).unwrap();
-    swept(app, "auth-session-cleanup").await;
+    cleaned(app).await;
     assert_eq!(instance.count(codes).await, 0);
 }
 
@@ -3496,6 +3538,59 @@ async fn the_error_page_explains_each_code_and_shows_nothing_of_the_request() {
         assert_eq!(page.status, StatusCode::OK, "{code}");
         assert!(!page.text.contains(planted), "{code}: {}", page.text);
         assert!(!page.text.contains(unexplained), "{code}");
+    }
+}
+
+/// Sets every access token's end, as a hand edit or a later reader would find it.
+async fn end_tokens_at(app: &Arc<App>, expires_at: String) {
+    app.db
+        .write(Write::own(), move |tx| {
+            tx.execute(
+                "UPDATE auth_oauth_access_token SET expires_at = ?1",
+                [&expires_at],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn an_access_token_opens_until_the_millisecond_it_ends_and_the_sweep_takes_it_then() {
+    let instance = Instance::signed_in().await;
+    let client = instance.register(NOTES).await;
+    let token = text_at(&instance.tokens(&client, NOTES).await, "access_token").to_string();
+    let app = &instance.app;
+    app.clock.pause(true);
+    let now = app.clock.instant();
+
+    end_tokens_at(app, now.plus_ms(1).unwrap().text()).await;
+    assert_eq!(instance.reads(&token).await, StatusCode::OK);
+    end_tokens_at(app, now.text()).await;
+    assert_eq!(instance.reads(&token).await, StatusCode::UNAUTHORIZED);
+
+    let tokens = "SELECT count(*) FROM auth_oauth_access_token";
+    end_tokens_at(app, now.plus_ms(1).unwrap().text()).await;
+    cleaned(app).await;
+    assert_eq!(instance.count(tokens).await, 1);
+    end_tokens_at(app, now.text()).await;
+    cleaned(app).await;
+    assert_eq!(instance.count(tokens).await, 0);
+}
+
+#[tokio::test]
+async fn an_access_token_whose_end_does_not_read_is_refused_and_never_taken_as_ended() {
+    let instance = Instance::signed_in().await;
+    let client = instance.register(NOTES).await;
+    let token = text_at(&instance.tokens(&client, NOTES).await, "access_token").to_string();
+    assert_eq!(instance.reads(&token).await, StatusCode::OK);
+    for stored in ["soon", "1800000000000", "2027-01-15T08:00:00Z"] {
+        end_tokens_at(&instance.app, stored.to_string()).await;
+        assert_eq!(
+            instance.reads(&token).await,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "{stored}"
+        );
     }
 }
 

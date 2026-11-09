@@ -8,7 +8,7 @@ use super::clients::{self, ceiling_lacks, destinations_digest, judge, registries
 use super::grant::{self, DEVICE_SOURCE, GRANT_CREATED, GRANT_WRITE};
 use super::offer::{self, Decision, Offer, Post, Request};
 use super::scope::{OFFLINE_ACCESS, Registries, ScopeSet, narrow, needs_recent_sign_in};
-use super::store::{self, DeviceCode, DeviceStatus, ms_of};
+use super::store::{self, DeviceCode, DeviceStatus};
 use super::token::{Form, credential_refused};
 use super::tokens::{new_device_code, new_user_code, normalize_user_code};
 use super::{Answered, DEVICE_CODE_SECONDS, DEVICE_INTERVAL_SECONDS, MS_PER_SECOND, Problem};
@@ -20,6 +20,7 @@ use crate::app::auth::limits::{
     admit, device_code_lanes, device_lookup_lanes, device_owner_lanes, hold_to,
 };
 use crate::app::catalog::{self, Snapshot};
+use crate::app::clock::Stamp;
 use crate::app::faults::DEVICE_OWNER_INSTANCE_LANE;
 use crate::app::keys::digest_of;
 use crate::app::refusal::{Code as RefusalCode, Refusal, Result};
@@ -32,8 +33,7 @@ pub async fn request(app: &Arc<App>, form: &Form, visit: &Visit) -> Result<Answe
         app,
         device_code_lanes(visit.address),
         "Too many device codes requested. Try again later.",
-    )
-    .await?;
+    )?;
     if let Some(problem) = credential_refused(form) {
         return Ok(Err(problem));
     }
@@ -75,7 +75,7 @@ pub async fn request(app: &Arc<App>, form: &Form, visit: &Visit) -> Result<Answe
     let device_code = new_device_code()?;
     let user_code = new_user_code()?;
     let salt = &app.settings.start.key_salt;
-    let now = app.clock.now_ms();
+    let now = app.clock.instant();
     let row = DeviceCode {
         digest: digest_of(salt, &device_code)?,
         user_code_digest: digest_of(salt, &normalize_user_code(&user_code))?,
@@ -86,9 +86,9 @@ pub async fn request(app: &Arc<App>, form: &Form, visit: &Visit) -> Result<Answe
         user_id: None,
         interval_seconds: DEVICE_INTERVAL_SECONDS,
         last_polled_at: None,
-        expires_at: now + DEVICE_CODE_SECONDS * MS_PER_SECOND,
+        expires_at: now.plus_ms(DEVICE_CODE_SECONDS * MS_PER_SECOND)?,
     };
-    let at = app.clock.stamp();
+    let at = now.text();
     let ip = visit.client_ip();
     app.db
         .write(Write::caller(CODE_WRITE), move |tx| {
@@ -119,31 +119,18 @@ pub async fn request(app: &Arc<App>, form: &Form, visit: &Visit) -> Result<Answe
     })))
 }
 
-/// Own write so a refused lookup still counts. A verified session spends from the
-/// owner's lanes, anyone else from the address's.
-pub async fn admit_lookup(
-    app: &App,
-    address: Option<IpAddr>,
-    owner: Option<&Caller>,
-) -> Result<Option<i64>> {
-    let session = owner.and_then(Caller::session);
-    let now = app.clock.now_ms();
-    match session {
-        Some(session) => {
-            let lanes = device_owner_lanes(
+/// A refused lookup still counts. A verified session spends from the owner's lanes, anyone
+/// else from the address's.
+pub fn admit_lookup(app: &App, address: Option<IpAddr>, owner: Option<&Caller>) -> Option<i64> {
+    match owner.and_then(Caller::session) {
+        Some(session) => admit(
+            app,
+            &device_owner_lanes(
                 &session.user_id,
                 app.faults.limit(DEVICE_OWNER_INSTANCE_LANE),
-            );
-            app.db
-                .write(Write::own(), move |tx| admit(tx, now, &lanes))
-                .await
-        }
-        None => {
-            let lanes = device_lookup_lanes(address);
-            app.db
-                .write(Write::own(), move |tx| admit(tx, now, &lanes))
-                .await
-        }
+            ),
+        ),
+        None => admit(app, &device_lookup_lanes(address)),
     }
 }
 
@@ -159,7 +146,7 @@ fn digest_of_typed(app: &App, typed: &str) -> Result<String> {
     digest_of(&app.settings.start.key_salt, &normalize_user_code(typed))
 }
 
-fn looked_up(found: Option<&DeviceCode>, now: i64) -> Lookup {
+fn looked_up(found: Option<&DeviceCode>, now: Stamp) -> Lookup {
     match found {
         None => Lookup::Unknown,
         Some(code) if code.expires_at <= now => Lookup::Expired,
@@ -170,7 +157,7 @@ fn looked_up(found: Option<&DeviceCode>, now: i64) -> Lookup {
 
 pub async fn look_up(app: &App, typed: &str) -> Result<Lookup> {
     let digest = digest_of_typed(app, typed)?;
-    let now = app.clock.now_ms();
+    let now = app.clock.instant();
     app.db
         .read(move |tx| {
             let found = store::device_code_by_user_code(tx, &digest)?;
@@ -190,7 +177,7 @@ pub async fn screen(
         .map(|session| session.user_id.clone())
         .ok_or_else(|| Refusal::internal("an approval has no browser session"))?;
     let cache = app.catalog_handle();
-    let now = app.clock.now_ms();
+    let now = app.clock.instant();
     app.db
         .write(Write::own(), move |tx| {
             let found = store::device_code_by_user_code(tx, &digest)?;
@@ -245,7 +232,7 @@ pub async fn answer(
     let shared = app.clone();
     app.write(owner, GRANT_WRITE, move |unit| {
         let tx = unit.tx();
-        let now = ms_of(&unit.at)?;
+        let now = unit.instant;
         let found = store::device_code_by_user_code(tx, &digest)?;
         let lookup = looked_up(found.as_ref(), now);
         let (Lookup::Pending, Some(code)) = (lookup, found) else {

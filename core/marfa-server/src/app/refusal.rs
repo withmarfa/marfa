@@ -118,6 +118,7 @@ codes! {
     ExportUnrestorable = "export_unrestorable", 503;
     InboundUnavailable = "inbound_unavailable", 503;
     StreamCapacityExhausted = "stream_capacity_exhausted", 503;
+    TooManyConnections = "too_many_connections", 503;
     WriteContention = "write_contention", 503;
     InsufficientStorage = "insufficient_storage", 507;
 }
