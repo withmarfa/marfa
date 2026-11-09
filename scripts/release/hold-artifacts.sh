@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Refuse a folder of artifacts that is not exactly the files named, each
-# non-empty. An upload that only refuses an empty folder would carry a run
-# missing one.
+# Refuses a folder that is not exactly the named files, each non-empty.
 #
 #   hold-artifacts.sh <file>...   (run in the folder)
 set -euo pipefail

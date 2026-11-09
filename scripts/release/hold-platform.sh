@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Refuse an npm tarball whose manifest does not limit the install to the one
-# platform its binary is built for. Without `os` and `cpu` the package
-# installs anywhere and fails at the first `require`.
+# Refuses an npm tarball whose manifest lacks `os` and `cpu`, which would install anywhere.
 #
 #   hold-platform.sh <tarball> <os> <cpu>
 set -euo pipefail

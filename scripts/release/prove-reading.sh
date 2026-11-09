@@ -1,18 +1,10 @@
 #!/usr/bin/env bash
-# Proves the reading of the `marfa-server` in a release archive, as a person unpacks it,
-# so a signed and notarized program is the one proved. Two checks:
+# Proves the reading of the `marfa-server` in a release archive. Two checks:
 #
-# 1. Over HTTP: it boots the server on throwaway state, claims it on its private socket,
-#    mints a key, uploads three files and requires the text each one holds back, read by
-#    the server's own file reader: a plain text file (the witness that the reading works
-#    at all), a PDF (PDFium) and a picture (Tesseract). Automatic reading and one manual
-#    sweep may each do the work, so the outcome is judged on the text the files end up
-#    with, within a deadline.
-# 2. Over the reader's internal protocol: the same program runs as its own reading child,
-#    as the server starts it, and must report the full sandbox before it reads the picture.
-#    The server does not report how far its reader was sandboxed, so the HTTP proof cannot
-#    show it. This check is kept beside core/marfa-enrichment/src/isolated/wire.rs and
-#    moves with it.
+# 1. Over HTTP: a text file, a PDF and a picture each end up with their text.
+# 2. Over the reader's internal protocol: the program as its own reading child must
+#    report the full sandbox, which the server does not report. This check moves with
+#    core/marfa-enrichment/src/isolated/wire.rs.
 #
 #   prove-reading.sh <archive> <fixtures-folder>
 #
@@ -42,8 +34,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# The server gives an unclaimed instance's setup code only on its private socket. Lines of
-# its log that name one are still left out of what is printed, so no build can publish it.
+# Log lines that name a setup code are left out, so no build can publish one.
 fail() {
   echo "::error::$1"
   echo "--- the server's log"
@@ -55,18 +46,14 @@ tar -xzf "$archive" -C "$state" marfa-server
 server="$state/marfa-server"
 chmod +x "$server"
 
-# The reader's own protocol: `wire.rs` has the request and the frame, `child.rs` the
-# order of what a child does, and `parent.rs` how a parent starts one.
 prove_sandbox() {
   local picture="$fixtures/sentence.png" phrase="Marfa reads this sentence upright."
   local request said code frame answer text
   request=$(jq -cn --argjson len "$(wc -c < "$picture" | tr -d ' ')" \
     '{mime: "image/png", len: $len, max_text_chars: 1000000, max_inflated_bytes: 67108864,
       time_budget_ms: 45000, ocr: {languages: "eng+deu+fra+spa", data_dir: null}}')
-  # What a parent gives a child: an empty environment, `/` as the working folder, the
-  # file open for reading only as standard input, a minute and a gigabyte of memory, and
-  # pipes for output, read apart. The child's limit on file size is zero, so output to a
-  # file would kill it: its error output goes through a pipe to `cat`, which writes it.
+  # The child's file size limit is zero, so output to a file would kill it: its
+  # error output goes through a pipe to `cat`.
   said=$(
     (
       exec 0< "$picture"
@@ -84,7 +71,6 @@ prove_sandbox() {
   echo "sandbox: the reading child reported the full sandbox"
   [ "$code" = 0 ] || fail "The reading child exited with status $code, not 0: ${said:0:300}"
   answer=${said#*$'\n'}
-  # One answer after the frame, as the parent reads it; anything more is refused there.
   text=$(jq -ser 'if length == 1 then .[0].reading.text // error("no reading") else error("\(length) answers") end' <<< "$answer" 2> /dev/null) ||
     fail "The reading child gave no reading: ${answer:0:300} (its error output: $(tail -c 300 "$state/child-stderr" 2> /dev/null))"
   grep -qF -- "$phrase" <<< "$text" || fail "The reading child read '${text:0:200}', which lacks '$phrase'. Its answer: ${answer:0:300}"
@@ -119,9 +105,8 @@ reply="$state/reply"
 request="$state/request.json"
 status=
 
-# send <what> <accepted statuses, as a pattern> <curl arguments>...: runs the request and
-# keeps its body in $reply and its HTTP status in $status. Any other status, or no status
-# at all, ends the proof naming the request and what the server said.
+# send <what> <accepted statuses, as a pattern> <curl arguments>...: leaves the body in
+# $reply and the status in $status; any other status ends the proof.
 send() {
   local what=$1 accepted=$2 code=0 detail
   shift 2
@@ -178,11 +163,8 @@ ids+=("$uploaded")
 upload "$fixtures/sentence.png" image/png core.file.image "a picture"
 ids+=("$uploaded")
 
-# Uploads bring automatic reading forward by a few seconds, and only one run of the sweep
-# happens at a time, so the automatic run may read some of the files and a manual run the
-# rest, or meet the other mid-run (409). What counts is the text the files end up with:
-# poll them, running the sweep between looks, until all three read right or the deadline
-# passes. A file whose text lacks its phrase will not improve, so that ends the proof at once.
+# Automatic reading and a manual sweep share the work and may meet mid-run (409), so
+# judge the text the files end up with. A file whose text lacks its phrase ends the proof at once.
 last_sweep="no sweep ran"
 deadline=$((SECONDS + READING_SECONDS))
 while :; do

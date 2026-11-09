@@ -1,24 +1,12 @@
 #!/bin/bash
-# Builds the programs a release ships for one target, `marfa-server` and `marfa`, from
-# the same toolchain, environment and native prefix as the file reader, and checks them.
+# Builds `marfa-server` and `marfa` for one target, with the native readers linked in, and checks them.
 #
 #   MARFA_NATIVE_ROOT=<folder> scripts/release/build-programs.sh <target>
 #
 #   <target>   aarch64-apple-darwin, aarch64-unknown-linux-musl or x86_64-unknown-linux-musl
 #
-# It first runs core/marfa-enrichment/native/release.sh for the target, which makes the
-# prefix and the file reader and checks it (see that script for what the runner needs).
-# Then it builds the two programs with `--release --locked`, stripped: on the Mac on the
-# host, on Linux inside the build image that release.sh uses. It checks each as the file
-# reader is checked, runs it where it can run here and requires `--version` to print its
-# name and the version of core/Cargo.toml.
-#
-# The result is in $MARFA_NATIVE_ROOT/out/<target>/: marfa, marfa-server and NOTICES.txt,
-# the licences of every crate and native library the two hold. That NOTICES.txt takes the
-# place of the file reader's, which is not shipped. The reader and its other files stay
-# where release.sh puts them.
-#
-# MARFA_RELEASE_PREFIX and MARFA_KEEP_WORK are the ones release.sh reads.
+# The result is in $MARFA_NATIVE_ROOT/out/<target>/: marfa, marfa-server and NOTICES.txt.
+# MARFA_RELEASE_PREFIX and MARFA_KEEP_WORK are read by native/release.sh.
 set -euo pipefail
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -43,7 +31,6 @@ version=$(awk '/^\[/ { own = ($0 == "[workspace.package]") }
                own && /^version = / { gsub(/"/, "", $3); print $3; exit }' "$CORE/Cargo.toml")
 [ -n "$version" ] || die "$CORE/Cargo.toml names no workspace version"
 
-# build_and_check: the programs, their checks and their licences, on a Mac or in the image.
 build_and_check() {
   need cargo rustc python3
   mkdir -p "$OUT"
@@ -51,9 +38,7 @@ build_and_check() {
   cargo_environment
   case "$TARGET" in
     *-unknown-linux-musl)
-      # Without the bundled libunwind (link-self-contained=no), the standard library's
-      # `-lunwind` finds nothing; the script sends it to the toolchain's one unwinder,
-      # as the file reader's build script does for itself.
+      # Without the bundled libunwind, `-lunwind` finds nothing; send it to libgcc_eh.
       mkdir -p "$CARGO_TARGET_DIR/unwind"
       echo 'INPUT(-lgcc_eh)' >"$CARGO_TARGET_DIR/unwind/libunwind.a"
       export RUSTFLAGS="$RUSTFLAGS -L $CARGO_TARGET_DIR/unwind"
@@ -79,9 +64,7 @@ build_and_check() {
   "$NATIVE/licenses.sh" "$TARGET" --out "$OUT/NOTICES.txt" marfa-server marfa-cli
 }
 
-# say_version <program> <command...>: runs the program's `--version` and requires its name
-# and the version of core/Cargo.toml. A program that cannot start here for want of its
-# architecture is said so and skipped; one that starts and answers wrongly stops the build.
+# say_version <program> <command...>: a program of another architecture is skipped; a wrong answer stops the build.
 say_version() {
   local program=$1
   shift
@@ -102,8 +85,7 @@ case "$TARGET" in
   aarch64-apple-darwin)
     [ "$(uname -s)-$(uname -m)" = Darwin-arm64 ] || die "$TARGET builds on a Mac with Apple silicon"
     echo "programs: the file reader and the prefix (native/release.sh)"
-    # PDFium's build steps write to the runner's files when they see these, and lose
-    # depot_tools from PATH.
+    # PDFium's build steps write to these files and lose depot_tools from PATH.
     env -u GITHUB_ENV -u GITHUB_PATH "$NATIVE/release.sh" "$TARGET"
     build_and_check
     for program in "${PROGRAMS[@]}"; do
