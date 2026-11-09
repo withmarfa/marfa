@@ -1,5 +1,4 @@
-/// Why the server did not start, and the status it exits with: 78 for a
-/// database this build will not run on, 1 for anything else.
+/// Exit status: 78 for a database this build will not run on, 1 otherwise.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 #[error("{message}")]
 pub struct Failure {

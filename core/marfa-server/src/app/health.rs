@@ -1,5 +1,4 @@
-//! How the instance is: four components, each probed on its own, and the
-//! worst of them overall.
+//! Four components, each probed on its own; the overall answer is the worst of them.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};

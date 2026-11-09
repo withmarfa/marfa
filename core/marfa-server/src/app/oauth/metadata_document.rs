@@ -1,23 +1,19 @@
-//! Client ID metadata documents (draft-ietf-oauth-client-id-metadata-document): a `client_id`
-//! that is a URL, and the fetch of what it names. The URL comes from whoever opens an
-//! authorization, so nothing about it is trusted and the fetch must never reach this server's
-//! own network.
-//!
-//! Blocking: the door runs it off the async threads.
+//! Client ID metadata documents; the URL is untrusted input.
 
+use crate::app::faults::Faults;
 use crate::app::outbound::address::is_public;
-use std::io::{self, Read};
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
-use std::sync::mpsc;
+use crate::app::outbound::{self, Pinned, Reach};
+use std::io::Read;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{Map, Value};
+use tokio::runtime::Handle;
 use ureq::Agent;
-use ureq::config::Config;
-use ureq::http::{Uri, header};
+use ureq::http::header;
 use ureq::tls::TlsConfig;
-use ureq::unversioned::resolver::{ResolvedSocketAddrs, Resolver};
-use ureq::unversioned::transport::{DefaultConnector, NextTimeout};
+use ureq::unversioned::transport::DefaultConnector;
 use url::{Host, Url};
 
 use super::client::{self, Registration, RegistrationError, Source};
@@ -28,7 +24,6 @@ use super::scope::ScopeSet;
 const MAX_DOCUMENT_BYTES: u64 = 5 * 1024;
 const MAX_HEADER_BYTES: usize = 16 * 1024;
 
-/// All a `ureq` resolver answer holds.
 const MOST_ADDRESSES: usize = 16;
 const TIME_LIMIT: Duration = Duration::from_secs(5);
 
@@ -54,10 +49,7 @@ pub fn is_url(client_id: &str) -> bool {
         .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https:"))
 }
 
-/// The draft compares client IDs as strings, so the text must already be the URL's one
-/// spelling: what is checked is what is fetched, and one document is never two clients. That
-/// also refuses dot segments (encoded too), an uppercase host, a default port and an encoded
-/// host, which the parser rewrites.
+/// The text must be the URL's one spelling, so what is checked is what is fetched.
 pub fn check_url(client_id: &str) -> Result<Url, Failure> {
     let refused = |why| Err(Failure::Refused(why));
     if !redirect::is_plain(client_id) {
@@ -121,71 +113,24 @@ fn metadata_uses_the_shared_public_address_policy() {
     }
 }
 
-/// Kept apart so the one answer the checks saw is the one the connection uses.
-pub trait Lookup: Send + Sync {
-    fn lookup(&self, host: &str, port: u16) -> io::Result<Vec<SocketAddr>>;
-}
-
-/// The system's resolver has no time limit, so it runs on a thread of its own, which a hung
-/// lookup leaves behind until the system gives up.
-pub(crate) struct SystemLookup {
-    pub(crate) limit: Duration,
-}
-
-impl Lookup for SystemLookup {
-    fn lookup(&self, host: &str, port: u16) -> io::Result<Vec<SocketAddr>> {
-        let (send, receive) = mpsc::channel();
-        let host = host.to_string();
-        std::thread::spawn(move || {
-            let answers = (host.as_str(), port)
-                .to_socket_addrs()
-                .map(Iterator::collect);
-            let _ = send.send(answers);
-        });
-        receive
-            .recv_timeout(self.limit)
-            .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))?
-    }
-}
-
-/// So nothing between the check and the connection can look the name up again.
-#[derive(Debug)]
-pub(crate) struct Pinned(pub(crate) Vec<SocketAddr>);
-
-impl Resolver for Pinned {
-    fn resolve(
-        &self,
-        _uri: &Uri,
-        _config: &Config,
-        _timeout: NextTimeout,
-    ) -> Result<ResolvedSocketAddrs, ureq::Error> {
-        let mut answers = self.empty();
-        for address in &self.0 {
-            answers.push(*address);
-        }
-        Ok(answers)
-    }
-}
-
 pub struct Fetcher {
-    lookup: Box<dyn Lookup>,
-    allow: fn(IpAddr) -> bool,
+    faults: Arc<Faults>,
+    runtime: Handle,
     tls: TlsConfig,
     limit: Duration,
 }
 
-impl Default for Fetcher {
-    fn default() -> Fetcher {
+impl Fetcher {
+    /// Built inside the runtime; [`Fetcher::fetch`] runs on a blocking thread of it.
+    pub fn new(faults: Arc<Faults>) -> Fetcher {
         Fetcher {
-            lookup: Box::new(SystemLookup { limit: TIME_LIMIT }),
-            allow: is_public,
+            faults,
+            runtime: Handle::current(),
             tls: TlsConfig::default(),
             limit: TIME_LIMIT,
         }
     }
-}
 
-impl Fetcher {
     pub fn fetch(&self, client_id: &str) -> Result<Vec<u8>, Failure> {
         let url = check_url(client_id)?;
         let addresses = self.checked_addresses(&url)?;
@@ -249,26 +194,28 @@ impl Fetcher {
         Ok(document)
     }
 
-    /// Resolve once, and judge every answer: a name that also answers an
+    /// Resolved once by the outbound path, which judges every answer: a name that also answers an
     /// internal address is not trusted for the sake of its public one.
     fn checked_addresses(&self, url: &Url) -> Result<Vec<SocketAddr>, Failure> {
-        let unavailable = Failure::Unavailable("The client's host could not be resolved.");
-        let port = url.port_or_known_default().ok_or(unavailable)?;
-        let answers = match url.host() {
-            Some(Host::Ipv4(v4)) => vec![SocketAddr::new(IpAddr::V4(v4), port)],
-            Some(Host::Ipv6(v6)) => vec![SocketAddr::new(IpAddr::V6(v6), port)],
-            Some(Host::Domain(name)) => self.lookup.lookup(name, port).map_err(|_| unavailable)?,
-            None => Vec::new(),
-        };
-        if answers.is_empty() {
-            return Err(unavailable);
-        }
-        if !answers.iter().all(|answer| (self.allow)(answer.ip())) {
-            return Err(Failure::Refused(
+        let port = url.port_or_known_default().ok_or(Failure::Unavailable(
+            "The client's host could not be resolved.",
+        ))?;
+        match self
+            .runtime
+            .block_on(outbound::reach(&self.faults, url, false))
+        {
+            Reach::Targets(targets) => Ok(targets
+                .into_iter()
+                .take(MOST_ADDRESSES)
+                .map(|target| SocketAddr::new(target.connected, port))
+                .collect()),
+            Reach::Unresolved => Err(Failure::Unavailable(
+                "The client's host could not be resolved.",
+            )),
+            Reach::NotPublic => Err(Failure::Refused(
                 "The client's host resolves to an address that is not public.",
-            ));
+            )),
         }
-        Ok(answers.into_iter().take(MOST_ADDRESSES).collect())
     }
 }
 
@@ -378,11 +325,10 @@ pub fn parse_document(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::VecDeque;
     use std::io::Write;
     use std::net::{Shutdown, TcpListener, TcpStream};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, LazyLock};
 
     use flate2::Compression;
     use flate2::write::GzEncoder;
@@ -467,41 +413,27 @@ mod tests {
         out
     }
 
-    struct Script {
-        answers: Mutex<VecDeque<Vec<SocketAddr>>>,
-        calls: Arc<AtomicUsize>,
+    static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .expect("a runtime")
+    });
+
+    /// The guard judges the first address of each entry and the connection goes to the second.
+    fn scripted(lookups: &str) -> Arc<Faults> {
+        let faults = Arc::new(Faults::default());
+        faults
+            .set(&format!("resolve:{NAME}"), Some(lookups))
+            .expect("a resolve fault");
+        faults
     }
 
-    impl Script {
-        fn new(answers: Vec<Vec<SocketAddr>>) -> (Script, Arc<AtomicUsize>) {
-            let calls = Arc::new(AtomicUsize::new(0));
-            let script = Script {
-                answers: Mutex::new(answers.into()),
-                calls: calls.clone(),
-            };
-            (script, calls)
-        }
-    }
-
-    impl Lookup for Script {
-        fn lookup(&self, _host: &str, _port: u16) -> io::Result<Vec<SocketAddr>> {
-            self.calls.fetch_add(1, Ordering::SeqCst);
-            let mut answers = self.answers.lock().expect("the script");
-            if answers.len() > 1 {
-                return Ok(answers.pop_front().expect("an answer"));
-            }
-            answers
-                .front()
-                .cloned()
-                .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))
-        }
-    }
-
-    /// Only the listeners' loopback is let through by name of the test; the guard has its own tests.
-    fn fetcher(lookup: impl Lookup + 'static, trusted: &[u8]) -> Fetcher {
+    fn fetcher(faults: Arc<Faults>, trusted: &[u8]) -> Fetcher {
         Fetcher {
-            lookup: Box::new(lookup),
-            allow: |address| address.is_loopback(),
+            faults,
+            runtime: RUNTIME.handle().clone(),
             tls: TlsConfig::builder()
                 .root_certs(RootCerts::new_with_certs(&[
                     Certificate::from_der(trusted).to_owned()
@@ -511,9 +443,13 @@ mod tests {
         }
     }
 
-    fn at(listener: &Listener) -> Fetcher {
-        let (script, _) = Script::new(vec![vec![listener.address]]);
-        fetcher(script, &listener.certificate)
+    fn id_at(listener: &Listener) -> String {
+        format!("https://{NAME}:{}/client.json", listener.address.port())
+    }
+
+    fn get(listener: &Listener) -> Result<Vec<u8>, Failure> {
+        let faults = scripted("8.8.8.8>127.0.0.1");
+        fetcher(faults, &listener.certificate).fetch(&id_at(listener))
     }
 
     fn document() -> Value {
@@ -540,125 +476,110 @@ mod tests {
     #[test]
     fn a_rebinding_name_cannot_turn_the_connection_inward() {
         let public = listen(NAME, reply("200 OK", "application/json", b"public"));
-        let internal = listen(NAME, reply("200 OK", "application/json", b"internal"));
-        let (script, lookups) = Script::new(vec![vec![public.address], vec![internal.address]]);
-        let fetcher = fetcher(script, &public.certificate);
+        let faults = scripted("8.8.8.8>127.0.0.1;10.0.0.1>127.0.0.1");
+        let fetcher = fetcher(faults.clone(), &public.certificate);
+        let id = id_at(&public);
 
-        assert_eq!(fetcher.fetch(ID).expect("a document"), b"public");
-        assert_eq!(lookups.load(Ordering::SeqCst), 1);
+        assert_eq!(fetcher.fetch(&id).expect("a document"), b"public");
+        assert_eq!(faults.list()[0].fired, 1);
         assert_eq!(public.accepted.load(Ordering::SeqCst), 1);
-        assert_eq!(internal.accepted.load(Ordering::SeqCst), 0);
 
-        assert!(fetcher.fetch(ID).is_err());
-        assert_eq!(lookups.load(Ordering::SeqCst), 2);
-        assert_eq!(internal.accepted.load(Ordering::SeqCst), 1);
+        assert!(matches!(fetcher.fetch(&id), Err(Failure::Refused(_))));
+        assert_eq!(faults.list()[0].fired, 2);
+        assert_eq!(public.accepted.load(Ordering::SeqCst), 1);
     }
 
-    fn closed_port() -> SocketAddr {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("a port");
-        listener.local_addr().expect("an address")
+    /// Entries that are judged public and connect to a port nothing listens on.
+    fn unreachable_answers(count: usize) -> String {
+        vec!["8.8.8.8>::1"; count].join(",")
     }
 
     #[test]
     fn every_checked_address_is_tried_until_one_answers() {
         let live = listen(NAME, reply("200 OK", "application/json", b"{}"));
-        let (script, _) = Script::new(vec![vec![closed_port(), closed_port(), live.address]]);
-        let fetcher = fetcher(script, &live.certificate);
-        assert_eq!(fetcher.fetch(ID).expect("a document"), b"{}");
+        let lookups = format!("{},8.8.4.4>127.0.0.1", unreachable_answers(2));
+        let fetcher = fetcher(scripted(&lookups), &live.certificate);
+        assert_eq!(fetcher.fetch(&id_at(&live)).expect("a document"), b"{}");
         assert_eq!(live.accepted.load(Ordering::SeqCst), 1);
     }
 
     #[test]
     fn more_answers_than_can_be_tried_are_all_judged_and_only_sixteen_used() {
         let live = listen(NAME, reply("200 OK", "application/json", b"{}"));
-        let mut answers = vec![closed_port(); 16];
-        answers.push(live.address);
-        let (script, _) = Script::new(vec![answers]);
+        let lookups = format!("{},8.8.4.4>127.0.0.1", unreachable_answers(16));
         assert!(matches!(
-            fetcher(script, &live.certificate).fetch(ID),
+            fetcher(scripted(&lookups), &live.certificate).fetch(&id_at(&live)),
             Err(Failure::Unavailable(_))
         ));
         assert_eq!(live.accepted.load(Ordering::SeqCst), 0);
 
-        let mut answers = vec!["8.8.8.8:443".parse().expect("an address"); 16];
-        answers.push("10.0.0.1:443".parse().expect("an address"));
-        let (script, _) = Script::new(vec![answers]);
-        let fetcher = Fetcher {
-            lookup: Box::new(script),
-            ..Fetcher::default()
-        };
-        assert!(matches!(fetcher.fetch(ID), Err(Failure::Refused(_))));
+        let lookups = format!("{},10.0.0.1>127.0.0.1", vec!["8.8.8.8"; 16].join(","));
+        assert!(matches!(
+            fetcher(scripted(&lookups), &live.certificate).fetch(&id_at(&live)),
+            Err(Failure::Refused(_))
+        ));
+        assert_eq!(live.accepted.load(Ordering::SeqCst), 0);
     }
 
     #[test]
     fn one_answer_that_is_not_public_refuses_the_name() {
-        let public: SocketAddr = "8.8.8.8:443".parse().expect("an address");
-        for private in [
-            "10.0.0.1:443",
-            "127.0.0.1:443",
-            "[::1]:443",
-            "[fe80::1]:443",
-        ] {
-            let private: SocketAddr = private.parse().expect("an address");
-            for answers in [vec![public, private], vec![private, public], vec![private]] {
-                let (script, _) = Script::new(vec![answers]);
-                let fetcher = Fetcher {
-                    lookup: Box::new(script),
-                    ..Fetcher::default()
-                };
+        let live = listen(NAME, reply("200 OK", "application/json", b"{}"));
+        for private in ["10.0.0.1", "127.0.0.1", "::1", "fe80::1"] {
+            for lookups in [
+                format!("8.8.8.8>127.0.0.1,{private}>127.0.0.1"),
+                format!("{private}>127.0.0.1,8.8.8.8>127.0.0.1"),
+                format!("{private}>127.0.0.1"),
+            ] {
+                let fetcher = fetcher(scripted(&lookups), &live.certificate);
                 assert_eq!(
-                    fetcher.fetch(ID),
+                    fetcher.fetch(&id_at(&live)),
                     Err(Failure::Refused(
                         "The client's host resolves to an address that is not public."
                     )),
-                    "{private}"
+                    "{lookups}"
                 );
             }
         }
+        assert_eq!(live.accepted.load(Ordering::SeqCst), 0);
     }
 
     #[test]
-    fn a_failed_or_empty_lookup_is_unavailable() {
-        let (empty, _) = Script::new(vec![vec![]]);
-        let (failed, _) = Script::new(vec![]);
-        for lookup in [empty, failed] {
-            let fetcher = Fetcher {
-                lookup: Box::new(lookup),
-                ..Fetcher::default()
-            };
-            assert!(matches!(fetcher.fetch(ID), Err(Failure::Unavailable(_))));
-        }
+    fn a_name_that_does_not_resolve_is_unavailable() {
+        let fetcher = fetcher(Arc::new(Faults::default()), &[]);
+        assert!(matches!(
+            fetcher.fetch("https://nothing.invalid/client.json"),
+            Err(Failure::Unavailable(_))
+        ));
     }
 
     #[test]
     fn a_url_that_is_refused_is_never_looked_up() {
-        let (script, lookups) = Script::new(vec![vec!["8.8.8.8:443".parse().expect("an address")]]);
-        let fetcher = Fetcher {
-            lookup: Box::new(script),
-            ..Fetcher::default()
-        };
+        let faults = Arc::new(Faults::default());
+        faults
+            .set("resolve:localhost", Some("8.8.8.8>127.0.0.1"))
+            .expect("a resolve fault");
+        let fetcher = fetcher(faults.clone(), &[]);
         assert!(matches!(
             fetcher.fetch("https://localhost/client.json"),
             Err(Failure::Refused(_))
         ));
-        assert_eq!(lookups.load(Ordering::SeqCst), 0);
+        assert_eq!(faults.list()[0].fired, 0);
     }
 
     #[test]
     fn tls_is_checked_against_the_name_and_not_the_address() {
         let right = listen(NAME, reply("200 OK", "application/json", b"{}"));
-        assert_eq!(at(&right).fetch(ID).expect("a document"), b"{}");
+        assert_eq!(get(&right).expect("a document"), b"{}");
 
         let wrong = listen(
             "other.example.com",
             reply("200 OK", "application/json", b"{}"),
         );
-        assert!(matches!(at(&wrong).fetch(ID), Err(Failure::Unavailable(_))));
+        assert!(matches!(get(&wrong), Err(Failure::Unavailable(_))));
 
-        let (script, _) = Script::new(vec![vec![right.address]]);
         let unknown = listen(NAME, Vec::new());
         assert!(matches!(
-            fetcher(script, &unknown.certificate).fetch(ID),
+            fetcher(scripted("8.8.8.8>127.0.0.1"), &unknown.certificate).fetch(&id_at(&right)),
             Err(Failure::Unavailable(_))
         ));
     }
@@ -674,10 +595,7 @@ mod tests {
             )
             .into_bytes(),
         );
-        assert!(matches!(
-            at(&redirecting).fetch(ID),
-            Err(Failure::Refused(_))
-        ));
+        assert!(matches!(get(&redirecting), Err(Failure::Refused(_))));
         assert_eq!(redirecting.accepted.load(Ordering::SeqCst), 1);
         assert_eq!(target.accepted.load(Ordering::SeqCst), 0);
     }
@@ -692,7 +610,7 @@ mod tests {
         ] {
             let listener = listen(NAME, reply(status, "application/json", b""));
             assert!(
-                matches!(at(&listener).fetch(ID), Err(Failure::Refused(_))),
+                matches!(get(&listener), Err(Failure::Refused(_))),
                 "{status}"
             );
         }
@@ -704,7 +622,7 @@ mod tests {
         ] {
             let listener = listen(NAME, reply(status, "application/json", b""));
             assert!(
-                matches!(at(&listener).fetch(ID), Err(Failure::Unavailable(_))),
+                matches!(get(&listener), Err(Failure::Unavailable(_))),
                 "{status}"
             );
         }
@@ -719,12 +637,12 @@ mod tests {
             "application/oauth-client+json",
         ] {
             let listener = listen(NAME, reply("200 OK", content_type, b"{}"));
-            assert!(at(&listener).fetch(ID).is_ok(), "{content_type}");
+            assert!(get(&listener).is_ok(), "{content_type}");
         }
         for content_type in ["text/html", "text/json", "application/+json", ""] {
             let listener = listen(NAME, reply("200 OK", content_type, b"{}"));
             assert!(
-                matches!(at(&listener).fetch(ID), Err(Failure::Refused(_))),
+                matches!(get(&listener), Err(Failure::Refused(_))),
                 "{content_type}"
             );
         }
@@ -734,15 +652,12 @@ mod tests {
     fn a_document_stops_at_the_size_limit() {
         let most = vec![b'a'; MAX_DOCUMENT_BYTES as usize];
         let listener = listen(NAME, reply("200 OK", "application/json", &most));
-        assert_eq!(
-            at(&listener).fetch(ID).expect("a document").len(),
-            most.len()
-        );
+        assert_eq!(get(&listener).expect("a document").len(), most.len());
 
         let over = vec![b'a'; MAX_DOCUMENT_BYTES as usize + 1];
         let listener = listen(NAME, reply("200 OK", "application/json", &over));
         assert_eq!(
-            at(&listener).fetch(ID),
+            get(&listener),
             Err(Failure::Refused(
                 "The client's metadata document is too large."
             ))
@@ -754,7 +669,7 @@ mod tests {
         unstated.extend_from_slice(&over);
         let listener = listen(NAME, unstated);
         assert_eq!(
-            at(&listener).fetch(ID),
+            get(&listener),
             Err(Failure::Refused(
                 "The client's metadata document is too large."
             ))
@@ -777,12 +692,12 @@ mod tests {
     #[test]
     fn the_limit_is_on_a_document_after_it_is_decompressed() {
         let small = listen(NAME, gzipped(b"{}"));
-        assert_eq!(at(&small).fetch(ID).expect("a document"), b"{}");
+        assert_eq!(get(&small).expect("a document"), b"{}");
 
         let bomb = gzipped(&vec![b' '; 1024 * 1024]);
         assert!((bomb.len() as u64) < MAX_DOCUMENT_BYTES);
         assert_eq!(
-            at(&listen(NAME, bomb)).fetch(ID),
+            get(&listen(NAME, bomb)),
             Err(Failure::Refused(
                 "The client's metadata document is too large."
             ))
@@ -792,15 +707,17 @@ mod tests {
     #[test]
     fn a_server_that_says_nothing_runs_out_of_time() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("a port");
-        let address = listener.local_addr().expect("an address");
+        let id = format!(
+            "https://{NAME}:{}/client.json",
+            listener.local_addr().expect("an address").port()
+        );
         let certificate = listen(NAME, Vec::new()).certificate;
-        let (script, _) = Script::new(vec![vec![address]]);
         let impatient = Fetcher {
             limit: Duration::from_millis(300),
-            ..fetcher(script, &certificate)
+            ..fetcher(scripted("8.8.8.8>127.0.0.1"), &certificate)
         };
         let started = std::time::Instant::now();
-        assert!(matches!(impatient.fetch(ID), Err(Failure::Unavailable(_))));
+        assert!(matches!(impatient.fetch(&id), Err(Failure::Unavailable(_))));
         assert!(started.elapsed() < TIME_LIMIT);
         drop(listener);
     }

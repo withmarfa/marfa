@@ -1,6 +1,4 @@
-//! The settings only the environment sets, listed by name for a person who
-//! asks. A value never leaves here: some are secrets, and the rest are the
-//! machine's own to show.
+//! Settings only the environment sets; a value is never shown, since some are secrets.
 
 use super::Environment;
 

@@ -1,6 +1,4 @@
-//! What telemetry is told, read once from the environment before the database
-//! opens. Every one of these is the machine's, and several can hold a
-//! credential, so a refusal names such a setting and never its value.
+//! Telemetry settings, read once; a refusal never names a value, which may be a credential.
 
 use std::time::Duration;
 
@@ -85,9 +83,7 @@ pub struct Config {
 }
 
 impl Config {
-    /// Reads every setting, adding a line to `problems` for each one outside
-    /// its own rule. A rule between settings is [`disagreements`], which waits
-    /// for every setting to read.
+    /// A rule between settings is [`disagreements`], which waits for every setting to read.
     pub fn read(environment: &Environment, problems: &mut Vec<String>) -> Config {
         let get = |name: &str| environment.get(name).map(str::to_string);
         let mut refuse = |line: String| {

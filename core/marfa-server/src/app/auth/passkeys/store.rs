@@ -93,9 +93,7 @@ pub fn by_credential(tx: &Transaction<'_>, credential_id: &str) -> Result<Option
         .transpose()
 }
 
-/// Records a passkey. Answers `None`, recording nothing, if its credential is
-/// already registered. The unique column decides, so two at once cannot both
-/// land.
+/// `None` if the credential is already registered; the unique column decides.
 pub fn insert(tx: &Transaction<'_>, new: &New<'_>) -> Result<Option<Listed>> {
     let inserted = tx.execute(
         "INSERT INTO auth_passkey (id, user_id, credential_id, host, name, credential, \

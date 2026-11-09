@@ -1,6 +1,4 @@
-//! [`Start`] is fixed when the process begins; the registry holds what can change while it
-//! runs. Reading gives [`Accepted`], which touches no disk; opening its secrets gives
-//! [`Settings`], the only way to reach a [`Start`].
+//! [`Start`] is fixed at process start; the registry holds what changes while it runs.
 
 mod environment;
 pub mod registry;

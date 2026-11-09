@@ -1,6 +1,4 @@
-//! Work handed to a thread of its own so that a request never waits on a receiver. The
-//! queue is bounded and a full one drops what comes, so a storm of faults or a hung
-//! receiver holds a fixed amount of memory.
+//! A bounded queue that drops when full, so a request never waits on a receiver.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::mpsc::{RecvTimeoutError, SyncSender, TrySendError, sync_channel};

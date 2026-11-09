@@ -1,8 +1,4 @@
-//! The instance's configuration: its display name, its enforcement levers and
-//! every stored setting, read and written as one body.
-//!
-//! A field is a stored setting when the registry holds its key. `name` and
-//! `enforcement` are the two the registry does not hold, and so are stored here.
+//! The instance's configuration as one body; only `name` and `enforcement` live outside the registry.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -124,9 +120,7 @@ fn lever_errors(refusal: Refusal) -> Result<Vec<(String, String)>> {
 }
 
 impl Request {
-    /// Reads a body for `fields`, naming every field it cannot accept.
-    /// Unknown names come first, then the shape of each field. A lever lacking
-    /// a member is answered at once.
+    /// Names every field it cannot accept: unknown names first, then each field's shape.
     pub fn from_body(mode: Mode, body: &Map<String, Value>, allowed: &[&str]) -> Result<Request> {
         unknown_fields(body, allowed)?;
         let mut errors = Vec::new();
@@ -425,9 +419,7 @@ pub fn levers_unreadable(tx: &Transaction<'_>) -> Result<bool> {
     Ok(text.is_some_and(|text| Levers::from_row(&text).is_none()))
 }
 
-/// What a caller setting the levers `own` is held to, as `tx` holds the
-/// instance's. A row that does not read closes the levers it should have set
-/// and leaves `/config` open to replace it.
+/// An unreadable row closes the levers it should have set and leaves `/config` open.
 pub fn standing(tx: &Transaction<'_>, own: Option<&Levers>) -> Result<Standing> {
     let Some(text) = stored::get(tx, ENFORCEMENT_ROW)? else {
         return Ok(Standing::of(own, None));
@@ -495,8 +487,6 @@ fn confirmation_needed(moved: &Moved) -> Refusal {
     .with_detail("consequences", moved.consequences_json())
 }
 
-/// Writes a configuration change, makes the settings live, and answers the
-/// configuration it left.
 pub async fn update(app: &Arc<App>, caller: &Caller, request: Request) -> Result<Value> {
     request.check_identity(app)?;
     let writing = app.clone();
@@ -550,8 +540,6 @@ pub async fn check(app: &Arc<App>, request: Request) -> Result<Value> {
         .await
 }
 
-/// Every stored setting with its value, default and rule, and every setting
-/// only the environment sets.
 pub async fn listing(app: &Arc<App>) -> Result<Value> {
     let rows = rows_of(app.db.read(stored::rows).await?);
     let live = app.settings.live();

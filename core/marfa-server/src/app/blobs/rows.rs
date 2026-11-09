@@ -478,8 +478,7 @@ pub fn holders(tx: &Transaction<'_>, hash: &Hash) -> Result<Vec<Held>> {
     Ok(found)
 }
 
-/// The objects whose deletion is queued in the store, each with whether a copy recorded there
-/// names it.
+/// Each object comes with whether a recorded copy names it.
 pub fn deletion(tx: &Transaction<'_>, hash: &Hash, store_id: &str) -> Result<Vec<(String, bool)>> {
     let mut statement = tx.prepare_cached(
         "SELECT s.kind, p.object, EXISTS (SELECT 1 FROM blob_copies c \
@@ -830,9 +829,7 @@ pub fn named(tx: &Transaction<'_>, candidates: &HashSet<String>) -> Result<HashS
     Ok(found)
 }
 
-/// Whether stored bytes could hold one of the hex names once read: a run of 64 or more
-/// lowercase hex holding one, or an escape that reading could turn into hex. Never narrower
-/// than the digest rule, so a row it passes over names none of them.
+/// Never narrower than the digest rule, so a row it passes over names none of the hashes.
 fn may_name(raw: &[u8], names: &HashSet<&[u8]>) -> bool {
     const HEX_LEN: usize = 64;
     let is_hex = |byte: u8| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte);
@@ -863,9 +860,7 @@ fn may_name(raw: &[u8], names: &HashSet<&[u8]>) -> bool {
     false
 }
 
-/// Takes a blob out of the registry with its copies, proofs and report, and queues the
-/// deletion of its bytes in each attached store: every object recorded in an object store, and
-/// the file the hash names in a disk store, which a write the server gave up on may have left.
+/// Queues deletion of the blob's bytes in each store, including a file a failed write left.
 pub fn purge(tx: &Transaction<'_>, hash: &Hash, at: &str) -> Result<()> {
     tx.prepare_cached(
         "INSERT INTO blob_pending_deletions (hash, store_id, object, queued_at) \

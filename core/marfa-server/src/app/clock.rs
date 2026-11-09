@@ -1,6 +1,4 @@
-//! The instance's clock: the one place code asks the time. Under test hooks a
-//! harness can move it forward and pause it; it never goes back. Every time a
-//! table holds is a [`Stamp`].
+//! The one place code asks the time; it never goes back.
 
 #[cfg(feature = "test-hooks")]
 use std::sync::Mutex;

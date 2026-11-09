@@ -48,9 +48,7 @@ pub fn get(tx: &Transaction<'_>, key: &str) -> Result<Option<String>> {
         .optional()?)
 }
 
-/// One setting as this transaction holds it, so a change committed while the write waited is
-/// seen. A row that does not read is reported and the seed or default is used, as the live
-/// settings do.
+/// Read in this transaction, so a change committed while the write waited is seen.
 pub fn setting<T: Kind>(tx: &Transaction<'_>, seeds: &Seeds, setting: Setting<T>) -> Result<T> {
     let row = get(tx, setting.entry.key)?;
     let (value, reading) = setting.resolve(seeds, row.as_deref());
@@ -60,9 +58,7 @@ pub fn setting<T: Kind>(tx: &Transaction<'_>, seeds: &Seeds, setting: Setting<T>
     Ok(value)
 }
 
-/// A setting that decides what is deleted, as this transaction holds it. A row that does not
-/// read refuses, since a fallback could delete what the stored value keeps; an absent row takes
-/// the seed or default.
+/// An unreadable row refuses, since a fallback could delete what the stored value keeps.
 pub fn deciding<T: Kind>(tx: &Transaction<'_>, seeds: &Seeds, setting: Setting<T>) -> Result<T> {
     let row = get(tx, setting.entry.key)?;
     match setting.resolve(seeds, row.as_deref()) {
@@ -126,9 +122,7 @@ impl Staged {
     }
 }
 
-/// Runs as a task of its own, since a commit outlives a caller who goes away and so must
-/// its publish. When the commit's outcome is unknown the settings are read again, so a
-/// change that landed is live.
+/// Runs as a task of its own so the publish outlives a caller who goes away.
 pub async fn committing<T, F>(app: &Arc<App>, write: F) -> Result<T>
 where
     T: Send + 'static,
@@ -190,8 +184,7 @@ pub async fn change(app: &Arc<App>, write: Write, changes: Vec<Change>) -> Resul
     .await
 }
 
-/// Reads a `setting` line as the row it stores. The two addresses name where an instance
-/// answers, which a move changes, so a line naming either is a damaged archive.
+/// A line naming either address is a damaged archive, since a move changes them.
 pub fn archived(line: &serde_json::Value) -> Result<(String, String)> {
     let key = line
         .get("key")

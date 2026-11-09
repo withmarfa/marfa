@@ -35,9 +35,7 @@ const PLAIN_JSON: &str = "application/json";
 const REGISTER_REQUEST_BYTES: usize = 32 * 1024;
 const CONFIG_PATH: &str = "/config";
 
-/// A socket closed with bytes still arriving resets, which can take an answer already
-/// sent with it. `finish` keeps reading in the background so a refusal that leaves a
-/// body unread still arrives.
+/// `finish` keeps reading so a refusal that leaves a body unread still arrives.
 #[derive(Clone)]
 pub struct Shared {
     body: Arc<Mutex<Body>>,

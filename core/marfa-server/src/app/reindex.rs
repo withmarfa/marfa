@@ -1,6 +1,4 @@
-//! A type's write reindexes one page in its own transaction; a larger type goes on here a
-//! page to a write, so the writer serves every other caller between pages. With nothing
-//! queued the task sleeps until a type's door wakes it.
+//! A larger type reindexes a page per write, so the writer serves other callers between pages.
 
 use std::sync::{Arc, Weak};
 

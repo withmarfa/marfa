@@ -1,5 +1,4 @@
-//! The one thread that writes. Jobs run first come first served, each in its
-//! own `BEGIN IMMEDIATE` transaction.
+//! The one thread that writes, first come first served, each job in its own transaction.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
@@ -198,9 +197,7 @@ impl Writer {
         self.pulse.clone()
     }
 
-    /// A wait past `budget` before the job starts withdraws it, so a caller told to try again
-    /// can be sure it never ran, unless the queue is held by a job whose [`Pulse`] beats within
-    /// the budget. A started job always finishes, whether or not anyone reads its answer.
+    /// A job withdrawn after `budget` never ran; a started job always finishes.
     pub async fn submit<T, F>(&self, write: Write, budget: Duration, job: F) -> Result<T>
     where
         T: Send + 'static,

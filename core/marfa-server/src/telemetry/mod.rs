@@ -1,7 +1,4 @@
-//! Traces and log records to OTLP, exceptions to PostHog, notices to an error webhook.
-//! Nothing here is on a request's way: a request hands a finished fact to a bounded
-//! queue that drops when full, and a thread of its own sends it, with a timeout and no
-//! retry.
+//! Nothing here is on a request's way: facts go to a bounded queue that drops when full.
 
 pub mod config;
 mod fault;

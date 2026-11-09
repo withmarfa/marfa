@@ -112,8 +112,7 @@ pub async fn list(app: &App, caller: &Caller) -> Result<Vec<Value>> {
     .await
 }
 
-/// Registers an edge type, or widens the endpoint constraints of a registered one. The
-/// answer says whether a type was created.
+/// The answer says whether a type was created.
 pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<(bool, Value)> {
     request_shape(&body).map_err(refusal_of)?;
     let id = text_of(&body, "id").unwrap_or_default().to_string();

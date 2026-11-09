@@ -30,9 +30,7 @@ impl Caller {
         }
     }
 
-    /// Whether a digest this caller writes into a row lends, on the state its write commits: the
-    /// bytes are held, and the caller uploaded them or may read them now. A write for no
-    /// credential proves nothing.
+    /// On the state the write commits: the bytes are held, and the caller uploaded or may read them.
     pub fn proves_blob(
         &self,
         held: bool,

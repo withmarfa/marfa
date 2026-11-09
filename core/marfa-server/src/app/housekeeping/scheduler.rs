@@ -232,9 +232,7 @@ enum Ending {
     Cut,
 }
 
-/// Stands over one claimed run until it is recorded. A stop that outruns it
-/// leaves the claim for the next start to clear and its schedule as it was, so
-/// the run comes again.
+/// A stop that outruns the run leaves its claim for the next start to clear.
 pub async fn supervise(
     app: Arc<App>,
     job: &'static Job,

@@ -155,9 +155,7 @@ enum Trace {
     Kept,
 }
 
-/// The ratio decides as `TraceIdRatioBased` does. A trace it does not keep is held, up to
-/// [`MAX_HELD_SPANS`] spans, until its local root ends; if a span failed by then, or fails
-/// after, the held spans and every later span are exported whatever the ratio says.
+/// A held trace is exported whatever the ratio if a span fails by or after its root ends.
 #[derive(Debug)]
 pub struct Tail<P> {
     next: P,

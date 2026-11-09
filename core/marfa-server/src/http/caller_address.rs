@@ -46,9 +46,7 @@ fn address_in(text: &[u8]) -> Option<IpAddr> {
     Some(address.to_canonical())
 }
 
-/// Each proxy appends the address it saw, so only the entries to the right of
-/// the first address outside the trusted ranges were written by a proxy.
-/// Everything further left came from the caller.
+/// Only entries right of the first untrusted address were written by a proxy.
 fn walked(peer: IpAddr, ranges: &[IpNet], headers: &HeaderMap) -> IpAddr {
     let hops = headers
         .get_all(FORWARDED_FOR)

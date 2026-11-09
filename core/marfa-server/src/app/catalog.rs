@@ -1,7 +1,4 @@
-//! A catalog carries the database generation it was read at, raised in the
-//! transaction that changes a type or edge type. A transaction uses the shared
-//! catalog when generations agree, else reads its own; only a committed
-//! snapshot is shared.
+//! A transaction shares the catalog only when its generation matches the database's.
 
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -41,8 +41,7 @@ pub struct Bytes {
     object: String,
 }
 
-/// The blob a caller may read, with the copies recorded in attached stores; `None` for a hash
-/// the instance holds no blob of, or one the caller may not read.
+/// `None` for a hash with no blob or one the caller may not read.
 pub fn carried(tx: &Transaction<'_>, caller: &Caller, hash: &Hash) -> Result<Option<Carried>> {
     let Some(blob) = rows::find(tx, hash)? else {
         return Ok(None);

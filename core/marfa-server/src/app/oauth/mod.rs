@@ -1,5 +1,4 @@
-//! Sign-in by OAuth. `scope`, `redirect`, `client`, `pkce` and the like decide on
-//! untrusted text without a database or HTTP; the rest use `store`.
+//! Sign-in by OAuth; `scope`, `redirect`, `client` and `pkce` decide on untrusted text.
 
 pub mod authorize;
 mod bearer;

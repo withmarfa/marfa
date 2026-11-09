@@ -397,8 +397,7 @@ impl App {
 }
 
 impl Placed {
-    /// Gives up the locks once the write has ended, and starts copying to other stores if it
-    /// committed.
+    /// Starts copying to other stores if the write committed.
     pub fn release(self, app: &App, committed: bool) {
         drop(self.held);
         if committed && self.replicates && !self.copies.is_empty() {

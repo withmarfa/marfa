@@ -1,6 +1,4 @@
-//! Each ceremony's check and what it writes are one transaction, so the challenge goes whatever
-//! the verdict. The relying party is the sign-in address as it stands in that transaction, never
-//! the request's `Host`.
+//! The relying party is the sign-in address in the ceremony's transaction, never `Host`.
 
 mod challenge;
 mod store;
@@ -106,9 +104,7 @@ impl Party {
     }
 }
 
-/// What a door asked for, or a refusal the transaction must still commit, so
-/// that the challenge it took stays taken. An `Err` rolls back and hands the
-/// challenge back, which only a failure to judge may do.
+/// A refusal the transaction still commits, so the challenge it took stays taken.
 enum Verdict<T> {
     Done(T),
     Refused(Refusal),
@@ -141,9 +137,7 @@ fn encoded(credential_id: &[u8]) -> String {
     URL_SAFE_NO_PAD.encode(credential_id)
 }
 
-/// webauthn-rs asks only for a key the authenticator may discard, and reports an excluded
-/// credential with an error that says something else. Both are set here; a duplicate is
-/// caught where it is written.
+/// webauthn-rs asks for a discardable key and misreports an excluded credential; both are fixed here.
 fn ask_for_a_resident_key(options: &mut Value, excluded: Vec<String>) {
     options["authenticatorSelection"]["residentKey"] = json!("required");
     options["authenticatorSelection"]["requireResidentKey"] = json!(true);
@@ -287,9 +281,7 @@ pub struct Assertion {
     pub response: Value,
 }
 
-/// A refused assertion. `passkey` is set where it named one of the owner's,
-/// which is the case worth an audit entry: anyone can name a credential that
-/// does not exist, as often as they like.
+/// `passkey` is set only where the owner's credential was named, the case worth an audit entry.
 struct Unproven {
     refusal: Refusal,
     passkey: Option<(String, &'static str)>,
@@ -342,9 +334,7 @@ struct Judging<'a> {
     user_id: Option<&'a str>,
 }
 
-/// Judges an assertion, spending its challenge whatever the verdict. Only the
-/// credential the assertion names is looked at: the browser chose it, and the
-/// signature must then bear that choice out.
+/// Spends the challenge whatever the verdict, and looks only at the credential the assertion names.
 fn prove(
     tx: &Transaction<'_>,
     judging: &Judging<'_>,

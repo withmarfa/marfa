@@ -625,9 +625,7 @@ impl<'c> Writing<'_, '_, 'c> {
         Ok(None)
     }
 
-    /// The refusals a restored edge meets: those that need no edge type, and for a registered
-    /// one its ends, cardinality and cycles. Its properties stand as stored, and an end in the
-    /// bin, of a type no longer registered, or a revoked folder takes it.
+    /// Refusals a restored edge meets; its properties stand as stored.
     fn judge_restored(
         &self,
         edge_type: &str,

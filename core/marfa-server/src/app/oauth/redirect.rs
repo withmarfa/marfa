@@ -149,9 +149,7 @@ pub fn check_registered(kind: AppKind, uri: &str) -> Result<(), Refused> {
     }
 }
 
-/// The same text, or for a registered loopback host the same text with only the port changed,
-/// since a native app binds an ephemeral one. Text, not the parsed form, because a browser goes
-/// where the text says.
+/// Compared as text, because a browser goes where the text says.
 pub fn is_registered(registered: &[String], requested: &str) -> bool {
     registered.iter().any(|entry| entry == requested) || {
         let bare = (is_plain(requested) && !requested.contains('#'))
@@ -186,9 +184,7 @@ fn without_port(uri: &str) -> Option<String> {
     Some(format!("{scheme}://{host}{tail}"))
 }
 
-/// RFC 9700 section 4.1.3 lets the port vary for localhost URIs. RFC 8252 section 7.3 names only
-/// IP addresses, but real clients register `http://localhost/callback` and listen on an ephemeral
-/// port. Only the name exactly: not a subdomain and not a trailing dot.
+/// Loopback addresses and exactly `localhost`, not a subdomain or a trailing dot.
 fn takes_any_port(registered: &Url) -> bool {
     registered.host_str() == Some("localhost") || ip_of(registered).is_some_and(is_loopback_ip)
 }

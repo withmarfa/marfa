@@ -532,10 +532,7 @@ pub fn to_grants(granted: &ScopeSet) -> Grants {
     grants
 }
 
-/// Compared as access resolves, not by literal, because removing an overriding entry can widen
-/// a wildcard. `wanted` is judged whole first, so `*:write core.*:read` covers itself though its
-/// `*:write` alone reaches further than the set does. `offline_access` and a literal that does
-/// not parse carry no access, so only naming them covers them.
+/// Compared as access resolves, with `wanted` judged whole first.
 pub fn first_uncovered(held: &ScopeSet, wanted: &ScopeSet) -> Option<String> {
     let ceiling = to_grants(held);
     let whole = ceiling.first_beyond("", &to_grants(wanted)).is_none();
