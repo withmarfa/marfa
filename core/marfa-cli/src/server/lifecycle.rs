@@ -79,6 +79,9 @@ fn upgrade_native(
             "If {target} has a newer database schema, the server copies the database beside it and then updates it in place."
         ));
     }
+    if !unchanged {
+        folder.forget_applied(dotenv, files::kept_for(state.manager).dotenv)?;
+    }
     let mark = service.mark();
     // A new release may keep the same service definition.
     let started = service.on(state.autostart, !unchanged, &binary, &server)?;

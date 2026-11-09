@@ -531,6 +531,9 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
             let applied = folder.applied(port, &release)?;
             let restart =
                 dotenv.get("MARFA_APPLIED").as_deref() != Some(&applied) || !answers_health(port);
+            if restart {
+                folder.forget_applied(&mut dotenv, kept.dotenv)?;
+            }
             steps.say(&format!("Starting {name}..."));
             let mark = service.mark();
             let mut started = service.on(autostart, restart, &binary, server)?;

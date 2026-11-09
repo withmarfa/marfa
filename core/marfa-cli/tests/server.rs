@@ -2230,10 +2230,17 @@ fn a_restart_that_failed_is_tried_again_by_running_install_again() {
         "--address",
         "https://marfa.example.com",
     ];
+    assert!(rig.file(".env").contains("MARFA_APPLIED="));
     fs::write(rig.home().join("restart-fails"), "").unwrap();
     let (code, _, stderr) = rig.native(&proxy);
     assert_ne!(code, 0, "{stderr}");
     assert_eq!(rig.service_pid("marfa"), pid, "the failed restart ran");
+    // Whatever the server now runs, no run may take it for what it was.
+    assert!(
+        !rig.file(".env").contains("MARFA_APPLIED="),
+        "{}",
+        rig.file(".env")
+    );
 
     fs::remove_file(rig.home().join("restart-fails")).unwrap();
     let restarts = rig.restarts();
@@ -2243,6 +2250,23 @@ fn a_restart_that_failed_is_tried_again_by_running_install_again() {
 
     rig.native_installed(&proxy);
     assert_eq!(rig.restarts(), restarts + 1, "an applied run restarted it");
+}
+
+#[test]
+fn a_stopped_server_whose_settings_changed_is_started_once_not_restarted() {
+    let rig = Rig::new("n-stopped-changed");
+    rig.native_installed(&["--access", "local"]);
+    let (code, _, stderr) = rig.marfa(&["stop"]);
+    assert_eq!(code, 0, "{stderr}");
+    let restarts = rig.restarts();
+    rig.native_installed(&[
+        "--access",
+        "proxy",
+        "--address",
+        "https://marfa.example.com",
+    ]);
+    assert_eq!(rig.restarts(), restarts, "{}", rig.manager_log());
+    assert!(answers(rig.port));
 }
 
 #[test]

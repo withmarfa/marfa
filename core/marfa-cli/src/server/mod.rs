@@ -373,6 +373,14 @@ impl Folder {
         Ok(())
     }
 
+    /// Forgets what the server was started with before a restart that may
+    /// not be confirmed, so that the next install restarts it again.
+    fn forget_applied(&self, dotenv: &mut EnvFile, kept: files::Perms) -> Result<(), CliError> {
+        dotenv.remove("MARFA_APPLIED");
+        files::write_if_changed(&self.path(files::DOTENV), &dotenv.render(), kept)?;
+        Ok(())
+    }
+
     /// The install in this folder, or `None` for a folder with none.
     fn state(&self) -> Result<Option<(State, EnvFile)>, CliError> {
         let Some(dotenv) = self.read(files::DOTENV)? else {
