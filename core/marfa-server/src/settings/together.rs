@@ -77,8 +77,8 @@ pub fn judge(after: &Snapshot, touched: &[&str], start: &Fixed) -> Vec<Breach> {
         .collect()
 }
 
-/// A write through `/config` is refused, so a seed is the only way a setting can start
-/// outside a rule.
+/// A write through `/config` or a restore is refused, so a seed is the only way a setting can
+/// start outside a rule.
 pub fn seed_lines(seeds: &Seeds, start: &Fixed) -> Vec<String> {
     let after = Snapshot::resolve(seeds, &[], 0);
     let touched: Vec<&str> = seeds.keys().copied().collect();

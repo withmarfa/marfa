@@ -191,19 +191,26 @@ pub fn archived(line: &serde_json::Value) -> Result<(String, String)> {
     Ok((key.to_string(), text))
 }
 
-/// Stores each archived setting the instance has none stored for, and answers how many it
-/// stored and how many it left.
-pub fn restore(tx: &Transaction<'_>, rows: &[(String, String)]) -> Result<(usize, usize)> {
-    let (mut added, mut held) = (0, 0);
-    for (key, text) in rows {
-        if get(tx, key)?.is_some() {
-            held += 1;
-            continue;
-        }
+/// Stores each archived setting the instance has none stored for, judged together with the
+/// instance's own as `/config` judges them, and answers how many it stored and how many it left.
+pub fn restore(
+    tx: &Transaction<'_>,
+    app: &App,
+    archived: &[(String, String)],
+) -> Result<(usize, usize)> {
+    let mut stored = rows(tx)?;
+    let held = archived.len();
+    let added: Vec<&(String, String)> = archived
+        .iter()
+        .filter(|(key, _)| !stored.iter().any(|(held, _)| held == key))
+        .collect();
+    stored.extend(added.iter().map(|&row| row.clone()));
+    let touched: Vec<&str> = added.iter().map(|(key, _)| key.as_str()).collect();
+    super::config::judge_together(app, &stored, &touched)?;
+    for (key, text) in &added {
         write_row(tx, key, text)?;
-        added += 1;
     }
-    Ok((added, held))
+    Ok((added.len(), held - added.len()))
 }
 
 #[cfg(test)]
