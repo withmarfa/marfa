@@ -23,6 +23,7 @@ use super::App;
 use super::access::{Caller, Permission};
 use super::blobs::carry::{self, Carried, Copy};
 use super::blobs::{Hash, Room, references};
+use super::clock::Stamp;
 use super::faults::{FAIL_EXPORT_READ, HOLD_EXPORT_PAGE};
 use super::items::{self, Archived, Reader, reading, reading_background};
 use super::query::{self, Ask};
@@ -121,7 +122,7 @@ struct EdgeNeed(BTreeSet<(String, String)>);
 /// An archive ready to send: its manifest, its spooled line files, and the blobs it carries
 /// with the store each was found whole in.
 struct Prepared {
-    created_at: String,
+    created_at: Stamp,
     manifest: Vec<u8>,
     instance: Spooled<InstanceNeed>,
     items: Spooled<ItemNeed>,
@@ -133,7 +134,7 @@ struct Prepared {
 /// holds.
 pub struct Backup {
     pub body: Body,
-    pub created_at: String,
+    pub created_at: Stamp,
     pub changes: i64,
     /// How long the object store has to take it, which also bounds how long its sender waits.
     pub limit: std::time::Duration,
@@ -197,9 +198,9 @@ impl App {
         caller: &Caller,
         ask: Ask,
         files: bool,
-    ) -> Result<(Body, String)> {
+    ) -> Result<(Body, Stamp)> {
         let (prepared, _) = self.prepare_archive(caller, ask, files, None).await?;
-        let created = prepared.created_at.clone();
+        let created = prepared.created_at;
         self.audit_export(caller, "archive").await?;
         let (sender, body) = channel(QUEUED);
         let (app, caller) = (self.clone(), caller.clone());
@@ -223,7 +224,7 @@ impl App {
         let (prepared, changes) = self
             .prepare_archive(&Caller::Server, ask, false, Some(bucket.to_string()))
             .await?;
-        let created_at = prepared.created_at.clone();
+        let created_at = prepared.created_at;
         let entry = |size: u64| tar::BLOCK as u64 + size + tar::padding(size) as u64;
         let size = entry(prepared.manifest.len() as u64)
             + entry(prepared.instance.size)
@@ -258,7 +259,7 @@ impl App {
         files: bool,
         bucket: Option<String>,
     ) -> Result<(Prepared, Option<i64>)> {
-        let created_at = self.clock.stamp();
+        let created_at = self.clock.instant();
         let scratch = [
             self.scratch().await?,
             self.scratch().await?,
@@ -307,7 +308,7 @@ impl App {
         let mut manifest = Map::new();
         manifest.insert("version".into(), VERSION.into());
         manifest.insert("format".into(), FORMAT.into());
-        manifest.insert("created_at".into(), created_at.clone().into());
+        manifest.insert("created_at".into(), created_at.text().into());
         manifest.insert("instance_id".into(), self.instance_id.clone().into());
         manifest.insert("item_count".into(), selected.items.lines.into());
         manifest.insert("edge_count".into(), selected.edges.lines.into());

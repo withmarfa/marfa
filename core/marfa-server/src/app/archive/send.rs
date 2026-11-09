@@ -7,7 +7,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
-use chrono::DateTime;
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 
@@ -55,8 +54,7 @@ pub async fn archive(
     sender: Sender,
     idle: Duration,
 ) {
-    let mtime = DateTime::parse_from_rfc3339(&prepared.created_at)
-        .map_or(0, |at| u64::try_from(at.timestamp()).unwrap_or(0));
+    let mtime = u64::try_from(prepared.created_at.at().timestamp()).unwrap_or(0);
     let out = Out {
         app: &app,
         caller: &caller,

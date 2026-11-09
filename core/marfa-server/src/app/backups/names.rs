@@ -3,21 +3,16 @@
 
 use std::collections::HashSet;
 
-use chrono::{DateTime, Duration, NaiveDate, SecondsFormat, Utc};
+use chrono::{Duration, NaiveDate};
+
+use crate::app::clock::Stamp;
 
 const SUFFIX: &str = ".tar";
 const DAILY_FOR_DAYS: i64 = 30;
 
-/// The name of a backup taken at `created_at`, an instant in the server's own form.
-pub fn name_of(created_at: &str) -> Option<String> {
-    let at = DateTime::parse_from_rfc3339(created_at)
-        .ok()?
-        .with_timezone(&Utc);
-    let name = format!(
-        "{}{SUFFIX}",
-        at.to_rfc3339_opts(SecondsFormat::Millis, true)
-    );
-    (parse(&name) == Some(at)).then_some(name)
+/// The name of a backup taken at `created_at`.
+pub fn name_of(created_at: Stamp) -> String {
+    format!("{created_at}{SUFFIX}")
 }
 
 /// Whether `folder` names an instance's backups: an instance id in its canonical form.
@@ -26,21 +21,18 @@ pub fn instance_of(folder: &str) -> bool {
 }
 
 /// When the backup `name` was taken, for a name exactly as `name_of` writes one.
-pub fn parse(name: &str) -> Option<DateTime<Utc>> {
-    let stamp = name.strip_suffix(SUFFIX)?;
-    let at = DateTime::parse_from_rfc3339(stamp)
-        .ok()?
-        .with_timezone(&Utc);
-    (at.to_rfc3339_opts(SecondsFormat::Millis, true) == stamp).then_some(at)
+pub fn parse(name: &str) -> Option<Stamp> {
+    Stamp::parsed(name.strip_suffix(SUFFIX)?)
 }
 
 /// The listed names to delete: every backup of the last day is kept, then the newest of each
 /// day for thirty days, and the newest backup always. A name that does not read as a backup is
 /// never named.
-pub fn doomed(listed: &[String], now: DateTime<Utc>) -> Vec<String> {
-    let mut backups: Vec<(DateTime<Utc>, &String)> = listed
+pub fn doomed(listed: &[String], now: Stamp) -> Vec<String> {
+    let now = now.at();
+    let mut backups: Vec<(chrono::DateTime<chrono::Utc>, &String)> = listed
         .iter()
-        .filter_map(|name| parse(name).map(|at| (at, name)))
+        .filter_map(|name| parse(name).map(|at| (at.at(), name)))
         .collect();
     backups.sort_by(|a, b| b.cmp(a));
     let day = Duration::days(1);
@@ -61,15 +53,13 @@ pub fn doomed(listed: &[String], now: DateTime<Utc>) -> Vec<String> {
 mod tests {
     use super::*;
 
-    fn at(text: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(text)
-            .unwrap()
-            .with_timezone(&Utc)
+    fn at(text: &str) -> Stamp {
+        Stamp::read(text).unwrap()
     }
 
     #[test]
     fn a_name_is_the_instant_and_reads_back_as_it() {
-        let name = name_of("2026-11-09T10:15:30.250Z").unwrap();
+        let name = name_of(at("2026-11-09T10:15:30.250Z"));
         assert_eq!(name, "2026-11-09T10:15:30.250Z.tar");
         assert_eq!(parse(&name), Some(at("2026-11-09T10:15:30.250Z")));
     }

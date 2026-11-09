@@ -18,6 +18,7 @@ use super::App;
 use super::access::Caller;
 use super::archive::Backup;
 use super::blobs::s3::S3;
+use super::clock::Stamp;
 use super::faults::HOLD_BACKUP_PUT;
 use super::housekeeping::{self, Report, Run};
 use super::refusal::{Code, Refusal, Result};
@@ -79,7 +80,7 @@ fn state(tx: &Transaction<'_>) -> Result<State> {
     Ok(found.unwrap_or_default())
 }
 
-fn record_put(tx: &Transaction<'_>, changes: i64, name: &str, at: &str) -> Result<()> {
+fn record_put(tx: &Transaction<'_>, changes: i64, name: &str, at: Stamp) -> Result<()> {
     tx.execute(
         "INSERT INTO backup_state (id, backed_up, last_backup, last_backup_at) \
          VALUES (1, ?1, ?2, ?3) ON CONFLICT (id) DO UPDATE SET \
@@ -90,7 +91,7 @@ fn record_put(tx: &Transaction<'_>, changes: i64, name: &str, at: &str) -> Resul
     Ok(())
 }
 
-fn record_failure(tx: &Transaction<'_>, error: &str, at: &str) -> Result<()> {
+fn record_failure(tx: &Transaction<'_>, error: &str, at: Stamp) -> Result<()> {
     tx.execute(
         "INSERT INTO backup_state (id, failures, last_error, last_failed_at) \
          VALUES (1, 1, ?1, ?2) ON CONFLICT (id) DO UPDATE SET \
@@ -138,11 +139,11 @@ fn key_of(instance: &str, name: &str) -> String {
     format!("{FOLDER}/{instance}/{name}")
 }
 
-fn listed(instance: &str, name: &str, size: u64) -> Value {
+fn listed(instance: &str, name: &str, created_at: Stamp, size: u64) -> Value {
     json!({
         "name": name,
         "instance_id": instance,
-        "created_at": created_of(name),
+        "created_at": created_at,
         "size_bytes": size,
     })
 }
@@ -152,6 +153,7 @@ enum Outcome {
     Put {
         instance: String,
         name: String,
+        taken: Stamp,
         size: u64,
         removed: usize,
         unremoved: usize,
@@ -166,12 +168,13 @@ impl Outcome {
             Outcome::Put {
                 instance,
                 name,
+                taken,
                 size,
                 removed,
                 unremoved,
             } => json!({
                 "outcome": "put",
-                "backup": listed(instance, name, *size),
+                "backup": listed(instance, name, *taken, *size),
                 "removed": removed,
                 "unremoved": unremoved,
             }),
@@ -179,10 +182,6 @@ impl Outcome {
             Outcome::Running => json!({ "outcome": "running" }),
         }
     }
-}
-
-fn created_of(name: &str) -> String {
-    name.strip_suffix(".tar").unwrap_or(name).to_string()
 }
 
 /// The `backup` housekeeping job.
@@ -241,7 +240,7 @@ impl App {
         let found = super::blobs::store::within(LIST_DEADLINE, bucket.list_under(FOLDER))
             .await
             .map_err(|error| unreachable("listing the backups", &error))?;
-        let mut backups: Vec<(chrono::DateTime<chrono::Utc>, String, String, u64)> = found
+        let mut backups: Vec<(Stamp, String, String, u64)> = found
             .into_iter()
             .filter_map(|(parts, size)| match parts.as_slice() {
                 [instance, name] if instance_of(instance) => {
@@ -253,7 +252,7 @@ impl App {
         backups.sort_by(|a, b| b.cmp(a));
         Ok(backups
             .into_iter()
-            .map(|(_, instance, name, size)| listed(&instance, &name, size))
+            .map(|(created_at, instance, name, size)| listed(&instance, &name, created_at, size))
             .collect())
     }
 
@@ -367,31 +366,28 @@ async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
     }
     wake_replication(app).await;
     match put(app, &bucket).await {
-        Ok((name, size, changes)) => {
-            let at = created_of(&name);
+        Ok((taken, name, size, changes)) => {
             let recorded = name.clone();
             app.db
                 .write(Write::own(), move |tx| {
-                    record_put(tx, changes, &recorded, &at)
+                    record_put(tx, changes, &recorded, taken)
                 })
                 .await?;
-            let (removed, unremoved) = match parse(&name) {
-                Some(taken) => thin(app, &bucket, taken).await,
-                None => (0, 0),
-            };
+            let (removed, unremoved) = thin(app, &bucket, taken).await;
             Ok(Outcome::Put {
                 instance: app.instance_id.clone(),
                 name,
+                taken,
                 size,
                 removed,
                 unremoved,
             })
         }
         Err(refused) => {
-            let (message, at) = (refused.message.to_string(), app.clock.stamp());
+            let (message, at) = (refused.message.to_string(), app.clock.instant());
             if let Err(error) = app
                 .db
-                .write(Write::own(), move |tx| record_failure(tx, &message, &at))
+                .write(Write::own(), move |tx| record_failure(tx, &message, at))
                 .await
             {
                 tracing::error!(%error, "A failed backup was not recorded");
@@ -416,14 +412,14 @@ async fn wake_replication(app: &Arc<App>) {
     }
 }
 
-/// Writes the archive and puts it whole, answering its name, size and change count.
-async fn put(app: &Arc<App>, bucket: &Arc<S3>) -> Result<(String, u64, i64)> {
+/// Writes the archive and puts it whole, answering when it was taken, its name, size and change
+/// count.
+async fn put(app: &Arc<App>, bucket: &Arc<S3>) -> Result<(Stamp, String, u64, i64)> {
     let began = std::time::Instant::now();
     let backup = app.backup_archive(bucket.id(), app.blobs.check()).await?;
     let read_ms = began.elapsed().as_millis() as u64;
-    let name = name_of(&backup.created_at)
-        .ok_or_else(|| Refusal::internal("a backup's time did not make a name"))?;
-    let (changes, limit) = (backup.changes, backup.limit);
+    let (taken, changes, limit) = (backup.created_at, backup.changes, backup.limit);
+    let name = name_of(taken);
     let key = key_of(&app.instance_id, &name);
     let bytes = put_stream(app, backup);
     let size = bucket
@@ -437,16 +433,12 @@ async fn put(app: &Arc<App>, bucket: &Arc<S3>) -> Result<(String, u64, i64)> {
         put_ms = began.elapsed().as_millis() as u64 - read_ms,
         "A backup was put in the object store"
     );
-    Ok((name, size, changes))
+    Ok((taken, name, size, changes))
 }
 
 /// Deletes this instance's backups the plan leaves out, judged from when the backup just put
 /// was taken. Only names it listed in its own folder and could read as a backup are deleted.
-async fn thin(
-    app: &Arc<App>,
-    bucket: &Arc<S3>,
-    taken: chrono::DateTime<chrono::Utc>,
-) -> (usize, usize) {
+async fn thin(app: &Arc<App>, bucket: &Arc<S3>, taken: Stamp) -> (usize, usize) {
     let own = format!("{FOLDER}/{}", app.instance_id);
     let listed = match super::blobs::store::within(LIST_DEADLINE, bucket.list_in(&own)).await {
         Ok(listed) => listed,

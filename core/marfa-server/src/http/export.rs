@@ -90,7 +90,7 @@ pub async fn export(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> An
         return Ok(streamed(body, "application/x-ndjson"));
     }
     let (body, created_at) = app.export_archive(&caller, ask, files).await?;
-    let date = created_at.get(..10).unwrap_or("today");
+    let date = created_at.at().format("%Y-%m-%d");
     let mut response = streamed(body, "application/x-tar");
     response.headers_mut().insert(
         header::CONTENT_DISPOSITION,
