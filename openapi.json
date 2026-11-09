@@ -63625,7 +63625,7 @@
           "Export and restore"
         ],
         "summary": "List backups",
-        "description": "Returns the backups in the instance's object store, newest first, including those another instance on the same prefix took, so a new instance can restore the one it replaces. A backup is an archive of every item, edge and instance line, the trash included, without file bytes, which the object store already holds. Requires direct owner or local authority.",
+        "description": "Returns the backups in the instance's object store, newest first, including those another instance on the same prefix took, so a new instance can restore the one it replaces. Requires direct owner or local authority.",
         "security": [
           {
             "ownerSession": []
@@ -63633,7 +63633,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Returns every backup, in one page.",
+            "description": "Returns every backup, in one page. A backup is an archive of every item, edge and instance line, the trash included, without file bytes, which the object store already holds.",
             "content": {
               "application/json": {
                 "schema": {
@@ -64050,7 +64050,7 @@
             }
           },
           "409": {
-            "description": "- `housekeeping_job_running`: a backup is running. Try again once it ends.\n- `no_bucket`: the instance has no object store, so it keeps no backups. Set `S3_BUCKET` to keep them.",
+            "description": "- `housekeeping_job_running`: a backup is running. Try again once it ends.\n- `no_bucket`: the instance has no object store, so it keeps no backups.",
             "content": {
               "application/json": {
                 "schema": {
@@ -64219,7 +64219,7 @@
           "Export and restore"
         ],
         "summary": "Restore a backup",
-        "description": "Restores a backup from the instance's object store, as `POST /restore` restores an archive, with Marfa reading the backup itself. Other writes wait until it finishes. Requires local authority or the owner, authenticated within five minutes before the request starts.",
+        "description": "Restores a backup from the instance's object store, as `POST /restore` restores an archive. Other writes wait until it finishes. Requires local authority or the owner, authenticated within five minutes before the request starts.",
         "security": [
           {
             "ownerSession": []
@@ -64530,7 +64530,7 @@
             }
           },
           "409": {
-            "description": "- `conflict`: the archive redefines a type this instance registers differently or registered while the restore ran, carries a core edge type, or carries a snapshot ID that already exists.\n- `link_taken`: the archive registers a type naming a `link_field` in which two rows a forced delete left share a value.\n- `no_bucket`: the instance has no object store, so it keeps no backups. Set `S3_BUCKET` to keep them.",
+            "description": "- `conflict`: the archive redefines a type this instance registers differently or registered while the restore ran, carries a core edge type, or carries a snapshot ID that already exists.\n- `link_taken`: the archive registers a type naming a `link_field` in which two rows a forced delete left share a value.\n- `no_bucket`: the instance has no object store, so it keeps no backups.",
             "content": {
               "application/json": {
                 "schema": {
@@ -65125,7 +65125,10 @@
       "description": "Export the instance's data, and restore it from an archive.",
       "x-operation-order": [
         "exportArchive",
-        "restoreArchive"
+        "restoreArchive",
+        "listBackups",
+        "runBackup",
+        "restoreBackup"
       ]
     }
   ],
