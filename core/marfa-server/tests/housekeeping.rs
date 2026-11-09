@@ -318,10 +318,20 @@ async fn thinning_keeps_what_a_policy_committed_before_it_is_live_keeps() {
         instance.ok(Method::PATCH, &path, edit).await;
     }
 
+    let faults = &instance.app.faults;
+    faults
+        .set("hold:write", Some("item.versions_thinned"))
+        .unwrap();
+    let app = instance.app.clone();
+    let run = tokio::spawn(async move { housekeeping::run_now(&app, "version-thinning").await });
+    instance.when_held().await;
     commit_unpublished(&instance.app, "version_max_versions", "500").await;
     assert_eq!(instance.app.settings.live().get(VERSION_MAX_VERSIONS), 1);
-    let result = instance.run("version-thinning").await;
-    assert_eq!(result, json!({ "pruned": 0, "items": 0 }));
+    faults.clear(Some("hold:write"));
+
+    let ended = run.await.unwrap().unwrap();
+    assert_eq!(ended.outcome, "ok");
+    assert_eq!(ended.result, Some(json!({ "pruned": 0, "items": 0 })));
     assert_eq!(instance.count("SELECT count(*) FROM item_versions"), 3);
 }
 

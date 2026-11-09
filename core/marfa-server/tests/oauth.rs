@@ -1262,23 +1262,26 @@ async fn the_sweeps_keep_what_a_retention_committed_before_it_is_live_keeps() {
     instance.register(NOTES).await;
     app.clock.advance(366 * DAY_MS).unwrap();
 
-    for key in [
-        "grant_inactivity_days",
-        "revoked_grant_retention_days",
-        "dcr_client_retention_days",
+    let mut taken = Vec::new();
+    for (job, write, key) in [
+        ("grant-inactivity-retirement", "auth.grant.retired", "grant_inactivity_days"),
+        ("revoked-grant-purge", "auth.grants.purged", "revoked_grant_retention_days"),
     ] {
+        app.faults.set("hold:write", Some(write)).unwrap();
+        let running = app.clone();
+        let run = tokio::spawn(async move { swept(&running, job).await });
+        instance.when_held().await;
         commit_unpublished(app, key, "0").await;
+        app.faults.clear(Some("hold:write"));
+        taken.push(run.await.unwrap());
     }
+    commit_unpublished(app, "dcr_client_retention_days", "0").await;
     let live = app.settings.live();
     assert_eq!(live.get(GRANT_INACTIVITY_DAYS), 365);
     assert_eq!(live.get(REVOKED_GRANT_RETENTION_DAYS), 90);
     assert_eq!(live.get(DCR_CLIENT_RETENTION_DAYS), 1);
-    let taken = (
-        swept(app, "grant-inactivity-retirement").await,
-        swept(app, "revoked-grant-purge").await,
-        swept(app, "dcr-client-cleanup").await,
-    );
-    assert_eq!(taken, (0, 0, 0));
+    taken.push(swept(app, "dcr-client-cleanup").await);
+    assert_eq!(taken, [0, 0, 0]);
     let standing = "SELECT count(*) FROM auth_oauth_consent WHERE withdrawn_at IS NULL";
     assert_eq!(instance.count(standing).await, 1);
     let withdrawn = "SELECT count(*) FROM auth_oauth_consent WHERE withdrawn_at IS NOT NULL";

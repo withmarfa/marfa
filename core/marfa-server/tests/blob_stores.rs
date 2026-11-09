@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
-use marfa_server::app::App;
+use marfa_server::app::{App, housekeeping};
 use marfa_server::db::Write;
 use marfa_server::http::{control, public};
 use marfa_server::settings::registry::{
@@ -452,14 +452,21 @@ async fn the_orphan_job_keeps_what_settings_committed_before_they_are_live_keep(
         let first = instance.run("blob-orphans").await;
         assert_eq!(first["purged"], 0, "{first}");
 
+        let faults = &instance.app.faults;
+        faults.set("hold:write", Some("blob.purge")).unwrap();
+        let app = instance.app.clone();
+        let run = tokio::spawn(async move { housekeeping::run_now(&app, "blob-orphans").await });
+        instance.when_held().await;
         commit_unpublished(&instance.app, key, value).await;
         let live = instance.app.settings.live();
         assert_eq!(live.get(BLOB_CLEANUP_GRACE_MS), 0);
         assert_eq!(live.get(BLOB_CLEANUP_INTERVAL_MS), 86_400_000);
-        let second = instance.run("blob-orphans").await;
+        faults.clear(Some("hold:write"));
+        let second = run.await.unwrap().unwrap();
+        assert_eq!(second.outcome, "ok", "{:?}", second.error);
         purged.push((
             key,
-            second["purged"].clone(),
+            second.result.unwrap()["purged"].clone(),
             instance.file(&orphan).is_file(),
         ));
     }
@@ -1000,10 +1007,18 @@ async fn the_drop_door_holds_to_a_minimum_committed_before_it_is_live() {
     assert_eq!(run["copied"], 1, "{run}");
     let disk = instance.disk().await;
 
+    let faults = &instance.app.faults;
+    faults.set("hold:write", Some("blob.copy_dropped")).unwrap();
+    let door = format!("/blobs/{hash}/copies/{disk}");
+    let router = instance.control.clone();
+    let request = Request::builder().method(Method::DELETE).uri(&door);
+    let request = request.body(Body::empty()).unwrap();
+    let drop = tokio::spawn(async move { send(&router, request).await });
+    instance.when_held().await;
     commit_unpublished(&instance.app, "blob_min_copies", "2").await;
     assert_eq!(instance.app.settings.live().get(BLOB_MIN_COPIES), 1);
-    let door = format!("/blobs/{hash}/copies/{disk}");
-    let dropped = instance.call(Method::DELETE, &door, None).await;
+    faults.clear(Some("hold:write"));
+    let dropped = drop.await.unwrap();
     assert_eq!(dropped.status, StatusCode::CONFLICT, "{}", dropped.body);
     assert_eq!(dropped.code(), "copies_below_minimum");
     assert_eq!(instance.copies(&hash).await.len(), 2);
