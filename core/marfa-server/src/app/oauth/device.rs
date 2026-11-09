@@ -33,8 +33,7 @@ pub async fn request(app: &Arc<App>, form: &Form, visit: &Visit) -> Result<Answe
         app,
         device_code_lanes(visit.address),
         "Too many device codes requested. Try again later.",
-    )
-    .await?;
+    )?;
     if let Some(problem) = credential_refused(form) {
         return Ok(Err(problem));
     }
@@ -120,31 +119,18 @@ pub async fn request(app: &Arc<App>, form: &Form, visit: &Visit) -> Result<Answe
     })))
 }
 
-/// Own write so a refused lookup still counts. A verified session spends from the
-/// owner's lanes, anyone else from the address's.
-pub async fn admit_lookup(
-    app: &App,
-    address: Option<IpAddr>,
-    owner: Option<&Caller>,
-) -> Result<Option<i64>> {
-    let session = owner.and_then(Caller::session);
-    let now = app.clock.now_ms();
-    match session {
-        Some(session) => {
-            let lanes = device_owner_lanes(
+/// A refused lookup still counts. A verified session spends from the owner's lanes, anyone
+/// else from the address's.
+pub fn admit_lookup(app: &App, address: Option<IpAddr>, owner: Option<&Caller>) -> Option<i64> {
+    match owner.and_then(Caller::session) {
+        Some(session) => admit(
+            app,
+            &device_owner_lanes(
                 &session.user_id,
                 app.faults.limit(DEVICE_OWNER_INSTANCE_LANE),
-            );
-            app.db
-                .write(Write::own(), move |tx| admit(tx, now, &lanes))
-                .await
-        }
-        None => {
-            let lanes = device_lookup_lanes(address);
-            app.db
-                .write(Write::own(), move |tx| admit(tx, now, &lanes))
-                .await
-        }
+            ),
+        ),
+        None => admit(app, &device_lookup_lanes(address)),
     }
 }
 

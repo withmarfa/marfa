@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::body::{Body, to_bytes};
-use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, Method, Request, StatusCode, header};
 use marfa_server::app::App;
 use marfa_server::http::{control, public};
 use marfa_server::settings::{Environment, Settings};
@@ -479,20 +479,47 @@ async fn the_cap_counts_a_credential_only_under_keys() {
     ])
     .await;
     let (_, secret) = instance.key(bare("capped")).await;
-    let limit = HeaderName::from_static("x-ratelimit-limit");
     for _ in 0..2 {
         let answer = instance
             .call(&secret, Method::GET, "/keys/current", None)
             .await;
         assert_eq!(answer.status, StatusCode::OK);
-        assert_eq!(answer.headers[&limit], "2");
     }
     let over = instance.call(&secret, Method::GET, "/keys", None).await;
     assert_eq!(over.status, StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(over.headers[&limit], "2");
-    assert!(over.headers.contains_key(header::RETRY_AFTER));
+    let wait: u64 = over.headers[header::RETRY_AFTER]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!((1..=60).contains(&wait), "{wait}");
+    assert_eq!(over.body["error"]["code"], "rate_limited");
+    assert_eq!(over.body["error"]["details"]["retry_after"], wait);
     let elsewhere = instance.call(&secret, Method::GET, "/sources", None).await;
     assert_eq!(elsewhere.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn one_allowance_counts_a_credential_across_every_operation() {
+    let instance = Instance::start(&[
+        ("MARFA_RATE_LIMIT_ENABLED", "true"),
+        ("MARFA_RATE_LIMIT_REQUESTS", "3"),
+    ])
+    .await;
+    let (_, spent) = instance.key(bare("spent")).await;
+    let (_, other) = instance.key(bare("other")).await;
+    for path in ["/sources", "/keys/current", "/sources"] {
+        let answer = instance.call(&spent, Method::GET, path, None).await;
+        assert_eq!(answer.status, StatusCode::OK, "{path}");
+    }
+    let over = instance.call(&spent, Method::GET, "/types", None).await;
+    assert_eq!(over.status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(over.headers.contains_key(header::RETRY_AFTER));
+    assert_eq!(over.body["error"]["code"], "rate_limited");
+    let elsewhere = instance.call(&other, Method::GET, "/sources", None).await;
+    assert_eq!(elsewhere.status, StatusCode::OK);
+    let local = request(Method::GET, "/sources", None, None);
+    assert_eq!(send(&instance.control, local).await.status, StatusCode::OK);
 }
 
 #[tokio::test]

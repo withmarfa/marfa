@@ -678,9 +678,9 @@ describe("what a change runs", () => {
       ["ci-sqlite", ...CONFORMANCE, "restore-drill"],
     ],
     [
-      "the entrypoint, which a ci/ test and the drill's backup fixtures run",
+      "the entrypoint, which a ci/ test runs",
       ["deploy/entrypoint.sh"],
-      ["ci-sqlite", "workspace", "restore-drill"],
+      ["ci-sqlite", "workspace"],
     ],
     [
       "the script that builds the release's programs, which the image is made from",
@@ -698,9 +698,9 @@ describe("what a change runs", () => {
       ["ci-sqlite", "core-checks-linux", "rust-contract", "image"],
     ],
     [
-      "the image's replica fixtures, which the drill's job runs",
+      "the backup suite, which only the type check and the offline lane read",
       ["conformance/src/suites/backup/replica-paths.test.ts"],
-      ["ci-sqlite", "workspace", "conformance-offline", "restore-drill"],
+      ["ci-sqlite", "workspace", "conformance-offline"],
     ],
     [
       "the script that boots the image",
@@ -931,7 +931,7 @@ describe("what a change runs", () => {
                 "core-checks-linux",
                 "rust-contract",
               ]
-            : chapter === "instance.md"
+            : chapter === "instance.md" || chapter === "housekeeping.md"
               ? [
                   "workspace",
                   "conformance-offline",

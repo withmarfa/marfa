@@ -1,7 +1,4 @@
-//! The address people sign in at. The server holds it as a stored setting
-//! that only its private socket changes, and refuses every caller off the
-//! machine until it is set. `setup open`, `setup claim` and the installer
-//! all set it through here.
+//! The address people sign in at, which only the server's private socket changes.
 
 use serde_json::{Value, json};
 
@@ -12,9 +9,7 @@ use crate::remote::Remote;
 const KEY: &str = "sign_in_address";
 const CONFIRMATION: &str = "confirm_sign_in_address_change";
 
-/// The address written the way the server reads it: scheme, host and a port
-/// only if it is not the scheme's own. Devices sign in over https, and a
-/// machine signs in to itself over http.
+/// The address written the way the server reads it.
 pub fn normalise(raw: &str) -> Result<String, CliError> {
     let bad =
         |why: &str| CliError::Usage(format!("{raw} is not an address the server can use: {why}"));
@@ -85,9 +80,7 @@ pub enum Settled {
     },
 }
 
-/// Brings the address the server holds to what is wanted through `read` and
-/// `write`, which reach its private socket. An address the server holds is
-/// replaced only when the person asked, and one it does not hold is set.
+/// An address the server holds is replaced only when the person asked.
 pub fn settle_with(
     want: Want,
     read: impl FnOnce() -> Result<Value, CliError>,

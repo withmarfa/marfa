@@ -1,5 +1,5 @@
-//! Bodies of the housekeeping jobs that remove aged-out sign-in rows. Each write is bounded and
-//! each run stops between two of them when told to.
+//! The stages of the credential clean-up that deal with sign-in rows. Each write is bounded and
+//! each stage stops between two of them when told to.
 
 use std::sync::Arc;
 
@@ -10,7 +10,7 @@ use super::grant;
 use crate::app::access::Caller;
 use crate::app::auth::session;
 use crate::app::clock::Stamp;
-use crate::app::housekeeping::{Report, Run, drain};
+use crate::app::housekeeping::{Run, drain};
 use crate::app::refusal::Result;
 use crate::app::{App, stored};
 use crate::db::Write;
@@ -95,12 +95,8 @@ async fn idle_clients(app: &Arc<App>) -> Result<i64> {
 }
 
 /// Anything a client holds spares it.
-pub async fn remove_idle_clients(app: Arc<App>, run: Run) -> Result<Report> {
-    let (deleted, done) = drain(&run, BATCH, || idle_clients(&app)).await?;
-    Ok(Report {
-        result: json!({ "deleted": deleted }),
-        again: !done,
-    })
+pub async fn remove_idle_clients(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
+    drain(run, BATCH, || idle_clients(app)).await
 }
 
 async fn retire_one(app: &Arc<App>) -> Result<i64> {
@@ -131,12 +127,8 @@ async fn retire_one(app: &Arc<App>) -> Result<i64> {
 }
 
 /// Each is a write of its own, since one ends every credential of the grant and rewrites its item.
-pub async fn retire_idle_grants(app: Arc<App>, run: Run) -> Result<Report> {
-    let (retired, done) = drain(&run, 1, || retire_one(&app)).await?;
-    Ok(Report {
-        result: json!({ "retired": retired }),
-        again: !done,
-    })
+pub async fn retire_idle_grants(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
+    drain(run, 1, || retire_one(app)).await
 }
 
 async fn withdrawn_grants(app: &Arc<App>) -> Result<i64> {
@@ -164,12 +156,8 @@ async fn withdrawn_grants(app: &Arc<App>) -> Result<i64> {
 }
 
 /// So a client they alone kept can go.
-pub async fn purge_withdrawn_grants(app: Arc<App>, run: Run) -> Result<Report> {
-    let (deleted, done) = drain(&run, BATCH, || withdrawn_grants(&app)).await?;
-    Ok(Report {
-        result: json!({ "deleted": deleted }),
-        again: !done,
-    })
+pub async fn purge_withdrawn_grants(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
+    drain(run, BATCH, || withdrawn_grants(app)).await
 }
 
 async fn expired_in(
@@ -207,8 +195,8 @@ async fn expired_sessions(app: &Arc<App>) -> Result<i64> {
 /// A rotated refresh token stays until then, since a replay of it must still be recognized. A
 /// device code stays a day longer, so a device polling after it expired is told so; its poll
 /// removes it sooner.
-pub async fn sweep_expired(app: Arc<App>, run: Run) -> Result<Report> {
-    let (mut deleted, mut done) = drain(&run, BATCH, || expired_sessions(&app)).await?;
+pub async fn sweep_expired(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
+    let (mut deleted, mut done) = drain(run, BATCH, || expired_sessions(app)).await?;
     for (table, key, kept_ms) in [
         ("auth_oauth_code", "digest", 0),
         ("auth_oauth_device_code", "device_code", MS_PER_DAY),
@@ -219,13 +207,9 @@ pub async fn sweep_expired(app: Arc<App>, run: Run) -> Result<Report> {
         if !done {
             break;
         }
-        let (taken, finished) =
-            drain(&run, BATCH, || expired_in(&app, table, key, kept_ms)).await?;
+        let (taken, finished) = drain(run, BATCH, || expired_in(app, table, key, kept_ms)).await?;
         deleted += taken;
         done = finished;
     }
-    Ok(Report {
-        result: json!({ "deleted": deleted }),
-        again: !done,
-    })
+    Ok((deleted, done))
 }

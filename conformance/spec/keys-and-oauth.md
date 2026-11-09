@@ -1099,19 +1099,13 @@ If a signed-in app mints a key naming any extension namespace, then the server M
 
 **Tests:** `compliance/key-reach.test.ts › a signed-in app gives a key within its reach a permission its grant holds, and no other`.
 
-## The limit on the key operations
+## The rate limiter
 
-The limiter is off for a run, so these rules are asserted against a server booted with it on.
+One limiter, held in the server's memory, counts every limit in this chapter. Every count starts afresh when the server starts. The limiter holds a bounded number of windows for each kind of limit. When one kind is full, it drops that kind's window that ends soonest, and the key that window counted starts afresh. It never drops the account windows of password sign-in once the instance has an owner, the owner's device code lookup window or the instance-wide windows. The limits on a credential's requests are off for a run, so their rules are asserted against a server booted with the limiter on.
 
 ### `keys-and-oauth/keys-rate-cap`
 
-Where the limiter is on, when a credential's requests to the operations under `/keys` pass the cap `rate_limit_keys_requests` names, the server MUST answer `429 rate_limited` with `Retry-After` in seconds.
-
-**Tests:** `compliance/key-rate-limit.test.ts › refuses past the limit the instance set, and the key doors share one window`.
-
-### `keys-and-oauth/keys-rate-header`
-
-Where the limiter is on, the server MUST name the cap in force in `X-RateLimit-Limit` on every answer from the operations under `/keys`.
+Where the limiter is on, when a credential's requests to the operations under `/keys` pass the cap `rate_limit_keys_requests` names within a window, the server MUST answer `429 rate_limited`.
 
 **Tests:** `compliance/key-rate-limit.test.ts › refuses past the limit the instance set, and the key doors share one window`.
 
@@ -1126,6 +1120,40 @@ Where the limiter is on and the instance names no cap for the key operations, th
 Where the limiter is on, when a credential has passed the cap on the key operations, the server MUST still answer it on an operation outside `/keys`.
 
 **Tests:** `compliance/key-rate-limit.test.ts › closes the key doors while a data-plane read on the same credential is answered`.
+
+### `keys-and-oauth/credential-rate-cap`
+
+Where the limiter is on, when one key's or one app's requests to all operations together pass `rate_limit_requests` within a window, the server MUST answer each further request in that window `429 rate_limited`.
+
+**Reason:** A key or an app that loops cannot take the instance's attention from the others, and the key operations have a cap of their own beneath it.
+
+**Tests:** `compliance/credential-rate-limit.test.ts › refuses a key past the cap across operations, and counts none of its refused requests against another key`.
+
+### `keys-and-oauth/credential-rate-default`
+
+Where the limiter is on and the instance names no cap for a credential's requests, the server MUST hold a key or an app to 4000 requests per window.
+
+**Tests:** `compliance/credential-rate-limit.test.ts › falls back to 4000 when the instance names no number`.
+
+### `keys-and-oauth/credential-rate-own-window`
+
+Where the limiter is on, when one credential has passed `rate_limit_requests`, the server MUST still answer another credential's requests.
+
+**Tests:** `compliance/credential-rate-limit.test.ts › refuses a key past the cap across operations, and counts none of its refused requests against another key`.
+
+### `keys-and-oauth/rate-limit-retry-after`
+
+When the server answers `429 rate_limited`, the server MUST carry in `Retry-After` the whole seconds, from 1 to 86400, until the latest end among the limits that are spent, rounded up.
+
+**Reason:** The wait is a real number of seconds and not an invitation to retry at once. A request refused by one limit can meet another that is spent for longer, so a client that waits less meets a second refusal.
+
+**Tests:** `compliance/key-rate-limit.test.ts › refuses past the limit the instance set, and the key doors share one window`, `compliance/credential-rate-limit.test.ts › refuses a key past the cap across operations, and counts none of its refused requests against another key`.
+
+### `keys-and-oauth/rate-limit-retry-detail`
+
+When the server answers `429 rate_limited` in the error envelope to a request made with a key or an app's access token, the server MUST name in `details.retry_after` the number of seconds `Retry-After` carries.
+
+**Tests:** `compliance/key-rate-limit.test.ts › refuses past the limit the instance set, and the key doors share one window`, `compliance/credential-rate-limit.test.ts › refuses a key past the cap across operations, and counts none of its refused requests against another key`.
 
 ## Discovery
 
@@ -1323,7 +1351,7 @@ When a registration at `POST /auth/oauth2/register` carries the owner's browser 
 
 ### `keys-and-oauth/register-idle-removed`
 
-When the `dcr-client-cleanup` job runs, the server MUST remove each registered client that no grant names, that holds no access or refresh token, and that was neither registered nor offered on the consent screen or the device approval page within `dcr_client_retention_days`.
+When the `credential-cleanup` job runs, the server MUST remove each registered client that no grant names, that holds no access or refresh token, and that was neither registered nor offered on the consent screen or the device approval page within `dcr_client_retention_days`.
 
 **Reason:** Registration takes no credential and answers every origin, so any page the owner visits can add registrations; a short retention bounds what is left behind without a cap that a page could fill to block real registrations.
 
@@ -1333,7 +1361,7 @@ When the `dcr-client-cleanup` job runs, the server MUST remove each registered c
 
 While a grant names a registered client, live or revoked, the server MUST keep the client registered.
 
-**Reason:** A revoked grant is kept, with the client it names, until the revoked-grant purge removes it after `revoked_grant_retention_days`, so it never names a client that is gone.
+**Reason:** A revoked grant is kept, with the client it names, until the credential clean-up removes it after `revoked_grant_retention_days`, so it never names a client that is gone.
 
 **Tests:** `compliance/web-page-register.test.ts › removes a registration nobody approved once it is idle past the retention, and keeps an approved, a revoked and an offered one`.
 
@@ -2095,7 +2123,7 @@ If a caller without `grants.manage` lists or revokes grants, then the server MUS
 
 **Reason:** A key is an app's own credential and a grant is another app's, so a credential trusted to rotate a key is not one that may revoke every other app.
 
-**Tests:** `compliance/auth-grants.test.ts › refuses a caller without grants.manage 403, naming it, and a request with no credential 401`.
+**Tests:** `compliance/auth-grants.test.ts › refuses a caller without grants.manage 403, naming it, and a request with no credential 401`, `› refuses a caller without grants.manage 403 whatever query it sends, at both doors`.
 
 ### `keys-and-oauth/grants-no-credential`
 
@@ -2123,9 +2151,25 @@ When a grant is revoked without `revoke_keys`, the server MUST leave every key t
 
 **Tests:** `compliance/auth-grants.test.ts › ends the app's tokens and the person's consent, and leaves the keys it minted working`.
 
+### `keys-and-oauth/refresh-revoke-keeps-keys`
+
+When an app revokes its refresh token at `POST /auth/oauth2/revoke`, the server MUST leave every key the app minted, and every key those keys minted, working.
+
+**Reason:** An app that disconnects itself says nothing about the keys it handed out, and those keys may serve someone else by now.
+
+**Tests:** `compliance/auth-grants.test.ts › leaves the keys an app minted working when the app revokes its refresh token`.
+
+### `keys-and-oauth/grant-retire-keeps-keys`
+
+When the inactivity retirement retires a grant, the server MUST leave every key the app minted, and every key those keys minted, working.
+
+**Reason:** The retirement measures the app's own use, and a key the app minted is used on its own account, so the app going quiet says nothing about the key.
+
+**Tests:** `compliance/auth-grants.test.ts › leaves the keys an idle app minted working when the inactivity retirement retires its grant`.
+
 ### `keys-and-oauth/grant-revoke-keys`
 
-When a grant is revoked with `revoke_keys=1`, the server MUST also revoke every key carrying that app's origin, whatever the caller's reach.
+When a grant is revoked with `revoke_keys=1`, the server MUST revoke in the same write every key the app minted and every key those keys minted, whatever the caller's reach.
 
 **Reason:** A key an app minted is held to the app's grant, so taking those keys with the grant reaches no further than revoking the grant does.
 
@@ -2143,7 +2187,7 @@ Where the limiter is on, the server MUST count every request a signed-in app mak
 
 **Reason:** Refreshing a token does not start a fresh window.
 
-**Tests:** `compliance/signed-in-apps.test.ts › is limited by its grant, so a refreshed token shares the window of the one before it`.
+**Tests:** `compliance/app-rate-window.test.ts › is limited by its grant, so a refreshed token shares the window of the one before it`.
 
 ## Web pages
 
@@ -2453,7 +2497,7 @@ If a device code lookup is refused by a device lookup limit, then the server MUS
 
 **Reason:** The anonymous address limit, the anonymous instance limit and the two owner limits each end at their own time, and a lookup refused by one can meet another that is spent for longer, so the page can say how long to wait only if the redirect names the later end.
 
-**Tests:** `compliance/sign-in-surface.test.ts › limits anonymous device code entry per address and owner consent per owner`, `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes, and keeps the budget after restart`, `compliance/sign-in-limits.test.ts › names the later end when a lookup meets a spent address limit and a spent instance limit`.
+**Tests:** `compliance/sign-in-surface.test.ts › limits anonymous device code entry per address and owner consent per owner`, `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes`, `compliance/sign-in-limits.test.ts › names the later end when a lookup meets a spent address limit and a spent instance limit`.
 
 ### `keys-and-oauth/device-lookup-page`
 
@@ -2503,7 +2547,7 @@ When a caller with a verified, live browser session of the claimed owner looks a
 
 If the claimed owner has made ten counted device code lookups in fifteen minutes, across browser sessions, addresses, the entry form, the consent screen and its decision, then the server MUST redirect the owner's next lookup with `error=too_many_attempts` before the code is looked up.
 
-**Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes, and keeps the budget after restart`.
+**Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes`.
 
 ### `keys-and-oauth/device-lookup-owner-instance-limit`
 
@@ -2523,19 +2567,13 @@ If a device code lookup carries only an unverified, expired or revoked owner coo
 
 When concurrent device code lookups use the owner's live browser session, the server MUST admit no more lookups than remain in the owner's fifteen-minute allowance.
 
-**Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes, and keeps the budget after restart`.
-
-### `keys-and-oauth/device-lookup-owner-persistent`
-
-When the server restarts within a device code lookup window, the server MUST retain the owner's counted lookups and the owner lane's counted lookups for the rest of that window.
-
-**Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes, and keeps the budget after restart`, `› holds the owner lane aggregate to its limit and resets its fifteen-minute window`.
+**Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes`.
 
 ### `keys-and-oauth/device-lookup-owner-window`
 
 When an owner's device code lookup window or the owner lane's collective window reaches fifteen minutes, the server MUST count its next lookup in a fresh window.
 
-**Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes, and keeps the budget after restart`, `› holds the owner lane aggregate to its limit and resets its fifteen-minute window`.
+**Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes`, `› holds the owner lane aggregate to its limit and resets its fifteen-minute window`.
 
 ## The sign-in library's routes
 
@@ -2821,7 +2859,7 @@ When `DELETE /owner/sign-ins/{id}` has ended an app, the server MUST answer `400
 
 ### `keys-and-oauth/sign-in-end-app-keys`
 
-When `DELETE /owner/sign-ins/{id}` ends an app without `revoke_keys` set to `true`, the server MUST keep every key that app minted working.
+When `DELETE /owner/sign-ins/{id}` ends an app without `revoke_keys` set to `true`, the server MUST keep every key that app minted, and every key those keys minted, working.
 
 **Reason:** As at `DELETE /auth/grants/{id}`, a key is minted on purpose and listed as a sign-in of its own, so ending an app ends its own tokens and leaves its keys to be ended with it or on their own.
 
@@ -2829,9 +2867,9 @@ When `DELETE /owner/sign-ins/{id}` ends an app without `revoke_keys` set to `tru
 
 ### `keys-and-oauth/sign-in-end-app-revoke-keys`
 
-When `DELETE /owner/sign-ins/{id}` with `revoke_keys` set to `true` ends an app, the server MUST answer `401` to the next request that carries a key that app minted.
+When `DELETE /owner/sign-ins/{id}` with `revoke_keys` set to `true` ends an app, the server MUST answer `401` to the next request that carries a key that app minted or a key that such a key minted.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › end with the app when revoke_keys is true, and no other key does`.
+**Tests:** `compliance/owner-sign-ins.test.ts › end with the app when revoke_keys is true, a key's descendant included, and no other key does`.
 
 ### `keys-and-oauth/sign-in-end-revoke-keys-not-app`
 
@@ -2849,7 +2887,7 @@ When `DELETE /owner/sign-ins/{id}` has ended a key, the server MUST answer `401`
 
 When `DELETE /owner/sign-ins/{id}` ends a sign-in, the server MUST keep every other sign-in of the owner signed in.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › ends that browser's session, whose next request is refused, and leaves the other signed in`, `› ends an app at once: its next request is refused and its refresh token is dead, and nothing else is`, `› ends a key at once, and leaves every other sign-in`, `› end with the app when revoke_keys is true, and no other key does`.
+**Tests:** `compliance/owner-sign-ins.test.ts › ends that browser's session, whose next request is refused, and leaves the other signed in`, `› ends an app at once: its next request is refused and its refresh token is dead, and nothing else is`, `› ends a key at once, and leaves every other sign-in`, `› end with the app when revoke_keys is true, a key's descendant included, and no other key does`.
 
 ### `keys-and-oauth/sign-in-end-versions`
 
@@ -3091,7 +3129,7 @@ When the private local command issues a setup code, or a browser exchanges one, 
 
 **Reason:** The owner claim the proof leads to is held by `instance-claim/concurrent-claim`.
 
-**Tests:** `compliance/owner.test.ts › keeps code-attempt counters through restart and replaces unclaimed setup proof`.
+**Tests:** `compliance/owner.test.ts › replaces unclaimed setup proof on restart`.
 
 ### `keys-and-oauth/audit-registration`
 

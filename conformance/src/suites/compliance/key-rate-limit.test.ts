@@ -84,12 +84,10 @@ describe("the key doors' rate limit", () => {
   it("refuses past the limit the instance set, and the key doors share one window", async () => {
     const client = await freshKey("limit");
 
-    // One. The header says which cap this request was judged against, so
-    // the setting is observable before anything is refused: a server that
-    // ignored `MARFA_RATE_LIMIT_KEYS_REQUESTS` would name its own number here.
+    // One. The cap is low on purpose: a server that ignored
+    // `MARFA_RATE_LIMIT_KEYS_REQUESTS` would answer every request below.
     const first = await client.listKeys();
     expect(first.status).toBe(200);
-    expect(first.headers.get("X-RateLimit-Limit")).toBe(String(KEYS_LIMIT));
 
     // Two and three, on the other door. `/keys` and `/keys/{id}` are one
     // budget, not two — the statement says the doors share it, and a
@@ -118,12 +116,17 @@ describe("the key doors' rate limit", () => {
     const refused = await client.listKeys();
     expect(refused.status).toBe(429);
     expect(refused.error?.error.code).toBe("rate_limited");
-    // What to do about it. The limiter's window is fixed rather than
-    // sliding, so the wait it names is a real number of seconds and not
-    // an invitation to retry immediately.
+    // What to do about it. The window is fixed rather than sliding, so the
+    // wait it names is a real number of seconds and not an invitation to
+    // retry immediately.
     const retryAfter = refused.headers.get("Retry-After");
-    expect(retryAfter).not.toBeNull();
-    expect(Number(retryAfter)).toBeGreaterThan(0);
+    expect(retryAfter).toMatch(/^\d+$/);
+    expect(Number(retryAfter)).toBeGreaterThanOrEqual(1);
+    expect(Number(retryAfter)).toBeLessThanOrEqual(60);
+    expect(
+      (refused.error?.error as { details?: { retry_after?: number } }).details
+        ?.retry_after,
+    ).toBe(Number(retryAfter));
   }, 120_000);
 
   it("closes the key doors while a data-plane read on the same credential is answered", async () => {
@@ -132,9 +135,9 @@ describe("the key doors' rate limit", () => {
     // assertion there, and what the statement claims — that the cap
     // belongs to the key doors rather than to the credential — would be
     // asserted against nothing. One other door, not every other door:
-    // the aggregate window still bounds what a credential spends across
-    // all of them, so "refused at `/keys`, answered elsewhere" holds
-    // while the caller stops asking and not while it keeps hammering.
+    // the credential's allowance across every operation still bounds what it
+    // spends, so "refused at `/keys`, answered elsewhere" holds while the
+    // caller stops asking and not while it keeps hammering.
     const client = await freshKey("scope");
 
     for (let spent = 1; spent <= KEYS_LIMIT; spent++) {
@@ -164,10 +167,13 @@ describe("the key doors' rate limit", () => {
       baseUrl: unset!.apiUrl,
       apiKey: unset!.workingKey,
     });
-    const answer = await client.listKeys();
-    expect(answer.status).toBe(200);
-    expect(answer.headers.get("X-RateLimit-Limit")).toBe(
-      String(DEFAULT_KEYS_LIMIT),
-    );
+    for (let spent = 1; spent <= DEFAULT_KEYS_LIMIT; spent++) {
+      const answer = await client.listKeys();
+      expect(
+        answer.status,
+        `request ${String(spent)} of ${String(DEFAULT_KEYS_LIMIT)} was refused`,
+      ).toBe(200);
+    }
+    expect((await client.listKeys()).status).toBe(429);
   }, 120_000);
 });

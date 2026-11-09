@@ -102,7 +102,7 @@ describe("GET /auth/device/consent", () => {
 
   it("answers 400 invalid_client for a pending code whose client is no longer registered", async () => {
     const server = clients!;
-    await quiet(server, ["dcr-client-cleanup"]);
+    await quiet(server, ["credential-cleanup"]);
     const discovery = (await (
       await fetch(
         `${server.apiUrl}/.well-known/oauth-authorization-server/auth`,
@@ -159,10 +159,7 @@ describe("GET /auth/device/consent", () => {
     const consentUrl = (user: string) =>
       `${origin}/auth/device/consent?user_code=${encodeURIComponent(user)}`;
 
-    expect(await runJob(server, "dcr-client-cleanup")).toMatchObject({
-      outcome: "ok",
-      result: { deleted: 1 },
-    });
+    expect((await runJob(server, "credential-cleanup")).outcome).toBe("ok");
     const refused = await fetch(consentUrl(code.user_code), {
       headers: { cookie },
     });

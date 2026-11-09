@@ -1,10 +1,4 @@
-/**
- * A release is installed the way a person installs it before it is published:
- * on a clean runner of each platform the run's own archives go through
- * `scripts/install.sh` and `marfa server install`, with HTTPS in front, and the
- * instance is claimed, reached, stopped, started and uninstalled. It runs in a
- * dry run as in a release, publishes nothing, and a release waits for it.
- */
+// Exercises the workflow's install proof.
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

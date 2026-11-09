@@ -58,6 +58,14 @@ pub const DECLARED: &[Declared] = &[
         "MARFA_WRITE_WAIT_MS",
         "How long a write waits for the one writer before it fails, in milliseconds.",
     ),
+    plain(
+        "MARFA_MAX_CONNECTIONS",
+        "The most connections the public listener holds open at once.",
+    ),
+    plain(
+        "MARFA_MAX_CONNECTIONS_PER_ADDRESS",
+        "The most connections the public listener holds open for one caller address.",
+    ),
     plain("MARFA_BLOB_PATH", "Where the server keeps files."),
     plain(
         "MARFA_ENRICHMENT_TESSDATA_DIR",

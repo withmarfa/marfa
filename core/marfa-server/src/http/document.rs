@@ -179,7 +179,7 @@ const UNPUBLISHED: &[(&str, &str)] = &[
 
 /// Published operations the router does not serve yet. An entry that becomes
 /// served fails the test, so the list only shrinks.
-const NOT_YET_SERVED: &[&str] = &["GET /export", "GET /metrics", "POST /restore"];
+const NOT_YET_SERVED: &[&str] = &["GET /export", "POST /restore"];
 
 const METHODS: [&str; 8] = [
     "get", "put", "post", "delete", "options", "head", "patch", "trace",

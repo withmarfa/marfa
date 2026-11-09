@@ -255,8 +255,7 @@ pub async fn begin_proving(app: Arc<App>, visit: &Visit) -> Result<Begun> {
         &app,
         passkey_challenge_lanes(visit.address),
         "Too many sign-in attempts. Try again later.",
-    )
-    .await?;
+    )?;
     let salt = app.settings.start.key_salt.clone();
     let now_app = app.clone();
     app.db

@@ -387,16 +387,6 @@ CREATE TABLE IF NOT EXISTS setup_proof (
     expires_at TEXT
 ) STRICT, WITHOUT ROWID;
 
-CREATE TABLE IF NOT EXISTS rate_limit_windows (
-    family TEXT NOT NULL,
-    window_key TEXT NOT NULL,
-    count INTEGER NOT NULL,
-    expires_at TEXT NOT NULL,
-    PRIMARY KEY (family, window_key)
-) STRICT, WITHOUT ROWID;
-
-CREATE INDEX IF NOT EXISTS rate_limit_windows_expiry ON rate_limit_windows (expires_at);
-
 -- Spent signatures expire at `expires_at`.
 CREATE TABLE IF NOT EXISTS mcp_spent_confirmations (
     token TEXT PRIMARY KEY NOT NULL,

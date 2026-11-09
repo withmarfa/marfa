@@ -2129,6 +2129,7 @@ fn changing_how_a_native_server_is_reached_restarts_it_and_an_unchanged_run_does
         "https://marfa.example.com",
     ];
     rig.native_installed(&proxy);
+    assert!(rig.setting("MARFA_TRUSTED_PROXY_CIDRS").is_some());
     let (restarts, pid) = (rig.restarts(), rig.service_pid("marfa"));
 
     rig.native_installed(&proxy);
@@ -2312,9 +2313,26 @@ fn a_process_id_that_cannot_be_read_does_not_cancel_the_restart_and_is_said() {
     assert_ne!(rig.service_pid("marfa"), pid);
     assert!(stderr.contains("process ID"), "{stderr}");
     assert!(stderr.contains("answers on port"), "{stderr}");
+    assert!(stderr.contains("restarts it again"), "{stderr}");
+    assert!(!rig.file(".env").contains("MARFA_APPLIED="));
 
     rig.native_installed(&proxy);
-    assert_eq!(rig.restarts(), restarts + 1, "an applied run restarted it");
+    assert_eq!(
+        rig.restarts(),
+        restarts + 2,
+        "an unconfirmed restart was taken as applied"
+    );
+
+    fs::remove_file(rig.home().join("pid-query-fails")).unwrap();
+    rig.native_installed(&proxy);
+    assert_eq!(rig.restarts(), restarts + 3, "{}", rig.manager_log());
+    assert!(rig.file(".env").contains("MARFA_APPLIED="));
+    rig.native_installed(&proxy);
+    assert_eq!(
+        rig.restarts(),
+        restarts + 3,
+        "a confirmed restart was not kept"
+    );
 }
 
 #[test]

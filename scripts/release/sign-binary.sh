@@ -1,21 +1,11 @@
 #!/usr/bin/env bash
-# Sign a macOS binary with the maintainer's Developer ID, under the hardened
-# runtime, and have Apple notarize it. A browser marks what it downloads, and
-# macOS refuses to run a marked program that Apple has not notarized. `curl`
-# and `gh` mark nothing, so only a browser download shows whether this worked.
-#
-# A bare binary cannot carry its notarization ticket, so nothing is stapled:
-# macOS looks the ticket up online the first time a marked copy runs.
-#
-# The identity comes in as a base64 PKCS#12 and is imported into a keychain
-# of the run's own, deleted on exit, so the runner's login keychain is never
-# touched.
+# Signs a macOS binary with a Developer ID under the hardened runtime and notarizes it.
+# A bare binary cannot carry a ticket, so nothing is stapled.
 #
 #   sign-binary.sh <binary>
 #
-# Reads APPLE_DEVELOPER_ID_P12, APPLE_DEVELOPER_ID_P12_PASSWORD,
-# APPLE_NOTARY_KEY, APPLE_NOTARY_KEY_ID, APPLE_NOTARY_ISSUER_ID and
-# APPLE_TEAM_ID from the environment.
+# Reads APPLE_DEVELOPER_ID_P12, APPLE_DEVELOPER_ID_P12_PASSWORD, APPLE_NOTARY_KEY,
+# APPLE_NOTARY_KEY_ID, APPLE_NOTARY_ISSUER_ID and APPLE_TEAM_ID.
 set -euo pipefail
 
 binary="$1"
@@ -38,8 +28,7 @@ fi
 
 work=$(mktemp -d)
 keychain="$work/signing.keychain-db"
-# codesign finds an identity only in a keychain on the user's search list, so
-# the run's keychain joins the list for the signing and the list is put back.
+# codesign finds an identity only in a keychain on the search list.
 searched=()
 while IFS= read -r line; do
   line="${line#"${line%%[![:space:]]*}"}"

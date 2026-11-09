@@ -214,19 +214,30 @@ async function mintKey(label: string): Promise<{ id: string; key: string }> {
 }
 
 /** A key the app mints with its own token, which records the app. */
-async function mintAsApp(
+function mintAsApp(
   signedIn: SignedInApp,
   label: string,
+  permissions: string[] = [],
+): Promise<{ id: string; key: string }> {
+  return mintFrom(signedIn.accessToken, label, permissions);
+}
+
+/** A key that `bearer`, an app's token or a key, mints. */
+async function mintFrom(
+  bearer: string,
+  label: string,
+  permissions: string[] = [],
 ): Promise<{ id: string; key: string }> {
   const response = await fetch(`${server.apiUrl}/keys`, {
     method: "POST",
     headers: {
-      authorization: `Bearer ${signedIn.accessToken}`,
+      authorization: `Bearer ${bearer}`,
       "content-type": "application/json",
     },
     body: JSON.stringify({
       label,
       source: `owner-sign-ins-app-${label.replace(/\W+/g, "-")}`,
+      permissions,
       type_permissions: { "core.note": "read" },
     }),
   });
@@ -782,19 +793,30 @@ describe("the keys an app minted", () => {
   it("stay working when the app ends without revoke_keys", async () => {
     const browser = await signIn();
     const signedIn = await approveApp(browser, "app ended alone");
-    const minted = await mintAsApp(signedIn, "key outliving its app");
+    const minted = await mintAsApp(signedIn, "key outliving its app", [
+      "keys.mint",
+    ]);
+    const descendant = await mintFrom(minted.key, "key outliving its maker");
     expect((await end(await appId("app ended alone"))).status).toBe(200);
     expect(await itemsStatus(server, signedIn.accessToken)).toBe(401);
     expect(await itemsStatus(server, minted.key)).toBe(200);
+    expect(await itemsStatus(server, descendant.key)).toBe(200);
   });
 
-  it("end with the app when revoke_keys is true, and no other key does", async () => {
+  it("end with the app when revoke_keys is true, a key's descendant included, and no other key does", async () => {
     const browser = await signIn();
     const signedIn = await approveApp(browser, "app ended with its keys");
-    const minted = await mintAsApp(signedIn, "key ending with its app");
+    const minted = await mintAsApp(signedIn, "key ending with its app", [
+      "keys.mint",
+    ]);
+    const descendant = await mintFrom(minted.key, "key its key minted");
     const other = await mintKey("key of the owner's own");
-    // The witness: the minted key works before the end.
+    const otherApp = await approveApp(browser, "app beside the ended one");
+    const otherAppKey = await mintAsApp(otherApp, "key of the app beside");
+    // The witness: the minted keys work before the end.
     expect(await itemsStatus(server, minted.key)).toBe(200);
+    expect(await itemsStatus(server, descendant.key)).toBe(200);
+    expect(await itemsStatus(server, otherAppKey.key)).toBe(200);
     const response = await end(
       await appId("app ended with its keys"),
       "?revoke_keys=true",
@@ -808,8 +830,13 @@ describe("the keys an app minted", () => {
     );
     expect(await itemsStatus(server, signedIn.accessToken)).toBe(401);
     expect(await itemsStatus(server, minted.key)).toBe(401);
+    expect(await itemsStatus(server, descendant.key)).toBe(401);
     expect(await itemsStatus(server, other.key)).toBe(200);
-    expect((await signIns()).map((r) => r.id)).not.toContain(minted.id);
+    expect(await itemsStatus(server, otherApp.accessToken)).toBe(200);
+    expect(await itemsStatus(server, otherAppKey.key)).toBe(200);
+    const listed = (await signIns()).map((r) => r.id);
+    expect(listed).not.toContain(minted.id);
+    expect(listed).not.toContain(descendant.id);
   });
 
   it("refuses revoke_keys on a browser and a key 400, and ends neither", async () => {

@@ -1,6 +1,6 @@
 /**
  * Where the image keeps an instance's database replica, and which replica a
- * fresh volume restores: the instance chapter's `instance/replica-*` rules.
+ * fresh volume restores.
  * `harness.ts` says what each boot runs and what it needs.
  *
  * It writes under a prefix of its own and under the default prefix's `db/`,

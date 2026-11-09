@@ -134,10 +134,10 @@ export interface AppConfig {
    *  `AppConfig` literals don't have to supply it; `loadConfig` always
    *  populates it. */
   s3ForcePathStyle?: boolean;
-  /** Key prefix the instance keeps everything in the bucket under
-   *  (`S3_PREFIX`, default `blobs`): the blobs, and the database replica at
-   *  `<prefix>/db`, so one bucket can carry several instances. Optional on
-   *  the type for the same reason as `s3ForcePathStyle`. */
+  /** Key prefix the instance keeps its blobs under in the bucket
+   *  (`S3_PREFIX`, default `blobs`), so one bucket can carry several
+   *  instances. Optional on the type for the same reason as
+   *  `s3ForcePathStyle`. */
   s3Prefix?: string;
   apiKeySalt: string;
   corsOrigins: string[];
@@ -1252,7 +1252,7 @@ const settingsShape = {
     setting(
       keyPrefix,
       () => "blobs",
-      "The key prefix the instance keeps everything in the bucket under: its blobs and, in the image, its database replica under `db/`. Each instance on a bucket needs its own. A `/` at either end is dropped; a `.` or `..` segment is refused.",
+      "The key prefix the instance keeps its blobs under in the bucket. Each instance on a bucket needs its own. A `/` at either end is dropped; a `.` or `..` segment is refused.",
     ),
   ),
   MARFA_BLOB_MIN_COPIES: grouped(

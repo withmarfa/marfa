@@ -1,9 +1,4 @@
-/**
- * `npm publish` reads its argument as a package spec before it reads it as a
- * file. A bare `dir/name.tgz` is GitHub shorthand for the repository `name.tgz`
- * of the user `dir`, so npm tries to clone it over SSH and the publish fails
- * with nothing sent. A tarball has to be named as a path, `./dir/name.tgz`.
- */
+// npm reads a bare `dir/name.tgz` as GitHub shorthand and tries to clone it, so a tarball needs `./`.
 import {
   mkdtempSync,
   readdirSync,

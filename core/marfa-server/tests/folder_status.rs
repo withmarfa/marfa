@@ -244,12 +244,15 @@ async fn a_removed_key_takes_its_reports_and_no_other_sign_ins() {
             .uri(format!("/housekeeping/{name}/run"));
         Instance::send(&instance.control, request, json!({}))
     };
+    let keys = format!("SELECT count(*) FROM api_keys WHERE id = '{ended}'");
     instance.app.clock.advance(29 * DAY_MS).unwrap();
-    assert_eq!(run("revoked-key-reap").await.body["result"]["deleted"], 0);
+    assert!(run("credential-cleanup").await.status.is_success());
+    assert_eq!(instance.count(&keys), 1);
     assert_eq!(instance.count("SELECT count(*) FROM folder_status"), 2);
 
     instance.app.clock.advance(2 * DAY_MS).unwrap();
-    assert_eq!(run("revoked-key-reap").await.body["result"]["deleted"], 1);
+    assert!(run("credential-cleanup").await.status.is_success());
+    assert_eq!(instance.count(&keys), 0);
     assert_eq!(instance.count("SELECT count(*) FROM folder_status"), 1);
     assert_eq!(
         instance.count(&format!(

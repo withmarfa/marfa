@@ -1,8 +1,4 @@
-/**
- * `@withmarfa/core` ships one native binary, built on the macOS release
- * runner, so its manifest has to say it installs only there. The release
- * refuses a packed tarball whose manifest does not.
- */
+// `@withmarfa/core` ships one native binary, so its manifest must limit the install to that platform.
 import {
   mkdirSync,
   mkdtempSync,

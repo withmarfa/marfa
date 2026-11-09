@@ -348,20 +348,23 @@ pub async fn recover(app: &App, new_password: String) -> Result<()> {
         return Err(not_found());
     }
     let hash = app.passwords.hash(new_password).await?;
-    app.write(&Caller::local(), "owner.password.recovered", move |unit| {
-        let tx = unit.tx();
-        let owner = read(tx)?.ok_or_else(not_found)?;
-        set_password(tx, &owner.id, &hash, unit.instant)?;
-        session::end_all(
-            tx,
-            &unit.at,
-            &unit.caller,
-            &Visit::default(),
-            &owner.id,
-            None,
-        )?;
-        limits::clear_account(tx, &owner.email)?;
-        unit.audit("owner", &owner.id, None)
-    })
-    .await
+    let email = app
+        .write(&Caller::local(), "owner.password.recovered", move |unit| {
+            let tx = unit.tx();
+            let owner = read(tx)?.ok_or_else(not_found)?;
+            set_password(tx, &owner.id, &hash, unit.instant)?;
+            session::end_all(
+                tx,
+                &unit.at,
+                &unit.caller,
+                &Visit::default(),
+                &owner.id,
+                None,
+            )?;
+            unit.audit("owner", &owner.id, None)?;
+            Ok(owner.email)
+        })
+        .await?;
+    limits::clear_account(&app.limiter, &email);
+    Ok(())
 }
