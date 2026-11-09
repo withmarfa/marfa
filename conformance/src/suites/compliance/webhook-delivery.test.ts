@@ -242,6 +242,73 @@ it("starts a later maker's delivery at once while one maker holds every attempt 
   }
 });
 
+it("starts a third maker's delivery only when an attempt ends once two makers hold every attempt", async () => {
+  const first = await stallingReceiver();
+  const second = await stallingReceiver();
+  const firstMaker = await keyWith("third-first-maker", reads);
+  const secondMaker = await keyWith("third-second-maker", reads);
+  const thirdMaker = await keyWith("third-third-maker", reads);
+  const made: { id: string; client: MarfaClient }[] = [];
+  const secondMade: { id: string; client: MarfaClient }[] = [];
+  try {
+    for (let i = 0; i < 70; i++) {
+      const hook = await firstMaker.client.createWebhook({
+        url: `http://127.0.0.1:${first.port}/${i}`,
+        events: ["item.created"],
+      });
+      expect(hook.status).toBe(201);
+      made.push({ id: hook.data.id, client: firstMaker.client });
+    }
+    await makeNote("third-first");
+    await waitFor(
+      "the first maker to hold the attempts it may",
+      async () => (first.received() >= 56 ? true : undefined),
+      5_000,
+    );
+    for (let i = 0; i < 8; i++) {
+      const hook = await secondMaker.client.createWebhook({
+        url: `http://127.0.0.1:${second.port}/${i}`,
+        events: ["item.created"],
+      });
+      expect(hook.status).toBe(201);
+      secondMade.push({ id: hook.data.id, client: secondMaker.client });
+    }
+    await makeNote("third-second");
+    await waitFor(
+      "the second maker to hold the attempts left over",
+      async () => (second.received() === 8 ? true : undefined),
+      5_000,
+    );
+    const hook = await thirdMaker.client.createWebhook({
+      url: receiver.hookUrl("third-maker"),
+      events: ["item.created"],
+    });
+    expect(hook.status).toBe(201);
+    made.push({ id: hook.data.id, client: thirdMaker.client });
+    await makeNote("third-third");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(receiver.received.some((r) => r.path === "/hook/third-maker")).toBe(
+      false,
+    );
+    expect(first.received()).toBe(56);
+    // Removed first, so the second maker's later deliveries do not take the freed attempts.
+    await removeAll(secondMade);
+    secondMade.length = 0;
+    second.server.closeAllConnections();
+    await waitFor(
+      "the third maker's delivery once the second maker's attempts end",
+      async () => receiver.received.find((r) => r.path === "/hook/third-maker"),
+      5_000,
+    );
+    expect(first.received()).toBe(56);
+  } finally {
+    await removeAll(made);
+    await removeAll(secondMade);
+    await closeStalled(first.server);
+    await closeStalled(second.server);
+  }
+});
+
 beforeAll(async () => {
   ({ ctx, client, apiUrl } = await createTestContext(
     "compliance",

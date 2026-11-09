@@ -1705,15 +1705,17 @@ While no subscription of another maker has a delivery due, the server MUST start
 
 While a maker has 8 or more delivery attempts in flight, the server MUST NOT start a further attempt for that maker whenever 56 or more attempts are in flight.
 
-**Reason:** the 8 slots left free let a delivery of another maker that falls due later start at once, however many attempts one maker holds. Attempts already in flight finish.
+**Reason:** a maker alone holds at most 56 of the 64 attempts. The 8 attempts left over serve the first 8 attempts of the makers whose deliveries fall due later, in total and not for each maker. Attempts already in flight finish.
 
 **Tests:** `compliance/webhook-delivery.test.ts › starts a later maker's delivery at once while one maker holds every attempt it may`.
 
 ### `events/delivery-maker-isolation`
 
-While the subscriptions of one maker have receivers that do not answer, the server MUST start a due delivery of another maker's subscription without waiting for those attempts to finish.
+While the subscriptions of one maker have receivers that do not answer, the server MUST start a due delivery of another maker's subscription without waiting for those attempts to finish whenever that other maker has fewer than 8 attempts in flight and fewer than 64 attempts are in flight.
 
-**Tests:** `compliance/webhook-delivery.test.ts › delivers promptly to a second maker while one maker's subscriptions never answer`, `compliance/webhook-delivery.test.ts › starts a later maker's delivery at once while one maker holds every attempt it may`.
+**Reason:** the 8 attempts that the one maker leaves free are shared by every later maker. Once they are in flight, a delivery of a further maker starts when an attempt ends.
+
+**Tests:** `compliance/webhook-delivery.test.ts › delivers promptly to a second maker while one maker's subscriptions never answer`, `compliance/webhook-delivery.test.ts › starts a later maker's delivery at once while one maker holds every attempt it may`, `compliance/webhook-delivery.test.ts › starts a third maker's delivery only when an attempt ends once two makers hold every attempt`.
 
 ## The audit log
 
