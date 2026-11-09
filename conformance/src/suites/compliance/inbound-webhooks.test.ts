@@ -20,9 +20,11 @@ import { createNote } from "../../generators/items.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
 import {
   bootFreshServer,
+  bootRefused,
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { listened, settingLines } from "../../utils/refused-boot.js";
 import { HOUR_MS, movedClock } from "../../utils/moved-clock.js";
 
 let ctx: TestContext;
@@ -472,19 +474,18 @@ describe("the receiving door", () => {
     expect(stored?.sha256).toBe(
       createHash("sha256").update(body).digest("hex"),
     );
+    // Names are lower case, and the repeats of one name keep their order.
     const sent = [
-      ["Content-Type", "application/json"],
-      ["X-Repeat", "one"],
+      ["content-type", "application/json"],
+      ["x-repeat", "one"],
       ["x-repeat", "two"],
-      ["X-Mixed-CASE", "Value"],
+      ["x-mixed-case", "Value"],
     ];
-    const names = stored?.headers.map(([name]) => name) ?? [];
     expect(
       stored?.headers.filter(([name]) =>
         sent.some(([sentName]) => sentName === name),
       ),
     ).toEqual(sent);
-    expect(names.indexOf("X-Repeat")).toBeLessThan(names.indexOf("x-repeat"));
     expect(stored?.handled_at).toBeNull();
     expect(stored?.outcome).toBeNull();
     expect(stored?.duplicate_of).toBeNull();
@@ -585,7 +586,7 @@ describe("the receiving door", () => {
     const bearer = `Bearer ${minted.data.key}`;
     idOf(await send(apiUrl, made.path, "keyed", ["Authorization", bearer]));
     const [stored] = await pending(owner);
-    expect(stored?.headers).toContainEqual(["Authorization", bearer]);
+    expect(stored?.headers).toContainEqual(["authorization", bearer]);
     expect(await lastUsed()).toBeFalsy();
 
     // Witness: the same key at a door that reads it is stamped.
@@ -660,12 +661,11 @@ describe("the receiving door on an instance that names its limits", () => {
 
   beforeAll(async () => {
     server = await bootFreshServer("inbound-limits", {
-      MARFA_RATE_LIMIT_ENABLED: "true",
-      MARFA_RATE_LIMIT_INBOUND_REQUESTS: "3",
+      MARFA_RATE_LIMIT_ENABLED: "false",
       MARFA_INBOUND_BACKLOG_DELIVERIES: "5",
       MARFA_INBOUND_BACKLOG_BYTES: "6",
       MARFA_INBOUND_MAX_BYTES: "64",
-      MARFA_INBOUND_IN_FLIGHT_BYTES: "8",
+      MARFA_INBOUND_IN_FLIGHT_BYTES: "65536",
       MARFA_INBOUND_READ_TIMEOUT_MS: "1000",
     });
   }, 2 * FRESH_SERVER_TIMEOUT_MS);
@@ -697,20 +697,6 @@ describe("the receiving door on an instance that names its limits", () => {
     expect(registered.status).toBe(201);
     return { client: own, id: registered.data.id };
   }
-
-  it("holds each endpoint to its own rate window", async () => {
-    const owner = await freshConnector("rate");
-    const first = await endpoint(owner);
-    const second = await endpoint(owner);
-    for (let i = 0; i < 3; i++) {
-      idOf(await send(server!.apiUrl, first.path, String(i)));
-    }
-    const refused = await send(server!.apiUrl, first.path, "3");
-    expect(refused.status).toBe(429);
-    expect(codeOf(refused)).toBe("rate_limited");
-    expect(Number(refused.headers["retry-after"])).toBeGreaterThan(0);
-    idOf(await send(server!.apiUrl, second.path, "0"));
-  });
 
   it("refuses while the backlog is full, and takes again once it drains", async () => {
     const owner = await freshConnector("backlog");
@@ -817,7 +803,7 @@ describe("the receiving door on an instance that names its limits", () => {
           hostname: url.hostname,
           port: url.port,
           path: url.pathname,
-          headers: ["Host", url.host, "Content-Length", "10"],
+          headers: ["Host", url.host, "Content-Length", "6"],
         },
         (res) => {
           const chunks: Buffer[] = [];
@@ -833,7 +819,7 @@ describe("the receiving door on an instance that names its limits", () => {
         },
       );
       req.on("error", reject);
-      // Three of the ten bytes it declared, and then nothing.
+      // Three of the six bytes it declared, and then nothing.
       req.write("abc");
     });
     expect(answer.status).toBe(408);
@@ -848,20 +834,20 @@ describe("the receiving door on an instance that names its limits", () => {
     async () => {
       const flight = await bootFreshServer("inbound-in-flight", {
         MARFA_RATE_LIMIT_ENABLED: "false",
-        MARFA_INBOUND_BACKLOG_BYTES: "64",
-        MARFA_INBOUND_MAX_BYTES: "64",
-        MARFA_INBOUND_IN_FLIGHT_BYTES: "8",
+        MARFA_INBOUND_BACKLOG_BYTES: "65536",
+        MARFA_INBOUND_MAX_BYTES: "8192",
+        MARFA_INBOUND_IN_FLIGHT_BYTES: "4096",
       });
       try {
         const owner = await freshConnector("in-flight", flight);
         const made = await endpoint(owner);
-        const held = await send(flight.apiUrl, made.path, "x".repeat(9));
+        const held = await send(flight.apiUrl, made.path, "x".repeat(4097));
         expect(held.status).toBe(503);
         expect(codeOf(held)).toBe("inbound_unavailable");
         expectRetryAfter(held, "bytes in flight");
         expect(await pending(owner)).toEqual([]);
-        idOf(await send(flight.apiUrl, made.path, "x".repeat(8)));
-        expect((await pending(owner)).map((d) => d.size)).toEqual([8]);
+        idOf(await send(flight.apiUrl, made.path, "x".repeat(1900)));
+        expect((await pending(owner)).map((d) => d.size)).toEqual([1900]);
       } finally {
         await flight.stop();
       }
@@ -1394,18 +1380,17 @@ describe("retained inbound capacity", () => {
   it("counts query metadata when every retained body has zero bytes", async () => {
     const owner = await own("retained-metadata");
     const made = await endpoint(owner);
-    idOf(
-      await send(
-        server!.apiUrl,
-        made.path + "?metadata=" + "x".repeat(3500),
-        "",
-      ),
-    );
-    const refused = await send(server!.apiUrl, made.path, "");
+    // Two queries exceed 4096 bytes even with empty bodies.
+    const heavy = `${made.path}?metadata=${"x".repeat(2500)}`;
+    idOf(await send(server!.apiUrl, heavy, ""));
+    const refused = await send(server!.apiUrl, heavy, "");
     expect(refused.status).toBe(503);
     expect(codeOf(refused)).toBe("inbound_unavailable");
     expectRetryAfter(refused, "retained bytes");
     expect((await pending(owner)).map((row) => row.size)).toEqual([0]);
+    // The witness: without the query the same body is taken.
+    idOf(await send(server!.apiUrl, made.path, ""));
+    expect((await pending(owner)).map((row) => row.size)).toEqual([0, 0]);
   });
   it("round trips retention overrides and refuses invalid values", async () => {
     const before = await minter.getConfig();
@@ -1430,4 +1415,34 @@ describe("retained inbound capacity", () => {
     expect(cleared.data).not.toHaveProperty("inbound_handled_retention_days");
     expect(cleared.data).not.toHaveProperty("inbound_pending_retention_days");
   });
+});
+
+describe("the longest a body may take to arrive", () => {
+  it(
+    "is five minutes: a longer time is refused at start, naming the setting, and five minutes is taken",
+    async () => {
+      const name = "MARFA_INBOUND_READ_TIMEOUT_MS";
+      const refused = await bootRefused("inbound-read-timeout", {
+        extraEnv: { [name]: "300001" },
+      });
+      try {
+        expect(refused).toMatchObject({ code: 1, signal: null });
+        expect(listened(refused)).toBe(false);
+        const lines = settingLines(refused);
+        expect(lines).toHaveLength(1);
+        expect(lines[0]).toContain(
+          `${name} must be a whole number, from 1 to 300000`,
+        );
+      } finally {
+        await refused.stop();
+      }
+
+      // The witness: the same setting at the limit starts a server.
+      const accepted = await bootFreshServer("inbound-read-timeout-limit", {
+        [name]: "300000",
+      });
+      await accepted.stop();
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
 });

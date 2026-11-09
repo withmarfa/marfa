@@ -4,7 +4,7 @@ mod moving;
 mod read;
 pub mod write;
 
-pub(crate) use moving::finish_move;
+pub(crate) use moving::{Guard, dry_run, finish_move, start_guarded};
 pub use moving::{Move, move_type};
 pub use read::{get, list, normalize};
 use write::not_found;

@@ -366,7 +366,7 @@ describe("connector interfaces", () => {
       (await call(`/connectors/${id}/hold`, "POST", { process: "p" })).status,
     ).toBe(200);
     for (const map of [
-      { bad: "😀".repeat(251) },
+      { bad: "😀".repeat(501) },
       Object.fromEntries(
         Array.from({ length: 201 }, (_, i) => [String(i), "bad"]),
       ),
@@ -380,7 +380,7 @@ describe("connector interfaces", () => {
         }
       ).problems,
     ).toEqual(problems);
-    expect((await write({ unicode: "😀".repeat(250) })).status).toBe(200);
+    expect((await write({ unicode: "😀".repeat(500) })).status).toBe(200);
     expect(
       (
         await call(`/connectors/${id}/state`, "PUT", {

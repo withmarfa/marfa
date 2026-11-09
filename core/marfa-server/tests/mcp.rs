@@ -2589,3 +2589,413 @@ async fn a_webhook_secret_is_shown_once_when_it_is_made_and_in_no_other_answer()
     }
     assert!(answers[0].payload()["webhooks"][0].get("secret").is_none());
 }
+
+const FROM: &str = "user.lead";
+const TO: &str = "user.contact";
+
+/// A credential that may move items, with the two types registered and one lead saved.
+async fn mover(instance: &Instance) -> String {
+    marfa_server::app::jobs::start(&instance.app);
+    let token = instance
+        .key(json!({
+            "type_permissions": { "*": "write" },
+            "metadata_permissions": { "*": "write" },
+            "permissions": ["schema.write", "webhooks.manage"],
+        }))
+        .await;
+    for id in [TO, FROM] {
+        let made = instance
+            .tool_at(
+                SCHEMA,
+                &token,
+                "marfa_save_type",
+                json!({ "action": "register", "id": id, "fields": { "title": { "type": "string" } } }),
+            )
+            .await;
+        assert!(!made.failed, "{}", made.value);
+    }
+    token
+}
+
+async fn lead(instance: &Instance, token: &str, title: &str) -> String {
+    let made = instance
+        .tool(
+            token,
+            "marfa_create",
+            json!({ "type": FROM, "properties": { "title": title } }),
+        )
+        .await;
+    made.payload()["id"].as_str().unwrap().to_string()
+}
+
+async fn type_of(instance: &Instance, token: &str, id: &str) -> String {
+    let read = instance
+        .tool(token, "marfa_get", json!({ "ids": [id] }))
+        .await;
+    read.payload()["items"][0]["type"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+async fn move_preview(instance: &Instance, token: &str) -> Tool {
+    instance
+        .tool_at(
+            SCHEMA,
+            token,
+            "marfa_move_items",
+            json!({ "from": FROM, "to": TO }),
+        )
+        .await
+}
+
+async fn move_with(instance: &Instance, token: &str, confirm: &str) -> Tool {
+    instance
+        .tool_at(
+            SCHEMA,
+            token,
+            "marfa_move_items",
+            json!({ "from": FROM, "to": TO, "confirm": confirm }),
+        )
+        .await
+}
+
+/// Follows a started move until the job ends, and answers its status.
+async fn finished(instance: &Instance, token: &str, started: &Tool) -> String {
+    let id = started.payload()["job"]["id"].as_str().unwrap().to_string();
+    for _ in 0..500 {
+        let progress = instance
+            .tool_at(SCHEMA, token, "marfa_move_items", json!({ "job_id": id }))
+            .await;
+        let status = progress.payload()["job"]["status"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        if status == "completed" || status == "failed" {
+            return status;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("the move did not finish");
+}
+
+#[tokio::test]
+async fn a_move_preview_names_the_items_and_moves_none_until_the_token_is_sent() {
+    let instance = Instance::start(&[]).await;
+    let token = mover(&instance).await;
+    let id = lead(&instance, &token, "Ada").await;
+    let shown = move_preview(&instance, &token).await;
+    assert_eq!(shown.payload()["matched"], 1);
+    assert_eq!(shown.payload()["ids"][0], id.as_str());
+    assert_eq!(type_of(&instance, &token, &id).await, FROM);
+    assert!(instance.audited("items.bulk_action").await.is_empty());
+    // The witness: the same token starts the move, and the item changes type.
+    let confirm = shown.payload()["confirm"].as_str().unwrap();
+    let started = move_with(&instance, &token, confirm).await;
+    assert_eq!(finished(&instance, &token, &started).await, "completed");
+    assert_eq!(type_of(&instance, &token, &id).await, TO);
+}
+
+#[tokio::test]
+async fn a_move_confirmation_works_once() {
+    let instance = Instance::start(&[]).await;
+    let token = mover(&instance).await;
+    let first = lead(&instance, &token, "Ada").await;
+    let confirm = move_preview(&instance, &token).await.payload()["confirm"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let started = move_with(&instance, &token, &confirm).await;
+    assert_eq!(finished(&instance, &token, &started).await, "completed");
+    assert_eq!(type_of(&instance, &token, &first).await, TO);
+
+    // A lead saved after the move makes a replay observable.
+    let later = lead(&instance, &token, "Grace").await;
+    let replay = move_with(&instance, &token, &confirm).await;
+    assert_eq!(replay.code(), "confirmation_stale");
+    assert_eq!(type_of(&instance, &token, &later).await, FROM);
+    assert_eq!(instance.audited("items.bulk_action").await.len(), 1);
+}
+
+#[tokio::test]
+async fn a_move_confirmation_sent_by_another_credential_moves_nothing() {
+    let instance = Instance::start(&[]).await;
+    let owner = mover(&instance).await;
+    let other = instance
+        .key(json!({ "type_permissions": { "*": "write" } }))
+        .await;
+    let id = lead(&instance, &owner, "Ada").await;
+    let confirm = move_preview(&instance, &owner).await.payload()["confirm"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let refused = move_with(&instance, &other, &confirm).await;
+    assert_eq!(refused.code(), "confirmation_stale");
+    assert_eq!(type_of(&instance, &owner, &id).await, FROM);
+    // The witness: the credential it was issued to starts the move.
+    let started = move_with(&instance, &owner, &confirm).await;
+    assert_eq!(finished(&instance, &owner, &started).await, "completed");
+}
+
+#[tokio::test]
+async fn a_move_confirmation_sent_after_five_minutes_moves_nothing() {
+    let instance = Instance::start(&[]).await;
+    let token = mover(&instance).await;
+    let id = lead(&instance, &token, "Ada").await;
+    let confirm = move_preview(&instance, &token).await.payload()["confirm"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    instance.app.clock.advance(5 * 60_000 + 1).unwrap();
+    let refused = move_with(&instance, &token, &confirm).await;
+    assert_eq!(refused.code(), "confirmation_stale");
+    assert!(
+        refused.value["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("expired")
+    );
+    assert_eq!(type_of(&instance, &token, &id).await, FROM);
+    // The witness: the new preview's confirmation starts the move.
+    let fresh = refused.value["error"]["confirm"].as_str().unwrap();
+    let started = move_with(&instance, &token, fresh).await;
+    assert_eq!(finished(&instance, &token, &started).await, "completed");
+}
+
+#[tokio::test]
+async fn a_move_confirmation_is_refused_once_an_item_of_the_type_changed() {
+    let instance = Instance::start(&[]).await;
+    let token = mover(&instance).await;
+    let first = lead(&instance, &token, "Ada").await;
+    let confirm = move_preview(&instance, &token).await.payload()["confirm"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let second = lead(&instance, &token, "Grace").await;
+    let refused = move_with(&instance, &token, &confirm).await;
+    assert_eq!(refused.code(), "confirmation_stale");
+    assert_eq!(refused.value["error"]["matched"], 2);
+    assert_eq!(type_of(&instance, &token, &first).await, FROM);
+    assert_eq!(type_of(&instance, &token, &second).await, FROM);
+    // The witness: the confirmation of the new preview moves both.
+    let fresh = refused.value["error"]["confirm"].as_str().unwrap();
+    let started = move_with(&instance, &token, fresh).await;
+    assert_eq!(finished(&instance, &token, &started).await, "completed");
+    assert_eq!(type_of(&instance, &token, &second).await, TO);
+}
+
+#[tokio::test]
+async fn a_move_confirmation_is_refused_once_a_setting_names_the_type() {
+    let instance = Instance::start(&[("MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES", "true")]).await;
+    let token = mover(&instance).await;
+    let id = lead(&instance, &token, "Ada").await;
+    let shown = move_preview(&instance, &token).await;
+    assert_eq!(shown.payload()["settings"], json!([]));
+    let made = instance
+        .call(
+            &token,
+            Method::POST,
+            "/webhooks",
+            Some(json!({
+                "url": "http://127.0.0.1:9/move",
+                "events": ["item.created"],
+                "type_filter": FROM,
+            })),
+        )
+        .await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    let confirm = shown.payload()["confirm"].as_str().unwrap();
+    let refused = move_with(&instance, &token, confirm).await;
+    assert_eq!(refused.code(), "confirmation_stale");
+    assert_ne!(refused.value["error"]["settings"], json!([]));
+    assert_eq!(type_of(&instance, &token, &id).await, FROM);
+    // The witness: the new preview's confirmation moves the item.
+    let fresh = refused.value["error"]["confirm"].as_str().unwrap();
+    let started = move_with(&instance, &token, fresh).await;
+    assert_eq!(finished(&instance, &token, &started).await, "completed");
+    assert_eq!(type_of(&instance, &token, &id).await, TO);
+}
+
+#[tokio::test]
+async fn an_item_that_arrives_between_the_check_and_the_commit_is_not_moved() {
+    let instance = Instance::start(&[]).await;
+    let token = mover(&instance).await;
+    let first = lead(&instance, &token, "Ada").await;
+    let confirm = move_preview(&instance, &token).await.payload()["confirm"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    instance
+        .app
+        .faults
+        .set("hold:write", Some("items.bulk_action"))
+        .unwrap();
+    let confirming = move_with(&instance, &token, &confirm);
+    let arriving = async {
+        for _ in 0..500 {
+            if instance.app.faults.list().iter().any(|f| f.waiting > 0) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+        let made = instance
+            .call(
+                &token,
+                Method::POST,
+                "/items",
+                Some(json!({ "type": FROM, "properties": { "title": "Late" } })),
+            )
+            .await;
+        assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+        instance.app.faults.clear(Some("hold:write"));
+    };
+    let (refused, ()) = tokio::join!(confirming, arriving);
+    assert_eq!(refused.code(), "confirmation_stale");
+    assert_eq!(type_of(&instance, &token, &first).await, FROM);
+    assert_eq!(refused.value["error"]["matched"], 2);
+}
+
+#[tokio::test]
+async fn the_move_tool_is_offered_only_to_a_credential_that_writes_a_type() {
+    let instance = Instance::start(&[]).await;
+    let reader = instance
+        .key(json!({ "type_permissions": { "core.note": "read" } }))
+        .await;
+    let one = instance
+        .key(json!({ "type_permissions": { "core.note": "write" } }))
+        .await;
+    let mover = "marfa_move_items".to_string();
+    assert!(!instance.names_at(SCHEMA, &reader).await.contains(&mover));
+    assert!(instance.names_at(SCHEMA, &one).await.contains(&mover));
+    assert!(!instance.names(&one).await.contains(&mover));
+    unoffered(
+        &instance,
+        SCHEMA,
+        &reader,
+        "marfa_move_items",
+        json!({ "from": FROM, "to": TO }),
+    )
+    .await;
+}
+
+async fn view_of_leads(instance: &Instance, token: &str) -> String {
+    let made = instance
+        .tool_at(
+            SCHEMA,
+            token,
+            "marfa_save_view",
+            json!({ "title": "Leads", "query": { "types": [FROM] } }),
+        )
+        .await;
+    assert!(!made.failed, "{}", made.value);
+    made.payload()["id"].as_str().unwrap().to_string()
+}
+
+async fn register_subtype(instance: &Instance, token: &str) {
+    let made = instance
+        .tool_at(
+            SCHEMA,
+            token,
+            "marfa_save_type",
+            json!({
+                "action": "register",
+                "id": "user.lead.cold",
+                "parent": FROM,
+                "fields": { "title": { "type": "string" } },
+            }),
+        )
+        .await;
+    assert!(!made.failed, "{}", made.value);
+}
+
+#[tokio::test]
+async fn a_move_confirmation_is_refused_once_the_type_gained_a_subtype() {
+    let instance = Instance::start(&[]).await;
+    let token = mover(&instance).await;
+    lead(&instance, &token, "Ada").await;
+    let view = view_of_leads(&instance, &token).await;
+    let shown = move_preview(&instance, &token).await;
+    assert_eq!(shown.payload()["settings"].as_array().unwrap().len(), 1);
+    register_subtype(&instance, &token).await;
+    let confirm = shown.payload()["confirm"].as_str().unwrap();
+    let refused = move_with(&instance, &token, confirm).await;
+    assert_eq!(refused.code(), "confirmation_stale", "{}", refused.value);
+    // The witness: the new preview's confirmation moves the items, and the view keeps its subtypes.
+    let fresh = refused.value["error"]["confirm"].as_str().unwrap();
+    let started = move_with(&instance, &token, fresh).await;
+    assert_eq!(finished(&instance, &token, &started).await, "completed");
+    let read = instance
+        .call(&token, Method::GET, "/items?type=system.view", None)
+        .await;
+    let held = read.body["data"]
+        .as_array()
+        .and_then(|views| views.iter().find(|item| item["id"] == view.as_str()))
+        .cloned();
+    assert_eq!(
+        held.as_ref()
+            .map(|item| &item["properties"]["query"]["types"]),
+        Some(&json!([FROM, TO])),
+        "{}",
+        read.body
+    );
+}
+
+#[tokio::test]
+async fn a_move_confirmation_is_stale_when_a_setting_became_blocked_after_the_preview() {
+    let instance = Instance::start(&[("MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES", "true")]).await;
+    let token = mover(&instance).await;
+    let id = lead(&instance, &token, "Ada").await;
+    let shown = move_preview(&instance, &token).await;
+    register_subtype(&instance, &token).await;
+    let made = instance
+        .call(
+            &token,
+            Method::POST,
+            "/webhooks",
+            Some(json!({
+                "url": "http://127.0.0.1:9/move",
+                "events": ["item.created"],
+                "type_filter": FROM,
+            })),
+        )
+        .await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    let confirm = shown.payload()["confirm"].as_str().unwrap();
+    let refused = move_with(&instance, &token, confirm).await;
+    assert_eq!(refused.code(), "confirmation_stale", "{}", refused.value);
+    assert_eq!(refused.value["error"]["settings"][0]["reason"], "subtypes");
+    assert!(refused.value["error"].get("confirm").is_none());
+    assert_eq!(type_of(&instance, &token, &id).await, FROM);
+    // The witness: a fresh preview of the blocked move is refused as blocked.
+    assert_eq!(
+        move_preview(&instance, &token).await.code(),
+        "type_move_blocked"
+    );
+}
+
+#[tokio::test]
+async fn a_move_confirmation_survives_properties_sent_in_another_order() {
+    let instance = Instance::start(&[]).await;
+    let token = mover(&instance).await;
+    let id = lead(&instance, &token, "Ada").await;
+    let shown = instance
+        .tool_at(
+            SCHEMA,
+            &token,
+            "marfa_move_items",
+            json!({ "from": FROM, "to": TO, "properties": { "title": "A", "notes": "B" } }),
+        )
+        .await;
+    let confirm = shown.payload()["confirm"].as_str().unwrap();
+    let started = instance
+        .tool_at(
+            SCHEMA,
+            &token,
+            "marfa_move_items",
+            json!({ "from": FROM, "to": TO, "properties": { "notes": "B", "title": "A" }, "confirm": confirm }),
+        )
+        .await;
+    assert!(!started.failed, "{}", started.value);
+    finished(&instance, &token, &started).await;
+    assert_eq!(type_of(&instance, &token, &id).await, TO);
+}

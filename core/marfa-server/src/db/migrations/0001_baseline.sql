@@ -1118,3 +1118,57 @@ WHEN OLD.key <> 'health_probe'
 BEGIN
     INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
 END;
+-- Source takeover changes the binding without deleting endpoints or deliveries.
+CREATE TABLE IF NOT EXISTS inbound_sources (
+    source TEXT PRIMARY KEY CHECK (length(source) > 0),
+    connector_id TEXT NOT NULL UNIQUE REFERENCES connectors (id) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID;
+
+-- The address is stored as a hash and its last four characters.
+CREATE TABLE IF NOT EXISTS inbound_endpoints (
+    seq INTEGER PRIMARY KEY,
+    id TEXT NOT NULL UNIQUE,
+    source TEXT NOT NULL REFERENCES inbound_sources (source) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE CHECK (length(token_hash) = 64),
+    token_last4 TEXT NOT NULL CHECK (length(token_last4) = 4),
+    label TEXT CHECK (label IS NULL OR length(label) > 0),
+    duplicate_header TEXT,
+    created_at TEXT NOT NULL,
+    retired_at TEXT
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS inbound_endpoints_source ON inbound_endpoints (source, seq);
+
+-- `charge` is the bytes the delivery holds against a registration's retained limits: body, headers and query.
+CREATE TABLE IF NOT EXISTS inbound_deliveries (
+    seq INTEGER PRIMARY KEY,
+    id TEXT NOT NULL UNIQUE,
+    endpoint_id TEXT NOT NULL REFERENCES inbound_endpoints (id) ON DELETE CASCADE,
+    source TEXT NOT NULL,
+    received_at TEXT NOT NULL,
+    method TEXT NOT NULL,
+    query TEXT NOT NULL,
+    headers TEXT NOT NULL CHECK (json_valid(headers)),
+    size INTEGER NOT NULL CHECK (size >= 0),
+    sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
+    dedupe_key TEXT,
+    charge INTEGER NOT NULL CHECK (charge >= size),
+    handled_at TEXT,
+    outcome TEXT CHECK (outcome IN ('processed', 'duplicate', 'rejected')),
+    CHECK ((handled_at IS NULL) = (outcome IS NULL))
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS inbound_deliveries_order ON inbound_deliveries (source, received_at, seq);
+CREATE INDEX IF NOT EXISTS inbound_deliveries_tally ON inbound_deliveries (source, handled_at, size, charge);
+CREATE INDEX IF NOT EXISTS inbound_deliveries_endpoint ON inbound_deliveries (endpoint_id, received_at, seq);
+CREATE INDEX IF NOT EXISTS inbound_deliveries_repeat
+    ON inbound_deliveries (endpoint_id, dedupe_key, received_at, seq) WHERE dedupe_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS inbound_deliveries_pending_age
+    ON inbound_deliveries (received_at, seq) WHERE handled_at IS NULL;
+CREATE INDEX IF NOT EXISTS inbound_deliveries_handled_age
+    ON inbound_deliveries (handled_at, seq) WHERE handled_at IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS inbound_bodies (
+    delivery_seq INTEGER PRIMARY KEY REFERENCES inbound_deliveries (seq) ON DELETE CASCADE,
+    body BLOB NOT NULL
+) STRICT;

@@ -27,6 +27,7 @@ const FEATURES: &[(&str, &str)] = &[
     ("audit", "GET /audit"),
     ("edges", "POST /edges"),
     ("connectors", "GET /connectors"),
+    ("inbound_webhooks", "POST /connectors/{id}/endpoints"),
     ("webhooks", "GET /webhooks"),
 ];
 

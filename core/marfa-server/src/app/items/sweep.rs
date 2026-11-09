@@ -121,10 +121,10 @@ struct Batch {
 /// One batch, inside the write that removes it: the retention is read here, so
 /// a retention raised or set to zero during a run holds for what has not gone.
 fn purge_batch(unit: &Unit<'_, '_>, app: &App, after: &Position) -> Result<Batch> {
-    let Some(before) = cutoff(app, TRASH_RETENTION_DAYS, DAY_MS) else {
+    let tx = unit.tx();
+    let Some(before) = cutoff(tx, app, TRASH_RETENTION_DAYS, DAY_MS)? else {
         return Ok(Batch::default());
     };
-    let tx = unit.tx();
     let catalog = catalog::current(&app.catalog_handle(), tx, Snapshot::Pending)?;
     let gate = Gate {
         tx,
@@ -192,12 +192,15 @@ fn result(deleted: usize, passed_over: usize) -> Value {
 }
 
 pub async fn trash_purge(app: Arc<App>, run: Run) -> Result<Report> {
-    let Some(before) = cutoff(&app, TRASH_RETENTION_DAYS, DAY_MS) else {
-        return Ok(Report::done(result(0, 0)));
-    };
+    let live = app.clone();
     let due = app
         .db
-        .read(move |tx| Ok(!binned_after(tx, &before, &Position::default(), 1)?.is_empty()))
+        .read(
+            move |tx| match cutoff(tx, &live, TRASH_RETENTION_DAYS, DAY_MS)? {
+                Some(before) => Ok(!binned_after(tx, &before, &Position::default(), 1)?.is_empty()),
+                None => Ok(false),
+            },
+        )
         .await?;
     if !due {
         return Ok(Report::done(result(0, 0)));

@@ -16,6 +16,7 @@ use crate::app::access::Caller;
 use crate::app::faults::{FAIL_BLOB_READ, HOLD_BLOB_PURGE, HOLD_BLOB_READ, Lie};
 use crate::app::housekeeping::{Report, Run};
 use crate::app::refusal::Result;
+use crate::app::stored;
 use crate::db::Write;
 use crate::settings::registry::{
     BLOB_CLEANUP_GRACE_MS, BLOB_CLEANUP_INTERVAL_MS, BLOB_INTEGRITY_BATCH,
@@ -489,6 +490,19 @@ pub async fn integrity(app: Arc<App>, run: Run) -> Result<Report> {
     })))
 }
 
+/// Empty while the sweep is off. Read from `tx`, since the live settings lag a committed change.
+fn purgeable(tx: &rusqlite::Transaction<'_>, app: &App) -> Result<Vec<Hash>> {
+    let seeds = app.settings.seeds();
+    if stored::deciding(tx, &seeds, BLOB_CLEANUP_INTERVAL_MS)? == 0 {
+        return Ok(Vec::new());
+    }
+    let grace = stored::deciding(tx, &seeds, BLOB_CLEANUP_GRACE_MS)?;
+    let cutoff = app
+        .clock
+        .stamp_ago(i64::try_from(grace).unwrap_or(i64::MAX));
+    rows::purge_candidates(tx, &cutoff)
+}
+
 /// Finishes the deletions a purge left, reports every blob nothing references, and purges
 /// each one an earlier run reported at least the grace ago that nothing names at the moment
 /// it is purged.
@@ -496,15 +510,12 @@ pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
     let mut unreachable = BTreeSet::new();
     app.retry_deletions(&run, LEFTOVERS, true, &mut unreachable)
         .await?;
-    let grace = i64::try_from(app.settings.live().get(BLOB_CLEANUP_GRACE_MS)).unwrap_or(i64::MAX);
-    let cutoff = app.clock.stamp_ago(grace);
-    let at = app.clock.stamp();
-    let chosen = cutoff.clone();
+    let (live, at) = (app.clone(), app.clock.stamp());
     let candidates = app
         .db
         .write(Write::own(), move |tx| {
             // Chosen before this run reports, so only an earlier run's report is purged.
-            let candidates = rows::purge_candidates(tx, &chosen)?;
+            let candidates = purgeable(tx, &live)?;
             rows::report_orphans(tx, &at)?;
             Ok(candidates)
         })
@@ -518,11 +529,11 @@ pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
             .collect();
         let named = app.db.read(move |tx| rows::named(tx, &hexes)).await?;
         app.faults.hold(HOLD_BLOB_PURGE, None).await;
+        let live = app.clone();
         let gone = app
             .write(&Caller::Server, "blob.purge", move |unit| {
                 let tx = unit.tx();
-                let still: HashSet<Hash> =
-                    rows::purge_candidates(tx, &cutoff)?.into_iter().collect();
+                let still: HashSet<Hash> = purgeable(tx, &live)?.into_iter().collect();
                 let chosen: Vec<Hash> = candidates
                     .into_iter()
                     .filter(|hash| still.contains(hash))

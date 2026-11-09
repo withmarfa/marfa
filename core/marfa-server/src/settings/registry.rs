@@ -336,6 +336,16 @@ registry! {
     REVOKED_KEY_REAP_INTERVAL_MS: u64 = "revoked_key_reap_interval_ms", INTERVAL, "3600000", "How often the `revoked-key-reap` job runs, in milliseconds.";
     TRASH_PURGE_INTERVAL_MS: u64 = "trash_purge_interval_ms", INTERVAL, "86400000", "How often the `trash-purge` job runs, in milliseconds.";
     VERSION_THINNING_INTERVAL_MS: u64 = "version_thinning_interval_ms", INTERVAL, "3600000", "How often the `version-thinning` job runs, in milliseconds.";
+    INBOUND_MAX_BYTES: u64 = "inbound_max_bytes", BYTES, "26214400", "The largest inbound webhook delivery the server stores, in bytes.";
+    INBOUND_IN_FLIGHT_BYTES: u64 = "inbound_in_flight_bytes", BYTES, "104857600", "The most bytes of inbound webhook deliveries the server holds in memory at once. One source holds at most half.";
+    INBOUND_READ_TIMEOUT_MS: u64 = "inbound_read_timeout_ms", Rule::Whole { min: 1, max: 300_000 }, "30000", "How long an inbound webhook delivery's body has to arrive whole, in milliseconds.";
+    INBOUND_BACKLOG_DELIVERIES: u64 = "inbound_backlog_deliveries", COUNT, "10000", "The unhandled deliveries one registration may hold before the server refuses more for it.";
+    INBOUND_BACKLOG_BYTES: u64 = "inbound_backlog_bytes", BYTES, "1073741824", "The bytes of unhandled deliveries one registration may hold before the server refuses more for it.";
+    INBOUND_RETAINED_DELIVERIES: u64 = "inbound_retained_deliveries", COUNT, "10000", "The most deliveries one registration retains across its live and retired endpoints.";
+    INBOUND_RETAINED_BYTES: u64 = "inbound_retained_bytes", BYTES, "1073741824", "The most bytes of bodies, headers and queries one registration retains across its live and retired endpoints.";
+    INBOUND_HANDLED_RETENTION_DAYS: u64 = "inbound_handled_retention_days", Rule::Whole { min: 0, max: 36_500 }, "7", "How many days a handled inbound delivery is kept after it was handled. 0 keeps it for ever.";
+    INBOUND_PENDING_RETENTION_DAYS: u64 = "inbound_pending_retention_days", Rule::Whole { min: 0, max: 36_500 }, "30", "How many days an unhandled inbound delivery is kept after it arrived. 0 keeps it for ever.";
+    INBOUND_CLEANUP_INTERVAL_MS: u64 = "inbound_cleanup_interval_ms", INTERVAL, "60000", "How often the `inbound-delivery-cleanup` job runs, in milliseconds.";
     ADDRESSES: Vec<Address> = "addresses", Rule::Addresses, "[]", "The addresses people reach this instance at, such as https://marfa.example.";
     CORS_ORIGINS: Vec<Address> = "cors_origins", Rule::Addresses, "[]", "The browser origins allowed to call the API across origins, beside the web pages the owner approves, and trusted by the sign-in forms.";
     SIGN_IN_ADDRESS: Option<Address> = "sign_in_address", Rule::Address, "", "The address people sign in at. Leave it empty to use this computer's own address.";
@@ -497,6 +507,13 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_body_may_take_at_most_five_minutes_to_arrive() {
+        let timeout = INBOUND_READ_TIMEOUT_MS.entry;
+        assert!(timeout.parse("300000").is_ok());
+        assert!(timeout.parse("300001").is_err());
     }
 
     #[test]

@@ -26,6 +26,7 @@ mod export;
 mod folders;
 mod health;
 mod housekeeping;
+mod inbound;
 mod items;
 mod jobs;
 mod keys;
@@ -298,6 +299,23 @@ fn connector_doors(app: Arc<App>) -> Routes {
             "/connectors/{id}/agreements/lookup",
             post(connectors::lookup_agreements),
         )
+        .route(
+            "/connectors/{id}/endpoints",
+            post(inbound::create_endpoint).get(inbound::list_endpoints),
+        )
+        .route(
+            "/connectors/{id}/endpoints/{endpoint_id}",
+            delete(inbound::retire_endpoint),
+        )
+        .route("/connectors/{id}/deliveries", get(inbound::list_deliveries))
+        .route(
+            "/connectors/{id}/deliveries/handled",
+            post(inbound::mark_handled),
+        )
+        .route(
+            "/connectors/{id}/deliveries/{delivery_id}/body",
+            get(inbound::delivery_body),
+        )
         .admitting(app, Admission::Presented)
 }
 
@@ -361,6 +379,13 @@ pub fn public(app: Arc<App>) -> Router {
     public_on(app, listener)
 }
 
+/// A sender's address is its credential and the sender holds no copy of the instance.
+fn sender_doors() -> Routes {
+    Doors::new()
+        .route("/inbound/{token}", post(inbound::receive))
+        .unjudged()
+}
+
 /// Sign-in, grant and OAuth callers hold no copy of the instance.
 fn public_doors(app: Arc<App>) -> Routes {
     shared(app)
@@ -368,6 +393,7 @@ fn public_doors(app: Arc<App>) -> Routes {
         .merge(auth::doors().unjudged())
         .merge(oauth::doors().unjudged())
         .merge(mcp::doors())
+        .merge(sender_doors())
 }
 
 pub fn public_on(app: Arc<App>, listener: Declaration) -> Router {
