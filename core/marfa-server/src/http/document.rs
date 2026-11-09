@@ -177,7 +177,6 @@ const UNPUBLISHED: &[(&str, &str)] = &[
 /// served fails the test, so the list only shrinks.
 const NOT_YET_SERVED: &[&str] = &[
     "DELETE /connectors/{id}/endpoints/{endpoint_id}",
-    "GET /attention",
     "GET /connectors/{id}/deliveries",
     "GET /connectors/{id}/deliveries/{delivery_id}/body",
     "GET /connectors/{id}/endpoints",

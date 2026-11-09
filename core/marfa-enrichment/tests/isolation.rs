@@ -1,8 +1,4 @@
-//! Each test here is the real thing: this program calls `serve_child_if_asked` as the
-//! first line of `main`, so `read` starts this very program, as it starts any program
-//! that calls `read`.
-//! The tests run one at a time, because they count this process's children and
-//! descriptors.
+//! Real reads: this program serves the child itself. The tests run one at a time, because they count children and descriptors.
 
 use std::fs::File;
 use std::io::Write;
@@ -13,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use libtest_mimic::{Arguments, Failed, Trial};
-use marfa_enrichment::{Options, Reading, Refusal, Sandbox, serve_child_if_asked};
+use marfa_enrichment::{Options, Reading, Refusal, serve_child_if_asked};
 
 const TEXT: &str = "text/plain";
 /// Says that a run of this program is a scenario in a copy of it, not the tests.
@@ -50,28 +46,6 @@ fn fixture(name: &str) -> Vec<u8> {
         .join("fixtures")
         .join(name);
     std::fs::read(path).expect("a fixture of this crate")
-}
-
-/// Whether this kernel can sandbox a child, asked apart from the code under test.
-fn kernel_can_sandbox() -> bool {
-    #[cfg(target_os = "linux")]
-    {
-        const LANDLOCK_CREATE_RULESET_VERSION: libc::c_ulong = 1;
-        // SAFETY: with this flag and no attributes the call only gives the ABI version.
-        let version = unsafe {
-            libc::syscall(
-                libc::SYS_landlock_create_ruleset,
-                std::ptr::null::<libc::c_void>(),
-                0usize,
-                LANDLOCK_CREATE_RULESET_VERSION,
-            )
-        };
-        // SAFETY: this prctl takes plain integers and only reads.
-        let seccomp = unsafe { libc::prctl(libc::PR_GET_SECCOMP, 0, 0, 0, 0) };
-        version > 0 && seccomp >= 0
-    }
-    #[cfg(not(target_os = "linux"))]
-    true
 }
 
 fn check(condition: bool, problem: impl FnOnce() -> String) -> Result<(), Failed> {
@@ -153,18 +127,6 @@ fn fixture_file(name: &str) -> File {
     File::open(path).expect("a fixture of this crate")
 }
 
-/// A read that came back with the sandbox the kernel allows.
-fn confined(reading: &Reading) -> Result<(), String> {
-    if reading.sandbox == Sandbox::Full || !kernel_can_sandbox() {
-        Ok(())
-    } else {
-        Err(format!(
-            "the kernel has a sandbox and the child reported {:?}",
-            reading.sandbox
-        ))
-    }
-}
-
 fn near(seconds: Option<f64>, expected: f64) -> Result<(), String> {
     if seconds.is_some_and(|seconds| (seconds - expected).abs() < 0.06) {
         Ok(())
@@ -190,7 +152,6 @@ fn reads_the_length_of_a_sound_and_a_video() -> Result<(), Failed> {
             .map_err(|refusal| format!("{name}: {refusal}"))?;
         near(reading.duration, seconds).map_err(|error| format!("{name}: {error}"))?;
         check(reading.text.is_empty(), || format!("{name}: text"))?;
-        confined(&reading).map_err(|error| format!("{name}: {error}"))?;
     }
     let video = marfa_enrichment::read(&fixture_file("sample.mp4"), "video/mp4", &options())
         .map_err(|refusal| refusal.to_string())?;
@@ -249,8 +210,7 @@ fn bad_media_is_malformed_and_the_next_file_reads() -> Result<(), Failed> {
     parent_is_whole()
 }
 
-/// A video with its index after the pictures, as a camera or an encoder leaves it,
-/// and one with its index first: a few hundred mebibytes of nothing between.
+/// A video with its index after the pictures and one with it first, with mebibytes between.
 fn a_large_video_is_read_without_holding_it() -> Result<(), Failed> {
     use std::io::{Seek as _, SeekFrom};
 
@@ -262,9 +222,7 @@ fn a_large_video_is_read_without_holding_it() -> Result<(), Failed> {
         max_memory_bytes: 64 * MIB,
         ..options()
     };
-    // The box size is 32 bits, or 64 for a larger file. The last is a download cut off
-    // at 300 MiB of five gibibytes, which a reader that wants its index there cannot
-    // have.
+    // The box size is 32 bits, or 64 for a larger file; the last is a cut-off download.
     for (size, claimed, index_first, wide) in [
         (300 * MIB, 300 * MIB, false, false),
         (300 * MIB, 300 * MIB, true, false),
@@ -307,7 +265,6 @@ fn a_large_video_is_read_without_holding_it() -> Result<(), Failed> {
         let took = started.elapsed();
         near(reading.duration, 1.0)?;
         check(reading.dimensions.is_some(), || "no picture size".into())?;
-        confined(&reading)?;
         check(took < Duration::from_secs(5), || format!("took {took:?}"))?;
         // The same file as text has to be held whole, which the limit does not allow.
         let as_text = marfa_enrichment::read(&reader, TEXT, &limited);
@@ -380,8 +337,7 @@ fn what_the_call_decides_starts_no_child() -> Result<(), Failed> {
     check(matches!(outcome, Err(Refusal::OverLimit(..))), || {
         format!("a file over the memory limit gave {outcome:?}")
     })?;
-    // A sound or a video is not held whole, so its size is no reason to refuse it
-    // before a child is started.
+    // A sound or video is not held whole, so its size is no reason to refuse it.
     let outcome = read(b"four", "audio/mpeg", &small);
     check(
         matches!(outcome, Err(Refusal::ReaderUnavailable(_))),
@@ -397,8 +353,7 @@ fn what_the_call_decides_starts_no_child() -> Result<(), Failed> {
     )?;
     let path = folder.path().join("writable");
     std::fs::write(&path, b"x").map_err(|error| error.to_string())?;
-    // The witness: the same file, open for reading only, is let through to a child, which
-    // is the time limit's refusal and not the call's.
+    // The witness: the same file, read-only, reaches a child, which refuses at the time limit.
     let witness = marfa_enrichment::read(
         &File::open(&path).map_err(|e| e.to_string())?,
         TEXT,
@@ -426,8 +381,7 @@ fn what_the_call_decides_starts_no_child() -> Result<(), Failed> {
             || format!("{what} gave {outcome:?}"),
         )?;
     }
-    // A pipe cannot be read by position, and opening one for reading would otherwise
-    // wait for a writer.
+    // A pipe cannot be read by position, and opening one for reading waits for a writer.
     let pipe = folder.path().join("pipe");
     let named =
         std::ffi::CString::new(pipe.to_str().ok_or("a path")?).map_err(|e| e.to_string())?;
@@ -806,10 +760,7 @@ mod native {
             .map_err(|error| error.to_string())?;
         let options = ocr_options(Some(inside.path().to_owned()), "mine");
         let outcome = read(&fixture("sentence.png"), "image/png", &options);
-        match outcome {
-            Ok(reading) if reading.sandbox != marfa_enrichment::Sandbox::Full => Ok(()),
-            other => check(ocr_refused(&other), || format!("{other:?}")),
-        }
+        check(ocr_refused(&outcome), || format!("{outcome:?}"))
     }
 
     /// A picture whose text cannot be read keeps its size beside the refusal.
@@ -920,18 +871,10 @@ mod faults {
             .and_then(|rest| rest.split_ascii_whitespace().next())
             .and_then(|pid| pid.parse().ok())
             .ok_or_else(|| format!("no orphan named: {reason}"))?;
-        // A sandbox refuses the fork, and -1 is what that leaves. Only a system that
-        // cannot confine a child gets a real orphan.
-        if orphan > 0 {
-            std::thread::sleep(Duration::from_millis(50));
-            check(!is_running(orphan), || {
-                format!("process {orphan} outlived the reader")
-            })?;
-        } else {
-            check(kernel_can_sandbox(), || {
-                "the fork failed where it should work".into()
-            })?;
-        }
+        // The sandbox refuses the fork, and -1 is what that leaves.
+        check(orphan <= 0, || {
+            format!("process {orphan} started under the sandbox")
+        })?;
         parent_is_whole()
     }
 
@@ -1071,28 +1014,17 @@ mod faults {
         Ok(())
     }
 
-    fn sandbox_of(name: &str) -> Result<(String, Sandbox), Failed> {
+    fn text_of(name: &str) -> Result<String, Failed> {
         let reading = read(&fault(name), TEXT, &short()).map_err(|refusal| refusal.to_string())?;
-        Ok((reading.text, reading.sandbox))
+        Ok(reading.text)
     }
 
-    /// A kernel with no sandbox still reads, and has to say so: the file then opens,
-    /// which is the same fact seen from the other side.
-    fn refused_when_sandboxed(what: &str, name: &str, unconfined: &str) -> Result<(), Failed> {
-        let (text, sandbox) = sandbox_of(name)?;
-        println!("{what}: {sandbox:?}: {text}");
-        check(sandbox == Sandbox::Full || !kernel_can_sandbox(), || {
-            format!("the kernel has a sandbox and the child reported {sandbox:?}")
-        })?;
-        match sandbox {
-            Sandbox::Full => check(text.starts_with("refused") || text.contains("Err"), || {
-                format!("{what}: {text}")
-            }),
-            Sandbox::Partial | Sandbox::Off => check(
-                text.contains(unconfined) || text.starts_with("refused"),
-                || format!("{what}: {text}"),
-            ),
-        }
+    fn refused_by_the_sandbox(what: &str, name: &str) -> Result<(), Failed> {
+        let text = text_of(name)?;
+        println!("{what}: {text}");
+        check(text.starts_with("refused") || text.contains("Err"), || {
+            format!("{what}: {text}")
+        })
     }
 
     pub(super) fn a_child_cannot_open_a_file_it_should_not() -> Result<(), Failed> {
@@ -1105,8 +1037,8 @@ mod faults {
             .map_err(|error| error.to_string())?;
         check(!witness.is_empty(), || "the witness read nothing".into())?;
         let path = secret.to_str().ok_or("a path")?;
-        refused_when_sandboxed("open", &format!("open {path}"), "opened")?;
-        refused_when_sandboxed("open /etc/passwd", "open /etc/passwd", "opened")
+        refused_by_the_sandbox("open", &format!("open {path}"))?;
+        refused_by_the_sandbox("open /etc/passwd", "open /etc/passwd")
     }
 
     pub(super) fn a_child_can_open_the_data_folder() -> Result<(), Failed> {
@@ -1147,14 +1079,10 @@ mod faults {
         check(reading.text == "opened", || format!("{reading:?}"))?;
         let denied = read(&fault("open /etc/passwd"), TEXT, &options)
             .map_err(|refusal| refusal.to_string())?;
-        check(
-            denied.sandbox != Sandbox::Full || denied.text.starts_with("refused"),
-            || format!("{denied:?}"),
-        )
+        check(denied.text.starts_with("refused"), || format!("{denied:?}"))
     }
 
-    /// The child is given the caller's descriptor as stdin, so a taken-over child could
-    /// write to the caller's file if that descriptor allowed it.
+    /// The child's stdin is the caller's descriptor, so it must not allow a write.
     pub(super) fn a_child_cannot_write_to_the_file_it_was_given() -> Result<(), Failed> {
         let folder = tempfile::tempdir().map_err(|error| error.to_string())?;
         let path = folder.path().join("given");
@@ -1183,9 +1111,7 @@ mod faults {
         check(left == bytes, || "the child changed the file".into())
     }
 
-    /// The offset belongs to the open file description the caller and the child share, so
-    /// a taken-over child can move it, as the documentation says. `pread` is what keeps an
-    /// honest reader from doing so.
+    /// The offset is shared with the caller, so a taken-over child can move it; `pread` keeps an honest reader from doing so.
     pub(super) fn a_taken_over_child_can_move_the_callers_place() -> Result<(), Failed> {
         use std::io::{Seek as _, SeekFrom};
 
@@ -1289,7 +1215,7 @@ mod faults {
         let listener = TcpListener::bind("127.0.0.1:0").map_err(|error| error.to_string())?;
         let address = listener.local_addr().map_err(|error| error.to_string())?;
         std::net::TcpStream::connect(address).map_err(|error| error.to_string())?;
-        refused_when_sandboxed("connect", &format!("connect {address}"), "connected")
+        refused_by_the_sandbox("connect", &format!("connect {address}"))
     }
 
     /// A child must not make a socket at all: Landlock has no rule for UDP or for a
@@ -1309,7 +1235,7 @@ mod faults {
             .recv(&mut datagram)
             .map_err(|error| error.to_string())?;
 
-        refused_when_sandboxed("udp", &format!("udp {address}"), "sent")?;
+        refused_by_the_sandbox("udp", &format!("udp {address}"))?;
         check(listener.recv(&mut datagram).is_err(), || {
             "a datagram arrived from the child".into()
         })
@@ -1323,7 +1249,7 @@ mod faults {
         listener.accept().map_err(|error| error.to_string())?;
 
         let name = format!("unix {}", path.to_str().ok_or("a path")?);
-        refused_when_sandboxed("unix", &name, "connected")
+        refused_by_the_sandbox("unix", &name)
     }
 
     pub(super) fn a_child_cannot_change_a_files_mode() -> Result<(), Failed> {
@@ -1341,7 +1267,7 @@ mod faults {
         })?;
 
         let name = format!("chmod {}", path.to_str().ok_or("a path")?);
-        refused_when_sandboxed("chmod", &name, "changed")?;
+        refused_by_the_sandbox("chmod", &name)?;
         check(mode(&path).is_ok_and(|mode| mode == 0o640), || {
             "the child changed the mode".into()
         })
@@ -1359,7 +1285,7 @@ mod faults {
             &["chown", "utimes"]
         };
         for call in calls {
-            refused_when_sandboxed(call, &format!("{call} {path}"), "done")?;
+            refused_by_the_sandbox(call, &format!("{call} {path}"))?;
         }
         Ok(())
     }
@@ -1388,7 +1314,7 @@ mod faults {
             .arg("30")
             .spawn()
             .map_err(|error| error.to_string())?;
-        let outcome = refused_when_sandboxed("kill", &format!("kill {}", other.id()), "done");
+        let outcome = refused_by_the_sandbox("kill", &format!("kill {}", other.id()));
         let alive = other.try_wait().is_ok_and(|ended| ended.is_none());
         let _ = other.kill();
         let _ = other.wait();
@@ -1397,7 +1323,7 @@ mod faults {
     }
 
     pub(super) fn a_child_cannot_fork() -> Result<(), Failed> {
-        let (text, _) = sandbox_of("fork")?;
+        let text = text_of("fork")?;
         println!("fork: {text}");
         check(text.starts_with("refused"), || text.clone())
     }

@@ -23,7 +23,7 @@ marfa server install
 By default the command runs the server as a service of your machine, without Docker:
 
 - **macOS:** a launchd agent named `so.marfa.server.<name>`, started when you sign in. Run the command as the person who uses the server, not with `sudo`. The server's output goes to `~/Library/Logs/Marfa`.
-- **Linux:** a systemd user service named `marfa-<name>.service` with lingering turned on, so it starts at boot. When you run the command as root, it installs a system service that runs under a `marfa` account instead. The server needs the `acl` package (`getfacl`) to check its private socket.
+- **Linux:** a systemd user service named `marfa-<name>.service` with lingering turned on, so it starts at boot. When you run the command as root, it installs a system service that runs under a `marfa` account instead.
 
 The command asks how you reach the server, writes the settings, starts the service, and prints a link that claims the server. [Claim the server](#claim-the-server) says what to do with the link. Running the command again changes only what isn't already as you asked, and never the secrets or the runtime.
 

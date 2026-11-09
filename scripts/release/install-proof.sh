@@ -202,14 +202,6 @@ prepare_user_systemd() {
   fail "systemd's user manager did not start for $USER: $XDG_RUNTIME_DIR/bus is missing."
 }
 
-# The server's private socket is checked with `getfacl`.
-require_acl() {
-  [ "$os" = Linux ] || return 0
-  command -v getfacl > /dev/null && return 0
-  say "getfacl is missing: installing the acl package, which the private socket's check needs."
-  sudo apt-get install -y --no-install-recommends acl > /dev/null
-}
-
 # ---- Caddy -------------------------------------------------------------------
 
 fetch_caddy() {
@@ -466,7 +458,6 @@ for mode in "${modes[@]}"; do
 done
 
 install_programs
-require_acl
 for mode in "${modes[@]}"; do
   [ "$mode" != native-user ] || prepare_user_systemd
   [ "$mode" != docker ] || build_image
