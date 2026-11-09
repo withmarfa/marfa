@@ -125,3 +125,19 @@ pub fn forget_item(tx: &Transaction<'_>, seq: i64) -> Result<()> {
 pub fn keep_version(tx: &Transaction<'_>, seq: i64) -> Result<()> {
     rows::keep_version(tx, seq)
 }
+
+/// What a restored row's references are: each digest its properties name lends exactly where
+/// its archive line lists it as lending.
+pub fn archived(properties: &Map<String, Value>, lending: &BTreeSet<String>) -> Decided {
+    let named = digests(properties)
+        .into_iter()
+        .map(|digest| {
+            let lends = lending.contains(&digest);
+            (digest, lends)
+        })
+        .collect();
+    Decided {
+        held: BTreeMap::new(),
+        named,
+    }
+}

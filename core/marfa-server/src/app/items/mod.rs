@@ -6,6 +6,7 @@ pub mod expiry;
 mod index;
 mod plan;
 mod read;
+pub mod restored;
 mod rows;
 pub mod sweep;
 pub mod thinning;

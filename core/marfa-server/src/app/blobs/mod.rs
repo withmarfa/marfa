@@ -8,6 +8,7 @@ mod hash;
 pub mod link;
 pub mod range;
 pub mod references;
+pub mod restore;
 mod rows;
 mod s3;
 mod store;
@@ -47,6 +48,7 @@ pub use hash::Hash;
 use rows::Held;
 pub use rows::{CopyRecord, Lender, OrphanRecord, StoreRecord};
 use s3::{Marker, S3};
+pub use restore::stored_size;
 pub use store::ByteStream;
 use store::{Answer, CHECK_DEADLINE, Failed, Gate, Store};
 

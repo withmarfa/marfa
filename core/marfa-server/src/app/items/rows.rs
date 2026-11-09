@@ -742,3 +742,120 @@ pub(super) fn set_title_key(tx: &Transaction<'_>, seq: i64, key: Option<&str>) -
     )?;
     Ok(())
 }
+
+/// What a restored row keeps beside what a new row has: its version and dates as archived.
+pub(super) struct Restoring<'a> {
+    pub version: i64,
+    pub updated_at: &'a str,
+    pub restored_at: Option<&'a str>,
+    pub trashed_with: Option<&'a str>,
+}
+
+pub(super) fn insert_restored(
+    tx: &Transaction<'_>,
+    row: &NewRow<'_>,
+    kept: &Restoring<'_>,
+) -> Result<Item> {
+    let mut statement = tx.prepare_cached(
+        "INSERT INTO items (id, type, state, tier, source, source_id, properties, title_key, \
+         version, schema_version, occurred_at, created_at, updated_at, trashed_at, \
+         capture_latitude, capture_longitude, writer_kind, writer_id, writer_name, link, \
+         trashed_by_kind, trashed_by_id, trashed_by_name, restored_at, trashed_with, \
+         trashed_with_type) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, jsonb(?7), ?8, ?22, ?9, ?10, ?11, ?23, ?12, ?13, ?14, \
+         ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?24, ?25, \
+         (SELECT type FROM items WHERE id = ?25))",
+    )?;
+    statement.execute(params![
+        row.id,
+        row.type_id,
+        row.state,
+        row.tier,
+        row.source,
+        row.source_id,
+        row.properties,
+        row.title_key,
+        row.schema_version,
+        row.occurred_at,
+        row.at,
+        row.trashed_at,
+        row.capture_latitude,
+        row.capture_longitude,
+        row.writer.map(|by| &by.kind),
+        row.writer.map(|by| &by.id),
+        row.writer.map(|by| &by.name),
+        row.link,
+        row.trashed_by.map(|by| &by.kind),
+        row.trashed_by.map(|by| &by.id),
+        row.trashed_by.map(|by| &by.name),
+        kept.version,
+        kept.updated_at,
+        kept.restored_at,
+        kept.trashed_with,
+    ])?;
+    clear_tombstones(tx, row.type_id, row.link, row.source, row.source_id)?;
+    stored(tx, row.id)
+}
+
+/// A cascade mark names its row's type once that row is written.
+pub(super) fn name_mark_types(tx: &Transaction<'_>) -> Result<()> {
+    tx.prepare_cached(
+        "UPDATE items SET trashed_with_type = (SELECT r.type FROM items r WHERE r.id = items.trashed_with) \
+         WHERE trashed_with IS NOT NULL AND trashed_with_type IS NULL",
+    )?
+    .execute([])?;
+    Ok(())
+}
+
+pub(super) struct NewSnapshot<'a> {
+    pub item_seq: i64,
+    pub version: i64,
+    pub id: &'a str,
+    pub properties: &'a str,
+    pub type_id: &'a str,
+    pub tier: Option<&'a str>,
+    pub occurred_at: &'a str,
+    pub source_id: Option<&'a str>,
+    pub writer: Option<&'a Writer>,
+    pub created_at: &'a str,
+}
+
+pub(super) fn insert_snapshot(tx: &Transaction<'_>, snapshot: &NewSnapshot<'_>) -> Result<()> {
+    tx.prepare_cached(
+        "INSERT INTO item_versions (item_seq, version, id, properties, type, tier, occurred_at, \
+         source_id, writer_kind, writer_id, writer_name, created_at) \
+         VALUES (?1, ?2, ?3, jsonb(?4), ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+    )?
+    .execute(params![
+        snapshot.item_seq,
+        snapshot.version,
+        snapshot.id,
+        snapshot.properties,
+        snapshot.type_id,
+        snapshot.tier,
+        snapshot.occurred_at,
+        snapshot.source_id,
+        snapshot.writer.map(|by| &by.kind),
+        snapshot.writer.map(|by| &by.id),
+        snapshot.writer.map(|by| &by.name),
+        snapshot.created_at,
+    ])?;
+    Ok(())
+}
+
+/// Every stored snapshot id that `wanted` asks for, read in one pass over the history.
+pub(super) fn snapshot_ids(
+    tx: &Transaction<'_>,
+    wanted: impl Fn(&str) -> bool,
+) -> Result<std::collections::HashSet<String>> {
+    let mut statement = tx.prepare("SELECT id FROM item_versions")?;
+    let mut rows = statement.query([])?;
+    let mut held = std::collections::HashSet::new();
+    while let Some(row) = rows.next()? {
+        let id: String = row.get(0)?;
+        if wanted(&id) {
+            held.insert(id);
+        }
+    }
+    Ok(held)
+}

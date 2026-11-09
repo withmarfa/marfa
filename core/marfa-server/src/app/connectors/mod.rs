@@ -547,3 +547,37 @@ pub fn archived(tx: &rusqlite::Transaction<'_>) -> super::refusal::Result<Archiv
         agreements: store::every_agreement(tx)?,
     })
 }
+
+/// Stores an archived state document where the instance holds none for the source.
+pub fn restore_state(
+    tx: &rusqlite::Transaction<'_>,
+    source: &str,
+    state: &serde_json::Map<String, serde_json::Value>,
+    at: &str,
+) -> super::refusal::Result<bool> {
+    if store::document(tx, source)?.is_some() {
+        return Ok(false);
+    }
+    let state = serde_json::Value::Object(state.clone()).to_string();
+    store::put_document(tx, source, &state, "{}", at)?;
+    Ok(true)
+}
+
+/// Stores an archived agreement where the instance holds the item and no agreement for it.
+pub fn restore_agreement(
+    tx: &rusqlite::Transaction<'_>,
+    source: &str,
+    item_id: &str,
+    waiting: bool,
+    record: &serde_json::Map<String, serde_json::Value>,
+    at: &str,
+) -> super::refusal::Result<bool> {
+    if super::items::type_of(tx, item_id)?.is_none()
+        || store::agreement_of(tx, source, item_id)?.is_some()
+    {
+        return Ok(false);
+    }
+    let record = serde_json::Value::Object(record.clone()).to_string();
+    store::put_agreement(tx, source, item_id, waiting, &record, at)?;
+    Ok(true)
+}

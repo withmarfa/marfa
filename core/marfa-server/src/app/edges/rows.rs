@@ -85,6 +85,30 @@ pub(super) fn insert(tx: &Transaction<'_>, edge: &NewEdge<'_>) -> Result<Edge> {
     stored(tx, edge.id)
 }
 
+/// An edge as an archive holds it: its version and dates are kept.
+pub(super) fn insert_restored(
+    tx: &Transaction<'_>,
+    edge: &NewEdge<'_>,
+    version: i64,
+    updated_at: &str,
+) -> Result<Edge> {
+    tx.prepare_cached(
+        "INSERT INTO edges (id, source_id, target_id, edge_type, properties, version, \
+         created_at, updated_at) VALUES (?1, ?2, ?3, ?4, jsonb(?5), ?6, ?7, ?8)",
+    )?
+    .execute(params![
+        edge.id,
+        edge.source_id,
+        edge.target_id,
+        edge.edge_type,
+        edge.properties,
+        version,
+        edge.at,
+        updated_at
+    ])?;
+    stored(tx, edge.id)
+}
+
 pub(super) struct Landed<'a> {
     pub source_id: &'a str,
     pub target_id: &'a str,

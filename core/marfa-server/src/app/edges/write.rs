@@ -554,6 +554,138 @@ impl<'c> Writing<'_, '_, 'c> {
         Ok(Wrote::Created(edge))
     }
 
+    /// Writes an archived edge as the line holds it, or names why a restore skips it: the code
+    /// `POST /edges` would refuse it with, judged as a restore judges an edge.
+    pub(crate) fn restore(&self, line: &Value) -> Result<Option<String>> {
+        let skip = |reason: &str| Ok(Some(reason.to_string()));
+        let Some(edge) = line.get("edge").and_then(Value::as_object) else {
+            return skip("malformed");
+        };
+        let text = |key: &str| edge.get(key).and_then(Value::as_str);
+        let (Some(source_id), Some(target_id), Some(edge_type)) =
+            (text("source_id"), text("target_id"), text("edge_type"))
+        else {
+            return skip("malformed");
+        };
+        let (Some(source), Some(target)) = (
+            items::row(self.tx(), source_id)?,
+            items::row(self.tx(), target_id)?,
+        ) else {
+            return skip("endpoint_missing");
+        };
+        if let Some(id) = text("id")
+            && rows::by_id(self.tx(), id)?.is_some()
+        {
+            return skip("already_present");
+        }
+        let properties = edge
+            .get("properties")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        if let Err(refusal) = self.judge_restored(edge_type, &source, &target, &properties) {
+            return skip(refusal.code.wire());
+        }
+        let instant = |key: &str| {
+            text(key)
+                .map(|held| marfa_rules::time::rfc3339(held, key))
+                .transpose()
+                .map_err(|_| Refusal::internal("a checked archive date does not read"))
+        };
+        let created_at = instant("created_at")?.unwrap_or_else(|| self.unit.at.clone());
+        let updated_at = instant("updated_at")?.unwrap_or_else(|| created_at.clone());
+        let minted = Uuid::now_v7().to_string();
+        let written = rows::insert_restored(
+            self.tx(),
+            &NewEdge {
+                id: text("id").unwrap_or(&minted),
+                source_id,
+                target_id,
+                edge_type,
+                properties: &number::object(&properties),
+                at: &created_at,
+            },
+            edge.get("version").and_then(Value::as_i64).unwrap_or(1),
+            &updated_at,
+        )?;
+        let lent = line
+            .get("lending_blobs")
+            .and_then(Value::as_array)
+            .map(|listed| {
+                listed
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        references::archived(&properties, &lent).apply(self.tx(), Referencing::Edge(written.seq()))?;
+        announce(self.unit, "edge.created", &written, &source, None)?;
+        Ok(None)
+    }
+
+    /// The refusals a restored edge meets: those that need no edge type, and for a registered
+    /// one its ends, cardinality and cycles. Its properties stand as stored, and an end in the
+    /// bin, of a type no longer registered, or a revoked folder takes it.
+    fn judge_restored(
+        &self,
+        edge_type: &str,
+        source: &Item,
+        target: &Item,
+        properties: &Map<String, Value>,
+    ) -> Result<()> {
+        if source.id == target.id {
+            return Err(Refusal::new(
+                Code::EdgeCycle,
+                "Edge source and target must be different items",
+            ));
+        }
+        let proposed = Proposed {
+            edge_type,
+            source: &source.id,
+            target: &target.id,
+            moving: None,
+        };
+        let store = self.store();
+        let held = edges::duplicate(&store, &proposed)?.is_some();
+        let Some(kind) = self.catalog.edge_kind(edge_type) else {
+            return if held {
+                Err(duplicate(edge_type, &source.id, &target.id))
+            } else {
+                Ok(())
+            };
+        };
+        if kind.id == FOLDER_EDGE {
+            judge_folder(properties)?;
+        }
+        judge_restored_ends(self.catalog, kind, (&source.id, &source.type_id), &target.type_id)?;
+        if held {
+            return Err(duplicate(edge_type, &source.id, &target.id));
+        }
+        if let Some(end) = edges::full_end(&store, kind, &proposed)? {
+            let at = match end {
+                End::Source => &source.id,
+                End::Target => &target.id,
+            };
+            return Err(constraint(edges::refused_cardinality(kind, end, at)));
+        }
+        if kind.acyclic && edges::closes_cycle(&store, &proposed, |held| held == kind.id)? {
+            return Err(Refusal::new(
+                Code::EdgeCycle,
+                format!("Edge \"{}\" would close a cycle", kind.id),
+            ));
+        }
+        let parts =
+            |held: &str| marfa_rules::edges::Graph::on_delete(&store, held) == OnDelete::WithHosts;
+        if parts(&kind.id) && edges::closes_cycle(&store, &proposed, parts)? {
+            return Err(Refusal::new(
+                Code::EdgeConstraintViolation,
+                format!("Edge \"{}\" would make an item a part of its own part", kind.id),
+            ));
+        }
+        Ok(())
+    }
+
     pub(super) fn may_read(&self, edge: &Edge) -> Result<bool> {
         Ok(items::type_of(self.tx(), &edge.source_id)?
             .is_some_and(|source| self.caller().may_read_edge(&edge.edge_type, &source)))

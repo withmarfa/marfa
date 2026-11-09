@@ -459,3 +459,146 @@ async fn change_icon(
     app.publish_catalog().await;
     Ok(answered)
 }
+
+/// An archive's type line: the definition and who made it.
+pub struct Archived {
+    pub definition: Value,
+    pub created_by: Option<Value>,
+}
+
+/// What a restore does with an archive's types, judged on the catalog its write holds.
+pub struct Restoring {
+    fresh: Vec<(String, Obj, Option<Value>)>,
+    pub skipped: usize,
+    pub conflicts: Vec<String>,
+}
+
+impl Restoring {
+    pub fn registered(&self) -> usize {
+        self.fresh.len()
+    }
+}
+
+fn reserved(id: &str, why: String) -> Refusal {
+    Refusal::new(
+        Code::Forbidden,
+        format!("The archive registers {id}, {why}, which no archive can restore."),
+    )
+}
+
+/// Judges every type an archive registers together, so registrations that name each other
+/// restore in any order: each is held to what `POST /types` takes.
+pub fn plan_restored(catalog: &Catalog, archived: &[Archived]) -> Result<Restoring> {
+    let mut raw = Vec::new();
+    for line in archived {
+        let definition = line
+            .definition
+            .as_object()
+            .ok_or_else(|| Refusal::new(Code::InvalidSchema, "An archived type is not an object"))?;
+        let id = text_of(definition, "id").unwrap_or_default();
+        check_id(id, "type.id")?;
+        if let Some(root) = grammar::platform_root(id) {
+            return Err(reserved(id, format!("a type in the reserved {root}.* namespace")));
+        }
+        raw.push(definition.clone());
+    }
+    let registry = raw
+        .iter()
+        .fold(catalog.types.clone(), |held, row| held.with(row.clone()));
+    let mut plan = Restoring {
+        fresh: Vec::new(),
+        skipped: 0,
+        conflicts: Vec::new(),
+    };
+    for (line, definition) in archived.iter().zip(&raw) {
+        let schema = validate_type(&Value::Object(definition.clone()), &registry)
+            .map_err(schema_refusal)?;
+        let schema = labelled(schema);
+        let id = text_of(&schema, "id")
+            .ok_or_else(|| Refusal::internal("an archived type has no id"))?
+            .to_string();
+        if let Some(parent) = text_of(&schema, "parent")
+            && let Some(fault) = parent_chain_fault(&registry, &id, parent, 0)
+        {
+            return Err(Refusal::validation(fault));
+        }
+        match catalog.types.get(&id) {
+            Some(held) if catalog.holds(&id) && *held == schema => plan.skipped += 1,
+            Some(_) if catalog.holds(&id) => plan.conflicts.push(id),
+            _ => plan.fresh.push((id, schema, line.created_by.clone())),
+        }
+    }
+    let ids: Vec<&str> = plan.fresh.iter().map(|(id, _, _)| id.as_str()).collect();
+    let written = plan
+        .fresh
+        .iter()
+        .fold(catalog.types.clone(), |held, (_, schema, _)| held.with(schema.clone()));
+    let broken = broken_compatible_dependents(&written, &ids);
+    if !broken.is_empty() {
+        return Err(dependents_refusal(broken));
+    }
+    Ok(plan)
+}
+
+/// Registers the types a plan found new, and brings their rows' keys, links and index up to them.
+pub fn write_restored(
+    unit: &crate::app::unit::Unit<'_, '_>,
+    cache: &arc_swap::ArcSwap<Catalog>,
+    before: &Catalog,
+    plan: Restoring,
+) -> Result<()> {
+    if plan.fresh.is_empty() {
+        return Ok(());
+    }
+    let tx = unit.tx();
+    let creator = unit.caller.actor();
+    let mut ids = Vec::new();
+    for (id, schema, created_by) in plan.fresh {
+        let parent = text_of(&schema, "parent").map(str::to_string);
+        tx.execute(
+            "INSERT INTO types (id, parent, origin, created_by, definition, created_at, updated_at) \
+             VALUES (?1, ?2, 'user', ?3, ?4, ?5, ?5)",
+            params![
+                id,
+                parent,
+                created_by.unwrap_or_else(|| creator.clone()).to_string(),
+                Value::Object(schema).to_string(),
+                unit.at,
+            ],
+        )?;
+        ids.push(id);
+    }
+    catalog::raise(tx)?;
+    instance::raise_reach(tx)?;
+    let after = catalog::current(cache, tx, Snapshot::Pending)?;
+    items::rekey_changed(tx, &before.rules, &after.rules, &ids)?;
+    items::relink_changed(tx, before, &after, &ids)?;
+    for id in &ids {
+        items::drop_tombstones(tx, id)?;
+    }
+    items::reindex_changed(tx, &before.rules, &after.rules)
+}
+
+/// Sets each icon whose type has no owner icon, and answers how many it set.
+pub fn restore_icons(
+    unit: &crate::app::unit::Unit<'_, '_>,
+    catalog: &Catalog,
+    icons: &[(String, String)],
+) -> Result<(usize, usize)> {
+    let (mut added, mut held) = (0, 0);
+    for (id, icon) in icons {
+        if catalog.types.icon_of(id).is_some() {
+            held += 1;
+            continue;
+        }
+        unit.tx().execute(
+            "UPDATE types SET owner_icon = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id, icon, unit.at],
+        )?;
+        added += 1;
+    }
+    if added > 0 {
+        catalog::raise(unit.tx())?;
+    }
+    Ok((added, held))
+}

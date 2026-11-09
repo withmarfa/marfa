@@ -163,6 +163,37 @@ pub async fn change(app: &Arc<App>, write: Write, changes: Vec<Change>) -> Resul
     .await
 }
 
+/// Reads a `setting` line as the row it stores. The two addresses name where an instance
+/// answers, which a move changes, so a line naming either is a damaged archive.
+pub fn archived(line: &serde_json::Value) -> Result<(String, String)> {
+    let key = line.get("key").and_then(serde_json::Value::as_str).unwrap_or_default();
+    let refused = |why: String| Refusal::validation(format!("The archive carries a setting {why}."));
+    let entry = registry::entry(key)
+        .filter(|entry| ![registry::ADDRESSES.entry.key, registry::SIGN_IN_ADDRESS.entry.key].contains(&entry.key))
+        .ok_or_else(|| refused(format!("this instance does not take: {key}")))?;
+    let value = line.get("value").ok_or_else(|| refused(format!("with no value: {key}")))?;
+    let text = entry
+        .row_text_of_json(value)
+        .and_then(|text| entry.row_text(&text))
+        .map_err(|rule| refused(format!("{key} whose value {rule}")))?;
+    Ok((key.to_string(), text))
+}
+
+/// Stores each archived setting the instance has none stored for, and answers how many it
+/// stored and how many it left.
+pub fn restore(tx: &Transaction<'_>, rows: &[(String, String)]) -> Result<(usize, usize)> {
+    let (mut added, mut held) = (0, 0);
+    for (key, text) in rows {
+        if get(tx, key)?.is_some() {
+            held += 1;
+            continue;
+        }
+        write_row(tx, key, text)?;
+        added += 1;
+    }
+    Ok((added, held))
+}
+
 #[cfg(test)]
 mod tests {
     use rusqlite::Connection;
