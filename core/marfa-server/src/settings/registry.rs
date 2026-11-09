@@ -479,6 +479,20 @@ mod tests {
     }
 
     #[test]
+    fn the_contract_tables_only_the_settings_built_and_each_once() {
+        let rows = spec_table("Stored settings");
+        for (index, row) in rows.iter().enumerate() {
+            let key = row[0].trim_matches('`');
+            assert!(entry(key).is_some(), "{key} is tabled and not built");
+            assert!(
+                rows[index + 1..].iter().all(|other| other[0] != row[0]),
+                "{key} is tabled twice"
+            );
+        }
+        assert_eq!(rows.len(), ENTRIES.len());
+    }
+
+    #[test]
     fn the_contract_tables_each_setting_built_with_its_default_and_bounds() {
         let rows = spec_table("Stored settings");
         for entry in ENTRIES {

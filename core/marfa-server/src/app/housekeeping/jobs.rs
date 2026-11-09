@@ -119,7 +119,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_contract_tables_each_job_the_server_runs_and_lists_each_once() {
+    fn the_contract_tables_exactly_the_jobs_the_server_runs_each_once() {
         let spec = include_str!("../../../../../conformance/spec/housekeeping.md");
         let table = spec
             .split("<!-- housekeeping-table:start -->")
@@ -136,6 +136,10 @@ mod tests {
             assert!(tabled.contains(&job.name), "{} is not tabled", job.name);
         }
         for (index, name) in tabled.iter().enumerate() {
+            assert!(
+                JOBS.iter().any(|job| job.name == *name),
+                "{name} is tabled and not run"
+            );
             assert!(
                 !tabled[index + 1..].contains(name),
                 "{name} is tabled twice"
