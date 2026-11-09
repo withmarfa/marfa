@@ -207,6 +207,11 @@ fn select(
     let mut instance: Lines<()> = Lines::new(instance).map_err(written)?;
     let caller = &read.caller;
     let catalog = &read.catalog;
+    if let Some(type_id) = catalog.unreadable.first() {
+        return Err(Refusal::internal(&format!(
+            "the stored definition of type {type_id} does not read, so no archive holds it"
+        )));
+    }
     let manages_connectors = caller.holds(Permission::ConnectorsManage);
     let connectors::Archived { states, agreements } = if manages_connectors {
         connectors::archived(read.tx)?
@@ -329,11 +334,6 @@ fn select(
         }
         Ok(())
     };
-    if let Some(type_id) = catalog.unreadable.first() {
-        return Err(Refusal::internal(&format!(
-            "the stored definition of type {type_id} does not read, so no archive holds it"
-        )));
-    }
     let mut types = Vec::new();
     let mut icons = Vec::new();
     for id in catalog.types.ids() {
