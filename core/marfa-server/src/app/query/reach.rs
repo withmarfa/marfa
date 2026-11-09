@@ -1,6 +1,10 @@
 use marfa_rules::catalog::Catalog as Rules;
 
+use rusqlite::Transaction;
+
 use super::compile::Sql;
+use crate::app::access::Caller;
+use crate::app::catalog::Catalog;
 use crate::app::items::Reader;
 use crate::app::refusal::Result;
 
@@ -26,8 +30,11 @@ impl Reach {
     }
 
     pub fn held(read: &Reader<'_, '_>) -> Result<Reach> {
-        let present: Vec<String> = read
-            .tx
+        Reach::within(read.tx, &read.caller, &read.catalog)
+    }
+
+    pub fn within(tx: &Transaction<'_>, caller: &Caller, catalog: &Catalog) -> Result<Reach> {
+        let present: Vec<String> = tx
             .prepare_cached(PRESENT_TYPES)?
             .query_map([], |row| row.get(0))?
             .collect::<rusqlite::Result<_>>()?;
@@ -37,10 +44,10 @@ impl Reach {
             sources: Vec::new(),
         };
         for type_id in present {
-            if !read.caller.may_read_type(&type_id) {
+            if !caller.may_read_type(&type_id) {
                 continue;
             }
-            match read.caller.listed_sources(&read.catalog.rules, &type_id) {
+            match caller.listed_sources(&catalog.rules, &type_id) {
                 None => reach.open.push(type_id),
                 Some(sources) => {
                     reach.sources = sources;
