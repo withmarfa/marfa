@@ -28,10 +28,7 @@ pub const DEVICE_CODE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_cod
 /// `keys-and-oauth/grants-kind` names the same value.
 const SOFTWARE_ID: &str = "so.marfa.cli";
 
-const OWNER_SCOPES: [&str; 22] = [
-    "openid",
-    "profile",
-    "email",
+const OWNER_SCOPES: [&str; 21] = [
     "offline_access",
     "*:read",
     "*:write",
@@ -39,6 +36,8 @@ const OWNER_SCOPES: [&str; 22] = [
     "edge.*:write",
     "metadata:read",
     "metadata:write",
+    "profile:read",
+    "profile:write",
     "schema.write",
     "keys.mint",
     "items.purge",
@@ -62,7 +61,6 @@ pub struct Discovery {
     pub device_authorization_endpoint: String,
     pub registration_endpoint: String,
     pub revocation_endpoint: Option<String>,
-    pub userinfo_endpoint: Option<String>,
     /// Optional in RFC 8414.
     #[serde(default)]
     pub scopes_supported: Vec<String>,
@@ -147,7 +145,6 @@ pub fn discover(remote: &Remote) -> Result<Discovery, CliError> {
         Some(&discovery.device_authorization_endpoint),
         Some(&discovery.registration_endpoint),
         discovery.revocation_endpoint.as_ref(),
-        discovery.userinfo_endpoint.as_ref(),
     ];
     for door in doors.into_iter().flatten() {
         on_issuer(&discovery, door)?;
@@ -766,8 +763,7 @@ mod tests {
             "device_authorization_endpoint": format!("{origin}/auth/device/code"),
             "registration_endpoint": format!("{origin}/auth/oauth2/register"),
             "revocation_endpoint": format!("{origin}/auth/oauth2/revoke"),
-            "userinfo_endpoint": format!("{origin}/auth/oauth2/userinfo"),
-            "scopes_supported": ["openid", "offline_access", "*:read", "core.note:read", "keys.mint"]
+            "scopes_supported": ["offline_access", "*:read", "core.note:read", "keys.mint"]
         })
         .to_string()
     }
@@ -951,7 +947,7 @@ mod tests {
         );
         assert_eq!(
             default_scope(&discovery).unwrap(),
-            "openid offline_access *:read keys.mint",
+            "offline_access *:read keys.mint",
             "the owner's scopes the server supports, in the owner's order, and none it does not"
         );
         let mut unlisted = discovery.clone();
@@ -1281,7 +1277,7 @@ mod tests {
             access_token: "access-witness".into(),
             refresh_token: Some("refresh-witness".into()),
             expires_in: Some(3600),
-            scope: Some("openid".into()),
+            scope: Some("core.note:read".into()),
         };
         let device = DeviceCode {
             device_code: "device-witness".into(),

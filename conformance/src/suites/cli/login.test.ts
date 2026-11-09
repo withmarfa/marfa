@@ -192,7 +192,7 @@ describe("the owner", () => {
 
     // The token reaches the data plane, and the binary knows whose it is.
     const me = await c.cli.as(token.access_token).json<{
-      credential: { kind: string; from: string; person?: { email: string } };
+      credential: { kind: string; from: string; person?: { email?: string } };
     }>(["whoami"]);
     expect(me.credential.kind).toBe("token");
     expect(me.credential.from).toBe("MARFA_API_KEY");
@@ -201,5 +201,20 @@ describe("the owner", () => {
       .as(token.access_token)
       .json<{ data: unknown[] }>(["items", "list", "--type", "core.note"]);
     expect(Array.isArray(listed.data)).toBe(true);
+
+    // Once the token has ended, whoami says so with the credential exit code.
+    const revoked = await fetch(`${c.apiUrl}/auth/oauth2/revoke`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        token: token.access_token,
+        token_type_hint: "access_token",
+        client_id: clientId!,
+      }),
+    });
+    expect(revoked.status).toBe(200);
+    const dead = await c.cli.as(token.access_token).run(["--json", "whoami"]);
+    expect(dead.code, dead.stderr).toBe(5);
+    expect(dead.stdout).toBe("");
   });
 });
