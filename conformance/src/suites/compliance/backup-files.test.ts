@@ -132,6 +132,31 @@ describe("the files a backup names", () => {
     expect(new Uint8Array(read.data)).toEqual(kept.bytes);
   });
 
+  it("refuses a backup with 409 conflict and puts no object when the object store's copy of a file it names is dropped while it is read", async () => {
+    const { operator } = clientsFor(origin);
+    const s3 = (await operator.listBlobStores()).data.data.find(
+      (store) => store.kind === "s3",
+    )!;
+    const named = await namedFile(
+      origin,
+      "a file dropped during a backup read",
+    );
+    const before = await bucket.backupKeys();
+    const owner = ownerOf(origin);
+
+    await origin.setFault("hold:backup:read");
+    const running = owner.runBackup();
+    await origin.waitForHold("hold:backup:read");
+    const dropped = await operator.deleteBlobCopy(named.hash, s3.id);
+    expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
+    await origin.clearFault();
+    const refused = await running;
+    expect(refused.status, JSON.stringify(refused.data)).toBe(409);
+    expect(refused.error?.error.code).toBe("conflict");
+    expect(await bucket.backupKeys()).toEqual(before);
+    await unname(origin, named.item);
+  });
+
   it("purges a file once thinning has deleted every backup that names it", async () => {
     const { operator } = clientsFor(origin);
     await runJob(operator, "blob-orphans");

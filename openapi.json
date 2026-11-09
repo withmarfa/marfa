@@ -51911,11 +51911,14 @@
             }
           },
           "409": {
-            "description": "- `housekeeping_job_running`: a backup is running. Try again once it ends.\n- `no_bucket`: the instance has no object store, so it keeps no backups.",
+            "description": "- `conflict`: a file the backup names was purged, or its object store copy was dropped, while the backup was read, or a backup by this name is already recorded. The next run takes the backup again.\n- `housekeeping_job_running`: a backup is running. Try again once it ends.\n- `no_bucket`: the instance has no object store, so it keeps no backups.",
             "content": {
               "application/json": {
                 "schema": {
                   "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ConflictRefusal"
+                    },
                     {
                       "$ref": "#/components/schemas/HousekeepingJobRunningRefusal"
                     },
