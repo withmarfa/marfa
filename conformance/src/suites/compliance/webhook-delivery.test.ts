@@ -78,22 +78,35 @@ it("delivers promptly while eight other subscriptions never answer", async () =>
   }
 });
 
-/** A receiver that takes every request and never answers; `received` counts them. */
+/** A receiver that takes every request and never answers; `received` counts them and `open` counts the connections still held. */
 async function stallingReceiver(): Promise<{
   server: Server;
   port: number;
   received: () => number;
+  open: () => number;
 }> {
   let received = 0;
+  let open = 0;
   const server = createServer((req) => {
     req.resume();
     received++;
+  });
+  server.on("connection", (socket) => {
+    open++;
+    socket.on("close", () => {
+      open--;
+    });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (!address || typeof address === "string")
     throw new Error("no receiver port");
-  return { server, port: address.port, received: () => received };
+  return {
+    server,
+    port: address.port,
+    received: () => received,
+    open: () => open,
+  };
 }
 
 const reads = { type_permissions: { "*": "read" } };
@@ -294,6 +307,11 @@ it("starts a third maker's delivery only when an attempt ends once two makers ho
     // Removed first, so the second maker's later deliveries do not take the freed attempts.
     await removeAll(secondMade);
     secondMade.length = 0;
+    expect(receiver.received.some((r) => r.path === "/hook/third-maker")).toBe(
+      false,
+    );
+    expect(first.open()).toBe(56);
+    expect(second.open()).toBe(8);
     second.server.closeAllConnections();
     await waitFor(
       "the third maker's delivery once the second maker's attempts end",
