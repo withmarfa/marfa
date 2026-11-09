@@ -2078,7 +2078,7 @@ When `POST /restore` reads a `connector_agreement` line whose item the instance 
 
 ### `search-and-filters/archive-webhooks`
 
-When `GET /export?format=archive` is requested by the owner, by local authority or by a credential that holds `webhooks.manage`, the server MUST carry in `instance.ndjson.gz` one `webhook` line, holding the subscription's `id`, `url`, `events`, `type_filter` and `active`, and never its secret, for each subscription that caller may read.
+When `GET /export?format=archive` is requested through the owner's browser session or by a credential that holds `webhooks.manage`, the server MUST carry in `instance.ndjson.gz` one `webhook` line, holding the subscription's `id`, `url`, `events`, `type_filter` and `active`, and never its secret, for each subscription that caller may read.
 
 **Reason:** a subscription is made by the owner or an app and is worth keeping, but its secret is a credential, and a backup holds no credentials.
 
