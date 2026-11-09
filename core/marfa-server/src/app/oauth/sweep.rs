@@ -9,7 +9,7 @@ use serde_json::json;
 use super::grant;
 use crate::app::access::Caller;
 use crate::app::auth::session;
-use crate::app::clock::Stamp;
+use crate::app::clock::{Stamp, readable};
 use crate::app::housekeeping::{Run, drain};
 use crate::app::refusal::Result;
 use crate::app::{App, stored};
@@ -23,11 +23,23 @@ pub(super) const MS_PER_DAY: i64 = 86_400_000;
 const CLIENTS_PURGED: &str = "auth.clients.purged";
 const GRANTS_PURGED: &str = "auth.grants.purged";
 const GRANT_RETIRED: &str = "auth.grant.retired";
-const IDLE_GRANTS: &str = "SELECT client_id, user_id FROM auth_oauth_consent \
-                           WHERE withdrawn_at IS NULL \
-                           AND COALESCE(last_used_at, updated_at) < ?1 LIMIT ?2";
-const WITHDRAWN_GRANTS: &str = "SELECT client_id, user_id FROM auth_oauth_consent \
-                                WHERE withdrawn_at IS NOT NULL AND withdrawn_at < ?1 LIMIT ?2";
+
+fn idle_consents() -> String {
+    let last = "COALESCE(last_used_at, updated_at)";
+    format!(
+        "SELECT client_id, user_id FROM auth_oauth_consent WHERE withdrawn_at IS NULL \
+         AND {} AND {last} < ?1 LIMIT ?2",
+        readable(last)
+    )
+}
+
+fn withdrawn_consents() -> String {
+    format!(
+        "SELECT client_id, user_id FROM auth_oauth_consent \
+         WHERE {} AND withdrawn_at < ?1 LIMIT ?2",
+        readable("withdrawn_at")
+    )
+}
 
 /// Read from `tx`, since the live settings lag a change the writer has committed.
 fn cutoff_of(tx: &Transaction<'_>, app: &App, retention: Setting<u64>) -> Result<Option<Stamp>> {
@@ -54,11 +66,15 @@ fn consents_in(
 }
 
 /// So a run with nothing to do takes no write.
-async fn any_consent(app: &Arc<App>, query: &'static str, retention: Setting<u64>) -> Result<bool> {
+async fn any_consent(
+    app: &Arc<App>,
+    query: fn() -> String,
+    retention: Setting<u64>,
+) -> Result<bool> {
     let live = app.clone();
     app.db
         .read(move |tx| match cutoff_of(tx, &live, retention)? {
-            Some(cutoff) => Ok(!consents_in(tx, query, cutoff, 1)?.is_empty()),
+            Some(cutoff) => Ok(!consents_in(tx, &query(), cutoff, 1)?.is_empty()),
             None => Ok(false),
         })
         .await
@@ -70,10 +86,12 @@ async fn idle_clients(app: &Arc<App>) -> Result<i64> {
         let Some(cutoff) = cutoff_of(unit.tx(), &live, DCR_CLIENT_RETENTION_DAYS)? else {
             return Ok(0);
         };
+        let offered = "COALESCE(offered_at, created_at)";
         let count = unit.tx().execute(
-            "DELETE FROM auth_oauth_client WHERE client_id IN ( \
+            &format!(
+                "DELETE FROM auth_oauth_client WHERE client_id IN ( \
              SELECT client_id FROM auth_oauth_client AS c \
-             WHERE created_at < ?1 AND COALESCE(offered_at, created_at) < ?1 \
+             WHERE {} AND created_at < ?1 AND {} AND {offered} < ?1 \
              AND NOT EXISTS (SELECT 1 FROM auth_oauth_consent AS x \
                              WHERE x.client_id = c.client_id) \
              AND NOT EXISTS (SELECT 1 FROM auth_oauth_access_token AS x \
@@ -81,6 +99,9 @@ async fn idle_clients(app: &Arc<App>) -> Result<i64> {
              AND NOT EXISTS (SELECT 1 FROM auth_oauth_refresh_token AS x \
                              WHERE x.client_id = c.client_id) \
              LIMIT ?2)",
+                readable("created_at"),
+                readable(offered)
+            ),
             params![cutoff, BATCH],
         )?;
         if count > 0 {
@@ -100,7 +121,7 @@ pub async fn remove_idle_clients(app: &Arc<App>, run: &Run) -> Result<(i64, bool
 }
 
 async fn retire_one(app: &Arc<App>) -> Result<i64> {
-    if !any_consent(app, IDLE_GRANTS, GRANT_INACTIVITY_DAYS).await? {
+    if !any_consent(app, idle_consents, GRANT_INACTIVITY_DAYS).await? {
         return Ok(0);
     }
     let (live, cache) = (app.clone(), app.catalog_handle());
@@ -108,7 +129,7 @@ async fn retire_one(app: &Arc<App>) -> Result<i64> {
         let Some(cutoff) = cutoff_of(unit.tx(), &live, GRANT_INACTIVITY_DAYS)? else {
             return Ok(0);
         };
-        let idle = consents_in(unit.tx(), IDLE_GRANTS, cutoff, 1)?;
+        let idle = consents_in(unit.tx(), &idle_consents(), cutoff, 1)?;
         for (client_id, user_id) in &idle {
             grant::end(unit, &cache, client_id, user_id)?;
             unit.audit(
@@ -132,7 +153,7 @@ pub async fn retire_idle_grants(app: &Arc<App>, run: &Run) -> Result<(i64, bool)
 }
 
 async fn withdrawn_grants(app: &Arc<App>) -> Result<i64> {
-    if !any_consent(app, WITHDRAWN_GRANTS, REVOKED_GRANT_RETENTION_DAYS).await? {
+    if !any_consent(app, withdrawn_consents, REVOKED_GRANT_RETENTION_DAYS).await? {
         return Ok(0);
     }
     let (live, cache) = (app.clone(), app.catalog_handle());
@@ -140,7 +161,7 @@ async fn withdrawn_grants(app: &Arc<App>) -> Result<i64> {
         let Some(cutoff) = cutoff_of(unit.tx(), &live, REVOKED_GRANT_RETENTION_DAYS)? else {
             return Ok(0);
         };
-        let withdrawn = consents_in(unit.tx(), WITHDRAWN_GRANTS, cutoff, BATCH)?;
+        let withdrawn = consents_in(unit.tx(), &withdrawn_consents(), cutoff, BATCH)?;
         for (client_id, user_id) in &withdrawn {
             grant::forget(unit, &cache, client_id, user_id)?;
         }
@@ -174,7 +195,8 @@ async fn expired_in(
             let count = tx.execute(
                 &format!(
                     "DELETE FROM {table} WHERE {key} IN ( \
-                     SELECT {key} FROM {table} WHERE expires_at <= ?1 LIMIT ?2)"
+                     SELECT {key} FROM {table} WHERE {} AND expires_at <= ?1 LIMIT ?2)",
+                    readable("expires_at")
                 ),
                 params![cutoff, BATCH],
             )?;

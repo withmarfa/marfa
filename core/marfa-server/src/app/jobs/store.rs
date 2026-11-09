@@ -5,6 +5,7 @@ use serde_json::Value;
 
 use super::Queued;
 use crate::app::access::Maker;
+use crate::app::clock::readable;
 use crate::app::items::Selected;
 use crate::app::refusal::{Refusal, Result};
 
@@ -260,8 +261,11 @@ pub fn end(
 /// Removes up to `limit` jobs that ended before `before`.
 pub fn remove_ended(tx: &Transaction<'_>, before: &str, limit: i64) -> Result<i64> {
     let removed = tx.execute(
-        "DELETE FROM bulk_jobs WHERE id IN (SELECT id FROM bulk_jobs \
-         WHERE finished_at IS NOT NULL AND finished_at < ?1 LIMIT ?2)",
+        &format!(
+            "DELETE FROM bulk_jobs WHERE id IN (SELECT id FROM bulk_jobs \
+             WHERE {} AND finished_at < ?1 LIMIT ?2)",
+            readable("finished_at")
+        ),
         params![before, limit],
     )?;
     Ok(removed as i64)

@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use super::super::App;
 use super::super::access::Caller;
 use super::super::catalog::{self, Snapshot};
+use super::super::clock::readable;
 use super::super::edges::write::purge_edge;
 use super::super::housekeeping::{DAY_MS, Report, Run, cutoff};
 use super::super::instance;
@@ -35,10 +36,11 @@ fn binned_after(
     after: &Position,
     limit: i64,
 ) -> Result<Vec<Position>> {
-    let mut statement = tx.prepare_cached(
-        "SELECT trashed_at, id FROM items WHERE state = 'trashed' AND trashed_at < ?1 \
+    let mut statement = tx.prepare_cached(&format!(
+        "SELECT trashed_at, id FROM items WHERE state = 'trashed' AND {} AND trashed_at < ?1 \
          AND (trashed_at, id) > (?2, ?3) ORDER BY trashed_at, id LIMIT ?4",
-    )?;
+        readable("trashed_at")
+    ))?;
     Ok(statement
         .query_map(params![before, after.0, after.1, limit], |row| {
             Ok((row.get(0)?, row.get(1)?))

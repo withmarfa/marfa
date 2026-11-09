@@ -204,6 +204,15 @@ impl Stamp {
     }
 }
 
+/// SQL that holds only where `column` is a time in the stored form, so that comparing it as text
+/// compares instants. A clean-up keyed on a time adds it, so a time that does not read is never past.
+/// SQLite's own reading lets an hour of 24 through.
+pub fn readable(column: &str) -> String {
+    format!(
+        "(strftime('%Y-%m-%dT%H:%M:%fZ', {column}) = {column} AND substr({column}, 12, 2) < '24')"
+    )
+}
+
 impl fmt::Display for Stamp {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.text())
@@ -282,6 +291,64 @@ mod tests {
             "2025-11-09 07:16:20.123Z",
         ] {
             assert!(Stamp::read(stored).is_err(), "{stored}");
+        }
+    }
+
+    #[test]
+    fn its_sql_test_agrees_with_reading() {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE t (at)").unwrap();
+        let held: Vec<rusqlite::types::Value> = [
+            "2025-11-09T07:16:20.123Z",
+            "0000-01-01T00:00:00.000Z",
+            "9999-12-31T23:59:59.999Z",
+            "2024-02-29T00:00:00.000Z",
+            "",
+            "0",
+            "z",
+            "soon",
+            "1762672580",
+            "2025-11-09T07:16:20Z",
+            "2025-11-09T07:16:20.1Z",
+            "2025-11-09T07:16:20.123+00:00",
+            "2025-11-09t07:16:20.123z",
+            "2025-11-09T07:16:20.1234Z",
+            "2025-11-09 07:16:20.123Z",
+            " 2025-11-09T07:16:20.123Z",
+            "2025-11-09T07:16:20.123Z ",
+            "2025-02-29T00:00:00.000Z",
+            "2025-13-01T00:00:00.000Z",
+            "2025-11-31T00:00:00.000Z",
+            "2025-11-09T24:00:00.000Z",
+            "2025-11-09T24:59:59.999Z",
+            "2025-11-09T25:00:00.000Z",
+            "2025-11-09T23:59:59.999Z",
+            "2025-11-09T23:60:00.000Z",
+            "2025-11-09T23:59:60.000Z",
+        ]
+        .map(|text| rusqlite::types::Value::Text(text.into()))
+        .into_iter()
+        .chain([
+            rusqlite::types::Value::Integer(1_762_672_580_123),
+            rusqlite::types::Value::Real(2_461_000.5),
+            rusqlite::types::Value::Null,
+        ])
+        .collect();
+        for value in &held {
+            db.execute("DELETE FROM t", []).unwrap();
+            db.execute("INSERT INTO t VALUES (?1)", [value]).unwrap();
+            let passes: bool = db
+                .query_row(
+                    &format!("SELECT EXISTS (SELECT 1 FROM t WHERE {})", readable("at")),
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let reads = match value {
+                rusqlite::types::Value::Text(text) => Stamp::parsed(text).is_some(),
+                _ => false,
+            };
+            assert_eq!(passes, reads, "{value:?}");
         }
     }
 

@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use super::{Note, Visit, names, note};
 use crate::app::access::{Caller, Standing, unauthorized};
-use crate::app::clock::Stamp;
+use crate::app::clock::{Stamp, readable};
 use crate::app::faults::{FAIL_SESSION_DELETE, FAIL_SESSION_LOOKUP, FAIL_SESSION_USE};
 use crate::app::keys::digest_of;
 use crate::app::refusal::{Code, Refusal, Result};
@@ -325,7 +325,10 @@ pub(super) fn end_all(
 ) -> Result<()> {
     let now = Stamp::read(at)?;
     tx.execute(
-        "DELETE FROM auth_session WHERE user_id = ?1 AND expires_at <= ?2",
+        &format!(
+            "DELETE FROM auth_session WHERE user_id = ?1 AND {} AND expires_at <= ?2",
+            readable("expires_at")
+        ),
         params![user_id, now],
     )?;
     let mut statement = tx.prepare("SELECT id FROM auth_session WHERE user_id = ?1")?;
@@ -341,8 +344,11 @@ pub(super) fn end_all(
 /// Removes up to `batch` sessions past their end, which no cookie opens any more.
 pub fn remove_expired(tx: &Transaction<'_>, now: Stamp, batch: i64) -> Result<i64> {
     let count = tx.execute(
-        "DELETE FROM auth_session WHERE id IN ( \
-         SELECT id FROM auth_session WHERE expires_at <= ?1 LIMIT ?2)",
+        &format!(
+            "DELETE FROM auth_session WHERE id IN ( \
+             SELECT id FROM auth_session WHERE {} AND expires_at <= ?1 LIMIT ?2)",
+            readable("expires_at")
+        ),
         params![now, batch],
     )?;
     Ok(i64::try_from(count).unwrap_or(i64::MAX))
@@ -455,9 +461,11 @@ mod tests {
     }
 
     #[test]
-    fn a_session_whose_end_does_not_read_is_refused_and_never_taken_as_live() {
+    fn a_session_whose_end_does_not_read_is_refused_and_never_taken_as_live_or_swept() {
         let now = at(NOW);
         for stored in [
+            "0",
+            "z",
             "soon",
             "1800000000",
             "2027-01-15T08:00:00Z",
@@ -470,6 +478,7 @@ mod tests {
             assert_eq!(refused.code, Code::InternalError, "{stored}");
             assert!(all_live(&tx, now).is_err(), "{stored}");
             assert!(live_count(&tx, now).is_err(), "{stored}");
+            assert_eq!(remove_expired(&tx, now, 10).unwrap(), 0, "{stored}");
         }
     }
 }

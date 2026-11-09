@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use super::super::App;
 use super::super::access::Caller;
 use super::super::catalog::{self, Catalog, Snapshot};
+use super::super::clock::readable;
 use super::super::housekeeping::{DAY_MS, Report, Run, ago};
 use super::super::refusal::{Code, Result};
 use super::super::unit::Unit;
@@ -59,8 +60,9 @@ fn expired(
     limit: i64,
 ) -> Result<Vec<Position>> {
     let mut statement = tx.prepare_cached(&format!(
-        "SELECT created_at, id FROM items WHERE type = ?1 AND {EXPIRABLE} AND created_at < ?2 \
-         AND (created_at, id) > (?3, ?4) ORDER BY created_at, id LIMIT ?5"
+        "SELECT created_at, id FROM items WHERE type = ?1 AND {EXPIRABLE} AND {} \
+         AND created_at < ?2 AND (created_at, id) > (?3, ?4) ORDER BY created_at, id LIMIT ?5",
+        readable("created_at")
     ))?;
     Ok(statement
         .query_map(params![type_id, before, after.0, after.1, limit], |row| {
@@ -74,7 +76,9 @@ fn is_expired(app: &App, tx: &Transaction<'_>, catalog: &Catalog, item: &Item) -
         return Ok(false);
     };
     let mut statement = tx.prepare_cached(&format!(
-        "SELECT EXISTS (SELECT 1 FROM items WHERE id = ?1 AND {EXPIRABLE} AND created_at < ?2)"
+        "SELECT EXISTS (SELECT 1 FROM items WHERE id = ?1 AND {EXPIRABLE} AND {} \
+         AND created_at < ?2)",
+        readable("created_at")
     ))?;
     Ok(statement.query_row(params![item.id, before], |row| row.get(0))?)
 }

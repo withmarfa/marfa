@@ -2,7 +2,7 @@
 
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 
-use crate::app::clock::Stamp;
+use crate::app::clock::{Stamp, readable};
 use crate::app::refusal::Result;
 
 pub struct Endpoint {
@@ -342,15 +342,18 @@ pub fn expired(
     pending_before: Option<&str>,
     limit: i64,
 ) -> Result<Vec<Expired>> {
-    let mut statement = tx.prepare_cached(
+    let mut statement = tx.prepare_cached(&format!(
         "SELECT seq, charge FROM ( \
            SELECT * FROM (SELECT seq, charge, handled_at AS aged FROM inbound_deliveries \
-             WHERE handled_at IS NOT NULL AND handled_at < ?1 ORDER BY handled_at, seq LIMIT ?3) \
+             WHERE {handled} AND handled_at < ?1 ORDER BY handled_at, seq LIMIT ?3) \
            UNION ALL \
            SELECT * FROM (SELECT seq, charge, received_at AS aged FROM inbound_deliveries \
-             WHERE handled_at IS NULL AND received_at < ?2 ORDER BY received_at, seq LIMIT ?3) \
+             WHERE handled_at IS NULL AND {received} AND received_at < ?2 \
+             ORDER BY received_at, seq LIMIT ?3) \
          ) ORDER BY aged, seq LIMIT ?3",
-    )?;
+        handled = readable("handled_at"),
+        received = readable("received_at"),
+    ))?;
     let rows = statement.query_map(params![handled_before, pending_before, limit], |row| {
         Ok(Expired {
             seq: row.get(0)?,
@@ -372,11 +375,13 @@ pub fn any_expired(
     pending_before: Option<&str>,
 ) -> Result<bool> {
     Ok(tx
-        .prepare_cached(
-            "SELECT EXISTS (SELECT 1 FROM inbound_deliveries WHERE handled_at IS NOT NULL \
+        .prepare_cached(&format!(
+            "SELECT EXISTS (SELECT 1 FROM inbound_deliveries WHERE {handled} \
                AND handled_at < ?1) \
              OR EXISTS (SELECT 1 FROM inbound_deliveries WHERE handled_at IS NULL \
-               AND received_at < ?2)",
-        )?
+               AND {received} AND received_at < ?2)",
+            handled = readable("handled_at"),
+            received = readable("received_at"),
+        ))?
         .query_row(params![handled_before, pending_before], |row| row.get(0))?)
 }

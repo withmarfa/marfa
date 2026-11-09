@@ -7,7 +7,7 @@ use rusqlite::{OptionalExtension, Transaction, params};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
-use crate::app::clock::Stamp;
+use crate::app::clock::{Stamp, readable};
 use crate::app::refusal::{Refusal, Result};
 
 /// How long a preview's token stays good, in milliseconds.
@@ -187,7 +187,10 @@ pub fn spend(
 /// Removes expired records during the next confirmation write.
 pub fn sweep(tx: &Transaction<'_>, now: Stamp) -> Result<()> {
     tx.execute(
-        "DELETE FROM mcp_spent_confirmations WHERE expires_at <= ?1",
+        &format!(
+            "DELETE FROM mcp_spent_confirmations WHERE {} AND expires_at <= ?1",
+            readable("expires_at")
+        ),
         params![now],
     )?;
     Ok(())
