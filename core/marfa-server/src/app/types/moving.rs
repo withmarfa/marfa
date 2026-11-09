@@ -98,6 +98,7 @@ enum Rewrite {
 }
 
 struct Plan {
+    subtypes: bool,
     named: Vec<Named>,
     rewrites: Vec<Rewrite>,
 }
@@ -159,6 +160,7 @@ fn settings_of(item: &items::Item) -> Result<Map<String, Value>> {
 fn plan(tx: &Transaction<'_>, caller: &Caller, from: &str, to: &str) -> Result<Plan> {
     let subtypes = !subtypes_of(tx, from)?.is_empty();
     let mut plan = Plan {
+        subtypes,
         named: Vec::new(),
         rewrites: Vec::new(),
     };
@@ -281,6 +283,36 @@ fn judge(caller: &Caller, catalog: &Catalog, from: &str, to: &str) -> Result<()>
     caller.require_type(to, Level::Write)
 }
 
+/// What a move would take, and whether the type has subtypes, on one read.
+pub(crate) async fn dry_run(
+    app: &App,
+    caller: &Caller,
+    from: String,
+    to: String,
+) -> Result<(Value, bool)> {
+    let at = app.clock.stamp();
+    crate::app::items::reading(app, caller, move |read| {
+        let (caller, tx) = (&read.caller, read.tx);
+        judge(caller, &read.catalog, &from, &to)?;
+        let plan = plan(tx, caller, &from, &to)?;
+        if plan.blocked() {
+            return Err(plan.refusal(&from));
+        }
+        let ids = query::of_exact_type(tx, caller, &read.catalog, &from)?;
+        let answer = json!({
+            "dry_run": true,
+            "from": from,
+            "to": to,
+            "matched": ids.len(),
+            "ids": ids,
+            "settings": plan.settings(),
+            "grants": grants(tx, caller, &from, &at)?,
+        });
+        Ok((answer, plan.subtypes))
+    })
+    .await
+}
+
 /// `POST /types/{id}/move`: answers a dry run, or queues the move.
 pub async fn move_type(
     app: &App,
@@ -291,27 +323,8 @@ pub async fn move_type(
 ) -> Result<(u16, String)> {
     let cache = app.catalog_handle();
     if asked.dry_run {
-        let at = app.clock.stamp();
         let named = [from.clone(), asked.to.clone()];
-        let answer = crate::app::items::reading(app, caller, move |read| {
-            let (caller, tx) = (&read.caller, read.tx);
-            judge(caller, &read.catalog, &from, &asked.to)?;
-            let plan = plan(tx, caller, &from, &asked.to)?;
-            if plan.blocked() {
-                return Err(plan.refusal(&from));
-            }
-            let ids = query::of_exact_type(tx, caller, &read.catalog, &from)?;
-            Ok(json!({
-                "dry_run": true,
-                "from": from,
-                "to": asked.to,
-                "matched": ids.len(),
-                "ids": ids,
-                "settings": plan.settings(),
-                "grants": grants(tx, caller, &from, &at)?,
-            }))
-        })
-        .await?;
+        let (answer, _) = dry_run(app, caller, from, asked.to).await?;
         let body = answer.to_string();
         let Some(claim) = claim else {
             return Ok((200, body));
@@ -342,6 +355,8 @@ pub async fn move_type(
 pub(crate) struct Taking<'a> {
     pub ids: &'a [String],
     pub settings: &'a Value,
+    /// Whether the type has subtypes, which decides how a view's type list is rewritten.
+    pub subtypes: bool,
 }
 
 /// Decides, on the state the write commits, whether the move may start.
@@ -379,8 +394,7 @@ fn queue(
     let catalog = catalog::current(cache, tx, Snapshot::Pending)?;
     judge(&unit.caller, &catalog, &from, &asked.to)?;
     let plan = plan(tx, &unit.caller, &from, &asked.to)?;
-    let blocked = plan.blocked();
-    if blocked && guard.is_none() {
+    if guard.is_none() && plan.blocked() {
         return Err(plan.refusal(&from));
     }
     let ids = query::of_exact_type(tx, &unit.caller, &catalog, &from)?;
@@ -389,12 +403,10 @@ fn queue(
         let taking = Taking {
             ids: &ids,
             settings: &settings,
+            subtypes: plan.subtypes,
         };
         if !guard(unit, &taking)? {
             return Ok(None);
-        }
-        if blocked {
-            return Err(plan.refusal(&from));
         }
     }
     let selected = items::selected(tx, &ids)?;

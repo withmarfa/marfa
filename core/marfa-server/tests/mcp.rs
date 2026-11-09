@@ -2877,3 +2877,125 @@ async fn the_move_tool_is_offered_only_to_a_credential_that_writes_a_type() {
     )
     .await;
 }
+
+async fn view_of_leads(instance: &Instance, token: &str) -> String {
+    let made = instance
+        .tool_at(
+            SCHEMA,
+            token,
+            "marfa_save_view",
+            json!({ "title": "Leads", "query": { "types": [FROM] } }),
+        )
+        .await;
+    assert!(!made.failed, "{}", made.value);
+    made.payload()["id"].as_str().unwrap().to_string()
+}
+
+async fn register_subtype(instance: &Instance, token: &str) {
+    let made = instance
+        .tool_at(
+            SCHEMA,
+            token,
+            "marfa_save_type",
+            json!({
+                "action": "register",
+                "id": "user.lead.cold",
+                "parent": FROM,
+                "fields": { "title": { "type": "string" } },
+            }),
+        )
+        .await;
+    assert!(!made.failed, "{}", made.value);
+}
+
+#[tokio::test]
+async fn a_move_confirmation_is_refused_once_the_type_gained_a_subtype() {
+    let instance = Instance::start(&[]).await;
+    let token = mover(&instance).await;
+    lead(&instance, &token, "Ada").await;
+    let view = view_of_leads(&instance, &token).await;
+    let shown = move_preview(&instance, &token).await;
+    assert_eq!(shown.payload()["settings"].as_array().unwrap().len(), 1);
+    register_subtype(&instance, &token).await;
+    let confirm = shown.payload()["confirm"].as_str().unwrap();
+    let refused = move_with(&instance, &token, confirm).await;
+    assert_eq!(refused.code(), "confirmation_stale", "{}", refused.value);
+    // The witness: the new preview's confirmation moves the items, and the view keeps its subtypes.
+    let fresh = refused.value["error"]["confirm"].as_str().unwrap();
+    let started = move_with(&instance, &token, fresh).await;
+    assert_eq!(finished(&instance, &token, &started).await, "completed");
+    let read = instance
+        .call(&token, Method::GET, "/items?type=system.view", None)
+        .await;
+    let held = read.body["data"]
+        .as_array()
+        .and_then(|views| views.iter().find(|item| item["id"] == view.as_str()))
+        .cloned();
+    assert_eq!(
+        held.as_ref()
+            .map(|item| &item["properties"]["query"]["types"]),
+        Some(&json!([FROM, TO])),
+        "{}",
+        read.body
+    );
+}
+
+#[tokio::test]
+async fn a_move_confirmation_is_stale_when_a_setting_became_blocked_after_the_preview() {
+    let instance = Instance::start(&[("MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES", "true")]).await;
+    let token = mover(&instance).await;
+    let id = lead(&instance, &token, "Ada").await;
+    let shown = move_preview(&instance, &token).await;
+    register_subtype(&instance, &token).await;
+    let made = instance
+        .call(
+            &token,
+            Method::POST,
+            "/webhooks",
+            Some(json!({
+                "url": "http://127.0.0.1:9/move",
+                "events": ["item.created"],
+                "type_filter": FROM,
+            })),
+        )
+        .await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    let confirm = shown.payload()["confirm"].as_str().unwrap();
+    let refused = move_with(&instance, &token, confirm).await;
+    assert_eq!(refused.code(), "confirmation_stale", "{}", refused.value);
+    assert_eq!(refused.value["error"]["settings"][0]["reason"], "subtypes");
+    assert!(refused.value["error"].get("confirm").is_none());
+    assert_eq!(type_of(&instance, &token, &id).await, FROM);
+    // The witness: a fresh preview of the blocked move is refused as blocked.
+    assert_eq!(
+        move_preview(&instance, &token).await.code(),
+        "type_move_blocked"
+    );
+}
+
+#[tokio::test]
+async fn a_move_confirmation_survives_properties_sent_in_another_order() {
+    let instance = Instance::start(&[]).await;
+    let token = mover(&instance).await;
+    let id = lead(&instance, &token, "Ada").await;
+    let shown = instance
+        .tool_at(
+            SCHEMA,
+            &token,
+            "marfa_move_items",
+            json!({ "from": FROM, "to": TO, "properties": { "title": "A", "notes": "B" } }),
+        )
+        .await;
+    let confirm = shown.payload()["confirm"].as_str().unwrap();
+    let started = instance
+        .tool_at(
+            SCHEMA,
+            &token,
+            "marfa_move_items",
+            json!({ "from": FROM, "to": TO, "properties": { "notes": "B", "title": "A" }, "confirm": confirm }),
+        )
+        .await;
+    assert!(!started.failed, "{}", started.value);
+    finished(&instance, &token, &started).await;
+    assert_eq!(type_of(&instance, &token, &id).await, TO);
+}

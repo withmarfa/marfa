@@ -11,7 +11,7 @@ use crate::app::access::Caller;
 use crate::app::items::write::ruled;
 use crate::app::jobs;
 use crate::app::mcp::confirm;
-use crate::app::mcp::moving::{self, Confirmed, Preview};
+use crate::app::mcp::moving::{self, Confirmed, Fresh, Preview};
 use crate::app::refusal::Refusal;
 use crate::http::mcp::results::{ANSWER_BUDGET_CHARS, Outcome, Stop, fit_list};
 
@@ -187,9 +187,17 @@ pub async fn run(
     match moving::confirmed(app, caller, &from, &to, properties.clone(), &token).await? {
         Confirmed::Started(job) => Ok(job_answer(&parsed(&job)?, STARTED_NEXT)),
         Confirmed::Stale => {
-            let fresh = moving::preview(app, caller, &from, &to, properties.as_ref()).await?;
-            let expired = confirm::is_expired(&token, app.clock.now_ms());
-            Err(stale(preview_body(app, caller, &fresh)?, expired))
+            let body = match moving::fresh(app, caller, &from, &to, properties.as_ref()).await? {
+                Fresh::Open(fresh) => preview_body(app, caller, &fresh)?,
+                Fresh::Blocked(mut body) => {
+                    body.insert(
+                        "next".into(),
+                        "Nothing has moved, and the move can't start while these settings name the type. Change each setting listed, then call again without confirm.".into(),
+                    );
+                    body
+                }
+            };
+            Err(stale(body, confirm::is_expired(&token, app.clock.now_ms())))
         }
     }
 }
