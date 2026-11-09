@@ -538,8 +538,11 @@ jobs:
           retention-days: 1
 
   # Each Linux archive on a runner of its own architecture, unpacked as a
-  # person would: both programs report the version, and the server boots with
-  # throwaway secrets and answers `/health`.
+  # person would: both programs report the version, the server boots with
+  # throwaway secrets and answers `/health`, and it reads a text file, a PDF
+  # and a picture under the full sandbox (`prove-reading.sh`). This is the only
+  # job that runs the arm64 programs on arm64: the build runs them under QEMU,
+  # which cannot install the reader's seccomp filter.
   run-linux:
     name: Run the programs (${{ matrix.arch }} Linux)
     needs: [version, programs-linux]
@@ -567,6 +570,9 @@ jobs:
 
       - name: Unpack the archive, ask the programs their version and boot the server
         run: bash scripts/release/check-archive.sh "$RUNNER_TEMP/archive/marfa-$VERSION-linux-${{ matrix.arch }}.tar.gz" "$VERSION" --boot
+
+      - name: Read a text file, a PDF and a picture with the server unpacked from the archive
+        run: bash scripts/release/prove-reading.sh "$RUNNER_TEMP/archive/marfa-$VERSION-linux-${{ matrix.arch }}.tar.gz" core/marfa-enrichment/fixtures
 
   # Everything a release carries, in one folder, with the checksum file for
   # the three archives, and the Homebrew formula the release would give the
