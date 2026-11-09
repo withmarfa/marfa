@@ -1547,14 +1547,14 @@ fn a_connector_holds_its_registration_and_keeps_its_state_and_agreements() {
 #[test]
 fn restore_posts_the_archive_under_its_own_type() {
     let request = restore::request(&restore::RestoreArgs {
-        file: PathBuf::from("/nowhere/archive.tar.gz"),
+        file: PathBuf::from("/nowhere/archive.tar"),
     });
     assert_eq!(request.method, Method::Post);
     assert_eq!(request.path(), "/restore");
     match &request.body {
         Body::File { path, content_type } => {
-            assert_eq!(path, &PathBuf::from("/nowhere/archive.tar.gz"));
-            assert_eq!(content_type, "application/gzip");
+            assert_eq!(path, &PathBuf::from("/nowhere/archive.tar"));
+            assert_eq!(content_type, "application/x-tar");
         }
         other => panic!("the archive is not sent as a file: {other:?}"),
     }

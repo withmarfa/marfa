@@ -5,7 +5,6 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use clap::{Args, ValueEnum};
-use flate2::write::GzDecoder;
 use serde_json::{Value, json};
 
 use super::{StateFilter, state_list};
@@ -275,8 +274,8 @@ const TAR_BLOCK: usize = 512;
 struct ManifestTap<R> {
     inner: R,
     archive: bool,
-    /// Until the manifest is whole, what the gzip stream decompresses to.
-    decoder: Option<GzDecoder<Vec<u8>>>,
+    /// Until the manifest is whole, the archive's first bytes.
+    head: Option<Vec<u8>>,
     manifest: Option<Vec<u8>>,
 }
 
@@ -285,7 +284,7 @@ impl<R: Read> ManifestTap<R> {
         ManifestTap {
             inner,
             archive,
-            decoder: archive.then(|| GzDecoder::new(Vec::new())),
+            head: archive.then(Vec::new),
             manifest: None,
         }
     }
@@ -337,18 +336,11 @@ impl<R: Read> ManifestTap<R> {
 impl<R: Read> Read for ManifestTap<R> {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         let read = self.inner.read(buffer)?;
-        if let Some(decoder) = &mut self.decoder {
-            // A stream the decoder cannot read is left to the reader of the
-            // file; it is not the export's to judge mid-copy.
-            if decoder
-                .write_all(&buffer[..read])
-                .and_then(|()| decoder.flush())
-                .is_err()
-            {
-                self.decoder = None;
-            } else if let Some(found) = Self::take_manifest(decoder.get_ref()) {
+        if let Some(head) = &mut self.head {
+            head.extend_from_slice(&buffer[..read]);
+            if let Some(found) = Self::take_manifest(head) {
                 self.manifest = found;
-                self.decoder = None;
+                self.head = None;
             }
         }
         Ok(read)
@@ -358,15 +350,14 @@ impl<R: Read> Read for ManifestTap<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use flate2::{Compression, write::GzEncoder};
 
-    /// A gzip-compressed tar whose first entry is `manifest.json`, followed by
-    /// an entry the tap must not need.
+    /// A tar whose first entry is `manifest.json`, followed by an entry the
+    /// tap must not need.
     fn archive(manifest: &str) -> Vec<u8> {
         let mut tar = Vec::new();
         for (name, body) in [
             ("manifest.json", manifest.as_bytes()),
-            ("items.ndjson", b"{}\n".as_slice()),
+            ("items.ndjson.gz", b"\x1f\x8b".as_slice()),
         ] {
             let mut header = [0u8; TAR_BLOCK];
             header[..name.len()].copy_from_slice(name.as_bytes());
@@ -377,9 +368,7 @@ mod tests {
             tar.resize(tar.len().div_ceil(TAR_BLOCK) * TAR_BLOCK, 0);
         }
         tar.resize(tar.len() + 2 * TAR_BLOCK, 0);
-        let mut gzip = GzEncoder::new(Vec::new(), Compression::default());
-        gzip.write_all(&tar).unwrap();
-        gzip.finish().unwrap()
+        tar
     }
 
     /// Copies `bytes` through the tap in small reads, as a stream arrives.
@@ -442,7 +431,7 @@ mod tests {
     #[test]
     fn leaves_nothing_at_the_path_when_the_stream_is_cut_and_says_so() {
         let dir = scratch();
-        let path = dir.join("backup.tar.gz");
+        let path = dir.join("backup.tar");
         // The witness: an earlier archive at the path is neither cut nor replaced.
         std::fs::write(&path, b"an earlier archive").unwrap();
         let error =
@@ -495,8 +484,8 @@ mod tests {
         let whole = archive(r#"{"version":0,"blobs":{"sha256:aa":{}},"missing_blobs":{}}"#);
 
         let dir = scratch();
-        let path = dir.join("nightly.tar.gz");
-        let incomplete = dir.join("nightly.tar.gz.incomplete");
+        let path = dir.join("nightly.tar");
+        let incomplete = dir.join("nightly.tar.incomplete");
 
         // The earlier complete archive stays byte for byte, an earlier file
         // of the incomplete name is the only thing replaced.
@@ -532,7 +521,7 @@ mod tests {
         assert_eq!(std::fs::read(&incomplete).unwrap(), lacking);
         assert_eq!(
             names_in(&dir),
-            ["nightly.tar.gz", "nightly.tar.gz.incomplete"]
+            ["nightly.tar", "nightly.tar.incomplete"]
         );
 
         // The witness: a whole archive replaces the path and leaves no
@@ -542,7 +531,7 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), newer);
         assert_eq!(
             names_in(&dir),
-            ["nightly.tar.gz", "nightly.tar.gz.incomplete"]
+            ["nightly.tar", "nightly.tar.incomplete"]
         );
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -551,7 +540,7 @@ mod tests {
     fn keeps_an_archive_that_lacks_blobs_beside_a_path_where_nothing_was_and_says_so() {
         let lacking = archive(r#"{"version":0,"blobs":{},"missing_blobs":{"sha256:aa":{}}}"#);
         let dir = scratch();
-        let path = dir.join("first.tar.gz");
+        let path = dir.join("first.tar");
         let error = written(&path, &lacking).unwrap_err();
         assert!(
             matches!(
@@ -568,10 +557,10 @@ mod tests {
         assert!(message.contains("nothing there lacks files"), "{message}");
         assert!(!path.exists(), "an archive that lacks files is at the path");
         assert_eq!(
-            std::fs::read(dir.join("first.tar.gz.incomplete")).unwrap(),
+            std::fs::read(dir.join("first.tar.incomplete")).unwrap(),
             lacking
         );
-        assert_eq!(names_in(&dir), ["first.tar.gz.incomplete"]);
+        assert_eq!(names_in(&dir), ["first.tar.incomplete"]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -580,8 +569,8 @@ mod tests {
         let lacking = archive(r#"{"version":0,"blobs":{},"missing_blobs":{"sha256:aa":{}}}"#);
         let whole = archive(r#"{"version":0,"blobs":{"sha256:bb":{}},"missing_blobs":{}}"#);
         let dir = scratch();
-        let path = dir.join("nightly.tar.gz");
-        let incomplete = dir.join("nightly.tar.gz.incomplete");
+        let path = dir.join("nightly.tar");
+        let incomplete = dir.join("nightly.tar.incomplete");
         std::fs::write(&path, &whole).unwrap();
         std::fs::create_dir(&incomplete).unwrap();
         let error = written(&path, &lacking).unwrap_err();
@@ -616,20 +605,20 @@ mod tests {
     #[test]
     fn leaves_the_path_and_no_partial_file_when_the_manifest_cannot_be_read() {
         let dir = scratch();
-        let path = dir.join("backup.tar.gz");
+        let path = dir.join("backup.tar");
         std::fs::write(&path, b"an earlier archive").unwrap();
-        let error = written(&path, b"not gzip").unwrap_err();
+        let error = written(&path, b"not a tar").unwrap_err();
         assert!(matches!(error, CliError::Invalid(_)), "{error:?}");
         assert!(error.to_string().contains("nothing was written"), "{error}");
         assert_eq!(std::fs::read(&path).unwrap(), b"an earlier archive");
-        assert_eq!(names_in(&dir), ["backup.tar.gz"]);
+        assert_eq!(names_in(&dir), ["backup.tar"]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn refuses_an_archive_with_no_manifest_and_leaves_ndjson_alone() {
         assert!(matches!(
-            tapped(b"not gzip".to_vec(), true),
+            tapped(b"not a tar".to_vec(), true),
             Err(CliError::Invalid(_))
         ));
         assert_eq!(
@@ -652,7 +641,7 @@ mod tests {
                 let _ = socket.read(&mut request);
                 std::thread::sleep(delay);
                 let head = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/gzip\r\n{}: {}\r\nContent-Length: {claimed}\r\nConnection: close\r\n\r\n",
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/x-tar\r\n{}: {}\r\nContent-Length: {claimed}\r\nConnection: close\r\n\r\n",
                     marfa_core::http::CONTRACT_HEADER,
                     marfa_core::contract::CONTRACT_VERSION,
                 );
@@ -685,7 +674,7 @@ mod tests {
         let bytes = archive(r#"{"version":0,"blobs":{},"missing_blobs":{}}"#);
         let url = slow_server(Duration::from_millis(1_500), bytes.clone(), bytes.len(), 2);
         let dir = scratch();
-        let path = dir.join("big.tar.gz");
+        let path = dir.join("big.tar");
         let budget = Duration::from_millis(400);
 
         // The witness: the same server and the same budget end an NDJSON
@@ -706,7 +695,7 @@ mod tests {
 
         run(archive_to(&path), &answering_within(&url, budget), &QUIET).unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
-        assert_eq!(names_in(&dir), ["big.tar.gz"]);
+        assert_eq!(names_in(&dir), ["big.tar"]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -714,7 +703,7 @@ mod tests {
     fn gives_up_on_an_archive_whose_first_byte_never_comes() {
         let url = slow_server(Duration::from_secs(8), Vec::new(), 0, 1);
         let dir = scratch();
-        let path = dir.join("never.tar.gz");
+        let path = dir.join("never.tar");
         let started = std::time::Instant::now();
         let error = run_waiting(
             archive_to(&path),
@@ -739,7 +728,7 @@ mod tests {
             1,
         );
         let dir = scratch();
-        let path = dir.join("cut.tar.gz");
+        let path = dir.join("cut.tar");
         std::fs::write(&path, b"an earlier archive").unwrap();
         let error = run(
             archive_to(&path),
@@ -749,7 +738,7 @@ mod tests {
         .unwrap_err();
         assert!(error.to_string().contains("nothing was written"), "{error}");
         assert_eq!(std::fs::read(&path).unwrap(), b"an earlier archive");
-        assert_eq!(names_in(&dir), ["cut.tar.gz"]);
+        assert_eq!(names_in(&dir), ["cut.tar"]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
