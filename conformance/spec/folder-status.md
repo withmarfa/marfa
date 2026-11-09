@@ -196,17 +196,17 @@ While a revoked app grant's own record is kept, the server MUST retain its lates
 
 ### `folder-status/key-reports-removed`
 
-When the `revoked-key-reap` job removes a key, the server MUST remove that key's folder-copy reports.
+When the `credential-cleanup` job removes a key, the server MUST remove that key's folder-copy reports.
 
 **Reason:** a sign-in's reports are kept as history while its record is kept, and no longer; the reports of the other sign-ins stay.
 
-**Tests:** `compliance/folder-status-retention.test.ts › removes a key's reports when the reap removes the key, and no other sign-in's`.
+**Tests:** `compliance/folder-status-retention.test.ts › removes a key's reports when the credential clean-up removes the key, and no other sign-in's`.
 
 ### `folder-status/app-reports-removed`
 
-When the `revoked-grant-purge` job removes an app grant, the server MUST remove that grant's folder-copy reports.
+When the `credential-cleanup` job removes an app grant, the server MUST remove that grant's folder-copy reports.
 
-**Tests:** `compliance/folder-status-retention.test.ts › removes an app grant's reports when the purge removes the grant`.
+**Tests:** `compliance/folder-status-retention.test.ts › removes an app grant's reports when the credential clean-up removes the grant`.
 
 ### `folder-status/local-report`
 

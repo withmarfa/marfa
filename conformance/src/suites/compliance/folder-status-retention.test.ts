@@ -79,7 +79,7 @@ async function put(id: string, bearer: string): Promise<void> {
 }
 
 describe("how long a sign-in's folder reports are kept", () => {
-  it("removes a key's reports when the reap removes the key, and no other sign-in's", async () => {
+  it("removes a key's reports when the credential clean-up removes the key, and no other sign-in's", async () => {
     const id = await folder();
     const ended = await key();
     const kept = await key();
@@ -95,13 +95,13 @@ describe("how long a sign-in's folder reports are kept", () => {
     );
 
     await server.advanceClock(31 * DAY_MS);
-    const run = await runJob(server, "revoked-key-reap");
+    const run = await runJob(server, "credential-cleanup");
     expect(run.outcome, JSON.stringify(run)).toBe("ok");
     const after = (await status(id)).sign_ins;
     expect(after.map((g) => g.sign_in.id)).toEqual([kept.id]);
   });
 
-  it("removes an app grant's reports when the purge removes the grant", async () => {
+  it("removes an app grant's reports when the credential clean-up removes the grant", async () => {
     const id = await folder();
     const cookie = await signIn(server, origin);
     const app = await registerApp(server, "system.folder:read offline_access");
@@ -125,7 +125,7 @@ describe("how long a sign-in's folder reports are kept", () => {
     expect(history.map((g) => g.current)).toEqual([false]);
 
     await server.advanceClock(91 * DAY_MS);
-    const run = await runJob(server, "revoked-grant-purge");
+    const run = await runJob(server, "credential-cleanup");
     expect(run.outcome, JSON.stringify(run)).toBe("ok");
     expect(
       (await status(id)).sign_ins.filter((g) => g.sign_in.kind === "app"),

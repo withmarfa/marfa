@@ -1361,7 +1361,7 @@ When the `credential-cleanup` job runs, the server MUST remove each registered c
 
 While a grant names a registered client, live or revoked, the server MUST keep the client registered.
 
-**Reason:** A revoked grant is kept, with the client it names, until the revoked-grant purge removes it after `revoked_grant_retention_days`, so it never names a client that is gone.
+**Reason:** A revoked grant is kept, with the client it names, until the credential clean-up removes it after `revoked_grant_retention_days`, so it never names a client that is gone.
 
 **Tests:** `compliance/web-page-register.test.ts › removes a registration nobody approved once it is idle past the retention, and keeps an approved, a revoked and an offered one`.
 
