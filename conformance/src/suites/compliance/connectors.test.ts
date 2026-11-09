@@ -10,6 +10,7 @@ import {
   requireApiUrl,
 } from "../../utils/setup.js";
 import { controlRequest } from "../../utils/control-request.js";
+import { idOf, send } from "../../utils/inbound-sender.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
 let client: MarfaClient;
@@ -191,6 +192,11 @@ describe("registration", () => {
         })
       ).status,
     ).toBe(200);
+    const endpoint = await client.createInboundEndpoint(mine.data.id);
+    expect(endpoint.status).toBe(201);
+    const delivery = idOf(
+      await send(requireApiUrl(), endpoint.data.path, "kept"),
+    );
     const doors: [string, string, unknown?][] = [
       ["POST", "/connectors", { name: "x" }],
       ["GET", "/connectors"],
@@ -215,6 +221,16 @@ describe("registration", () => {
       ["POST", `${base}/agreements`, { process: "p", clear: [itemId] }],
       ["POST", `${base}/agreements/lookup`, { item_ids: [itemId] }],
       ["GET", `${base}/agreements`],
+      ["POST", `${base}/endpoints`, { label: "cookie" }],
+      ["GET", `${base}/endpoints`],
+      ["DELETE", `${base}/endpoints/${endpoint.data.id}`],
+      ["GET", `${base}/deliveries`],
+      ["GET", `${base}/deliveries/${delivery}/body`],
+      [
+        "POST",
+        `${base}/deliveries/handled`,
+        { ids: [delivery], outcome: "processed" },
+      ],
     ];
     for (const [method, path, body] of doors) {
       const response = await fetch(`${requireApiUrl()}${path}`, {
@@ -246,6 +262,17 @@ describe("registration", () => {
       (await client.listConnectorRuns(mine.data.id)).data.data,
     ).toHaveLength(0);
     expect(
+      (await client.listInboundEndpoints(mine.data.id)).data.data.map((row) => [
+        row.id,
+        row.retired_at,
+      ]),
+    ).toEqual([[endpoint.data.id, null]]);
+    expect(
+      (await client.listInboundDeliveries(mine.data.id)).data.data.map(
+        (row) => [row.id, row.handled_at],
+      ),
+    ).toEqual([[delivery, null]]);
+    expect(
       (await client.takeConnectorHold(mine.data.id, "p")).data.renewed,
     ).toBe(true);
     // The witness: the private socket reaches the same doors as the owner.
@@ -254,6 +281,8 @@ describe("registration", () => {
     const read = await controlRequest(socket(), base);
     expect(read.status).toBe(200);
     expect(read.body).toMatchObject({ id: mine.data.id });
+    const endpoints = await controlRequest(socket(), `${base}/endpoints`);
+    expect(endpoints.status).toBe(200);
     const cleared = await controlRequest(socket(), `${base}/state`, {
       method: "DELETE",
     });

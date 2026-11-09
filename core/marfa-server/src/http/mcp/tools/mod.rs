@@ -9,6 +9,7 @@ mod find;
 mod get;
 mod health;
 mod keys;
+mod moving;
 mod overview;
 mod revoke;
 mod sources;
@@ -68,6 +69,7 @@ fn definitions() -> Vec<(Group, Definition)> {
         (Group::Schema, types::definition()),
         (Group::Schema, views::definition()),
         (Group::Schema, bulk::definition()),
+        (Group::Schema, moving::definition()),
         (Group::Schema, docs::definition()),
         (Group::Schema, sources::list_definition()),
         (Group::Schema, sources::name_definition()),
@@ -92,6 +94,7 @@ fn works_on_items(name: &str) -> bool {
             | update::NAME
             | delete::NAME
             | bulk::NAME
+            | moving::NAME
     )
 }
 
@@ -101,7 +104,9 @@ fn offered(caller: &Caller, name: &str) -> bool {
     }
     match name {
         overview::NAME | find::NAME | get::NAME => true,
-        create::NAME | update::NAME | delete::NAME | bulk::NAME => caller.writes_a_type(),
+        create::NAME | update::NAME | delete::NAME | bulk::NAME | moving::NAME => {
+            caller.writes_a_type()
+        }
         types::NAME => caller.may_save_types(),
         views::NAME => caller.writes_views(),
         docs::NAME | sources::LIST_NAME | sources::NAME_NAME => true,
@@ -194,6 +199,7 @@ async fn run(
         update::NAME => update::run(app, caller, arguments, exact).await,
         delete::NAME => delete::run(app, caller, arguments).await,
         bulk::NAME => bulk::run(app, caller, arguments, exact).await,
+        moving::NAME => moving::run(app, caller, arguments, exact).await,
         types::NAME => types::run(app, caller, arguments).await,
         views::NAME => views::run(app, caller, arguments).await,
         docs::NAME => docs::run(arguments),

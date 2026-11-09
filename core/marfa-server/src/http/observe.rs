@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use axum::body::Body;
 use axum::extract::{ConnectInfo, MatchedPath, Request, State};
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::Response;
 
@@ -81,6 +81,9 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
     let started = Instant::now();
     let method = request.method().to_string();
     let path = request.uri().path().to_string();
+    let logged = crate::app::inbound::loggable(&path);
+    // A sender's headers are its content, so nothing from them reaches the log or a span.
+    let from_sender = crate::app::inbound::is_address(&path);
     let wants_html = asks_for_html(
         request
             .headers()
@@ -90,6 +93,7 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
     let request_id = request
         .headers()
         .get("x-request-id")
+        .filter(|_| !from_sender)
         .and_then(|value| value.to_str().ok())
         .filter(|id| acceptable_id(id))
         .map(str::to_string)
@@ -108,7 +112,11 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
         notes: notes.clone(),
     });
 
-    let span = observed.app.telemetry.begin(request.headers(), &method);
+    let span = if from_sender {
+        observed.app.telemetry.begin(&HeaderMap::new(), &method)
+    } else {
+        observed.app.telemetry.begin(request.headers(), &method)
+    };
     let upload = super::blobs::is_upload(&request) || super::restore::is_restore(&request);
     let origin = Origin {
         client_ip: caller_address.map(|address| address.to_string()),
@@ -160,7 +168,7 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
         .get::<Unhandled>()
         .map(|held| held.0.clone());
     if let Some(fault) = &fault {
-        log::unhandled(&request_id, &method, &path, route, &fault.message);
+        log::unhandled(&request_id, &method, &logged, route, &fault.message);
     }
     let status = response.status().as_u16();
     log::request(&log::Request {
@@ -168,7 +176,7 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
         request_id: &request_id,
         method: &method,
         transport: transport.name(),
-        path: &path,
+        path: &logged,
         route,
         status,
         duration_ms: (started.elapsed().as_secs_f64() * 1_000_000.0).round() / 1000.0,
@@ -181,7 +189,7 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
         &Finished {
             request_id: &request_id,
             method: &method,
-            path: &path,
+            path: &logged,
             route,
             transport: observed.listener.transport.name(),
             status,
