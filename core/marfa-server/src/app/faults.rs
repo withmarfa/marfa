@@ -9,6 +9,7 @@ use std::time::Duration;
 use serde::Serialize;
 use tokio::sync::watch;
 
+use super::blobs::Hash;
 use super::{attention, housekeeping};
 use crate::db::Pulse;
 
@@ -299,18 +300,13 @@ fn deadline_of(job: &str, arg: Option<&str>) -> Result<u64, String> {
 }
 
 fn blob_hashes(arg: Option<&str>) -> Result<HashSet<String>, String> {
-    let named = |hash: &str| {
-        hash.strip_prefix("sha256:").is_some_and(|hex| {
-            hex.len() == 64
-                && hex
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        })
-    };
     let hashes: Vec<&str> = arg
         .filter(|arg| !arg.is_empty())
         .map_or_else(Vec::new, |arg| arg.split(',').collect());
-    if hashes.is_empty() || hashes.len() > MAX_BLOB_HASHES || !hashes.iter().all(|h| named(h)) {
+    if hashes.is_empty()
+        || hashes.len() > MAX_BLOB_HASHES
+        || !hashes.iter().all(|h| Hash::parse(h).is_ok())
+    {
         return Err(format!(
             "a blob fault takes up to {MAX_BLOB_HASHES} sha256: names separated by ,"
         ));
