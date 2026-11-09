@@ -1199,6 +1199,32 @@ async fn cleanup_takes_only_the_clients_nothing_holds() {
 }
 
 #[tokio::test]
+async fn a_failing_stage_leaves_the_later_stages_to_run_and_fails_the_run() {
+    let instance = Instance::signed_in().await;
+    let kept = instance.register(OFFLINE_NOTES).await;
+    instance.tokens(&kept, OFFLINE_NOTES).await;
+    instance.register(NOTES).await;
+    let app = &instance.app;
+    app.clock.advance(366 * DAY_MS).unwrap();
+    let clients = "SELECT count(*) FROM auth_oauth_client";
+    assert_eq!(instance.count(clients).await, 2);
+
+    app.faults
+        .set("fail:commit", Some("auth.grant.retired"))
+        .unwrap();
+    let ended = housekeeping::run_now(app, "credential-cleanup")
+        .await
+        .unwrap();
+    assert_eq!(instance.count(clients).await, 1);
+    assert_eq!(ended.outcome, "error");
+    let error = ended.error.unwrap();
+    assert!(error.starts_with("idle grants: "), "{error}");
+
+    app.faults.clear(None);
+    assert_eq!(cleaned(app).await.retired, 1);
+}
+
+#[tokio::test]
 async fn an_idle_grant_retires_then_goes_and_its_client_can_follow() {
     let instance = Instance::signed_in().await;
     let client = instance.register(OFFLINE_NOTES).await;

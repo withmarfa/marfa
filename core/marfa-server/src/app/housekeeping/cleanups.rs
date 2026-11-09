@@ -9,7 +9,7 @@ use serde_json::json;
 
 use super::super::access::Caller;
 use super::super::keys::reap;
-use super::super::refusal::Result;
+use super::super::refusal::{Refusal, Result};
 use super::super::{App, audit, events, idempotency, oauth, webhooks};
 use super::{DAY_MS, HOUR_MS, Report, Run, cutoff};
 use crate::db::Write;
@@ -122,30 +122,84 @@ async fn revoked_keys(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
 struct Tally {
     deleted: i64,
     retired: i64,
+    stopped: bool,
+    failed: Vec<(&'static str, Refusal)>,
 }
 
 impl Tally {
-    fn deleted(&mut self, (count, done): (i64, bool)) -> bool {
-        self.deleted += count;
-        done
+    /// Whether the run goes on to the next stage. A stage that failed leaves the rest to run.
+    fn take(
+        &mut self,
+        stage: &'static str,
+        ran: Result<(i64, bool)>,
+        count: fn(&mut Tally) -> &mut i64,
+    ) -> bool {
+        match ran {
+            Ok((taken, done)) => {
+                *count(self) += taken;
+                self.stopped = !done;
+                done
+            }
+            Err(refused) => {
+                self.failed.push((stage, refused));
+                true
+            }
+        }
     }
 
-    fn retired(&mut self, (count, done): (i64, bool)) -> bool {
-        self.retired += count;
-        done
+    fn deleted(&mut self, stage: &'static str, ran: Result<(i64, bool)>) -> bool {
+        self.take(stage, ran, |tally| &mut tally.deleted)
+    }
+
+    fn retired(&mut self, stage: &'static str, ran: Result<(i64, bool)>) -> bool {
+        self.take(stage, ran, |tally| &mut tally.retired)
+    }
+
+    fn report(self) -> Result<Report> {
+        let Some((_, first)) = self.failed.first() else {
+            return Ok(Report {
+                result: json!({ "deleted": self.deleted, "retired": self.retired }),
+                again: self.stopped,
+            });
+        };
+        let told: Vec<String> = self
+            .failed
+            .iter()
+            .map(|(stage, refused)| {
+                let message = refused
+                    .fault
+                    .as_ref()
+                    .map_or_else(|| refused.to_string(), |fault| fault.message.clone());
+                format!("{stage}: {message}")
+            })
+            .collect();
+        let told = told.join("; ");
+        let mut failed = Refusal::new(first.code, told.clone());
+        failed.fault = self
+            .failed
+            .iter()
+            .find_map(|(_, refused)| refused.fault.as_ref())
+            .map(|fault| Arc::new(fault.retold(told)));
+        Err(failed)
     }
 }
 
 /// Grants retire before the purge, and clients go only after the grants that kept them.
 pub async fn credentials(app: Arc<App>, run: Run) -> Result<Report> {
     let mut tally = Tally::default();
-    let done = tally.deleted(oauth::sweep::sweep_expired(&app, &run).await?)
-        && tally.retired(oauth::sweep::retire_idle_grants(&app, &run).await?)
-        && tally.deleted(oauth::sweep::purge_withdrawn_grants(&app, &run).await?)
-        && tally.deleted(oauth::sweep::remove_idle_clients(&app, &run).await?)
-        && tally.deleted(revoked_keys(&app, &run).await?);
-    Ok(Report {
-        result: json!({ "deleted": tally.deleted, "retired": tally.retired }),
-        again: !done,
-    })
+    let _ = tally.deleted("expired", oauth::sweep::sweep_expired(&app, &run).await)
+        && tally.retired(
+            "idle grants",
+            oauth::sweep::retire_idle_grants(&app, &run).await,
+        )
+        && tally.deleted(
+            "withdrawn grants",
+            oauth::sweep::purge_withdrawn_grants(&app, &run).await,
+        )
+        && tally.deleted(
+            "idle clients",
+            oauth::sweep::remove_idle_clients(&app, &run).await,
+        )
+        && tally.deleted("revoked keys", revoked_keys(&app, &run).await);
+    tally.report()
 }
