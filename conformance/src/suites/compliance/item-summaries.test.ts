@@ -6,7 +6,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
-import { controlRequest } from "../../utils/control-request.js";
+import { controlRequest, localFetch } from "../../utils/control-request.js";
 
 let server: FreshServer;
 beforeAll(async () => {
@@ -18,10 +18,7 @@ afterAll(async () => {
   vi.unstubAllEnvs();
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 function owner(path: string, init: RequestInit = {}) {
-  const headers = new Headers(init.headers);
-  headers.set("cookie", server.ownerCookie);
-  headers.set("origin", new URL(server.apiUrl).origin);
-  return fetch(`${server.apiUrl}${path}`, { ...init, headers });
+  return localFetch(server.controlSocket, `${server.apiUrl}${path}`, init);
 }
 function key(path: string, body?: unknown) {
   return fetch(`${server.apiUrl}${path}`, {
@@ -267,8 +264,11 @@ it("pages name matches without leaking content or widening other owner reads", a
   expect((await key("/items/summaries")).status).toBe(403);
   expect(
     (
-      await owner("/items/summaries", {
-        headers: { authorization: `Bearer ${server.workingKey}` },
+      await fetch(`${server.apiUrl}/items/summaries`, {
+        headers: {
+          authorization: `Bearer ${server.workingKey}`,
+          cookie: server.ownerCookie,
+        },
       })
     ).status,
   ).toBe(403);

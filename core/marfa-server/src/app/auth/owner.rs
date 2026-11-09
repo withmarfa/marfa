@@ -217,8 +217,7 @@ impl Update {
 
 pub async fn update(app: &App, caller: &Caller, update: Update, visit: Visit) -> Result<Owner> {
     app.write(caller, "owner.update", move |unit| {
-        unit.caller.require_direct()?;
-        unit.caller.require_recent(&unit.at)?;
+        unit.caller.require_local()?;
         let mut owner = read(unit.tx())?.ok_or_else(not_found)?;
         if let Some(email) = update.email {
             owner.email = email;

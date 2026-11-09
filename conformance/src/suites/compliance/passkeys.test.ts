@@ -171,7 +171,7 @@ describe("owner passkeys", () => {
     expect(signed.status).toBe(200);
     expect(
       (
-        await fetch(server.url + "/owner", {
+        await fetch(server.url + "/owner/passkeys", {
           headers: { cookie: cookie(signed) },
         })
       ).status,

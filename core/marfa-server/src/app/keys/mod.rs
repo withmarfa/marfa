@@ -325,7 +325,6 @@ pub async fn mint(app: &App, caller: &Caller, request: Mint) -> Result<(Key, Str
     let key = app
         .write(caller, "key.create", move |unit| {
             let caller = &unit.caller;
-            caller.require_recent(&unit.at)?;
             caller.require(Permission::KeysMint)?;
             if request.levers.is_some() {
                 caller.require(Permission::ConfigManage)?;
@@ -372,7 +371,6 @@ pub async fn mint(app: &App, caller: &Caller, request: Mint) -> Result<(Key, Str
 
 pub async fn update(app: &App, caller: &Caller, id: String, request: Update) -> Result<Key> {
     app.write(caller, UPDATED, move |unit| {
-        unit.caller.require_recent(&unit.at)?;
         unit.caller.require_key_door()?;
         let mut key = reached(unit.tx(), &unit.caller, &id, &unit.at)?;
         let grants = request.families.over(&key.grants);
@@ -457,7 +455,6 @@ pub(crate) fn all_live(tx: &Transaction<'_>, at: &str) -> Result<Vec<Key>> {
 
 pub async fn revoke(app: &App, caller: &Caller, id: String) -> Result<()> {
     app.write(caller, REVOKED, move |unit| {
-        unit.caller.require_recent(&unit.at)?;
         unit.caller.require_key_door()?;
         let key = reached(unit.tx(), &unit.caller, &id, &unit.at)?;
         end(unit, &key.id)

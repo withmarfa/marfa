@@ -14,7 +14,7 @@ beforeAll(async () => {
   server = await bootFreshServer("management-grants", { S3_BUCKET: "" });
   owner = new MarfaClient({
     baseUrl: server.apiUrl,
-    ownerCookie: server.ownerCookie,
+    controlSocket: server.controlSocket,
   });
   working = new MarfaClient({
     baseUrl: server.apiUrl,

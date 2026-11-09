@@ -114,7 +114,7 @@ async fn read_credential(parts: &Parts, app: &Arc<App>) -> Result<Option<Caller>
     let local = context.is_some_and(|context| context.transport == Transport::LocalSocket);
     let caller = match presented(&parts.headers) {
         Presented::Nothing if local => return Ok(Some(Caller::local())),
-        Presented::Nothing => return owner_by_cookie(parts, app, context, Origin::Judged).await,
+        Presented::Nothing => return Ok(None),
         Presented::Unreadable => return Ok(None),
         Presented::Token(token) if tokens::looks_like_access_token(token) => {
             oauth::authenticate(app, token).await?
@@ -129,14 +129,34 @@ async fn read_credential(parts: &Parts, app: &Arc<App>) -> Result<Option<Caller>
     Ok(caller)
 }
 
-/// For a door a form posts to, which judges the form's origin itself. A request presenting
-/// a credential is not a browser's, whatever cookie it also carries.
+/// The form's door checks its origin. A request that presents a credential is no browser's.
 pub async fn browser_owner(parts: &Parts, app: &Arc<App>) -> Result<Option<Caller>> {
     if !matches!(presented(&parts.headers), Presented::Nothing) {
         return Ok(None);
     }
     let context = parts.extensions.get::<RequestContext>();
     owner_by_cookie(parts, app, context, Origin::LeftToTheDoor).await
+}
+
+/// Only sign-in page routes may accept the owner's session cookie.
+pub struct OnPage(pub Option<Caller>);
+
+impl FromRequestParts<Arc<App>> for OnPage {
+    type Rejection = Stopped;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        app: &Arc<App>,
+    ) -> std::result::Result<OnPage, Stopped> {
+        let context = parts.extensions.get::<RequestContext>();
+        let local = context.is_some_and(|context| context.transport == Transport::LocalSocket);
+        if local || !matches!(presented(&parts.headers), Presented::Nothing) {
+            return Ok(OnPage(identify(parts, app).await?));
+        }
+        Ok(OnPage(
+            owner_by_cookie(parts, app, context, Origin::Judged).await?,
+        ))
+    }
 }
 
 /// Read once however many layers ask. A credential that does not verify is nobody, on the

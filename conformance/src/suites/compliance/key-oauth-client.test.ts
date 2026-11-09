@@ -43,7 +43,7 @@ beforeAll(async () => {
   server = await bootFreshServer("key-oauth-client");
   operator = new MarfaClient({
     baseUrl: server.apiUrl,
-    ownerCookie: server.ownerCookie,
+    controlSocket: server.controlSocket,
   });
   const app = await approvedApp(server);
   appClientId = app.clientId;

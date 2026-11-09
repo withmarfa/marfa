@@ -582,7 +582,7 @@ describe("key management", () => {
     const { key } = await createClientWithoutPermissions(
       `km-standing-${ctx.runId}`,
     );
-    // These doors require management grants or direct authority. Invalid
+    // These doors require management grants or local authority. Invalid
     // requests distinguish that gate from later request validation.
     const doors: [string, string][] = [
       ["GET", "/metrics"],
@@ -809,7 +809,7 @@ describe("key management", () => {
     expect(narrowed.data.matched).toBe(0);
   });
 
-  it("the direct owner issues an ordinary key without a caller ceiling", async () => {
+  it("the local command issues an ordinary key without a caller ceiling", async () => {
     const owner = getOwnerClient();
     const minted = await owner.createKey({
       label: "owner-issued",

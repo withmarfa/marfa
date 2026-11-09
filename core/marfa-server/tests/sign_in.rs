@@ -68,9 +68,10 @@ fn post_signed_in(path: &str, body: &Value, cookie: &str) -> Request<Body> {
     request
 }
 
-fn read_owner(cookie: &str) -> Request<Body> {
+/// A use of the session at the one door it counts on: the passkey page's list.
+fn on_the_passkey_list(cookie: &str) -> Request<Body> {
     Request::builder()
-        .uri("/owner")
+        .uri("/owner/passkeys")
         .header(header::COOKIE, cookie)
         .body(Body::empty())
         .unwrap()
@@ -198,11 +199,11 @@ async fn a_full_disk_costs_a_session_its_renewal_and_not_the_request() {
         .faults
         .set("fail:commit-full", Some("auth.session.use"))
         .unwrap();
-    let admitted = send(instance.public.clone(), read_owner(&cookie)).await;
+    let admitted = send(instance.public.clone(), on_the_passkey_list(&cookie)).await;
     assert_eq!(admitted.status, StatusCode::OK);
     assert!(admitted.cookie().is_none());
     instance.app.faults.clear(None);
-    let recorded = send(instance.public.clone(), read_owner(&cookie)).await;
+    let recorded = send(instance.public.clone(), on_the_passkey_list(&cookie)).await;
     assert_eq!(recorded.status, StatusCode::OK);
     assert_eq!(recorded.cookie().as_ref(), Some(&cookie));
 }
@@ -213,14 +214,16 @@ async fn a_refused_request_that_records_a_use_sends_the_cookie_again() {
     let cookie = instance.sign_in(PASSWORD).await.cookie().unwrap();
     instance.app.clock.advance(120_000).unwrap();
     let refused = Request::builder()
-        .uri("/items/stats?nothing=declared")
+        .method(Method::DELETE)
+        .uri("/owner/passkeys/absent")
         .header(header::COOKIE, &cookie)
+        .header(header::ORIGIN, ORIGIN)
         .body(Body::empty())
         .unwrap();
     let refused = send(instance.public.clone(), refused).await;
-    assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+    assert_eq!(refused.status, StatusCode::NOT_FOUND);
     assert_eq!(refused.cookie().as_ref(), Some(&cookie));
-    let within_the_minute = send(instance.public.clone(), read_owner(&cookie)).await;
+    let within_the_minute = send(instance.public.clone(), on_the_passkey_list(&cookie)).await;
     assert!(within_the_minute.cookie().is_none());
 }
 
@@ -283,12 +286,7 @@ async fn an_email_changed_during_a_sign_in_ends_that_sign_in() {
 
 #[tokio::test]
 async fn an_unknown_outcome_changes_no_cookie() {
-    let change = json!({ "currentPassword": PASSWORD, "newPassword": "the second password" });
-    for (path, body, action) in [
-        ("/auth/sign-out", json!({}), "auth.session.delete"),
-        ("/auth/revoke-sessions", json!({}), "auth.session.delete"),
-        ("/auth/change-password", change, "owner.password.changed"),
-    ] {
+    for (path, body, action) in [("/auth/sign-out", json!({}), "auth.session.delete")] {
         let instance = Instance::claimed().await;
         let cookie = instance.sign_in(PASSWORD).await.cookie().unwrap();
         instance.app.clock.advance(120_000).unwrap();
@@ -334,17 +332,12 @@ async fn until_an_address_is_set_only_this_machine_gets_past_the_doors() {
         "/owner",
         "/auth/sign-in",
         "/auth/sign-in/email",
-        "/auth/change-password",
         "/auth/confirm",
         "/auth/passkey/verify-authentication",
     ] {
         let cookie = "marfa.session_token=none";
         let request = from(AWAY, post_signed_in(path, &json!({}), cookie));
         let refused = send(instance.public.clone(), request).await;
-        if path == "/auth/change-password" || path == "/auth/confirm" {
-            assert_eq!(refused.status, StatusCode::UNAUTHORIZED, "{path}");
-            continue;
-        }
         assert_eq!(refused.status, StatusCode::FORBIDDEN, "{path}");
         let message = refused.body["error"]["message"].as_str().unwrap();
         assert!(message.contains("sign_in_address"), "{path}: {message}");
@@ -356,15 +349,10 @@ async fn until_an_address_is_set_only_this_machine_gets_past_the_doors() {
     .await;
     assert_eq!(here.status, StatusCode::OK);
     let cookie = here.cookie().unwrap();
-    let change = json!({ "currentPassword": PASSWORD, "newPassword": "the second password" });
-    for (path, body) in [
-        ("/auth/change-password", change),
-        ("/auth/confirm", json!({ "password": PASSWORD })),
-    ] {
-        let request = from(AWAY, post_signed_in(path, &body, &cookie));
-        let refused = send(instance.public.clone(), request).await;
-        assert_eq!(refused.status, StatusCode::FORBIDDEN, "{path}");
-    }
+    let body = json!({ "password": PASSWORD });
+    let request = from(AWAY, post_signed_in("/auth/confirm", &body, &cookie));
+    let refused = send(instance.public.clone(), request).await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN);
     let mapped = send(
         instance.public.clone(),
         from("::ffff:127.0.0.1", sign_in_at(NO_ADDRESS_ORIGIN)),
@@ -470,25 +458,6 @@ async fn a_claim_refuses_a_name_that_is_not_text() {
             "{path}"
         );
     }
-}
-
-#[tokio::test]
-async fn a_password_change_always_ends_the_other_sessions() {
-    let instance = Instance::claimed().await;
-    let cookie = instance.sign_in(PASSWORD).await.cookie().unwrap();
-    let change = |revoke: Value| {
-        let body = json!({
-            "currentPassword": PASSWORD,
-            "newPassword": "the second password",
-            "revokeOtherSessions": revoke,
-        });
-        send(
-            instance.public.clone(),
-            post_signed_in("/auth/change-password", &body, &cookie),
-        )
-    };
-    assert_eq!(change(json!(false)).await.status, StatusCode::BAD_REQUEST);
-    assert_eq!(change(json!(true)).await.status, StatusCode::OK);
 }
 
 #[tokio::test]
@@ -612,67 +581,6 @@ async fn the_code_a_start_announces_is_recorded_as_the_servers_own_work() {
         .unwrap();
     let actor: Value = serde_json::from_str(&actor).unwrap();
     assert_eq!(actor["kind"], "server");
-}
-
-const STALE_REFUSAL: &str = "Sign in again to perform this operation";
-
-#[tokio::test]
-async fn the_bin_and_type_doors_ask_a_stale_session_to_sign_in_again_and_change_nothing() {
-    let instance = Instance::claimed().await;
-    let public = || instance.public.clone();
-    let body = json!({
-        "label": "writer",
-        "source": "writer",
-        "permissions": ["schema.write"],
-        "type_permissions": { "*": "write" },
-        "metadata_permissions": { "types": "write" },
-    });
-    let minted = send(instance.control.clone(), post("/keys", &body)).await;
-    assert_eq!(minted.status, StatusCode::CREATED, "{}", minted.body);
-    let bearer = format!("Bearer {}", minted.body["key"].as_str().unwrap());
-    let with_key = |path: &str, body: Value| {
-        let mut request = post(path, &body);
-        request
-            .headers_mut()
-            .insert(header::AUTHORIZATION, bearer.parse().unwrap());
-        request
-    };
-    let note = json!({ "type": "core.note", "properties": { "title": "Kept", "body": "text" } });
-    let made = send(public(), with_key("/items", note)).await;
-    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
-    let id = made.body["item"]["id"].as_str().unwrap().to_string();
-    let kind = json!({ "id": "user.kept", "fields": { "title": { "type": "string" } } });
-    let made = send(public(), with_key("/types", kind)).await;
-    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
-    let stale = instance.sign_in(PASSWORD).await.cookie().unwrap();
-    instance.app.clock.advance(6 * 60_000).unwrap();
-    let remove_type = |cookie: &str| {
-        let mut request = post_signed_in("/types/user.kept", &json!({}), cookie);
-        *request.method_mut() = Method::DELETE;
-        *request.body_mut() = Body::empty();
-        request
-    };
-
-    let trash = format!("/items/summaries/{id}/trash?version=1");
-    for request in [
-        post_signed_in(&trash, &json!({}), &stale),
-        post_signed_in("/trash/empty", &json!({}), &stale),
-        remove_type(&stale),
-    ] {
-        let refused = send(public(), request).await;
-        assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.body);
-        assert_eq!(refused.body["error"]["message"], STALE_REFUSAL);
-    }
-
-    let fresh = instance.sign_in(PASSWORD).await.cookie().unwrap();
-    for request in [
-        post_signed_in(&trash, &json!({}), &fresh),
-        post_signed_in("/trash/empty", &json!({}), &fresh),
-        remove_type(&fresh),
-    ] {
-        let passed = send(public(), request).await;
-        assert_eq!(passed.status, StatusCode::OK, "{}", passed.body);
-    }
 }
 
 #[tokio::test]

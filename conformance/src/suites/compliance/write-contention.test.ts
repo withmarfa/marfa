@@ -9,6 +9,7 @@ import {
 import { codeOf, idOf, send } from "../../utils/inbound-sender.js";
 import type { SseEvent } from "../../utils/sse.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
+import { controlRequest } from "../../utils/control-request.js";
 
 /**
  * What a write answers when it meets the write lock and never gets it.
@@ -485,29 +486,44 @@ it("serves a session read without waiting for renewal and keeps its durable idle
   const server = await bootFreshServer("session-use-contention", {
     MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: SCHEDULER_NEVER_POLLS_MS,
   });
+  // A use of the session: the passkey page's list, the one door it counts on.
   const read = () =>
-    fetch(`${server.apiUrl}/owner/sign-ins`, {
+    fetch(`${server.apiUrl}/owner/passkeys`, {
       headers: { cookie: server.ownerCookie },
       signal: AbortSignal.timeout(1000),
     });
-  type SignIn = { current: boolean; last_used_at: string; expires_at: string };
-  const current = async (response: Response) => {
-    expect(response.status).toBe(200);
-    return ((await response.json()) as { data: SignIn[] }).data.find(
-      (row) => row.current,
-    )!;
+  type SignIn = { kind: string; last_used_at: string; expires_at: string };
+  const session = async () => {
+    const listed = await controlRequest(
+      server.controlSocket,
+      "/owner/sign-ins",
+    );
+    expect(listed.status).toBe(200);
+    const browsers = (listed.body.data as SignIn[]).filter(
+      (row) => row.kind === "browser",
+    );
+    expect(browsers).toHaveLength(1);
+    return browsers[0]!;
   };
-  const before = await current(await read());
+  const used = async () => {
+    const response = await read();
+    expect(response.status).toBe(200);
+    await response.body?.cancel();
+    return session();
+  };
+  const before = await used();
   await server.advanceClock(61_000);
   const lock = await takeLock(server);
   try {
     const response = await read();
+    expect(response.status).toBe(200);
     expect(response.headers.get("set-cookie")).toBeNull();
-    expect(await current(response)).toEqual(before);
+    await response.body?.cancel();
+    expect(await session()).toEqual(before);
   } finally {
     await lock.release();
   }
-  const renewed = await current(await read());
+  const renewed = await used();
   expect(Date.parse(renewed.last_used_at)).toBeGreaterThan(
     Date.parse(before.last_used_at),
   );

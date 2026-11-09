@@ -171,17 +171,16 @@ describe("the test hooks", () => {
             body: JSON.stringify(TEST_OWNER),
           });
           expect(signedIn.status).toBe(200);
-          const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
-            signedIn.headers.get("set-cookie") ?? "",
-          )?.[1];
-          const session = await fetch(`${server.apiUrl}/auth/get-session`, {
-            headers: { cookie: cookie! },
-          });
-          expect(session.status).toBe(200);
-          return Date.parse(
-            ((await session.json()) as { session: { createdAt: string } })
-              .session.createdAt,
+          await signedIn.body?.cancel();
+          const listed = await controlRequest(
+            server.controlSocket,
+            "/owner/sign-ins",
           );
+          expect(listed.status).toBe(200);
+          const browsers = (
+            listed.body.data as { kind: string; created_at: string }[]
+          ).filter((row) => row.kind === "browser");
+          return Math.max(...browsers.map((row) => Date.parse(row.created_at)));
         };
         // The witness: with no offset the library's time is the system's.
         expect(Math.abs((await createdAt(level)) - Date.now())).toBeLessThan(

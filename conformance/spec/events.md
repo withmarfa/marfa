@@ -903,7 +903,7 @@ When the server lists or gets a subscription, the server MUST include its maker'
 
 When private local authority requests redelivery, the server MUST apply the same live subscription, maker and retention checks as a request by the subscription's maker.
 
-**Reason:** direct authority can request another attempt, but cannot restore the maker's revoked access or send content the maker can no longer read.
+**Reason:** local authority can request another attempt, but cannot restore the maker's revoked access or send content the maker can no longer read.
 
 **Tests:** `compliance/webhooks-owner.test.ts › retries a failed delivery through local authority without exposing its frame`.
 
@@ -1063,7 +1063,7 @@ If a credential without `webhooks.manage` sends a request to a webhook operation
 
 ### `events/webhook-unauthenticated`
 
-If a request to a webhook operation carries neither a credential nor direct owner or local authority, then the server MUST answer `401 unauthorized`.
+If a request to a webhook operation carries neither a credential nor local authority, then the server MUST answer `401 unauthorized`.
 
 **Tests:** `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`, `compliance/webhooks.test.ts › refuses every door without a credential`.
 
@@ -1811,7 +1811,7 @@ When a cancellation of a bulk-action job changes nothing, the server MUST NOT re
 
 ### `events/audit-housekeeping-run`
 
-When a caller authorized by `instance.maintain` or direct owner or local authority runs a housekeeping job with `POST /housekeeping/{name}/run`, the server MUST NOT record an audit entry for the request.
+When a caller authorized by `instance.maintain` or local authority runs a housekeeping job with `POST /housekeeping/{name}/run`, the server MUST NOT record an audit entry for the request.
 
 **Tests:** `compliance/audit-jobs.test.ts › is not written to by POST /housekeeping/{name}/run, which runs a job the manager named`.
 
@@ -1822,12 +1822,6 @@ When the server accepts an export, the server MUST record an `export.run` entry 
 **Reason:** an export is a bulk extraction of the instance, so the record exists whether or not the stream that follows completes.
 
 **Tests:** `compliance/audit.test.ts › records export.run before the export's stream begins, and none for an export it refuses`.
-
-### `events/owner-export-actor`
-
-When the server accepts an export through an owner browser session, the server MUST attribute its `export.run` audit entry to `owner:<session ID>`.
-
-**Tests:** `compliance/owner-item-read.test.ts › refuses an invalid bearer with an owner cookie and attributes owner exports`.
 
 ### `events/audit-export-refused`
 
@@ -1853,7 +1847,7 @@ The server MUST filter `GET /audit` by `action`, `resource_type` and `resource_i
 
 The server MUST filter `GET /audit` by `kind`, which sorts every entry into one of `access`, `data`, `settings` or `housekeeping` from its `action`, so that each entry is of exactly one kind.
 
-**Reason:** `kind` is the console's Activity filter. `access` holds sign-ins, accounts, keys, folders and the owner's profile; `settings` holds configuration, webhooks and connectors; `housekeeping` holds what Marfa does on its own; `data` holds the rest.
+**Reason:** `kind` lets a reader ask for one area of activity at a time. `access` holds sign-ins, accounts, keys, folders and the owner's profile; `settings` holds configuration, webhooks and connectors; `housekeeping` holds what Marfa does on its own; `data` holds the rest.
 
 **Tests:** `compliance/audit.test.ts › sorts entries by kind, each into exactly one`.
 

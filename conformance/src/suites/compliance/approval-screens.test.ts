@@ -325,7 +325,7 @@ describe("what the approval pages offer", () => {
   });
 });
 
-describe("what the approval pages and the key form say of a permission", () => {
+describe("what the approval pages say of a permission", () => {
   const booted = bootFor("approval-words");
   beforeAll(booted.up, 2 * FRESH_SERVER_TIMEOUT_MS);
   afterAll(booted.down, 2 * FRESH_SERVER_TIMEOUT_MS);
@@ -345,14 +345,6 @@ describe("what the approval pages and the key form say of a permission", () => {
     "webhooks.manage",
   ];
 
-  const keyForm = async (): Promise<string> => {
-    const res = await fetch(`${server.apiUrl}/auth/owner/keys/new`, {
-      headers: { cookie },
-    });
-    expect(res.status).toBe(200);
-    return res.text();
-  };
-
   // The first switch of the group is read with the group's heading and the line
   // under it, which counts what is on and so differs by page.
   const ownWords = (text: string | undefined): string | undefined =>
@@ -361,30 +353,19 @@ describe("what the approval pages and the key form say of a permission", () => {
       "",
     );
 
-  it("describes each permission in the same words on both pages and on the key form", async () => {
-    const pages = await bothPages(`core.note:read ${TWELVE.join(" ")}`);
-    const form = await keyForm();
+  it("describes each permission in the same words on both pages", async () => {
+    const [[, consent], ...others] = await bothPages(
+      `core.note:read ${TWELVE.join(" ")}`,
+    );
     for (const permission of TWELVE) {
-      const onForm = ownWords(
-        readRows(form).find((r) => r.control.value === permission)?.text,
+      const words = ownWords(
+        readRows(consent).find((r) => r.control.value === permission)?.text,
       );
-      expect(onForm, `the key form: ${permission}`).toBeTruthy();
-      for (const [page, html] of pages) {
+      expect(words, `the consent screen: ${permission}`).toBeTruthy();
+      for (const [page, html] of others) {
         const row = readRows(html).find((r) => r.control.value === permission);
-        expect(ownWords(row?.text), `${page}: ${permission}`).toBe(onForm);
+        expect(ownWords(row?.text), `${page}: ${permission}`).toBe(words);
       }
-    }
-  });
-
-  it("marks the permissions that delete for good on the key form, and no other", async () => {
-    const marked = ["instance.maintain", "schema.write", "items.purge"];
-    const form = await keyForm();
-    for (const permission of TWELVE) {
-      const row = readRows(form).find((r) => r.control.value === permission);
-      expect(row, permission).toBeDefined();
-      expect(/can't be undone/i.test(row?.text ?? ""), permission).toBe(
-        marked.includes(permission),
-      );
     }
   });
 });

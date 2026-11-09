@@ -23,7 +23,7 @@ import {
 import { createNote } from "../../generators/items.js";
 
 let client: MarfaClient;
-/** The direct owner's client, for the restore half alone. */
+/** The local command's client, for the restore half alone. */
 let owner: MarfaClient;
 let ctx: TestContext;
 

@@ -122,26 +122,6 @@ describe("a sign-in credential", () => {
     await signIn(server, origin);
     expect(await logged("auth.sign_in.success")).toBe(before + 1);
   });
-
-  it("is in the audit log when a password change answers", async () => {
-    const own = await signIn(server, origin);
-    const change = async (from: string, to: string) => {
-      const response = await fetch(`${server.apiUrl}/auth/change-password`, {
-        method: "POST",
-        headers: { "content-type": "application/json", origin, cookie: own },
-        body: JSON.stringify({ currentPassword: from, newPassword: to }),
-      });
-      await response.body?.cancel();
-      return response.status;
-    };
-    const before = await logged("owner.password.changed");
-    const next = `${OWNER.password} changed`;
-    expect(await change(OWNER.password, next)).toBe(200);
-    expect(await logged("owner.password.changed")).toBe(before + 1);
-    expect(await change(next, OWNER.password)).toBe(200);
-    // A password change ends every other session, the file's own included.
-    cookie = own;
-  });
 });
 
 describe("a grant made or ended without the person asking", () => {

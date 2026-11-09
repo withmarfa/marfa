@@ -4,6 +4,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { localFetch } from "../../utils/control-request.js";
 
 let server: FreshServer;
 let itemId: string;
@@ -42,21 +43,21 @@ beforeAll(async () => {
       ).status,
     ).toBe(200);
   }
-  const minted = await fetch(`${server.apiUrl}/keys`, {
-    method: "POST",
-    headers: {
-      cookie: server.ownerCookie,
-      origin: server.apiUrl,
-      "Content-Type": "application/json",
+  const minted = await localFetch(
+    server.controlSocket,
+    `${server.apiUrl}/keys`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        label: "extension-levels",
+        source: "extension-levels-fixture",
+        type_permissions: { "*": "write" },
+        extension_permissions: { "*": "write" },
+        permissions: ["keys.mint"],
+      }),
     },
-    body: JSON.stringify({
-      label: "extension-levels",
-      source: "extension-levels-fixture",
-      type_permissions: { "*": "write" },
-      extension_permissions: { "*": "write" },
-      permissions: ["keys.mint"],
-    }),
-  });
+  );
   expect(minted.status).toBe(201);
   key = (await minted.json()) as typeof key;
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
@@ -69,20 +70,20 @@ let holders = 0;
 async function mint(
   extensions: Record<string, "read" | "write">,
 ): Promise<{ id: string; key: string }> {
-  const minted = await fetch(`${server.apiUrl}/keys`, {
-    method: "POST",
-    headers: {
-      cookie: server.ownerCookie,
-      origin: server.apiUrl,
-      "Content-Type": "application/json",
+  const minted = await localFetch(
+    server.controlSocket,
+    `${server.apiUrl}/keys`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        label: "extension-levels-held",
+        source: `extension-levels-held-${String(++holders)}`,
+        type_permissions: { "*": "write" },
+        extension_permissions: extensions,
+      }),
     },
-    body: JSON.stringify({
-      label: "extension-levels-held",
-      source: `extension-levels-held-${String(++holders)}`,
-      type_permissions: { "*": "write" },
-      extension_permissions: extensions,
-    }),
-  });
+  );
   expect(minted.status).toBe(201);
   return (await minted.json()) as { id: string; key: string };
 }

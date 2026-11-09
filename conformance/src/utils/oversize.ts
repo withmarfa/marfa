@@ -15,6 +15,7 @@ export function declareOversizeBody(
     method: string;
     headers: Record<string, string>;
     bytes: number;
+    socketPath?: string;
   },
 ): Promise<{ status: number; headers: IncomingHttpHeaders; body: string }> {
   return new Promise((resolve, reject) => {
@@ -22,6 +23,9 @@ export function declareOversizeBody(
       url,
       {
         method: options.method,
+        ...(options.socketPath === undefined
+          ? {}
+          : { socketPath: options.socketPath }),
         headers: {
           ...options.headers,
           "content-length": String(options.bytes),

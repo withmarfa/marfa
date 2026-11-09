@@ -25,7 +25,6 @@ import {
   loseBlobs,
   unreadBlobs,
 } from "../../utils/store-faults.js";
-import { TEST_OWNER } from "../../utils/target.js";
 
 /**
  * What an archive export does with a blob it should carry and cannot read,
@@ -78,8 +77,7 @@ function ownerOf(server: FreshServer): MarfaClient {
   return new MarfaClient({
     baseUrl: server.apiUrl,
     apiKey: "",
-    ownerCookie: server.ownerCookie,
-    ownerCredentials: TEST_OWNER,
+    controlSocket: server.controlSocket,
   });
 }
 
@@ -252,7 +250,7 @@ describe("an archive export on an instance with one disk store", () => {
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
     expect(restored.data.blobs_missing).toEqual([absent]);
 
-    const res = await owner.exportArchive();
+    const res = await working.exportArchive();
     expect(res.status, JSON.stringify(res.error)).toBe(200);
     const manifest = JSON.parse(
       readTarGzEntry(res.data, "manifest.json") ?? "{}",
@@ -324,17 +322,16 @@ describe("an archive export on an instance with one disk store", () => {
   /** Exports with `fault` set, which cuts the response, and answers that the
    *  archive after it lists the blobs the archive before it did. */
   async function cutBy(fault: string, label: string) {
-    const owner = ownerOf(server!);
     const hash = await upload(working, bytesOf(label, 120));
     await noteNaming(working, hash);
     // The witness: the archive before the fault, carrying the blob.
-    const before = await archiveOf(owner);
+    const before = await archiveOf(working);
     expect(Object.keys(before.manifest.blobs)).toContain(hash);
 
     await server!.setFault(`${fault}=1`);
     try {
       const res = await fetch(`${server!.apiUrl}/export?format=archive`, {
-        headers: { cookie: server!.ownerCookie },
+        headers: { authorization: `Bearer ${server!.workingKey}` },
       });
       expect(res.status).toBe(200);
       await expect(res.arrayBuffer()).rejects.toThrow();
@@ -345,7 +342,7 @@ describe("an archive export on an instance with one disk store", () => {
       await server!.clearFault();
     }
 
-    const after = await archiveOf(owner);
+    const after = await archiveOf(working);
     expect(Object.keys(after.manifest.blobs).sort()).toEqual(
       Object.keys(before.manifest.blobs).sort(),
     );

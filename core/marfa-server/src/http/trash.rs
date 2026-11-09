@@ -14,7 +14,7 @@ use super::items::{
 };
 use super::query;
 use crate::app::App;
-use crate::app::access::{Caller, Permission, SIGN_IN_AGAIN};
+use crate::app::access::{Caller, Permission};
 use crate::app::items::write::{self, Change, OwnerAct};
 use crate::app::items::{self, Listing};
 use crate::app::refusal::{Code, Refusal, Result};
@@ -218,14 +218,14 @@ fn listing_of(uri: &Uri, page: i64) -> Result<Listing> {
 }
 
 pub async fn summaries(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
-    caller.require_direct()?;
+    caller.require_local()?;
     let listing = listing_of(&uri, SUMMARIES_PAGE)?;
     let answer = items::summaries(&app, &caller, listing).await?;
     Ok(text_answer(StatusCode::OK, answer))
 }
 
 pub async fn bin(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
-    caller.require_direct()?;
+    caller.require_local()?;
     let listing = listing_of(&uri, BIN_PAGE)?;
     let answer = items::bin(&app, &caller, listing).await?;
     Ok(text_answer(StatusCode::OK, answer))
@@ -237,21 +237,18 @@ fn safe(refusal: Refusal) -> Refusal {
     if refusal.commit_failed {
         return Refusal::new(
             Code::InternalError,
-            "The change may have completed, but its result could not be confirmed. Refresh the \
-             page before trying again.",
+            "The change may have completed, but its result could not be confirmed. Read the \
+             item again before trying again.",
         )
         .with_detail("write_outcome", "unknown");
     }
     let message = match refusal.code {
-        Code::Forbidden if refusal.message == SIGN_IN_AGAIN => SIGN_IN_AGAIN,
-        Code::InvalidTransition => {
-            "This item is no longer in the required state. Refresh the page."
-        }
+        Code::InvalidTransition => "This item is no longer in the required state. Read it again.",
         Code::EdgeConstraintViolation => {
             "Another item prevents this item from moving to the trash."
         }
         Code::ItemNotFound => "This item is no longer available.",
-        _ => "The change could not be completed. Refresh the page before trying again.",
+        _ => "The change could not be completed. Read the item again before trying again.",
     };
     Refusal::new(refusal.code, message)
 }
@@ -263,7 +260,7 @@ async fn owner_act(
     uri: &Uri,
     act: OwnerAct,
 ) -> std::result::Result<Response, Refusal> {
-    caller.require_direct()?;
+    caller.require_local()?;
     let Some(version) = named_version(uri)? else {
         return Err(missing_field("version"));
     };
@@ -305,8 +302,7 @@ pub async fn owner_purge(
 /// Each row is purged at the version the page read, in a write of its own so that other
 /// requests pass between pages.
 pub async fn empty(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
-    caller.require_direct()?;
-    caller.require_recent(&app.clock.stamp())?;
+    caller.require_local()?;
     query::only(&uri, &["cursor"])?;
     let listing = Listing {
         type_id: None,

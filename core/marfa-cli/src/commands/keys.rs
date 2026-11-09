@@ -12,7 +12,7 @@ use crate::values::Tier;
 
 #[derive(Debug, Subcommand)]
 pub enum KeysCommand {
-    /// Mint a key. Needs `keys.mint` or direct owner/local authority.
+    /// Mint a key. Needs `keys.mint` or local authority.
     ///
     /// The key holds exactly what the flags name. A permission, a map entry
     /// or a claim each names a part of what it holds, and a part left
@@ -20,18 +20,17 @@ pub enum KeysCommand {
     /// caller's whole set.
     Create(KeyCreateArgs),
     /// List key metadata. Needs `keys.manage`, `keys.mint` (the keys within
-    /// the caller's reach) or direct owner/local authority.
+    /// the caller's reach) or local authority.
     List,
     /// The key this call bears, without plaintext: what it holds and what it
     /// claims. Any key may read itself.
     Current,
     /// Change a key's label, tier, expiry or permission maps. Needs `keys.manage`,
-    /// `keys.mint` (a key within the caller's reach) or direct owner/local
-    /// authority.
+    /// `keys.mint` (a key within the caller's reach) or local authority.
     Update(KeyUpdateArgs),
     /// Revoke a key; the next request bearing it is refused. Needs
-    /// `keys.manage`, `keys.mint` (a key within the caller's reach) or direct
-    /// owner/local authority.
+    /// `keys.manage`, `keys.mint` (a key within the caller's reach) or local
+    /// authority.
     Revoke {
         /// The key id.
         id: String,

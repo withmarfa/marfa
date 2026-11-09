@@ -83,6 +83,7 @@ fn prepare(
     };
     let judge = Judge {
         caller: &caller,
+        levers: caller.levers()?,
         rules: &catalog.rules,
         read_only,
         filter: &UNFILTERED,

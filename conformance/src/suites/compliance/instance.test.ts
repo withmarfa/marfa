@@ -307,56 +307,6 @@ describe("the instance", () => {
     expect(nonces.size).toBe(asked);
   });
 
-  it("sends a content security policy with every HTML page and a nonce of its own with each", async () => {
-    const asBrowser = { accept: "text/html" };
-    const nonces = new Set<string>();
-    const pages = [
-      ["/", 200, false, false],
-      ["/auth/sign-in", 200, true, false],
-      ["/auth/owner/passkeys", 200, true, true],
-      ["/auth/device", 200, false, false],
-      ["/no-such-page", 404, false, false],
-    ] as const;
-    for (const [path, status, connects, consolePage] of pages) {
-      const res =
-        path === "/auth/owner/passkeys"
-          ? await getOwnerClient().rawRequest(path, { headers: asBrowser })
-          : await fetch(`${apiUrl}${path}`, { headers: asBrowser });
-      expect(res.status, path).toBe(status);
-      expect(res.headers.get("content-type"), path).toContain("text/html");
-      const policy = res.headers.get("content-security-policy") ?? "";
-      const directives = new Map(
-        policy.split(";").map((part) => {
-          const [name, ...sources] = part.trim().split(/\s+/);
-          return [name, sources];
-        }),
-      );
-      expect(directives.get("default-src"), path).toEqual(["'none'"]);
-      const scripts = directives.get("script-src");
-      expect(scripts, path).toHaveLength(1);
-      const nonce = /^'nonce-([^']+)'$/.exec(scripts?.[0] ?? "")?.[1];
-      expect(nonce, path).toBeTruthy();
-      expect(directives.get("style-src"), path).toEqual([
-        `'nonce-${nonce ?? ""}'`,
-      ]);
-      expect(directives.get("connect-src"), path).toEqual(
-        connects ? ["'self'"] : undefined,
-      );
-      expect(directives.get("img-src"), path).toEqual(
-        consolePage ? ["'self'", "data:"] : ["data:"],
-      );
-      expect(policy, path).not.toContain("unsafe-inline");
-      nonces.add(nonce ?? "");
-    }
-    expect(nonces.size).toBe(pages.length);
-
-    // The witness: the same root asked the way a program asks is JSON, and
-    // sends no page policy.
-    const data = await fetch(`${apiUrl}/`);
-    expect(data.headers.get("content-type")).toContain("application/json");
-    expect(data.headers.get("content-security-policy")).toBeNull();
-  });
-
   it("serves a route for every feature it advertises", async () => {
     // The witness first, so the assertions after it are about something. A
     // path nothing serves answers `404 not_found`, which is exactly what
@@ -490,9 +440,9 @@ describe("the instance", () => {
         await fetch(`${apiUrl}/auth/sign-in`, { headers: asBrowser }),
       ],
       [
-        "the sign-in library's own answer",
-        200,
-        await fetch(`${apiUrl}/auth/get-session`),
+        "a sign-in page's own answer",
+        401,
+        await fetch(`${apiUrl}/owner/passkeys`),
       ],
       ["an event stream", 200, stream],
       [

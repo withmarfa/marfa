@@ -32,7 +32,10 @@ afterEach(async () => {
 const working = (server: FreshServer) =>
   new MarfaClient({ baseUrl: server.apiUrl, apiKey: server.workingKey });
 const owner = (server: FreshServer) =>
-  new MarfaClient({ baseUrl: server.apiUrl, ownerCookie: server.ownerCookie });
+  new MarfaClient({
+    baseUrl: server.apiUrl,
+    controlSocket: server.controlSocket,
+  });
 
 /** The archive with one member replaced, every other as it was. */
 function withEntry(archive: Uint8Array, name: string, body: string) {
