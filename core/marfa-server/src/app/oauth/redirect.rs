@@ -4,7 +4,7 @@ use std::net::IpAddr;
 
 use url::{Host, Url};
 
-/// OpenID Connect Dynamic Client Registration's `application_type`.
+/// A registration's `application_type`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AppKind {
     Web,

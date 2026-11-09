@@ -1059,7 +1059,7 @@ describe("what an approval posted to the approval pages grants", () => {
   });
 
   it("answers an approval with nothing chosen as access_denied, as declining is answered", async () => {
-    const scope = "openid offline_access core.note:read";
+    const scope = "offline_access core.note:read";
     const app = await register(scope);
     const screen = await consentScreen(app, scope);
     const denied = await decide(
@@ -1071,7 +1071,7 @@ describe("what an approval posted to the approval pages grants", () => {
       [],
     );
     expect(denied?.searchParams.get("error")).toBe("access_denied");
-    for (const chosen of [[], [""], ["openid", "offline_access"]]) {
+    for (const chosen of [[], [""], ["offline_access"]]) {
       const sent = await decide(
         server,
         origin,
@@ -1106,14 +1106,14 @@ describe("what an approval posted to the approval pages grants", () => {
       cookie,
       screen.consent,
       true,
-      ["openid", "core.note:read"],
+      ["core.note:read"],
     );
     expect(approved?.searchParams.get("code")).toBeTruthy();
   });
 
   it("denies a device code approved with nothing chosen", async () => {
-    const scope = "openid offline_access core.note:read";
-    for (const chosen of [[], ["openid", "offline_access"]]) {
+    const scope = "offline_access core.note:read";
+    for (const chosen of [[], ["offline_access"]]) {
       const app = await register(scope);
       const screen = await deviceScreen(app, scope);
       const answered = await decideDevice(screen, "approve", chosen);
@@ -1125,8 +1125,8 @@ describe("what an approval posted to the approval pages grants", () => {
     }
   });
 
-  it("approves a request that names only openid and offline_access, which offers nothing to turn off", async () => {
-    const scope = "openid offline_access";
+  it("approves a request that names only offline_access, which offers nothing to turn off", async () => {
+    const scope = "offline_access";
     const app = await register(scope);
     const screen = await consentScreen(app, scope);
     const sent = await decide(
@@ -1193,17 +1193,13 @@ async function redeem(
 ) {
   const code = sent?.searchParams.get("code");
   expect(code, String(sent)).toBeTruthy();
-  return token(
-    server,
-    {
-      grant_type: "authorization_code",
-      code: code!,
-      redirect_uri: CALLBACK,
-      code_verifier: proof.verifier,
-      client_id: app.clientId,
-    },
-    app,
-  );
+  return token(server, {
+    grant_type: "authorization_code",
+    code: code!,
+    redirect_uri: CALLBACK,
+    code_verifier: proof.verifier,
+    client_id: app.clientId,
+  });
 }
 
 describe("what the approval pages offer an app that asks for all data, and what choosing types grants", () => {
@@ -1547,15 +1543,11 @@ describe("what the approval pages keep when an app holds types and asks again fo
       "core.task:read",
       "offline_access",
     ]);
-    const refreshed = await token(
-      server,
-      {
-        grant_type: "refresh_token",
-        refresh_token: issued.body.refresh_token ?? "",
-        client_id: app.clientId,
-      },
-      app,
-    );
+    const refreshed = await token(server, {
+      grant_type: "refresh_token",
+      refresh_token: issued.body.refresh_token ?? "",
+      client_id: app.clientId,
+    });
     expect(refreshed.status, JSON.stringify(refreshed.body)).toBe(200);
     expect(sorted(refreshed.body.scope)).toEqual([
       "core.task:read",
@@ -1768,7 +1760,7 @@ describe("what full access on the approval pages grants", () => {
   });
 
   it("offers no choice of access where the request names nothing to choose", async () => {
-    for (const [page, html] of await bothPages("openid")) {
+    for (const [page, html] of await bothPages("offline_access")) {
       expect(offeredValues(html, "access"), page).toEqual([]);
     }
   });

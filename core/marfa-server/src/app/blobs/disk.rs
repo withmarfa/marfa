@@ -1,8 +1,8 @@
-//! The disk store: one file per blob under `<folder>/<hex 0..2>/<hex 2..4>/<hex>`,
-//! and a `tmp` folder that holds an upload until it is whole.
+//! The disk store: one file per blob under `<folder>/<hex 0..4>/<hex>`, and a `tmp`
+//! folder that holds bytes until they are whole.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
@@ -27,24 +27,33 @@ fn refused(root: &Path, what: &str, error: io::Error) -> Failure {
     ))
 }
 
+/// What a folder holds before the server takes it as its disk store.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Found {
+    Marked,
+    Unmarked,
+    Missing,
+}
+
 impl Disk {
+    /// Looks at the folder without changing it.
+    pub fn probe(root: &Path) -> Result<Found, Failure> {
+        if !root.is_dir() {
+            return Ok(Found::Missing);
+        }
+        match read_marker(root)? {
+            Some(_) => Ok(Found::Marked),
+            None => Ok(Found::Unmarked),
+        }
+    }
+
     /// Reads the store's id from its marker, writing one for a folder that has none, and
     /// empties `tmp`. It blocks, so it runs before the server takes requests.
     pub fn open(root: &Path) -> Result<Disk, Failure> {
         fs::create_dir_all(root).map_err(|error| refused(root, "could not be made", error))?;
-        let marker = root.join(MARKER);
-        let id = match fs::read_to_string(&marker) {
-            Ok(text) if !text.trim().is_empty() => Uuid::parse_str(text.trim())
-                .map(|id| id.to_string())
-                .map_err(|_| {
-                    Failure::start(format!(
-                        "The marker {} does not hold a store id.",
-                        marker.display()
-                    ))
-                })?,
-            Ok(_) => fresh_marker(root, &marker)?,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => fresh_marker(root, &marker)?,
-            Err(error) => return Err(refused(root, "has an unreadable marker", error)),
+        let id = match read_marker(root)? {
+            Some(id) => id,
+            None => fresh_marker(root, &root.join(MARKER))?,
         };
         let disk = Disk {
             id,
@@ -74,7 +83,17 @@ impl Disk {
 
     fn path_of(&self, hash: &Hash) -> PathBuf {
         let hex = hash.hex();
-        self.root.join(&hex[0..2]).join(&hex[2..4]).join(hex)
+        self.root.join(&hex[0..4]).join(hex)
+    }
+
+    /// The folder is there and still holds this store's marker. A folder that went away, a
+    /// drive that did not mount and an empty mount point all fail this.
+    pub fn reachable(&self) -> bool {
+        fs::read_to_string(self.root.join(MARKER)).is_ok_and(|text| text.trim() == self.id)
+    }
+
+    fn unreachable() -> io::Error {
+        io::Error::other("the disk store's folder or marker is missing")
     }
 
     /// A file of its own for an upload that is arriving.
@@ -93,11 +112,12 @@ impl Disk {
         })
     }
 
-    /// Moves a sealed file into place and syncs it and every folder whose entries changed,
-    /// the root included. A final file that already stands is the same bytes and is synced
-    /// all the same, since the upload that renamed it may not have synced yet. The staged
-    /// file is discarded in that case.
+    /// Moves a sealed file into place over whatever stands there, which may be a damaged
+    /// copy's bytes, and syncs it and every folder whose entries changed, the root included.
     pub fn publish(&self, staged: &mut Staged, hash: &Hash) -> io::Result<()> {
+        if !self.reachable() {
+            return Err(Disk::unreachable());
+        }
         let target = self.path_of(hash);
         let Some(folder) = target.parent() else {
             return Err(io::Error::other("a blob path has no folder"));
@@ -106,10 +126,8 @@ impl Disk {
             return Err(io::Error::other("a blob path has no folder"));
         };
         fs::create_dir_all(folder)?;
-        if !target.exists() {
-            fs::rename(&staged.path, &target)?;
-            staged.published = true;
-        }
+        fs::rename(&staged.path, &target)?;
+        staged.published = true;
         File::open(&target)?.sync_all()?;
         for synced in [folder, parent, self.root.as_path()] {
             File::open(synced)?.sync_all()?;
@@ -118,7 +136,117 @@ impl Disk {
     }
 
     pub fn open_blob(&self, hash: &Hash) -> io::Result<File> {
+        if !self.reachable() {
+            return Err(Disk::unreachable());
+        }
         File::open(self.path_of(hash))
+    }
+
+    /// The size of the file a blob would be in, or `None` where there is none.
+    pub fn size_of(&self, hash: &Hash) -> io::Result<Option<u64>> {
+        if !self.reachable() {
+            return Err(Disk::unreachable());
+        }
+        match fs::metadata(self.path_of(hash)) {
+            Ok(meta) => Ok(Some(meta.len())),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Reads a blob's file through and answers its size and what it hashes to, with its first
+    /// byte changed when `changed` says so.
+    pub fn rehash(&self, hash: &Hash, changed: bool) -> io::Result<Option<(u64, Hash)>> {
+        self.rehash_opened(hash, changed, |path| File::open(path))
+    }
+
+    fn rehash_opened(
+        &self,
+        hash: &Hash,
+        changed: bool,
+        open: impl FnOnce(&Path) -> io::Result<File>,
+    ) -> io::Result<Option<(u64, Hash)>> {
+        if !self.reachable() {
+            return Err(Disk::unreachable());
+        }
+        let mut file = match open(&self.path_of(hash)) {
+            Ok(file) => file,
+            // A drive that went away after the first look shows every file as missing.
+            Err(error) if error.kind() == io::ErrorKind::NotFound && !self.reachable() => {
+                return Err(Disk::unreachable());
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let (mut hasher, mut size, mut buffer) = (Sha256::new(), 0u64, vec![0; 256 * 1024]);
+        loop {
+            let count = file.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            if changed && size == 0 {
+                buffer[0] ^= 0xff;
+            }
+            hasher.update(&buffer[..count]);
+            size += count as u64;
+        }
+        Ok(Some((size, Hash::from_digest(&hasher.finalize()))))
+    }
+
+    /// The name and size of each file in `tmp`. It blocks.
+    pub fn spool(&self) -> io::Result<Vec<(String, u64)>> {
+        let entries = match fs::read_dir(self.tmp()) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error),
+        };
+        let mut files = Vec::new();
+        for entry in entries {
+            let entry = entry?;
+            match entry.metadata() {
+                Ok(meta) => {
+                    files.push((entry.file_name().to_string_lossy().into_owned(), meta.len()))
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        files.sort();
+        Ok(files)
+    }
+
+    /// Removes a blob's file. One that is not there is already gone.
+    pub fn delete(&self, hash: &Hash) -> io::Result<()> {
+        if !self.reachable() {
+            return Err(Disk::unreachable());
+        }
+        let target = self.path_of(hash);
+        match fs::remove_file(&target) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        }
+        match target.parent() {
+            Some(folder) => File::open(folder)?.sync_all(),
+            None => Ok(()),
+        }
+    }
+}
+
+fn read_marker(root: &Path) -> Result<Option<String>, Failure> {
+    let marker = root.join(MARKER);
+    match fs::read_to_string(&marker) {
+        Ok(text) if !text.trim().is_empty() => Uuid::parse_str(text.trim())
+            .map(|id| Some(id.to_string()))
+            .map_err(|_| {
+                Failure::start(format!(
+                    "The marker {} does not hold a store id.",
+                    marker.display()
+                ))
+            }),
+        Ok(_) => Ok(None),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(refused(root, "has an unreadable marker", error)),
     }
 }
 
@@ -147,6 +275,10 @@ impl Staged {
         self.size
     }
 
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
     /// Writes and hashes `bytes`. It blocks.
     pub fn append(&mut self, bytes: &[u8]) -> io::Result<()> {
         let Some(file) = self.file.as_mut() else {
@@ -156,6 +288,11 @@ impl Staged {
         self.hasher.update(bytes);
         self.size += bytes.len() as u64;
         Ok(())
+    }
+
+    /// Opens the file for reading. It blocks.
+    pub fn reopen(&self) -> io::Result<File> {
+        File::open(&self.path)
     }
 
     /// Syncs the file and names it by what it holds. It blocks.
@@ -178,9 +315,14 @@ impl Staged {
     fn remove(&mut self) {
         if !self.published {
             self.published = true;
-            let _ = fs::remove_file(&self.path);
+            unspool(&self.path);
         }
     }
+}
+
+/// Removes a staged file; one already placed or removed is not there. It blocks.
+pub fn unspool(path: &Path) {
+    let _ = fs::remove_file(path);
 }
 
 impl Drop for Staged {
@@ -193,13 +335,9 @@ impl Drop for Staged {
         let path = std::mem::take(&mut self.path);
         match tokio::runtime::Handle::try_current() {
             Ok(runtime) => {
-                runtime.spawn_blocking(move || {
-                    let _ = fs::remove_file(path);
-                });
+                runtime.spawn_blocking(move || unspool(&path));
             }
-            Err(_) => {
-                let _ = fs::remove_file(path);
-            }
+            Err(_) => unspool(&path),
         }
     }
 }
@@ -232,7 +370,7 @@ mod tests {
         assert!(fs::read_dir(root.join(TMP)).unwrap().next().is_none());
         assert_eq!(fs::read(disk.path_of(&hash)).unwrap(), b"kept");
         let hex = hash.hex();
-        assert!(root.join(&hex[0..2]).join(&hex[2..4]).join(hex).is_file());
+        assert!(root.join(&hex[0..4]).join(hex).is_file());
     }
 
     #[test]
@@ -266,6 +404,55 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
         panic!("the staged file was not removed");
+    }
+
+    #[test]
+    fn a_probe_changes_nothing_and_a_folder_without_its_marker_is_unreachable() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("blobs");
+        assert_eq!(Disk::probe(&root).unwrap(), Found::Missing);
+        assert!(!root.exists());
+        fs::create_dir(&root).unwrap();
+        assert_eq!(Disk::probe(&root).unwrap(), Found::Unmarked);
+        let disk = Disk::open(&root).unwrap();
+        assert_eq!(Disk::probe(&root).unwrap(), Found::Marked);
+        assert!(disk.reachable());
+        fs::remove_file(root.join(MARKER)).unwrap();
+        assert!(!disk.reachable());
+        let hash = Hash::from_digest(&Sha256::digest(b"x"));
+        assert!(disk.size_of(&hash).is_err());
+        assert!(disk.delete(&hash).is_err());
+    }
+
+    #[test]
+    fn a_rehash_finds_an_altered_file_and_a_missing_one() {
+        let dir = TempDir::new().unwrap();
+        let disk = Disk::open(dir.path()).unwrap();
+        let mut staged = disk.stage().unwrap();
+        staged.append(b"kept bytes").unwrap();
+        let hash = staged.seal().unwrap();
+        disk.publish(&mut staged, &hash).unwrap();
+        assert_eq!(disk.rehash(&hash, false).unwrap(), Some((10, hash.clone())));
+        let changed = Hash::from_digest(&Sha256::digest(b"\x94ept bytes"));
+        assert_eq!(disk.rehash(&hash, true).unwrap(), Some((10, changed)));
+        fs::write(disk.path_of(&hash), b"kept bytez").unwrap();
+        assert_ne!(disk.rehash(&hash, false).unwrap().unwrap().1, hash);
+        disk.delete(&hash).unwrap();
+        disk.delete(&hash).unwrap();
+        assert_eq!(disk.rehash(&hash, false).unwrap(), None);
+    }
+
+    #[test]
+    fn a_file_missing_because_the_folder_went_away_is_unreachable_not_missing() {
+        let dir = TempDir::new().unwrap();
+        let disk = Disk::open(dir.path()).unwrap();
+        let hash = Hash::from_digest(&Sha256::digest(b"never kept"));
+        assert_eq!(disk.rehash(&hash, false).unwrap(), None);
+        let unmounted = disk.rehash_opened(&hash, false, |path| {
+            fs::remove_file(dir.path().join(MARKER))?;
+            File::open(path)
+        });
+        assert!(unmounted.is_err(), "{unmounted:?}");
     }
 
     #[test]

@@ -495,6 +495,7 @@ fn own_data(folder: &Folder, state: &State) -> Result<(), CliError> {
         &folder.dir,
         state.manager == Some(Manager::SystemdSystem),
         super::account::lookup(super::account::NAME).map(|identity| identity.gid),
+        true,
     )?;
     match std::fs::symlink_metadata(&data) {
         Ok(found) if found.is_dir() => Ok(()),

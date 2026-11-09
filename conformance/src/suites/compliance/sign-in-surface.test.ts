@@ -534,21 +534,6 @@ describe("the pages a person reads at sign-in", () => {
     );
   });
 
-  it("shows a browser at end-session with no session a page, and a program the provider's JSON", async () => {
-    const page = await fetch(`${server!.apiUrl}/auth/oauth2/end-session`, {
-      headers: NAVIGATION,
-    });
-    expect(page.status).toBe(200);
-    expect(page.headers.get("content-type")).toContain("text/html");
-    expect(await page.text()).toContain("signed out");
-
-    const program = await fetch(`${server!.apiUrl}/auth/oauth2/end-session`, {
-      headers: { accept: "application/json" },
-    });
-    expect(program.status).toBe(400);
-    expect(program.headers.get("content-type")).toContain("application/json");
-  });
-
   it("tells a link whose window has closed that the request has expired", async () => {
     const cookie = await sessionCookie("192.0.2.54");
     const link = consentLink(await startAuthorization("Conformance Lapsed"));

@@ -1827,7 +1827,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Get the owner's profile
+         * @description Returns the fields of the owner's profile that your credential can read: `name`, `email` and `avatar`, each only with profile read permission for that field. A field you can't read is left out, so a credential that can read none gets an empty object.
+         */
+        get: operations["getProfile"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6044,7 +6048,7 @@ export interface components {
                 };
             };
         };
-        /** @description An OAuth client: its app metadata and the grants it uses. */
+        /** @description An OAuth client: its app metadata and the grants it uses. Marfa ignores metadata it doesn't support and leaves it out of the answer. */
         OAuthClientRegistration: {
             /** @description The addresses Marfa may send a person back to after authorization. Required for `authorization_code`. At most 10. A `web` client's URIs must use `https` off the loopback; a `native` client may use `http` on `localhost`, `127.0.0.1` or `[::1]`. */
             redirect_uris?: string[];
@@ -6066,25 +6070,12 @@ export interface components {
             software_id?: string;
             /** @description The software's version. Leave it out if there is none. */
             software_version?: string;
-            /** @description A signed software statement. Leave it out to register without one. */
-            software_statement?: string;
-            /** @description Addresses the app may return to after sign-out. Leave it out if there are none. */
-            post_logout_redirect_uris?: string[];
             /**
-             * @description `none` is public, `client_secret_basic` uses HTTP Basic and `client_secret_post` sends the secret in the body. Other methods, including `private_key_jwt`, are refused with `invalid_client_metadata`.
-             * @default client_secret_basic
+             * @description `none`: the client is public and proves itself with PKCE. Any other method is refused with `invalid_client_metadata`.
+             * @default none
              * @enum {string}
              */
-            token_endpoint_auth_method: "none" | "client_secret_basic" | "client_secret_post";
-            /** @description The client's public JSON Web Key Set. Leave it out if the client has none. */
-            jwks?: {
-                /** @description The client's public JSON Web Keys, including any extension members. */
-                keys: {
-                    [key: string]: unknown;
-                }[];
-            };
-            /** @description The URL of the client's public JSON Web Key Set. Leave it out if the client has none. */
-            jwks_uri?: string;
+            token_endpoint_auth_method: "none";
             /** @description The grants the client uses: `authorization_code`, `refresh_token` or `urn:ietf:params:oauth:grant-type:device_code`. Defaults to `authorization_code`. Without `authorization_code`, add `refresh_token` to get a refresh token with `offline_access`. */
             grant_types?: string[];
             /** @description The response types the client uses. Defaults to `code` when `grant_types` includes `authorization_code`. */
@@ -6094,14 +6085,7 @@ export interface components {
              * @enum {string}
              */
             application_type?: "web" | "native";
-            /**
-             * @description `public` for public subject identifiers. Leave it out to use public identifiers. `pairwise` is refused with `invalid_client_metadata`.
-             * @enum {string}
-             */
-            subject_type?: "public";
-            /** @description `true` to bind the client's access tokens to DPoP proofs. Leave it out for tokens without that binding. */
-            dpop_bound_access_tokens?: boolean;
-            /** @description Resource identifiers to register the client for. Leave it out for the instance's default resources. */
+            /** @description Resource identifiers, each an absolute URI without a fragment; any other value is refused with `invalid_target`. Marfa doesn't register them or return them: a token request names its own `resource`. */
             resources?: string[];
         };
         /** @description An error response. */
@@ -26920,7 +26904,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Returns the registered client, with its `client_id` and, unless it's a public client, its `client_secret`. */
+            /** @description Returns the registered client, with its `client_id`. */
             201: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -26952,24 +26936,11 @@ export interface operations {
                         software_id?: string;
                         /** @description Version identifier for the software_id */
                         software_version?: string;
-                        /** @description JWT containing metadata values about the client software as claims */
-                        software_statement?: string;
-                        /** @description List of allowed logout redirect uris */
-                        post_logout_redirect_uris?: string[];
                         /**
-                         * @description How the client proves itself at the token endpoint.
+                         * @description How the client proves itself at the token endpoint: `none`, for a public client.
                          * @enum {string}
                          */
-                        token_endpoint_auth_method?: "none" | "client_secret_basic" | "client_secret_post";
-                        /** @description The client's public JSON Web Key Set, as registered. */
-                        jwks?: {
-                            /** @description The client's public JSON Web Keys, including any extension members. */
-                            keys: {
-                                [key: string]: unknown;
-                            }[];
-                        };
-                        /** @description The URL of the client's public JSON Web Key Set, as registered. */
-                        jwks_uri?: string;
+                        token_endpoint_auth_method?: "none";
                         /** @description The grants, as registered. */
                         grant_types?: string[];
                         /** @description The response types, as registered. */
@@ -26979,21 +26950,8 @@ export interface operations {
                          * @enum {string}
                          */
                         application_type?: "web" | "native";
-                        /**
-                         * @description `public` for public subject identifiers.
-                         * @enum {string}
-                         */
-                        subject_type?: "public";
-                        /** @description `true` if the client always uses DPoP for its token requests. */
-                        dpop_bound_access_tokens?: boolean;
-                        /** @description Final resource identifiers linked to the registered client */
-                        resources?: string[];
                         /** @description Unique identifier for the client. */
                         client_id: string;
-                        /** @description The secret the client proves itself with at the token endpoint. Absent for a public client. */
-                        client_secret?: string;
-                        /** @description When the secret expires, in seconds since the Unix epoch, or `0` if it doesn't. */
-                        client_secret_expires_at?: number;
                         /** @description The ID of the user who registered the client. Absent for anonymous registration. */
                         user_id?: string;
                         /** @description When the client was registered, in seconds since the Unix epoch. */
@@ -27008,7 +26966,6 @@ export interface operations {
              *     - `invalid_redirect_uri`: a redirect URI is invalid, or there are more than 10.
              *     - `invalid_scope`: a scope is not allowed.
              *     - `invalid_target`: a resource is invalid.
-             *     - `invalid_software_statement`: a software statement is invalid.
              *
              *     These errors use RFC 7591. An unknown query parameter gets Marfa's `validation_error` instead.
              */
@@ -27028,7 +26985,7 @@ export interface operations {
                          * @description The OAuth error code.
                          * @enum {string}
                          */
-                        error: "invalid_client_metadata" | "invalid_redirect_uri" | "invalid_scope" | "invalid_target" | "invalid_software_statement";
+                        error: "invalid_client_metadata" | "invalid_redirect_uri" | "invalid_scope" | "invalid_target";
                         /** @description A description of the error for a person to read. */
                         error_description?: string;
                     };
@@ -28007,6 +27964,150 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
+    getProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The profile fields you can read. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description The owner's name. Present with `profile.name:read`. */
+                        name?: string;
+                        /**
+                         * Format: email
+                         * @description The owner's sign-in email address. Present with `profile.email:read`.
+                         */
+                        email?: string;
+                        /**
+                         * Format: uri
+                         * @description The address of the owner's picture, or `null` when there is none. Present with `profile.avatar:read`.
+                         */
+                        avatar?: string | null;
+                    };
+                };
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description The owner is unavailable. */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnerNotFoundRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */

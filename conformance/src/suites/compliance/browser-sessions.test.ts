@@ -1,7 +1,6 @@
 import { controlRequest } from "../../utils/control-request.js";
 import { TEST_OWNER as OWNER } from "../../utils/target.js";
 import { createHash, randomBytes } from "node:crypto";
-import { request } from "node:http";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   bootFreshServer,
@@ -30,7 +29,6 @@ interface App {
   clientId: string;
   access: string;
   refresh?: string;
-  idToken?: string;
 }
 
 /** The apps the browser about to end has just approved. */
@@ -61,48 +59,6 @@ beforeAll(async () => {
 afterAll(async () => {
   await server?.stop();
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
-
-/**
- * A request as a browser navigating sends it. `fetch` stamps its own fetch
- * metadata over the headers it is given, so the provider would read it as a
- * program's call and answer a program.
- */
-function navigate(
-  method: string,
-  path: string,
-  headers: Record<string, string>,
-  body?: string,
-): Promise<{ status: number; text: string; cookies: string[] }> {
-  return new Promise((resolve, reject) => {
-    const url = new URL(path, server!.apiUrl);
-    const req = request(
-      url,
-      {
-        method,
-        headers: {
-          accept: "text/html,application/xhtml+xml",
-          "sec-fetch-mode": "navigate",
-          ...headers,
-        },
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (chunk: Buffer) => chunks.push(chunk));
-        res.on("end", () =>
-          resolve({
-            status: res.statusCode ?? 0,
-            text: Buffer.concat(chunks).toString("utf8"),
-            cookies: (res.headers["set-cookie"] ?? []).map(
-              (cookie) => cookie.split(";")[0] ?? "",
-            ),
-          }),
-        );
-      },
-    );
-    req.once("error", reject);
-    req.end(body);
-  });
-}
 
 async function signIn(): Promise<string> {
   const response = await fetch(`${server!.apiUrl}/auth/sign-in/email`, {
@@ -230,19 +186,17 @@ async function connect(cookie: string, scope: string): Promise<App> {
   const body = (await response.json()) as {
     access_token: string;
     refresh_token?: string;
-    id_token?: string;
   };
   return {
     clientId,
     access: body.access_token,
     refresh: body.refresh_token,
-    idToken: body.id_token,
   };
 }
 
 /** Both kinds of app, approved by this browser, so ending it is what is asked. */
 async function connectApps(cookie: string): Promise<void> {
-  refreshing = await connect(cookie, `${SCOPE} offline_access openid`);
+  refreshing = await connect(cookie, `${SCOPE} offline_access`);
   accessOnly = await connect(cookie, SCOPE);
 }
 
@@ -333,39 +287,6 @@ describe("a browser session ending", () => {
     await expectAppsConnected(live);
   });
 
-  it("through the provider's end-session, once confirmed, leaves every app connected", async () => {
-    const browser = live;
-    await connectApps(browser);
-    const asked = await navigate("GET", "/auth/oauth2/end-session", {
-      cookie: browser,
-    });
-    expect(asked.status, asked.text).toBe(200);
-    // Asking changes nothing: the person confirms on the page it answers with.
-    expect(await browserLive(browser)).toBe(true);
-    const action = /action="([^"]+)"/.exec(asked.text)?.[1];
-    expect(action, "the page named no form action").toBeTruthy();
-    const confirmation = asked.cookies.filter((cookie) =>
-      cookie.includes("oauth_logout_confirmation"),
-    );
-    expect(confirmation.length).toBeGreaterThan(0);
-
-    const confirmed = await navigate(
-      "POST",
-      new URL(action!.replaceAll("&amp;", "&"), server!.apiUrl).pathname,
-      {
-        cookie: [browser, ...confirmation].join("; "),
-        origin,
-        "content-type": "application/x-www-form-urlencoded",
-      },
-      "action=confirm",
-    );
-    expect(confirmed.status, confirmed.text).toBeLessThan(400);
-    expect(await browserLive(browser)).toBe(false);
-
-    live = await signIn();
-    await expectAppsConnected(live);
-  });
-
   it("through a password change that ends the other sessions leaves every app connected", async () => {
     const ended = await signIn();
     await connectApps(ended);
@@ -422,19 +343,6 @@ describe("a browser session ending", () => {
 
     expect((await post("/auth/sign-out", live)).status).toBe(200);
     await expectAppsConnected(await signIn());
-  });
-
-  it("advertises no back-channel logout, since no app is notified of a browser ending", async () => {
-    for (const path of [
-      "/auth/.well-known/openid-configuration",
-      "/auth/.well-known/oauth-authorization-server",
-    ]) {
-      const response = await fetch(`${server!.apiUrl}${path}`);
-      expect(response.status).toBe(200);
-      const document = (await response.json()) as Record<string, unknown>;
-      expect(document.backchannel_logout_supported).toBe(false);
-      expect(document.backchannel_logout_session_supported).toBe(false);
-    }
   });
 
   it("registers an app without a back-channel logout address and does not echo one", async () => {

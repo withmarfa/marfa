@@ -84,7 +84,7 @@ async fn arrived(
 }
 
 async fn put(
-    app: &App,
+    app: &Arc<App>,
     caller: &Caller,
     visit: Visit,
     request: Request,
@@ -123,6 +123,12 @@ pub async fn put_profile(
 ) -> Answer {
     put(&app, &caller, visit, request, Door::Profile).await?;
     Ok(json_answer(StatusCode::OK, &json!({ "ok": true })))
+}
+
+pub async fn read_own(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
+    query::only(&uri, &[])?;
+    let profile = owner::read_profile(&app, &caller).await?;
+    Ok(json_answer(StatusCode::OK, &profile))
 }
 
 pub async fn update(
@@ -164,7 +170,11 @@ pub async fn read(
     let body = if unchanged {
         Body::empty()
     } else {
-        stream(app.bytes_of(&found).await?, 0, size, app.blob_read_idle())
+        stream(
+            app.bytes_of(&found, 0, size).await?,
+            size,
+            app.blob_read_idle(),
+        )
     };
     let mut response = Response::new(body);
     let headers = response.headers_mut();
