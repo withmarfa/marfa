@@ -540,6 +540,12 @@ describe("the keys an app minted, when its grant ends another way", () => {
     expect(revoked.status).toBe(200);
     // The witness: the revocation ended the app.
     expect(await itemsStatus(server, issued.access_token!)).toBe(401);
+    const afterRevoke = (await (await grants(server.managementKey)).json()) as {
+      data: Grant[];
+    };
+    expect(afterRevoke.data.map((g) => g.client_id)).not.toContain(
+      app.clientId,
+    );
     expect(await itemsStatus(server, key.key)).toBe(200);
     expect(await itemsStatus(server, descendant.key)).toBe(200);
   });
