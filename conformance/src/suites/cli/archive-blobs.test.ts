@@ -194,12 +194,12 @@ describe("an archive that lacks a blob it names", () => {
         .viaSocket(server!.controlSocket)
         .refused(["restore", path]);
       expect(late.envelope.error.server?.status).toBe(400);
-      expect(late.envelope.error.code).toBe("validation_error");
+      expect(late.envelope.error.server?.code).toBe("validation_error");
       expect(late.envelope.error.message).toContain("version 99");
       // Refused before the body: a working key is not the owner.
       const early = await cli.refused(["restore", path]);
       expect(early.envelope.error.server?.status).toBe(403);
-      expect(early.envelope.error.code).toBe("forbidden");
+      expect(early.envelope.error.server?.code).toBe("forbidden");
     }
   });
 
