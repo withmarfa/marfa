@@ -31,7 +31,10 @@ afterEach(async () => {
 const working = (server: FreshServer) =>
   new MarfaClient({ baseUrl: server.apiUrl, apiKey: server.workingKey });
 const owner = (server: FreshServer) =>
-  new MarfaClient({ baseUrl: server.apiUrl, controlSocket: server.controlSocket });
+  new MarfaClient({
+    baseUrl: server.apiUrl,
+    controlSocket: server.controlSocket,
+  });
 
 /** Everything a reader of `ids` can learn from an instance, by id. */
 async function held(client: MarfaClient, ids: string[]) {
