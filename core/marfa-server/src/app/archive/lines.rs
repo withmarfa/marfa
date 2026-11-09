@@ -26,12 +26,20 @@ struct Page {
     whole: bool,
 }
 
-async fn item_page(app: &App, admitted: &Caller, ask: &Ask, after: i64) -> Result<(Caller, Page)> {
-    let (admitted, ask) = (admitted.clone(), ask.clone());
-    reading(app, &admitted.clone(), move |read| {
+/// A page selected as `admitted` read, or for the first page, as the caller reads now.
+async fn item_page(
+    app: &App,
+    caller: &Caller,
+    admitted: Option<&Caller>,
+    ask: &Ask,
+    after: i64,
+) -> Result<(Caller, Page)> {
+    let (admitted, ask) = (admitted.cloned(), ask.clone());
+    reading(app, caller, move |read| {
         if read.faults().fail(FAIL_EXPORT_READ, None) {
             return Err(io_refusal());
         }
+        let admitted = admitted.unwrap_or_else(|| read.caller.clone());
         let selecting = read.as_caller(admitted.clone());
         let seqs = query::selected(&selecting, &ask, after, PAGE)?;
         let rows = items::archived(read.tx, &admitted, &read.catalog, &read.read_only, &seqs, false)?;
@@ -54,9 +62,15 @@ async fn item_page(app: &App, admitted: &Caller, ask: &Ask, after: i64) -> Resul
     .await
 }
 
-async fn edge_page(app: &App, admitted: &Caller, exported: Arc<Vec<i64>>, after: i64) -> Result<Page> {
-    let admitted = admitted.clone();
-    reading(app, &admitted.clone(), move |read| {
+async fn edge_page(
+    app: &App,
+    admitted: &Caller,
+    exported: Arc<Vec<i64>>,
+    after: i64,
+) -> Result<Page> {
+    let selecting = admitted.clone();
+    reading(app, admitted, move |read| {
+        let admitted = selecting;
         let page = edges::with_ends(read.tx, after, EDGE_PAGE)?;
         let next = page.last().map(|(edge, ..)| edge.seq());
         let mut text = String::new();
@@ -84,7 +98,7 @@ impl App {
     /// Reads the first page before answering, so a refusal is an ordinary answer, then hands the
     /// rest to a task that reads a page as the client takes the last.
     pub async fn export_lines(self: &Arc<App>, caller: &Caller, ask: Ask) -> Result<Body> {
-        let (admitted, first) = item_page(self, caller, &ask, 0).await?;
+        let (admitted, first) = item_page(self, caller, None, &ask, 0).await?;
         self.audit_export(caller, "ndjson").await?;
         let (sender, body) = mpsc::channel(QUEUED);
         let app = self.clone();
@@ -130,7 +144,7 @@ async fn send(
         let Some(after) = page.after else {
             break;
         };
-        page = item_page(app, admitted, ask, after)
+        page = item_page(app, admitted, Some(admitted), ask, after)
             .await
             .map_err(|refusal| cut(refusal.message.into_owned()))?
             .1;
