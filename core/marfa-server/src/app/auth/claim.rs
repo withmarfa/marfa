@@ -110,16 +110,18 @@ fn require_unclaimed(tx: &Transaction<'_>) -> Result<()> {
 }
 
 fn holds(tx: &Transaction<'_>, kind: &str, digest: &str, now: Stamp) -> Result<bool> {
-    let mut statement = tx.prepare(
-        "SELECT digest FROM setup_proof \
-         WHERE kind = ?1 AND (expires_at IS NULL OR expires_at > ?2)",
-    )?;
-    let digests = statement
-        .query_map(params![kind, now], |row| row.get::<_, String>(0))?
-        .collect::<rusqlite::Result<Vec<String>>>()?;
-    Ok(digests.iter().fold(false, |found, held| {
-        found | bool::from(held.as_bytes().ct_eq(digest.as_bytes()))
-    }))
+    let mut statement = tx.prepare("SELECT digest, expires_at FROM setup_proof WHERE kind = ?1")?;
+    let held = statement
+        .query_map(params![kind], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<Stamp>>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(held
+        .iter()
+        .filter(|(_, expires_at)| expires_at.is_none_or(|at| at > now))
+        .fold(false, |found, (held, _)| {
+            found | bool::from(held.as_bytes().ct_eq(digest.as_bytes()))
+        }))
 }
 
 fn drop_expired(tx: &Transaction<'_>, now: Stamp) -> Result<()> {
@@ -372,4 +374,60 @@ pub async fn claim(app: &App, details: Details, proof: Proof, visit: Visit) -> R
             Ok(owner)
         })
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::Connection;
+
+    use super::*;
+
+    const NOW: i64 = 1_800_000_000_000;
+
+    fn at(ms: i64) -> Stamp {
+        Stamp::from_ms(ms).unwrap()
+    }
+
+    fn database() -> Connection {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(include_str!("../../db/migrations/0001_baseline.sql"))
+            .unwrap();
+        db
+    }
+
+    #[test]
+    fn a_proof_holds_until_the_millisecond_it_ends_and_goes_then() {
+        let mut db = database();
+        let tx = db.transaction().unwrap();
+        for (digest, ms) in [("before", NOW - 1), ("end", NOW), ("after", NOW + 1)] {
+            add(&tx, digest, TICKET, "g", Some(at(ms))).unwrap();
+        }
+        add(&tx, "code", CODE, "g", None).unwrap();
+        let now = at(NOW);
+        for (digest, holds_now) in [("before", false), ("end", false), ("after", true)] {
+            assert_eq!(holds(&tx, TICKET, digest, now).unwrap(), holds_now, "{digest}");
+        }
+        assert!(holds(&tx, CODE, "code", now).unwrap());
+        drop_expired(&tx, now).unwrap();
+        let left: i64 = tx
+            .query_row("SELECT count(*) FROM setup_proof", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(left, 2);
+    }
+
+    #[test]
+    fn a_proof_whose_end_does_not_read_is_refused_and_never_held() {
+        for stored in ["soon", "1800000000000", "2027-01-15T08:00:00Z"] {
+            let mut db = database();
+            let tx = db.transaction().unwrap();
+            tx.execute(
+                "INSERT INTO setup_proof (digest, kind, generation, expires_at) \
+                 VALUES ('odd', 'ticket', 'g', ?1)",
+                [stored],
+            )
+            .unwrap();
+            let refused = holds(&tx, TICKET, "odd", at(NOW)).unwrap_err();
+            assert_eq!(refused.code, Code::InternalError, "{stored}");
+        }
+    }
 }

@@ -71,7 +71,7 @@ async fn idle_clients(app: &Arc<App>) -> Result<i64> {
         let count = unit.tx().execute(
             "DELETE FROM auth_oauth_client WHERE client_id IN ( \
              SELECT client_id FROM auth_oauth_client AS c \
-             WHERE created_at < ?1 AND COALESCE(offered_at, 0) < ?1 \
+             WHERE created_at < ?1 AND COALESCE(offered_at, created_at) < ?1 \
              AND NOT EXISTS (SELECT 1 FROM auth_oauth_consent AS x \
                              WHERE x.client_id = c.client_id) \
              AND NOT EXISTS (SELECT 1 FROM auth_oauth_access_token AS x \

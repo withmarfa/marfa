@@ -391,6 +391,17 @@ fn due_takes_one_turn_per_subscription_and_excludes_busy_subscriptions() {
     assert_eq!(due(&tx, 0, &[], 1).unwrap(), vec![1]);
     assert_eq!(due(&tx, 0, &[1], 10).unwrap(), vec![3]);
     assert_eq!(next_due(&tx, &[1, 3]).unwrap(), Some(5));
+    assert_eq!(due(&tx, 4, &[1, 3], 10).unwrap(), Vec::<i64>::new());
+    assert_eq!(due(&tx, 5, &[1, 3], 10).unwrap(), vec![4]);
+}
+
+#[test]
+fn a_due_time_that_does_not_read_is_refused() {
+    let mut db = rusqlite::Connection::open_in_memory().unwrap();
+    let tx = db.transaction().unwrap();
+    tx.execute_batch("CREATE TABLE webhook_deliveries (seq INTEGER, webhook_id TEXT, status TEXT, due_at TEXT);
+        INSERT INTO webhook_deliveries VALUES (1, 'a', 'pending', 'soon');").unwrap();
+    assert!(next_due(&tx, &[]).is_err());
 }
 
 /// Preserves earlier attempts and leaves settled deliveries unchanged.

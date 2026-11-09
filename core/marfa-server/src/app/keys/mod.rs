@@ -9,6 +9,7 @@ use std::sync::Arc;
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 use serde_json::{Map, Value, json};
 
+use crate::app::clock::Stamp;
 use super::App;
 use super::access::{Axis, Caller, Change, Grants, OwnLevers, Permission, Standing};
 use super::items::reading;
@@ -116,9 +117,9 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Key> {
         },
         levers: OwnLevers::from_row(row.get("enforcement_override")?),
         standing: Standing::default(),
-        created_at: row.get("created_at")?,
-        expires_at: row.get("expires_at")?,
-        last_used_at: row.get("last_used_at")?,
+        created_at: row.get::<_, Stamp>("created_at")?.text(),
+        expires_at: row.get::<_, Option<Stamp>>("expires_at")?.map(Stamp::text),
+        last_used_at: row.get::<_, Option<Stamp>>("last_used_at")?.map(Stamp::text),
     })
 }
 

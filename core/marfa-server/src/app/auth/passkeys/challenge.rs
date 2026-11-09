@@ -130,3 +130,58 @@ pub fn take(
         (word == purpose.word() && expires_at > now).then_some(taken)
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::Connection;
+
+    use super::*;
+
+    const SALT: &str = "salt";
+    const NOW: i64 = 1_800_000_000_000;
+
+    fn at(ms: i64) -> Stamp {
+        Stamp::from_ms(ms).unwrap()
+    }
+
+    fn issued(tx: &Transaction<'_>) -> String {
+        let new = New {
+            purpose: Purpose::Prove,
+            origin: "https://a.example",
+            session_id: None,
+            state: &"state",
+        };
+        issue(tx, SALT, at(NOW), new).unwrap()
+    }
+
+    fn database() -> Connection {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(include_str!("../../../db/migrations/0001_baseline.sql"))
+            .unwrap();
+        db
+    }
+
+    #[test]
+    fn a_ceremony_is_taken_until_the_millisecond_it_ends() {
+        for (taken_at, stands) in [(NOW + LIFE_MS - 1, true), (NOW + LIFE_MS, false)] {
+            let mut db = database();
+            let tx = db.transaction().unwrap();
+            let token = issued(&tx);
+            let taken = take(&tx, SALT, Some(&token), Purpose::Prove, at(taken_at)).unwrap();
+            assert_eq!(taken.is_some(), stands, "{taken_at}");
+        }
+    }
+
+    #[test]
+    fn a_ceremony_whose_end_does_not_read_is_refused() {
+        for stored in ["soon", "1800000300000", "2027-01-15T08:00:00Z"] {
+            let mut db = database();
+            let tx = db.transaction().unwrap();
+            let token = issued(&tx);
+            tx.execute("UPDATE auth_passkey_challenge SET expires_at = ?1", [stored])
+                .unwrap();
+            let refused = take(&tx, SALT, Some(&token), Purpose::Prove, at(NOW)).err();
+            assert!(refused.is_some(), "{stored}");
+        }
+    }
+}

@@ -107,13 +107,13 @@ pub(super) fn all_live(tx: &Transaction<'_>, now: Stamp) -> Result<Vec<(Session,
     };
     Ok(tx
         .prepare(&format!(
-            "SELECT {COLUMNS}, ip_address FROM auth_session \
-             WHERE user_id = ?1 AND expires_at > ?2"
+            "SELECT {COLUMNS}, ip_address FROM auth_session WHERE user_id = ?1"
         ))?
-        .query_map(params![owner, now], |row| {
-            Ok((from_row(row)?, row.get("ip_address")?))
-        })?
-        .collect::<rusqlite::Result<_>>()?)
+        .query_map([owner], |row| Ok((from_row(row)?, row.get("ip_address")?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|(session, _): &(Session, Option<String>)| session.expires_at > now)
+        .collect())
 }
 
 fn live_by_digest(tx: &Transaction<'_>, digest: &str, now: Stamp) -> Result<Option<Session>> {
@@ -132,11 +132,11 @@ pub fn live_count(tx: &Transaction<'_>, now: Stamp) -> Result<i64> {
     let Some(owner) = instance::owner_id(tx)? else {
         return Ok(0);
     };
-    Ok(tx.query_row(
-        "SELECT count(*) FROM auth_session WHERE user_id = ?1 AND expires_at > ?2",
-        params![owner, now],
-        |row| row.get(0),
-    )?)
+    let ends = tx
+        .prepare("SELECT expires_at FROM auth_session WHERE user_id = ?1")?
+        .query_map([owner], |row| row.get::<_, Stamp>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(ends.iter().filter(|ends| **ends > now).count() as i64)
 }
 
 fn new_token() -> Result<String> {
@@ -402,4 +402,93 @@ pub async fn end_many(app: &App, caller: &Caller, keep_own: bool, visit: Visit) 
         )
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::Connection;
+
+    use super::*;
+
+    const NOW: i64 = 1_800_000_000_000;
+
+    fn at(ms: i64) -> Stamp {
+        Stamp::from_ms(ms).unwrap()
+    }
+
+    fn owned() -> Connection {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(include_str!("../../db/migrations/0001_baseline.sql"))
+            .unwrap();
+        let then = at(NOW - 60_000);
+        db.execute(
+            "INSERT INTO auth_user (id, name, email, created_at, updated_at) \
+             VALUES ('owner', 'Owner', 'owner@example.test', ?1, ?1)",
+            [then],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO instance (key, value) VALUES ('owner_id', 'owner')",
+            [],
+        )
+        .unwrap();
+        db
+    }
+
+    fn ending(tx: &Transaction<'_>, id: &str, expires_at: &str) {
+        tx.execute(
+            "INSERT INTO auth_session (id, token, user_id, created_at, updated_at, expires_at) \
+             VALUES (?1, ?1, 'owner', ?2, ?2, ?3)",
+            params![id, at(NOW - 60_000), expires_at],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_session_lives_until_the_millisecond_it_ends_and_the_sweep_takes_it_then() {
+        let mut db = owned();
+        let tx = db.transaction().unwrap();
+        for (id, ms) in [("before", NOW - 1), ("end", NOW), ("after", NOW + 1)] {
+            ending(&tx, id, &at(ms).text());
+        }
+        let now = at(NOW);
+        for (id, lives) in [("before", false), ("end", false), ("after", true)] {
+            assert_eq!(live_by_id(&tx, id, now).unwrap().is_some(), lives, "{id}");
+        }
+        let live: Vec<String> = all_live(&tx, now)
+            .unwrap()
+            .into_iter()
+            .map(|(session, _)| session.id)
+            .collect();
+        assert_eq!(live, ["after"]);
+        assert_eq!(live_count(&tx, now).unwrap(), 1);
+        assert_eq!(remove_expired(&tx, now, 10).unwrap(), 2);
+        let left: Vec<String> = tx
+            .prepare("SELECT id FROM auth_session")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(left, ["after"]);
+    }
+
+    #[test]
+    fn a_session_whose_end_does_not_read_is_refused_and_never_taken_as_live() {
+        let now = at(NOW);
+        for stored in [
+            "soon",
+            "1800000000",
+            "2027-01-15T08:00:00Z",
+            "2027-01-15T08:00:00.000+00:00",
+        ] {
+            let mut db = owned();
+            let tx = db.transaction().unwrap();
+            ending(&tx, "odd", stored);
+            let refused = live_by_id(&tx, "odd", now).unwrap_err();
+            assert_eq!(refused.code, Code::InternalError, "{stored}");
+            assert!(all_live(&tx, now).is_err(), "{stored}");
+            assert!(live_count(&tx, now).is_err(), "{stored}");
+        }
+    }
 }

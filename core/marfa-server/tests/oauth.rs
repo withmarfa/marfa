@@ -3469,3 +3469,56 @@ async fn the_error_page_explains_each_code_and_shows_nothing_of_the_request() {
         assert!(!page.text.contains(unexplained), "{code}");
     }
 }
+
+/// Sets every access token's end, as a hand edit or a later reader would find it.
+async fn end_tokens_at(app: &Arc<App>, expires_at: String) {
+    app.db
+        .write(Write::own(), move |tx| {
+            tx.execute(
+                "UPDATE auth_oauth_access_token SET expires_at = ?1",
+                [&expires_at],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn an_access_token_opens_until_the_millisecond_it_ends_and_the_sweep_takes_it_then() {
+    let instance = Instance::signed_in().await;
+    let client = instance.register(NOTES).await;
+    let token = text_at(&instance.tokens(&client, NOTES).await, "access_token").to_string();
+    let app = &instance.app;
+    app.clock.pause(true);
+    let now = app.clock.instant();
+
+    end_tokens_at(app, now.plus_ms(1).unwrap().text()).await;
+    assert_eq!(instance.reads(&token).await, StatusCode::OK);
+    end_tokens_at(app, now.text()).await;
+    assert_eq!(instance.reads(&token).await, StatusCode::UNAUTHORIZED);
+
+    let tokens = "SELECT count(*) FROM auth_oauth_access_token";
+    end_tokens_at(app, now.plus_ms(1).unwrap().text()).await;
+    swept(app, "auth-session-cleanup").await;
+    assert_eq!(instance.count(tokens).await, 1);
+    end_tokens_at(app, now.text()).await;
+    swept(app, "auth-session-cleanup").await;
+    assert_eq!(instance.count(tokens).await, 0);
+}
+
+#[tokio::test]
+async fn an_access_token_whose_end_does_not_read_is_refused_and_never_taken_as_ended() {
+    let instance = Instance::signed_in().await;
+    let client = instance.register(NOTES).await;
+    let token = text_at(&instance.tokens(&client, NOTES).await, "access_token").to_string();
+    assert_eq!(instance.reads(&token).await, StatusCode::OK);
+    for stored in ["soon", "1800000000000", "2027-01-15T08:00:00Z"] {
+        end_tokens_at(&instance.app, stored.to_string()).await;
+        assert_eq!(
+            instance.reads(&token).await,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "{stored}"
+        );
+    }
+}
