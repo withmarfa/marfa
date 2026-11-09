@@ -26,7 +26,7 @@
 #
 # Needs python3 (and Pillow, for the scanned PDF and the memory test's picture) and, on
 # Linux, docker. Under `uv`, `uv run --with pillow` finds Pillow. A target other than
-# the machine's own runs emulated; the report says which.
+# the machine's own is refused, except x86_64 with --vm.
 #
 # MARFA_VERIFY_CORPUS   a folder of real PDFs and pictures, read as well, and kept
 #                       with their text so targets can be compared.

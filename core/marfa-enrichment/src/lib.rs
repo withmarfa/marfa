@@ -146,11 +146,11 @@ pub struct Reading {
     /// An image with no readable size is a plain refusal instead.
     pub text_refused: Option<Refusal>,
     /// How far the process that read the file was shut off from the system. Always
-    /// `Full`: a process that cannot confine itself is given no file.
+    /// `Full`: a process that cannot confine itself reads no file.
     pub sandbox: Sandbox,
 }
 
-/// How far a child process says it is shut off from the system. Only `Full` is given a file.
+/// How far a child process says it is shut off from the system. Only `Full` reads the file.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Sandbox {

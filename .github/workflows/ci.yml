@@ -414,7 +414,7 @@ jobs:
   # read held to `sandbox: Full`. The fuzz then reads mutated files through the
   # real reader. A hosted x86_64 Linux runner is what the Landlock and seccomp
   # of an x86_64 kernel can be proved on at all: an Apple silicon Mac runs the
-  # program under emulation, which reports the sandbox as `Off`.
+  # program only under emulation, where it cannot confine itself and reads nothing.
   #
   # PDFium's finished library (`archives/`) and the pinned downloads are cached
   # by what pins and builds them, saved only from `main` so that a pull request

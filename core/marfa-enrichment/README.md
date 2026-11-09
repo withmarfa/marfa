@@ -70,7 +70,7 @@ A file the reader cannot take apart is `Refusal::Malformed`, and so is one that 
 | Network, processes, signals | The seccomp allow-list in `src/isolated/calls.rs` refuses them. | `sandbox_init` refuses them. |
 | Crash | No core file. | No core file and no crash report: the signals the reporter watches end the child with `128` plus the signal. |
 
-A child is given the file only when it states `Sandbox::Full`: on Linux the seccomp filter plus Landlock, or the filter alone when there is no data folder; on macOS `sandbox_init`. A child that states anything else ends without reading, and the parent kills one that goes on, so `read` answers `ReaderUnavailable`. Rosetta cannot run the filter, so an x86_64 program under it reads nothing.
+A child reads the file only when it states `Sandbox::Full`: on Linux the seccomp filter plus Landlock, or the filter alone when there is no data folder; on macOS `sandbox_init`. A child that states anything else ends without reading, and the parent kills one that goes on, so `read` answers `ReaderUnavailable`. Rosetta cannot run the filter, so an x86_64 program under it reads nothing.
 
 ## Refusals
 

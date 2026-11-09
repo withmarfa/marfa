@@ -89,7 +89,7 @@ enum Fate {
     Skip(Why),
     /// Tried and failed: offered again until its attempts run out.
     Retry,
-    /// No reader could start. The file was not tried.
+    /// No reader could start or confine itself. The file was not tried.
     Untried,
     /// The store did not give the bytes. The file was not tried, and the run pauses.
     Unreached,

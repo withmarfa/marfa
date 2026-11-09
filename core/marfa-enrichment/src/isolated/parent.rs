@@ -556,7 +556,7 @@ fn conclude(
     };
     if sandbox != Sandbox::Full {
         return Err(Refusal::ReaderUnavailable(format!(
-            "the reader could not confine itself ({sandbox:?}), so it was given no file to parse"
+            "the reader could not confine itself ({sandbox:?}), so it read nothing"
         )));
     }
     match end {
