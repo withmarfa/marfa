@@ -331,20 +331,26 @@ pub(super) fn settings(tx: &Transaction<'_>) -> Result<Vec<Item>> {
     Ok(found.collect::<rusqlite::Result<_>>()?)
 }
 
-pub(super) fn weights(tx: &Transaction<'_>, ids: &[String], history: bool) -> Result<Vec<i64>> {
-    let mut statement = tx.prepare_cached(
-        "SELECT length(i.properties) + CASE WHEN ?2 THEN \
-         (SELECT total(length(v.properties)) FROM item_versions v WHERE v.item_seq = i.seq) \
-         ELSE 0 END FROM items i WHERE i.id = ?1",
-    )?;
-    ids.iter()
-        .map(|id| {
-            let weight: Option<f64> = statement
-                .query_row(params![id, history], |row| row.get(0))
-                .optional()?;
-            Ok(weight.map_or(0, |bytes| bytes as i64))
-        })
-        .collect()
+/// What one stored row carries beside its own JSON: its fixed columns and index entries.
+const ROW_BYTES: i64 = 256;
+
+/// The bytes a write of the row moves: the row and its extensions, and with `whole` also its
+/// versions and the edges touching it. Each counts `ROW_BYTES` beside its JSON.
+pub(super) fn weight(tx: &Transaction<'_>, id: &str, whole: bool) -> Result<i64> {
+    let weight: Option<f64> = tx
+        .prepare_cached(
+            "SELECT ?3 + length(i.properties) \
+             + (SELECT total(?3 + length(x.data)) FROM item_extensions x WHERE x.item_seq = i.seq) \
+             + CASE WHEN ?2 THEN \
+             (SELECT total(?3 + length(v.properties)) FROM item_versions v \
+              WHERE v.item_seq = i.seq) \
+             + (SELECT total(?3 + length(e.properties)) FROM edges e WHERE e.source_id = i.id) \
+             + (SELECT total(?3 + length(e.properties)) FROM edges e WHERE e.target_id = i.id) \
+             ELSE 0 END FROM items i WHERE i.id = ?1",
+        )?
+        .query_row(params![id, whole, ROW_BYTES], |row| row.get(0))
+        .optional()?;
+    Ok(weight.map_or(0, |bytes| bytes as i64))
 }
 
 pub(super) fn selected(tx: &Transaction<'_>, ids: &[String]) -> Result<Vec<super::Selected>> {

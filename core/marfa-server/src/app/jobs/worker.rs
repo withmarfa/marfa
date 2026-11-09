@@ -1,5 +1,6 @@
 use std::future::Future;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
 use rusqlite::Transaction;
@@ -14,14 +15,13 @@ use crate::app::faults::{
     FAIL_JOB_ROW, HOLD_JOB_BETWEEN_CHUNKS, HOLD_JOB_CLAIMED, HOLD_JOB_FINISHING, HOLD_JOB_IN_CHUNK,
 };
 use crate::app::items::write::apply_row;
-use crate::app::items::{self, Selected};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::types;
 use crate::app::unit::Unit;
 use crate::db::io_refusal;
 
 const CHUNK: i64 = 100;
-/// A chunk holds the writer while it runs, so it ends once its items weigh this many bytes.
+/// A chunk holds the writer while it runs, so it ends once it has written or purged this many bytes.
 const CHUNK_BYTES: i64 = 512 * 1024;
 const TRIES: u32 = 5;
 const FIRST_RETRY: Duration = Duration::from_millis(250);
@@ -83,12 +83,8 @@ async fn run(app: &Arc<App>) {
                     code = refusal.code.wire(),
                     "Bulk-action jobs could not be read"
                 );
-                unread += 1;
-                if unread < TRIES {
-                    pause(woken, backoff(unread)).await;
-                } else {
-                    woken.await;
-                }
+                unread = (unread + 1).min(TRIES);
+                wait_out(app, backoff(unread)).await;
                 continue;
             }
         };
@@ -118,17 +114,26 @@ async fn run(app: &Arc<App>) {
                     }
                 }
                 stalled = Some((id, at, tries));
-                pause(woken, backoff(tries)).await;
+                wait_out(app, backoff(tries)).await;
             }
         }
     }
 }
 
-/// Waits out `pause`, or less if a door wakes the worker.
-async fn pause(woken: std::pin::Pin<&mut tokio::sync::futures::Notified<'_>>, pause: Duration) {
-    tokio::select! {
-        () = woken => {}
-        () = tokio::time::sleep(pause) => {}
+/// Waits out the whole `pause`, whatever the doors ask meanwhile; only a stop ends it early.
+async fn wait_out(app: &App, pause: Duration) {
+    let until = tokio::time::Instant::now() + pause;
+    loop {
+        let woken = app.jobs.wake.notified();
+        tokio::pin!(woken);
+        woken.as_mut().enable();
+        if app.jobs.stopping() {
+            return;
+        }
+        tokio::select! {
+            () = woken => {}
+            () = tokio::time::sleep_until(until) => return,
+        }
     }
 }
 
@@ -169,14 +174,20 @@ async fn run_job(app: &Arc<App>, id: &str) -> Ran {
             Err(refusal) => return stalled_by(&refusal, reached),
         };
         reached = Some(offset);
-        let written = patiently(app, || chunk(app, id)).await;
+        let tried = Arc::new(AtomicI64::new(0));
+        let written = patiently(app, || chunk(app, id, &tried)).await;
         let next = match written {
             Ok(next) => next,
             Err(_) if app.jobs.stopping() => return Ran::Stopped,
-            Err(refusal) => match patiently(app, || lost_chunk(app, id, offset, &refusal)).await {
-                Ok(next) => next,
-                Err(_) if app.jobs.stopping() => return Ran::Stopped,
-                Err(refusal) => return stalled_by(&refusal, Some(offset)),
+            Err(refusal) => match tried.load(Ordering::Acquire) {
+                0 => return stalled_by(&refusal, Some(offset)),
+                tried => {
+                    match patiently(app, || lost_chunk(app, id, offset, tried, &refusal)).await {
+                        Ok(next) => next,
+                        Err(_) if app.jobs.stopping() => return Ran::Stopped,
+                        Err(refusal) => return stalled_by(&refusal, Some(offset)),
+                    }
+                }
             },
         };
         match next {
@@ -330,17 +341,21 @@ async fn checkpoint(app: &App, id: &str) -> Result<Option<i64>> {
         .await
 }
 
-async fn chunk(app: &App, id: &str) -> Result<Chunk> {
+/// Writes the job's next chunk: up to `CHUNK` items, ending after the item whose running total of
+/// bytes written or purged passes `CHUNK_BYTES`. `tried` counts the items this try reached.
+async fn chunk(app: &App, id: &str, tried: &Arc<AtomicI64>) -> Result<Chunk> {
     let id = id.to_string();
     let cache = app.catalog_handle();
     let faults = app.faults.clone();
     let pulse = app.db.pulse();
+    let tried = tried.clone();
     app.write(&Caller::Server, "items.bulk_action.chunk", move |unit| {
+        tried.store(0, Ordering::Release);
         let Some((job, caller)) = standing(unit, &id)? else {
             return Ok(Chunk::Ended);
         };
         let tx = unit.tx();
-        let items = planned(tx, &job)?;
+        let items = store::slice(tx, &job.id, job.processed, CHUNK)?;
         if items.is_empty() {
             return Ok(Chunk::Last);
         }
@@ -352,8 +367,15 @@ async fn chunk(app: &App, id: &str) -> Result<Chunk> {
             succeeded: job.succeeded,
             errored: job.errored,
         };
+        let mut taken = 0i64;
+        let mut bytes = 0i64;
         held.fanning(job.queued.fanout, |held| {
             for selected in &items {
+                if bytes > CHUNK_BYTES {
+                    break;
+                }
+                taken += 1;
+                tried.store(taken, Ordering::Release);
                 let item = selected.id.as_str();
                 if store::noted(tx, &id, Note::Carried, item)? {
                     tally.changed(tx, &id, item)?;
@@ -373,6 +395,7 @@ async fn chunk(app: &App, id: &str) -> Result<Chunk> {
                             store::note(tx, &id, Note::Blob, blob, None)?;
                         }
                         tally.changed(tx, &id, item)?;
+                        bytes = bytes.saturating_add(done.bytes);
                     }
                     Err(refusal) if refuses_row(&refusal) => {
                         tx.execute_batch(UNDO)?;
@@ -384,16 +407,21 @@ async fn chunk(app: &App, id: &str) -> Result<Chunk> {
             }
             Ok(())
         })?;
-        let to = job.processed + items.len() as i64;
-        let next = record_chunk(&held, &job, to, &tally)?;
+        let next = record_chunk(&held, &job, job.processed + taken, &tally)?;
         faults.hold_beating(HOLD_JOB_IN_CHUNK, &pulse);
         Ok(next)
     })
     .await
 }
 
-/// Check the checkpoint before recording a failed commit's rows as unwritten.
-async fn lost_chunk(app: &App, id: &str, offset: i64, cause: &Refusal) -> Result<Chunk> {
+/// Check the checkpoint before recording the `tried` rows of a failed chunk as unwritten.
+async fn lost_chunk(
+    app: &App,
+    id: &str,
+    offset: i64,
+    tried: i64,
+    cause: &Refusal,
+) -> Result<Chunk> {
     let id = id.to_string();
     let cause = cause.clone();
     app.write(&Caller::Server, "items.bulk_action.chunk", move |unit| {
@@ -408,7 +436,7 @@ async fn lost_chunk(app: &App, id: &str, offset: i64, cause: &Refusal) -> Result
             });
         }
         let tx = unit.tx();
-        let items = planned(tx, &job)?;
+        let items = store::slice(tx, &job.id, job.processed, tried)?;
         let mut tally = Tally {
             succeeded: job.succeeded,
             errored: job.errored,
@@ -446,42 +474,4 @@ async fn finish(app: &App, id: &str) -> Result<()> {
         Ok(())
     })
     .await
-}
-
-/// The items the job's next chunk takes: up to `CHUNK`, ending once they weigh `CHUNK_BYTES`.
-fn planned(tx: &Transaction<'_>, job: &Job) -> Result<Vec<Selected>> {
-    let mut items = store::slice(tx, &job.id, job.processed, CHUNK)?;
-    let ids: Vec<String> = items.iter().map(|item| item.id.clone()).collect();
-    let weights = items::weights(tx, &ids, job.queued.action.purges())?;
-    items.truncate(taken(&weights, CHUNK_BYTES));
-    Ok(items)
-}
-
-/// How many of the items, in order, a chunk takes: always the first, then each that keeps the
-/// chunk within `budget`.
-fn taken(weights: &[i64], budget: i64) -> usize {
-    let mut total = 0i64;
-    weights
-        .iter()
-        .enumerate()
-        .take_while(|(at, weight)| {
-            total = total.saturating_add(**weight);
-            *at == 0 || total <= budget
-        })
-        .count()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::taken;
-
-    #[test]
-    fn a_chunk_ends_once_its_items_weigh_the_budget_and_always_takes_one() {
-        assert_eq!(taken(&[], 10), 0);
-        assert_eq!(taken(&[1, 2, 3], 10), 3);
-        assert_eq!(taken(&[4, 4, 4], 10), 2);
-        assert_eq!(taken(&[50, 1], 10), 1);
-        assert_eq!(taken(&[1, 50, 1], 10), 1);
-        assert_eq!(taken(&[i64::MAX, i64::MAX], 10), 1);
-    }
 }

@@ -202,10 +202,11 @@ describe("a bulk action whose writes fail", () => {
       errored: number;
       result: { errors: { id: string; code: string; message: string }[] };
     };
-    expect(failed).toMatchObject({ succeeded: 0, errored: 2 });
-    expect(failed.result.errors.map((entry) => entry.id).sort()).toEqual(
-      [...ids].sort(),
-    );
+    // The fault ends the chunk at its first row, which is reported, and the
+    // job goes on to write the other.
+    expect(failed).toMatchObject({ succeeded: 1, errored: 1 });
+    expect(failed.result.errors).toHaveLength(1);
+    expect(ids).toContain(failed.result.errors[0]?.id);
     for (const entry of failed.result.errors) {
       expect(entry.code).toBe("internal_error");
       expectFixedFailure(entry.message);

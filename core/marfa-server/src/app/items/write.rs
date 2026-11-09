@@ -313,11 +313,13 @@ pub enum RowAct {
     },
 }
 
-/// What one row's write did beyond the row: the other rows it moved, and the blobs a purge took.
+/// What one row's write did beyond the row: the other rows it moved, the blobs a purge took, and
+/// the bytes it wrote or purged (`rows::weight` of every row it touched, whole for a purge).
 #[derive(Debug, Default)]
 pub struct RowDone {
     pub carried: Vec<String>,
     pub blobs: Vec<String>,
+    pub bytes: i64,
 }
 
 /// A source filter hides the same items from a job as from a listing.
@@ -340,7 +342,14 @@ pub fn apply_row(
     if !unit.caller.lists(&catalog.rules, &row.type_id, &row.source) {
         return Err(not_found());
     }
-    let done = job.row_act(selected, act)?;
+    let mut done = job.row_act(selected, act)?;
+    if !matches!(act, RowAct::Purge) {
+        for touched in std::iter::once(id).chain(done.carried.iter().map(String::as_str)) {
+            done.bytes = done
+                .bytes
+                .saturating_add(rows::weight(unit.tx(), touched, false)?);
+        }
+    }
     index::settle(unit.tx(), &catalog.rules)?;
     Ok(done)
 }
@@ -2071,6 +2080,9 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         let mut done = RowDone::default();
         for purging in &plan.purging {
             let item = &purging.item;
+            done.bytes = done
+                .bytes
+                .saturating_add(rows::weight(self.unit.tx(), &item.id, true)?);
             done.blobs
                 .extend(references::held(self.unit.tx(), Referencing::Item(item.seq))?.into_keys());
             for (edge, source) in &purging.edges {
@@ -2121,7 +2133,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 let (_, carried) = self.transitioned(id, state, version)?;
                 Ok(RowDone {
                     carried,
-                    blobs: Vec::new(),
+                    ..RowDone::default()
                 })
             }
             RowAct::Purge => self.purged(id.to_string(), version),
