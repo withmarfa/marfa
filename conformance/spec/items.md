@@ -2060,7 +2060,7 @@ When a bulk-action job writes an item, the server MUST hold the write to the ver
 
 **Reason:** a job carries what the person asked for when they queued it, and must not undo an edit made since.
 
-**Tests:** `compliance/bulk-job-holds.test.ts › leaves an item updated after it was selected and reports it with the code its own update answers (update_properties)`, `› leaves an item edited after it was selected and reports it with the code its own tag change answers (update_tags)`, `› leaves an item edited after it was selected and reports it with the code its own purge answers (purge)`, `› leaves an item moved to a third type after it was selected, and reports it with the code its own move answers (type move)`.
+**Tests:** `compliance/bulk-job-meanwhile.test.ts › leaves an item updated after it was selected and reports it with the code its own update answers (update_properties)`, `› leaves an item edited after it was selected and reports it with the code its own tag change answers (update_tags)`, `› leaves an item edited after it was selected and reports it with the code its own purge answers (purge)`, `› leaves an item moved to a third type after it was selected, and reports it with the code its own move answers (type move)`.
 
 ### `items/job-selected-state`
 
@@ -2068,7 +2068,7 @@ If a `transition` job reaches an item that has left the state it was in when the
 
 **Reason:** a change of state writes no new version, and a job queued to bring archived items back must not take an item out of the bin.
 
-**Tests:** `compliance/bulk-job-holds.test.ts › leaves an item moved out of its state after it was selected, and reports it invalid_transition (transition)`.
+**Tests:** `compliance/bulk-job-meanwhile.test.ts › leaves an item moved out of its state after it was selected, and reports it invalid_transition (transition)`.
 
 ### `items/job-retried`
 
@@ -2076,7 +2076,7 @@ If a fault stops a job before it ends, then the server MUST try the job again fr
 
 **Reason:** a job left waiting for the next request may wait for good, and holds every job queued behind it.
 
-**Tests:** `compliance/job-chunk-faults.test.ts › tries the write again from the job's checkpoint, unasked, and the job ends completed`.
+**Tests:** `compliance/job-chunk-faults.test.ts › tries the write again from the job's checkpoint, unasked, and the job ends completed`, `› waits out its pause before each try, so jobs queued and canceled meanwhile spend none of its tries`, `› reads its jobs again, unasked, once a read fault that outlasted its tries clears`.
 
 ### `items/job-fault-persists`
 

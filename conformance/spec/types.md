@@ -1052,7 +1052,7 @@ If no item of the type remains once a type move's job has run, and `to` is no lo
 
 **Reason:** a setting rewritten past its own checks would name a type nothing can hold, or refuse the person's next edit of it.
 
-**Tests:** `compliance/bulk-job-holds.test.ts › rewrites no setting, and says why, when the type it moves to is gone by then`.
+**Tests:** `compliance/bulk-job-meanwhile.test.ts › rewrites no setting, and says why, when the type it moves to is gone by then`, `› rewrites none of the settings, and says why, when one of them would be refused by then`.
 
 ### `types/move-settings-delivered`
 

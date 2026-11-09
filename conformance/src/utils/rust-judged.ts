@@ -28,6 +28,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/body-field-length.test.ts",
   "src/suites/compliance/bulk-get.test.ts",
   "src/suites/compliance/bulk-job-long.test.ts",
+  "src/suites/compliance/bulk-job-meanwhile.test.ts",
   "src/suites/compliance/bulk-job-restart.test.ts",
   "src/suites/compliance/bulk-job-token.test.ts",
   "src/suites/compliance/bulk-limits.test.ts",
