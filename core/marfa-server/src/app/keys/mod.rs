@@ -45,7 +45,7 @@ pub struct Key {
 
 impl Key {
     /// A stored expiry was read with the row, so its text compares as its instant.
-    pub fn lives_at(&self, at: &str) -> bool {
+    fn lives_at(&self, at: &str) -> bool {
         self.expires_at.as_deref().is_none_or(|end| end > at)
     }
 
