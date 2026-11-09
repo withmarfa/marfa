@@ -138,6 +138,17 @@ pub struct Backup {
     pub changes: i64,
     /// How long the object store has to take it, which also bounds how long its sender waits.
     pub limit: std::time::Duration,
+    /// Each file its rows name that the registry held in its snapshot.
+    pub files: Vec<String>,
+}
+
+/// What a backup's snapshot gave beside its lines.
+struct Snapshot {
+    changes: i64,
+    /// The files the bucket held a recorded copy of.
+    in_bucket: Vec<String>,
+    /// The files the registry held.
+    files: Vec<String>,
 }
 
 /// What the selection's snapshot gave: the line files, the blobs the rows name, and the counts.
@@ -148,8 +159,7 @@ struct Selected {
     counts: Map<String, Value>,
     listed: Vec<Carried>,
     missing: BTreeMap<String, Value>,
-    /// For a backup: the change count, and the files the bucket held a recorded copy of.
-    backup: Option<(i64, Vec<String>)>,
+    backup: Option<Snapshot>,
 }
 
 fn print(value: &impl serde::Serialize) -> Result<String> {
@@ -221,9 +231,12 @@ impl App {
             system: true,
             ..Ask::default()
         };
-        let (prepared, changes) = self
+        let (prepared, snapshot) = self
             .prepare_archive(&Caller::Server, ask, false, Some(bucket.to_string()))
             .await?;
+        let Some(Snapshot { changes, files, .. }) = snapshot else {
+            return Err(Refusal::internal("a backup's snapshot was not kept"));
+        };
         let created_at = prepared.created_at;
         let entry = |size: u64| tar::BLOCK as u64 + size + tar::padding(size) as u64;
         let size = entry(prepared.manifest.len() as u64)
@@ -240,8 +253,9 @@ impl App {
         Ok(Backup {
             body,
             created_at,
-            changes: changes.unwrap_or(0),
+            changes,
             limit,
+            files,
         })
     }
 
@@ -258,7 +272,7 @@ impl App {
         ask: Ask,
         files: bool,
         bucket: Option<String>,
-    ) -> Result<(Prepared, Option<i64>)> {
+    ) -> Result<(Prepared, Option<Snapshot>)> {
         let created_at = self.clock.instant();
         let scratch = [
             self.scratch().await?,
@@ -319,9 +333,10 @@ impl App {
             "missing_blobs".into(),
             Value::Object(missing.into_iter().collect()),
         );
-        let changes = selected.backup.map(|(changes, in_bucket)| {
+        let snapshot = selected.backup.map(|mut snapshot| {
+            let in_bucket = std::mem::take(&mut snapshot.in_bucket);
             manifest.insert("bucket_blobs".into(), in_bucket.into());
-            changes
+            snapshot
         });
         reading(self, caller, |_| Ok(())).await?;
         let prepared = Prepared {
@@ -332,7 +347,7 @@ impl App {
             edges: selected.edges,
             blobs,
         };
-        Ok((prepared, changes))
+        Ok((prepared, snapshot))
     }
 }
 
@@ -596,9 +611,17 @@ fn select(
                 .iter()
                 .map(|carried| carried.blob.hash.as_str().to_string())
                 .chain(missing.keys().cloned());
-            let mut held = crate::app::blobs::held_in(read.tx, bucket, named)?;
-            held.sort();
-            Some((backups::changes(read.tx)?, held))
+            let mut in_bucket = crate::app::blobs::held_in(read.tx, bucket, named)?;
+            in_bucket.sort();
+            let files = listed
+                .iter()
+                .map(|carried| carried.blob.hash.as_str().to_string())
+                .collect();
+            Some(Snapshot {
+                changes: backups::changes(read.tx)?,
+                in_bucket,
+                files,
+            })
         }
     };
     Ok(Selected {

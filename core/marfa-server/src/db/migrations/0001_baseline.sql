@@ -974,6 +974,27 @@ CREATE TABLE IF NOT EXISTS backup_state (
     last_failed_at TEXT
 ) STRICT;
 
+-- Each backup this instance began to put in an object store, until a thinning
+-- finds it deleted or never put. `seq` is never reused, so a run of them in
+-- `backup_files` names only backups taken in that run.
+CREATE TABLE IF NOT EXISTS backups (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    UNIQUE (store_id, name)
+) STRICT;
+
+-- For each file a backup named, the run of backups from `first_seq` to
+-- `last_seq`, or to the newest while `last_seq` is NULL, that may name it.
+-- A file stays while any backup in its run is kept.
+CREATE TABLE IF NOT EXISTS backup_files (
+    store_id TEXT NOT NULL,
+    hash TEXT NOT NULL,
+    first_seq INTEGER NOT NULL,
+    last_seq INTEGER,
+    PRIMARY KEY (store_id, hash)
+) STRICT, WITHOUT ROWID;
+
 CREATE TRIGGER IF NOT EXISTS backup_items_inserted AFTER INSERT ON items BEGIN
     INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
 END;

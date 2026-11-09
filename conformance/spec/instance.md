@@ -490,6 +490,14 @@ When the server takes a backup, the server MUST list under the manifest's `bucke
 
 **Tests:** `compliance/backups.test.ts › puts one object in the prefix's backups folder for its instance, named for its created_at, holding what an archive export with state any and files false holds for a key that reaches everything`.
 
+### `instance/backup-keeps-files`
+
+While a backup the server put is in the object store and names a file, the server MUST NOT purge that file.
+
+**Reason:** a backup carries no file's bytes, so a restore takes each file from the object store, and a daily backup is kept 31 days, longer than the orphan grace. The server keeps the backups it holds files for in its own database, so the hold lasts across a restart and while the object store does not answer.
+
+**Tests:** `compliance/backup-files.test.ts › keeps a file a retained backup names once nothing else names it, across a restart, so a fresh server on the bucket restores it whole`.
+
 ### `instance/backup-no-credentials`
 
 When the server takes a backup, the server MUST NOT put in it a key, an app's token, the owner's password or passkeys, the contents of `marfa.secrets`, or the object store's credentials.

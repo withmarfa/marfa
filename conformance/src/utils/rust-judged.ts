@@ -39,6 +39,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/auth.test.ts",
   "src/suites/compliance/background-authority-webhooks.test.ts",
   "src/suites/compliance/backup-faults.test.ts",
+  "src/suites/compliance/backup-files.test.ts",
   "src/suites/compliance/backup-restore.test.ts",
   "src/suites/compliance/backup-thinning.test.ts",
   "src/suites/compliance/backups.test.ts",
