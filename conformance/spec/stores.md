@@ -842,7 +842,7 @@ When a queued or in-progress `update_properties` job's patch names a digest no b
 
 When a string in an item in any lifecycle state, a metadata extension, an edge's properties or a version snapshot holds a run of exactly 64 lowercase hexadecimal characters with no further lowercase hexadecimal character after it, and either no lowercase hexadecimal character before it or the escape `%3a` straight before it, the server MUST count the run as a reference to the blob `sha256:` and that run.
 
-**Reason:** so a whole value, a `sha256:` link inside text such as a Markdown body, a URL-encoded one in capitals or in lowercase (`sha256%3A…`, `sha256%3a…`), an escaped one and the bare hex that `GET /blobs/{hash}` also serves are all references, whatever else stands beside the run.
+**Reason:** so a whole value, a `sha256:` link inside text such as a Markdown body, a URL-encoded one in capitals or in lowercase (`sha256%3A…`, `sha256%3a…`), an escaped one and the bare hex are all references, whatever else stands beside the run.
 
 **Tests:** `compliance/blob-rules.test.ts › counts a digest as a reference by its run of lowercase hex, whatever form it is written in`, `› keeps a blob a note links in its body after the file item naming it is purged`, `› keeps a blob named only in an edge's properties`.
 
