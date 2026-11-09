@@ -1679,9 +1679,9 @@ When an ordinary write follows a bulk write of 50,000 items with fan-out disable
 
 ### `events/receiver-isolation`
 
-While other subscriptions have receivers that do not answer, the server MUST start a healthy subscription's due delivery without waiting for those attempts to finish.
+While other subscriptions have receivers that do not answer, the server MUST start a healthy subscription's due delivery without waiting for those attempts to finish whenever the limits of `events/delivery-maker-share`, `events/delivery-maker-free`, `events/delivery-maker-headroom` and `events/delivery-maker-isolation` permit its attempt to start.
 
-**Reason:** one attempt per subscription allows each subscription a turn without sharing a slow receiver's wait.
+**Reason:** one attempt per subscription allows each subscription a turn without sharing a slow receiver's wait. Those limits hold a delivery back only for its maker's share of the 64 attempts the server runs at once and for that total, so a healthy subscription whose maker is within its share waits only while 64 attempts are in flight.
 
 **Tests:** `compliance/webhook-delivery.test.ts › delivers promptly while eight other subscriptions never answer`.
 
