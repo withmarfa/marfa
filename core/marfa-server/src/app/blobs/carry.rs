@@ -62,9 +62,8 @@ pub fn readable(tx: &Transaction<'_>, caller: &Caller, hash: &Hash) -> Result<bo
 }
 
 impl App {
-    /// Asks the stores, a few blobs at a time, which recorded copy each blob is whole in. A
-    /// blob whose only possible copies are in stores that failed or did not answer refuses
-    /// the export, since that is no evidence the copy is gone.
+    /// Which recorded copy each blob is whole in. A store that fails is no evidence the copy is
+    /// gone, so a blob it alone could hold refuses the export.
     pub async fn whole_copies(&self, carried: &[Carried]) -> Result<Vec<Copy>> {
         let mut silent = BTreeSet::new();
         let mut answers = Vec::with_capacity(carried.len());
@@ -118,9 +117,8 @@ impl App {
         (Copy::Missing, failed)
     }
 
-    /// The bytes of a listed blob, from the store the check found it whole in or, failing that,
-    /// any attached store whose recorded copy is as long as the blob. The record is read again,
-    /// so a blob that has lost its record or every copy since is refused.
+    /// The bytes of a listed blob, from `preferred` or any store whose recorded copy is whole,
+    /// read from the record as it stands now.
     pub async fn carried_bytes(&self, blob: &Blob, preferred: &str) -> Result<Bytes> {
         let hash = blob.hash.clone();
         let (record, held) = self

@@ -1,6 +1,5 @@
-//! A gzip-compressed line file in the disk store's `tmp`, cut into segments that each end on a
-//! line, so a reader can ask before each segment whether it may still send what the segment
-//! holds.
+//! A gzip-compressed line file in the disk store's `tmp`, cut into segments that end on a line,
+//! so a sender can ask before each segment whether it may still send it.
 
 use std::fs::File;
 use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};

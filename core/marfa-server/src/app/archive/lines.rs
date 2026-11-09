@@ -1,6 +1,5 @@
-//! The NDJSON export: item lines, then the edges between them, each page read on its own, so a
-//! slow reader holds no snapshot open. Every page is selected as the credential read when the
-//! export began, and sent only while the credential still stands and reads all of it.
+//! The NDJSON export, a page per read so a slow reader holds no snapshot open. Each page is
+//! selected as the credential read at the start, and sent only while it still reads all of it.
 
 use std::io;
 use std::sync::Arc;
@@ -9,9 +8,6 @@ use bytes::Bytes;
 use tokio::sync::mpsc;
 
 use super::{Body, EDGE_PAGE, reads_row};
-
-/// Items in one page, so a credential that ends or narrows stops the export within a page.
-const PAGE: i64 = 100;
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::edges;
@@ -20,6 +16,9 @@ use crate::app::items::{self, reading};
 use crate::app::query::{self, Ask};
 use crate::app::refusal::Result;
 use crate::db::io_refusal;
+
+/// Items in one page, so a credential that ends or narrows stops the export within a page.
+const PAGE: i64 = 100;
 
 /// One page: its lines, where the next begins, and whether the credential now reads all of it.
 struct Page {

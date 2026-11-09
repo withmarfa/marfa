@@ -1,7 +1,5 @@
-//! Sends a prepared archive. Before each segment of a line file and each run of a blob's bytes
-//! it asks whether the credential still stands and still reads what that part holds; a part it
-//! may not send, a read that fails and bytes that are not their blob's all end the response
-//! with an error, never a clean end. Whatever the outcome, the spool goes with the task.
+//! Sends a prepared archive, asking before each part whether the credential still reads it.
+//! Every failure ends the response with an error, never a clean end.
 
 use std::fs::File;
 use std::io;
