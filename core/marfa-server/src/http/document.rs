@@ -14,7 +14,7 @@ use super::doors::Doors;
 use super::root::DOCUMENT;
 use super::{
     control, control_doors, count_doors, folder_setting_doors, item_doors, overview_doors,
-    public_doors,
+    public_doors, type_move_doors,
 };
 use crate::app::App;
 use crate::settings::{Environment, Settings};
@@ -323,6 +323,7 @@ async fn served() -> Served {
             routes(overview_doors(app.clone())),
             routes(count_doors(app.clone())),
             routes(folder_setting_doors(app.clone())),
+            routes(type_move_doors(app.clone())),
         ]
         .into_iter()
         .flatten()
