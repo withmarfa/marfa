@@ -1,5 +1,4 @@
-//! The checks a restore makes of each archive line on its own, which an export makes too.
-//! Checks across lines or against the target instance are the restore's.
+//! The per-line checks a restore makes, which an export makes too.
 
 use marfa_rules::time;
 use serde_json::{Map, Value, json};
@@ -200,15 +199,13 @@ fn oversized(at: &At<'_>, cap: usize, field: &str, properties: &Value) -> Option
     })
 }
 
-/// Whether a row of `type_id` can be in `state`: the bin holds no `system.*` row, and only a
-/// `system.*` row is revoked.
+/// The bin holds no `system.*` row, and only a `system.*` row is revoked.
 fn state_held(type_id: &str, state: &str) -> bool {
     let system = crate::app::items::is_system(type_id);
     STATES.contains(&state) && !(system && state == "trashed") && !(!system && state == "revoked")
 }
 
-/// Judges an `items.ndjson.gz` line, the `row`th, as a restore into an instance holding `catalog`,
-/// whose bulk operations take bodies of `cap` bytes.
+/// Judges an `items.ndjson.gz` line as a restore would; `cap` is the bulk body limit.
 pub fn item(catalog: &Catalog, cap: usize, line: &Value, row: usize) -> Result<(), Box<Refused>> {
     let unnamed = At {
         kind: Kind::Item,
@@ -320,8 +317,7 @@ pub fn item(catalog: &Catalog, cap: usize, line: &Value, row: usize) -> Result<(
     shape(catalog, &at, type_id, properties.unwrap_or(&empty))
 }
 
-/// A row of a type this build ships is held to that type, and an event's schedule or a task's
-/// recurrence to what a calendar read can unfold, whatever type it is.
+/// A shipped type holds its rows to it; a schedule or recurrence must unfold in a calendar read, whatever the type.
 fn shape(
     catalog: &Catalog,
     at: &At<'_>,
@@ -415,8 +411,7 @@ pub struct End<'a> {
     pub type_id: &'a str,
 }
 
-/// Judges an `edges.ndjson.gz` line, the `row`th, whose ends `ends` finds, as a restore into an
-/// instance holding `catalog`, whose bulk operations take bodies of `cap` bytes.
+/// Judges an `edges.ndjson.gz` line as a restore would, finding its ends through `ends`.
 pub fn edge<'a>(
     catalog: &Catalog,
     cap: usize,

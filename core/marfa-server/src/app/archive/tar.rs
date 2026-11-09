@@ -1,5 +1,4 @@
-//! The few ustar headers an archive needs: regular files with short names. A size of 8 GiB or
-//! more is written in the base-256 form GNU tar, bsdtar and every common reader take.
+//! Ustar headers for regular files with short names; 8 GiB or more is written in base-256.
 
 pub const BLOCK: usize = 512;
 const NAME: usize = 100;

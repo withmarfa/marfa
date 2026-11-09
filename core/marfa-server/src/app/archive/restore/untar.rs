@@ -1,5 +1,4 @@
-//! Reads a tar a part at a time as its bytes arrive: each entry's name and size, then its
-//! bytes. Only regular files are entries; every other kind is stepped past.
+//! Reads a tar a part at a time; only regular files are entries.
 
 use super::super::tar::BLOCK;
 
@@ -179,8 +178,7 @@ impl Reader {
     }
 }
 
-/// The name, size and whether a header names a regular file, or `None` for a block that is no
-/// tar header.
+/// `None` for a block that is no tar header.
 fn parse(block: &[u8]) -> Option<(String, u64, bool)> {
     let held = octal(&block[148..156])?;
     let sum: u64 = block

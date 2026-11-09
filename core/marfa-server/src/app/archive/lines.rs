@@ -1,5 +1,4 @@
-//! The NDJSON export, a page per read so a slow reader holds no snapshot open. Each page is
-//! selected as the credential read at the start, and sent only while it still reads all of it.
+//! The NDJSON export, read a page at a time so a slow reader holds no snapshot open.
 
 use std::io;
 use std::sync::Arc;
@@ -114,8 +113,7 @@ async fn edge_page(
 }
 
 impl App {
-    /// Reads the first page before answering, so a refusal is an ordinary answer, then hands the
-    /// rest to a task that reads a page as the client takes the last.
+    /// Reads the first page before answering, so a refusal is an ordinary answer.
     pub async fn export_lines(self: &Arc<App>, caller: &Caller, ask: Ask) -> Result<Body> {
         let (admitted, first) = item_page(self, caller, None, &ask, 0).await?;
         self.audit_export(caller, "ndjson").await?;
@@ -132,8 +130,7 @@ impl App {
     }
 }
 
-/// Waits for room for one page, so a page is read and checked only once it can be queued at
-/// once. `None` where the client left or stopped reading.
+/// Waits for room for one page; `None` where the client left or stopped reading.
 async fn room<'a>(app: &App, sender: &'a Sender) -> Option<mpsc::Permit<'a, Bytes>> {
     match tokio::time::timeout(app.blob_read_idle(), sender.chunks.reserve()).await {
         Ok(Ok(permit)) => Some(permit),
