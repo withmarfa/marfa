@@ -73,7 +73,9 @@ async function fileInTheBucket(words: string) {
 describe("a restore of files the archive names and does not carry", () => {
   it("takes each file from the object store it was kept in, checked against its name, and records the copy", async () => {
     const one = await fileInTheBucket("kept in the bucket");
-    const archive = await (await everythingClient(origin)).exportArchive({ files: "false" });
+    const archive = await (
+      await everythingClient(origin)
+    ).exportArchive({ files: "false" });
     expect(archive.status).toBe(200);
     const manifest = archiveManifest<{
       blobs: Record<string, unknown>;
@@ -135,7 +137,9 @@ describe("a restore of files the archive names and does not carry", () => {
 
   it("answers nothing in blobs_missing on an instance that holds every file the archive names", async () => {
     const held = await fileInTheBucket("held by the instance that exported it");
-    const archive = await (await everythingClient(origin)).exportArchive({ files: "false" });
+    const archive = await (
+      await everythingClient(origin)
+    ).exportArchive({ files: "false" });
     expect(archive.status).toBe(200);
     const manifest = archiveManifest<{
       missing_blobs: Record<string, unknown>;

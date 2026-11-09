@@ -61,9 +61,7 @@ describe("GET /health while an archive restore runs", () => {
     const start = "hold:restore:item";
     const later = "hold:restore:before-commit";
     const release = "release:restore:item";
-    let restoring:
-      | ReturnType<MarfaClient["restoreArchive"]>
-      | undefined;
+    let restoring: ReturnType<MarfaClient["restoreArchive"]> | undefined;
     let finished = false;
     try {
       await server.setFault(`${start}=1`);

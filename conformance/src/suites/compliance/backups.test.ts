@@ -161,7 +161,9 @@ describe("a backup in the object store", () => {
       expect(Object.keys(manifest.missing_blobs)).toContain(hash);
     }
 
-    const exported = await (await everythingClient(origin)).exportArchive({
+    const exported = await (
+      await everythingClient(origin)
+    ).exportArchive({
       state: "any",
       files: "false",
     });
