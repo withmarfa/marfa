@@ -569,6 +569,10 @@ fn a_first_install_writes_the_files_and_prints_the_link_and_no_secret() {
         "{stdout}"
     );
     assert!(stdout.contains(&format!("http://localhost:{}", rig.port)));
+    assert_eq!(
+        rig.address().as_deref(),
+        Some(format!("http://localhost:{}", rig.port).as_str())
+    );
 
     let mode = |name: &str| {
         fs::metadata(rig.dir.join(name))
@@ -781,7 +785,7 @@ fn a_claimed_server_gets_no_setup_link() {
 
 #[test]
 fn each_way_of_reaching_it_sets_the_proxy_trust_it_needs() {
-    let rig = Rig::new("proxy");
+    let mut rig = Rig::new("proxy");
     let (code, _, stderr) = rig.install(&[
         "--access",
         "proxy",
@@ -819,11 +823,25 @@ fn each_way_of_reaching_it_sets_the_proxy_trust_it_needs() {
     let (code, _, stderr) = rig.install(&["--access", "local"]);
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(rig.setting("TRUSTED_PROXY_HEADER"), None);
-    // Asking for a local server clears the address, which no longer fits it.
-    assert_eq!(rig.address(), None);
+    let local = format!("http://localhost:{}", rig.port);
+    assert_eq!(rig.address().as_deref(), Some(local.as_str()));
+    let moved = free_port();
+    rig.also_listen(moved);
+    let moved_arg = moved.to_string();
+    let (code, _, stderr) = rig.install_as(&["--port", &moved_arg]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(rig.address(), Some(format!("http://localhost:{moved}")));
+    // A run that changes nothing still puts it back, as after a failed update.
+    fs::write(rig.state.join("address"), "https://moved.example.com\n").unwrap();
+    let (code, _, stderr) = rig.install_as(&[]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(rig.address(), Some(format!("http://localhost:{moved}")));
     let fresh = Rig::new("proxy-local");
     fresh.installed(&["--access", "local"]);
-    assert_eq!(fresh.address(), None);
+    assert_eq!(
+        fresh.address(),
+        Some(format!("http://localhost:{}", fresh.port))
+    );
 }
 
 #[test]
