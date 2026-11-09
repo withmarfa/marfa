@@ -27,7 +27,6 @@ use crate::app::types::missing_field;
 
 const QUEUED: usize = 2;
 pub(super) const SANDBOX: &str = "sandbox; default-src 'none'";
-const POLICY: &str = "all";
 
 /// A body the server streams to a store, whose size no cap holds in check.
 pub fn is_upload(request: &Request) -> bool {
@@ -140,8 +139,7 @@ impl HttpBody for Reading {
     }
 }
 
-/// Sends exactly `length` bytes from a store, and fails a body that the store ends short or
-/// that either side leaves idle for `idle`.
+/// Fails a body the store ends short or either side leaves idle for `idle`.
 pub(super) fn stream(mut bytes: ByteStream, length: u64, idle: Duration) -> Body {
     let (send, chunks) = mpsc::channel(QUEUED);
     let stalled = Arc::new(AtomicBool::new(false));
@@ -323,7 +321,6 @@ pub async fn copies(
             json!({
                 "store_id": copy.store_id,
                 "kind": copy.kind,
-                "policy": POLICY,
                 "detached": copy.detached,
                 "recorded_at": copy.recorded_at,
                 "verified_at": copy.verified_at,
@@ -346,7 +343,6 @@ pub async fn stores(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> An
                 "id": store.id,
                 "kind": store.kind,
                 "locator": store.locator,
-                "policy": POLICY,
                 "attached_at": store.attached_at,
                 "detached_at": store.detached_at,
             })

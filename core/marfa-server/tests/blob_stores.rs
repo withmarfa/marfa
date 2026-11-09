@@ -545,6 +545,108 @@ async fn an_upload_waits_on_a_late_deletion_of_its_bytes_and_answers_503_until_i
     );
 }
 
+#[tokio::test]
+async fn an_upload_whose_record_is_refused_has_its_file_deleted_by_the_next_clean_up() {
+    let instance = Instance::start(&[]).await;
+    let bytes = b"placed, then its record refused".to_vec();
+    let hash = hash_of(&bytes);
+    instance.arm("fail:commit", Some("blob.upload"));
+    let refused = instance.put(&bytes).await;
+    assert!(refused.status.is_server_error(), "{}", refused.body);
+    assert!(instance.file(&hash).is_file());
+
+    instance.run("blob-orphans").await;
+    assert!(!instance.file(&hash).exists());
+    assert_eq!(
+        instance.count("SELECT count(*) FROM blob_pending_deletions"),
+        0
+    );
+}
+
+#[tokio::test]
+async fn an_upload_cut_off_between_its_file_and_its_record_is_deleted_after_a_restart() {
+    let instance = Instance::start(&[]).await;
+    let bytes = b"placed, then the server stopped".to_vec();
+    let hash = hash_of(&bytes);
+    instance.arm("hold:write", Some("blob.upload"));
+    let router = instance.control.clone();
+    let upload = bytes.clone();
+    tokio::spawn(async move {
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/blobs")
+            .body(Body::from(upload))
+            .unwrap();
+        send(&router, request).await
+    });
+    instance.when_held().await;
+    assert!(instance.file(&hash).is_file());
+
+    let restarted = App::start(settings(instance.dir.path(), &[]))
+        .await
+        .unwrap();
+    let run = control(restarted)
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/housekeeping/blob-orphans/run")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(run.status(), StatusCode::OK);
+    assert!(!instance.file(&hash).exists());
+    assert_eq!(
+        instance.count("SELECT count(*) FROM blob_pending_deletions"),
+        0
+    );
+}
+
+#[tokio::test]
+async fn a_clean_up_waits_for_an_upload_of_the_same_bytes_and_keeps_its_file() {
+    let instance = Instance::start(&[]).await;
+    let bytes = b"refused once, then uploaded again".to_vec();
+    let hash = hash_of(&bytes);
+    instance.arm("fail:commit", Some("blob.upload"));
+    instance.put(&bytes).await;
+    instance.app.faults.clear(Some("fail:commit"));
+
+    instance.arm("hold:write", Some("blob.upload"));
+    let landing = async {
+        let landed = instance.put(&bytes).await;
+        assert_eq!(landed.status, StatusCode::CREATED, "{}", landed.body);
+    };
+    let cleaning = async {
+        instance.when_held().await;
+        let control = instance.control.clone();
+        let run = tokio::spawn(async move {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri("/housekeeping/blob-orphans/run")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{}"))
+                .unwrap();
+            send(&control, request).await
+        });
+        settle().await;
+        instance.app.faults.clear(Some("hold:write"));
+        let run = run.await.unwrap();
+        assert_eq!(run.body["outcome"], "ok", "{}", run.body);
+    };
+    tokio::join!(landing, cleaning);
+
+    assert!(instance.file(&hash).is_file());
+    let fetched = instance.fetch(&hash).await;
+    assert_eq!(fetched.status, StatusCode::OK, "{}", fetched.body);
+    assert_eq!(fetched.bytes, bytes);
+    assert_eq!(
+        instance.count("SELECT count(*) FROM blob_pending_deletions"),
+        0
+    );
+}
+
 const BUCKET: &str = "marfa";
 
 /// Where the keys of a blob's objects in the fake store, in `prefix`, start.

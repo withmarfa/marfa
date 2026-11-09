@@ -329,29 +329,23 @@ describe("blob correctness", () => {
     expect(empty.error?.error.code).toBe("validation_error");
   });
 
-  it("takes a bare 64-character hash on every hash operation and refuses any other malformed one", async () => {
+  it("refuses a hash without its prefix and every other malformed one on every hash operation", async () => {
     const content = bytesOf("a hash sent without its prefix");
     const upload = await uploadReferenced(client, ctx, content, "text/plain");
     expect(upload.status).toBe(201);
     const hash = upload.data.hash;
     const bare = hash.slice("sha256:".length);
 
-    const bytes = await client.downloadBlob(bare);
+    // The witness: every operation answers the prefixed hash.
+    const bytes = await client.downloadBlob(hash);
     expect(bytes.status).toBe(200);
     expect(new Uint8Array(bytes.data)).toEqual(content);
-    // The answer names the blob by its full hash, so the bare form was read
-    // as the prefixed one and not as a second blob.
-    const head = await client.headBlob(bare);
-    expect(head.status).toBe(200);
-    expect(head.headers.get("etag")).toBe(`"${hash}"`);
-    const link = await client.getBlobUrl(bare);
-    expect(link.status).toBe(200);
-    expect((await fetchLink(link.data.url)).bytes).toEqual(content);
-    const copies = await client.listBlobCopies(bare);
-    expect(copies.status).toBe(200);
-    expect(copies.data.data.length).toBeGreaterThan(0);
+    expect((await client.headBlob(hash)).status).toBe(200);
+    expect((await client.getBlobUrl(hash)).status).toBe(200);
+    expect((await client.listBlobCopies(hash)).status).toBe(200);
 
     const malformed = [
+      bare,
       bare.slice(1),
       `${bare}0`,
       bare.toUpperCase(),
@@ -524,14 +518,19 @@ describe("blob correctness", () => {
       headers: { Range: "bytes=0-3" },
     });
     expect(part.status).toBe(206);
+    const widest = await call("GET", `/blobs/${hash}`, {
+      headers: { Range: "bytes=0-18446744073709551615" },
+    });
+    expect(widest.status).toBe(206);
+    expect(widest.headers.get("content-range")).toBe("bytes 0-9/10");
 
     for (const range of [
       "bytes=-3",
       "bytes=0-1,3-4",
       "items=0-3",
       "bytes=a-b",
-      "bytes=0-99999999999999999999",
-      "bytes=99999999999999999999-",
+      "bytes=0-18446744073709551616",
+      "bytes=18446744073709551616-",
     ]) {
       const whole = await call("GET", `/blobs/${hash}`, {
         headers: { Range: range },

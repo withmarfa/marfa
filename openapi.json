@@ -6235,10 +6235,6 @@
             "type": "string",
             "description": "Where the store is: its directory for a `disk` store, `s3://<bucket>/<prefix>` for an `s3` store."
           },
-          "policy": {
-            "type": "string",
-            "description": "Which blobs the store takes. Marfa defines one policy, `all`: the store takes every blob."
-          },
           "attached_at": {
             "type": "string",
             "description": "When the instance first attached the store, in UTC."
@@ -6255,7 +6251,6 @@
           "id",
           "kind",
           "locator",
-          "policy",
           "attached_at",
           "detached_at"
         ],
@@ -6370,10 +6365,6 @@
             ],
             "description": "The kind of store: `disk` for the disk beside the server, `s3` for an S3-compatible bucket."
           },
-          "policy": {
-            "type": "string",
-            "description": "Which blobs the store takes. Marfa defines one policy, `all`: the store takes every blob."
-          },
           "detached": {
             "type": "boolean",
             "description": "`true` if the instance's configuration no longer names the store. A copy in a detached store doesn't count toward `min_copies`."
@@ -6393,7 +6384,6 @@
         "required": [
           "store_id",
           "kind",
-          "policy",
           "detached",
           "recorded_at",
           "verified_at"
