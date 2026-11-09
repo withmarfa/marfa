@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
+use futures_util::StreamExt;
 use marfa_server::app::{App, housekeeping};
 use marfa_server::db::Write;
 use marfa_server::http::{control, public};
@@ -1580,4 +1581,33 @@ async fn a_picture_set_while_a_purge_waits_for_the_writer_keeps_its_bytes() {
     let served = instance.call(Method::GET, "/owner/picture", None).await;
     assert_eq!(served.status, StatusCode::OK);
     assert_eq!(served.bytes, bytes);
+}
+
+#[tokio::test]
+async fn a_copy_that_runs_out_of_time_aborts_its_multipart_upload() {
+    let s3 = FakeS3::start().await;
+    let instance = Instance::start(&pairs(&s3.settings(BUCKET, "blobs"))).await;
+    let bucket = instance.app.blobs.s3().unwrap();
+    let whole = vec![7u8; 10 * 1024 * 1024];
+    let hash = marfa_server::app::blobs::Hash::parse(&hash_of(&whole)).unwrap();
+    let first = bytes::Bytes::copy_from_slice(&whole[..9 * 1024 * 1024]);
+    let stalls = futures_util::stream::once(async move { Ok(first) })
+        .chain(futures_util::stream::pending())
+        .boxed();
+
+    let written = bucket.write(
+        "stalled/0190a1b2c3d4",
+        &hash,
+        "application/octet-stream",
+        whole.len() as u64,
+        stalls,
+        Duration::from_secs(2),
+    );
+    let error = written.await.unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::TimedOut, "{error}");
+    assert_eq!(s3.unfinished_uploads(), Vec::<String>::new());
+    assert!(
+        s3.objects_under(&format!("/{BUCKET}/blobs/stalled"))
+            .is_empty()
+    );
 }

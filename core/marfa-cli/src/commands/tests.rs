@@ -1570,6 +1570,34 @@ fn restore_posts_the_archive_under_its_own_type() {
 }
 
 #[test]
+fn backups_reach_their_doors_and_an_instance_and_a_name_are_one_path_segment_each() {
+    let list = backups::request(&backups::BackupsCommand::List);
+    assert_eq!(
+        (list.method, list.path()),
+        (Method::Get, "/backups".to_string())
+    );
+    let run = backups::request(&backups::BackupsCommand::Run);
+    assert_eq!(
+        (run.method, run.path()),
+        (Method::Post, "/backups".to_string())
+    );
+    let restore = backups::request(&backups::BackupsCommand::Restore {
+        instance_id: "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b".to_string(),
+        name: "2026-11-09T10:15:30.250Z.tar".to_string(),
+    });
+    assert_eq!(restore.method, Method::Post);
+    assert!(
+        restore
+            .path()
+            .starts_with("/backups/0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b/2026-11-09T10")
+            && restore.path().ends_with(".tar/restore")
+            && restore.path().matches('/').count() == 4,
+        "{}",
+        restore.path()
+    );
+}
+
+#[test]
 fn every_published_operation_has_a_command() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../openapi.json");
     let document: serde_json::Value = serde_json::from_str(

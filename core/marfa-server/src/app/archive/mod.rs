@@ -24,10 +24,10 @@ use super::access::{Caller, Permission};
 use super::blobs::carry::{self, Carried, Copy};
 use super::blobs::{Hash, Room, references};
 use super::faults::{FAIL_EXPORT_READ, HOLD_EXPORT_PAGE};
-use super::items::{self, Archived, Reader, reading};
+use super::items::{self, Archived, Reader, reading, reading_background};
 use super::query::{self, Ask};
 use super::refusal::{Code, Refusal, Result};
-use super::{connectors, edges, sources, stored};
+use super::{backups, connectors, edges, sources, stored};
 use crate::db::io_refusal;
 use crate::settings::registry::{self, ADDRESSES, SIGN_IN_ADDRESS};
 use spool::{Lines, Spooled};
@@ -129,6 +129,16 @@ struct Prepared {
     blobs: Vec<(Carried, String)>,
 }
 
+/// An archive a backup writes: its body, when it was taken, and the change count its snapshot
+/// holds.
+pub struct Backup {
+    pub body: Body,
+    pub created_at: String,
+    pub changes: i64,
+    /// How long the object store has to take it, which also bounds how long its sender waits.
+    pub limit: std::time::Duration,
+}
+
 /// What the selection's snapshot gave: the line files, the blobs the rows name, and the counts.
 struct Selected {
     instance: Spooled<InstanceNeed>,
@@ -137,6 +147,8 @@ struct Selected {
     counts: Map<String, Value>,
     listed: Vec<Carried>,
     missing: BTreeMap<String, Value>,
+    /// For a backup: the change count, and the files the bucket held a recorded copy of.
+    backup: Option<(i64, Vec<String>)>,
 }
 
 fn print(value: &impl serde::Serialize) -> Result<String> {
@@ -184,13 +196,50 @@ impl App {
         ask: Ask,
         files: bool,
     ) -> Result<(Body, String)> {
-        let prepared = self.prepare_archive(caller, ask, files).await?;
+        let (prepared, _) = self.prepare_archive(caller, ask, files, None).await?;
         let created = prepared.created_at.clone();
         self.audit_export(caller, "archive").await?;
         let (sender, body) = channel(QUEUED);
         let (app, caller) = (self.clone(), caller.clone());
-        tokio::spawn(async move { send::archive(app, caller, prepared, sender).await });
+        let idle = self.blob_read_idle();
+        tokio::spawn(async move { send::archive(app, caller, prepared, sender, idle).await });
         Ok((body, created))
+    }
+
+    /// The archive a backup puts: every row, the bin included, and the instance lines, with no
+    /// file, read behind other work. Its manifest names the files `bucket` held a copy of, and
+    /// `check` is how long the bucket is given to answer.
+    pub async fn backup_archive(
+        self: &Arc<App>,
+        bucket: &str,
+        check: std::time::Duration,
+    ) -> Result<Backup> {
+        let ask = Ask {
+            system: true,
+            ..Ask::default()
+        };
+        let (prepared, changes) = self
+            .prepare_archive(&Caller::Server, ask, false, Some(bucket.to_string()))
+            .await?;
+        let created_at = prepared.created_at.clone();
+        let entry = |size: u64| tar::BLOCK as u64 + size + tar::padding(size) as u64;
+        let size = entry(prepared.manifest.len() as u64)
+            + entry(prepared.instance.size)
+            + entry(prepared.items.size)
+            + entry(prepared.edges.size)
+            + tar::END.len() as u64;
+        let limit = super::blobs::store::write_deadline(check, size);
+        let (sender, body) = channel(QUEUED);
+        let app = self.clone();
+        tokio::spawn(async move {
+            send::archive(app, Caller::Server, prepared, sender, limit).await;
+        });
+        Ok(Backup {
+            body,
+            created_at,
+            changes: changes.unwrap_or(0),
+            limit,
+        })
     }
 
     async fn audit_export(&self, caller: &Caller, format: &'static str) -> Result<()> {
@@ -200,7 +249,13 @@ impl App {
         .await
     }
 
-    async fn prepare_archive(&self, caller: &Caller, ask: Ask, files: bool) -> Result<Prepared> {
+    async fn prepare_archive(
+        &self,
+        caller: &Caller,
+        ask: Ask,
+        files: bool,
+        bucket: Option<String>,
+    ) -> Result<(Prepared, Option<i64>)> {
         let created_at = self.clock.stamp();
         let scratch = [
             self.scratch().await?,
@@ -209,10 +264,20 @@ impl App {
         ];
         let room = self.room();
         let cap = self.bulk_cap();
-        let selected = reading(self, caller, move |read| {
-            select(read, &ask, scratch, room, cap)
-        })
-        .await?;
+        let selected = match bucket {
+            None => {
+                reading(self, caller, move |read| {
+                    select(read, &ask, scratch, room, cap, None)
+                })
+                .await?
+            }
+            Some(bucket) => {
+                reading_background(self, caller, move |read| {
+                    select(read, &ask, scratch, room, cap, Some(&bucket))
+                })
+                .await?
+            }
+        };
         let copies = if files {
             self.whole_copies(&selected.listed).await?
         } else {
@@ -251,15 +316,20 @@ impl App {
             "missing_blobs".into(),
             Value::Object(missing.into_iter().collect()),
         );
+        let changes = selected.backup.map(|(changes, in_bucket)| {
+            manifest.insert("bucket_blobs".into(), in_bucket.into());
+            changes
+        });
         reading(self, caller, |_| Ok(())).await?;
-        Ok(Prepared {
+        let prepared = Prepared {
             created_at,
             manifest: print(&Value::Object(manifest))?.into_bytes(),
             instance: selected.instance,
             items: selected.items,
             edges: selected.edges,
             blobs,
-        })
+        };
+        Ok((prepared, changes))
     }
 }
 
@@ -271,6 +341,7 @@ fn select(
     [instance, items, edges]: [crate::app::blobs::Scratch; 3],
     room: Room,
     cap: usize,
+    bucket: Option<&str>,
 ) -> Result<Selected> {
     let mut items: Lines<ItemNeed> = Lines::new(items, room.clone())?;
     let mut edges: Lines<EdgeNeed> = Lines::new(edges, room.clone())?;
@@ -451,7 +522,7 @@ fn select(
         .collect::<Result<_>>()?;
     count("edge_type_count", &mut instance, edge_types)?;
     count("type_icon_count", &mut instance, icons)?;
-    let direct = matches!(caller, Caller::Owner(_) | Caller::Local(_));
+    let direct = matches!(caller, Caller::Owner(_) | Caller::Local(_) | Caller::Server);
     let named = sources::named(read.tx)?
         .into_iter()
         .filter(|named| direct || carried_sources.contains_key(&named.source))
@@ -515,6 +586,18 @@ fn select(
         })
         .collect::<Result<_>>()?;
     count("connector_agreement_count", &mut instance, kept)?;
+    let backup = match bucket {
+        None => None,
+        Some(bucket) => {
+            let named = listed
+                .iter()
+                .map(|carried| carried.blob.hash.as_str().to_string())
+                .chain(missing.keys().cloned());
+            let mut held = crate::app::blobs::held_in(read.tx, bucket, named)?;
+            held.sort();
+            Some((backups::changes(read.tx)?, held))
+        }
+    };
     Ok(Selected {
         instance: instance.finish()?,
         items: items.finish()?,
@@ -522,5 +605,6 @@ fn select(
         counts,
         listed,
         missing,
+        backup,
     })
 }

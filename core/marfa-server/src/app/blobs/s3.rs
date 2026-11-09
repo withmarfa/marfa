@@ -1,6 +1,7 @@
 //! The object store: one object per write of a blob, under `<prefix>/<hex>/<write>`, and a
 //! marker object that holds the store's id.
 
+use std::future::Future;
 use std::io;
 use std::time::Duration;
 
@@ -12,9 +13,11 @@ use object_store::client::{HttpError, HttpErrorKind};
 use object_store::path::Path;
 use object_store::signer::Signer;
 use object_store::{
-    Attribute, Attributes, BackoffConfig, ClientOptions, GetOptions, GetRange, ObjectStore,
-    ObjectStoreExt, PutMultipartOptions, PutOptions, PutPayload, RetryConfig, WriteMultipart,
+    Attribute, Attributes, BackoffConfig, ClientOptions, GetOptions, GetRange, MultipartUpload,
+    ObjectStore, ObjectStoreExt, PutMultipartOptions, PutOptions, PutPayload, RetryConfig,
 };
+use tokio::task::JoinSet;
+use tokio::time::Instant;
 use uuid::Uuid;
 
 use super::hash::Hash;
@@ -24,6 +27,7 @@ use crate::settings::start::ObjectStoreSettings;
 /// The most bytes sent in one request; a larger blob goes up in parts of this size.
 const PART: usize = 8 * 1024 * 1024;
 const PARTS_IN_FLIGHT: usize = 2;
+const ABORT_DEADLINE: Duration = Duration::from_secs(15);
 const MARKER: &str = ".marfa-store";
 /// The object metadata that names the store which wrote an object.
 const WRITER: &str = "marfa-store";
@@ -54,6 +58,97 @@ fn is_silent(error: &object_store::Error) -> bool {
         cause = error.source();
     }
     false
+}
+
+type Checked<'a> = Option<(&'a mut super::store::Hasher, &'a Hash, u64)>;
+
+fn seen(checked: &mut Checked<'_>, chunk: &Bytes) {
+    if let Some((hasher, _, _)) = checked {
+        hasher.update(chunk);
+    }
+}
+
+fn verify(checked: &Checked<'_>) -> io::Result<()> {
+    match checked {
+        Some((hasher, hash, size)) => hasher.matches(hash, *size),
+        None => Ok(()),
+    }
+}
+
+fn stalled() -> io::Error {
+    io::Error::new(io::ErrorKind::TimedOut, "the object store stalled")
+}
+
+async fn within_deadline<T>(
+    deadline: Instant,
+    work: impl Future<Output = io::Result<T>>,
+) -> io::Result<T> {
+    tokio::time::timeout_at(deadline, work)
+        .await
+        .unwrap_or_else(|_| Err(stalled()))
+}
+
+/// Aborts an unfinished multipart upload, within a bound of its own, so its parts are not left
+/// in the bucket.
+async fn abort(upload: &mut dyn MultipartUpload) {
+    match tokio::time::timeout(ABORT_DEADLINE, upload.abort()).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => tracing::warn!(%error, "An unfinished upload was not aborted"),
+        Err(_) => tracing::warn!("An unfinished upload's abort did not end in time"),
+    }
+}
+
+/// A multipart upload's parts: each `PART` bytes but the last, at most `PARTS_IN_FLIGHT` sent
+/// at once. The upload stays with the caller, so it can still be aborted.
+#[derive(Default)]
+struct Parts {
+    buffer: Vec<Bytes>,
+    buffered: usize,
+    tasks: JoinSet<object_store::Result<()>>,
+}
+
+impl Parts {
+    async fn put(&mut self, upload: &mut dyn MultipartUpload, mut bytes: Bytes) -> io::Result<()> {
+        while !bytes.is_empty() {
+            let room = PART - self.buffered;
+            if bytes.len() < room {
+                self.buffered += bytes.len();
+                self.buffer.push(bytes);
+                return Ok(());
+            }
+            self.buffer.push(bytes.split_to(room));
+            self.send(upload, PARTS_IN_FLIGHT).await?;
+        }
+        Ok(())
+    }
+
+    async fn send(&mut self, upload: &mut dyn MultipartUpload, in_flight: usize) -> io::Result<()> {
+        while self.tasks.len() >= in_flight {
+            self.next().await?;
+        }
+        let part = PutPayload::from_iter(std::mem::take(&mut self.buffer));
+        self.buffered = 0;
+        self.tasks.spawn(upload.put_part(part));
+        Ok(())
+    }
+
+    async fn next(&mut self) -> io::Result<()> {
+        match self.tasks.join_next().await {
+            Some(Ok(sent)) => sent.map_err(failed),
+            Some(Err(_)) => Err(io::Error::other("a part's upload ended early")),
+            None => Ok(()),
+        }
+    }
+
+    async fn finish(&mut self, upload: &mut dyn MultipartUpload) -> io::Result<()> {
+        if !self.buffer.is_empty() {
+            self.send(upload, PARTS_IN_FLIGHT).await?;
+        }
+        while !self.tasks.is_empty() {
+            self.next().await?;
+        }
+        Ok(())
+    }
 }
 
 /// What a store answered when asked for its marker.
@@ -255,64 +350,167 @@ impl S3 {
     }
 
     /// Sends the bytes and keeps them only if they hash to `hash`; a short body is sent
-    /// whole, so nothing is placed before it is checked.
+    /// whole, so nothing is placed before it is checked. Fails once it outlasts `limit`.
     pub async fn write(
         &self,
         key: &str,
         hash: &Hash,
         mime_type: &str,
         size: u64,
-        mut bytes: BoxStream<'static, io::Result<Bytes>>,
+        bytes: BoxStream<'static, io::Result<Bytes>>,
+        limit: Duration,
     ) -> io::Result<()> {
+        let deadline = Instant::now() + limit;
         let mut hasher = super::store::Hasher::default();
+        let attributes = attributes(mime_type, hash, &self.id);
+        let checked = Some((&mut hasher, hash, size));
+        self.place(key, attributes, bytes, deadline, checked)
+            .await
+            .map(|_| ())
+    }
+
+    /// Puts `bytes` as the object at `key`, which appears whole or not at all, and answers the
+    /// bytes put. Fails once it outlasts `limit`.
+    pub async fn put_whole(
+        &self,
+        key: &str,
+        content_type: &str,
+        bytes: BoxStream<'static, io::Result<Bytes>>,
+        limit: Duration,
+    ) -> io::Result<u64> {
+        let deadline = Instant::now() + limit;
+        let mut attributes = Attributes::new();
+        attributes.insert(Attribute::ContentType, content_type.to_string().into());
+        attributes.insert(Attribute::Metadata(WRITER.into()), self.id.clone().into());
+        self.place(key, attributes, bytes, deadline, None).await
+    }
+
+    /// One put for a body of up to a part, and above that a multipart upload, which no listing
+    /// or read sees before it completes and which is aborted when it fails or meets `deadline`.
+    /// With `checked`, the bytes must hash to the blob before the object is placed.
+    async fn place(
+        &self,
+        key: &str,
+        attributes: Attributes,
+        mut bytes: BoxStream<'static, io::Result<Bytes>>,
+        deadline: Instant,
+        mut checked: Checked<'_>,
+    ) -> io::Result<u64> {
         let location = self.path_of(key);
-        if size <= PART as u64 {
-            let mut whole = Vec::with_capacity(usize::try_from(size).unwrap_or(0));
-            while let Some(chunk) = bytes.next().await {
-                let chunk = chunk?;
-                hasher.update(&chunk);
-                whole.extend_from_slice(&chunk);
+        let mut first: Vec<Bytes> = Vec::new();
+        let mut held = 0u64;
+        let mut ended = false;
+        within_deadline(deadline, async {
+            while held <= PART as u64 {
+                match bytes.next().await {
+                    Some(chunk) => {
+                        let chunk = chunk?;
+                        held += chunk.len() as u64;
+                        seen(&mut checked, &chunk);
+                        first.push(chunk);
+                    }
+                    None => {
+                        ended = true;
+                        break;
+                    }
+                }
             }
-            hasher.matches(hash, size)?;
+            Ok(())
+        })
+        .await?;
+        if ended {
+            verify(&checked)?;
             let options = PutOptions {
-                attributes: attributes(mime_type, hash, &self.id),
+                attributes,
                 ..PutOptions::default()
             };
-            self.client
-                .put_opts(&location, PutPayload::from(whole), options)
-                .await
-                .map_err(failed)?;
-            return Ok(());
+            let put = self
+                .client
+                .put_opts(&location, PutPayload::from_iter(first), options);
+            within_deadline(deadline, async { put.await.map_err(failed) }).await?;
+            return Ok(held);
         }
         let options = PutMultipartOptions {
-            attributes: attributes(mime_type, hash, &self.id),
+            attributes,
             ..PutMultipartOptions::default()
         };
-        let upload = self
-            .client
-            .put_multipart_opts(&location, options)
-            .await
-            .map_err(failed)?;
-        let mut parts = WriteMultipart::new_with_chunk_size(upload, PART);
-        let sent = async {
+        let begun = self.client.put_multipart_opts(&location, options);
+        let mut upload = within_deadline(deadline, async { begun.await.map_err(failed) }).await?;
+        let mut parts = Parts::default();
+        let sent = within_deadline(deadline, async {
+            for chunk in first {
+                parts.put(upload.as_mut(), chunk).await?;
+            }
             while let Some(chunk) = bytes.next().await {
                 let chunk = chunk?;
-                hasher.update(&chunk);
-                parts
-                    .wait_for_capacity(PARTS_IN_FLIGHT)
-                    .await
-                    .map_err(failed)?;
-                parts.put(chunk);
+                held += chunk.len() as u64;
+                seen(&mut checked, &chunk);
+                parts.put(upload.as_mut(), chunk).await?;
             }
-            hasher.matches(hash, size)
-        }
+            verify(&checked)?;
+            parts.finish(upload.as_mut()).await?;
+            upload.complete().await.map_err(failed)
+        })
         .await;
         match sent {
-            Ok(()) => parts.finish().await.map(|_| ()).map_err(failed),
+            Ok(_) => Ok(held),
             Err(error) => {
-                let _ = parts.abort().await;
+                parts.tasks.shutdown().await;
+                abort(upload.as_mut()).await;
                 Err(error)
             }
+        }
+    }
+
+    /// The objects directly under `folder`, by name within it, with their sizes.
+    pub async fn list_in(&self, folder: &str) -> io::Result<Vec<(String, u64)>> {
+        let under = self.path_of(folder);
+        let listed = self
+            .client
+            .list_with_delimiter(Some(&under))
+            .await
+            .map_err(failed)?;
+        Ok(listed
+            .objects
+            .into_iter()
+            .filter_map(|meta| {
+                let mut parts = meta.location.prefix_match(&under)?;
+                let name = parts.next()?.as_ref().to_string();
+                parts.next().is_none().then_some((name, meta.size))
+            })
+            .collect())
+    }
+
+    /// Every object at any depth under `folder`, by the path segments within it, with its size.
+    pub async fn list_under(&self, folder: &str) -> io::Result<Vec<(Vec<String>, u64)>> {
+        let under = self.path_of(folder);
+        self.client
+            .list(Some(&under))
+            .map_ok(|meta| {
+                let parts = meta
+                    .location
+                    .prefix_match(&under)
+                    .map(|parts| parts.map(|part| part.as_ref().to_string()).collect())
+                    .unwrap_or_default();
+                (parts, meta.size)
+            })
+            .try_collect()
+            .await
+            .map_err(failed)
+    }
+
+    /// The whole object at `key` and its size, or `None` where the store holds none.
+    pub async fn get_whole(
+        &self,
+        key: &str,
+    ) -> io::Result<Option<(u64, BoxStream<'static, io::Result<Bytes>>)>> {
+        match self.client.get(&self.path_of(key)).await {
+            Ok(found) => {
+                let size = found.meta.size;
+                Ok(Some((size, found.into_stream().map_err(failed).boxed())))
+            }
+            Err(error) if is_missing(&error) => Ok(None),
+            Err(error) => Err(failed(error)),
         }
     }
 

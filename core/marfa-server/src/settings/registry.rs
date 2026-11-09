@@ -295,6 +295,7 @@ registry! {
     BLOB_INTEGRITY_BATCH_BYTES: u64 = "blob_integrity_batch_bytes", BYTES, "1073741824", "The most bytes one integrity run checks.";
     BLOB_CLEANUP_INTERVAL_MS: u64 = "blob_cleanup_interval_ms", Rule::Whole { min: 0, max: rule::YEAR_MS }, "86400000", "How often the `blob-orphans` job sweeps for blobs nothing references, in milliseconds. 0 turns the sweep off.";
     BLOB_CLEANUP_GRACE_MS: u64 = "blob_cleanup_grace_ms", Rule::Whole { min: 0, max: rule::YEAR_MS }, "86400000", "How long a blob nothing references stands in the orphan report before a later run purges it, in milliseconds.";
+    BACKUP_INTERVAL_MS: u64 = "backup_interval_ms", Rule::Whole { min: 0, max: rule::YEAR_MS }, "3600000", "How often the `backup` job puts a backup in the object store when anything it holds has changed, in milliseconds. 0 turns scheduled backups off.";
     RATE_LIMIT_ENABLED: bool = "rate_limit_enabled", Rule::Boolean, "true", "Whether requests made with a key, app registrations, device code requests and passkey sign-in challenges are limited.";
     RATE_LIMIT_KEYS_REQUESTS: u64 = "rate_limit_keys_requests", COUNT, "200", "How many requests one key may make in each window.";
     RATE_LIMIT_WINDOW_MS: u64 = "rate_limit_window_ms", UP_TO_A_DAY, "60000", "How long one rate-limit window lasts, in milliseconds.";

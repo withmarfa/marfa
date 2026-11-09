@@ -5,6 +5,7 @@ pub mod answer;
 mod attention;
 mod audit;
 mod auth;
+mod backups;
 mod blobs;
 pub mod body;
 mod bulk;
@@ -326,6 +327,11 @@ fn shared(app: Arc<App>) -> Routes {
         .route("/audit", get(audit::list))
         .route("/housekeeping", get(housekeeping::list))
         .route("/housekeeping/{name}/run", post(housekeeping::run))
+        .route("/backups", get(backups::list).post(backups::run))
+        .route(
+            "/backups/{instance_id}/{name}/restore",
+            post(backups::restore),
+        )
         .route("/sources", get(sources::list))
         .route("/source", get(sources::read).patch(sources::update))
         .merge(schema_doors())

@@ -64,6 +64,7 @@ codes! {
     Forbidden = "forbidden", 403;
     TypeNotPermitted = "type_not_permitted", 403;
     ApiKeyNotFound = "api_key_not_found", 404;
+    BackupNotFound = "backup_not_found", 404;
     BlobCopyNotFound = "blob_copy_not_found", 404;
     BlobNotFound = "blob_not_found", 404;
     BulkJobNotFound = "bulk_job_not_found", 404;
@@ -95,6 +96,7 @@ codes! {
     InstanceChanged = "instance_changed", 409;
     ItemExists = "item_exists", 409;
     LinkTaken = "link_taken", 409;
+    NoBucket = "no_bucket", 409;
     OwnerExists = "owner_exists", 409;
     ReachChanged = "reach_changed", 409;
     SignInAddressChangeUnconfirmed = "sign_in_address_change_unconfirmed", 409;

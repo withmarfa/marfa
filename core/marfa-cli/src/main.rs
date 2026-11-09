@@ -33,9 +33,10 @@ use std::process::ExitCode;
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::commands::{
-    apps, attention, audit, blobs, config, connectors, docs, edge_types, edges, events, export,
-    extensions, housekeeping, items, keys, login, logout, metadata, metrics, operations, overview,
-    owner, profile, restore, search, sign_ins, sources, status, types, views, webhooks, whoami,
+    apps, attention, audit, backups, blobs, config, connectors, docs, edge_types, edges, events,
+    export, extensions, housekeeping, items, keys, login, logout, metadata, metrics, operations,
+    overview, owner, profile, restore, search, sign_ins, sources, status, types, views, webhooks,
+    whoami,
 };
 use crate::device::DeviceArgs;
 use crate::error::{CliError, DOCS_HINT, Exit, long_help_footer};
@@ -277,6 +278,13 @@ enum Command {
     /// prints it and exits 1 with `blobs_missing`. Upload their bytes again
     /// with `blobs upload` to restore them.
     Restore(restore::RestoreArgs),
+    /// Backups the server puts in its object store on a schedule, and takes
+    /// and restores when asked. Each holds every item, edge and setting, the
+    /// trash included, and no file, which the object store already holds.
+    Backups {
+        #[command(subcommand)]
+        command: backups::BackupsCommand,
+    },
     /// Views: saved lists of items, held as `system.view` and shared by every
     /// app. Writing one needs write on `system.view`.
     Views {
@@ -651,6 +659,7 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         Command::Config { command } => config::run(command, &remote()?, &out),
         Command::Export(args) => export::run(args, &remote()?, &out),
         Command::Restore(args) => restore::run(args, &remote()?, &out),
+        Command::Backups { command } => backups::run(command, &remote()?, &out),
         Command::Views { command } => views::run(command, &remote()?, &out),
         Command::Webhooks { command } => webhooks::run(command, &remote()?, &out),
         Command::Audit(args) => audit::run(args, &remote()?, &out),

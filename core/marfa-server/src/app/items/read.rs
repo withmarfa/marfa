@@ -49,7 +49,16 @@ where
 {
     let demand = Demand::pending();
     let held = demand.is_some();
-    read_in(app, caller, demand, held, job).await
+    read_in(app, caller, demand, held, false, job).await
+}
+
+/// Reads in one snapshot behind other work, for the server's own long reads.
+pub(crate) async fn reading_background<T, F>(app: &App, caller: &Caller, job: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce(&Reader<'_, '_>) -> Result<T> + Send + 'static,
+{
+    read_in(app, caller, None, false, true, job).await
 }
 
 /// Reads in one snapshot, holding the reach a copy stream announced to that snapshot.
@@ -63,7 +72,7 @@ where
     T: Send + 'static,
     F: FnOnce(&Reader<'_, '_>) -> Result<T> + Send + 'static,
 {
-    read_in(app, caller, demand, false, job).await
+    read_in(app, caller, demand, false, false, job).await
 }
 
 async fn read_in<T, F>(
@@ -71,6 +80,7 @@ async fn read_in<T, F>(
     caller: &Caller,
     demand: Option<Demand>,
     held: bool,
+    background: bool,
     job: F,
 ) -> Result<T>
 where
@@ -82,28 +92,31 @@ where
     let marked = app.read_only_handle();
     let clock = app.clock.clone();
     let faults = app.faults.clone();
-    app.db
-        .read(move |tx| {
-            let at = clock.stamp();
-            let caller = caller.current(tx, &at)?;
-            if let Some(demand) = &demand {
-                demand.verify(tx, &caller)?;
-                if held {
-                    faults.hold_blocking(HOLD_READ_SNAPSHOT);
-                }
+    let read = move |tx: &rusqlite::Transaction<'_>| {
+        let at = clock.stamp();
+        let caller = caller.current(tx, &at)?;
+        if let Some(demand) = &demand {
+            demand.verify(tx, &caller)?;
+            if held {
+                faults.hold_blocking(HOLD_READ_SNAPSHOT);
             }
-            let catalog = catalog::current(&cache, tx, Snapshot::Committed)?;
-            let read_only = read_only::current(&marked, tx, &at, Snapshot::Committed)?;
-            job(&Reader {
-                tx,
-                caller,
-                catalog,
-                read_only,
-                faults: &faults,
-                certified: demand.is_some(),
-            })
+        }
+        let catalog = catalog::current(&cache, tx, Snapshot::Committed)?;
+        let read_only = read_only::current(&marked, tx, &at, Snapshot::Committed)?;
+        job(&Reader {
+            tx,
+            caller,
+            catalog,
+            read_only,
+            faults: &faults,
+            certified: demand.is_some(),
         })
-        .await
+    };
+    if background {
+        app.db.read_background(read).await
+    } else {
+        app.db.read(read).await
+    }
 }
 
 impl<'a, 'c> Reader<'a, 'c> {

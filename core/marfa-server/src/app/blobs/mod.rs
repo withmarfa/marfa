@@ -9,8 +9,8 @@ pub mod range;
 pub mod references;
 pub mod restore;
 mod rows;
-mod s3;
-mod store;
+pub mod s3;
+pub mod store;
 pub mod upkeep;
 
 use std::fs::File;
@@ -46,7 +46,7 @@ pub use disk::{MARKER, Scratch};
 pub use hash::Hash;
 pub use restore::stored_size;
 use rows::Held;
-pub use rows::{CopyRecord, Lender, OrphanRecord, StoreRecord};
+pub use rows::{CopyRecord, Lender, OrphanRecord, StoreRecord, held_in};
 use s3::{Marker, S3};
 pub use store::ByteStream;
 use store::{Answer, CHECK_DEADLINE, Failed, Gate, Store};
@@ -254,8 +254,14 @@ impl Blobs {
         })
     }
 
-    fn check(&self) -> Duration {
+    /// How long a store is given to answer.
+    pub fn check(&self) -> Duration {
         self.faults.store_check_deadline().unwrap_or(CHECK_DEADLINE)
+    }
+
+    /// The object store, where one is configured.
+    pub fn s3(&self) -> Option<Arc<S3>> {
+        self.s3.clone()
     }
 
     /// The attached stores, the disk first.

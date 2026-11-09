@@ -33,7 +33,7 @@ pub use read::{
 };
 pub(crate) use read::{
     Reader, listed, listed_rows, position_at, position_cursor, readable_tags, reading,
-    reading_under,
+    reading_background, reading_under,
 };
 pub(crate) use write::settle_late_part;
 
