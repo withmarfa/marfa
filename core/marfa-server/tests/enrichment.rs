@@ -581,6 +581,19 @@ async fn gives_a_file_with_no_copy_its_attempt_back() {
     assert_eq!(one.sweep().await, counts(1, 0, 0));
 }
 
+async fn gives_a_file_binned_during_its_reading_its_attempt_back() {
+    let one = Instance::start(&[("MARFA_ENRICHMENT_MAX_ATTEMPTS", "1")]).await;
+    let id = one
+        .file(b"the binned ledger", "text/plain", json!({}))
+        .await;
+    let sweep = sweep_while_held(&one, "hold:blob-read", None).await;
+    one.execute("UPDATE items SET state = 'trashed' WHERE id = ?1", &id);
+    one.app.faults.clear(None);
+    assert_eq!(sweep.await.unwrap(), counts(0, 0, 0));
+    one.execute("UPDATE items SET state = 'active' WHERE id = ?1", &id);
+    assert_eq!(one.sweep().await, counts(1, 0, 0));
+}
+
 async fn leaves_a_file_waiting_when_its_copy_returns_as_it_is_settled() {
     let one = Instance::start(&[]).await;
     let id = one.file(b"the lost ledger", "text/plain", json!({})).await;
@@ -947,6 +960,10 @@ fn main() {
         trial("gives_a_file_with_no_copy_its_attempt_back", || {
             Box::pin(gives_a_file_with_no_copy_its_attempt_back())
         }),
+        trial(
+            "gives_a_file_binned_during_its_reading_its_attempt_back",
+            || Box::pin(gives_a_file_binned_during_its_reading_its_attempt_back()),
+        ),
         trial(
             "leaves_a_file_waiting_when_its_copy_returns_as_it_is_settled",
             || Box::pin(leaves_a_file_waiting_when_its_copy_returns_as_it_is_settled()),

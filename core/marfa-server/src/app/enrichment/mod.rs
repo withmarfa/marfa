@@ -303,7 +303,7 @@ async fn store(
     app.write(&Caller::Server, ACTION, move |unit| {
         let tx = unit.tx();
         let catalog = catalog::current(&cache, tx, Snapshot::Pending)?;
-        if standing(tx, &catalog, seq, &hash, &offered)? == Standing::Moved {
+        if standing(tx, &catalog, seq, &hash, &offered)? != Standing::Same {
             queue::refund(tx, seq, hash.as_str(), &unit.at)?;
             return Ok(Count::None);
         }
