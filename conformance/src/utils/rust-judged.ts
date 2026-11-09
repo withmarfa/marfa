@@ -112,6 +112,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/file-blob-proof.test.ts",
   "src/suites/compliance/filter-characters.test.ts",
   "src/suites/compliance/filter-escapes.test.ts",
+  "src/suites/compliance/folder-status-retention.test.ts",
   "src/suites/compliance/folder-status.test.ts",
   "src/suites/compliance/folders.test.ts",
   "src/suites/compliance/fts-searchable.test.ts",

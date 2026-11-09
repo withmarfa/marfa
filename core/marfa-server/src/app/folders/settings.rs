@@ -248,6 +248,16 @@ pub async fn compile_patterns(settings: &Map<String, Value>) -> Result<Patterns>
 
 /// Judges the settings a request names, but for the patterns `compile_patterns` judged.
 pub fn check(settings: &Map<String, Value>, catalog: &Catalog, _: &Patterns) -> Result<()> {
+    check_settings(settings, catalog)
+}
+
+/// Judges whole settings the server rewrote, whose pattern lists were judged when they were stored.
+pub fn check_stored(settings: &Map<String, Value>, catalog: &Catalog) -> Result<()> {
+    check_settings(settings, catalog)?;
+    judge(settings, catalog)
+}
+
+fn check_settings(settings: &Map<String, Value>, catalog: &Catalog) -> Result<()> {
     if let Some(title) = settings.get("title") {
         check_title(title)?;
     }

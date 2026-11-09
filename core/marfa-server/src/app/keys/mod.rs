@@ -11,6 +11,7 @@ use serde_json::{Map, Value, json};
 
 use super::App;
 use super::access::{Axis, Caller, Change, Grants, OwnLevers, Permission, Standing};
+use super::connectors;
 use super::items::reading;
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
@@ -345,6 +346,10 @@ pub async fn mint(app: &App, caller: &Caller, request: Mint) -> Result<(Key, Str
                 claimed_by_a_live_key(unit.tx(), &request.source, &unit.at)?,
             )?;
             take_source(unit, &request.source)?;
+            caller.check_held_source(
+                &request.source,
+                connectors::source_held(unit.tx(), &request.source)?,
+            )?;
             let key = Key {
                 id: uuid::Uuid::now_v7().to_string(),
                 label: request.label,

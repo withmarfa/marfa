@@ -1251,6 +1251,68 @@ async fn an_idle_grant_retires_then_goes_and_its_client_can_follow() {
 }
 
 #[tokio::test]
+async fn a_purged_grant_takes_the_folder_reports_it_made() {
+    let instance = Instance::signed_in().await;
+    let scope = "system.folder:read offline_access";
+    let client = instance.register(scope).await;
+    let issued = instance.tokens(&client, scope).await;
+    let body = json!({
+        "label": "folders",
+        "source": "folders",
+        "type_permissions": { "system.folder": "write" },
+    });
+    let minted = send(control(instance.app.clone()), post_json("/keys", &body)).await;
+    assert_eq!(minted.status, StatusCode::CREATED, "{}", minted.text);
+    let key = text_at(&minted.json(), "key").to_string();
+    let made = Request::builder()
+        .method(Method::POST)
+        .uri("/folders")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::AUTHORIZATION, format!("Bearer {key}"))
+        .body(Body::from(json!({ "title": "Copies" }).to_string()))
+        .unwrap();
+    let made = instance.send(made).await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.text);
+    let folder = text_at(&made.json()["item"], "id").to_string();
+    let report = json!({
+        "folder_store_id": "copy",
+        "sequence": 1,
+        "last_success_at": null,
+        "pending_uploads": 0,
+        "pending_downloads": 0,
+        "paused_removals": 0,
+        "first_sync_waiting": false,
+        "problems": [],
+    });
+    let report = Request::builder()
+        .method(Method::PUT)
+        .uri(format!("/folders/{folder}/status"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(
+            header::AUTHORIZATION,
+            format!("Bearer {}", text_at(&issued, "access_token")),
+        )
+        .body(Body::from(report.to_string()))
+        .unwrap();
+    let reported = instance.send(report).await;
+    assert_eq!(reported.status, StatusCode::OK, "{}", reported.text);
+    let reports = "SELECT count(*) FROM folder_status WHERE sign_in_kind = 'app'";
+    assert_eq!(instance.count(reports).await, 1);
+
+    let grant = instance.grant_of(&client).await;
+    assert_eq!(
+        instance.end_grant(&grant).await.status,
+        StatusCode::NO_CONTENT
+    );
+    instance.app.clock.advance(89 * DAY_MS).unwrap();
+    assert_eq!(swept(&instance.app, "revoked-grant-purge").await, 0);
+    assert_eq!(instance.count(reports).await, 1);
+    instance.app.clock.advance(2 * DAY_MS).unwrap();
+    assert_eq!(swept(&instance.app, "revoked-grant-purge").await, 1);
+    assert_eq!(instance.count(reports).await, 0);
+}
+
+#[tokio::test]
 async fn a_grant_in_use_is_not_idle() {
     let instance = Instance::signed_in().await;
     let client = instance.register(OFFLINE_NOTES).await;
