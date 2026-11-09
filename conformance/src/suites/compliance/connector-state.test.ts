@@ -1916,6 +1916,17 @@ describe("what a connector keeps on the instance", () => {
     expect((await operator.revokeKey(gone.keyId)).status).toBe(200);
     expect((await operator.deleteConnector(gone.id)).status).toBe(200);
 
+    // With no registration left, the kept state and agreements still hold the source.
+    const refused = await getClientFromEnv().client.createKey({
+      label: `${source}-refused`,
+      source,
+      default_tier: "library",
+    });
+    expect(refused.status).toBe(403);
+    expect(refused.error?.error.code).toBe("forbidden");
+    expect(refused.error?.error.details?.required_scope).toBe("keys.manage");
+    expect(refused.error?.error.details?.source).toBe(source);
+
     const later = await register(
       await mintUnder(source, "later", getOwnerClient()),
       "clearer",

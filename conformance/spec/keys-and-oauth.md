@@ -253,11 +253,11 @@ If a mint names as the new key's own `source` one that another key, neither revo
 
 ### `keys-and-oauth/own-source-held`
 
-If a caller holding neither `keys.manage` nor direct owner or local authority mints a key naming as its own `source` one that a connector registration names, or that holds connector state, connector agreements or inbound endpoints, then the server MUST answer `403 forbidden` with `details.required_scope` naming `keys.manage` and `details.source` naming the source.
+If a caller holding neither `keys.manage` nor direct owner or local authority mints a key naming as its own `source` one that no live key holds as its own and that a connector registration names, or that holds connector state, connector agreements or inbound endpoints, then the server MUST answer `403 forbidden` with `details.required_scope` naming `keys.manage` and `details.source` naming the source.
 
 **Reason:** A key whose own source is held succeeds to it, taking over its inbound endpoints and deliveries (`inbound-webhooks/source-takeover-preserves`), its state and its agreements. Choosing a connector's successor belongs to whoever manages keys. A source nothing holds stays open to `keys.mint`.
 
-**Tests:** `compliance/key-expiry.test.ts › leaves a source a connector holds to keys.manage, and a source never used to keys.mint`.
+**Tests:** `compliance/key-expiry.test.ts › leaves a source a connector holds to keys.manage, and a source never used to keys.mint`, `compliance/connector-state.test.ts › clears what a removed registration left, through a later registration of its source`.
 
 ### `keys-and-oauth/own-source-race`
 
