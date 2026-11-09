@@ -1384,7 +1384,7 @@ describe("a verdict is reported, not acted on", () => {
                 }),
               ),
             ]
-          : [answers.itemNotFound(id)],
+          : [answers.itemNotFound()],
         update: [
           answers.updated(
             wireItem({

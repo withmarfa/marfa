@@ -449,7 +449,7 @@ describe("what a folder is", () => {
       [{ "*": "write" }, false],
     ] as const) {
       const server = await ScriptedServer.start();
-      server.copyAnswer("GET", `/items/${id}`, answers.itemNotFound(id));
+      server.copyAnswer("GET", `/items/${id}`, answers.itemNotFound());
       server.copyAnswer(
         "GET",
         "/keys/current",

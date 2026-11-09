@@ -2995,7 +2995,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
         server.copyAnswer(
           "GET",
           `/items/${unseen}`,
-          answers.itemNotFound(unseen),
+          answers.itemNotFound(),
         );
       },
     );

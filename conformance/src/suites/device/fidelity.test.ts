@@ -1509,7 +1509,7 @@ describe("the scripted answers match the server's", () => {
     expectFidelity(
       "a row of a type the key does not hold, read by id",
       { status: unread.status, body: unread.error },
-      answers.itemNotFound(note.data.item.id),
+      answers.itemNotFound(),
       { same: ["error.code", "error.message"] },
     );
     const left = await narrowed.rawRequest("/items/bulk-get", {
@@ -1523,7 +1523,7 @@ describe("the scripted answers match the server's", () => {
     expectFidelity(
       "a row of a type the key does not hold, in a bulk read by id",
       { status: left.status, body: left.data },
-      bulkGetOf([answers.itemNotFound(note.data.item.id)], {
+      bulkGetOf([answers.itemNotFound()], {
         withReach: false,
         system: true,
       }),
@@ -2379,11 +2379,12 @@ describe("the scripted answers match the server's", () => {
       {
         kind: "json",
         status: registry.status,
-        body: { row: scriptedType("core.note") },
+        body: { row: { ...scriptedType("core.note"), plural: "Notes" } },
       },
       {
         same: [
           "row.id",
+          "row.plural",
           "row.display_hints.title_field",
           "row.display_hints.body_field",
           "row.provenance.origin",
@@ -2397,7 +2398,12 @@ describe("the scripted answers match the server's", () => {
     );
     // A folder writes a file's body and name to the properties these name
     // (`folders/body-property` and `folders/title-property`), so the ones the fixtures lean on are held here.
-    for (const id of ["core.event", "core.highlight", "core.bookmark"]) {
+    const shippedPlurals = {
+      "core.event": "Events",
+      "core.highlight": "Highlights",
+      "core.bookmark": "Bookmarks",
+    };
+    for (const [id, plural] of Object.entries(shippedPlurals)) {
       expectFidelity(
         `the display hints of ${id}`,
         {
@@ -2407,11 +2413,12 @@ describe("the scripted answers match the server's", () => {
         {
           kind: "json",
           status: registry.status,
-          body: { row: scriptedType(id) },
+          body: { row: { ...scriptedType(id), plural } },
         },
         {
           same: [
             "row.id",
+            "row.plural",
             "row.display_hints.title_field",
             "row.display_hints.body_field",
             "row.display_hints.name_from_body",
@@ -3502,7 +3509,7 @@ it("matches copy marker tuples and conditional listing proofs", async (context) 
     bulkGetOf(
       [
         certifiedRead(answers.updated(wireItem({ id: seeded.id }))),
-        certifiedRead(answers.itemNotFound(gone)),
+        certifiedRead(answers.itemNotFound()),
       ],
       { withReach: true, system: true },
     ),
