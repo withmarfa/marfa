@@ -2359,6 +2359,42 @@ async fn a_make_confirmation_is_stale_once_a_webhook_the_credential_reads_was_ma
 }
 
 #[tokio::test]
+async fn a_make_confirmation_is_stale_after_a_webhook_was_made_and_deleted_since_the_preview() {
+    let instance = Instance::start(&[]).await;
+    let token = instance.hooker().await;
+    let other = instance.hooker().await;
+    let args =
+        json!({ "action": "make", "url": format!("{RECEIVER}fresh"), "events": ["item.created"] });
+
+    // The witness: another credential's webhook, made and deleted, is not one this credential reads.
+    let shown = instance.hook(&token, args.clone()).await;
+    let theirs = instance.made_hook(&other, "theirs").await;
+    let gone = instance
+        .hook(&other, json!({ "action": "delete", "id": theirs["id"] }))
+        .await;
+    assert!(!gone.failed, "{}", gone.value);
+    let mut sent = args.clone();
+    sent["confirm"] = shown.payload()["confirm"].clone();
+    let done = instance.hook(&token, sent).await;
+    assert!(!done.failed, "{}", done.value);
+    assert_eq!(instance.hooks(&token).await.len(), 1);
+
+    // One of this credential's own, made and deleted, leaves the set as it was and still stales the token.
+    let shown = instance.hook(&token, args.clone()).await;
+    let second = instance.made_hook(&token, "second").await;
+    let gone = instance
+        .hook(&token, json!({ "action": "delete", "id": second["id"] }))
+        .await;
+    assert!(!gone.failed, "{}", gone.value);
+    let mut sent = args;
+    sent["confirm"] = shown.payload()["confirm"].clone();
+    let refused = instance.hook(&token, sent).await;
+    assert_eq!(refused.code(), "confirmation_stale", "{}", refused.value);
+    assert_eq!(instance.hooks(&token).await.len(), 1);
+    assert_eq!(instance.audited("webhook.create").await.len(), 3);
+}
+
+#[tokio::test]
 async fn a_change_is_confirmed_against_the_webhook_it_would_leave() {
     let instance = Instance::start(&[]).await;
     let token = instance.hooker().await;

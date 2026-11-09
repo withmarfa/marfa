@@ -118,17 +118,10 @@ impl Plan {
         ))
     }
 
-    /// Making reads the credential's webhooks, so a token to make stops at one made or deleted since.
-    fn subject(&self, reached: &[String]) -> String {
-        confirm::subject_digest(reached, &self.digest())
+    /// `covered` is what the token stops at: the webhook to change, or the count of the credential's makings and deletions.
+    fn subject(&self, covered: &str) -> String {
+        confirm::subject_digest(&[covered.to_string()], &self.digest())
     }
-}
-
-fn reached_ids(tx: &rusqlite::Transaction<'_>, caller: &Caller) -> Result<Vec<String>> {
-    Ok(webhooks::reached_in(tx, caller)?
-        .into_iter()
-        .map(|held| held.id)
-        .collect())
 }
 
 /// The plan and the ids it covers, on the state `tx` sees.
@@ -140,13 +133,13 @@ fn planned(
     match request {
         Request::Make(_) => {
             let plan = Plan::of(request, None)?;
-            let subject = plan.subject(&reached_ids(tx, caller)?);
+            let subject = plan.subject(&webhooks::turns_of(tx, caller)?.to_string());
             Ok((plan, subject))
         }
         Request::Change { id, .. } => {
             let existing = webhooks::made_by(tx, caller, id)?;
             let plan = Plan::of(request, Some(&existing))?;
-            let subject = plan.subject(std::slice::from_ref(id));
+            let subject = plan.subject(id);
             Ok((plan, subject))
         }
     }

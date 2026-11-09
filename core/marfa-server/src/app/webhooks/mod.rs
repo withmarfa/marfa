@@ -187,10 +187,9 @@ pub fn insert_new(unit: &Unit<'_, '_>, request: Create) -> Result<Subscription> 
     Ok(subscription)
 }
 
-/// The subscriptions the caller reaches.
-pub fn reached_in(tx: &Transaction<'_>, caller: &Caller) -> Result<Vec<Subscription>> {
-    let reach = caller.webhook_reach()?;
-    store::list(tx, reach.as_ref())
+/// How many webhooks the caller has made or deleted: it moves with each, and with no one else's.
+pub fn turns_of(tx: &Transaction<'_>, caller: &Caller) -> Result<i64> {
+    store::turns(tx, &caller.webhook_maker()?)
 }
 
 /// One subscription the caller made, or `webhook_not_found`.
@@ -296,8 +295,8 @@ pub async fn delete(app: &App, caller: &Caller, id: String) -> Result<()> {
     app.write(caller, "webhook.delete", move |unit| {
         let maker = unit.caller.webhook_maker()?;
         let tx = unit.tx();
-        store::by_id(tx, &id, Some(&maker))?.ok_or_else(not_found)?;
-        store::delete(tx, &id)?;
+        let held = store::by_id(tx, &id, Some(&maker))?.ok_or_else(not_found)?;
+        store::delete(tx, &held)?;
         unit.audit("webhook", &id, None)
     })
     .await
