@@ -254,7 +254,8 @@ impl Blobs {
         })
     }
 
-    fn check(&self) -> Duration {
+    /// How long a store is given to answer.
+    pub fn check(&self) -> Duration {
         self.faults.store_check_deadline().unwrap_or(CHECK_DEADLINE)
     }
 

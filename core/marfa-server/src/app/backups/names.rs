@@ -20,6 +20,11 @@ pub fn name_of(created_at: &str) -> Option<String> {
     (parse(&name) == Some(at)).then_some(name)
 }
 
+/// Whether `folder` names an instance's backups: an instance id in its canonical form.
+pub fn instance_of(folder: &str) -> bool {
+    uuid::Uuid::try_parse(folder).is_ok_and(|id| id.hyphenated().to_string() == folder)
+}
+
 /// When the backup `name` was taken, for a name exactly as `name_of` writes one.
 pub fn parse(name: &str) -> Option<DateTime<Utc>> {
     let stamp = name.strip_suffix(SUFFIX)?;
@@ -81,6 +86,20 @@ mod tests {
             "",
         ] {
             assert_eq!(parse(stray), None, "{stray}");
+        }
+    }
+
+    #[test]
+    fn only_an_instance_id_in_its_canonical_form_names_a_folder() {
+        assert!(instance_of("0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"));
+        for stray in [
+            "0190A1B2-C3D4-7E5F-8A9B-0C1D2E3F4A5B",
+            "0190a1b2c3d47e5f8a9b0c1d2e3f4a5b",
+            "{0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b}",
+            "deeper",
+            "",
+        ] {
+            assert!(!instance_of(stray), "{stray}");
         }
     }
 

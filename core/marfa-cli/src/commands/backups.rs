@@ -7,7 +7,8 @@ use crate::remote::request::Request;
 
 #[derive(Debug, Subcommand)]
 pub enum BackupsCommand {
-    /// The backups in the instance's object store, newest first. Requires the owner or --socket.
+    /// The backups in the instance's object store, newest first, from every instance that put
+    /// them there. Requires the owner or --socket.
     List,
     /// Take a backup now, whether or not anything changed since the last one.
     /// Requires the owner or --socket.
@@ -17,6 +18,8 @@ pub enum BackupsCommand {
     /// and holds no sign-in, keys, apps or webhooks. Requires the owner,
     /// signed in within five minutes, or --socket.
     Restore {
+        /// The id of the instance that took the backup, as `backups list` shows it.
+        instance_id: String,
         /// The backup's name, as `backups list` shows it.
         name: String,
     },
@@ -26,7 +29,9 @@ pub fn request(command: &BackupsCommand) -> Request {
     match command {
         BackupsCommand::List => Request::get(&["backups"]),
         BackupsCommand::Run => Request::post(&["backups"]),
-        BackupsCommand::Restore { name } => Request::post(&["backups", name, "restore"]),
+        BackupsCommand::Restore { instance_id, name } => {
+            Request::post(&["backups", instance_id, name, "restore"])
+        }
     }
 }
 

@@ -135,8 +135,8 @@ pub struct Backup {
     pub body: Body,
     pub created_at: String,
     pub changes: i64,
-    /// The archive's length in bytes.
-    pub size: u64,
+    /// How long the object store has to take it, which also bounds how long its sender waits.
+    pub limit: std::time::Duration,
 }
 
 /// What the selection's snapshot gave: the line files, the blobs the rows name, and the counts.
@@ -201,13 +201,19 @@ impl App {
         self.audit_export(caller, "archive").await?;
         let (sender, body) = channel(QUEUED);
         let (app, caller) = (self.clone(), caller.clone());
-        tokio::spawn(async move { send::archive(app, caller, prepared, sender).await });
+        let idle = self.blob_read_idle();
+        tokio::spawn(async move { send::archive(app, caller, prepared, sender, idle).await });
         Ok((body, created))
     }
 
     /// The archive a backup puts: every row, the bin included, and the instance lines, with no
-    /// file, read behind other work. Its manifest names the files `bucket` held a copy of.
-    pub async fn backup_archive(self: &Arc<App>, bucket: &str) -> Result<Backup> {
+    /// file, read behind other work. Its manifest names the files `bucket` held a copy of, and
+    /// `check` is how long the bucket is given to answer.
+    pub async fn backup_archive(
+        self: &Arc<App>,
+        bucket: &str,
+        check: std::time::Duration,
+    ) -> Result<Backup> {
         let ask = Ask {
             system: true,
             ..Ask::default()
@@ -222,14 +228,17 @@ impl App {
             + entry(prepared.items.size)
             + entry(prepared.edges.size)
             + tar::END.len() as u64;
+        let limit = super::blobs::store::write_deadline(check, size);
         let (sender, body) = channel(QUEUED);
         let app = self.clone();
-        tokio::spawn(async move { send::archive(app, Caller::Server, prepared, sender).await });
+        tokio::spawn(async move {
+            send::archive(app, Caller::Server, prepared, sender, limit).await;
+        });
         Ok(Backup {
             body,
             created_at,
             changes: changes.unwrap_or(0),
-            size,
+            limit,
         })
     }
 

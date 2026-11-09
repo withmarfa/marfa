@@ -32,13 +32,15 @@ pub async fn run(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answe
 pub async fn restore(
     State(app): State<Arc<App>>,
     caller: Caller,
-    Path(name): Path<String>,
+    Path((instance, name)): Path<(String, String)>,
     uri: Uri,
 ) -> Answer {
     caller.require_direct()?;
     let started_at = app.clock.stamp();
     caller.require_recent(&started_at)?;
     query::only(&uri, &[])?;
-    let answer = app.restore_backup(&caller, started_at, &name).await?;
+    let answer = app
+        .restore_backup(&caller, started_at, &instance, &name)
+        .await?;
     Ok(json_answer(StatusCode::OK, &answer))
 }

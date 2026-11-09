@@ -1,5 +1,6 @@
 //! Backups: an archive of every row and the instance lines, with no file, put as one object
-//! under `<prefix>/backups/` in the object store, which already keeps a copy of each file.
+//! under `<prefix>/backups/<instance id>/` in the object store, which already keeps a copy of
+//! each file.
 
 mod names;
 
@@ -23,9 +24,9 @@ use super::refusal::{Code, Refusal, Result};
 use crate::db::Write;
 use crate::settings::registry::BACKUP_INTERVAL_MS;
 
-pub use names::{doomed, name_of, parse};
+pub use names::{doomed, instance_of, name_of, parse};
 
-/// The folder under the object store's prefix that holds the backups.
+/// The folder under the object store's prefix that holds a folder of backups per instance.
 pub const FOLDER: &str = "backups";
 const LIST_DEADLINE: Duration = Duration::from_secs(30);
 const REPLICATION: &str = "blob-replicate";
@@ -121,10 +122,10 @@ fn unreachable(what: &str, error: &std::io::Error) -> Refusal {
     )
 }
 
-fn not_found(name: &str) -> Refusal {
+fn not_found(instance: &str, name: &str) -> Refusal {
     Refusal::new(
         Code::BackupNotFound,
-        format!("The object store holds no backup named {name}."),
+        format!("The object store holds no backup named {name} from instance {instance}."),
     )
 }
 
@@ -133,9 +134,23 @@ pub fn scheduled(app: &App) -> bool {
     app.blobs.s3().is_some() && app.settings.live().get(BACKUP_INTERVAL_MS) > 0
 }
 
+fn key_of(instance: &str, name: &str) -> String {
+    format!("{FOLDER}/{instance}/{name}")
+}
+
+fn listed(instance: &str, name: &str, size: u64) -> Value {
+    json!({
+        "name": name,
+        "instance_id": instance,
+        "created_at": created_of(name),
+        "size_bytes": size,
+    })
+}
+
 /// What a backup run did.
 enum Outcome {
     Put {
+        instance: String,
         name: String,
         size: u64,
         removed: usize,
@@ -149,13 +164,14 @@ impl Outcome {
     fn to_json(&self) -> Value {
         match self {
             Outcome::Put {
+                instance,
                 name,
                 size,
                 removed,
                 unremoved,
             } => json!({
                 "outcome": "put",
-                "backup": { "name": name, "created_at": created_of(name), "size_bytes": size },
+                "backup": listed(instance, name, *size),
                 "removed": removed,
                 "unremoved": unremoved,
             }),
@@ -218,23 +234,26 @@ impl App {
         self.blobs.s3().ok_or_else(no_bucket)
     }
 
-    /// The backups the object store holds, newest first.
+    /// The backups the object store holds, of every instance that put them there, newest first.
     pub async fn list_backups(&self, caller: &Caller) -> Result<Vec<Value>> {
         caller.require_direct()?;
         let bucket = self.bucket()?;
-        let listed = super::blobs::store::within(LIST_DEADLINE, bucket.list_in(FOLDER))
+        let found = super::blobs::store::within(LIST_DEADLINE, bucket.list_under(FOLDER))
             .await
             .map_err(|error| unreachable("listing the backups", &error))?;
-        let mut backups: Vec<(String, u64)> = listed
+        let mut backups: Vec<(chrono::DateTime<chrono::Utc>, String, String, u64)> = found
             .into_iter()
-            .filter(|(name, _)| parse(name).is_some())
+            .filter_map(|(parts, size)| match parts.as_slice() {
+                [instance, name] if instance_of(instance) => {
+                    Some((parse(name)?, instance.clone(), name.clone(), size))
+                }
+                _ => None,
+            })
             .collect();
-        backups.sort_by(|a, b| b.0.cmp(&a.0));
+        backups.sort_by(|a, b| b.cmp(a));
         Ok(backups
             .into_iter()
-            .map(|(name, size)| {
-                json!({ "name": name, "created_at": created_of(&name), "size_bytes": size })
-            })
+            .map(|(_, instance, name, size)| listed(&instance, &name, size))
             .collect())
     }
 
@@ -251,19 +270,20 @@ impl App {
         }
     }
 
-    /// Restores the named backup, read from the object store by the server itself.
+    /// Restores the named backup of `instance`, read from the object store by the server itself.
     pub async fn restore_backup(
         self: &Arc<App>,
         caller: &Caller,
         started_at: String,
+        instance: &str,
         name: &str,
     ) -> Result<Value> {
         caller.require_direct()?;
         let bucket = self.bucket()?;
-        if parse(name).is_none() {
-            return Err(not_found(name));
+        if !instance_of(instance) || parse(name).is_none() {
+            return Err(not_found(instance, name));
         }
-        let key = format!("{FOLDER}/{name}");
+        let key = key_of(instance, name);
         let found = super::blobs::store::within(
             super::blobs::store::CHECK_DEADLINE,
             bucket.get_whole(&key),
@@ -271,7 +291,7 @@ impl App {
         .await
         .map_err(|error| unreachable("reading the backup", &error))?;
         let Some((size, bytes)) = found else {
-            return Err(not_found(name));
+            return Err(not_found(instance, name));
         };
         let mut bytes = super::blobs::store::idle_limited(bytes, self.blob_read_idle());
         let mut receiving = self.begin_restore(Some(size)).await?;
@@ -286,7 +306,7 @@ impl App {
         }
         let received = receiving.finish().await?;
         let mut answer = self.restore(caller, started_at, received).await?;
-        answer["backup"] = Value::from(name);
+        answer["backup"] = json!({ "name": name, "instance_id": instance });
         Ok(answer)
     }
 
@@ -305,9 +325,16 @@ impl App {
         let read = tokio::time::timeout(Duration::from_secs(2), self.db.read(state)).await;
         let state = match read {
             Ok(Ok(state)) => Some(state),
-            _ => None,
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "The backup state did not read for health");
+                None
+            }
+            Err(_) => {
+                tracing::warn!("The backup state did not read for health in time");
+                None
+            }
         };
-        let failing = state.as_ref().is_some_and(|state| state.failures > 0);
+        let failing = state.as_ref().is_none_or(|state| state.failures > 0);
         health.insert(
             "status".into(),
             match (status, failing) {
@@ -335,7 +362,7 @@ async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
         return Ok(Outcome::Running);
     };
     let held = app.db.read(state).await?;
-    if !forced && held.backed_up == Some(held.changes) {
+    if !forced && held.failures == 0 && held.backed_up == Some(held.changes) {
         return Ok(Outcome::Unchanged);
     }
     wake_replication(app).await;
@@ -348,8 +375,12 @@ async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
                     record_put(tx, changes, &recorded, &at)
                 })
                 .await?;
-            let (removed, unremoved) = thin(app, &bucket).await;
+            let (removed, unremoved) = match parse(&name) {
+                Some(taken) => thin(app, &bucket, taken).await,
+                None => (0, 0),
+            };
             Ok(Outcome::Put {
+                instance: app.instance_id.clone(),
                 name,
                 size,
                 removed,
@@ -388,19 +419,17 @@ async fn wake_replication(app: &Arc<App>) {
 /// Writes the archive and puts it whole, answering its name, size and change count.
 async fn put(app: &Arc<App>, bucket: &Arc<S3>) -> Result<(String, u64, i64)> {
     let began = std::time::Instant::now();
-    let backup = app.backup_archive(bucket.id()).await?;
+    let backup = app.backup_archive(bucket.id(), app.blobs.check()).await?;
     let read_ms = began.elapsed().as_millis() as u64;
     let name = name_of(&backup.created_at)
         .ok_or_else(|| Refusal::internal("a backup's time did not make a name"))?;
-    let changes = backup.changes;
-    let limit =
-        super::blobs::store::write_deadline(super::blobs::store::CHECK_DEADLINE, backup.size);
-    let key = format!("{FOLDER}/{name}");
+    let (changes, limit) = (backup.changes, backup.limit);
+    let key = key_of(&app.instance_id, &name);
     let bytes = put_stream(app, backup);
-    let size =
-        super::blobs::store::within(limit, bucket.put_whole(&key, "application/x-tar", bytes))
-            .await
-            .map_err(|error| unreachable("taking the backup", &error))?;
+    let size = bucket
+        .put_whole(&key, "application/x-tar", bytes, limit)
+        .await
+        .map_err(|error| unreachable("taking the backup", &error))?;
     tracing::info!(
         backup = %name,
         size,
@@ -411,10 +440,15 @@ async fn put(app: &Arc<App>, bucket: &Arc<S3>) -> Result<(String, u64, i64)> {
     Ok((name, size, changes))
 }
 
-/// Deletes the backups the plan leaves out. Only names it listed under the folder and could
-/// read as a backup are ever deleted.
-async fn thin(app: &Arc<App>, bucket: &Arc<S3>) -> (usize, usize) {
-    let listed = match super::blobs::store::within(LIST_DEADLINE, bucket.list_in(FOLDER)).await {
+/// Deletes this instance's backups the plan leaves out, judged from when the backup just put
+/// was taken. Only names it listed in its own folder and could read as a backup are deleted.
+async fn thin(
+    app: &Arc<App>,
+    bucket: &Arc<S3>,
+    taken: chrono::DateTime<chrono::Utc>,
+) -> (usize, usize) {
+    let own = format!("{FOLDER}/{}", app.instance_id);
+    let listed = match super::blobs::store::within(LIST_DEADLINE, bucket.list_in(&own)).await {
         Ok(listed) => listed,
         Err(error) => {
             tracing::warn!(%error, "The backups were not listed for thinning");
@@ -423,8 +457,8 @@ async fn thin(app: &Arc<App>, bucket: &Arc<S3>) -> (usize, usize) {
     };
     let names: Vec<String> = listed.into_iter().map(|(name, _)| name).collect();
     let (mut removed, mut unremoved) = (0, 0);
-    for name in doomed(&names, app.clock.now()) {
-        let key = format!("{FOLDER}/{name}");
+    for name in doomed(&names, taken) {
+        let key = key_of(&app.instance_id, &name);
         match super::blobs::store::within(LIST_DEADLINE, bucket.delete(&key)).await {
             Ok(()) => removed += 1,
             Err(error) => {
