@@ -28,6 +28,20 @@ When reports name the same folder and sign-in, the server MUST retain the latest
 
 **Tests:** `compliance/folder-status.test.ts › groups multiple copies under their canonical sign-ins and counts current observations`.
 
+### `folder-status/copy-limit`
+
+When `PUT /folders/{id}/status` names a `folder_store_id` that the sign-in has no report for on that folder and the sign-in already holds 16 such reports, the server MUST, in the write that stores the new report, discard the sign-in's report for that folder with the oldest `received_at`, and the one with the greatest `folder_store_id` among reports with the same `received_at`.
+
+**Reason:** a device that is reinstalled reports under a new copy ID, and a sign-in's oldest report is the one most likely to belong to a copy that no longer exists. The limit holds per sign-in and per folder, so another sign-in's reports and the same sign-in's reports on another folder do not count toward it.
+
+**Tests:** `compliance/folder-status.test.ts › keeps 16 copies for each sign-in and folder, replacing the least recently reported copy with a 17th`, `› replaces, among copies reported at one instant, the one with the greatest copy ID`.
+
+### `folder-status/copy-limit-held`
+
+When `PUT /folders/{id}/status` names a `folder_store_id` that the sign-in already has a report for on that folder, the server MUST NOT discard any other report of that sign-in.
+
+**Tests:** `compliance/folder-status.test.ts › keeps 16 copies for each sign-in and folder, replacing the least recently reported copy with a 17th`.
+
 ### `folder-status/hidden-folder`
 
 When an authenticated caller that reads some type cannot read the `system.folder` named by `GET /folders/{id}/status` or `PUT /folders/{id}/status`, the server MUST answer `404 item_not_found`.
@@ -156,7 +170,7 @@ When `GET /folders/{id}/status` returns totals, the server MUST sum only reports
 
 ### `folder-status/historical`
 
-When an API key is revoked or expires, the server MUST retain its latest folder-copy reports as `current: false`.
+While a revoked or expired API key's own record is kept, the server MUST retain its latest folder-copy reports as `current: false`.
 
 **Tests:** `compliance/folder-status.test.ts › retains revoked and expired key reports immediately as history and excludes them from totals`.
 
@@ -176,9 +190,23 @@ While an app grant still stands, the server MUST keep its folder-copy reports cu
 
 ### `folder-status/app-historical`
 
-When an app grant is revoked, the server MUST retain its latest folder-copy reports as `current: false`.
+While a revoked app grant's own record is kept, the server MUST retain its latest folder-copy reports as `current: false`.
 
 **Tests:** `compliance/folder-status.test.ts › uses the app grant identity across token refresh and retains history after grant revocation`.
+
+### `folder-status/key-reports-removed`
+
+When the `revoked-key-reap` job removes a key, the server MUST remove that key's folder-copy reports.
+
+**Reason:** a sign-in's reports are kept as history while its record is kept, and no longer; the reports of the other sign-ins stay.
+
+**Tests:** `compliance/folder-status-retention.test.ts › removes a key's reports when the reap removes the key, and no other sign-in's`.
+
+### `folder-status/app-reports-removed`
+
+When the `revoked-grant-purge` job removes an app grant, the server MUST remove that grant's folder-copy reports.
+
+**Tests:** `compliance/folder-status-retention.test.ts › removes an app grant's reports when the purge removes the grant`.
 
 ### `folder-status/local-report`
 

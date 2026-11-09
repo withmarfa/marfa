@@ -252,6 +252,38 @@ describe("moving a type's items", () => {
     expect(deleted.error?.error.code).toBe("type_has_subtypes");
   });
 
+  it("rewrites no setting, and says why, when the folder it rewrites would name more types than a query may", async () => {
+    const { ns, deal, contract } = await pair("crowded");
+    const sub = `${ns}.bigdeal`;
+    const registered = await client.registerType({
+      id: sub,
+      parent: deal,
+      fields: {},
+    } as never);
+    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    await item(deal, { name: "moved" });
+    const others: string[] = [];
+    for (let at = 0; at < 98; at++) {
+      const id = `${ns}.other${String(at)}`;
+      const filler = await client.registerType({ id, fields: {} } as never);
+      expect(filler.ok, JSON.stringify(filler.error)).toBe(true);
+      others.push(id);
+    }
+    const query = { types: [deal, ...others, "core.note"] };
+    const folderId = await folder({ query });
+    const viewId = await view({ types: [deal] });
+
+    const result = await move(deal, { to: contract });
+    expect(result).toMatchObject({
+      succeeded: 1,
+      remaining: 0,
+      settings_rewritten: false,
+      settings_error: { code: "validation_error" },
+    });
+    expect((await properties(folderId)).query).toEqual(query);
+    expect((await properties(viewId)).query).toEqual({ types: [deal] });
+  });
+
   it("rewrites the folders, views and webhooks that name the type once every item has moved", async () => {
     const { ns, deal, contract } = await pair("settings");
     await item(deal, { name: "moved" });

@@ -17,6 +17,9 @@ use crate::app::refusal::{Code, Refusal, Result};
 
 const ACTION: &str = "folder.status";
 
+/// The copies of one folder that one sign-in keeps a report for.
+pub const MOST_COPIES: i64 = 16;
+
 struct Copy {
     folder_store_id: String,
     sequence: i64,
@@ -94,6 +97,16 @@ pub async fn report(
                 (false, sequence, received_at)
             }
             _ => {
+                if held.is_none() {
+                    tx.execute(
+                        "DELETE FROM folder_status WHERE folder_id = ?1 AND sign_in_kind = ?2 \
+                         AND sign_in_id = ?3 AND folder_store_id IN ( \
+                         SELECT folder_store_id FROM folder_status WHERE folder_id = ?1 \
+                         AND sign_in_kind = ?2 AND sign_in_id = ?3 \
+                         ORDER BY received_at DESC, folder_store_id LIMIT -1 OFFSET ?4)",
+                        params![folder_id, by.kind, by.id, MOST_COPIES - 1],
+                    )?;
+                }
                 let problems: Vec<(String, i64)> = report
                     .problems
                     .iter()
@@ -138,6 +151,15 @@ pub async fn report(
         .to_string())
     })
     .await
+}
+
+/// A sign-in's reports go with the sign-in's own record.
+pub fn remove_of(tx: &Transaction<'_>, kind: &str, id: &str) -> Result<()> {
+    tx.execute(
+        "DELETE FROM folder_status WHERE sign_in_kind = ?1 AND sign_in_id = ?2",
+        params![kind, id],
+    )?;
+    Ok(())
 }
 
 fn stored_rows(tx: &Transaction<'_>, folder_id: &str) -> Result<Vec<Stored>> {
