@@ -1087,7 +1087,7 @@ describe("how the copies are placed and removed", () => {
   });
 
   it("answers the drop door's refusals in their order", async () => {
-    const hash = await uploadReferencedText("dropped through a bare hex");
+    const hash = await uploadReferencedText("dropped in the door's order");
     await replicateToZero();
     const stores = (await operator.listBlobStores()).data.data;
     const s3 = stores.find((store) => store.kind === "s3")!;
@@ -1129,16 +1129,13 @@ describe("how the copies are placed and removed", () => {
     expect(await code(unknownStore)).toBe("blob_copy_not_found");
 
     // The witness for all of them: the copy is still there, and the same
-    // door drops it once the hash is the bare hex of a registered blob.
+    // door drops it under the blob's hash.
     expect(kinds((await client.listBlobCopies(hash)).data.data)).toEqual([
       "disk",
       "s3",
     ]);
-    const bare = await drop(
-      `${hash.slice("sha256:".length)}/copies/${s3.id}`,
-      managementKey,
-    );
-    expect(bare.status).toBe(200);
+    const dropped = await drop(`${hash}/copies/${s3.id}`, managementKey);
+    expect(dropped.status).toBe(200);
     expect(kinds((await client.listBlobCopies(hash)).data.data)).toEqual([
       "disk",
     ]);

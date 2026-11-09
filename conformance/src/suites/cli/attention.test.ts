@@ -129,12 +129,6 @@ it("answers the same attention over HTTP on the local socket and through the com
     },
   );
   expect(report.status).toBe(200);
-  await server.setFault("fail:housekeeping:audit-cleanup");
-  try {
-    await local.run(["housekeeping", "run", "audit-cleanup"]);
-  } finally {
-    await server.clearFault();
-  }
   const registered = await fetch(`${server.apiUrl}/connectors`, {
     method: "POST",
     headers: {
@@ -147,6 +141,15 @@ it("answers the same attention over HTTP on the local socket and through the com
   const connector = (await registered.json()) as { id: string };
   // Registration is the only report so far, and a day without one is quiet.
   await server.advanceClock(2 * 86400000);
+  // After the clock moves: the job is then due again, and the scheduler's next
+  // poll would run it and replace this failure with a success.
+  await server.setFault("fail:housekeeping:audit-cleanup");
+  try {
+    const ended = await local.json(["housekeeping", "run", "audit-cleanup"]);
+    expect(ended).toMatchObject({ name: "audit-cleanup", outcome: "error" });
+  } finally {
+    await server.clearFault();
+  }
   const concerns = await local.json<Inventory>(["attention"]);
   expect(concerns.data).toEqual(
     expect.arrayContaining([

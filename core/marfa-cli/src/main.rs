@@ -1,6 +1,4 @@
 mod access;
-#[cfg(target_os = "macos")]
-mod acl;
 mod auth;
 mod autostart;
 mod cleartext;
