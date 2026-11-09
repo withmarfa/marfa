@@ -36,8 +36,7 @@ impl Moved {
     }
 }
 
-/// `subtypes` keeps `from` beside `to` in `query.types`, since a query naming a parent reaches its
-/// subtypes' items, which stay where they are.
+/// Parent queries must still reach subtypes after the parent's own items move.
 pub fn settings(
     holder: Holder,
     settings: &Map<String, Value>,
@@ -173,8 +172,6 @@ enum Filter {
     Blocked,
 }
 
-/// A `type eq` or `type neq` naming `from` names `to` instead. Any other term on `type` whose
-/// answer differs for the two blocks the move, as does a rewrite longer than a filter may be.
 fn retyped_filter(text: &str, from: &str, to: &str) -> Filter {
     let Ok(mut expression) = FilterExpression::decode(text) else {
         return Filter::Unnamed;

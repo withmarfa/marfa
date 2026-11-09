@@ -317,8 +317,7 @@ pub struct RowDone {
     pub blobs: Vec<String>,
 }
 
-/// One matched item, written by the job's credential as it stands in this transaction. An item
-/// the credential's source filter hides is not found, as a listing would not show it.
+/// A source filter hides the same items from a job as from a listing.
 pub fn apply_row(
     unit: &Unit<'_, '_>,
     catalog: &Arc<Catalog>,
@@ -2140,7 +2139,6 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         Ok(RowDone::default())
     }
 
-    /// Laid over the row as it stands in this transaction, so no other write is stale against it.
     fn row_update(&self, id: &str, fill: impl FnOnce(&mut Update)) -> Result<RowDone> {
         let row = self.gate().writable_row(id)?;
         let mut update = Update {

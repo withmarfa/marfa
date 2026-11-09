@@ -9,9 +9,7 @@ use crate::app::catalog::Catalog;
 use crate::app::items::Reader;
 use crate::app::refusal::Result;
 
-/// The items a bulk action's filter matches, in a listing's default order: only those the caller
-/// may write, among `only` where it is named, and at most one more than `cap`. A type the catalog
-/// lacks matches nothing.
+/// Select one past the cap so the caller can detect overflow.
 pub(crate) fn matched(
     read: &Reader<'_, '_>,
     ask: &Ask,

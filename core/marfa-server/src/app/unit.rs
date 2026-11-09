@@ -54,8 +54,7 @@ impl<'c> Unit<'_, 'c> {
         }
     }
 
-    /// A job's write for the credential that queued it. A `summarised` one leaves its rows to the
-    /// entry `audit_summary` records.
+    /// Summarized writes leave per-item auditing to the chunk's audit entry.
     pub fn for_holder(&self, caller: Caller, summarised: bool) -> Unit<'_, 'c> {
         Unit {
             caller,

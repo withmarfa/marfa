@@ -19,16 +19,7 @@ import {
   withStream,
 } from "../../utils/stream.js";
 
-/**
- * A bulk-action job that the server stops on: killed while it holds the
- * worker at the start of a job, with a chunk's rows written and not yet
- * committed, and between two chunks. The next process finishes the job.
- *
- * The patch of a property update moves each item's version by one, so a row
- * written twice shows as a third version, and a row skipped as a first. The
- * event stream is read from before the job, so a row announced twice shows
- * in the replay.
- */
+// Versions expose repeated writes; replay exposes repeated announcements.
 let server: FreshServer;
 let learned: { rows: number; chunk: number };
 let counter = 0;

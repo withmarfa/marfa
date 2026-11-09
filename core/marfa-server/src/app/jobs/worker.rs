@@ -1,6 +1,3 @@
-//! The one worker. It sleeps until a job is queued or canceled, runs one job at a time, and lets
-//! other writes through between chunks.
-
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,7 +19,6 @@ use crate::app::types;
 use crate::app::unit::Unit;
 use crate::db::io_refusal;
 
-/// Rows a chunk writes in one transaction.
 const CHUNK: i64 = 100;
 const BUSY_PAUSE: Duration = Duration::from_millis(50);
 const SAVEPOINT: &str = "SAVEPOINT job_row";
@@ -173,8 +169,6 @@ fn stalled(refusal: &Refusal) -> Ran {
     Ran::Stalled
 }
 
-/// The job as this transaction finds it, and its credential as it stands, or `None` once the job
-/// has ended, or failed here because its credential no longer stands.
 fn standing(unit: &Unit<'_, '_>, id: &str) -> Result<Option<(Job, Caller)>> {
     let tx = unit.tx();
     let Some(job) = store::by_id(tx, id)?.filter(|job| job.status == store::RUNNING) else {
@@ -331,8 +325,7 @@ async fn chunk(app: &App, id: &str) -> Result<Chunk> {
     .await
 }
 
-/// A fault ended the chunk's transaction, so none of its rows were written. They are recorded
-/// with the fault's cause, unless the chunk is found committed after all.
+/// Check the checkpoint before recording a failed commit's rows as unwritten.
 async fn lost_chunk(app: &App, id: &str, offset: i64, cause: &Refusal) -> Result<Chunk> {
     let id = id.to_string();
     let cause = cause.clone();

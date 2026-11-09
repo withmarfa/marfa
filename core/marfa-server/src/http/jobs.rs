@@ -1,6 +1,3 @@
-//! `POST /items/bulk-actions`, its jobs' reads and cancels, and `POST /types/{id}/move`. The doors
-//! read a request; `app::jobs` and `app::types` decide what becomes of it.
-
 use std::sync::Arc;
 
 use axum::extract::{Path, State};

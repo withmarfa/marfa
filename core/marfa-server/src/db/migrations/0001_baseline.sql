@@ -286,8 +286,6 @@ CREATE TABLE IF NOT EXISTS bulk_job_items (
     PRIMARY KEY (job_id, position)
 ) STRICT, WITHOUT ROWID;
 
--- What a job keeps of its rows: the first it changed and refused, rows an
--- earlier row carried along, and the blobs a purge's rows referenced.
 CREATE TABLE IF NOT EXISTS bulk_job_notes (
     job_id TEXT NOT NULL REFERENCES bulk_jobs (id) ON DELETE CASCADE,
     kind TEXT NOT NULL CHECK (kind IN ('changed', 'error', 'carried', 'blob')),

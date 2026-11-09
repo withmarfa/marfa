@@ -90,8 +90,7 @@ impl Caller {
     }
 }
 
-/// The job's credential as it stands now: a key while it lives, an app while its grant stands,
-/// whichever of its tokens has expired.
+/// App jobs outlive their access tokens while the grant stands.
 pub fn standing_holder(tx: &Transaction<'_>, holder: &Maker, at: &str) -> Result<Option<Caller>> {
     Ok(match holder {
         Maker::Key(id) => match keys::live_by_id(tx, id, at)? {

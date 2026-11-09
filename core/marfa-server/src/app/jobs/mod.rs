@@ -1,7 +1,3 @@
-//! Bulk actions and type moves: work that outlasts a request, run by one worker in chunks. Each
-//! chunk is one transaction that writes its rows through the items' write function and moves the
-//! job's checkpoint, so a job a stop or a crash cuts off resumes at its next row.
-
 mod store;
 mod worker;
 

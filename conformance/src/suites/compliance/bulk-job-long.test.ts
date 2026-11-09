@@ -8,19 +8,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 
-/**
- * A bulk-action job that outlives the stop's wait for it: a stop on `SIGTERM`
- * ends with status 0 within the eight seconds a container runtime leaves, and
- * the next process finishes the job once.
- *
- * **How long is long.** The stop waits under eight seconds for a run in
- * flight, so a job that outlives the wait needs more than that to do. The
- * contract states no pace, so the fixture measures one: it times a job over a
- * thousand rows and sizes the long job to take at least `LONG_JOB_MS` at that
- * pace. A bulk action matches at most 50,000 items, which a fast server writes
- * inside the wait, so the long job is a type move, which takes every item of
- * its type.
- */
+// An uncapped type move can outlast the stop's wait on a fast server.
 let server: FreshServer;
 
 /** What the long job must still have to do when the stop begins. */
