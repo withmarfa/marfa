@@ -1355,10 +1355,12 @@ async fn a_purged_grant_takes_the_folder_reports_it_made() {
         StatusCode::NO_CONTENT
     );
     instance.app.clock.advance(89 * DAY_MS).unwrap();
-    assert_eq!(swept(&instance.app, "revoked-grant-purge").await, 0);
+    cleaned(&instance.app).await;
+    assert_eq!(instance.count(WITHDRAWN).await, 1);
     assert_eq!(instance.count(reports).await, 1);
     instance.app.clock.advance(2 * DAY_MS).unwrap();
-    assert_eq!(swept(&instance.app, "revoked-grant-purge").await, 1);
+    cleaned(&instance.app).await;
+    assert_eq!(instance.count(WITHDRAWN).await, 0);
     assert_eq!(instance.count(reports).await, 0);
 }
 
