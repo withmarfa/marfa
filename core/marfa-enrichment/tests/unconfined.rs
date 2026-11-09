@@ -30,7 +30,7 @@ fn a_file_is_not_parsed_by_a_reader_that_is_not_confined() -> Result<(), Failed>
     let target = folder.path().join("written");
     let options = Options::default();
 
-    // SAFETY: this program is single-threaded here, and the only test.
+    // SAFETY: `main` runs one test at a time, and nothing else here reads the environment.
     unsafe { std::env::set_var(UNCONFINED, "1") };
     let outcome = read(&file_of(&writes(&target)), "text/plain", &options);
     // SAFETY: as above.
@@ -110,5 +110,7 @@ fn main() {
             a_child_that_is_not_confined_ends_after_its_first_line,
         ),
     ];
-    libtest_mimic::run(&Arguments::from_args(), trials).exit();
+    let mut arguments = Arguments::from_args();
+    arguments.test_threads = Some(1);
+    libtest_mimic::run(&arguments, trials).exit();
 }
