@@ -1,6 +1,10 @@
+use std::sync::Arc;
+use std::time::Duration;
+
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
+use marfa_server::app::App;
 use marfa_server::http::{control, public};
 use marfa_server::settings::{Environment, Settings};
 use serde_json::{Value, json};
@@ -8,6 +12,7 @@ use tempfile::TempDir;
 use tower::ServiceExt;
 
 struct Instance {
+    app: Arc<App>,
     _dir: TempDir,
     public: Router,
     control: Router,
@@ -56,8 +61,9 @@ impl Instance {
             ("MARFA_RATE_LIMIT_ENABLED", "false"),
         ];
         let settings = Settings::read(Environment::from_pairs(&pairs)).unwrap();
-        let app = marfa_server::app::App::start(settings).await.unwrap();
+        let app = App::start(settings).await.unwrap();
         Instance {
+            app: app.clone(),
             _dir: dir,
             public: public(app.clone()),
             control: control(app.clone()),
@@ -166,4 +172,47 @@ async fn a_key_without_instance_read_is_refused() {
     let refused = instance.metrics(&plain).await;
     assert_eq!(refused.status, StatusCode::FORBIDDEN);
     assert_eq!(refused.body["error"]["code"], "forbidden");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn requests_at_once_hold_one_read_connection_and_leave_the_rest_serving() {
+    let instance = Instance::start().await;
+    let (_, reader) = instance.key(&["instance.read"]).await;
+    let app = instance.app.clone();
+    app.faults.set("hold:metrics", None).unwrap();
+    let asked: Vec<_> = (0..8)
+        .map(|_| {
+            let public = instance.public.clone();
+            let request = request(Method::GET, "/metrics", Some(&reader), None);
+            tokio::spawn(async move { send(&public, request).await.status })
+        })
+        .collect();
+    let held = || {
+        app.faults
+            .list()
+            .iter()
+            .map(|fault| fault.waiting)
+            .sum::<u64>()
+    };
+    for _ in 0..500 {
+        if held() > 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let holding = held();
+    let others = (0..3).map(|_| {
+        app.db
+            .read(|tx| Ok(tx.query_row("SELECT 1", [], |row| row.get::<_, i64>(0))?))
+    });
+    let others = futures_util::future::join_all(others);
+    let read = tokio::time::timeout(Duration::from_secs(2), others).await;
+    app.faults.clear(None);
+
+    assert_eq!(holding, 1);
+    assert!(read.is_ok_and(|read| read.iter().all(Result::is_ok)));
+    for asked in asked {
+        assert_eq!(asked.await.unwrap(), StatusCode::OK);
+    }
 }

@@ -4,10 +4,12 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::Transaction;
 use serde_json::{Map, Value, json};
+use tokio::sync::Semaphore;
 
 use super::App;
+use super::faults::HOLD_METRICS;
 use super::instance::VERSION;
-use super::refusal::Result;
+use super::refusal::{Refusal, Result};
 
 pub struct Counts {
     by_state: Map<String, Value>,
@@ -78,15 +80,18 @@ fn file_size(path: &Path) -> Value {
     }
 }
 
-fn storage(app: &App, counts: &Counts) -> Value {
-    let (database, wal) = match app.settings.start.database.file() {
+fn file_sizes(database: Option<&Path>) -> (Value, Value) {
+    match database {
         Some(path) => {
-            let mut log = path.clone().into_os_string();
+            let mut log = path.as_os_str().to_owned();
             log.push("-wal");
-            (file_size(&path), file_size(&PathBuf::from(log)))
+            (file_size(path), file_size(&PathBuf::from(log)))
         }
         None => (Value::Null, Value::Null),
-    };
+    }
+}
+
+fn storage(counts: &Counts, (database, wal): (Value, Value)) -> Value {
     json!({
         "database_bytes": database,
         "wal_bytes": wal,
@@ -139,22 +144,46 @@ fn resident_bytes() -> Option<u64> {
     Some(pages * page)
 }
 
-fn process() -> Value {
+fn process(resident: Option<u64>) -> Value {
     let used = usage();
     // The peak is bytes on macOS and kilobytes elsewhere.
     let peak_unit: i64 = if cfg!(target_os = "macos") { 1 } else { 1024 };
     json!({
         "release": VERSION,
-        "memory_rss_bytes": resident_bytes(),
+        "memory_rss_bytes": resident,
         "memory_rss_peak_bytes": used.map(|used| used.ru_maxrss * peak_unit),
         "cpu_user_seconds": used.map(|used| seconds(used.ru_utime)),
         "cpu_system_seconds": used.map(|used| seconds(used.ru_stime)),
     })
 }
 
+/// One count at a time, so a burst of requests waits for one read connection, not all of them.
+pub struct Permit(Semaphore);
+
+impl Default for Permit {
+    fn default() -> Permit {
+        Permit(Semaphore::const_new(1))
+    }
+}
+
 pub async fn read(app: &App) -> Result<Value> {
+    let _one = app
+        .metrics
+        .0
+        .acquire()
+        .await
+        .map_err(|_| Refusal::internal("the metrics permit has closed"))?;
     let now = app.clock.stamp();
-    let counts = app.db.read(move |tx| count(tx, &now)).await?;
+    let database = app.settings.start.database.file();
+    let faults = app.faults.clone();
+    let (counts, files, resident) = app
+        .db
+        .read(move |tx| {
+            faults.hold_blocking(HOLD_METRICS);
+            let counts = count(tx, &now)?;
+            Ok((counts, file_sizes(database.as_deref()), resident_bytes()))
+        })
+        .await?;
     Ok(json!({
         "items": { "total": counts.items, "by_state": counts.by_state },
         "blobs": { "count": counts.blobs, "total_bytes": counts.blob_bytes },
@@ -162,7 +191,7 @@ pub async fn read(app: &App) -> Result<Value> {
         "keys": { "total": counts.keys },
         "webhooks": { "total": counts.webhooks },
         "uptime_seconds": app.started.elapsed().as_secs(),
-        "process": process(),
-        "storage": storage(app, &counts),
+        "process": process(resident),
+        "storage": storage(&counts, files),
     }))
 }
