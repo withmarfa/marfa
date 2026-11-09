@@ -523,9 +523,20 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
             if let Some(identity) = identity {
                 check_account_runs(identity, &binary)?;
             }
+            // A running server reads its settings once, so it restarts when
+            // this run changed what it reads, when those settings are
+            // written by something else, or when it does not answer where it
+            // should, which is what a run that wrote them and then failed
+            // leaves.
+            let restart = wrote_settings
+                || external
+                || existing
+                    .as_ref()
+                    .is_some_and(|(state, _)| state.port != port || state.release != release)
+                || (service.running() && !answers_health(port));
             steps.say(&format!("Starting {name}..."));
             let mark = service.mark();
-            linger = service.on(autostart, &binary, server)?.linger;
+            linger = service.on(autostart, restart, &binary, server)?;
             let watch = Watch::Process { service, mark };
             wait_until_healthy(&watch, port, args.wait)?;
         }
@@ -841,6 +852,13 @@ impl Watch<'_> {
             Watch::Process { service, mark } => service.log_after(Some(mark), 20),
         }
     }
+}
+
+fn answers_health(port: u16) -> bool {
+    http_agent()
+        .get(&format!("http://127.0.0.1:{port}/health"))
+        .call()
+        .is_ok_and(|response| response.status().as_u16() == 200)
 }
 
 pub(super) fn wait_until_healthy(watch: &Watch, port: u16, seconds: u64) -> Result<(), CliError> {

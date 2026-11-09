@@ -168,9 +168,11 @@ pub fn run(dir: &DirArgs) -> Result<(), CliError> {
     let mut command = Command::new(&server);
     command.stdin(Stdio::null());
     let mut sink = Sink::Inherit;
+    let mut folder_arg = String::new();
     if dir.dir.is_some() {
         let folder = Folder::new(dir)?;
         let (state, _) = folder.require_state()?;
+        folder_arg = format!(" --dir {}", folder.dir.display());
         let settings = folder.read(files::SETTINGS)?.unwrap_or_default();
         command.envs(native::environment(&folder.dir, state.port, &settings));
         if launchd::supported() {
@@ -218,7 +220,7 @@ pub fn run(dir: &DirArgs) -> Result<(), CliError> {
     let stopped = STOP.load(Ordering::SeqCst);
     if status.code() == Some(REFUSED) && !stopped {
         sink.say(&format!(
-            "{SERVER} {REFUSED_DATABASE} (exit status {REFUSED}); the lines above say why. This service stays up and does nothing, so that it is not started again into the same refusal. Stop it with `marfa server stop`, fix the database, then run `marfa server start`."
+            "{SERVER} {REFUSED_DATABASE} (exit status {REFUSED}); the lines above say why. This service stays up and does nothing, so that it is not started again into the same refusal. Stop it with `marfa server stop{folder_arg}`, fix the database, then run `marfa server start{folder_arg}`."
         ));
         while !STOP.load(Ordering::SeqCst) {
             std::thread::sleep(Duration::from_millis(250));

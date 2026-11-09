@@ -166,9 +166,18 @@ settled() {
 }
 echo "$*" >> "$H/launchctl.log"
 label=$(printf '%s' "$*" | sed -n 's/.*so\.marfa\.server\.\([a-z0-9_-]*\).*/\1/p')
+# A new process takes the next number, unless the stand-in is told that a
+# restart does nothing.
+spawn() {
+  [ -e "$H/loaded-$label" ] || return 0
+  if [ -e "$H/restart-ignored" ] && [ -e "$H/pid-$label" ]; then return 0; fi
+  n=$(cat "$H/pidseq" 2>/dev/null || echo 100); n=$((n+1))
+  echo $n > "$H/pidseq"; echo $n > "$H/pid-$label"
+}
 begin() {
   plist="$1"
   grep -q '<string>run</string>' "$plist" || return 0
+  spawn
   dir=$(awk '/<string>--dir<\/string>/{getline; gsub(/.*<string>|<\/string>.*/, ""); print; exit}' "$plist")
   name=$(sed -n 's/^MARFA_NAME=//p' "$dir/.env")
   if [ -e "$S/refuse" ]; then
@@ -182,13 +191,15 @@ begin() {
 case "$1" in
   print)
     [ -e "$H/loaded-$label" ] || exit 1
-    if [ -e "$H/stopped-$label" ]; then echo "	state = waiting"; else echo "	state = running"; fi ;;
+    if [ -e "$H/stopped-$label" ]; then echo "	state = waiting"; else echo "	state = running"; echo "	pid = $(cat "$H/pid-$label" 2>/dev/null)"; fi ;;
   bootstrap)
     [ -e "$H/bootstrap-fails" ] && { echo "Bootstrap failed: 5: Input/output error" >&2; exit 5; }
     label=$(basename "$3" .plist | sed 's/^so\.marfa\.server\.//')
     touch "$H/loaded-$label"; rm -f "$H/stopped-$label"; begin "$3" ;;
-  kickstart) rm -f "$H/stopped-$label"; f="$H/Library/LaunchAgents/so.marfa.server.$label.plist"; [ -e "$f" ] || f="$H/../install/so.marfa.server.$label.plist"; begin "$f" ;;
-  bootout) rm -f "$H/loaded-$label" "$S"/go-*; settled ;;
+  kickstart)
+    if [ "$2" = -k ] && [ ! -e "$H/restart-ignored" ]; then rm -f "$S"/go-* "$H/pid-$label"; settled; fi
+    rm -f "$H/stopped-$label"; f="$H/Library/LaunchAgents/so.marfa.server.$label.plist"; [ -e "$f" ] || f="$H/../install/so.marfa.server.$label.plist"; begin "$f" ;;
+  bootout) rm -f "$H/loaded-$label" "$H/pid-$label" "$S"/go-*; settled ;;
 esac
 "#;
 
@@ -213,6 +224,10 @@ begin() {
   dir=$(sed -n 's/.*"--dir" "\{0,1\}\([^" ]*\).*/\1/p' "$f")
   name=$(sed -n 's/^MARFA_NAME=//p' "$dir/.env")
   touch "$H/active-$unit"
+  if ! { [ -e "$H/restart-ignored" ] && [ -e "$H/pid-$unit" ]; }; then
+    n=$(cat "$H/pidseq" 2>/dev/null || echo 100); n=$((n+1))
+    echo $n > "$H/pidseq"; echo $n > "$H/pid-$unit"
+  fi
   if [ -e "$S/refuse" ]; then
     echo "marfa-server will not start on the database (exit status 78)" >> "$S/server-log"
     return 0
@@ -227,8 +242,13 @@ case "$cmd" in
   disable) rm -f "$H/enabled-$unit" ;;
   is-enabled) [ -e "$H/enabled-$unit" ] ;;
   is-active) [ -e "$H/active-$unit" ] ;;
-  start|restart) [ -e "$H/start-fails" ] && { echo "Job for $unit failed" >&2; exit 1; }; begin ;;
-  stop) rm -f "$H/active-$unit" "$S"/go-*; settled ;;
+  start) [ -e "$H/start-fails" ] && { echo "Job for $unit failed" >&2; exit 1; }; begin ;;
+  restart)
+    [ -e "$H/start-fails" ] && { echo "Job for $unit failed" >&2; exit 1; }
+    if [ ! -e "$H/restart-ignored" ]; then rm -f "$S"/go-* "$H/pid-$unit"; settled; fi
+    begin ;;
+  show) for last; do :; done; cat "$H/pid-$last" 2>/dev/null || echo 0 ;;
+  stop) rm -f "$H/active-$unit" "$H/pid-$unit" "$S"/go-*; settled ;;
 esac
 "#;
 
@@ -1930,6 +1950,30 @@ impl Rig {
         fs::read_to_string(self.home().join(name)).unwrap_or_default()
     }
 
+    /// How many times the service manager was told to restart a running
+    /// service.
+    fn restarts(&self) -> usize {
+        let word = if cfg!(target_os = "macos") {
+            "kickstart -k"
+        } else {
+            " restart "
+        };
+        self.manager_log()
+            .lines()
+            .filter(|line| line.contains(word))
+            .count()
+    }
+
+    /// The number the stand-in manager gave the service's current process.
+    fn service_pid(&self, name: &str) -> Option<String> {
+        let key = if cfg!(target_os = "macos") {
+            name.to_string()
+        } else {
+            format!("marfa-{name}.service")
+        };
+        fs::read_to_string(self.home().join(format!("pid-{key}"))).ok()
+    }
+
     fn control_log(&self) -> String {
         fs::read_to_string(self.state.join("control.log")).unwrap_or_default()
     }
@@ -2009,10 +2053,135 @@ fn running_a_native_install_again_changes_nothing() {
         !rig.manager_log()
             .lines()
             .skip(calls)
-            .any(|line| line.contains("bootstrap") || line.contains("restart")),
+            .any(|line| line.contains("bootstrap")
+                || line.contains("kickstart")
+                || line.contains("restart")),
         "the second run reloaded the service: {}",
         rig.manager_log()
     );
+}
+
+/// Whether anything answers on the port.
+fn answers(port: u16) -> bool {
+    let _held = SOCKETS.lock().unwrap();
+    std::net::TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+        Duration::from_millis(200),
+    )
+    .is_ok()
+}
+
+#[test]
+fn running_a_native_install_again_with_another_port_moves_the_running_server_to_it() {
+    let mut rig = Rig::new("n-port-move");
+    rig.native_installed(&["--access", "local"]);
+    assert!(answers(rig.port));
+    let (restarts, pid) = (rig.restarts(), rig.service_pid("marfa"));
+    assert!(pid.is_some(), "the stand-in gave the service no process");
+
+    let moved = free_port();
+    rig.also_listen(moved);
+    let (code, stdout, stderr) = rig.marfa(&[
+        "install",
+        "--yes",
+        "--wait",
+        "5",
+        "--access",
+        "local",
+        "--port",
+        &moved.to_string(),
+    ]);
+    assert_eq!(code, 0, "{stdout}\n{stderr}");
+    assert!(
+        rig.file(".env").contains(&format!("MARFA_PORT={moved}")),
+        "{}",
+        rig.file(".env")
+    );
+    assert_eq!(rig.restarts(), restarts + 1, "{}", rig.manager_log());
+    assert_ne!(rig.service_pid("marfa"), pid);
+    assert!(answers(moved), "nothing answers on the new port");
+    assert!(!answers(rig.port), "the old process still holds its port");
+}
+
+#[test]
+fn changing_how_a_native_server_is_reached_restarts_it_and_an_unchanged_run_does_not() {
+    let rig = Rig::new("n-access-restart");
+    let proxy = [
+        "--access",
+        "proxy",
+        "--address",
+        "https://marfa.example.com",
+    ];
+    rig.native_installed(&proxy);
+    let (restarts, pid) = (rig.restarts(), rig.service_pid("marfa"));
+
+    rig.native_installed(&proxy);
+    assert_eq!(rig.restarts(), restarts, "an unchanged run restarted it");
+    assert_eq!(rig.service_pid("marfa"), pid);
+
+    rig.native_installed(&[
+        "--access",
+        "cloudflare",
+        "--address",
+        "https://marfa.example.com",
+    ]);
+    assert_eq!(rig.setting("TRUSTED_PROXY_CIDRS"), None);
+    assert_eq!(rig.restarts(), restarts + 1, "{}", rig.manager_log());
+    assert_ne!(rig.service_pid("marfa"), pid);
+}
+
+#[test]
+fn a_native_run_that_finds_the_service_not_answering_on_its_port_restarts_it() {
+    let rig = Rig::new("n-unanswered");
+    rig.native_installed(&["--access", "local"]);
+    let restarts = rig.restarts();
+    // The state an earlier run left when it wrote a setting and then failed.
+    fs::remove_file(rig.state.join(format!("go-{}", rig.port))).unwrap();
+    let until = std::time::Instant::now() + Duration::from_secs(5);
+    while answers(rig.port) && std::time::Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    rig.native_installed(&["--access", "local"]);
+    assert_eq!(rig.restarts(), restarts + 1, "{}", rig.manager_log());
+    assert!(answers(rig.port));
+}
+
+#[test]
+fn settings_managed_elsewhere_are_applied_by_running_install_again() {
+    let rig = Rig::new("n-external-restart");
+    managed_elsewhere(&rig, CLOUDFLARE_FILE);
+    let external = [
+        "--access",
+        "cloudflare",
+        "--external-settings",
+        "--address",
+        "https://marfa.example.com",
+    ];
+    rig.native_installed(&external);
+    let (restarts, pid) = (rig.restarts(), rig.service_pid("marfa"));
+    fs::write(
+        rig.dir.join("marfa.env"),
+        CLOUDFLARE_FILE.replace("mine", "other"),
+    )
+    .unwrap();
+    rig.native_installed(&external);
+    assert_eq!(rig.restarts(), restarts + 1, "{}", rig.manager_log());
+    assert_ne!(rig.service_pid("marfa"), pid);
+}
+
+#[test]
+fn a_restart_that_leaves_the_same_process_running_is_reported() {
+    let rig = Rig::new("n-restart-ignored");
+    rig.native_installed(&["--access", "local"]);
+    fs::write(rig.home().join("restart-ignored"), "").unwrap();
+    let (code, _, stderr) = rig.native(&[
+        "--access",
+        "proxy",
+        "--address",
+        "https://marfa.example.com",
+    ]);
+    assert_eq!(code, 3, "{stderr}");
+    assert!(stderr.contains("did not restart"), "{stderr}");
 }
 
 #[test]
@@ -2554,6 +2723,16 @@ fn a_server_that_refuses_its_database_is_not_started_again_and_run_waits_to_be_s
         child.try_wait().unwrap().is_none(),
         "run ended on a refusal, so a supervisor would start it into the same one"
     );
+    let said = rig.run_said();
+    for command in ["stop", "start"] {
+        assert!(
+            said.contains(&format!(
+                "`marfa server {command} --dir {}",
+                rig.real_dir().display()
+            )),
+            "{said}"
+        );
+    }
     signal(&child, "TERM");
     let status = ended(&mut child, 20).expect("run did not end after a stop");
     assert_eq!(status.code(), Some(0));

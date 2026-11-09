@@ -228,6 +228,17 @@ pub fn running(name: &str) -> bool {
         })
 }
 
+/// The process launchd runs the agent as, while it runs one.
+pub fn process_id(name: &str) -> Option<u32> {
+    let out = run(&["print", &target(name)])
+        .ok()
+        .filter(|out| out.status.success())?;
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("pid = "))
+        .and_then(|pid| pid.trim().parse().ok())
+}
+
 /// The agent's file, where this install has one.
 pub fn installed(name: &str, dir: &Path) -> Option<PathBuf> {
     [at_login_file(name).ok()?, in_folder_file(name, dir)]

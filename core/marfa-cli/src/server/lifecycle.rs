@@ -1,5 +1,7 @@
 //! `marfa server upgrade`, `start`, `stop`, `status` and `uninstall`.
 
+use std::path::Path;
+
 use serde_json::{Value, json};
 
 use super::docker::{self, Docker};
@@ -81,11 +83,7 @@ fn upgrade_native(
     // The service is written again, because the binary it names may have
     // moved with the release. A changed service restarts by itself; a new
     // release needs the restart even when the service is the same.
-    let was_running = service.running();
-    let started = service.on(state.autostart, &binary, &server)?;
-    if was_running && !unchanged && !started.changed {
-        service.restart()?;
-    }
+    service.on(state.autostart, !unchanged, &binary, &server)?;
     let watch = Watch::Process {
         service: &service,
         mark,
@@ -95,8 +93,8 @@ fn upgrade_native(
             return Err(error);
         }
         return Err(CliError::Install(format!(
-            "{error}\n\n{target} did not update the database, and the server says why above. A refused update leaves the database as it was, so {from} still reads it: install {from} again and run `marfa server start`.",
-            from = state.release,
+            "{error}\n\n{}",
+            refused_update_note(&target, &state.release, &folder.dir)
         )));
     }
     if !unchanged {
@@ -254,6 +252,15 @@ fn database_update(log: &str) -> Option<DatabaseUpdate> {
         .next_back()
 }
 
+/// What to do after a service refused the database a newer release could not
+/// update. The service stays up and idle, so `start` alone finds it running.
+fn refused_update_note(target: &str, from: &str, dir: &Path) -> String {
+    let dir = dir.display();
+    format!(
+        "{target} did not update the database, and the server says why above. A refused update leaves the database as it was, so {from} still reads it. The service stays up and idle after a refusal, so run `marfa server stop --dir {dir}`, install {from} again, then run `marfa server start --dir {dir}`."
+    )
+}
+
 // ---- start and stop -----------------------------------------------------
 
 pub fn start(args: StartArgs, out: &Printer) -> Result<(), CliError> {
@@ -275,11 +282,8 @@ pub fn start(args: StartArgs, out: &Printer) -> Result<(), CliError> {
             let mark = service.mark();
             // Written again, so that a binary that has moved is named by its
             // new path.
-            if service.on(state.autostart, &binary, &server)?.changed && service.running() {
-                service.restart()?;
-            } else {
-                service.start()?;
-            }
+            service.on(state.autostart, false, &binary, &server)?;
+            service.start()?;
             wait_until_healthy(
                 &Watch::Process {
                     service: &service,
@@ -669,5 +673,18 @@ mod tests {
             (4, 5, "/b")
         );
         assert!(database_update("{}").is_none());
+    }
+
+    #[test]
+    fn a_refused_update_says_to_stop_the_idle_service_before_starting_it_again() {
+        let note = refused_update_note("0.0.71", "0.0.70", Path::new("/srv/marfa one"));
+        let stop = note
+            .find("`marfa server stop --dir /srv/marfa one`")
+            .unwrap();
+        let install = note.find("install 0.0.70 again").unwrap();
+        let start = note
+            .find("`marfa server start --dir /srv/marfa one`")
+            .unwrap();
+        assert!(stop < install && install < start, "{note}");
     }
 }

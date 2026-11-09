@@ -4,6 +4,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -99,11 +100,8 @@ pub struct Service<'a> {
     pub trace: bool,
 }
 
-/// What a start at boot did.
-pub struct Started {
-    pub changed: bool,
-    pub linger: Option<Linger>,
-}
+/// How long a restart is given to show a new process.
+const RESTART_WAIT: Duration = Duration::from_secs(4);
 
 impl Service<'_> {
     /// What a person calls it.
@@ -128,8 +126,33 @@ impl Service<'_> {
 
     /// Writes the service, loads it, and starts it. Only a service that
     /// `autostart` names starts again when the machine, or the person's
-    /// login, does.
-    pub fn on(&self, autostart: bool, binary: &Path, server: &Path) -> Result<Started, CliError> {
+    /// login, does. A running service on an unchanged definition keeps
+    /// running, unless `restart` says the server must read its settings
+    /// again, and then it restarts and is shown to have a new process.
+    pub fn on(
+        &self,
+        autostart: bool,
+        restart: bool,
+        binary: &Path,
+        server: &Path,
+    ) -> Result<Option<Linger>, CliError> {
+        let before = if restart { self.process_id() } else { None };
+        let (changed, linger) = self.write_and_load(autostart, binary, server)?;
+        if let Some(before) = before {
+            if !changed {
+                self.restart()?;
+            }
+            self.await_new_process(before)?;
+        }
+        Ok(linger)
+    }
+
+    fn write_and_load(
+        &self,
+        autostart: bool,
+        binary: &Path,
+        server: &Path,
+    ) -> Result<(bool, Option<Linger>), CliError> {
         match self.manager {
             Manager::Launchd => {
                 let agent = launchd::Agent {
@@ -140,10 +163,7 @@ impl Service<'_> {
                     stdout: launchd::agent_log(self.name)?,
                     at_login: autostart,
                 };
-                Ok(Started {
-                    changed: launchd::on(&agent, self.trace)?,
-                    linger: None,
-                })
+                Ok((launchd::on(&agent, self.trace)?, None))
             }
             manager => {
                 let scope = manager.scope();
@@ -163,7 +183,35 @@ impl Service<'_> {
                 let linger = (scope == Scope::User && autostart)
                     .then(|| systemd::linger(self.trace))
                     .transpose()?;
-                Ok(Started { changed, linger })
+                Ok((changed, linger))
+            }
+        }
+    }
+
+    /// The process the manager runs the service as, while it runs one.
+    pub fn process_id(&self) -> Option<u32> {
+        match self.manager {
+            Manager::Launchd => launchd::process_id(self.name),
+            m => systemd::process_id(m.scope(), self.name),
+        }
+    }
+
+    /// Waits for the manager to show another process than `before`. A service
+    /// that shows none is left to the wait for the server, which says why.
+    fn await_new_process(&self, before: u32) -> Result<(), CliError> {
+        let deadline = Instant::now() + RESTART_WAIT;
+        loop {
+            match self.process_id() {
+                Some(now) if now != before => return Ok(()),
+                None => return Ok(()),
+                Some(_) if Instant::now() >= deadline => {
+                    return Err(CliError::Install(format!(
+                        "{} did not restart: it still runs as process {before}, so the server has not read its new settings. Run `marfa server stop --dir {dir}` and then `marfa server start --dir {dir}`",
+                        self.describe(),
+                        dir = self.dir.display()
+                    )));
+                }
+                Some(_) => std::thread::sleep(Duration::from_millis(100)),
             }
         }
     }
