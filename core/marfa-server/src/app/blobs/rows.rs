@@ -432,7 +432,6 @@ pub fn recorded_object_store(tx: &Transaction<'_>, id: &str) -> Result<bool> {
     )?)
 }
 
-/// The copies the copy record names in attached stores.
 /// The hashes `store_id` holds a recorded copy of, among `hashes`.
 pub fn held_in(
     tx: &Transaction<'_>,
@@ -450,6 +449,7 @@ pub fn held_in(
     Ok(held)
 }
 
+/// The copies the copy record names in attached stores.
 pub fn holders(tx: &Transaction<'_>, hash: &Hash) -> Result<Vec<Held>> {
     let mut statement = tx.prepare_cached(
         "SELECT c.store_id, s.kind, c.object FROM blob_copies c JOIN stores s ON s.id = c.store_id \

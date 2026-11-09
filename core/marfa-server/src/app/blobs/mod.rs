@@ -258,12 +258,12 @@ impl Blobs {
         self.faults.store_check_deadline().unwrap_or(CHECK_DEADLINE)
     }
 
-    /// The attached stores, the disk first.
     /// The object store, where one is configured.
     pub fn s3(&self) -> Option<Arc<S3>> {
         self.s3.clone()
     }
 
+    /// The attached stores, the disk first.
     fn attached(&self) -> Vec<Store> {
         std::iter::once(Store::Disk(self.disk.clone()))
             .chain(self.s3.iter().map(|s3| Store::S3(s3.clone())))
