@@ -603,8 +603,6 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
             name: &name,
         },
     };
-    // A local server in a container is reached only at its published port, so
-    // that address is always put back.
     let asked_to_move = existing.is_none()
         || args.address.is_some()
         || args
@@ -616,6 +614,7 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
                 .https_port
                 .zip(existing.as_ref())
                 .is_some_and(|(port, (state, _))| state.https_port != Some(port)))
+        // A local Docker server is reached only at its published port.
         || (access == Access::Local && runtime == Runtime::Docker);
     let want = match &sign_in {
         Some(address) => address::Want::Set {

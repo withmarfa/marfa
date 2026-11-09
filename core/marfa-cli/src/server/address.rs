@@ -115,8 +115,7 @@ pub fn settle_with(
     }
 }
 
-/// Sets the sign-in address on the private socket unless it holds it already.
-/// The address it holds now, if it changed.
+/// Sets the sign-in address unless held already; returns the address held before, if it changed.
 pub fn ensure(remote: &Remote, raw: &str) -> Result<Option<String>, CliError> {
     let address = normalise(raw)?;
     let settled = settle_with(
