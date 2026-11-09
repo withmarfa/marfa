@@ -240,6 +240,18 @@ const REFUSES_LOCAL: &[(&str, &str)] = &[
         "POST /connectors/{id}/agreements/lookup",
         "the connector's own key alone",
     ),
+    (
+        "GET /connectors/{id}/deliveries",
+        "the connector's own key alone",
+    ),
+    (
+        "GET /connectors/{id}/deliveries/{delivery_id}/body",
+        "the connector's own key alone",
+    ),
+    (
+        "POST /connectors/{id}/deliveries/handled",
+        "the connector's own key alone",
+    ),
     ("POST /webhooks", "a subscription belongs to its maker"),
     (
         "PATCH /webhooks/{id}",
