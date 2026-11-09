@@ -146,7 +146,7 @@ fn process() -> Value {
     json!({
         "release": VERSION,
         "memory_rss_bytes": resident_bytes(),
-        "memory_rss_peak_bytes": used.map(|used| i64::from(used.ru_maxrss) * peak_unit),
+        "memory_rss_peak_bytes": used.map(|used| used.ru_maxrss * peak_unit),
         "cpu_user_seconds": used.map(|used| seconds(used.ru_utime)),
         "cpu_system_seconds": used.map(|used| seconds(used.ru_stime)),
     })
