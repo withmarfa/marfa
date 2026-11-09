@@ -18,6 +18,7 @@ macro_rules! point_list {
         HOLD_WEBHOOK_SCHEDULE = Hold "webhook-schedule" None;
         HOLD_WEBHOOK_SCHEDULE_QUEUED = Hold "webhook-schedule:queued" None;
         HOLD_CONNECTOR_WRITE = Hold "connector-write" None;
+        HOLD_INBOUND_RESERVED = Hold "inbound-reserved" Nth;
         HOLD_ATTENTION = Hold "attention" Write;
         FAIL_ATTENTION = Fail "attention" Write;
         HOLD_JOB_SELECTED = Hold "bulk-job:selected" None;
@@ -49,6 +50,8 @@ macro_rules! point_list {
         FAIL_HEALTH_WRITE = Fail "health-write" Nth;
         HOLD_DISK_PROBE = Hold "disk-probe" None;
         FAIL_JOB_ROW = Fail "job-row" Nth;
+        FAIL_INBOUND_RECEIPT = Fail "inbound-receipt" Nth;
+        FAIL_INBOUND_CLEANUP = Fail "inbound-cleanup" Nth;
         FAIL_FOLDER_STATUS_REPORT = Fail "folder-status-report" Nth;
         REFUSE_READ = Refuse "read" None;
         REFUSE_WRITE = Refuse "write" None;
