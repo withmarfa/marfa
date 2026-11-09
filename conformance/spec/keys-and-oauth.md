@@ -2223,7 +2223,7 @@ Where the limiter is on, the server MUST count every request a signed-in app mak
 
 **Reason:** Refreshing a token does not start a fresh window.
 
-**Tests:** `compliance/signed-in-apps.test.ts › is limited by its grant, so a refreshed token shares the window of the one before it`.
+**Tests:** `compliance/app-rate-window.test.ts › is limited by its grant, so a refreshed token shares the window of the one before it`.
 
 ## Web pages
 
