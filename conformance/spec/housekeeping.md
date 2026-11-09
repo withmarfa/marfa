@@ -29,7 +29,7 @@ The server registers the following jobs when their settings and required stores 
 | `blob-integrity`              | Checks blob copies and removes copies whose bytes are missing or altered.        |
 | `blob-orphans`                | Reports unreferenced blobs and purges them after the grace period.               |
 | `enrichment-sweep`            | Extracts searchable text and image dimensions from uploaded files.               |
-| `bulk-action-gc`              | Removes completed bulk action jobs after their retention window.                 |
+| `bulk-action-gc`              | Removes finished bulk action jobs after 7 days.                                  |
 
 <!-- housekeeping-table:end -->
 
@@ -277,7 +277,7 @@ Where enrichment is on, the server MUST write `width` and `height` for a well-fo
 
 ## Retention
 
-`PUT /config` sets how long the server keeps some records, and settings give the defaults. Settings alone set how long it keeps others, such as revoked grants and finished bulk-action jobs.
+`PUT /config` sets how long the server keeps some records, and settings give the defaults. Settings alone set how long it keeps others, such as revoked grants.
 
 ### `housekeeping/retention-days-range`
 
@@ -350,12 +350,6 @@ If `MARFA_AUDIT_RETENTION_DAYS`, `MARFA_TRASH_RETENTION_DAYS`, `MARFA_INBOUND_HA
 If `MARFA_EVENT_LOG_RETENTION_HOURS` holds a value that is neither empty nor an integer from 0 through 876000 when the server starts, then the server MUST refuse to start and name the setting.
 
 **Tests:** `compliance/housekeeping-settings.test.ts › refuses MARFA_EVENT_LOG_RETENTION_HOURS outside 0 through 876000, and names the setting`, `› starts with each setting empty, and with each at its smallest`.
-
-### `housekeeping/retention-setting-ms-range`
-
-If `MARFA_BULK_ACTION_JOB_RETENTION_MS` holds a value that is neither empty nor an integer from 0 through 31536000000 when the server starts, then the server MUST refuse to start and name the setting.
-
-**Tests:** `compliance/housekeeping-settings.test.ts › refuses MARFA_BULK_ACTION_JOB_RETENTION_MS outside 0 through 31536000000, and names the setting`, `› starts with each setting empty, and with each at its smallest`.
 
 ## Version thinning
 

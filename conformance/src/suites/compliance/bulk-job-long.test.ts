@@ -33,9 +33,7 @@ function working(): MarfaClient {
 }
 
 beforeAll(async () => {
-  server = await bootFreshServer("bulk-job-long", {
-    MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS: "1000",
-  });
+  server = await bootFreshServer("bulk-job-long");
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {

@@ -39,10 +39,7 @@ let counter = 0;
 const PAST_STALE_MS = 5 * 60_000;
 
 beforeAll(async () => {
-  server = await bootFreshServer("bulk-job-restart", {
-    // The idle worker looks for the recovered claim at this interval at most.
-    MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS: "1000",
-  });
+  server = await bootFreshServer("bulk-job-restart");
   learned = await rowsAndChunk(working());
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 

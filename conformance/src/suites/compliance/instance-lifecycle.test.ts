@@ -514,8 +514,6 @@ describe("starting with a setting outside its rule", () => {
         MARFA_VERSION_RECENT_DAYS: "40",
         MARFA_VERSION_DAILY_SNAPSHOT_DAYS: "40",
         MARFA_VERSION_WEEKLY_SNAPSHOT_DAYS: "40",
-        MARFA_BULK_ACTION_POLL_INTERVAL_MS: "500",
-        MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS: "500",
         MARFA_AUTH_SECRET: "x".repeat(32),
       });
 
@@ -602,14 +600,6 @@ describe("starting with a setting outside its rule", () => {
         MARFA_VERSION_WEEKLY_SNAPSHOT_DAYS: "99",
       },
       'MARFA_VERSION_WEEKLY_SNAPSHOT_DAYS must be at least MARFA_VERSION_DAILY_SNAPSHOT_DAYS (got "99")',
-    ],
-    [
-      "MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS",
-      {
-        MARFA_BULK_ACTION_POLL_INTERVAL_MS: "500",
-        MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS: "499",
-      },
-      'MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS must be at least MARFA_BULK_ACTION_POLL_INTERVAL_MS (got "499")',
     ],
   ];
 
