@@ -109,7 +109,7 @@ pub fn holds_type(catalog: &Catalog, types: &[String], named: &str) -> bool {
 
 /// A default type the query does not hold would put every new file outside
 /// its own folder.
-fn check_default_type(
+pub fn check_default_type(
     catalog: &Catalog,
     types: &[String],
     default_type: Option<&str>,
@@ -197,12 +197,16 @@ pub fn check(catalog: Option<&Catalog>, settings: &Settings) -> Result<(), Viola
 pub fn check_settled(catalog: Option<&Catalog>, settings: &Settings) -> Result<(), Violation> {
     if let Some(states) = settings.state {
         check_states(states).map_err(|fault| match fault {
-            StateFault::Empty => {
-                Violation::invalid("query.state", "query.state is a list of states.")
-            }
+            StateFault::Empty => Violation::invalid(
+                "query.state",
+                "query.state names no state, so the query would hold nothing.",
+            ),
             StateFault::Unknown(index) => Violation::invalid(
                 &format!("query.state.{index}"),
-                "A query lists the active and archived states.",
+                format!(
+                    "query.state names {:?}, and a folder holds active and archived items.",
+                    states[index]
+                ),
             ),
         })?;
     }

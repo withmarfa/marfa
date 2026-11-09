@@ -186,7 +186,7 @@ impl Settings {
             )));
         }
         let settings = Settings::parse(id, r#type, properties)?;
-        settings.check(None)?;
+        settings.check()?;
         Ok(settings)
     }
 
@@ -232,8 +232,7 @@ impl Settings {
         Ok(settings)
     }
 
-    /// A catalog is needed to check whether the query holds the default type.
-    fn check(&self, catalog: Option<&Catalog>) -> Result<()> {
+    fn check(&self) -> Result<()> {
         let placements: Vec<(&str, &str)> = self
             .first_placement
             .iter()
@@ -241,7 +240,7 @@ impl Settings {
             .collect();
         let count = |threshold: Option<u64>| threshold.map(|files| files as f64);
         marfa_rules::folder::check(
-            catalog,
+            None,
             &marfa_rules::folder::Settings {
                 types: &self.query.types,
                 tier: self.query.tier.map(SliceTier::as_str),
@@ -271,16 +270,23 @@ impl Settings {
             } else {
                 format!(
                     "the folder's {} is refused: {}. Change it with `marfa folders change`",
-                    violation.path, violation.message
+                    violation.path,
+                    violation.message.trim_end_matches('.')
                 )
             };
             CoreError::from(marfa_rules::RuleError::new(violation.code, message))
         })
     }
 
-    /// Checks settings against the working copy's catalog.
+    /// Whether the query holds the type new files become, which only the
+    /// working copy's catalog can say.
     pub(crate) fn check_types(&self, catalog: &Catalog) -> Result<()> {
-        self.check(Some(catalog))
+        marfa_rules::folder::check_default_type(
+            catalog,
+            &self.query.types,
+            self.defaults.r#type.as_deref(),
+        )
+        .map_err(CoreError::Invalid)
     }
 
     /// Whether the query names no type or names `*`: every type but
@@ -786,6 +792,17 @@ mod tests {
         )
         .unwrap();
         assert!(unheld.check_types(&catalog).is_err());
+    }
+
+    #[test]
+    fn a_query_state_the_folder_cannot_hold_is_refused_naming_it() {
+        let refused = |state: Value| read(json!({ "query": { "state": state } })).unwrap_err();
+        let empty = refused(json!([])).to_string();
+        assert!(empty.contains("no state"), "{empty}");
+        assert!(!empty.contains(".."), "{empty}");
+        let unknown = refused(json!(["trashed"])).to_string();
+        assert!(unknown.contains("trashed"), "{unknown}");
+        assert!(read(json!({ "query": { "state": ["archived"] } })).is_ok());
     }
 
     #[test]
