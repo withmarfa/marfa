@@ -42,38 +42,34 @@ async function seedEvent(startsAt: string, endsAt: string): Promise<string> {
 }
 
 describe("occurrence window bounds", () => {
-  it("reads a zone-less bound as UTC under a host zone that is not UTC", async () => {
-    // The event runs 10:00Z to 11:00Z. Auckland is 12 hours ahead of UTC
-    // in August, and each window below is chosen so the two readings
-    // disagree about whether it holds the event.
+  it("reads a date bound as midnight in UTC under a host zone that is not UTC", async () => {
+    // The event runs 10:00Z to 11:00Z. Auckland is 12 hours ahead of UTC in
+    // August, so 10 August read as local midnight ends at 12:00Z on the 10th
+    // and holds the event either way, while 11 August read as local midnight
+    // is 12:00Z on the 10th and the window [11th, 12th) would hold it.
     const id = await seedEvent("2031-08-10T10:00:00Z", "2031-08-10T11:00:00Z");
 
-    // Under UTC: 09:00Z to 12:00Z holds the event. Under Auckland time the
-    // same text is 21:00Z the day before to 00:00Z, which does not.
     const holds = await client.listOccurrences({
-      from: "2031-08-10T09:00:00",
-      to: "2031-08-10T12:00:00",
+      from: "2031-08-10",
+      to: "2031-08-11",
     });
     expect(holds.status, JSON.stringify(holds.error)).toBe(200);
     expect(holds.data.window).toEqual({
-      from: "2031-08-10T09:00:00.000Z",
-      to: "2031-08-10T12:00:00.000Z",
+      from: "2031-08-10T00:00:00.000Z",
+      to: "2031-08-11T00:00:00.000Z",
     });
     expect(holds.data.data.map((o) => o.item.id)).toContain(id);
 
-    // Under UTC: 11:00Z to 13:00Z starts as the event ends and holds
-    // nothing. Under Auckland time the same text is 23:00Z the day before to
-    // 01:00Z, which holds it.
     const misses = await client.listOccurrences({
-      from: "2031-08-10T11:00:00",
-      to: "2031-08-10T13:00:00",
+      from: "2031-08-11",
+      to: "2031-08-12",
     });
     expect(misses.status, JSON.stringify(misses.error)).toBe(200);
-    expect(misses.data.window.from).toBe("2031-08-10T11:00:00.000Z");
+    expect(misses.data.window.from).toBe("2031-08-11T00:00:00.000Z");
     expect(misses.data.data.map((o) => o.item.id)).not.toContain(id);
   });
 
-  it("refuses an impossible date and a string that is not ISO 8601, naming the bound", async () => {
+  it("refuses an impossible date, a date-time with no zone or no seconds, and a string that is not RFC 3339, naming the bound", async () => {
     // The witness: a readable window is answered.
     const ok = await client.listOccurrences({
       from: "2031-02-28",
@@ -84,7 +80,9 @@ describe("occurrence window bounds", () => {
     for (const [from, to, named] of [
       ["2031-02-30", "2031-03-05", "from"],
       ["2031-02-01", "2031-02-30", "to"],
-      ["2031-02-30T10:00:00", "2031-03-05T00:00:00Z", "from"],
+      ["2031-02-30T10:00:00Z", "2031-03-05T00:00:00Z", "from"],
+      ["2031-08-10T09:00:00", "2031-08-11T00:00:00Z", "from"],
+      ["2031-08-10T00:00:00Z", "2031-08-11T12:00Z", "to"],
       ["Aug 10 2031", "2031-08-11T00:00:00Z", "from"],
       ["2031-08-10T00:00:00Z", "Aug 11 2031", "to"],
     ] as const) {

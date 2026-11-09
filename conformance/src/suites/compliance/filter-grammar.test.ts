@@ -298,10 +298,8 @@ describe("every door that takes a filter", () => {
 });
 
 describe("the limits of a filter", () => {
-  // One character outside the basic plane is two code units, so a limit
-  // counted in characters would take the 2,049 below.
   const ofLength = (length: number): string => {
-    const head = 'properties.body eq "😀';
+    const head = 'properties.body eq "';
     return `${head}${"x".repeat(length - head.length - 1)}"`;
   };
   const conditions = (count: number, logical: "AND" | "OR"): string =>
@@ -309,7 +307,7 @@ describe("the limits of a filter", () => {
       ` ${logical} `,
     );
 
-  it("takes 2,048 code units and refuses 2,049, at each door", async () => {
+  it("takes 2,048 characters and refuses 2,049, at each door", async () => {
     expect(ofLength(2048)).toHaveLength(2048);
     for (const door of doors()) {
       const largest = await door.send(ofLength(2048));
@@ -370,7 +368,7 @@ describe("the limits of a filter", () => {
       }
     });
 
-    it("counts an edge key's clause and its AND toward the 2,048 code units", async () => {
+    it("counts an edge key's clause and its AND toward the 2,048 characters", async () => {
       const added = ` AND edge[about] eq "${target}"`.length;
       const shorthand = `${enc("edge[about]")}=${target}`;
       const fits = await asked(

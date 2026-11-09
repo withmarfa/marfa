@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{Compare, Condition, Field, Literal, Op, Term, parse, refused, system_literal, term};
 use crate::error::Result;
-use crate::js;
+use crate::number;
 
 /// The grammar joins every condition with `AND` or every one with `OR`, never both, and has no grouping or negation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -388,7 +388,7 @@ impl FilterValue {
                 if !number.is_finite() {
                     return Err(refused(format!(
                         "Number out of range \"{}\"",
-                        js::number(*number)
+                        number::text(*number)
                     )));
                 }
                 Ok(number.to_string())

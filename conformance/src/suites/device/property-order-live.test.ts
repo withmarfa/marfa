@@ -23,10 +23,14 @@ import { requireBinary } from "./harness.js";
 let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
+let apiKey: string;
 let device: CliDevice;
 let type: string;
 beforeAll(async () => {
-  ({ client, ctx, apiUrl } = await createTestContext("device", "order"));
+  ({ client, ctx, apiUrl, apiKey } = await createTestContext(
+    "device",
+    "order",
+  ));
   // A subtype whose parent declares two fields and which declares two more
   // and one of its parent's again, none in alphabetical order.
   const suffix = ctx.runId.replace(/[^a-z0-9]/gi, "").toLowerCase();
@@ -92,18 +96,15 @@ it("shows a create in the order the server answers it, before the answer and aft
   const sent = {
     extra1: "x",
     beta: "b",
-    "10": "ten",
     alpha: "a",
     extra0: "y",
-    "2": "two",
     zeta: "z",
   };
   const queued = value(await device.create({ type, properties: sent }));
   const id = queued.item_id ?? "";
   trackItem(ctx, id);
-  // Array index names first, as the server's JavaScript orders them, then
-  // the declared fields, then the rest as sent.
-  const order = ["2", "10", "zeta", "alpha", "beta", "extra1", "extra0"];
+  // The declared fields first, then the rest as sent.
+  const order = ["zeta", "alpha", "beta", "extra1", "extra0"];
   // The witness: the order sent is neither this one nor alphabetical.
   expect(Object.keys(sent)).not.toEqual(order);
   expect(
@@ -116,6 +117,39 @@ it("shows a create in the order the server answers it, before the answer and aft
   ).toEqual(["accepted"]);
   expect(await answered(id)).toEqual(order);
   expect(await shown(id)).toEqual(order);
+});
+
+/** The names in the order a text holds them, which a parsed object cannot show for a name such as `10`. */
+function writtenOrder(text: string, names: string[]): string[] {
+  return names
+    .map((name) => ({ name, at: text.indexOf(`"${name}":`) }))
+    .filter(({ at }) => at >= 0)
+    .sort((x, y) => x.at - y.at)
+    .map(({ name }) => name);
+}
+
+it("holds a property named by a number in the order it was written, as the server answers it", async () => {
+  // Text, since a JavaScript object writes `10` and `2` out ahead of the rest.
+  const propertiesText = '{"beta":"b","10":"ten","2":"two","extra":"x"}';
+  const names = Object.keys(JSON.parse(propertiesText));
+  const queued = value(await device.create({ type, propertiesText }));
+  const id = queued.item_id ?? "";
+  trackItem(ctx, id);
+  // The declared field first, then the rest as sent: no name moves ahead
+  // of another for reading as a number.
+  const order = ["beta", "10", "2", "extra"];
+  expect(
+    writtenOrder(value(await device.getText(id)), names),
+    "the copy moved a property named by a number",
+  ).toEqual(order);
+  expect(
+    value(await device.drain()).verdicts.map((verdict) => verdict.verdict),
+  ).toEqual(["accepted"]);
+  const served = await fetch(`${apiUrl}/items/${id}`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+  expect(writtenOrder(await served.text(), names)).toEqual(order);
+  expect(writtenOrder(value(await device.getText(id)), names)).toEqual(order);
 });
 
 it("shows an edit in the order the server answers it, before the answer and after", async () => {

@@ -4705,7 +4705,7 @@ mod tests {
         let core = validation_copy();
         let witness = core
             .create_item(&validation_draft(serde_json::json!({
-                "title": "😀abc", "read": null, "choice": "yes", "count": 2.0,
+                "title": "😀abcd", "read": null, "choice": "yes", "count": 2.0,
                 "list": [false, {}], "date": "2000-02-29", "time": "2026-01-01T23:59+23:59",
                 "email": "reader+tag@example.test", "url": "mailto:reader@example.test",
                 "image": "data:image/png;base64,iVBORw0KGgo=", "object": {},
@@ -4719,7 +4719,7 @@ mod tests {
             .rows;
         for (field, value) in [
             ("title", Value::Null),
-            ("title", serde_json::json!("😀abcd")),
+            ("title", serde_json::json!("😀abcde")),
             ("title", serde_json::json!("a\u{0000}b")),
             ("read", serde_json::json!("yes")),
             ("choice", serde_json::json!("maybe")),
@@ -4766,20 +4766,19 @@ mod tests {
         vec![
             (String::new(), "empty"),
             ("   ".into(), "blank"),
-            ("\t\u{a0}\u{2003}\u{feff}".into(), "blank"),
+            ("\t\u{a0}\u{2003}\u{85}".into(), "blank"),
             (".".into(), "URL path"),
             ("..".into(), "URL path"),
             ("a".repeat(MAX_TAG_LENGTH + 1), "at most"),
-            ("😀".repeat(MAX_TAG_LENGTH / 2 + 1), "at most"),
+            ("😀".repeat(MAX_TAG_LENGTH + 1), "at most"),
         ]
     }
 
     fn accepted_tags() -> Vec<String> {
         vec![
             "a".repeat(MAX_TAG_LENGTH),
-            "😀".repeat(MAX_TAG_LENGTH / 2),
-            // JavaScript's trim does not strip it, so the server holds it.
-            "\u{85}".into(),
+            "😀".repeat(MAX_TAG_LENGTH),
+            "\u{feff}".into(),
             " padded ".into(),
         ]
     }

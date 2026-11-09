@@ -1,5 +1,5 @@
 /**
- * A request whose JSON holds text that is not well-formed UTF-16 is refused
+ * A request whose JSON holds a surrogate escape with no partner is refused
  * at every door that stores text. Each door is asked twice: with a lone
  * surrogate, which is refused naming where it sits, and with a surrogate
  * pair, which is the witness that the door takes the same body otherwise.
@@ -412,7 +412,7 @@ async function prepared(door: Door): Promise<Prepared> {
   };
 }
 
-describe("text that is not well-formed UTF-16", () => {
+describe("a surrogate escape with no partner", () => {
   it.each(doors)(
     "refuses $name, naming where, and takes a surrogate pair there",
     async (door) => {
@@ -426,7 +426,7 @@ describe("text that is not well-formed UTF-16", () => {
       expect(refused.code).toBe("validation_error");
       expect(refused.errors).toHaveLength(1);
       expect(refused.errors?.[0]?.path).toBe(door.at);
-      expect(refused.errors?.[0]?.message).toMatch(/UTF-16/);
+      expect(refused.errors?.[0]?.message).toMatch(/not well-formed/);
       // What the refusal says goes back out as JSON a strict decoder takes.
       expect(JSON.stringify(refused.data)).not.toMatch(/\\ud[89a-f]/i);
 
@@ -565,7 +565,7 @@ describe("text that is not well-formed UTF-16", () => {
         if (
           refused.status !== 400 ||
           refused.errors?.[0]?.path !== "/k" ||
-          !/UTF-16/.test(refused.errors[0].message)
+          !/not well-formed/.test(refused.errors[0].message)
         ) {
           unreached.push(`${method.toUpperCase()} ${template}`);
         }
@@ -575,7 +575,7 @@ describe("text that is not well-formed UTF-16", () => {
           JSON.stringify({ k: PAIR }),
           false,
         );
-        if (witness.errors?.some((e) => /UTF-16/.test(e.message))) {
+        if (witness.errors?.some((e) => /not well-formed/.test(e.message))) {
           witnessed.push(`${method.toUpperCase()} ${template}`);
         }
       }
@@ -683,7 +683,7 @@ describe("a restore", () => {
     ["type", "/type/label", "type"],
     ["manifest", "/blobs/", "manifest.json"],
   ] as const)(
-    "refuses a %s that is not well-formed UTF-16, naming the row and where, and takes a pair there",
+    "refuses a %s that holds a surrogate escape with no partner, naming the row and where, and takes a pair there",
     async (where, pointer, row) => {
       const owner = getOwnerClient();
       const hex = randomUUID().replaceAll("-", "");
@@ -737,7 +737,7 @@ describe("a body whatever its content type states", () => {
     { path: "/setup/claim", credential: false },
   ];
 
-  it("is refused for text that is not well-formed UTF-16, before any credential", async () => {
+  it("is refused for a surrogate escape with no partner, before any credential", async () => {
     for (const contentType of types) {
       for (const door of doors) {
         const where = `${door.path} as ${contentType}`;

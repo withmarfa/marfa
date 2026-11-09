@@ -125,7 +125,7 @@ pub async fn settle(State(app): State<Arc<App>>, caller: Caller, body: JsonBody)
     let Some(settled_at) = text_of(&sent, "settled_at")? else {
         return Err(missing_field("settled_at").into());
     };
-    let settled_at = time::normalize(&settled_at, "settled_at")
+    let settled_at = time::rfc3339(&settled_at, "settled_at")
         .map_err(|error| invalid_field("settled_at", error.message))?;
     let Selector::Keys(keys) = selector_of(&sent, false)? else {
         return Err(Refusal::internal("a settle was asked by id").into());

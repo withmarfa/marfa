@@ -22,8 +22,8 @@ const note = (name: string, extra: string, body = "a body\n") =>
 
 /** A tag the server refuses, beside why. */
 const BAD_TAGS: Array<[string, string]> = [
-  ["a".repeat(129), "over 128 UTF-16 code units"],
-  ["﻿", "a tag of only U+FEFF, which JavaScript's trim strips"],
+  ["a".repeat(129), "over 128 characters"],
+  ["..", "two dots, which a URL path cannot name as a segment"],
 ];
 
 async function started(settings = {}) {

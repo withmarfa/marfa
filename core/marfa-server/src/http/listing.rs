@@ -145,7 +145,8 @@ impl Params {
     pub(super) fn time(&self, name: &str) -> Result<Option<String>> {
         self.one(name)?
             .map(|value| {
-                time::normalize(value, name).map_err(|error| invalid_field(name, error.message))
+                time::normalize_bound(value, name)
+                    .map_err(|error| invalid_field(name, error.message))
             })
             .transpose()
     }
