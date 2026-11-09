@@ -130,6 +130,15 @@ pub fn bind(tx: &Transaction<'_>, source: &str, connector_id: &str) -> Result<()
     Ok(())
 }
 
+pub fn kept_for(tx: &Transaction<'_>, source: &str) -> Result<bool> {
+    Ok(tx
+        .prepare_cached(
+            "SELECT 1 FROM inbound_sources WHERE source = ?1 \
+             UNION ALL SELECT 1 FROM inbound_endpoints WHERE source = ?1 LIMIT 1",
+        )?
+        .exists([source])?)
+}
+
 /// Whether the registration is the one that holds its source's endpoints and deliveries.
 pub fn holds(tx: &Transaction<'_>, source: &str, connector_id: &str) -> Result<bool> {
     Ok(tx

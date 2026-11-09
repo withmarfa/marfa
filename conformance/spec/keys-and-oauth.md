@@ -251,6 +251,14 @@ If a mint names as the new key's own `source` one that another key, neither revo
 
 **Tests:** `compliance/key-management.test.ts › refuses a second key naming as its own a source already in use`.
 
+### `keys-and-oauth/own-source-held`
+
+If a caller holding neither `keys.manage` nor direct owner or local authority mints a key naming as its own `source` one that no live key holds as its own and that a connector registration names, or that holds connector state, connector agreements or inbound endpoints, then the server MUST answer `403 forbidden` with `details.required_scope` naming `keys.manage` and `details.source` naming the source.
+
+**Reason:** A key whose own source is held succeeds to it, taking over its inbound endpoints and deliveries (`inbound-webhooks/source-takeover-preserves`), its state and its agreements. Choosing a connector's successor belongs to whoever manages keys. A source nothing holds stays open to `keys.mint`.
+
+**Tests:** `compliance/key-expiry.test.ts › leaves a source a connector holds to keys.manage, and a source never used to keys.mint`, `compliance/connector-state.test.ts › clears what a removed registration left, through a later registration of its source`.
+
 ### `keys-and-oauth/own-source-race`
 
 When several mints name one unused `source` as their own at once, the server MUST answer exactly one of them `201` and the rest `409 conflict`.
@@ -585,7 +593,7 @@ When a key is past its `expires_at`, the server MUST leave it out of `GET /keys`
 
 ### `keys-and-oauth/expired-source-free`
 
-When a mint names as the new key's own `source` one that only keys past their `expires_at` hold as their own, the server MUST mint the key.
+When a mint names as the new key's own `source` one that only keys past their `expires_at` hold as their own, the server MUST mint the key unless `keys-and-oauth/own-source-held` refuses it.
 
 **Reason:** A key past its `expires_at` answers as unknown to a revoke, so nothing else could free its source for the key that replaces it.
 
