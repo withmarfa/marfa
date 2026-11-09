@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
@@ -292,7 +292,7 @@ describe("a restore that does not finish", () => {
     { fault: "fail:commit-full=restore_archive", status: 507 },
     { fault: "fail:blob-write", status: 507 },
   ])(
-    "leaves no row, type, edge type, blob, event or audit record when a write fails ($fault), and restores whole when it is tried again",
+    "leaves no row, type, edge type, event or audit record when a write fails ($fault), the next blob-integrity run removes the bytes it placed, and it restores whole when tried again",
     async ({ fault, status }) => {
       const rows = carrying();
       const eventId = await eventCursor();
@@ -425,6 +425,22 @@ describe("an archive whose blob the instance holds", () => {
     expect(held.mtimeMs).toBe(placed.mtimeMs);
     const copies = await operator.listBlobCopies(rows.hash);
     expect(copies.data.data.map((copy) => copy.kind)).toEqual(["disk"]);
+  });
+
+  it("replaces a disk copy that has rotted at the same size with the bytes the archive carries", async () => {
+    const rows = carrying();
+    const first = await ownerClient().restoreArchive(rows.archive);
+    expect(first.status, JSON.stringify(first.error)).toBe(200);
+    const path = diskPath(server, rows.hash);
+    const rotted = new Uint8Array(rows.bytes.length).fill(0x2a);
+    writeFileSync(path, rotted);
+
+    const again = await ownerClient().restoreArchive(rows.archive);
+    expect(again.status, JSON.stringify(again.error)).toBe(200);
+    expect(new Uint8Array(readFileSync(path))).toEqual(rows.bytes);
+    const read = await operator.downloadBlob(rows.hash);
+    expect(read.status).toBe(200);
+    expect(new Uint8Array(read.data)).toEqual(rows.bytes);
   });
 });
 

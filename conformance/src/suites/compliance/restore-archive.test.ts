@@ -1429,3 +1429,193 @@ describe("type creator provenance in archives", () => {
     ).toBeNull();
   });
 });
+
+describe("a restore refused while its body is still arriving", () => {
+  /** A manifest the restore refuses on reading it, then `size` bytes more. */
+  const refusedEarly = (size: number): Uint8Array =>
+    tar([
+      {
+        name: "manifest.json",
+        body: JSON.stringify({ version: 99, format: "marfa-archive-v0" }),
+      },
+      { name: "padding.bin", body: new Uint8Array(size) },
+    ]);
+
+  it("reads the rest of a large body and answers the refusal, to the owner and to a working key", async () => {
+    const body = refusedEarly(64 * 1024 * 1024);
+    const send = (authorization: Record<string, string>) =>
+      fetch(`${apiUrl}/restore`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-tar", ...authorization },
+        body,
+      });
+
+    const keyResp = await client.createKey({
+      label: "restore-refused-early",
+      source: `${ctx.source}-refused-early`,
+      type_permissions: { "*": "write" },
+    });
+    expect(keyResp.ok).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const forbidden = await send({
+        Authorization: `Bearer ${keyResp.data.key}`,
+      });
+      expect(forbidden.status).toBe(403);
+      expect(
+        ((await forbidden.json()) as { error: { code: string } }).error.code,
+      ).toBe("forbidden");
+
+      const refused = await owner.restoreArchive(body);
+      expect(refused.status, JSON.stringify(refused.error)).toBe(400);
+      expect(refused.error?.error.message).toContain("version 99");
+    }
+  });
+});
+
+describe("lines an archive holds that no instance writes", () => {
+  const note = (id: string) => ({
+    id,
+    type: "core.note",
+    source: ctx.source,
+    properties: { body: `line ${id}` },
+  });
+
+  it("refuses an item line that holds no item, naming its row, and writes nothing", async () => {
+    const kept = uuidv7();
+    const good = `${JSON.stringify({ item: note(kept), metadata: { tags: [], extensions: {} } })}\n`;
+    for (const line of [
+      { metadata: { tags: [], extensions: {} } },
+      { item: "a note", metadata: { tags: [], extensions: {} } },
+      { item: null },
+    ]) {
+      const refused = await owner.restoreArchive(
+        withLines(itemsArchive([]), "items", good + JSON.stringify(line) + "\n"),
+      );
+      expect(refused.status, JSON.stringify(refused.error)).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+      expect(refused.error?.error.details?.row).toBe(2);
+      expect((await client.getItem(kept)).status).toBe(404);
+    }
+
+    // The witness: the item line alone restores.
+    const restored = await owner.restoreArchive(
+      withLines(itemsArchive([]), "items", good),
+    );
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, kept);
+    expect(restored.data.imported).toBe(1);
+  });
+
+  it("refuses an edge whose ID is not a lowercase UUIDv7, and writes nothing", async () => {
+    const [a, b] = [uuidv7(), uuidv7()];
+    const items = itemsArchive([note(a), note(b)]);
+    const edge = (id: unknown) =>
+      `${JSON.stringify({ edge: { id, source_id: a, target_id: b, edge_type: "references" } })}\n`;
+    for (const id of ["x", 7, uuidv7().toUpperCase(), ""]) {
+      const refused = await owner.restoreArchive(
+        withLines(items, "edges", edge(id)),
+      );
+      expect(refused.status, `${String(id)}: ${JSON.stringify(refused.error)}`).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+      expect(refused.error?.error.details?.field).toBe("id");
+      expect((await client.getItem(a)).status).toBe(404);
+    }
+
+    // The witness: the same edge under a lowercase UUIDv7 restores, once.
+    const id = uuidv7();
+    const archive = withLines(items, "edges", edge(id));
+    const restored = await owner.restoreArchive(archive);
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, a);
+    trackItem(ctx, b);
+    expect(restored.data.edges_imported).toBe(1);
+    expect((await client.getEdge(id)).status).toBe(200);
+    const again = await owner.restoreArchive(archive);
+    expect(again.ok, JSON.stringify(again.error)).toBe(true);
+    expect(again.data.edges_imported).toBe(0);
+  });
+
+  it("refuses an archive that registers a type or an edge type twice, and writes nothing", async () => {
+    const id = uuidv7();
+    const type = {
+      type: {
+        id: `user.twice${ctx.runId.replace(/[^a-z0-9]/g, "")}`,
+        label: "Twice",
+        version: 1,
+        fields: { body: { type: "string" } },
+      },
+    };
+    const edgeType = {
+      edge_type: {
+        id: `twice.x${ctx.runId.replace(/[^a-z0-9]/g, "")}`,
+        label: "Twice",
+        cardinality: "many-to-many",
+        source_type_constraints: ["*"],
+        target_type_constraints: ["*"],
+        cascade_on_delete: "orphan",
+        property_schema: {},
+        written_at: "source",
+      },
+    };
+    for (const line of [type, edgeType]) {
+      const twice = `${JSON.stringify(line)}\n`.repeat(2);
+      const refused = await owner.restoreArchive(
+        withLines(itemsArchive([note(id)]), "instance", twice),
+      );
+      expect(refused.status, JSON.stringify(refused.error)).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+      expect(refused.error?.error.message).toContain("more than once");
+      expect((await client.getItem(id)).status).toBe(404);
+    }
+    expect((await client.getType(type.type.id)).status).toBe(404);
+
+    // The witness: each line once restores.
+    const restored = await owner.restoreArchive(
+      withLines(
+        itemsArchive([note(id)]),
+        "instance",
+        `${JSON.stringify(type)}\n${JSON.stringify(edgeType)}\n`,
+      ),
+    );
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, id);
+    trackType(ctx, type.type.id);
+    trackEdgeType(ctx, edgeType.edge_type.id);
+    expect(restored.data.types_registered).toBe(1);
+    expect(restored.data.edge_types_registered).toBe(1);
+  });
+
+  it("writes a snapshot's dates in UTC to the millisecond", async () => {
+    const id = uuidv7();
+    const spelled = "2019-12-31T23:59:59+01:00";
+    const line = {
+      item: { ...note(id), version: 2 },
+      metadata: { tags: [], extensions: {} },
+      versions: [
+        {
+          id: uuidv7(),
+          item_id: id,
+          version: 1,
+          properties: { body: "the first version" },
+          type: "core.note",
+          tier: "library",
+          created_at: spelled,
+          occurred_at: spelled,
+          source_id: null,
+          writer: null,
+        },
+      ],
+    };
+    const restored = await owner.restoreArchive(
+      withLines(itemsArchive([]), "items", `${JSON.stringify(line)}\n`),
+    );
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, id);
+    const versions = await client.getVersions(id);
+    expect(versions.status, JSON.stringify(versions.error)).toBe(200);
+    expect(versions.data.data).toHaveLength(1);
+    expect(versions.data.data[0]?.created_at).toBe("2019-12-31T22:59:59.000Z");
+    expect(versions.data.data[0]?.occurred_at).toBe("2019-12-31T22:59:59.000Z");
+  });
+});

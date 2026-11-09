@@ -2048,6 +2048,14 @@ When `POST /restore` reads a `setting` line, the server MUST store that setting 
 
 **Tests:** `compliance/export-instance-lines.test.ts › restores the settings, connector state and agreements the instance lacks, and replaces none it holds`.
 
+### `search-and-filters/restore-settings-together`
+
+If the settings that `POST /restore` would store, judged with the instance's own, break a rule that `/config` applies across settings (`instance/live-policy-validation`), then the server MUST refuse the archive with the `400 validation_error` and `details.errors` that `/config` answers for them, and store nothing.
+
+**Reason:** a restore is not a way to hold settings that the configuration door would refuse, such as a heartbeat with no receiver or version windows out of order.
+
+**Tests:** `compliance/export-instance-lines.test.ts › refuses settings the instance cannot hold together, answering as /config does, and stores none`.
+
 ### `search-and-filters/archive-connector-state`
 
 When the credential requesting `GET /export?format=archive` holds `connectors.manage`, the server MUST carry in `instance.ndjson.gz` one `connector_state` line, holding the `source` and its `state` document, for each source with a connector state document.
@@ -2284,6 +2292,14 @@ When `POST /restore` succeeds, the server MUST answer in `set_up_again` a senten
 
 **Tests:** `compliance/restore-archive.test.ts › answers the restore result fields on the first restore and on a repeat`.
 
+### `search-and-filters/cli-restore-refused`
+
+When `POST /restore` refuses an archive that `marfa restore` sends, whether before the body or while it arrives, the CLI MUST report that refusal's status and code.
+
+**Reason:** a person restoring a large archive learns why it was refused, not that a connection broke.
+
+**Tests:** `cli/archive-blobs.test.ts › reports the refusal of a large archive the server refuses before or while it arrives`.
+
 ### `search-and-filters/cli-restore-set-up-again`
 
 When `POST /restore` answers `marfa restore` with `set_up_again`, the CLI MUST print that sentence on standard error.
@@ -2298,7 +2314,7 @@ When `POST /restore` succeeds, the server MUST answer in `blobs_missing` the has
 
 **Reason:** an archive that lacks a file says so on the restore rather than restoring as though it were complete. Uploading the bytes again through `POST /blobs` restores the file.
 
-**Tests:** `compliance/export-missing-blob.test.ts › answers in blobs_missing a blob the archive names and lacks, and none the instance holds`, `› answers in blobs_missing a blob the manifest lists that the archive carries no bytes for`, `compliance/restore-from-store.test.ts › answers in blobs_missing a file the object store does not hold`.
+**Tests:** `compliance/export-missing-blob.test.ts › answers in blobs_missing a blob the archive names and lacks, and none the instance holds`, `› answers in blobs_missing a blob the manifest lists that the archive carries no bytes for`, `compliance/restore-from-store.test.ts › answers in blobs_missing a file the object store does not hold`, `› answers nothing in blobs_missing on an instance that holds every file the archive names`.
 
 ### `search-and-filters/restore-blob-from-store`
 
@@ -2644,11 +2660,11 @@ If an archive records a `created_at` or `updated_at` of an item or an edge that 
 
 ### `search-and-filters/restore-dates-utc`
 
-When `POST /restore` writes a row, the server MUST write its `created_at` and `updated_at` as the instants they name, in UTC to the millisecond.
+When `POST /restore` writes a row, the server MUST write its `created_at` and `updated_at`, and the `created_at` and `occurred_at` of each snapshot in its history, as the instants they name, in UTC to the millisecond.
 
-**Reason:** canonical UTC values remain comparable with the filters and cursors of a listing.
+**Reason:** canonical UTC values remain comparable with the filters and cursors of a listing, and with the dates of the versions the instance writes itself.
 
-**Tests:** `compliance/archive-history.test.ts › writes a row's dates in UTC to the millisecond and keeps a snapshot's dates as the archive spelled them`.
+**Tests:** `compliance/archive-history.test.ts › writes a row's dates in UTC to the millisecond`, `compliance/restore-archive.test.ts › writes a snapshot's dates in UTC to the millisecond`.
 
 ### `search-and-filters/restore-history-shape`
 
@@ -2676,9 +2692,9 @@ When an archive records a malformed date or history for a row that the instance 
 
 ### `search-and-filters/restore-history-exact`
 
-When `POST /restore` writes an item's history, the server MUST keep each snapshot's `id`, `item_id`, `version`, `properties`, `type`, `tier`, `occurred_at`, `source_id` and `created_at` exactly, and its dates as the archive spelled them.
+When `POST /restore` writes an item's history, the server MUST keep each snapshot's `id`, `item_id`, `version`, `properties`, `type`, `tier`, `occurred_at`, `source_id` and `created_at`, with its dates as the instants they name (`search-and-filters/restore-dates-utc`).
 
-**Tests:** `compliance/archive-history.test.ts › restores each snapshot field for field into an instance that has never seen the item`, `› writes a row's dates in UTC to the millisecond and keeps a snapshot's dates as the archive spelled them`.
+**Tests:** `compliance/archive-history.test.ts › restores each snapshot field for field into an instance that has never seen the item`.
 
 ### `search-and-filters/restore-history-shape-free`
 
@@ -2720,6 +2736,14 @@ When `POST /restore` writes an item that is not of a `core` or `system` type tha
 
 **Tests:** `compliance/restore-rows-shape.test.ts › restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`.
 
+### `search-and-filters/restore-item-line`
+
+If a line of the `items.ndjson.gz` of an archive holds no `item` object, then the server MUST answer `400 validation_error` naming the line's row in `details.row`.
+
+**Reason:** a line that names no item is an archive that no instance wrote, and skipping it would leave it counted nowhere in the answer.
+
+**Tests:** `compliance/restore-archive.test.ts › refuses an item line that holds no item, naming its row, and writes nothing`.
+
 ### `search-and-filters/restore-item-type`
 
 If an archived item's `type` is missing or is not a type identifier, then the server MUST answer `400 validation_error` naming the item's ID in the message.
@@ -2760,6 +2784,14 @@ If an archived edge's `edge_type` is a string that is not an edge-type identifie
 
 **Tests:** `compliance/restore-edges-unregistered.test.ts › judges an edge of an unregistered type by what needs no edge type, still holds a registered one to its constraints, and refuses an edge whose type is no identifier`.
 
+### `search-and-filters/restore-edge-id`
+
+If an archived edge carries an `id` that is not a UUIDv7 in lowercase, then the server MUST answer `400 validation_error` naming `id` in `details.field`.
+
+**Reason:** an edge stored under such an ID could not be read or deleted by it, and one whose ID the restore replaced would be written again by every later restore of the same archive.
+
+**Tests:** `compliance/restore-archive.test.ts › refuses an edge whose ID is not a lowercase UUIDv7, and writes nothing`.
+
 ### `search-and-filters/restore-edges-end-unregistered`
 
 When `POST /restore` meets an edge with an end that is an item of a type that is not registered once the archive's own types are, the server MUST NOT refuse the edge because the edge type's `source_type_constraints` or `target_type_constraints` do not admit that end.
@@ -2786,11 +2818,11 @@ If an archive records a snapshot ID that existing history already holds, then th
 
 ### `search-and-filters/restore-strict`
 
-Where `enforcement.strict_mode` names the type of an archived row, if the row sets a property that no type declares, then the server MUST answer `400 invalid_properties`.
+Where `enforcement.strict_mode` names the type of an archived row that the restore would write, if the row sets a property that no type declares, then the server MUST answer `400 invalid_properties`.
 
-**Reason:** a restore is not a way to plant a row that `POST /items` would refuse. `types/strict-mode` states the lever and `types/strict-mode-code` the code it carries.
+**Reason:** a restore is not a way to plant a row that `POST /items` would refuse. A row whose ID, natural key or link the instance already holds is counted in `duplicates` and written nowhere, so the lever has nothing to judge. `types/strict-mode` states the lever and `types/strict-mode-code` the code it carries.
 
-**Tests:** `compliance/schema-enforcement.test.ts › strict-on rejects the same unknown property arriving through the restore door`.
+**Tests:** `compliance/schema-enforcement.test.ts › strict-on rejects the same unknown property arriving through the restore door`, `› strict-on counts a restored row the instance already holds as a duplicate`.
 
 ### `search-and-filters/restore-strict-off`
 
@@ -2821,6 +2853,14 @@ If no byte of the body of `POST /restore` arrives for `MARFA_UPLOAD_IDLE_TIMEOUT
 **Reason:** a sender that has gone quiet would otherwise hold its request and the bytes it has sent for ever. The time counts the server's wait for the sender, not the time it takes to write what has arrived.
 
 **Tests:** `compliance/upload-timing.test.ts › ends a restore with 408 request_timeout, writes nothing and removes what it spooled`.
+
+### `search-and-filters/restore-refused-read`
+
+When the server refuses `POST /restore` while the body is still arriving, the server MUST read the rest of the body, until it ends or no byte arrives for `MARFA_UPLOAD_IDLE_TIMEOUT_MS`, before it answers.
+
+**Reason:** a client that is still sending reads no answer until its body is sent, so a server that stopped reading would leave it with a broken connection in place of the refusal.
+
+**Tests:** `compliance/restore-archive.test.ts › reads the rest of a large body and answers the refusal, to the owner and to a working key`.
 
 ### `search-and-filters/restore-idle-unwritten`
 
@@ -2878,7 +2918,7 @@ When an archive carries a blob that the disk store holds a recorded copy of whol
 
 **Reason:** content addressing means the copy is already those bytes, and another request can be reading it while the restore runs.
 
-**Tests:** `compliance/restore-faults.test.ts › keeps the copy the disk holds and writes the bytes no second time`.
+**Tests:** `compliance/restore-faults.test.ts › keeps the copy the disk holds and writes the bytes no second time`, `› replaces a disk copy that has rotted at the same size with the bytes the archive carries`.
 
 ### `search-and-filters/restore-blob-hash`
 
@@ -2909,6 +2949,14 @@ If an archive carries `manifest.json`, `instance.ndjson.gz`, `items.ndjson.gz`, 
 **Reason:** a repeated entry has no single meaning, and reading both would let a later copy add rows that the first never listed.
 
 **Tests:** `compliance/restore-archive.test.ts › refuses an archive carrying an entry twice, and writes nothing`.
+
+### `search-and-filters/restore-registration-twice`
+
+If the `instance.ndjson.gz` of an archive registers the same type ID, or the same edge-type ID, on more than one line, then the server MUST answer `400 validation_error`.
+
+**Reason:** two registrations of one ID have no single meaning, as two icons for one type have none.
+
+**Tests:** `compliance/restore-archive.test.ts › refuses an archive that registers a type or an edge type twice, and writes nothing`.
 
 ### `search-and-filters/restore-no-count-limit`
 
@@ -2942,9 +2990,11 @@ If the server refuses an archive, then the server MUST leave no row, history, ty
 
 ### `search-and-filters/restore-failed-nothing`
 
-If a write fails while the server restores an archive, then the server MUST leave no row, type, edge type, blob, event or audit record that the restore wrote.
+If a write fails while the server restores an archive, then the server MUST leave no row, type, edge type, event or audit record that the restore wrote, and leave the blob bytes it placed that no row names for the next `blob-integrity` run to remove.
 
-**Tests:** `compliance/restore-faults.test.ts › leaves no row, type, edge type, blob, event or audit record when a write fails ($fault), and restores whole when it is tried again`.
+**Reason:** the bytes are placed before the transaction opens and stay unrecorded and queued for deletion, so nothing serves them, and clean-up removes only what no record names.
+
+**Tests:** `compliance/restore-faults.test.ts › leaves no row, type, edge type, event or audit record when a write fails ($fault), the next blob-integrity run removes the bytes it placed, and it restores whole when tried again`.
 
 ### `search-and-filters/restore-stopped-nothing`
 
