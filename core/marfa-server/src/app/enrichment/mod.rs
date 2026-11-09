@@ -19,8 +19,7 @@ use super::refusal::{Refusal, Result};
 use crate::settings::registry::{
     ENRICHMENT_BATCH_SIZE, ENRICHMENT_ENABLED, ENRICHMENT_ITEM_TIMEOUT_MS, ENRICHMENT_MAX_ATTEMPTS,
     ENRICHMENT_MAX_BLOB_BYTES, ENRICHMENT_MAX_INFLATED_BYTES, ENRICHMENT_MAX_MEMORY_BYTES,
-    ENRICHMENT_MAX_TEXT_CHARS, ENRICHMENT_OCR_ENABLED, ENRICHMENT_TESSDATA_DIR,
-    Snapshot as Settings,
+    ENRICHMENT_MAX_TEXT_CHARS, ENRICHMENT_OCR_ENABLED, Snapshot as Settings,
 };
 use queue::{Cap, Signatures, Why};
 
@@ -39,10 +38,15 @@ struct Plan {
 }
 
 impl Plan {
-    fn of(live: &Settings) -> Plan {
+    fn of(app: &App) -> Plan {
+        Plan::with(
+            &app.settings.live(),
+            app.settings.start.enrichment_tessdata_dir.clone(),
+        )
+    }
+
+    fn with(live: &Settings, data_dir: Option<PathBuf>) -> Plan {
         let ocr = live.get(ENRICHMENT_OCR_ENABLED);
-        let folder = live.get(ENRICHMENT_TESSDATA_DIR);
-        let data_dir = (!folder.is_empty()).then(|| PathBuf::from(&folder));
         let max_blob_bytes = live.get(ENRICHMENT_MAX_BLOB_BYTES);
         let max_inflated = live.get(ENRICHMENT_MAX_INFLATED_BYTES);
         let max_memory = live.get(ENRICHMENT_MAX_MEMORY_BYTES);
@@ -59,6 +63,9 @@ impl Plan {
             time_budget: None,
         };
         let languages = DEFAULT_OCR_LANGUAGES;
+        let folder = data_dir
+            .map(|folder| folder.display().to_string())
+            .unwrap_or_default();
         Plan {
             options,
             ocr,
@@ -381,7 +388,7 @@ pub async fn sweep(app: Arc<App>, run: Run) -> Result<Report> {
     if !live.get(ENRICHMENT_ENABLED) {
         return Ok(Report::done(tally.result()));
     }
-    let plan = Plan::of(&live);
+    let plan = Plan::of(&app);
     let (files, more) = pick(&app, &plan).await?;
     let mut again = more;
     for (seq, hash) in files {
@@ -413,8 +420,8 @@ mod tests {
         let blobs = dir.path().join("blobs");
         let socket = dir.path().join("s.sock");
         let pairs = [
-            ("SQLITE_PATH", database.to_str().unwrap()),
-            ("BLOB_PATH", blobs.to_str().unwrap()),
+            ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
+            ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
             ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
             ("MARFA_TEST_HOOKS", "true"),
             ("MARFA_ENRICHMENT_ENABLED", "true"),
@@ -475,7 +482,7 @@ mod tests {
     #[tokio::test]
     async fn bytes_that_changed_while_they_were_read_write_nothing() {
         let (_dir, app) = started().await;
-        let plan = Plan::of(&app.settings.live());
+        let plan = Plan::of(&app);
         let (id, hash) = file(&app, b"first bytes").await;
         let (files, _) = pick(&app, &plan).await.unwrap();
         let (seq, _) = files[0].clone();
@@ -514,7 +521,7 @@ mod tests {
     #[tokio::test]
     async fn a_value_the_client_wrote_while_the_file_was_read_is_kept() {
         let (_dir, app) = started().await;
-        let plan = Plan::of(&app.settings.live());
+        let plan = Plan::of(&app);
         let (id, hash) = file(&app, b"the file's own words").await;
         let (files, _) = pick(&app, &plan).await.unwrap();
         let (seq, _) = files[0].clone();
@@ -555,7 +562,7 @@ mod tests {
     #[tokio::test]
     async fn bytes_named_by_another_property_are_not_the_files_bytes() {
         let (_dir, app) = started().await;
-        let plan = Plan::of(&app.settings.live());
+        let plan = Plan::of(&app);
         let named = upload(&app, b"bytes a description names").await;
         let (id, own) = file(&app, b"the file's own bytes").await;
         let update = Update {
@@ -587,7 +594,7 @@ mod tests {
     #[tokio::test]
     async fn a_file_in_the_bin_is_not_written_and_waits() {
         let (_dir, app) = started().await;
-        let plan = Plan::of(&app.settings.live());
+        let plan = Plan::of(&app);
         let (id, hash) = file(&app, b"binned bytes").await;
         let (files, _) = pick(&app, &plan).await.unwrap();
         let (seq, _) = files[0].clone();
@@ -622,7 +629,7 @@ mod tests {
     #[tokio::test]
     async fn an_attempt_is_counted_before_the_file_is_read() {
         let (_dir, app) = started().await;
-        let plan = Plan::of(&app.settings.live());
+        let plan = Plan::of(&app);
         let (_, hash) = file(&app, b"a file that stops the server").await;
         for _ in 0..plan.max_attempts {
             let (files, _) = pick(&app, &plan).await.unwrap();
@@ -634,7 +641,7 @@ mod tests {
 
     async fn waiting_after(cap: Cap, change: impl Fn(&mut Signatures)) -> usize {
         let (_dir, app) = started().await;
-        let plan = Plan::of(&app.settings.live());
+        let plan = Plan::of(&app);
         let (_, hash) = file(&app, b"a file past a limit").await;
         let (files, _) = pick(&app, &plan).await.unwrap();
         settle(
@@ -647,14 +654,14 @@ mod tests {
         .await
         .unwrap();
         assert!(pick(&app, &plan).await.unwrap().0.is_empty());
-        let mut other = Plan::of(&app.settings.live());
+        let mut other = Plan::of(&app);
         change(&mut other.signatures);
         pick(&app, &other).await.unwrap().0.len()
     }
 
     #[tokio::test]
     async fn a_skip_comes_back_only_when_the_limit_that_stopped_it_is_raised() {
-        let now = Plan::of(&started().await.1.settings.live()).signatures;
+        let now = Plan::of(&started().await.1).signatures;
         let caps = [
             Cap::Blob(now.blob),
             Cap::Inflated(now.inflated),
@@ -699,13 +706,13 @@ mod tests {
     #[tokio::test]
     async fn an_encrypted_file_is_left_whatever_the_settings() {
         let (_dir, app) = started().await;
-        let plan = Plan::of(&app.settings.live());
+        let plan = Plan::of(&app);
         let (_, hash) = file(&app, b"locked").await;
         let (files, _) = pick(&app, &plan).await.unwrap();
         settle(&app, &plan, files[0].0, &hash, Fate::Skip(Why::Encrypted))
             .await
             .unwrap();
-        let mut changed = Plan::of(&app.settings.live());
+        let mut changed = Plan::of(&app);
         changed.signatures.native.push('+');
         changed.signatures.blob += 1;
         changed.signatures.inflated += 1;
@@ -727,11 +734,10 @@ mod tests {
     }
 
     fn plan_with(ocr: bool) -> Plan {
-        let mut plan = Plan::of(&crate::settings::registry::Snapshot::resolve(
-            &Default::default(),
-            &[],
-            0,
-        ));
+        let mut plan = Plan::with(
+            &crate::settings::registry::Snapshot::resolve(&Default::default(), &[], 0),
+            None,
+        );
         plan.ocr = ocr;
         plan
     }

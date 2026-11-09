@@ -64,7 +64,7 @@ beforeAll(async () => {
   }
   base = `http://127.0.0.1:${String(address.port)}`;
   server = await bootFreshServer("telemetry-identity", {
-    ERROR_WEBHOOK_URL: `${base}/errors`,
+    MARFA_ERROR_WEBHOOK_URL: `${base}/errors`,
     OTEL_SDK_DISABLED: "false",
     OTEL_EXPORTER_OTLP_ENDPOINT: base,
     MARFA_POSTHOG_HOST: base,
@@ -244,7 +244,7 @@ describe("what a server's telemetry says of where it came from", () => {
       // names comes from the attributes either way. The first server's
       // table cannot be put back in a state it will boot from again.
       const named = await bootFreshServer("telemetry-identity-name", {
-        ERROR_WEBHOOK_URL: `${base}/errors`,
+        MARFA_ERROR_WEBHOOK_URL: `${base}/errors`,
         OTEL_RESOURCE_ATTRIBUTES:
           "deployment.environment=old,deployment.environment.name=named",
       });

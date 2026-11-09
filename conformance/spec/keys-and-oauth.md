@@ -1097,7 +1097,7 @@ The limiter is off for a run, so these rules are asserted against a server boote
 
 ### `keys-and-oauth/keys-rate-cap`
 
-Where the limiter is on, when a credential's requests to the operations under `/keys` pass the cap `RATE_LIMIT_KEYS_REQUESTS` names, the server MUST answer `429 rate_limited` with `Retry-After` in seconds.
+Where the limiter is on, when a credential's requests to the operations under `/keys` pass the cap `rate_limit_keys_requests` names, the server MUST answer `429 rate_limited` with `Retry-After` in seconds.
 
 **Tests:** `compliance/key-rate-limit.test.ts › refuses past the limit the instance set, and the key doors share one window`.
 
@@ -1315,7 +1315,7 @@ When a registration at `POST /auth/oauth2/register` carries the owner's browser 
 
 ### `keys-and-oauth/register-idle-removed`
 
-When the `dcr-client-cleanup` job runs, the server MUST remove each registered client that no grant names, that holds no access or refresh token, and that was neither registered nor offered on the consent screen or the device approval page within `MARFA_DCR_CLIENT_RETENTION_DAYS`.
+When the `dcr-client-cleanup` job runs, the server MUST remove each registered client that no grant names, that holds no access or refresh token, and that was neither registered nor offered on the consent screen or the device approval page within `dcr_client_retention_days`.
 
 **Reason:** Registration takes no credential and answers every origin, so any page the owner visits can add registrations; a short retention bounds what is left behind without a cap that a page could fill to block real registrations.
 
@@ -1325,13 +1325,13 @@ When the `dcr-client-cleanup` job runs, the server MUST remove each registered c
 
 While a grant names a registered client, live or revoked, the server MUST keep the client registered.
 
-**Reason:** A revoked grant is kept, with the client it names, until the revoked-grant purge removes it after `MARFA_REVOKED_GRANT_RETENTION_DAYS`, so it never names a client that is gone.
+**Reason:** A revoked grant is kept, with the client it names, until the revoked-grant purge removes it after `revoked_grant_retention_days`, so it never names a client that is gone.
 
 **Tests:** `compliance/web-page-register.test.ts › removes a registration nobody approved once it is idle past the retention, and keeps an approved, a revoked and an offered one`.
 
 ### `keys-and-oauth/register-offered-kept`
 
-When the consent screen or the device approval page offers a registered client, the server MUST keep the client registered for `MARFA_DCR_CLIENT_RETENTION_DAYS` from then, however long ago it registered.
+When the consent screen or the device approval page offers a registered client, the server MUST keep the client registered for `dcr_client_retention_days` from then, however long ago it registered.
 
 **Reason:** A page may keep its registration between visits, so a registration older than the retention can be the one the owner is deciding on; the job must not remove it from under the decision.
 
@@ -2151,7 +2151,7 @@ While `GET /auth/grants` lists a grant to a web client, the server MUST answer e
 
 ### `keys-and-oauth/page-origin-refused`
 
-If a request to an operation that `keys-and-oauth/discovery-every-origin` and `keys-and-oauth/register-every-origin` do not name carries an `Origin` that is off the loopback, that `CORS_ORIGINS` does not name, and that is the origin of no redirect URI of a web client `GET /auth/grants` lists, then the server MUST answer it, a preflight included, without `Access-Control-Allow-Origin`.
+If a request to an operation that `keys-and-oauth/discovery-every-origin` and `keys-and-oauth/register-every-origin` do not name carries an `Origin` that is off the loopback, that `cors_origins` does not name, and that is the origin of no redirect URI of a web client `GET /auth/grants` lists, then the server MUST answer it, a preflight included, without `Access-Control-Allow-Origin`.
 
 **Reason:** Nothing is allowed until the owner approves it: a page not yet approved, one the owner denied or disconnected, and a native app's redirect URI, which is where a program on a device listens rather than a page, are all refused.
 
@@ -2195,7 +2195,7 @@ The server MUST take the origin of a redirect URI as its scheme, its host in low
 
 ### `keys-and-oauth/origin-configured`
 
-When a request carries an `Origin` that `CORS_ORIGINS` names, the server MUST answer it, a preflight included, with `Access-Control-Allow-Origin` naming that origin.
+When a request carries an `Origin` that `cors_origins` names, the server MUST answer it, a preflight included, with `Access-Control-Allow-Origin` naming that origin.
 
 **Tests:** `compliance/web-page-origin.test.ts › allows a configured origin, and refuses an unapproved one beside it`, `compliance/contract-header.test.ts › sends its contract version on a preflight from an origin the instance allows`.
 
@@ -2353,7 +2353,7 @@ If a signed-in person opens the device approval page for a pending code whose cl
 
 ### `keys-and-oauth/browser-origin`
 
-If `POST /auth/sign-in`, `POST /auth/device`, `POST /auth/device/consent` or `POST /auth/authorize/decision` receives a form whose `Origin`, or `Referer` where it carries no `Origin`, is neither the issuer's origin nor one `CORS_ORIGINS` names, an approved web page's origin and `null` included, then the server MUST answer `403 forbidden` before it reads the form.
+If `POST /auth/sign-in`, `POST /auth/device`, `POST /auth/device/consent` or `POST /auth/authorize/decision` receives a form whose `Origin`, or `Referer` where it carries no `Origin`, is neither the issuer's origin nor one `cors_origins` names, an approved web page's origin and `null` included, then the server MUST answer `403 forbidden` before it reads the form.
 
 **Reason:** A form posted under the owner's cookie acts as the owner, so approving a web page lets it call the instance with the credential it holds and never with the owner's browser session.
 
@@ -2543,7 +2543,7 @@ If a request names a path under `/auth/` that the sign-in surface does not serve
 
 ### `keys-and-oauth/library-origin`
 
-If `POST /auth/sign-in/email` carries an `Origin` that is neither the issuer's origin nor one `CORS_ORIGINS` names, an approved web page's origin included, then the server MUST answer `403`.
+If `POST /auth/sign-in/email` carries an `Origin` that is neither the issuer's origin nor one `cors_origins` names, an approved web page's origin included, then the server MUST answer `403`.
 
 **Reason:** A password sign-in sets the owner's session cookie, so the origins it trusts are the operator's and never widen with an approval.
 
@@ -2701,7 +2701,7 @@ When `GET /owner/sign-ins` answers, the server MUST give each sign-in its `id`, 
 
 ### `keys-and-oauth/sign-ins-app-expiry`
 
-When `GET /owner/sign-ins` lists an app, the server MUST give `expires_at` as its `last_used_at`, or `granted_at` if never used, plus the instance's grant inactivity days (`grant_inactivity_days` in `PUT /config` where set, else `MARFA_GRANT_INACTIVITY_DAYS`), or `null` when that is zero.
+When `GET /owner/sign-ins` lists an app, the server MUST give `expires_at` as its `last_used_at`, or `granted_at` if never used, plus the instance's grant inactivity days (`grant_inactivity_days`, 365 unless set), or `null` when that is zero.
 
 **Reason:** This is the inactivity boundary; the retirement sweep ends the grant after the boundary is passed.
 

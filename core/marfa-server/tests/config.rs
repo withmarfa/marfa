@@ -109,10 +109,10 @@ impl Instance {
         let blobs = dir.path().join("blobs");
         let socket = dir.path().join("s.sock");
         let mut pairs = vec![
-            ("SQLITE_PATH", database.to_str().unwrap()),
-            ("BLOB_PATH", blobs.to_str().unwrap()),
+            ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
+            ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
             ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
-            ("RATE_LIMIT_ENABLED", "false"),
+            ("MARFA_RATE_LIMIT_ENABLED", "false"),
         ];
         pairs.extend_from_slice(extra);
         let settings = Settings::read(Environment::from_pairs(&pairs)).unwrap();
@@ -278,7 +278,7 @@ async fn a_value_of_the_wrong_kind_or_size_is_named_and_a_null_in_a_put_is_refus
 async fn cors_origins_seed_from_a_comma_list_and_change_as_a_list() {
     let seed = [
         ("MARFA_TEST_HOOKS", "true"),
-        ("CORS_ORIGINS", "https://a.example, https://b.example"),
+        ("MARFA_CORS_ORIGINS", "https://a.example, https://b.example"),
     ];
     let instance = Instance::start(&seed).await;
     assert_eq!(
@@ -489,6 +489,7 @@ async fn only_direct_authority_moves_the_sign_in_address() {
     let instance = Instance::start(&[]).await;
     let key = instance.manager().await;
     let a = "https://a.example";
+    let own = instance.app.addresses().sign_in().origin().to_string();
 
     let confirmed = json!({ "sign_in_address": a, "confirm_sign_in_address_change": true });
     let first = instance.as_key(&key, Method::PATCH, confirmed).await;
@@ -508,7 +509,8 @@ async fn only_direct_authority_moves_the_sign_in_address() {
     let tidier = instance.as_key(&key, Method::PATCH, tidier).await;
     assert_eq!(tidier.status, StatusCode::OK, "{}", tidier.text);
 
-    let list = json!({ "addresses": [a, "https://b.example"] });
+    // Keep the fallback address so only authority can refuse clearing sign-in.
+    let list = json!({ "addresses": [a, "https://b.example", own] });
     let list = instance.as_key(&key, Method::PATCH, list).await;
     assert_eq!(list.status, StatusCode::OK, "{}", list.text);
 
@@ -518,10 +520,39 @@ async fn only_direct_authority_moves_the_sign_in_address() {
         (Method::PATCH, json!({ "sign_in_address": null })),
         (Method::PUT, json!({})),
     ] {
+        let label = format!("{method} {body}");
         let refused = instance.as_key(&key, method, body).await;
-        assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.text);
+        assert_eq!(
+            refused.status,
+            StatusCode::FORBIDDEN,
+            "{label}: {}",
+            refused.text
+        );
     }
     assert_eq!(instance.app.addresses().sign_in().origin(), a);
+}
+
+#[tokio::test]
+async fn the_addresses_are_judged_against_the_sign_in_address_in_force_stored_or_not() {
+    let instance = Instance::start(&[]).await;
+    let own = instance.app.addresses().sign_in().origin().to_string();
+    assert_eq!(instance.row("sign_in_address").await, None);
+
+    let elsewhere = json!({ "addresses": ["https://a.example"] });
+    let refused = instance.patch(elsewhere).await;
+    assert_eq!(refused.code(), "validation_error", "{}", refused.text);
+    assert_eq!(refused.error_paths(), ["addresses"]);
+    assert_eq!(instance.row("addresses").await, None);
+
+    // The witness: the same list with that address in it is stored.
+    let whole = json!({ "addresses": [own, "https://a.example"] });
+    let stored = instance.patch(whole).await;
+    assert_eq!(stored.status, StatusCode::OK, "{}", stored.text);
+
+    // Clearing the list leaves the sign-in address standing alone, which is whole.
+    let cleared = instance.patch(json!({ "addresses": null })).await;
+    assert_eq!(cleared.status, StatusCode::OK, "{}", cleared.text);
+    assert_eq!(instance.row("addresses").await, None);
 }
 
 #[tokio::test]
@@ -546,9 +577,10 @@ async fn a_write_that_would_overwrite_an_unreadable_address_list_must_name_it() 
         Some("not a list")
     );
 
-    let mended = instance.patch(json!({ "addresses": [a] })).await;
+    let own = instance.app.addresses().sign_in().origin().to_string();
+    let mended = instance.patch(json!({ "addresses": [a, own] })).await;
     assert_eq!(mended.status, StatusCode::OK, "{}", mended.text);
-    assert_eq!(mended.body["addresses"], json!([a]));
+    assert_eq!(mended.body["addresses"], json!([a, own]));
     assert!(instance.app.settings.live().unreadable().is_empty());
 }
 
@@ -741,7 +773,11 @@ async fn audit_rows(instance: &Instance) -> i64 {
 async fn the_settings_list_never_prints_a_secret_and_shows_a_row_that_no_longer_reads() {
     let secret = "salt-that-must-not-print";
     let hook = "https://hooks.example/token-that-must-not-print";
-    let instance = Instance::start(&[("API_KEY_SALT", secret), ("ERROR_WEBHOOK_URL", hook)]).await;
+    let instance = Instance::start(&[
+        ("MARFA_KEY_SALT", secret),
+        ("MARFA_ERROR_WEBHOOK_URL", hook),
+    ])
+    .await;
 
     instance.spoil("audit_retention_days", "soon").await;
 
@@ -757,7 +793,7 @@ async fn the_settings_list_never_prints_a_secret_and_shows_a_row_that_no_longer_
             .cloned()
             .unwrap()
     };
-    assert_eq!(named("API_KEY_SALT")["set"], true);
+    assert_eq!(named("MARFA_KEY_SALT")["set"], true);
     assert_eq!(named("MARFA_HEARTBEAT_URL")["set"], false);
     assert_eq!(named("MARFA_ERROR_WEBHOOK_TIMEOUT_MS")["secret"], false);
 

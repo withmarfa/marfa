@@ -10,7 +10,8 @@
 #   --full     also run the whole matrix of native/verify.sh (every format, OCR in six
 #              languages, damaged files, injected faults, the memory limit)
 #   --server   build the libraries and the server with them linked in
-#              (out/<target>/marfa-server, native/server.sh), and nothing else
+#              (out/<target>/marfa-server, native/server.sh), and nothing else;
+#              MARFA_SERVER_FEATURES adds cargo features to it
 #   --needs    print what the runner must have, and stop
 #
 # The result is in $MARFA_NATIVE_ROOT/out/<target>/: marfa-enrichment-read (what ships),
@@ -114,7 +115,7 @@ case "$TARGET" in
       docker run --rm --platform linux/amd64 \
         -v "$ROOT:/native-root" -v "$volume:/work" -v "$REPOSITORY:/repository:ro" \
         -e MARFA_NATIVE_ROOT=/native-root -e MARFA_NATIVE_WORK=/work -e CARGO_HOME=/work/cargo-home \
-        -e MARFA_KEEP_WORK="${MARFA_KEEP_WORK:-}" \
+        -e MARFA_KEEP_WORK="${MARFA_KEEP_WORK:-}" -e MARFA_SERVER_FEATURES="${MARFA_SERVER_FEATURES:-}" \
         "$image" "$@"
     }
     here=/repository/core/marfa-enrichment/native

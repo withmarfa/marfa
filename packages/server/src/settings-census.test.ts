@@ -76,6 +76,32 @@ const ENVIRONMENT_EXCEPTIONS: Record<string, string> = {
     "starts the server as a child process, which needs the test's own environment to run",
 };
 
+/** The contract's names for settings this server reads under others. */
+const CONTRACT_NAMES: Record<string, string> = {
+  MARFA_PORT: "PORT",
+  MARFA_DATABASE_PATH: "SQLITE_PATH",
+  MARFA_BLOB_PATH: "BLOB_PATH",
+  MARFA_KEY_SALT: "API_KEY_SALT",
+  MARFA_TRUSTED_PROXY_CIDRS: "TRUSTED_PROXY_CIDRS",
+  MARFA_TRUSTED_PROXY_HEADER: "TRUSTED_PROXY_HEADER",
+  MARFA_ERROR_WEBHOOK_URL: "ERROR_WEBHOOK_URL",
+  MARFA_WRITE_WAIT_MS: "SQLITE_BUSY_BUDGET_MS",
+  MARFA_SIGN_IN_ADDRESS: "MARFA_AUTH_BASE_URL",
+};
+
+/** Settings the contract names that this server does not read. */
+const CONTRACT_ONLY = ["MARFA_ADDRESSES"];
+
+/** Settings this server reads that the contract no longer names. */
+const SERVER_ONLY = ["NODE_ENV"];
+
+/** The name this server reads a contract name under. */
+function serverName(name: string): string {
+  if (SETTING_NAMES.includes(name) || CONTRACT_ONLY.includes(name)) return name;
+  const own = CONTRACT_NAMES[name] ?? name.replace(/^MARFA_/, "");
+  return SETTING_NAMES.includes(own) ? own : name;
+}
+
 /** Names in the docs that look like settings and are not the server's. */
 const NOT_SERVER_SETTINGS: Record<string, string> = {
   UNSUPPORTED_MEDIA_TYPE:
@@ -469,11 +495,16 @@ describe("the settings census", () => {
 
   it("lists every setting in .env.example, and nothing else", () => {
     const text = readFileSync(join(REPO, ".env.example"), "utf8");
-    const named = [...text.matchAll(/^#?\s*([A-Z][A-Z0-9_]*)=/gm)].map(
-      (m) => m[1],
+    const named = [...text.matchAll(/^#?\s*([A-Z][A-Z0-9_]*)=/gm)].map((m) =>
+      serverName(m[1] ?? ""),
     );
     expect(new Set(named).size, "a name listed twice").toBe(named.length);
-    expect([...named].sort()).toEqual([...SETTING_NAMES].sort());
+    expect([...named].sort()).toEqual(
+      [
+        ...SETTING_NAMES.filter((name) => !SERVER_ONLY.includes(name)),
+        ...CONTRACT_ONLY,
+      ].sort(),
+    );
   });
 
   it("has every setting the docs name", () => {
@@ -492,13 +523,16 @@ describe("the settings census", () => {
       for (const m of text.matchAll(
         /`([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)(=[^`]*)?`/g,
       )) {
-        promised.add(m[1] ?? "");
+        promised.add(serverName(m[1] ?? ""));
       }
     }
     // The witness: the docs do name settings.
     expect(promised).toContain("MARFA_AUTH_SECRET");
     const missing = [...promised].filter(
-      (name) => !SETTING_NAMES.includes(name) && !(name in NOT_SERVER_SETTINGS),
+      (name) =>
+        !SETTING_NAMES.includes(name) &&
+        !CONTRACT_ONLY.includes(name) &&
+        !(name in NOT_SERVER_SETTINGS),
     );
     expect(missing).toEqual([]);
   });

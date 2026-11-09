@@ -22,12 +22,14 @@ const CLIENT_HEADER = "x-conformance-client";
 
 beforeAll(async () => {
   [shared, account, timed] = await Promise.all([
-    bootFreshServer("sign-in-limits", { TRUSTED_PROXY_HEADER: CLIENT_HEADER }),
+    bootFreshServer("sign-in-limits", {
+      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+    }),
     bootFreshServer("sign-in-limits-account", {
-      TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
     }),
     bootFreshServer("sign-in-limits-timed", {
-      TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
     }),
   ]);
 }, 3 * FRESH_SERVER_TIMEOUT_MS);

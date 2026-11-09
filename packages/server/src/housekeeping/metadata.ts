@@ -88,7 +88,6 @@ export const HOUSEKEEPING_JOBS = {
   },
   "bulk-action-gc": {
     name: "bulk-action-gc",
-    description:
-      "Removes completed bulk action jobs after their retention window.",
+    description: "Removes finished bulk action jobs after 7 days.",
   },
 } as const;

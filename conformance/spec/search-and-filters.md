@@ -2058,7 +2058,7 @@ When an edge is created after the headers of `GET /export?format=archive` have a
 
 ### `search-and-filters/archive-restorable`
 
-When `GET /export?format=archive` returns a complete archive, the server MUST ensure that the archive passes `POST /restore` validation into an empty store running the same build with the exporting instance's `MARFA_MAX_BULK_REQUEST_BYTES`, without skipping any carried item or edge.
+When `GET /export?format=archive` returns a complete archive, the server MUST ensure that the archive passes `POST /restore` validation into an empty store running the same build with the exporting instance's `max_bulk_request_bytes`, without skipping any carried item or edge.
 
 **Reason:** pages can observe different committed states, and `schema.write` permits replacements that leave an earlier row that a restore refuses, such as a type that becomes an event while a row holds a rule no calendar read can unfold (`types/evolve-schema-write`). The setting is the exporting instance's because the archive is that instance's backup, restored into it under the same setting: a judgment against the default would refuse a row that the instance's write operations accepted, or pass a row that its restore refuses. The guarantee excludes destination conflicts and other settings of the destination; missing blobs retain their declared missing status.
 
@@ -2706,7 +2706,7 @@ Where the volume has room for an archive beside the instance's reserve (`blobs/r
 
 ### `search-and-filters/restore-duration`
 
-While a part of the body of `POST /restore` arrives at least once in every `MARFA_UPLOAD_IDLE_TIMEOUT_MS`, the server MUST NOT end the request for the time the body takes.
+While a part of the body of `POST /restore` arrives at least once in every `upload_idle_timeout_ms`, the server MUST NOT end the request for the time the body takes.
 
 **Reason:** an archive has no size cap (`search-and-filters/restore-blob-size`), so a large one over a slow link outlasts any fixed request deadline. The limit on a body that stops arriving is `search-and-filters/restore-idle`.
 
@@ -2714,7 +2714,7 @@ While a part of the body of `POST /restore` arrives at least once in every `MARF
 
 ### `search-and-filters/restore-idle`
 
-If no byte of the body of `POST /restore` arrives for `MARFA_UPLOAD_IDLE_TIMEOUT_MS`, 60000 milliseconds unless named, then the server MUST answer `408 request_timeout`.
+If no byte of the body of `POST /restore` arrives for `upload_idle_timeout_ms`, 60000 milliseconds unless named, then the server MUST answer `408 request_timeout`.
 
 **Reason:** a sender that has gone quiet would otherwise hold its request and the bytes it has sent for ever. The time counts the server's wait for the sender, not the time it takes to write what has arrived.
 
@@ -2780,7 +2780,7 @@ When an archived item's properties, those of one of its earlier versions, or an 
 
 If an archived item's properties, those of one of its earlier versions, or an archived edge's properties are larger than the largest body the bulk write operations take, then the server MUST answer `413 request_too_large` naming the row and the field in `details`.
 
-**Reason:** a restore is not a way to plant a row that the write operations would refuse, and the cap is `MARFA_MAX_BULK_REQUEST_BYTES` (`items/bulk-body-cap`).
+**Reason:** a restore is not a way to plant a row that the write operations would refuse, and the cap is `max_bulk_request_bytes` (`items/bulk-body-cap`).
 
 **Tests:** `compliance/archive-limits.test.ts › takes %s of exactly the bulk write cap and refuses one byte more, 413 naming the row and the field, and writes nothing`.
 
@@ -2830,11 +2830,11 @@ While a restore writes, the server MUST NOT show its rows, registrations or even
 
 ### `search-and-filters/restore-writers-wait`
 
-While a restore writes, if another request has to write and waits for the restore longer than the instance's busy budget, then the server MUST answer that request `503 write_contention`.
+While a restore writes, if another request has to write and waits for the restore longer than the instance's write wait, then the server MUST answer that request `503 write_contention`.
 
 **Reason:** the restore holds the write lock until it commits, and a caller retries a `503` (`errors/contention`), whose `details.budget_ms` names the budget (`errors/contention-budget`).
 
-**Tests:** `compliance/restore-concurrent.test.ts › is answered 201, or 503 write_contention carrying the busy budget, and nothing else`.
+**Tests:** `compliance/restore-concurrent.test.ts › is answered 201, or 503 write_contention carrying the write wait, and nothing else`.
 
 ### `search-and-filters/restore-bytes-kept`
 

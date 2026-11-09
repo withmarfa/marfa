@@ -660,8 +660,8 @@ describe("the receiving door on an instance that names its limits", () => {
 
   beforeAll(async () => {
     server = await bootFreshServer("inbound-limits", {
-      RATE_LIMIT_ENABLED: "true",
-      RATE_LIMIT_INBOUND_REQUESTS: "3",
+      MARFA_RATE_LIMIT_ENABLED: "true",
+      MARFA_RATE_LIMIT_INBOUND_REQUESTS: "3",
       MARFA_INBOUND_BACKLOG_DELIVERIES: "5",
       MARFA_INBOUND_BACKLOG_BYTES: "6",
       MARFA_INBOUND_MAX_BYTES: "64",
@@ -847,7 +847,7 @@ describe("the receiving door on an instance that names its limits", () => {
     "refuses a body that would pass the bytes the instance holds in flight",
     async () => {
       const flight = await bootFreshServer("inbound-in-flight", {
-        RATE_LIMIT_ENABLED: "false",
+        MARFA_RATE_LIMIT_ENABLED: "false",
         MARFA_INBOUND_BACKLOG_BYTES: "64",
         MARFA_INBOUND_MAX_BYTES: "64",
         MARFA_INBOUND_IN_FLIGHT_BYTES: "8",
@@ -1265,7 +1265,7 @@ describe("an address whose key has expired", () => {
   let server: FreshServer | undefined;
   beforeAll(async () => {
     server = await bootFreshServer("inbound-key-expired", {
-      RATE_LIMIT_ENABLED: "false",
+      MARFA_RATE_LIMIT_ENABLED: "false",
     });
   }, 2 * FRESH_SERVER_TIMEOUT_MS);
   afterAll(async () => {
@@ -1324,7 +1324,7 @@ describe("retained inbound capacity", () => {
   let minter: MarfaClient;
   beforeAll(async () => {
     server = await bootFreshServer("inbound-retained", {
-      RATE_LIMIT_ENABLED: "false",
+      MARFA_RATE_LIMIT_ENABLED: "false",
       MARFA_INBOUND_RETAINED_DELIVERIES: "3",
       MARFA_INBOUND_RETAINED_BYTES: "4096",
       MARFA_INBOUND_HANDLED_RETENTION_DAYS: "0",

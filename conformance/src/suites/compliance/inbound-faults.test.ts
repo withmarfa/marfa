@@ -34,7 +34,7 @@ beforeAll(async () => {
   server = await bootFreshServer("inbound-faults", {
     ...sinks.env(),
     // Far enough off that no pass but the ones this file asks for runs.
-    MARFA_INBOUND_CLEANUP_INTERVAL_MS: "3153600000000",
+    MARFA_INBOUND_CLEANUP_INTERVAL_MS: "31536000000",
   });
   // The scheduler makes the job's first run itself some seconds after the
   // boot, and the clock moved below would make it due again. Waiting for it
