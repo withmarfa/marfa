@@ -60,23 +60,13 @@ build_and_check() {
       ;;
   esac
 
-  # The server's native feature turns file reading on; until it has one, nothing differs.
-  local native=()
-  if (cd "$CORE" && cargo metadata --no-deps --format-version 1 --locked) | python3 -I -c '
-import json, sys
-server = next(p for p in json.load(sys.stdin)["packages"] if p["name"] == "marfa-server")
-sys.exit(0 if "native" in server["features"] else 1)'; then
-    native=(--features native)
-  fi
-
   local program package features
   for program in "${PROGRAMS[@]}"; do
     package=marfa-server
-    features=()
+    features=(--features native)
     if [ "$program" = marfa ]; then
       package=marfa-cli
-    else
-      features=(${native[@]+"${native[@]}"})
+      features=()
     fi
     echo "programs: build $program"
     (cd "$CORE" && cargo build --release --locked --target "$TARGET" -p "$package" --bin "$program" \
