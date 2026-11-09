@@ -100,10 +100,11 @@ impl Family {
             self.pinned.insert(lane.key.clone(), window);
             return;
         }
-        if held.is_none() && self.keys.len() >= ROOM {
-            if let Some((_, soonest)) = self.by_end.pop_first() {
-                self.keys.remove(&soonest);
-            }
+        if held.is_none()
+            && self.keys.len() >= ROOM
+            && let Some((_, soonest)) = self.by_end.pop_first()
+        {
+            self.keys.remove(&soonest);
         }
         let key = held.unwrap_or_else(|| Arc::from(lane.key.as_str()));
         self.by_end.insert((window.ends_ms, Arc::clone(&key)));
