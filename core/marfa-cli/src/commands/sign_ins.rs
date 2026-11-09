@@ -1,4 +1,4 @@
-use clap::Subcommand;
+use clap::{Subcommand, ValueEnum};
 use serde_json::{Value, json};
 
 use crate::error::CliError;
@@ -34,6 +34,35 @@ pub enum SignInsCommand {
         #[arg(long)]
         revoke_keys: bool,
     },
+    /// End every sign-in of the chosen kinds at once, except the ones named
+    /// with --keep. With no --kind it ends every browser. It ends them one
+    /// at a time, carries on past one it cannot end, and says how many it
+    /// ended. Needs direct local authority (--socket).
+    EndAll {
+        /// The kinds to end. Repeat it for several; the default is browser.
+        #[arg(long, value_enum, value_name = "KIND")]
+        kind: Vec<Kind>,
+        /// A sign-in to leave as it is. Repeat it for several.
+        #[arg(long, value_name = "ID")]
+        keep: Vec<String>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum Kind {
+    Browser,
+    App,
+    Key,
+}
+
+impl Kind {
+    fn word(self) -> &'static str {
+        match self {
+            Kind::Browser => "browser",
+            Kind::App => "app",
+            Kind::Key => "key",
+        }
+    }
 }
 
 pub fn list_request() -> Request {
@@ -61,10 +90,67 @@ pub fn run(command: SignInsCommand, remote: &Remote, out: &Printer) -> Result<()
                 format!("renamed sign-in {} to {}", printable(&id), printable(named))
             })
         }
+        SignInsCommand::EndAll { kind, keep } => end_all(&kind, &keep, remote, out),
         SignInsCommand::End { id, revoke_keys } => {
             let answer = remote.json(&end_request(&id, revoke_keys))?;
             out.report(&answer, || format!("ended sign-in {}", printable(&id)))
         }
+    }
+}
+
+/// The sign-ins `kinds` names, less the ones kept, from a listing.
+fn chosen(answer: &Value, kinds: &[Kind], keep: &[String]) -> Vec<String> {
+    let kinds = if kinds.is_empty() {
+        &[Kind::Browser]
+    } else {
+        kinds
+    };
+    answer
+        .get("data")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter(|row| {
+            let kind = row.get("kind").and_then(Value::as_str).unwrap_or_default();
+            kinds.iter().any(|wanted| wanted.word() == kind)
+        })
+        .filter_map(|row| row.get("id").and_then(Value::as_str))
+        .filter(|id| !keep.iter().any(|kept| kept == id))
+        .map(str::to_string)
+        .collect()
+}
+
+fn end_all(
+    kinds: &[Kind],
+    keep: &[String],
+    remote: &Remote,
+    out: &Printer,
+) -> Result<(), CliError> {
+    let found = chosen(&remote.json(&list_request())?, kinds, keep);
+    let mut ended = Vec::new();
+    let mut failed = Vec::new();
+    for id in found {
+        match remote.json(&end_request(&id, false)) {
+            Ok(_) => ended.push(id),
+            Err(error) => failed.push((id, error)),
+        }
+    }
+    let answer = json!({
+        "ended": ended.len(),
+        "ids": ended,
+        "failed": failed
+            .iter()
+            .map(|(id, error)| json!({ "id": id, "error": error.to_string() }))
+            .collect::<Vec<_>>(),
+    });
+    out.report(&answer, || match ended.len() {
+        1 => "ended 1 sign-in".to_string(),
+        count => format!("ended {count} sign-ins"),
+    })?;
+    match failed.into_iter().next() {
+        Some((_, error)) => Err(error),
+        None => Ok(()),
     }
 }
 
@@ -126,6 +212,19 @@ mod tests {
             listing(&json!({"data": [], "next_cursor": null})),
             "no sign-ins"
         );
+    }
+
+    #[test]
+    fn end_all_chooses_browsers_unless_told_otherwise_and_spares_what_is_kept() {
+        let answer = json!({ "data": [
+            {"id": "b1", "kind": "browser"},
+            {"id": "b2", "kind": "browser"},
+            {"id": "a1", "kind": "app"},
+            {"id": "k1", "kind": "key"},
+        ], "next_cursor": null });
+        assert_eq!(chosen(&answer, &[], &[]), ["b1", "b2"]);
+        assert_eq!(chosen(&answer, &[], &["b2".to_string()]), ["b1"]);
+        assert_eq!(chosen(&answer, &[Kind::App, Kind::Key], &[]), ["a1", "k1"]);
     }
 
     #[test]
