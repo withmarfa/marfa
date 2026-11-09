@@ -93,6 +93,13 @@ fn warn_of_ignored(environment: &Environment) {
     }
 }
 
+pub(crate) fn report_unreadable(key: &str) {
+    tracing::error!(
+        setting = key,
+        "A stored setting does not read; its row is kept and its default is in use"
+    );
+}
+
 pub struct Settings {
     pub start: Arc<Start>,
     seeds: Arc<Seeds>,
@@ -144,10 +151,7 @@ impl Settings {
     pub fn apply_stored(&self, stored: &[(String, String)]) {
         let snapshot = Snapshot::resolve(&self.seeds, stored, 0);
         for key in snapshot.unreadable() {
-            tracing::error!(
-                setting = key,
-                "A stored setting does not read; its row is kept and its default is in use"
-            );
+            report_unreadable(key);
         }
         self.live.store(Arc::new(snapshot));
     }

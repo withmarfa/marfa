@@ -82,6 +82,31 @@ impl Entry {
         self.parse(self.default)
             .expect("a registered default is inside its own rule")
     }
+
+    /// A blank or unreadable row counts as absent, then the seed, then the default.
+    fn resolve(&self, seeds: &Seeds, row: Option<&str>) -> (Value, Reading) {
+        let read = row
+            .filter(|text| !text.is_empty())
+            .map(|text| self.parse(text));
+        let reading = match read {
+            Some(Ok(value)) => return (value, Reading::Stored),
+            Some(Err(_)) => Reading::Unreadable,
+            None => Reading::Absent,
+        };
+        let fallback = seeds
+            .get(self.key)
+            .cloned()
+            .unwrap_or_else(|| self.default_value());
+        (fallback, reading)
+    }
+}
+
+/// How a setting's stored row read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reading {
+    Absent,
+    Stored,
+    Unreadable,
 }
 
 pub struct Setting<T: 'static> {
@@ -100,6 +125,13 @@ impl<T> Copy for Setting<T> {}
 impl<T: Kind> Setting<T> {
     pub fn default_value(self) -> T {
         T::from_value(&self.entry.default_value()).expect("a setting reads as its rule's kind")
+    }
+
+    /// The value of this one setting from its stored row, as a [`Snapshot`] resolves it.
+    pub fn resolve(self, seeds: &Seeds, row: Option<&str>) -> (T, Reading) {
+        let (value, reading) = self.entry.resolve(seeds, row);
+        let value = T::from_value(&value).expect("a setting reads as its rule's kind");
+        (value, reading)
     }
 }
 
@@ -358,23 +390,16 @@ impl Snapshot {
         for entry in ENTRIES {
             let row = stored
                 .iter()
-                .find(|(key, text)| key == entry.key && !text.is_empty())
-                .map(|(_, text)| entry.parse(text));
-            let value = match row {
-                Some(Ok(value)) => {
+                .find(|(key, _)| key == entry.key)
+                .map(|(_, text)| text.as_str());
+            let (value, reading) = entry.resolve(seeds, row);
+            match reading {
+                Reading::Stored => {
                     rows.insert(entry.key, value.clone());
-                    value
                 }
-                absent => {
-                    if matches!(absent, Some(Err(_))) {
-                        unreadable.push(entry.key);
-                    }
-                    seeds
-                        .get(entry.key)
-                        .cloned()
-                        .unwrap_or_else(|| entry.default_value())
-                }
-            };
+                Reading::Unreadable => unreadable.push(entry.key),
+                Reading::Absent => {}
+            }
             values.insert(entry.key, value);
         }
         Snapshot {
