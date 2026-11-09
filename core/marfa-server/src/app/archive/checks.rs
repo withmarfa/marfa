@@ -1,10 +1,5 @@
-//! The checks a restore makes of every line of an archive, which an export makes of what it
-//! writes, so an archive the export sends is one the restore takes whole.
-//!
-//! Each check judges one line on its own, against the catalog the archive's registrations make.
-//! The checks that need the whole archive or the instance it lands in (a second line with an id,
-//! a key or a snapshot id already read, an edge's cardinality and cycles, rows the instance
-//! already holds) are the restore's, made where it writes.
+//! The checks a restore makes of each archive line on its own, which an export makes too.
+//! Checks across lines or against the target instance are the restore's.
 
 use marfa_rules::time;
 use serde_json::{Map, Value, json};
@@ -213,7 +208,7 @@ fn state_held(type_id: &str, state: &str) -> bool {
     STATES.contains(&state) && !(system && state == "trashed") && !(!system && state == "revoked")
 }
 
-/// Judges an `items.ndjson` line, the `row`th, as a restore into an instance holding `catalog`.
+/// Judges an `items.ndjson.gz` line, the `row`th, as a restore into an instance holding `catalog`.
 pub fn item(catalog: &Catalog, line: &Value, row: usize) -> Result<(), Box<Refused>> {
     let unnamed = At {
         kind: Kind::Item,
@@ -420,7 +415,7 @@ pub struct End<'a> {
     pub type_id: &'a str,
 }
 
-/// Judges an `edges.ndjson` line, the `row`th, whose ends `ends` finds, as a restore into an
+/// Judges an `edges.ndjson.gz` line, the `row`th, whose ends `ends` finds, as a restore into an
 /// instance holding `catalog`.
 pub fn edge<'a>(
     catalog: &Catalog,

@@ -402,7 +402,7 @@ If a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: false` meets t
 
 ## A volume with no room
 
-An instance keeps a reserve of free space on the volume that holds its disk store, set by `MARFA_DISK_RESERVE_BYTES`. `blobs.md` states the uploads and restores that are held to it.
+An instance keeps a reserve of free space on the volume that holds its disk store, set by `MARFA_DISK_RESERVE_BYTES`. `blobs.md` states the uploads and restores that are held to it, and `search-and-filters.md` the archive exports.
 
 ### `errors/storage-full`
 
@@ -430,9 +430,9 @@ The server MUST declare `507 insufficient_storage` in its OpenAPI document on ev
 
 ### `errors/storage-reserve-details`
 
-When the server answers `507 insufficient_storage` because a body would take the volume below the reserve, the server MUST carry the reserve in `details.reserve_bytes` and the free space it found in `details.available_bytes`, both in bytes.
+When the server answers `507 insufficient_storage` because a request would take the volume below the reserve, the server MUST carry the reserve in `details.reserve_bytes` and the free space it found in `details.available_bytes`, both in bytes.
 
-**Tests:** `compliance/disk-reserve.test.ts › refuses an upload 507 insufficient_storage, naming the reserve and the room, and stores nothing`.
+**Tests:** `compliance/disk-reserve.test.ts › refuses an upload 507 insufficient_storage, naming the reserve and the room, and stores nothing`, `compliance/export-reserve.test.ts › is refused 507 insufficient_storage before any archive byte, naming the reserve and the room, and leaves nothing on disk`.
 
 ## What a refusal names of a missing grant
 

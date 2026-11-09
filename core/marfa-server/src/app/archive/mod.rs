@@ -8,18 +8,21 @@ mod send;
 mod spool;
 mod tar;
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::future::Future;
 use std::io;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use serde_json::{Map, Value, json};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 use super::App;
 use super::access::{Caller, Permission};
 use super::blobs::carry::{self, Carried, Copy};
-use super::blobs::{Hash, references};
+use super::blobs::{Hash, Room, references};
 use super::faults::{FAIL_EXPORT_READ, HOLD_EXPORT_PAGE};
 use super::items::{self, Archived, Reader, reading};
 use super::query::{self, Ask};
@@ -35,8 +38,53 @@ const PAGE: i64 = 500;
 const EDGE_PAGE: i64 = 1000;
 const QUEUED: usize = 4;
 
-/// An export's body: chunks, and an error in place of the end where it was cut short.
-pub type Body = mpsc::Receiver<io::Result<Bytes>>;
+/// An export's body. It ends cleanly only once the sending task has said it finished, so a task
+/// that stopped, failed or panicked ends the body with an error.
+pub struct Body {
+    chunks: mpsc::Receiver<Bytes>,
+    finished: Option<oneshot::Receiver<()>>,
+}
+
+/// The sending task's end of a `Body`.
+struct Sender {
+    chunks: mpsc::Sender<Bytes>,
+    finished: oneshot::Sender<()>,
+}
+
+fn channel(queued: usize) -> (Sender, Body) {
+    let (chunks, receiver) = mpsc::channel(queued);
+    let (finished, told) = oneshot::channel();
+    (
+        Sender { chunks, finished },
+        Body {
+            chunks: receiver,
+            finished: Some(told),
+        },
+    )
+}
+
+impl Sender {
+    fn finish(self) {
+        let _ = self.finished.send(());
+    }
+}
+
+impl Body {
+    pub fn poll_chunk(&mut self, context: &mut Context<'_>) -> Poll<Option<io::Result<Bytes>>> {
+        if let Some(chunk) = std::task::ready!(self.chunks.poll_recv(context)) {
+            return Poll::Ready(Some(Ok(chunk)));
+        }
+        let Some(finished) = self.finished.as_mut() else {
+            return Poll::Ready(None);
+        };
+        let told = std::task::ready!(Pin::new(finished).poll(context));
+        self.finished = None;
+        match told {
+            Ok(()) => Poll::Ready(None),
+            Err(_) => Poll::Ready(Some(Err(io::Error::other("the export ended short")))),
+        }
+    }
+}
 
 /// What the items of one segment need of the credential that sends them.
 #[derive(Clone, Debug, Default)]
@@ -48,6 +96,24 @@ struct ItemNeed {
     types: BTreeSet<String>,
 }
 
+/// What the instance lines of one segment need of the credential that sends them.
+#[derive(Clone, Debug, Default)]
+struct InstanceNeed {
+    permissions: Vec<Permission>,
+    /// For each source a line names, the types of the carried rows behind it.
+    sources: BTreeMap<String, BTreeSet<String>>,
+    /// The type and source of each row a line names.
+    rows: BTreeSet<(String, String)>,
+}
+
+impl InstanceNeed {
+    fn permission(&mut self, permission: Permission) {
+        if !self.permissions.contains(&permission) {
+            self.permissions.push(permission);
+        }
+    }
+}
+
 /// The edge types of one segment's edges, each with its source's type.
 #[derive(Clone, Debug, Default)]
 struct EdgeNeed(BTreeSet<(String, String)>);
@@ -57,7 +123,7 @@ struct EdgeNeed(BTreeSet<(String, String)>);
 struct Prepared {
     created_at: String,
     manifest: Vec<u8>,
-    instance: Spooled<()>,
+    instance: Spooled<InstanceNeed>,
     items: Spooled<ItemNeed>,
     edges: Spooled<EdgeNeed>,
     blobs: Vec<(Carried, String)>,
@@ -65,16 +131,12 @@ struct Prepared {
 
 /// What the selection's snapshot gave: the line files, the blobs the rows name, and the counts.
 struct Selected {
-    instance: Spooled<()>,
+    instance: Spooled<InstanceNeed>,
     items: Spooled<ItemNeed>,
     edges: Spooled<EdgeNeed>,
     counts: Map<String, Value>,
     listed: Vec<Carried>,
     missing: BTreeMap<String, Value>,
-}
-
-fn written(error: io::Error) -> Refusal {
-    Refusal::internal(&format!("an export's spool was not written: {error}"))
 }
 
 fn print(value: &impl serde::Serialize) -> Result<String> {
@@ -125,7 +187,7 @@ impl App {
         let prepared = self.prepare_archive(caller, ask, files).await?;
         let created = prepared.created_at.clone();
         self.audit_export(caller, "archive").await?;
-        let (sender, body) = mpsc::channel(QUEUED);
+        let (sender, body) = channel(QUEUED);
         let (app, caller) = (self.clone(), caller.clone());
         tokio::spawn(async move { send::archive(app, caller, prepared, sender).await });
         Ok((body, created))
@@ -145,7 +207,8 @@ impl App {
             self.scratch().await?,
             self.scratch().await?,
         ];
-        let selected = reading(self, caller, move |read| select(read, &ask, scratch)).await?;
+        let room = self.room();
+        let selected = reading(self, caller, move |read| select(read, &ask, scratch, room)).await?;
         let copies = if files {
             self.whole_copies(&selected.listed).await?
         } else {
@@ -202,10 +265,11 @@ fn select(
     read: &Reader<'_, '_>,
     ask: &Ask,
     [instance, items, edges]: [crate::app::blobs::Scratch; 3],
+    room: Room,
 ) -> Result<Selected> {
-    let mut items: Lines<ItemNeed> = Lines::new(items).map_err(written)?;
-    let mut edges: Lines<EdgeNeed> = Lines::new(edges).map_err(written)?;
-    let mut instance: Lines<()> = Lines::new(instance).map_err(written)?;
+    let mut items: Lines<ItemNeed> = Lines::new(items, room.clone())?;
+    let mut edges: Lines<EdgeNeed> = Lines::new(edges, room.clone())?;
+    let mut instance: Lines<InstanceNeed> = Lines::new(instance, room)?;
     let caller = &read.caller;
     let catalog = &read.catalog;
     if let Some(type_id) = catalog.unreadable.first() {
@@ -223,8 +287,8 @@ fn select(
         .iter()
         .map(|(_, held)| held.item_id.as_str())
         .collect();
-    let mut carried_ids: HashSet<String> = HashSet::new();
-    let mut carried_sources: BTreeSet<String> = BTreeSet::new();
+    let mut carried_ids: HashMap<String, (String, String)> = HashMap::new();
+    let mut carried_sources: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut digests: BTreeSet<String> = BTreeSet::new();
     let mut file_refs: BTreeSet<String> = BTreeSet::new();
     let mut selected: Vec<i64> = Vec::new();
@@ -244,18 +308,19 @@ fn select(
             let line = line_value(&row.line)?;
             checks::item(catalog, &line, items.lines as usize + 1)
                 .map_err(|refused| unrestorable(&refused))?;
-            items
-                .push(&row.line, |need| {
-                    need.rows.insert((row.type_id.clone(), row.source.clone()));
-                    need.namespaces.extend(row.namespaces.iter().cloned());
-                    need.types.extend(row.snapshot_types.iter().cloned());
-                    need.types.extend(row.mark_type.iter().cloned());
-                })
-                .map_err(written)?;
+            items.push(&row.line, |need| {
+                need.rows.insert((row.type_id.clone(), row.source.clone()));
+                need.namespaces.extend(row.namespaces.iter().cloned());
+                need.types.extend(row.snapshot_types.iter().cloned());
+                need.types.extend(row.mark_type.iter().cloned());
+            })?;
             if agreed.contains(row.id.as_str()) {
-                carried_ids.insert(row.id.clone());
+                carried_ids.insert(row.id.clone(), (row.type_id.clone(), row.source.clone()));
             }
-            carried_sources.insert(row.source);
+            carried_sources
+                .entry(row.source)
+                .or_default()
+                .insert(row.type_id);
             digests.extend(row.digests);
             file_refs.extend(row.file_refs);
         }
@@ -301,12 +366,10 @@ fn select(
             };
             checks::edge(catalog, &line, edges.lines as usize + 1, ends)
                 .map_err(|refused| unrestorable(&refused))?;
-            edges
-                .push(&text, |need| {
-                    need.0
-                        .insert((edge.edge_type.clone(), source.type_id.clone()));
-                })
-                .map_err(written)?;
+            edges.push(&text, |need| {
+                need.0
+                    .insert((edge.edge_type.clone(), source.type_id.clone()));
+            })?;
             digests.extend(references::digests(&items::parsed(&edge.properties)?));
         }
     }
@@ -328,12 +391,28 @@ fn select(
         }
     }
     let mut counts = Map::new();
-    let mut count = |name: &str, lines: &mut Lines<()>, values: Vec<String>| -> Result<()> {
+    let mut count = |name: &str,
+                     lines: &mut Lines<InstanceNeed>,
+                     values: Vec<(String, InstanceNeed)>|
+     -> Result<()> {
         counts.insert(name.into(), values.len().into());
-        for value in values {
-            lines.push(&value, |_| ()).map_err(written)?;
+        for (value, need) in values {
+            lines.push(&value, |open| {
+                for permission in need.permissions {
+                    open.permission(permission);
+                }
+                for (source, types) in need.sources {
+                    open.sources.entry(source).or_default().extend(types);
+                }
+                open.rows.extend(need.rows);
+            })?;
         }
         Ok(())
+    };
+    let needing = |permission: Option<Permission>| {
+        let mut need = InstanceNeed::default();
+        need.permissions.extend(permission);
+        need
     };
     let mut types = Vec::new();
     let mut icons = Vec::new();
@@ -344,35 +423,44 @@ fn select(
             .filter(|held| held.origin == "user")
             && let Some(definition) = catalog.types.get(id)
         {
-            types.push(print(&json!({
-                "type": definition,
-                "provenance": crate::app::catalog::provenance_json(Some(provenance)),
-            }))?);
+            types.push((
+                print(&json!({
+                    "type": definition,
+                    "provenance": crate::app::catalog::provenance_json(Some(provenance)),
+                }))?,
+                needing(None),
+            ));
         }
         if let Some(icon) = catalog.types.icon_of(id) {
-            icons.push(print(
-                &json!({ "type_icon": { "type_id": id, "icon": icon } }),
-            )?);
+            icons.push((
+                print(&json!({ "type_icon": { "type_id": id, "icon": icon } }))?,
+                needing(None),
+            ));
         }
     }
     count("type_count", &mut instance, types)?;
     let edge_types = catalog
         .edge_types
         .iter()
-        .map(|definition| print(&json!({ "edge_type": definition })))
+        .map(|definition| Ok((print(&json!({ "edge_type": definition }))?, needing(None))))
         .collect::<Result<_>>()?;
     count("edge_type_count", &mut instance, edge_types)?;
     count("type_icon_count", &mut instance, icons)?;
     let direct = matches!(caller, Caller::Owner(_) | Caller::Local(_));
     let named = sources::named(read.tx)?
         .into_iter()
-        .filter(|named| direct || carried_sources.contains(&named.source))
+        .filter(|named| direct || carried_sources.contains_key(&named.source))
         .map(|named| {
-            print(&json!({ "source": {
+            let mut need = needing(None);
+            if !direct && let Some(types) = carried_sources.get(&named.source) {
+                need.sources.insert(named.source.clone(), types.clone());
+            }
+            let line = print(&json!({ "source": {
                 "source": named.source,
                 "name": named.name,
                 "mark": named.mark,
-            } }))
+            } }))?;
+            Ok((line, need))
         })
         .collect::<Result<_>>()?;
     count("source_count", &mut instance, named)?;
@@ -388,36 +476,44 @@ fn select(
             let value = entry.row_json(&text).map_err(|error| {
                 Refusal::internal(&format!("the stored setting {key} does not read: {error}"))
             })?;
-            settings.push(print(
-                &json!({ "setting": { "key": key, "value": value } }),
-            )?);
+            settings.push((
+                print(&json!({ "setting": { "key": key, "value": value } }))?,
+                needing(Some(Permission::ConfigManage)),
+            ));
         }
     }
     count("setting_count", &mut instance, settings)?;
     let documents = states
         .into_iter()
         .map(|(source, state)| {
-            print(&json!({ "connector_state": { "source": source, "state": state } }))
+            let line = print(&json!({ "connector_state": { "source": source, "state": state } }))?;
+            Ok((line, needing(Some(Permission::ConnectorsManage))))
         })
         .collect::<Result<_>>()?;
     count("connector_state_count", &mut instance, documents)?;
     let kept = agreements
         .into_iter()
-        .filter(|(_, held)| carried_ids.contains(&held.item_id))
-        .map(|(source, held)| {
-            print(&json!({ "connector_agreement": {
+        .filter_map(|(source, held)| {
+            let row = carried_ids.get(&held.item_id)?.clone();
+            Some((source, held, row))
+        })
+        .map(|(source, held, row)| {
+            let line = print(&json!({ "connector_agreement": {
                 "source": source,
                 "item_id": held.item_id,
                 "waiting": held.waiting,
                 "record": held.record,
-            } }))
+            } }))?;
+            let mut need = needing(Some(Permission::ConnectorsManage));
+            need.rows.insert(row);
+            Ok((line, need))
         })
         .collect::<Result<_>>()?;
     count("connector_agreement_count", &mut instance, kept)?;
     Ok(Selected {
-        instance: instance.finish().map_err(written)?,
-        items: items.finish().map_err(written)?,
-        edges: edges.finish().map_err(written)?,
+        instance: instance.finish()?,
+        items: items.finish()?,
+        edges: edges.finish()?,
         counts,
         listed,
         missing,

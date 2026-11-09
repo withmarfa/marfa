@@ -1,7 +1,5 @@
-//! Sends a prepared archive. Before each segment of a line file and each run of a blob's bytes
-//! it asks whether the credential still stands and still reads what that part holds; a part it
-//! may not send, a read that fails and bytes that are not their blob's all end the response
-//! with an error, never a clean end. Whatever the outcome, the spool goes with the task.
+//! Sends a prepared archive, asking before each part whether the credential still reads it.
+//! Only a whole archive finishes its body; any other end is an error.
 
 use std::fs::File;
 use std::io;
@@ -11,11 +9,10 @@ use bytes::Bytes;
 use chrono::DateTime;
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
-use tokio::sync::mpsc;
 
 use super::spool::{Spooled, read_chunk};
 use super::tar;
-use super::{EdgeNeed, ItemNeed, Prepared};
+use super::{EdgeNeed, InstanceNeed, ItemNeed, Prepared, Sender};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::blobs::Hash;
@@ -44,30 +41,23 @@ fn failed(what: &str) -> Stop {
 struct Out<'a> {
     app: &'a App,
     caller: &'a Caller,
-    sender: mpsc::Sender<io::Result<Bytes>>,
+    sender: &'a Sender,
     mtime: u64,
 }
 
-pub async fn archive(
-    app: Arc<App>,
-    caller: Caller,
-    prepared: Prepared,
-    sender: mpsc::Sender<io::Result<Bytes>>,
-) {
+pub async fn archive(app: Arc<App>, caller: Caller, prepared: Prepared, sender: Sender) {
     let mtime = DateTime::parse_from_rfc3339(&prepared.created_at)
         .map_or(0, |at| u64::try_from(at.timestamp()).unwrap_or(0));
     let out = Out {
         app: &app,
         caller: &caller,
-        sender: sender.clone(),
+        sender: &sender,
         mtime,
     };
     match out.whole(&prepared).await {
-        Ok(()) | Err(Stop::Gone) => {}
-        Err(Stop::Failed(error)) => {
-            tracing::warn!(%error, "An archive export ended short");
-            let _ = sender.send(Err(error)).await;
-        }
+        Ok(()) => sender.finish(),
+        Err(Stop::Gone) => tracing::info!("An archive export's client left or stopped reading"),
+        Err(Stop::Failed(error)) => tracing::warn!(%error, "An archive export ended short"),
     }
     drop(prepared);
 }
@@ -75,7 +65,7 @@ pub async fn archive(
 impl Out<'_> {
     async fn emit(&self, bytes: Bytes) -> Result<(), Stop> {
         let idle = self.app.blob_read_idle();
-        match tokio::time::timeout(idle, self.sender.send(Ok(bytes))).await {
+        match tokio::time::timeout(idle, self.sender.chunks.send(bytes)).await {
             Ok(Ok(())) => Ok(()),
             _ => Err(Stop::Gone),
         }
@@ -119,10 +109,8 @@ impl Out<'_> {
         self.emit(Bytes::copy_from_slice(&prepared.manifest))
             .await?;
         self.pad(prepared.manifest.len() as u64).await?;
-        self.lines("instance.ndjson.gz", &prepared.instance, |_| {
-            Box::new(|_| true)
-        })
-        .await?;
+        self.lines("instance.ndjson.gz", &prepared.instance, instance_need)
+            .await?;
         self.lines("items.ndjson.gz", &prepared.items, items_need)
             .await?;
         self.lines("edges.ndjson.gz", &prepared.edges, edges_need)
@@ -221,6 +209,25 @@ fn items_need(need: &ItemNeed) -> Box<dyn Fn(&Reader<'_, '_>) -> bool + Send> {
                 .types
                 .iter()
                 .all(|type_id| caller.may_read_type(type_id))
+    })
+}
+
+fn instance_need(need: &InstanceNeed) -> Box<dyn Fn(&Reader<'_, '_>) -> bool + Send> {
+    let need = need.clone();
+    Box::new(move |read| {
+        let caller = &read.caller;
+        need.permissions
+            .iter()
+            .all(|permission| caller.holds(*permission))
+            && need.sources.iter().all(|(source, types)| {
+                types.iter().any(|type_id| {
+                    caller.may_read_type(type_id)
+                        && caller.lists(&read.catalog.rules, type_id, source)
+                })
+            })
+            && need.rows.iter().all(|(type_id, source)| {
+                caller.may_read_type(type_id) && caller.lists(&read.catalog.rules, type_id, source)
+            })
     })
 }
 

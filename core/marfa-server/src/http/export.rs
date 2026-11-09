@@ -44,7 +44,7 @@ impl HttpBody for Streamed {
         context: &mut Context<'_>,
     ) -> Poll<Option<std::result::Result<Frame<Bytes>, std::io::Error>>> {
         self.0
-            .poll_recv(context)
+            .poll_chunk(context)
             .map(|next| next.map(|chunk| chunk.map(Frame::data)))
     }
 }

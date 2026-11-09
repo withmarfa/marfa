@@ -17,7 +17,7 @@ pub mod upkeep;
 use std::fs::File;
 use std::future::Future;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -601,13 +601,19 @@ fn insufficient() -> Refusal {
     )
 }
 
-/// A write that ran out of room is `507`; any other failure is the store's.
-fn unwritable(error: io::Error) -> Refusal {
-    if matches!(
+/// `507` for a write that met a volume with no room.
+pub fn out_of_room(error: &io::Error) -> Option<Refusal> {
+    matches!(
         error.kind(),
         io::ErrorKind::StorageFull | io::ErrorKind::QuotaExceeded
-    ) {
-        return insufficient();
+    )
+    .then(insufficient)
+}
+
+/// A write that ran out of room is `507`; any other failure is the store's.
+fn unwritable(error: io::Error) -> Refusal {
+    if let Some(refusal) = out_of_room(&error) {
+        return refusal;
     }
     tracing::error!(%error, "A blob write failed");
     unavailable()
@@ -645,6 +651,30 @@ fn room(faults: &Faults, root: &Path, reserve: u64, incoming: u64) -> Result<()>
             .with_detail("available_bytes", available));
     }
     Ok(())
+}
+
+/// The reserve a file the server writes on the disk store's volume must leave free there.
+#[derive(Clone)]
+pub struct Room {
+    faults: Arc<Faults>,
+    root: PathBuf,
+    reserve: u64,
+}
+
+impl Room {
+    #[cfg(test)]
+    pub fn at(faults: Arc<Faults>, root: PathBuf, reserve: u64) -> Room {
+        Room {
+            faults,
+            root,
+            reserve,
+        }
+    }
+
+    /// Refuses where the volume already has less free than the reserve. It blocks.
+    pub fn check(&self) -> Result<()> {
+        room(&self.faults, &self.root, self.reserve, 0)
+    }
 }
 
 /// Bytes on the disk that no record names yet, locked against deletion until `release_upload`.
@@ -746,6 +776,14 @@ impl App {
 
     pub fn upload_idle(&self) -> Duration {
         Duration::from_millis(self.settings.live().get(UPLOAD_IDLE_TIMEOUT_MS))
+    }
+
+    pub fn room(&self) -> Room {
+        Room {
+            faults: self.faults.clone(),
+            root: self.blobs.disk.root().to_path_buf(),
+            reserve: self.settings.live().get(DISK_RESERVE_BYTES),
+        }
     }
 
     pub fn blob_read_idle(&self) -> Duration {

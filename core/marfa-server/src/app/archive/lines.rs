@@ -1,6 +1,5 @@
-//! The NDJSON export: item lines, then the edges between them, each page read on its own, so a
-//! slow reader holds no snapshot open. Every page is selected as the credential read when the
-//! export began, and sent only while the credential still stands and reads all of it.
+//! The NDJSON export, a page per read so a slow reader holds no snapshot open. Each page is
+//! selected as the credential read at the start, and sent only while it still reads all of it.
 
 use std::io;
 use std::sync::Arc;
@@ -8,10 +7,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use tokio::sync::mpsc;
 
-use super::{Body, EDGE_PAGE, reads_row};
-
-/// Items in one page, so a credential that ends or narrows stops the export within a page.
-const PAGE: i64 = 100;
+use super::{Body, EDGE_PAGE, Sender, channel, reads_row};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::edges;
@@ -20,6 +16,9 @@ use crate::app::items::{self, reading};
 use crate::app::query::{self, Ask};
 use crate::app::refusal::Result;
 use crate::db::io_refusal;
+
+/// Items in one page, so a credential that ends or narrows stops the export within a page.
+const PAGE: i64 = 100;
 
 /// One page: its lines, where the next begins, and whether the credential now reads all of it.
 struct Page {
@@ -117,14 +116,13 @@ impl App {
     pub async fn export_lines(self: &Arc<App>, caller: &Caller, ask: Ask) -> Result<Body> {
         let (admitted, first) = item_page(self, caller, None, &ask, 0).await?;
         self.audit_export(caller, "ndjson").await?;
-        let (sender, body) = mpsc::channel(1);
+        let (sender, body) = channel(1);
         let app = self.clone();
         tokio::spawn(async move {
-            if let Err(error) = send(&app, &admitted, &ask, first, &sender).await
-                && let Some(error) = error
-            {
-                tracing::warn!(%error, "An NDJSON export ended short");
-                let _ = sender.send(Err(error)).await;
+            match send(&app, &admitted, &ask, first, &sender).await {
+                Ok(()) => sender.finish(),
+                Err(None) => tracing::info!("An NDJSON export's client left or stopped reading"),
+                Err(Some(error)) => tracing::warn!(%error, "An NDJSON export ended short"),
             }
         });
         Ok(body)
@@ -133,11 +131,8 @@ impl App {
 
 /// Waits for room for one page, so a page is read and checked only once it can be queued at
 /// once. `None` where the client left or stopped reading.
-async fn room<'a>(
-    app: &App,
-    sender: &'a mpsc::Sender<io::Result<Bytes>>,
-) -> Option<mpsc::Permit<'a, io::Result<Bytes>>> {
-    match tokio::time::timeout(app.blob_read_idle(), sender.reserve()).await {
+async fn room<'a>(app: &App, sender: &'a Sender) -> Option<mpsc::Permit<'a, Bytes>> {
+    match tokio::time::timeout(app.blob_read_idle(), sender.chunks.reserve()).await {
         Ok(Ok(permit)) => Some(permit),
         _ => None,
     }
@@ -151,7 +146,7 @@ async fn send(
     admitted: &Caller,
     ask: &Ask,
     first: Page,
-    sender: &mpsc::Sender<io::Result<Bytes>>,
+    sender: &Sender,
 ) -> std::result::Result<(), Option<io::Error>> {
     let cut = |what: String| Some(io::Error::other(what));
     let mut exported = Vec::new();
@@ -172,7 +167,7 @@ async fn send(
             return Err(cut(NARROWED.into()));
         }
         exported.extend(read.seqs);
-        permit.send(Ok(Bytes::from(read.text)));
+        permit.send(Bytes::from(read.text));
         match read.after {
             Some(next) => after = next,
             None => break,
@@ -188,7 +183,7 @@ async fn send(
         if !read.whole {
             return Err(cut(NARROWED.into()));
         }
-        permit.send(Ok(Bytes::from(read.text)));
+        permit.send(Bytes::from(read.text));
         match read.after {
             Some(next) => after = next,
             None => return Ok(()),
