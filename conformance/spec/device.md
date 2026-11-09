@@ -1978,7 +1978,7 @@ If a local list names a time bound that is not a time the server reads, then a d
 
 ### `device/time-filter-server`
 
-When a filter compares `occurred_at`, `created_at` or `updated_at` by `eq`, `neq`, `gt`, `gte`, `lt` or `lte`, a device MUST read the literal as the server reads it, as the same instant to the millisecond in UTC.
+When a filter compares `occurred_at`, `created_at` or `updated_at` by `eq`, `neq`, `gt`, `gte`, `lt` or `lte`, a device MUST read the literal as the server reads it: an RFC 3339 date-time as the same instant to the millisecond in UTC, and a date alone as its midnight in UTC.
 
 **Tests:** `device/time-comparisons-live.test.ts › normalizes and validates time filters on %s`.
 

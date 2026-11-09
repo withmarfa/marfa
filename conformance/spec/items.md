@@ -458,7 +458,7 @@ If a write leaves an item with a string property longer than the length its fiel
 
 ### `items/property-length-declared`
 
-Where a string field declares a `maxLength`, the server MUST allow it that many units and no more.
+Where a string field declares a `maxLength`, the server MUST allow it that many characters and no more.
 
 **Reason:** a field's own `maxLength` wins over either default, lower or higher.
 
@@ -466,15 +466,15 @@ Where a string field declares a `maxLength`, the server MUST allow it that many 
 
 ### `items/property-length-body`
 
-Where a string field declares no `maxLength` and its type names it as `display_hints.body_field`, the server MUST allow it 1,000,000 units and no more.
+Where a string field declares no `maxLength` and its type names it as `display_hints.body_field`, the server MUST allow it 1,000,000 characters and no more.
 
-**Reason:** a body holds a whole document. The hint is read nearest type first (`types/read-display-hint`), so a child naming another field gives its parent's body the default for other text. The next limit is the request size, which 1,000,000 units of multi-byte text, or of text JSON escapes, can pass.
+**Reason:** a body holds a whole document. The hint is read nearest type first (`types/read-display-hint`), so a child naming another field gives its parent's body the default for other text. The next limit is the request size, which 1,000,000 characters of multi-byte text, or of text JSON escapes, can pass.
 
 **Tests:** `compliance/validation.test.ts › stores a body at the field's length cap intact`, `compliance/body-field-length.test.ts › follows a body a type names, inherits or renames`, `compliance/body-field-length.test.ts › gives core.event's description the body's length, and a child that renames its body puts it back`, `compliance/body-field-length.test.ts › answers the same at each limit for a character outside the Basic Multilingual Plane`.
 
 ### `items/property-length-default`
 
-Where a string field declares no `maxLength` and its type does not name it as `display_hints.body_field`, the server MUST allow it 100,000 units and no more.
+Where a string field declares no `maxLength` and its type does not name it as `display_hints.body_field`, the server MUST allow it 100,000 characters and no more.
 
 **Reason:** the limit follows what a type names, not what a field is called, so a field called `body` on a type that names no body takes this default.
 
@@ -500,7 +500,7 @@ When the server measures a string property against a length cap, the server MUST
 
 **Reason:** a character outside the Basic Multilingual Plane counts once, however a client encodes it, so the server and a working copy give the same verdict (`device/declared-checked`).
 
-**Tests:** `device/property-validation-live.test.ts › matches a real server's field decisions and keeps queued writes across a catalog change`.
+**Tests:** `compliance/body-field-length.test.ts › answers the same at each limit for a character outside the Basic Multilingual Plane`, `device/property-validation-live.test.ts › matches a real server's field decisions and keeps queued writes across a catalog change`.
 
 ### `items/property-invalid`
 
