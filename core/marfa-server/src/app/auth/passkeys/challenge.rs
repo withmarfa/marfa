@@ -4,6 +4,7 @@ use rusqlite::{OptionalExtension, Transaction, params};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use crate::app::clock::Stamp;
 use crate::app::keys::digest_of;
 use crate::app::refusal::{Refusal, Result};
 
@@ -58,10 +59,10 @@ fn looks_like_a_token(text: &str) -> bool {
     text.len() == TOKEN_BYTES * 2 && text.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-fn make_room(tx: &Transaction<'_>, now_ms: i64, purpose: Purpose) -> Result<()> {
+fn make_room(tx: &Transaction<'_>, now: Stamp, purpose: Purpose) -> Result<()> {
     tx.execute(
         "DELETE FROM auth_passkey_challenge WHERE expires_at <= ?1",
-        params![now_ms],
+        params![now],
     )?;
     tx.execute(
         "DELETE FROM auth_passkey_challenge WHERE digest IN (SELECT digest \
@@ -75,10 +76,10 @@ fn make_room(tx: &Transaction<'_>, now_ms: i64, purpose: Purpose) -> Result<()> 
 pub fn issue<S: Serialize>(
     tx: &Transaction<'_>,
     salt: &str,
-    now_ms: i64,
+    now: Stamp,
     new: New<'_, S>,
 ) -> Result<String> {
-    make_room(tx, now_ms, new.purpose)?;
+    make_room(tx, now, new.purpose)?;
     let token = new_token()?;
     let state = serde_json::to_string(new.state)
         .map_err(|_| Refusal::internal("a passkey challenge did not write"))?;
@@ -91,7 +92,7 @@ pub fn issue<S: Serialize>(
             new.origin,
             new.session_id,
             state,
-            now_ms + LIFE_MS,
+            now.plus_ms(LIFE_MS)?,
         ],
     )?;
     Ok(token)
@@ -102,12 +103,12 @@ pub fn take(
     salt: &str,
     token: Option<&str>,
     purpose: Purpose,
-    now_ms: i64,
+    now: Stamp,
 ) -> Result<Option<Taken>> {
     let Some(token) = token.filter(|token| looks_like_a_token(token)) else {
         return Ok(None);
     };
-    let found: Option<(String, i64, Taken)> = tx
+    let found: Option<(String, Stamp, Taken)> = tx
         .query_row(
             "DELETE FROM auth_passkey_challenge WHERE digest = ?1 \
              RETURNING purpose, expires_at, origin, session_id, state",
@@ -126,6 +127,64 @@ pub fn take(
         )
         .optional()?;
     Ok(found.and_then(|(word, expires_at, taken)| {
-        (word == purpose.word() && expires_at > now_ms).then_some(taken)
+        (word == purpose.word() && expires_at > now).then_some(taken)
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::Connection;
+
+    use super::*;
+
+    const SALT: &str = "salt";
+    const NOW: i64 = 1_800_000_000_000;
+
+    fn at(ms: i64) -> Stamp {
+        Stamp::from_ms(ms).unwrap()
+    }
+
+    fn issued(tx: &Transaction<'_>) -> String {
+        let new = New {
+            purpose: Purpose::Prove,
+            origin: "https://a.example",
+            session_id: None,
+            state: &"state",
+        };
+        issue(tx, SALT, at(NOW), new).unwrap()
+    }
+
+    fn database() -> Connection {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(include_str!("../../../db/migrations/0001_baseline.sql"))
+            .unwrap();
+        db
+    }
+
+    #[test]
+    fn a_ceremony_is_taken_until_the_millisecond_it_ends() {
+        for (taken_at, stands) in [(NOW + LIFE_MS - 1, true), (NOW + LIFE_MS, false)] {
+            let mut db = database();
+            let tx = db.transaction().unwrap();
+            let token = issued(&tx);
+            let taken = take(&tx, SALT, Some(&token), Purpose::Prove, at(taken_at)).unwrap();
+            assert_eq!(taken.is_some(), stands, "{taken_at}");
+        }
+    }
+
+    #[test]
+    fn a_ceremony_whose_end_does_not_read_is_refused() {
+        for stored in ["soon", "1800000300000", "2027-01-15T08:00:00Z"] {
+            let mut db = database();
+            let tx = db.transaction().unwrap();
+            let token = issued(&tx);
+            tx.execute(
+                "UPDATE auth_passkey_challenge SET expires_at = ?1",
+                [stored],
+            )
+            .unwrap();
+            let refused = take(&tx, SALT, Some(&token), Purpose::Prove, at(NOW)).err();
+            assert!(refused.is_some(), "{stored}");
+        }
+    }
 }

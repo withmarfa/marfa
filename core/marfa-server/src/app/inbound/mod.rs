@@ -13,10 +13,10 @@ use sha2::{Digest, Sha256};
 
 use super::App;
 use super::access::Caller;
-use super::auth;
 use super::connectors::{self, Registration, Window};
 use super::keys;
 use super::refusal::{Code, Refusal, Result};
+use crate::app::clock::Stamp;
 pub use cleanup::delivery_cleanup;
 pub use receive::{
     Arrival, Full, InFlight, Landed, Place, Reservation, Sent, admit, head_charge, receive,
@@ -70,7 +70,7 @@ fn key_stands(tx: &Transaction<'_>, key_id: &str, at: &str) -> Result<bool> {
     };
     match key.expires_at.as_deref() {
         None => Ok(true),
-        Some(expires_at) => Ok(auth::millis_of(expires_at)? > auth::millis_of(at)?),
+        Some(expires_at) => Ok(Stamp::read(expires_at)?.ms() > Stamp::read(at)?.ms()),
     }
 }
 

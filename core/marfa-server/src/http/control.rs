@@ -13,7 +13,6 @@ use crate::app::access::Caller;
 use crate::app::auth::Visit;
 use crate::app::auth::claim::{self, Proof};
 use crate::app::auth::owner::{self, Details};
-use crate::app::oauth::store::stamp_of;
 use crate::app::refusal::Refusal;
 
 const CLAIM_FIELDS: [&str; 3] = ["email", "password", "name"];
@@ -47,7 +46,7 @@ pub async fn setup_ticket(State(app): State<Arc<App>>, caller: Caller) -> Answer
         &json!({
             "ticket": ticket,
             "url": format!("{origin}/setup#handoff={ticket}"),
-            "expires_at": stamp_of(expires_at),
+            "expires_at": expires_at,
         }),
     ))
 }

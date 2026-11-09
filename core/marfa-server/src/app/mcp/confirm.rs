@@ -7,6 +7,7 @@ use rusqlite::{OptionalExtension, Transaction, params};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
+use crate::app::clock::Stamp;
 use crate::app::refusal::{Refusal, Result};
 
 /// How long a preview's token stays good, in milliseconds.
@@ -22,7 +23,7 @@ pub struct Signer(Vec<u8>);
 
 pub struct Token {
     pub text: String,
-    pub expires_at_ms: i64,
+    pub expires_at: Stamp,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -105,11 +106,11 @@ impl Signer {
     }
 
     pub fn issue(&self, tool: &str, credential: &str, subject: &str, now_ms: i64) -> Result<Token> {
-        let expires_at_ms = now_ms.saturating_add(LIFE_MS);
-        let signature = self.signature(tool, credential, subject, expires_at_ms)?;
+        let expires_at = Stamp::from_ms(now_ms.saturating_add(LIFE_MS))?;
+        let signature = self.signature(tool, credential, subject, expires_at.ms())?;
         Ok(Token {
-            text: format!("{expires_at_ms}.{signature}"),
-            expires_at_ms,
+            text: format!("{}.{signature}", expires_at.ms()),
+            expires_at,
         })
     }
 
@@ -177,17 +178,17 @@ pub fn spend(
             credential,
             ids_digest,
             total,
-            parsed.expires_at_ms
+            Stamp::from_ms(parsed.expires_at_ms)?
         ],
     )?;
     Ok(())
 }
 
 /// Removes expired records during the next confirmation write.
-pub fn sweep(tx: &Transaction<'_>, now_ms: i64) -> Result<()> {
+pub fn sweep(tx: &Transaction<'_>, now: Stamp) -> Result<()> {
     tx.execute(
         "DELETE FROM mcp_spent_confirmations WHERE expires_at <= ?1",
-        params![now_ms],
+        params![now],
     )?;
     Ok(())
 }
@@ -233,7 +234,7 @@ mod tests {
         let token = signer
             .issue("marfa_delete", "key-a", "subject", 1_000)
             .unwrap();
-        assert_eq!(token.expires_at_ms, 1_000 + LIFE_MS);
+        assert_eq!(token.expires_at.ms(), 1_000 + LIFE_MS);
         assert_eq!(
             signer
                 .check(

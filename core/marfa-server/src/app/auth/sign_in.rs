@@ -8,9 +8,10 @@ use super::limits::{self, too_many_passwords};
 use super::owner::{self, Owner};
 use super::password::Checked;
 use super::session::{self, New, Opened};
-use super::{Note, Visit, note, seconds_of};
+use super::{Note, Visit, note};
 use crate::app::App;
 use crate::app::access::{Caller, unauthorized};
+use crate::app::clock::Stamp;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::db::Write;
 
@@ -75,7 +76,7 @@ impl Proven {
             return Ok(false);
         }
         if let Some(hash) = &self.replacement {
-            owner::set_password(tx, &self.owner.id, hash, seconds_of(at)?)?;
+            owner::set_password(tx, &self.owner.id, hash, Stamp::read(at)?)?;
         }
         Ok(true)
     }
@@ -146,7 +147,7 @@ pub async fn with_password(
             }
             let opened = session::open(
                 tx,
-                seconds_of(&at)?,
+                Stamp::read(&at)?,
                 New {
                     salt: &salt,
                     user_id: &proven.owner.id,
@@ -198,7 +199,7 @@ pub async fn confirm(app: &App, caller: &Caller, password: String, visit: Visit)
         }
         let opened = session::open(
             tx,
-            seconds_of(&unit.at)?,
+            unit.instant,
             New {
                 salt: &salt,
                 user_id: &session.user_id,

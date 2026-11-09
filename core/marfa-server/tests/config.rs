@@ -7,6 +7,7 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use marfa_server::app::auth::configured_origins;
+use marfa_server::app::clock::Stamp;
 use marfa_server::app::{App, instance, stored};
 use marfa_server::db::Write;
 use marfa_server::http::{control, public};
@@ -56,47 +57,48 @@ impl Instance {
     }
 
     async fn claim_with(&self, sessions: u32, apps: u32) {
-        let now = self.app.clock.now_ms() / 1000;
+        let now = self.app.clock.instant();
+        let old = "2000-01-01T00:00:00.000Z";
         self.app
             .db
             .write(Write::own(), move |tx| {
                 tx.execute(
                     "INSERT INTO auth_user (id, name, email, created_at, updated_at) \
-                     VALUES ('owner', 'Owner', 'owner@example.com', 1, 1)",
-                    [],
+                     VALUES ('owner', 'Owner', 'owner@example.com', ?1, ?1)",
+                    [old],
                 )?;
                 instance::mark_claimed(tx, "2026-01-01T00:00:00.000Z", "owner")?;
-                let session = |id: String, expires_at: i64| {
+                let session = |id: String, expires_at: Stamp| {
                     tx.execute(
                         "INSERT INTO auth_session \
                          (id, token, user_id, created_at, updated_at, expires_at) \
-                         VALUES (?1, ?1, 'owner', 1, 1, ?2)",
-                        rusqlite::params![id, expires_at],
+                         VALUES (?1, ?1, 'owner', ?3, ?3, ?2)",
+                        rusqlite::params![id, expires_at, old],
                     )
                 };
-                let consent = |id: String, withdrawn_at: Option<i64>| {
+                let consent = |id: String, withdrawn_at: Option<&str>| {
                     tx.execute(
                         "INSERT INTO auth_oauth_client (client_id, auth_method, \
                          application_type, redirect_uris, grant_types, response_types, scopes, \
                          contacts, created_at) \
-                         VALUES (?1, 'none', 'native', '[]', '[]', '[]', '[]', '[]', 1)",
-                        [&id],
+                         VALUES (?1, 'none', 'native', '[]', '[]', '[]', '[]', '[]', ?2)",
+                        [id.as_str(), old],
                     )?;
                     tx.execute(
                         "INSERT INTO auth_oauth_consent (client_id, user_id, grant_id, scopes, \
                          created_at, updated_at, withdrawn_at) \
-                         VALUES (?1, 'owner', ?1, '[]', 1, 1, ?2)",
-                        rusqlite::params![id, withdrawn_at],
+                         VALUES (?1, 'owner', ?1, '[]', ?3, ?3, ?2)",
+                        rusqlite::params![id, withdrawn_at, old],
                     )
                 };
                 for number in 0..sessions {
-                    session(format!("live-{number}"), now + 1_000)?;
+                    session(format!("live-{number}"), now.plus_ms(1_000_000)?)?;
                 }
-                session("expired".to_string(), now - 1)?;
+                session("expired".to_string(), now.earlier_by(1_000).unwrap())?;
                 for number in 0..apps {
                     consent(format!("app-{number}"), None)?;
                 }
-                consent("withdrawn".to_string(), Some(1))?;
+                consent("withdrawn".to_string(), Some(old))?;
                 Ok(())
             })
             .await

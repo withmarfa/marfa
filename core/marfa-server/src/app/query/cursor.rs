@@ -46,6 +46,23 @@ impl Secret {
         Ok(format!("{}{}", hex::encode(tag), hex::encode(payload)))
     }
 
+    /// A place in a listing ordered by one text key, then by id.
+    pub fn issue_at(&self, scope: &str, key: &str, id: &str) -> Result<String> {
+        let position = Position {
+            keys: vec![Value::Text(key.to_string())],
+            id: id.to_string(),
+        };
+        self.issue(scope, &position.payload())
+    }
+
+    pub fn open_at(&self, scope: &str, cursor: &str) -> Result<(String, String)> {
+        let position = Position::from_payload(&self.open(scope, cursor)?, 1)?;
+        match position.keys.as_slice() {
+            [Value::Text(key)] => Ok((key.clone(), position.id)),
+            _ => Err(refused()),
+        }
+    }
+
     pub fn open(&self, scope: &str, cursor: &str) -> Result<Json> {
         let bytes = hex::decode(cursor).map_err(|_| refused())?;
         if bytes.len() < TAG_BYTES {

@@ -16,6 +16,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tokio::sync::{Notify, watch};
 
+use super::clock::Stamp;
 use super::refusal::{Code, Refusal, Result};
 use super::{App, config, stored};
 use crate::db::Write;
@@ -236,11 +237,18 @@ pub fn cutoff(
     unit_ms: i64,
 ) -> Result<Option<String>> {
     let kept = stored::deciding(tx, &app.settings.seeds(), retention)?;
-    Ok((kept > 0).then(|| ago(app, i64::try_from(kept).unwrap_or(i64::MAX), unit_ms)))
+    if kept == 0 {
+        return Ok(None);
+    }
+    Ok(ago(app, i64::try_from(kept).unwrap_or(i64::MAX), unit_ms))
 }
 
-pub fn ago(app: &App, amount: i64, unit_ms: i64) -> String {
-    app.clock.stamp_ago(amount.saturating_mul(unit_ms))
+/// `None` once no stored time can be that early.
+pub fn ago(app: &App, amount: i64, unit_ms: i64) -> Option<String> {
+    app.clock
+        .instant()
+        .earlier_by(amount.saturating_mul(unit_ms))
+        .map(Stamp::text)
 }
 
 /// Clears what the last process left unfinished and enters the jobs this build
