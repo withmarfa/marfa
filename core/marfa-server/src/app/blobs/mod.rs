@@ -30,9 +30,9 @@ use super::faults::{
     FAIL_BLOB_DELETE, FAIL_BLOB_READ, FAIL_BLOB_WRITE, Faults, HOLD_BLOB_DELETE, HOLD_BLOB_HAS,
     HOLD_BLOB_READ, HOLD_BLOB_WRITE, Lie, Volume,
 };
-use super::{housekeeping, stored};
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
+use super::{housekeeping, stored};
 use crate::db::{Db, Write, volume};
 use crate::failure::Failure;
 use crate::settings::registry::{

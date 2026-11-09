@@ -195,10 +195,12 @@ pub async fn trash_purge(app: Arc<App>, run: Run) -> Result<Report> {
     let live = app.clone();
     let due = app
         .db
-        .read(move |tx| match cutoff(tx, &live, TRASH_RETENTION_DAYS, DAY_MS)? {
-            Some(before) => Ok(!binned_after(tx, &before, &Position::default(), 1)?.is_empty()),
-            None => Ok(false),
-        })
+        .read(
+            move |tx| match cutoff(tx, &live, TRASH_RETENTION_DAYS, DAY_MS)? {
+                Some(before) => Ok(!binned_after(tx, &before, &Position::default(), 1)?.is_empty()),
+                None => Ok(false),
+            },
+        )
         .await?;
     if !due {
         return Ok(Report::done(result(0, 0)));

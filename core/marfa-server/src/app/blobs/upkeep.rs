@@ -13,10 +13,10 @@ use super::s3::S3;
 use super::store::{self, Answer, Failed, Store};
 use super::{App, Hash, room, rows};
 use crate::app::access::Caller;
-use crate::app::stored;
 use crate::app::faults::{FAIL_BLOB_READ, HOLD_BLOB_PURGE, HOLD_BLOB_READ, Lie};
 use crate::app::housekeeping::{Report, Run};
 use crate::app::refusal::Result;
+use crate::app::stored;
 use crate::db::Write;
 use crate::settings::registry::{
     BLOB_CLEANUP_GRACE_MS, BLOB_CLEANUP_INTERVAL_MS, BLOB_INTEGRITY_BATCH,

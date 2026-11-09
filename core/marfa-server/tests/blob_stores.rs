@@ -457,7 +457,11 @@ async fn the_orphan_job_keeps_what_settings_committed_before_they_are_live_keep(
         assert_eq!(live.get(BLOB_CLEANUP_GRACE_MS), 0);
         assert_eq!(live.get(BLOB_CLEANUP_INTERVAL_MS), 86_400_000);
         let second = instance.run("blob-orphans").await;
-        purged.push((key, second["purged"].clone(), instance.file(&orphan).is_file()));
+        purged.push((
+            key,
+            second["purged"].clone(),
+            instance.file(&orphan).is_file(),
+        ));
     }
     let kept = [
         ("blob_cleanup_grace_ms", json!(0), true),
