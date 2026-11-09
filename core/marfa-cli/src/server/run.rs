@@ -1,5 +1,4 @@
 //! `marfa server run`: the server as a child of this process, which a service runs.
-//! A server that refused its database is not run again: a restart meets the same refusal.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};

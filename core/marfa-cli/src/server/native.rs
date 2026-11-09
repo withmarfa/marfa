@@ -110,8 +110,7 @@ pub fn refuse_folder_settings(settings: &EnvFile, file: &Path) -> Result<(), Cli
     )))
 }
 
-/// A binary in a Homebrew Cellar moves at every upgrade, so a service names the
-/// prefix's `bin/marfa`, which follows it.
+/// Services use Homebrew's stable bin/marfa across Cellar upgrades.
 pub fn stable_binary(real: &Path, invoked: PathBuf) -> PathBuf {
     let parts: Vec<Component> = real.components().collect();
     let cellar = parts
