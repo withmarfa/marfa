@@ -1687,25 +1687,33 @@ While other subscriptions have receivers that do not answer, the server MUST sta
 
 ### `events/delivery-maker-share`
 
-While a subscription of another maker has a delivery due, the server MUST NOT hold more than 8 delivery attempts in flight for the subscriptions of one maker.
+While a subscription of another maker has a delivery due, the server MUST NOT start a delivery attempt for a maker that already has 8 or more attempts in flight.
 
-**Reason:** a maker's receivers that answer slowly or never would otherwise take every slot the server has for attempts and delay every other maker's deliveries by the time an attempt takes to end.
+**Reason:** a maker's receivers that answer slowly or never would otherwise take every slot the server has for attempts and delay every other maker's deliveries by the time an attempt takes to end. Attempts already in flight finish; the rule limits only what starts.
 
-**Tests:** `compliance/webhook-delivery.test.ts › holds at most eight attempts of one maker in flight while another maker's delivery is due`.
+**Tests:** `compliance/webhook-delivery.test.ts › starts no ninth attempt of one maker while another maker's delivery is due`.
 
 ### `events/delivery-maker-free`
 
-While no subscription of another maker has a delivery due, the server MUST attempt the due deliveries of one maker's subscriptions beyond 8 at once.
+While no subscription of another maker has a delivery due, the server MUST start a due delivery of a maker that already has 8 or more attempts in flight whenever fewer than 56 attempts are in flight.
 
 **Reason:** the share of `events/delivery-maker-share` protects a maker from the others and does not hold a maker back when no other maker waits.
 
 **Tests:** `compliance/webhook-delivery.test.ts › lets a maker no other maker waits behind hold more than eight attempts in flight`.
 
+### `events/delivery-maker-headroom`
+
+While a maker has 8 or more delivery attempts in flight, the server MUST NOT start a further attempt for that maker whenever 56 or more attempts are in flight.
+
+**Reason:** the 8 slots left free let a delivery of another maker that falls due later start at once, however many attempts one maker holds. Attempts already in flight finish.
+
+**Tests:** `compliance/webhook-delivery.test.ts › starts a later maker's delivery at once while one maker holds every attempt it may`.
+
 ### `events/delivery-maker-isolation`
 
 While the subscriptions of one maker have receivers that do not answer, the server MUST start a due delivery of another maker's subscription without waiting for those attempts to finish.
 
-**Tests:** `compliance/webhook-delivery.test.ts › delivers promptly to a second maker while one maker's subscriptions never answer`.
+**Tests:** `compliance/webhook-delivery.test.ts › delivers promptly to a second maker while one maker's subscriptions never answer`, `compliance/webhook-delivery.test.ts › starts a later maker's delivery at once while one maker holds every attempt it may`.
 
 ## The audit log
 
