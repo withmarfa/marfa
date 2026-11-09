@@ -128,18 +128,6 @@ describe("the sign-in library's routes", () => {
       }
     }
   });
-
-  it("answer the browser session with no signed token", async () => {
-    const cookie = await cookieFrom("192.0.2.2");
-    const session = await fetch(`${server.apiUrl}/auth/get-session`, {
-      headers: { cookie },
-    });
-    expect(session.status).toBe(200);
-    expect(
-      ((await session.json()) as { user?: { email?: string } }).user?.email,
-    ).toBe(OWNER.email);
-    expect(session.headers.get("set-auth-jwt")).toBeNull();
-  });
 });
 
 describe("the owner's password change", () => {

@@ -327,10 +327,10 @@ mod tests {
         let registries = Registries::new(["core.note", "user.recipe"], []);
         let judged = judge(
             &registration("user.recipe:read", vec![GrantType::AuthorizationCode]),
-            &ScopeSet::parse("user.recipe:read core.*:read user.recipe:write openid"),
+            &ScopeSet::parse("user.recipe:read core.*:read user.recipe:write notes"),
             &registries,
         );
-        assert_eq!(judged.unknown, ["openid"]);
+        assert_eq!(judged.unknown, ["notes"]);
         assert_eq!(judged.outside, ["user.recipe:write"]);
         assert_eq!(judged.widened, ScopeSet::parse("core.*:read"));
         assert_eq!(judged.kept, ScopeSet::parse("user.recipe:read core.*:read"));

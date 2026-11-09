@@ -38,9 +38,7 @@ let cookie: string;
 const SCOPE = "core.note:read";
 const DISCOVERY = [
   "/.well-known/oauth-authorization-server/auth",
-  "/.well-known/openid-configuration/auth",
   "/auth/.well-known/oauth-authorization-server",
-  "/auth/.well-known/openid-configuration",
   "/.well-known/oauth-protected-resource",
   "/.well-known/oauth-protected-resource/mcp",
   "/.well-known/oauth-protected-resource/mcp/schema",

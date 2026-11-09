@@ -125,6 +125,12 @@ pub async fn put_profile(
     Ok(json_answer(StatusCode::OK, &json!({ "ok": true })))
 }
 
+pub async fn read_own(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
+    query::only(&uri, &[])?;
+    let profile = owner::read_profile(&app, &caller).await?;
+    Ok(json_answer(StatusCode::OK, &profile))
+}
+
 pub async fn update(
     State(app): State<Arc<App>>,
     caller: Caller,

@@ -13,10 +13,7 @@ import {
 
 /**
  * The caution the pages a person approves an app on show beside its name.
- * Registration takes no credential, so every app names itself, whichever way
- * it authenticates at the token endpoint. Each case registers one app of each
- * kind over HTTP and reads the page for both: the app that sends no secret is
- * the witness that the page shows the caution at all.
+ * Registration takes no credential, so every app names itself.
  *
  * Approving needs the owner signed in, and an instance has one owner, so this
  * file boots a server of its own and claims its owner through the production local command.
@@ -54,17 +51,13 @@ afterAll(async () => {
   await server?.stop();
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-type AuthMethod = "none" | "client_secret_basic";
-
 interface Registered {
   clientId: string;
-  clientSecret?: string;
 }
 
 /** Registers an app the way any program can: no credential. */
 async function register(
   name: string,
-  method: AuthMethod,
   grantTypes: string[],
 ): Promise<Registered> {
   const response = await fetch(`${server!.apiUrl}/auth/oauth2/register`, {
@@ -76,20 +69,12 @@ async function register(
       redirect_uris: [CALLBACK],
       grant_types: grantTypes,
       response_types: grantTypes.includes("authorization_code") ? ["code"] : [],
-      token_endpoint_auth_method: method,
+      token_endpoint_auth_method: "none",
     }),
   });
   expect(response.status).toBe(201);
-  const body = (await response.json()) as {
-    client_id: string;
-    client_secret?: string;
-    token_endpoint_auth_method: string;
-  };
-  expect(body.token_endpoint_auth_method).toBe(method);
-  if (method === "client_secret_basic") {
-    expect(body.client_secret, "registration answered no secret").toBeTruthy();
-  }
-  return { clientId: body.client_id, clientSecret: body.client_secret };
+  const body = (await response.json()) as { client_id: string };
+  return { clientId: body.client_id };
 }
 
 function authorizeUrl(clientId: string, scope = "core.note:read"): string {
@@ -142,21 +127,10 @@ async function deviceApprovalPage(
   app: Registered,
   scope = "core.note:read",
 ): Promise<string> {
-  const headers: Record<string, string> = {
-    "content-type": "application/x-www-form-urlencoded",
-  };
-  const form = new URLSearchParams({ scope });
-  if (app.clientSecret === undefined) {
-    form.set("client_id", app.clientId);
-  } else {
-    headers.authorization = `Basic ${Buffer.from(
-      `${encodeURIComponent(app.clientId)}:${encodeURIComponent(app.clientSecret)}`,
-    ).toString("base64")}`;
-  }
   const code = await fetch(`${server!.apiUrl}/auth/device/code`, {
     method: "POST",
-    headers,
-    body: form,
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ scope, client_id: app.clientId }),
   });
   expect(code.status).toBe(200);
   const { user_code: userCode } = (await code.json()) as { user_code: string };
@@ -169,52 +143,25 @@ async function deviceApprovalPage(
 }
 
 describe("an app a person approves", () => {
-  it("is shown with the caution on the consent page, whether or not it authenticates with a secret", async () => {
-    const grants = ["authorization_code"];
-    const open = await register("Open Consent App", "none", grants);
-    const secret = await register(
-      "Secret Consent App",
-      "client_secret_basic",
-      grants,
-    );
-    const openPage = visibleText(await consentPage(open.clientId));
-    expect(openPage).toContain("Open Consent App");
-    expect(openPage).toContain(CAUTION);
-    const secretPage = visibleText(await consentPage(secret.clientId));
-    expect(secretPage).toContain("Secret Consent App");
-    expect(secretPage).toContain(CAUTION);
+  it("is shown with the caution on the consent page", async () => {
+    const app = await register("Consent App", ["authorization_code"]);
+    const page = visibleText(await consentPage(app.clientId));
+    expect(page).toContain("Consent App");
+    expect(page).toContain(CAUTION);
   });
 
-  it("is shown with the caution on the sign-in page, whether or not it authenticates with a secret", async () => {
-    const grants = ["authorization_code"];
-    const open = await register("Open Sign-In App", "none", grants);
-    const secret = await register(
-      "Secret Sign-In App",
-      "client_secret_basic",
-      grants,
-    );
-    const openPage = visibleText(await signInPage(open.clientId));
-    expect(openPage).toContain("Open Sign-In App");
-    expect(openPage).toContain(SIGN_IN_CAUTION);
-    const secretPage = visibleText(await signInPage(secret.clientId));
-    expect(secretPage).toContain("Secret Sign-In App");
-    expect(secretPage).toContain(SIGN_IN_CAUTION);
+  it("is shown with the caution on the sign-in page", async () => {
+    const app = await register("Sign-In App", ["authorization_code"]);
+    const page = visibleText(await signInPage(app.clientId));
+    expect(page).toContain("Sign-In App");
+    expect(page).toContain(SIGN_IN_CAUTION);
   });
 
-  it("is shown with the caution on the device approval page, whether or not it authenticates with a secret", async () => {
-    const grants = [DEVICE_GRANT];
-    const open = await register("Open Device App", "none", grants);
-    const secret = await register(
-      "Secret Device App",
-      "client_secret_basic",
-      grants,
-    );
-    const openPage = visibleText(await deviceApprovalPage(open));
-    expect(openPage).toContain("Open Device App");
-    expect(openPage).toContain(CAUTION);
-    const secretPage = visibleText(await deviceApprovalPage(secret));
-    expect(secretPage).toContain("Secret Device App");
-    expect(secretPage).toContain(CAUTION);
+  it("is shown with the caution on the device approval page", async () => {
+    const app = await register("Device App", [DEVICE_GRANT]);
+    const page = visibleText(await deviceApprovalPage(app));
+    expect(page).toContain("Device App");
+    expect(page).toContain(CAUTION);
   });
 });
 
@@ -254,10 +201,8 @@ describe("a grant a person reads", () => {
     });
     expect(registered.status, await registered.clone().text()).toBe(201);
     const scope = "core.note:read core.note:write user.*:read audit.read";
-    const browser = await register("Same Words App", "none", [
-      "authorization_code",
-    ]);
-    const device = await register("Same Words Device", "none", [DEVICE_GRANT]);
+    const browser = await register("Same Words App", ["authorization_code"]);
+    const device = await register("Same Words Device", [DEVICE_GRANT]);
     const consentPageHtml = await consentPage(browser.clientId, scope);
     const consent = rowLines(consentPageHtml);
     const approval = rowLines(await deviceApprovalPage(device, scope));
