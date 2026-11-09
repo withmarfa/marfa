@@ -255,7 +255,12 @@ impl App {
         ];
         let room = self.room();
         let selected = match bucket {
-            None => reading(self, caller, move |read| select(read, &ask, scratch, room, None)).await?,
+            None => {
+                reading(self, caller, move |read| {
+                    select(read, &ask, scratch, room, None)
+                })
+                .await?
+            }
             Some(bucket) => {
                 reading_background(self, caller, move |read| {
                     select(read, &ask, scratch, room, Some(&bucket))

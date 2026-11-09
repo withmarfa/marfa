@@ -263,11 +263,8 @@ fn blob_storage(app: &App) -> Component {
 }
 
 pub async fn check(app: &Arc<App>) -> Report {
-    let (database, database_write, backups) = tokio::join!(
-        database(app),
-        database_write(app),
-        app.backup_health()
-    );
+    let (database, database_write, backups) =
+        tokio::join!(database(app), database_write(app), app.backup_health());
     Report {
         database,
         database_write,

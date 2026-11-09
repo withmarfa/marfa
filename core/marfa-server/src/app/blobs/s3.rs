@@ -328,10 +328,7 @@ impl S3 {
         let location = self.path_of(key);
         let mut attributes = Attributes::new();
         attributes.insert(Attribute::ContentType, content_type.to_string().into());
-        attributes.insert(
-            Attribute::Metadata(WRITER.into()),
-            self.id.clone().into(),
-        );
+        attributes.insert(Attribute::Metadata(WRITER.into()), self.id.clone().into());
         let mut first: Vec<Bytes> = Vec::new();
         let mut held = 0usize;
         let mut ended = false;

@@ -10,15 +10,22 @@ const DAILY_FOR_DAYS: i64 = 30;
 
 /// The name of a backup taken at `created_at`, an instant in the server's own form.
 pub fn name_of(created_at: &str) -> Option<String> {
-    let at = DateTime::parse_from_rfc3339(created_at).ok()?.with_timezone(&Utc);
-    let name = format!("{}{SUFFIX}", at.to_rfc3339_opts(SecondsFormat::Millis, true));
+    let at = DateTime::parse_from_rfc3339(created_at)
+        .ok()?
+        .with_timezone(&Utc);
+    let name = format!(
+        "{}{SUFFIX}",
+        at.to_rfc3339_opts(SecondsFormat::Millis, true)
+    );
     (parse(&name) == Some(at)).then_some(name)
 }
 
 /// When the backup `name` was taken, for a name exactly as `name_of` writes one.
 pub fn parse(name: &str) -> Option<DateTime<Utc>> {
     let stamp = name.strip_suffix(SUFFIX)?;
-    let at = DateTime::parse_from_rfc3339(stamp).ok()?.with_timezone(&Utc);
+    let at = DateTime::parse_from_rfc3339(stamp)
+        .ok()?
+        .with_timezone(&Utc);
     (at.to_rfc3339_opts(SecondsFormat::Millis, true) == stamp).then_some(at)
 }
 
@@ -36,9 +43,8 @@ pub fn doomed(listed: &[String], now: DateTime<Utc>) -> Vec<String> {
     let mut days: HashSet<NaiveDate> = HashSet::new();
     let mut doomed = Vec::new();
     for (index, (at, name)) in backups.into_iter().enumerate() {
-        let kept = index == 0
-            || at > now - day
-            || (at > oldest_daily && days.insert(at.date_naive()));
+        let kept =
+            index == 0 || at > now - day || (at > oldest_daily && days.insert(at.date_naive()));
         if !kept {
             doomed.push(name.clone());
         }
@@ -51,7 +57,9 @@ mod tests {
     use super::*;
 
     fn at(text: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(text).unwrap().with_timezone(&Utc)
+        DateTime::parse_from_rfc3339(text)
+            .unwrap()
+            .with_timezone(&Utc)
     }
 
     #[test]
@@ -119,8 +127,11 @@ mod tests {
     #[test]
     fn a_backup_from_ahead_of_the_clock_is_kept() {
         let now = at("2026-11-09T12:00:00.000Z");
-        let names = ["2026-11-10T12:00:00.000Z.tar", "2026-11-09T11:00:00.000Z.tar"]
-            .map(String::from);
+        let names = [
+            "2026-11-10T12:00:00.000Z.tar",
+            "2026-11-09T11:00:00.000Z.tar",
+        ]
+        .map(String::from);
         assert!(doomed(&names, now).is_empty());
     }
 }

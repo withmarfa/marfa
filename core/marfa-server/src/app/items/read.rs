@@ -93,25 +93,25 @@ where
     let clock = app.clock.clone();
     let faults = app.faults.clone();
     let read = move |tx: &rusqlite::Transaction<'_>| {
-            let at = clock.stamp();
-            let caller = caller.current(tx, &at)?;
-            if let Some(demand) = &demand {
-                demand.verify(tx, &caller)?;
-                if held {
-                    faults.hold_blocking(HOLD_READ_SNAPSHOT);
-                }
+        let at = clock.stamp();
+        let caller = caller.current(tx, &at)?;
+        if let Some(demand) = &demand {
+            demand.verify(tx, &caller)?;
+            if held {
+                faults.hold_blocking(HOLD_READ_SNAPSHOT);
             }
-            let catalog = catalog::current(&cache, tx, Snapshot::Committed)?;
-            let read_only = read_only::current(&marked, tx, &at, Snapshot::Committed)?;
-            job(&Reader {
-                tx,
-                caller,
-                catalog,
-                read_only,
-                faults: &faults,
-                certified: demand.is_some(),
-            })
-        };
+        }
+        let catalog = catalog::current(&cache, tx, Snapshot::Committed)?;
+        let read_only = read_only::current(&marked, tx, &at, Snapshot::Committed)?;
+        job(&Reader {
+            tx,
+            caller,
+            catalog,
+            read_only,
+            faults: &faults,
+            certified: demand.is_some(),
+        })
+    };
     if background {
         app.db.read_background(read).await
     } else {

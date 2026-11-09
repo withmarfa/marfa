@@ -105,7 +105,9 @@ impl Pool {
                 })();
                 let _ = answer.send(read);
             })
-            .map_err(|error| Refusal::internal(&format!("a background read did not start: {error}")))?;
+            .map_err(|error| {
+                Refusal::internal(&format!("a background read did not start: {error}"))
+            })?;
         answered
             .await
             .unwrap_or_else(|_| Err(Refusal::internal("a background read panicked")))

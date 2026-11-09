@@ -107,7 +107,10 @@ fn no_bucket() -> Refusal {
 }
 
 fn running() -> Refusal {
-    Refusal::new(Code::HousekeepingJobRunning, "A backup is running; try again once it ends.")
+    Refusal::new(
+        Code::HousekeepingJobRunning,
+        "A backup is running; try again once it ends.",
+    )
 }
 
 fn unreachable(what: &str, error: &std::io::Error) -> Refusal {
@@ -132,7 +135,12 @@ pub fn scheduled(app: &App) -> bool {
 
 /// What a backup run did.
 enum Outcome {
-    Put { name: String, size: u64, removed: usize, unremoved: usize },
+    Put {
+        name: String,
+        size: u64,
+        removed: usize,
+        unremoved: usize,
+    },
     Unchanged,
     Running,
 }
@@ -336,7 +344,9 @@ async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
             let at = created_of(&name);
             let recorded = name.clone();
             app.db
-                .write(Write::own(), move |tx| record_put(tx, changes, &recorded, &at))
+                .write(Write::own(), move |tx| {
+                    record_put(tx, changes, &recorded, &at)
+                })
                 .await?;
             let (removed, unremoved) = thin(app, &bucket).await;
             Ok(Outcome::Put {
@@ -381,15 +391,14 @@ async fn put(app: &Arc<App>, bucket: &Arc<S3>) -> Result<(String, u64, i64)> {
     let name = name_of(&backup.created_at)
         .ok_or_else(|| Refusal::internal("a backup's time did not make a name"))?;
     let changes = backup.changes;
-    let limit = super::blobs::store::write_deadline(
-        super::blobs::store::CHECK_DEADLINE,
-        backup.size,
-    );
+    let limit =
+        super::blobs::store::write_deadline(super::blobs::store::CHECK_DEADLINE, backup.size);
     let key = format!("{FOLDER}/{name}");
     let bytes = put_stream(app, backup);
-    let size = super::blobs::store::within(limit, bucket.put_whole(&key, "application/x-tar", bytes))
-        .await
-        .map_err(|error| unreachable("taking the backup", &error))?;
+    let size =
+        super::blobs::store::within(limit, bucket.put_whole(&key, "application/x-tar", bytes))
+            .await
+            .map_err(|error| unreachable("taking the backup", &error))?;
     tracing::info!(backup = %name, size, "A backup was put in the object store");
     Ok((name, size, changes))
 }
