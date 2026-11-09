@@ -255,7 +255,10 @@ fn action_of(name: &str, sent: &Map<String, Value>) -> Result<(Action, Option<Ve
             Some(_) => return Err(invalid_field("patch", "patch must be an object.")),
         },
         "update_occurred_at" => Action::UpdateOccurredAt {
-            occurred_at: required(timestamp(sent, "occurred_at", time::rfc3339)?, "occurred_at")?,
+            occurred_at: required(
+                timestamp(sent, "occurred_at", time::rfc3339)?,
+                "occurred_at",
+            )?,
         },
         _ => {
             return Err(invalid_field(
