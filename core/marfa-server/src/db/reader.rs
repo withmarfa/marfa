@@ -132,9 +132,11 @@ fn lower_priority() {
         let thread = libc::syscall(libc::SYS_gettid) as libc::id_t;
         libc::setpriority(libc::PRIO_PROCESS, thread, 10);
     }
+    // `utility`, not `background`: the background class keeps a thread to the slow cores and
+    // throttles its reads, which makes a backup take several times the CPU.
     #[cfg(target_os = "macos")]
-    // SAFETY: as above; `PRIO_DARWIN_THREAD` with 0 names the calling thread.
+    // SAFETY: the call changes only the calling thread's own class.
     unsafe {
-        libc::setpriority(libc::PRIO_DARWIN_THREAD, 0, libc::PRIO_DARWIN_BG);
+        libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_UTILITY, 0);
     }
 }

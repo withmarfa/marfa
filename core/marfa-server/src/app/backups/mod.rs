@@ -387,7 +387,9 @@ async fn wake_replication(app: &Arc<App>) {
 
 /// Writes the archive and puts it whole, answering its name, size and change count.
 async fn put(app: &Arc<App>, bucket: &Arc<S3>) -> Result<(String, u64, i64)> {
+    let began = std::time::Instant::now();
     let backup = app.backup_archive(bucket.id()).await?;
+    let read_ms = began.elapsed().as_millis() as u64;
     let name = name_of(&backup.created_at)
         .ok_or_else(|| Refusal::internal("a backup's time did not make a name"))?;
     let changes = backup.changes;
@@ -399,7 +401,13 @@ async fn put(app: &Arc<App>, bucket: &Arc<S3>) -> Result<(String, u64, i64)> {
         super::blobs::store::within(limit, bucket.put_whole(&key, "application/x-tar", bytes))
             .await
             .map_err(|error| unreachable("taking the backup", &error))?;
-    tracing::info!(backup = %name, size, "A backup was put in the object store");
+    tracing::info!(
+        backup = %name,
+        size,
+        read_ms,
+        put_ms = began.elapsed().as_millis() as u64 - read_ms,
+        "A backup was put in the object store"
+    );
     Ok((name, size, changes))
 }
 
