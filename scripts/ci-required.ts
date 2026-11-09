@@ -261,8 +261,9 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // table, and `compliance/instance.test.ts` holds the published operations
   // to the coverage table. No other server fixture reads the contract, and
   // `ci/ci-required.test.ts` fails when one starts to. A unit test of the Rust
-  // server holds its refusal codes to `errors.md`, and two more hold its
-  // settings to the tables of `instance.md`, so those chapters reach it.
+  // server holds its refusal codes to `errors.md`, two more hold its
+  // settings to the tables of `instance.md`, and one holds its jobs to the
+  // table of `housekeeping.md`, so those chapters reach it.
   [
     /^conformance\/spec\/errors\.md$/,
     [
@@ -283,7 +284,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     ],
   ],
   [
-    /^conformance\/spec\/instance\.md$/,
+    /^conformance\/spec\/(instance|housekeeping)\.md$/,
     ["workspace", "conformance-offline", "core-checks-linux", "rust-contract"],
   ],
   [/^conformance\/spec\//, ["workspace", "conformance-offline"]],

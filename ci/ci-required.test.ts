@@ -931,7 +931,7 @@ describe("what a change runs", () => {
                 "core-checks-linux",
                 "rust-contract",
               ]
-            : chapter === "instance.md"
+            : chapter === "instance.md" || chapter === "housekeeping.md"
               ? [
                   "workspace",
                   "conformance-offline",
