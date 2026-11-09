@@ -39,7 +39,7 @@ afterAll(async () => {
 describe("DELETE /auth/grants/{id}", () => {
   it("answers 404 oauth_grant_not_found for an id that is no app's grant, and revokes one that is", async () => {
     const server = grants!;
-    await approvedAppToken(server, ["openid"]);
+    await approvedAppToken(server, ["core.note:read"]);
     const authorization = { Authorization: `Bearer ${server.workingKey}` };
     const listed = await fetch(`${server.apiUrl}/auth/grants`, {
       headers: authorization,
@@ -137,7 +137,10 @@ describe("GET /auth/device/consent", () => {
         await fetch(discovery.device_authorization_endpoint, {
           method: "POST",
           headers: FORM,
-          body: new URLSearchParams({ client_id: clientId, scope: "openid" }),
+          body: new URLSearchParams({
+            client_id: clientId,
+            scope: "core.note:read",
+          }),
         })
       ).json()) as { user_code: string; verification_uri_complete: string };
 

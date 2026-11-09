@@ -551,7 +551,7 @@ impl Remote {
         Remote::keeping(url, origin, None, None, None)
     }
 
-    /// A key named outright, or a token sent to its userinfo endpoint.
+    /// A key named outright.
     pub fn keyed(url: &str, key: &str) -> Result<Remote, CliError> {
         let origin = marfa_core::http::origin_of(url)?;
         Remote::keeping(url, origin, None, Some(key.to_string()), None)
@@ -2017,7 +2017,7 @@ mod tests {
             refresh_token: None,
             expires_at: None,
             client_id: "c".into(),
-            scope: Some("openid".into()),
+            scope: Some("core.note:read".into()),
             token_endpoint: format!("{}/auth/oauth2/token", door.url),
             revocation_endpoint: None,
         };

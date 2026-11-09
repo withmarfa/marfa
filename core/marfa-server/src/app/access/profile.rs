@@ -2,6 +2,10 @@ use super::{Axis, Caller, Level};
 use crate::app::refusal::{Code, Refusal, Result};
 
 impl Caller {
+    pub fn reads_profile(&self, field: &str) -> bool {
+        self.level_on(Axis::Profile, field) >= Level::Read
+    }
+
     /// A direct caller holds every profile field; a key or an app holds what its map names.
     pub fn require_profile(&self, field: &str, level: Level) -> Result<()> {
         if self.level_on(Axis::Profile, field) >= level {

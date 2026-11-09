@@ -41,8 +41,6 @@ pub fn authorization_server(app: &App) -> Value {
         "scopes_supported": published(app).literals(),
         "client_id_metadata_document_supported": true,
         "authorization_response_iss_parameter_supported": true,
-        "backchannel_logout_supported": false,
-        "backchannel_logout_session_supported": false,
     })
 }
 
