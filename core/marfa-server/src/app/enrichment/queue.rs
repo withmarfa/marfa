@@ -130,13 +130,13 @@ pub fn attempt(tx: &Transaction<'_>, seq: i64, hash: &str, at: &str) -> Result<(
     Ok(())
 }
 
-/// A file that was not tried is not counted against.
-pub fn refund(tx: &Transaction<'_>, seq: i64, hash: &str) -> Result<()> {
+/// A file that was not tried is not counted against, and goes to the back of the line.
+pub fn refund(tx: &Transaction<'_>, seq: i64, hash: &str, at: &str) -> Result<()> {
     tx.prepare_cached(
-        "UPDATE enrichment_files SET attempts = max(attempts - 1, 0) \
+        "UPDATE enrichment_files SET attempts = max(attempts - 1, 0), updated_at = ?3 \
          WHERE item_seq = ?1 AND hash = ?2",
     )?
-    .execute(params![seq, hash])?;
+    .execute(params![seq, hash, at])?;
     Ok(())
 }
 

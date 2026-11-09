@@ -91,6 +91,8 @@ enum Fate {
     Retry,
     /// No reader could start. The file was not tried.
     Untried,
+    /// The store did not give the bytes. The file was not tried, and the run pauses.
+    Unreached,
 }
 
 /// How a run counts a file that wrote nothing.
@@ -105,7 +107,7 @@ enum Count {
 impl Fate {
     fn count(self) -> Count {
         match self {
-            Fate::Read | Fate::Untried => Count::None,
+            Fate::Read | Fate::Untried | Fate::Unreached => Count::None,
             Fate::Skip(_) => Count::Skipped,
             Fate::Retry => Count::Failed,
         }
@@ -287,7 +289,7 @@ async fn store(
                 queue::skip(tx, seq, hash.as_str(), why, signatures.of(why), &unit.at)?;
             }
             Fate::Retry => queue::failed(tx, seq, hash.as_str(), &unit.at)?,
-            Fate::Untried => queue::refund(tx, seq, hash.as_str())?,
+            Fate::Untried | Fate::Unreached => queue::refund(tx, seq, hash.as_str(), &unit.at)?,
         }
         Ok(if written == Written::Landed {
             Count::Extracted
@@ -309,7 +311,7 @@ async fn settle(app: &Arc<App>, plan: &Plan, seq: i64, hash: &Hash, fate: Fate) 
                 queue::skip(tx, seq, hash.as_str(), why, signatures.of(why), &unit.at)?;
             }
             Fate::Retry => queue::failed(tx, seq, hash.as_str(), &unit.at)?,
-            Fate::Untried => queue::refund(tx, seq, hash.as_str())?,
+            Fate::Untried | Fate::Unreached => queue::refund(tx, seq, hash.as_str(), &unit.at)?,
         }
         Ok(fate.count())
     })
@@ -331,38 +333,35 @@ async fn read_blocking(
     .map_err(blocked)
 }
 
-/// One file. An `Err` is a fault of the server's own, and ends the run.
-async fn one(app: &Arc<App>, plan: &Plan, seq: i64, stored: &str) -> Result<Count> {
+/// One file's count, or `None` to pause the run. An `Err` is the server's own fault and ends it.
+async fn one(app: &Arc<App>, plan: &Plan, seq: i64, stored: &str) -> Result<Option<Count>> {
     let Ok(hash) = Hash::parse(stored) else {
         let hash = stored.to_string();
         app.write(&Caller::Server, ACTION, move |unit| {
             queue::drop_row(unit.tx(), seq, &hash).map(|()| Count::None)
         })
         .await?;
-        return Ok(Count::None);
+        return Ok(Some(Count::None));
     };
     let Begun::Reading(offered) = begin(app, seq, &hash).await? else {
-        return Ok(Count::None);
+        return Ok(Some(Count::None));
     };
     let held = app.open_held(&hash).await;
     let (file, blob): (Opened, Blob) = match held {
         Ok(Some(found)) => found,
-        Ok(None) => return settle(app, plan, seq, &hash, Fate::Untried).await,
-        Err(_) => return settle(app, plan, seq, &hash, Fate::Retry).await,
+        Ok(None) => return settle(app, plan, seq, &hash, Fate::Untried).await.map(Some),
+        Err(_) => {
+            settle(app, plan, seq, &hash, Fate::Unreached).await?;
+            return Ok(None);
+        }
     };
     let mime = offered
         .mime_type
         .clone()
         .unwrap_or_else(|| blob.mime_type.clone());
     if marfa_enrichment::loads_whole_file(&mime) && blob.size_bytes > plan.max_blob_bytes {
-        return settle(
-            app,
-            plan,
-            seq,
-            &hash,
-            Fate::Skip(Why::OverLimit(Cap::Blob(plan.max_blob_bytes))),
-        )
-        .await;
+        let fate = Fate::Skip(Why::OverLimit(Cap::Blob(plan.max_blob_bytes)));
+        return settle(app, plan, seq, &hash, fate).await.map(Some);
     }
     let read = read_blocking(file, mime.clone(), plan.options.clone()).await?;
     if let Err(Unread::ReaderUnavailable(reason)) = &read {
@@ -372,7 +371,9 @@ async fn one(app: &Arc<App>, plan: &Plan, seq: i64, stored: &str) -> Result<Coun
         )));
     }
     let judged = judge(read, &mime, plan);
-    store(app, plan, seq, &hash, offered.id, judged).await
+    store(app, plan, seq, &hash, offered.id, judged)
+        .await
+        .map(Some)
 }
 
 pub async fn sweep(app: Arc<App>, run: Run) -> Result<Report> {
@@ -389,7 +390,11 @@ pub async fn sweep(app: Arc<App>, run: Run) -> Result<Report> {
             again = true;
             break;
         }
-        tally.add(one(&app, &plan, seq, &hash).await?);
+        let Some(count) = one(&app, &plan, seq, &hash).await? else {
+            again = false;
+            break;
+        };
+        tally.add(count);
     }
     Ok(Report {
         result: tally.result(),

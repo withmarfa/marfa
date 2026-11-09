@@ -824,11 +824,12 @@ BEGIN
 END;
 
 -- An existing reference alone does not queue changed file properties. A skipped file keeps its
--- refusal and is read once more.
+-- refusal and is read once more. The type of file picks the reader, so a changed one counts.
 CREATE TRIGGER IF NOT EXISTS enrichment_files_changed AFTER UPDATE OF type, properties ON items
 WHEN NEW.properties ->> '$.blob_ref' IS NOT NULL AND (
     NEW.type IS NOT OLD.type
     OR NEW.properties ->> '$.blob_ref' IS NOT OLD.properties ->> '$.blob_ref'
+    OR NEW.properties ->> '$.mime_type' IS NOT OLD.properties ->> '$.mime_type'
     OR (NEW.properties ->> '$.extracted_text' IS NULL AND OLD.properties ->> '$.extracted_text' IS NOT NULL)
     OR (NEW.properties ->> '$.width' IS NULL AND OLD.properties ->> '$.width' IS NOT NULL)
     OR (NEW.properties ->> '$.height' IS NULL AND OLD.properties ->> '$.height' IS NOT NULL)

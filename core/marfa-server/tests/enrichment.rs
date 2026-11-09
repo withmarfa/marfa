@@ -274,6 +274,51 @@ async fn reads_a_file_again_when_the_text_it_was_given_is_cleared() {
     );
 }
 
+async fn reads_a_file_again_after_its_type_is_corrected() {
+    let one = Instance::start(&[]).await;
+    let id = one
+        .file(
+            b"words that were typed wrongly",
+            "application/octet-stream",
+            json!({}),
+        )
+        .await;
+    assert_eq!(one.sweep().await, counts(0, 1, 0));
+    assert_eq!(one.sweep().await, counts(0, 0, 0));
+    one.change(&id, json!({ "mime_type": "text/plain" }), &[])
+        .await;
+    assert_eq!(one.sweep().await, counts(1, 0, 0));
+    assert_eq!(
+        one.item(&id).await["properties"]["extracted_text"],
+        "words that were typed wrongly"
+    );
+}
+
+async fn does_not_use_up_a_files_attempts_while_its_bytes_cannot_be_opened() {
+    let one = Instance::start(&[]).await;
+    let id = one.file(b"the dingo ledger", "text/plain", json!({})).await;
+    let hash = one.item(&id).await["properties"]["blob_ref"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let hex = hash.strip_prefix("sha256:").unwrap();
+    let stored = one.dir.path().join("blobs").join(&hex[0..4]).join(hex);
+    let away = one.dir.path().join("away");
+    std::fs::rename(&stored, &away).unwrap();
+    for _ in 0..4 {
+        assert_eq!(one.sweep().await, counts(0, 0, 0));
+    }
+    let attempts = "SELECT attempts FROM enrichment_files f JOIN items i ON i.seq = f.item_seq \
+                    WHERE i.id = ?1";
+    assert_eq!(one.count(attempts, &id), 0);
+    std::fs::rename(&away, &stored).unwrap();
+    assert_eq!(one.sweep().await, counts(1, 0, 0));
+    assert_eq!(
+        one.item(&id).await["properties"]["extracted_text"],
+        "the dingo ledger"
+    );
+}
+
 #[cfg(feature = "native")]
 const SENTENCE: &[u8] = include_bytes!("../../marfa-enrichment/fixtures/sentence.png");
 
@@ -496,6 +541,13 @@ fn main() {
         trial(
             "reads_a_file_whose_only_copy_is_in_the_object_store",
             || Box::pin(reads_a_file_whose_only_copy_is_in_the_object_store()),
+        ),
+        trial("reads_a_file_again_after_its_type_is_corrected", || {
+            Box::pin(reads_a_file_again_after_its_type_is_corrected())
+        }),
+        trial(
+            "does_not_use_up_a_files_attempts_while_its_bytes_cannot_be_opened",
+            || Box::pin(does_not_use_up_a_files_attempts_while_its_bytes_cannot_be_opened()),
         ),
         trial("leaves_a_disabled_sweep_with_its_files_waiting", || {
             Box::pin(leaves_a_disabled_sweep_with_its_files_waiting())
