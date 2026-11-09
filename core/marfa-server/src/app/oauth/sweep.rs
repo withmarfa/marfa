@@ -197,6 +197,7 @@ pub async fn sweep_expired(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
     let (mut deleted, mut done) = drain(run, BATCH, || expired_sessions(app)).await?;
     for (table, key, kept_ms) in [
         ("auth_oauth_code", "digest", 0),
+        // A day longer, so a device polling after the code expired is told so.
         ("auth_oauth_device_code", "device_code", MS_PER_DAY),
         ("auth_oauth_access_token", "id", 0),
         ("auth_oauth_refresh_token", "id", 0),

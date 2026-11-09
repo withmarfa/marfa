@@ -566,6 +566,7 @@ pub async fn release(app: &App, claim: Claim) {
     }
 }
 
+/// Matches only a claim still in flight, so releasing is safe when a commit's outcome is unknown.
 fn release_in(tx: &Transaction<'_>, claim: &Claim) -> Result<()> {
     tx.execute(
         "DELETE FROM idempotency_records WHERE credential = ?1 AND idempotency_key = ?2 \

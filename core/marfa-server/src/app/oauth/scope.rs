@@ -532,7 +532,7 @@ pub fn to_grants(granted: &ScopeSet) -> Grants {
     grants
 }
 
-/// Compared as access resolves, since removing an overriding entry can widen a wildcard.
+/// Compared as access resolves, with `wanted` judged whole first.
 pub fn first_uncovered(held: &ScopeSet, wanted: &ScopeSet) -> Option<String> {
     let ceiling = to_grants(held);
     let whole = ceiling.first_beyond("", &to_grants(wanted)).is_none();

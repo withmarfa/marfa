@@ -184,7 +184,7 @@ fn without_port(uri: &str) -> Option<String> {
     Some(format!("{scheme}://{host}{tail}"))
 }
 
-/// Only the exact name `localhost`: not a subdomain and not a trailing dot.
+/// Loopback addresses and exactly `localhost`, not a subdomain or a trailing dot.
 fn takes_any_port(registered: &Url) -> bool {
     registered.host_str() == Some("localhost") || ip_of(registered).is_some_and(is_loopback_ip)
 }
