@@ -235,7 +235,7 @@ pub fn cutoff(
     retention: Setting<u64>,
     unit_ms: i64,
 ) -> Result<Option<String>> {
-    let kept = stored::setting(tx, &app.settings.seeds(), retention)?;
+    let kept = stored::deciding(tx, &app.settings.seeds(), retention)?;
     Ok((kept > 0).then(|| ago(app, i64::try_from(kept).unwrap_or(i64::MAX), unit_ms)))
 }
 

@@ -204,6 +204,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/undeclared-body-keys.test.ts",
   "src/suites/compliance/unfold-budget.test.ts",
   "src/suites/compliance/unmatched-paths.test.ts",
+  "src/suites/compliance/unreadable-deletion-settings.test.ts",
   "src/suites/compliance/unreadable-items.test.ts",
   "src/suites/compliance/unverified-apps.test.ts",
   "src/suites/compliance/version-exact.test.ts",

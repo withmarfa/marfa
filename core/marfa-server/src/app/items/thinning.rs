@@ -119,7 +119,7 @@ fn thin(history: &[Kept], policy: &Policy, now_ms: i64) -> Vec<Kept> {
 fn instance_policy(tx: &Transaction<'_>, app: &App) -> Result<Policy> {
     let seeds = app.settings.seeds();
     let whole = |setting| -> Result<i64> {
-        Ok(i64::try_from(stored::setting(tx, &seeds, setting)?).unwrap_or(i64::MAX))
+        Ok(i64::try_from(stored::deciding(tx, &seeds, setting)?).unwrap_or(i64::MAX))
     };
     Ok(Policy {
         recent_days: whole(VERSION_RECENT_DAYS)?,

@@ -16,7 +16,7 @@ use marfa_server::settings::registry::{
 };
 use marfa_server::settings::{Environment, Settings};
 use serde_json::{Value, json};
-use support::commit_unpublished;
+use support::{commit_unpublished, remove_unpublished};
 
 mod support;
 use sha2::{Digest, Sha256};
@@ -1264,8 +1264,16 @@ async fn the_sweeps_keep_what_a_retention_committed_before_it_is_live_keeps() {
 
     let mut taken = Vec::new();
     for (job, write, key) in [
-        ("grant-inactivity-retirement", "auth.grant.retired", "grant_inactivity_days"),
-        ("revoked-grant-purge", "auth.grants.purged", "revoked_grant_retention_days"),
+        (
+            "grant-inactivity-retirement",
+            "auth.grant.retired",
+            "grant_inactivity_days",
+        ),
+        (
+            "revoked-grant-purge",
+            "auth.grants.purged",
+            "revoked_grant_retention_days",
+        ),
     ] {
         app.faults.set("hold:write", Some(write)).unwrap();
         let running = app.clone();
@@ -1288,6 +1296,54 @@ async fn the_sweeps_keep_what_a_retention_committed_before_it_is_live_keeps() {
     assert_eq!(instance.count(withdrawn).await, 1);
     let clients = "SELECT count(*) FROM auth_oauth_client";
     assert_eq!(instance.count(clients).await, 3);
+}
+
+#[tokio::test]
+async fn a_retention_that_does_not_read_ends_each_sweep_in_error_and_deletes_nothing() {
+    let instance = Instance::signed_in().await;
+    let app = &instance.app;
+    let idle = instance.register(OFFLINE_NOTES).await;
+    instance.tokens(&idle, OFFLINE_NOTES).await;
+    let revoked = instance.register(OFFLINE_NOTES).await;
+    let issued = instance.tokens(&revoked, OFFLINE_NOTES).await;
+    instance
+        .revoke(&revoked, text_at(&issued, "refresh_token"))
+        .await;
+    instance.register(NOTES).await;
+    app.clock.advance(366 * DAY_MS).unwrap();
+    let rows = [
+        "SELECT count(*) FROM auth_oauth_consent WHERE withdrawn_at IS NULL",
+        "SELECT count(*) FROM auth_oauth_consent WHERE withdrawn_at IS NOT NULL",
+        "SELECT count(*) FROM auth_oauth_client",
+    ];
+    let mut before = Vec::new();
+    for sql in rows {
+        before.push(instance.count(sql).await);
+    }
+
+    let sweeps = [
+        ("grant-inactivity-retirement", "grant_inactivity_days"),
+        ("revoked-grant-purge", "revoked_grant_retention_days"),
+        ("dcr-client-cleanup", "dcr_client_retention_days"),
+    ];
+    for (job, key) in sweeps {
+        commit_unpublished(app, key, "soon").await;
+        let ended = housekeeping::run_now(app, job).await.unwrap();
+        assert_eq!(ended.outcome, "error", "{job}");
+        assert!(ended.error.unwrap().contains(key), "{job}");
+    }
+    let mut kept = Vec::new();
+    for sql in rows {
+        kept.push(instance.count(sql).await);
+    }
+    assert_eq!(kept, before);
+
+    let mut taken = Vec::new();
+    for (job, key) in sweeps {
+        remove_unpublished(app, key).await;
+        taken.push(swept(app, job).await);
+    }
+    assert!(taken.iter().all(|count| *count > 0), "{taken:?}");
 }
 
 #[tokio::test]

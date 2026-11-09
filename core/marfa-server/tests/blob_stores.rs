@@ -27,7 +27,7 @@ use tempfile::TempDir;
 use tower::ServiceExt;
 
 use fake_s3::{FakeS3, Mode};
-use support::commit_unpublished;
+use support::{commit_unpublished, remove_unpublished};
 
 struct Instance {
     dir: TempDir,
@@ -475,6 +475,29 @@ async fn the_orphan_job_keeps_what_settings_committed_before_they_are_live_keep(
         ("blob_cleanup_interval_ms", json!(0), true),
     ];
     assert_eq!(purged, kept);
+}
+
+#[tokio::test]
+async fn the_orphan_job_ends_in_error_and_purges_nothing_while_its_settings_do_not_read() {
+    for key in ["blob_cleanup_grace_ms", "blob_cleanup_interval_ms"] {
+        let instance = Instance::start(&[("MARFA_BLOB_CLEANUP_GRACE_MS", "0")]).await;
+        let orphan = instance.stored(b"nothing names this").await;
+        let first = instance.run("blob-orphans").await;
+        assert_eq!(first["purged"], 0, "{first}");
+
+        commit_unpublished(&instance.app, key, "soon").await;
+        let ended = housekeeping::run_now(&instance.app, "blob-orphans")
+            .await
+            .unwrap();
+        assert_eq!(ended.outcome, "error", "{key}");
+        assert!(ended.error.unwrap().contains(key), "{key}");
+        assert!(instance.file(&orphan).is_file(), "{key}");
+
+        remove_unpublished(&instance.app, key).await;
+        let purged = instance.run("blob-orphans").await;
+        assert_eq!(purged["purged"], 1, "{key}: {purged}");
+        assert!(!instance.file(&orphan).is_file(), "{key}");
+    }
 }
 
 #[tokio::test]
@@ -1023,6 +1046,53 @@ async fn the_drop_door_holds_to_a_minimum_committed_before_it_is_live() {
     assert_eq!(dropped.code(), "copies_below_minimum");
     assert_eq!(instance.copies(&hash).await.len(), 2);
     assert!(instance.file(&hash).is_file());
+}
+
+#[tokio::test]
+async fn the_drop_door_refuses_while_the_minimum_does_not_read() {
+    let s3 = FakeS3::start().await;
+    let env = s3.settings(BUCKET, "blobs");
+    let instance = Instance::start(&pairs(&env)).await;
+    let hash = instance
+        .stored(b"two copies, and a minimum that does not read")
+        .await;
+    let run = instance.run("blob-replicate").await;
+    assert_eq!(run["copied"], 1, "{run}");
+    let door = format!("/blobs/{hash}/copies/{}", instance.disk().await);
+
+    commit_unpublished(&instance.app, "blob_min_copies", "many").await;
+    let refused = instance.call(Method::DELETE, &door, None).await;
+    assert_eq!(
+        refused.status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "{}",
+        refused.body
+    );
+    remove_unpublished(&instance.app, "blob_min_copies").await;
+
+    let faults = &instance.app.faults;
+    faults.set("hold:write", Some("blob.copy_dropped")).unwrap();
+    let router = instance.control.clone();
+    let request = Request::builder().method(Method::DELETE).uri(&door);
+    let request = request.body(Body::empty()).unwrap();
+    let drop = tokio::spawn(async move { send(&router, request).await });
+    instance.when_held().await;
+    commit_unpublished(&instance.app, "blob_min_copies", "many").await;
+    faults.clear(Some("hold:write"));
+    let refused = drop.await.unwrap();
+    assert_eq!(
+        refused.status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "{}",
+        refused.body
+    );
+    assert_eq!(instance.copies(&hash).await.len(), 2);
+    assert!(instance.file(&hash).is_file());
+
+    remove_unpublished(&instance.app, "blob_min_copies").await;
+    let dropped = instance.call(Method::DELETE, &door, None).await;
+    assert_eq!(dropped.status, StatusCode::OK, "{}", dropped.body);
+    assert_eq!(instance.copies(&hash).await.len(), 1);
 }
 
 #[tokio::test]

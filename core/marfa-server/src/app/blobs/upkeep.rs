@@ -493,10 +493,10 @@ pub async fn integrity(app: Arc<App>, run: Run) -> Result<Report> {
 /// Empty while the sweep is off. Read from `tx`, since the live settings lag a committed change.
 fn purgeable(tx: &rusqlite::Transaction<'_>, app: &App) -> Result<Vec<Hash>> {
     let seeds = app.settings.seeds();
-    if stored::setting(tx, &seeds, BLOB_CLEANUP_INTERVAL_MS)? == 0 {
+    if stored::deciding(tx, &seeds, BLOB_CLEANUP_INTERVAL_MS)? == 0 {
         return Ok(Vec::new());
     }
-    let grace = stored::setting(tx, &seeds, BLOB_CLEANUP_GRACE_MS)?;
+    let grace = stored::deciding(tx, &seeds, BLOB_CLEANUP_GRACE_MS)?;
     let cutoff = app
         .clock
         .stamp_ago(i64::try_from(grace).unwrap_or(i64::MAX));

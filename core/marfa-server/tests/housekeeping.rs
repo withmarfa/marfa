@@ -13,7 +13,7 @@ use marfa_server::settings::registry::{
 };
 use marfa_server::settings::{Environment, Settings};
 use rusqlite::{Connection, OpenFlags};
-use support::commit_unpublished;
+use support::{commit_unpublished, remove_unpublished};
 
 mod support;
 use serde_json::{Value, json};
@@ -375,6 +375,77 @@ async fn log_cleanups_keep_what_a_retention_committed_before_it_is_live_keeps() 
         1
     );
     assert_eq!(instance.count("SELECT count(*) FROM webhook_deliveries"), 1);
+}
+
+#[tokio::test]
+async fn a_retention_that_does_not_read_ends_the_run_in_error_and_deletes_nothing() {
+    let settings = [
+        ("MARFA_TRASH_RETENTION_DAYS", "2"),
+        ("MARFA_VERSION_MAX_VERSIONS", "1"),
+        ("MARFA_AUDIT_RETENTION_DAYS", "2"),
+        ("MARFA_EVENT_LOG_RETENTION_HOURS", "2"),
+        ("MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES", "true"),
+    ];
+    let instance = Instance::start(&settings).await;
+    let app = &instance.app;
+    let webhook = instance.dead_delivery().await;
+    let binned = instance.note().await;
+    instance
+        .ok(Method::DELETE, &format!("/items/{binned}"), Value::Null)
+        .await;
+    let edited = format!("/items/{}", instance.note().await);
+    for (version, body) in [(1, "two"), (2, "three"), (3, "four")] {
+        let edit = json!({ "version": version, "properties": { "body": body } });
+        instance.ok(Method::PATCH, &edited, edit).await;
+    }
+    let keyed = json!({ "type": "core.note", "properties": { "body": "keyed" } });
+    let (status, _) = instance
+        .send(Method::POST, "/items", keyed, Some("the-key"))
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+    instance.forward(3 * DAY);
+    instance.note().await;
+    instance.scheduled().await;
+    let held = |instance: &Instance| {
+        [
+            "SELECT count(*) FROM items WHERE state = 'trashed'",
+            "SELECT count(*) FROM item_versions",
+            "SELECT count(*) FROM audit_log",
+            "SELECT count(*) FROM event_log",
+            "SELECT count(*) FROM idempotency_records",
+            "SELECT count(*) FROM webhook_deliveries",
+        ]
+        .map(|sql| instance.count(sql))
+    };
+    let before = held(&instance);
+
+    let jobs = [
+        ("trash-purge", "trash_retention_days"),
+        ("version-thinning", "version_max_versions"),
+        ("event-log-cleanup", "event_log_retention_hours"),
+        ("audit-cleanup", "audit_retention_days"),
+    ];
+    for (job, key) in jobs {
+        commit_unpublished(app, key, "soon").await;
+        let ended = housekeeping::run_now(app, job).await.unwrap();
+        assert_eq!(ended.outcome, "error", "{job}");
+        assert!(ended.error.unwrap().contains(key), "{job}");
+    }
+    let path = format!("/webhooks/{webhook}/deliveries/dead/redeliver");
+    let (status, _) = instance.send(Method::POST, &path, json!({}), None).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(held(&instance), before);
+
+    for (job, key) in jobs {
+        remove_unpublished(app, key).await;
+        let result = instance.run(job).await;
+        let counts = result.as_object().unwrap().values();
+        let taken: u64 = counts.filter_map(Value::as_u64).sum();
+        assert_ne!(taken, 0, "{job}: {result}");
+    }
+    let after = held(&instance);
+    assert_eq!([after[0], after[4], after[5]], [0, 0, 0], "{after:?}");
+    assert!(after[1] < before[1], "{before:?} {after:?}");
 }
 
 #[tokio::test]

@@ -1136,14 +1136,10 @@ impl App {
     }
 
     async fn dropping(&self, caller: &Caller, hash: &Hash, store_id: &str) -> Result<()> {
-        let (blob, seeds) = (hash.clone(), self.settings.seeds());
-        let (found, holders, min_copies) = self
+        let blob = hash.clone();
+        let (found, holders) = self
             .db
-            .read(move |tx| {
-                let found = rows::find(tx, &blob)?;
-                let min_copies = stored::setting(tx, &seeds, BLOB_MIN_COPIES)?;
-                Ok((found, rows::holders(tx, &blob)?, min_copies))
-            })
+            .read(move |tx| Ok((rows::find(tx, &blob)?, rows::holders(tx, &blob)?)))
             .await?;
         let Some(found) = found else {
             return Err(not_found());
@@ -1156,6 +1152,11 @@ impl App {
             .store(store_id)
             .filter(|_| holders.iter().any(|held| held.store_id == store_id))
             .ok_or_else(copy_not_found)?;
+        let seeds = self.settings.seeds();
+        let min_copies = self
+            .db
+            .read(move |tx| stored::deciding(tx, &seeds, BLOB_MIN_COPIES))
+            .await?;
         if ((holders.len() - 1) as u64) < min_copies {
             return Err(below(holders.len(), min_copies));
         }
@@ -1198,7 +1199,7 @@ impl App {
             if !holders.iter().any(|held| held.store_id == dropped) {
                 return Err(copy_not_found());
             }
-            let min_copies = stored::setting(unit.tx(), &seeds, BLOB_MIN_COPIES)?;
+            let min_copies = stored::deciding(unit.tx(), &seeds, BLOB_MIN_COPIES)?;
             if ((holders.len() - 1) as u64) < min_copies {
                 return Err(below(holders.len(), min_copies));
             }

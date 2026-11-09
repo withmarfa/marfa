@@ -31,7 +31,7 @@ const WITHDRAWN_GRANTS: &str = "SELECT client_id, user_id FROM auth_oauth_consen
 
 /// Read from `tx`, since the live settings lag a change the writer has committed.
 fn cutoff_of(tx: &Transaction<'_>, app: &App, retention: Setting<u64>) -> Result<Option<i64>> {
-    let days = stored::setting(tx, &app.settings.seeds(), retention)?;
+    let days = stored::deciding(tx, &app.settings.seeds(), retention)?;
     Ok((days > 0).then(|| app.clock.now_ms() - i64::try_from(days).unwrap_or(0) * MS_PER_DAY))
 }
 

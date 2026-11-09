@@ -9,3 +9,12 @@ pub async fn commit_unpublished(app: &App, key: &str, value: &str) {
         .await
         .unwrap();
 }
+
+/// Removes a setting's row as the writer commits it, without making that live.
+pub async fn remove_unpublished(app: &App, key: &str) {
+    let rows = vec![(key.to_string(), None)];
+    app.db
+        .write(Write::own(), move |tx| stored::write_rows(tx, &rows))
+        .await
+        .unwrap();
+}
