@@ -72,6 +72,7 @@ webauthn-rs = { version = "0.6.2", default-features = false, features = ["condit
 [dev-dependencies]
 marfa-server = { path = ".", features = ["test-hooks"] }
 flate2 = "1"
+marfa-acl = { workspace = true, features = ["testing"] }
 libtest-mimic = "0.8"
 opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "logs", "testing"] }
 p256 = "0.14"

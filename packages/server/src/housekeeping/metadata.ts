@@ -69,8 +69,7 @@ export const HOUSEKEEPING_JOBS = {
   },
   "blob-replicate": {
     name: "blob-replicate",
-    description:
-      "Copies blobs to satisfy each attached store's replication policy.",
+    description: "Copies each blob into every attached store that lacks it.",
   },
   "blob-integrity": {
     name: "blob-integrity",

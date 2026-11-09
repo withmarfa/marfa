@@ -25,7 +25,7 @@ The server registers the following jobs when their settings and required stores 
 | `rate-limit-cleanup`          | Removes expired rate limit windows.                                              |
 | `inbound-delivery-cleanup`    | Removes inbound deliveries after their handled or pending retention window.      |
 | `dcr-client-cleanup`          | Removes OAuth clients with no remaining grant after their retention window.      |
-| `blob-replicate`              | Copies blobs to satisfy each attached store's replication policy.                |
+| `blob-replicate`              | Copies each blob into every attached store that lacks it.                        |
 | `blob-integrity`              | Checks blob copies and removes copies whose bytes are missing or altered.        |
 | `blob-orphans`                | Reports unreferenced blobs and purges them after the grace period.               |
 | `enrichment-sweep`            | Extracts searchable text and image dimensions from uploaded files.               |

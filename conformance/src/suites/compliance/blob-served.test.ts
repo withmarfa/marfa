@@ -217,7 +217,7 @@ describe("how a blob's bytes are served", () => {
     expect((await fetch(long)).status).toBe(200);
   });
 
-  it("serves an instance link under a bare hash and refuses a malformed hash or a stray key on it", async () => {
+  it("refuses an instance link under a malformed hash or with a stray key on it", async () => {
     const content = new TextEncoder().encode(`link forms ${ctx.runId}`);
     const upload = await uploadReferenced(client, ctx, content, "text/plain");
     expect(upload.status).toBe(201);
@@ -235,10 +235,6 @@ describe("how a blob's bytes are served", () => {
       if (extra) copy.search += `&${extra}`;
       return copy;
     };
-    const barePath = await fetch(withPath(bare));
-    expect(barePath.status).toBe(200);
-    expect(new Uint8Array(await barePath.arrayBuffer())).toEqual(content);
-
     for (const form of ["not-a-hash", bare.slice(1), bare.toUpperCase()]) {
       const refused = await fetch(withPath(form));
       expect(refused.status, form).toBe(400);

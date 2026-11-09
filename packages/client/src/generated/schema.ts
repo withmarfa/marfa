@@ -4806,8 +4806,6 @@ export interface components {
             kind: "disk" | "s3";
             /** @description Where the store is: its directory for a `disk` store, `s3://<bucket>/<prefix>` for an `s3` store. */
             locator: string;
-            /** @description Which blobs the store takes. Marfa defines one policy, `all`: the store takes every blob. */
-            policy: string;
             /** @description When the instance first attached the store, in UTC. */
             attached_at: string;
             /** @description When the instance's configuration stopped naming the store, in UTC, or `null` while it names it. */
@@ -4863,8 +4861,6 @@ export interface components {
              * @enum {string}
              */
             kind: "disk" | "s3";
-            /** @description Which blobs the store takes. Marfa defines one policy, `all`: the store takes every blob. */
-            policy: string;
             /** @description `true` if the instance's configuration no longer names the store. A copy in a detached store doesn't count toward `min_copies`. */
             detached: boolean;
             /** @description When Marfa recorded the copy, in UTC. */

@@ -24,69 +24,59 @@ pub fn http(path: &Path) -> Result<marfa_core::http::Http, CliError> {
     )?)
 }
 
-/// Whether a folder on the way to something private belongs to neither the
-/// account that relies on it nor root.
-pub(crate) fn foreign_owner(metadata: &std::fs::Metadata, uid: u32) -> bool {
-    metadata.uid() != uid && metadata.uid() != 0
-}
-
-/// Whether group or others can write to a folder, so that they could swap
-/// what is below it. A sticky folder of root's, such as `/tmp`, lets nobody
-/// replace what is not theirs.
-pub(crate) fn open_to_others(metadata: &std::fs::Metadata) -> bool {
-    metadata.mode() & 0o022 != 0 && !(metadata.uid() == 0 && metadata.mode() & 0o1000 != 0)
-}
-
 fn verify(path: &Path) -> Result<(), CliError> {
     if !path.is_absolute() {
         return Err(CliError::Invalid(
             "--socket requires an absolute path".into(),
         ));
     }
+    let mut folders = marfa_acl::folders_from_root(path)
+        .filter(|walked| walked.len() > 1)
+        .ok_or_else(|| CliError::Invalid("--socket requires a normalized absolute path".into()))?;
+    folders.pop();
     let uid = unsafe { libc::geteuid() };
-    let mut current = PathBuf::new();
-    for component in path.components() {
-        if !matches!(
-            component,
-            std::path::Component::RootDir | std::path::Component::Normal(_)
-        ) {
-            return Err(CliError::Invalid(
-                "--socket requires a normalized absolute path".into(),
-            ));
+    for folder in &folders {
+        let found = std::fs::symlink_metadata(folder)?;
+        match marfa_acl::exposure(folder, &found, uid) {
+            Ok(None) => {}
+            Ok(Some(marfa_acl::Exposure::Link)) => return Err(through_link()),
+            Ok(Some(why)) => {
+                return Err(CliError::Invalid(format!(
+                    "another account could replace the socket: {} {why}",
+                    folder.display()
+                )));
+            }
+            Err(error) => return Err(unverified(error)),
         }
-        current.push(component);
-        let metadata = std::fs::symlink_metadata(&current)?;
-        match marfa_acl::grants_by_acl(&current) {
+    }
+    let holder = folders.last().map_or(path, PathBuf::as_path);
+    for (private, mode) in [(holder, 0o700), (path, 0o600)] {
+        let found = std::fs::symlink_metadata(private)?;
+        if found.file_type().is_symlink() {
+            return Err(through_link());
+        }
+        if found.uid() != uid || found.mode() & 0o777 != mode {
+            return Err(CliError::Invalid("the socket must be owned by this account with mode 0600, in an owned directory with mode 0700".into()));
+        }
+        match marfa_acl::grants_by_acl(private) {
             Ok(false) => {}
             Ok(true) => {
                 return Err(CliError::Invalid(
                     "the socket path has an access ACL".into(),
                 ));
             }
-            Err(error) => {
-                return Err(CliError::Invalid(format!(
-                    "cannot verify the socket path ACL: {error}"
-                )));
-            }
-        }
-
-        if metadata.file_type().is_symlink() {
-            return Err(CliError::Invalid(
-                "--socket must not traverse symbolic links".into(),
-            ));
-        }
-        if current == path || Some(current.as_path()) == path.parent() {
-            let expected = if current == path { 0o600 } else { 0o700 };
-            if metadata.uid() != uid || metadata.mode() & 0o777 != expected {
-                return Err(CliError::Invalid("the socket must be owned by this account with mode 0600, in an owned directory with mode 0700".into()));
-            }
-        } else if foreign_owner(&metadata, uid) || open_to_others(&metadata) {
-            return Err(CliError::Invalid(
-                "the socket path is writable by another account".into(),
-            ));
+            Err(error) => return Err(unverified(error)),
         }
     }
     Ok(())
+}
+
+fn through_link() -> CliError {
+    CliError::Invalid("--socket must not traverse symbolic links".into())
+}
+
+fn unverified(error: std::io::Error) -> CliError {
+    CliError::Invalid(format!("cannot verify the socket path ACL: {error}"))
 }
 
 #[derive(Debug)]
@@ -133,21 +123,54 @@ impl LocalTransport {
     }
 }
 
+fn deadline(timeout: Option<std::time::Duration>) -> Option<std::time::Instant> {
+    timeout.map(|timeout| std::time::Instant::now() + timeout)
+}
+
+/// What is left of a deadline, so a read or write that a signal interrupted
+/// and is tried again never waits longer than the timeout it was given.
+fn remaining(deadline: Option<std::time::Instant>) -> std::io::Result<Option<std::time::Duration>> {
+    deadline
+        .map(|deadline| {
+            deadline
+                .checked_duration_since(std::time::Instant::now())
+                .filter(|left| !left.is_zero())
+                .ok_or(std::io::ErrorKind::TimedOut.into())
+        })
+        .transpose()
+}
+
 impl Transport for LocalTransport {
     fn buffers(&mut self) -> &mut dyn Buffers {
         &mut self.buffers
     }
     fn transmit_output(&mut self, amount: usize, timeout: NextTimeout) -> Result<(), ureq::Error> {
-        self.stream
-            .set_write_timeout(timeout.for_write().not_zero().map(|t| *t))?;
-        self.stream.write_all(&self.buffers.output()[..amount])?;
+        let deadline = deadline(timeout.for_write().not_zero().map(|t| *t));
+        let mut sent = 0;
+        while sent < amount {
+            self.stream.set_write_timeout(remaining(deadline)?)?;
+            match self.stream.write(&self.buffers.output()[sent..amount]) {
+                Ok(0) => return Err(std::io::Error::from(std::io::ErrorKind::WriteZero).into()),
+                Ok(written) => sent += written,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
         Ok(())
     }
     fn await_input(&mut self, timeout: NextTimeout) -> Result<bool, ureq::Error> {
-        self.set_read_timeout(timeout.for_read().not_zero().map(|t| *t))?;
-        let amount = self.stream.read(self.buffers.input_append_buf())?;
-        self.buffers.input_appended(amount);
-        Ok(amount > 0)
+        let deadline = deadline(timeout.for_read().not_zero().map(|t| *t));
+        loop {
+            self.set_read_timeout(remaining(deadline)?)?;
+            match self.stream.read(self.buffers.input_append_buf()) {
+                Ok(amount) => {
+                    self.buffers.input_appended(amount);
+                    return Ok(amount > 0);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
     }
     fn is_open(&mut self) -> bool {
         false
@@ -158,6 +181,7 @@ impl Transport for LocalTransport {
 mod tests {
     use super::*;
     use crate::remote::{Remote, request::Request};
+    use marfa_acl::testing::{Grant, let_another_account};
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::net::UnixListener;
 
@@ -433,6 +457,102 @@ mod tests {
         assert!(transport.buffers.input().is_empty());
     }
 
+    extern "C" fn ignore_signal(_: libc::c_int) {}
+
+    /// Sends SIGUSR1 to `reader` every 10 ms until `stop` is set. The handler
+    /// is installed without SA_RESTART, so a read blocked in the kernel fails
+    /// with EINTR, as one does when a child process exits.
+    fn interrupt(
+        reader: libc::pthread_t,
+        stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> std::thread::JoinHandle<()> {
+        // SAFETY: the action is zeroed, then given a handler that does nothing.
+        unsafe {
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = ignore_signal as extern "C" fn(libc::c_int) as usize;
+            libc::sigemptyset(&mut action.sa_mask);
+            assert_eq!(
+                libc::sigaction(libc::SIGUSR1, &action, std::ptr::null_mut()),
+                0
+            );
+        }
+        std::thread::spawn(move || {
+            while !stop.load(std::sync::atomic::Ordering::SeqCst) {
+                // SAFETY: the reader thread outlives this one, which is joined first.
+                unsafe { libc::pthread_kill(reader, libc::SIGUSR1) };
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        })
+    }
+
+    #[test]
+    fn local_transport_keeps_reading_after_a_signal_interrupts_the_read() {
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        let reading = std::thread::spawn(move || {
+            let mut transport = LocalTransport {
+                stream,
+                buffers: LazyBuffers::new(1024, 1024),
+            };
+            let timeout = NextTimeout {
+                after: std::time::Duration::from_secs(10).into(),
+                reason: ureq::Timeout::RecvResponse,
+                ..NextTimeout::default()
+            };
+            let got = transport.await_input(timeout);
+            (
+                got.map_err(|error| error.to_string()),
+                transport.buffers.input().to_vec(),
+            )
+        });
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let signalling = interrupt(
+            std::os::unix::thread::JoinHandleExt::as_pthread_t(&reading),
+            stop.clone(),
+        );
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        peer.write_all(b"answer").unwrap();
+        let (got, input) = reading.join().unwrap();
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        signalling.join().unwrap();
+        assert_eq!(got, Ok(true));
+        assert_eq!(input, b"answer");
+    }
+
+    #[test]
+    fn a_read_that_signals_keep_interrupting_still_ends_at_its_timeout() {
+        let (stream, _peer) = UnixStream::pair().unwrap();
+        let reading = std::thread::spawn(move || {
+            let mut transport = LocalTransport {
+                stream,
+                buffers: LazyBuffers::new(1024, 1024),
+            };
+            let started = std::time::Instant::now();
+            let error = transport.await_input(NextTimeout {
+                after: std::time::Duration::from_millis(300).into(),
+                reason: ureq::Timeout::RecvResponse,
+                ..NextTimeout::default()
+            });
+            (error, started.elapsed())
+        });
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let signalling = interrupt(
+            std::os::unix::thread::JoinHandleExt::as_pthread_t(&reading),
+            stop.clone(),
+        );
+        let (error, elapsed) = reading.join().unwrap();
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        signalling.join().unwrap();
+        assert!(
+            matches!(error, Err(ureq::Error::Io(ref io)) if matches!(io.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut)),
+            "{error:?}"
+        );
+        assert!(
+            elapsed >= std::time::Duration::from_millis(250),
+            "{elapsed:?}"
+        );
+        assert!(elapsed < std::time::Duration::from_secs(2), "{elapsed:?}");
+    }
+
     #[test]
     fn local_transport_preserves_invalid_timeout_errors_after_the_peer_closes() {
         let (stream, peer) = UnixStream::pair().unwrap();
@@ -469,57 +589,6 @@ mod tests {
         (root, path, listener)
     }
 
-    // Returns false when the file system cannot store the test ACL.
-    fn let_another_account_in(folder: &Path) -> bool {
-        #[cfg(target_os = "macos")]
-        {
-            let status = std::process::Command::new("/bin/chmod")
-                .args(["+a", "everyone allow read"])
-                .arg(folder)
-                .status()
-                .unwrap();
-            assert!(status.success());
-            true
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            use std::os::unix::ffi::OsStrExt;
-            // Version 2, then owner rwx, user 65534 rwx, group r-x, mask rwx and others none.
-            let mut value = 2u32.to_le_bytes().to_vec();
-            for (tag, permissions, id) in [
-                (0x01u16, 7u16, u32::MAX),
-                (0x02, 7, 65534),
-                (0x04, 5, u32::MAX),
-                (0x10, 7, u32::MAX),
-                (0x20, 0, u32::MAX),
-            ] {
-                value.extend_from_slice(&tag.to_le_bytes());
-                value.extend_from_slice(&permissions.to_le_bytes());
-                value.extend_from_slice(&id.to_le_bytes());
-            }
-            let name = std::ffi::CString::new(folder.as_os_str().as_bytes()).unwrap();
-            // SAFETY: the name and the buffer outlive the call, and the size is the buffer's.
-            let status = unsafe {
-                libc::setxattr(
-                    name.as_ptr(),
-                    c"system.posix_acl_access".as_ptr(),
-                    value.as_ptr().cast(),
-                    value.len(),
-                    0,
-                )
-            };
-            if status == 0 {
-                return true;
-            }
-            let error = std::io::Error::last_os_error();
-            assert!(
-                matches!(error.raw_os_error(), Some(libc::ENOTSUP | libc::EPERM)),
-                "{error}"
-            );
-            false
-        }
-    }
-
     #[test]
     fn a_private_socket_path_is_accepted() {
         let (root, path, _listener) = socket_folder("plain");
@@ -530,13 +599,51 @@ mod tests {
     #[test]
     fn a_socket_folder_with_an_acl_for_another_account_is_refused() {
         let (root, path, _listener) = socket_folder("acl");
-        if !let_another_account_in(&root) {
-            eprintln!("skipped: this file system keeps no POSIX ACLs");
+        if !let_another_account(&root, Grant::Read) {
+            eprintln!("skipped: this file system keeps no ACLs");
             std::fs::remove_dir_all(root).unwrap();
             return;
         }
         let said = verify(&path).unwrap_err().to_string();
         assert!(said.contains("access ACL"), "{said}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_folder_above_the_socket_folder_is_refused_only_for_an_acl_that_writes() {
+        // macOS binds a socket path of at most 103 bytes, and its temporary folder is long.
+        let (root, _, _listener) = socket_folder("up");
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
+        for (name, grant, refused) in [
+            ("r", Grant::Read, false),
+            ("ir", Grant::InheritRead, false),
+            ("w", Grant::Write, true),
+            ("iw", Grant::InheritWrite, true),
+        ] {
+            let above = root.join(name);
+            let folder = above.join("c");
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::set_permissions(&above, std::fs::Permissions::from_mode(0o755)).unwrap();
+            std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let path = folder.join("s");
+            let _held = UnixListener::bind(&path).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+            verify(&path).unwrap();
+            if !let_another_account(&above, grant) {
+                eprintln!("skipped: this file system keeps no ACLs");
+                break;
+            }
+            let checked = verify(&path);
+            if refused {
+                let said = checked.unwrap_err().to_string();
+                assert!(
+                    said.contains(&format!("replace the socket: {} ", above.display())),
+                    "{grant:?}: {said}"
+                );
+            } else {
+                checked.unwrap();
+            }
+        }
         std::fs::remove_dir_all(root).unwrap();
     }
 }

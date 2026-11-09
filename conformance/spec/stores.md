@@ -6,7 +6,7 @@ Where a blob's bytes live, and the rules that keep them. A store is a place byte
 
 ### `stores/list`
 
-When a caller authorized by `instance.read` or direct owner or local authority sends `GET /blobs/stores`, the server MUST answer `200` with every store, each with its `id`, `kind`, `locator`, `policy`, `attached_at` and `detached_at`.
+When a caller authorized by `instance.read` or direct owner or local authority sends `GET /blobs/stores`, the server MUST answer `200` with every store, each with its `id`, `kind`, `locator`, `attached_at` and `detached_at`.
 
 **Tests:** `compliance/blob-stores.test.ts › lists the disk store and the object store to the management key`, `› lists each store with the time it was first attached`.
 
@@ -35,14 +35,6 @@ Where an object store is attached, when a caller authorized by `instance.read` o
 When a caller authorized by `instance.read` or direct owner or local authority sends `GET /blobs/stores`, the server MUST answer each store's `attached_at` as the time the store was first attached, the same on every listing.
 
 **Tests:** `compliance/blob-stores.test.ts › lists each store with the time it was first attached`, `compliance/blob-store-folders.test.ts › keeps one store through a folder that holds its marker, and detaches it for a fresh folder`.
-
-### `stores/policy-all`
-
-When a caller authorized by `instance.read` or direct owner or local authority sends `GET /blobs/stores`, the server MUST answer every store's `policy` as `all`, which wants every blob.
-
-**Reason:** `all` is the one policy this build defines.
-
-**Tests:** `compliance/blob-stores.test.ts › lists the disk store and the object store to the management key`.
 
 ### `stores/list-operator-only`
 
@@ -132,7 +124,7 @@ The copy record says which stores hold which blob.
 
 ### `stores/locations-listed`
 
-When a credential that may read a blob sends `GET /blobs/{hash}/copies`, the server MUST answer `200` with a row for each copy the copy record holds, each naming its `store_id`, `kind` and `policy`, and carrying `detached`, `recorded_at` and `verified_at`.
+When a credential that may read a blob sends `GET /blobs/{hash}/copies`, the server MUST answer `200` with a row for each copy the copy record holds, each naming its `store_id` and `kind`, and carrying `detached`, `recorded_at` and `verified_at`.
 
 **Reason:** which credentials may read a blob is `blobs/read-no-type`, `blobs/read-unreadable` and the rules about lending.
 
@@ -250,7 +242,7 @@ Where an attached object store holds a blob, the server MUST answer `GET /blobs/
 
 ## Replication
 
-The `blob-replicate` housekeeping job gives every attached store every blob, because every store's policy is `all`. The fixtures drive the housekeeping jobs through `POST /housekeeping/{name}/run` (`housekeeping/run-now`), so each rule is about a run rather than about a clock.
+The `blob-replicate` housekeeping job gives every attached store every blob. The fixtures drive the housekeeping jobs through `POST /housekeeping/{name}/run` (`housekeeping/run-now`), so each rule is about a run rather than about a clock.
 
 ### `stores/replicate-every-store`
 
@@ -422,11 +414,13 @@ When the server refuses a drop to a key or app token lacking `blobs.manage`, the
 
 **Tests:** `compliance/blob-rules.test.ts › drops a copy while the minimum holds and refuses the drop that would break it`, `compliance/blob-store-settings.test.ts › is refused the management operations on the stores, the report and the jobs, and the copy stays`.
 
-### `stores/drop-bare-hash`
+### `stores/drop-hash-malformed`
 
-When a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/copies/{store}` naming the blob by the 64 lowercase hexadecimal characters of its hash with no `sha256:`, the server MUST answer as it does for the same hash with the prefix.
+If a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/copies/{store}` naming the blob by anything but `sha256:` and the 64 lowercase hexadecimal characters of its hash, the bare 64 characters among them, then the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/blob-rules.test.ts › answers the drop door's refusals in their order`.
+**Reason:** a blob has one name, the one every answer gives it, so a hash without its prefix is not a second name for it.
+
+**Tests:** `compliance/blob-order.test.ts › answers a hash without its prefix on the drop door as malformed, before the blob's copies`.
 
 ### `stores/drop-order`
 
@@ -848,7 +842,7 @@ When a queued or in-progress `update_properties` job's patch names a digest no b
 
 When a string in an item in any lifecycle state, a metadata extension, an edge's properties or a version snapshot holds a run of exactly 64 lowercase hexadecimal characters with no further lowercase hexadecimal character after it, and either no lowercase hexadecimal character before it or the escape `%3a` straight before it, the server MUST count the run as a reference to the blob `sha256:` and that run.
 
-**Reason:** so a whole value, a `sha256:` link inside text such as a Markdown body, a URL-encoded one in capitals or in lowercase (`sha256%3A…`, `sha256%3a…`), an escaped one and the bare hex that `GET /blobs/{hash}` also serves are all references, whatever else stands beside the run.
+**Reason:** so a whole value, a `sha256:` link inside text such as a Markdown body, a URL-encoded one in capitals or in lowercase (`sha256%3A…`, `sha256%3a…`), an escaped one and the bare hex are all references, whatever else stands beside the run.
 
 **Tests:** `compliance/blob-rules.test.ts › counts a digest as a reference by its run of lowercase hex, whatever form it is written in`, `› keeps a blob a note links in its body after the file item naming it is purged`, `› keeps a blob named only in an edge's properties`.
 
