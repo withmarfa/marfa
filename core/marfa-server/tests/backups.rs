@@ -77,7 +77,7 @@ impl Instance {
     }
 
     async fn changes(&self) -> i64 {
-        self.app.db.read(|tx| backups::changes(tx)).await.unwrap()
+        self.app.db.read(backups::changes).await.unwrap()
     }
 }
 
