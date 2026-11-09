@@ -7,7 +7,7 @@ use serde::Serialize;
 use tokio::sync::watch;
 
 use super::super::blobs::Hash;
-use super::super::housekeeping;
+use super::super::{attention, housekeeping};
 use super::{DEVICE_OWNER_INSTANCE_LANE, Lie, Resolved, TYPE_DEFINITION, Volume};
 use crate::db::Pulse;
 
@@ -75,6 +75,13 @@ macro_rules! points {
 }
 
 point_list!(points);
+
+const ATTENTION: &str = "attention";
+
+fn check_names() -> String {
+    let names: Vec<&str> = attention::CHECKS.iter().map(|(check, _)| *check).collect();
+    names.join(", ")
+}
 
 impl Volume {
     const fn name(self) -> &'static str {
@@ -315,7 +322,19 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
             };
             let found = point(kind, rest)
                 .ok_or_else(|| format!("no {} point is named {rest}", kind.prefix()))?;
-            Ok((aim(found, arg)?, None))
+            let aimed = aim(found, arg)?;
+            if let (true, Some(Aim { action, .. })) = (rest == ATTENTION, &aimed) {
+                let known = attention::CHECKS
+                    .iter()
+                    .any(|(check, _)| Some(*check) == action.as_deref());
+                if !known {
+                    return Err(format!(
+                        "{rest} takes the check it acts on: {}",
+                        check_names()
+                    ));
+                }
+            }
+            Ok((aimed, None))
         }
         "release" => {
             point(Kind::Hold, rest).ok_or_else(|| format!("no hold point is named {rest}"))?;
@@ -848,6 +867,15 @@ mod tests {
         assert!(!refused("release:housekeeping:trash-purge", None));
         assert!(!refused("fail:housekeeping:trash-purge", Some("2")));
         assert!(!refused("deadline:trash-purge", Some("300")));
+    }
+
+    #[test]
+    fn an_attention_fault_names_a_check_this_build_runs() {
+        assert!(refused("fail:attention", None));
+        assert!(refused("hold:attention", Some("elsewhere")));
+        assert!(refused("fail:attention", Some("keys@0")));
+        assert!(!refused("fail:attention", Some("keys")));
+        assert!(!refused("hold:attention", Some("folders@2")));
     }
 
     #[test]

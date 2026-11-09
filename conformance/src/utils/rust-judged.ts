@@ -12,6 +12,7 @@ import { resolve } from "node:path";
  */
 export const RUST_JUDGED: readonly string[] = [
   "src/suites/cli/access-words.test.ts",
+  "src/suites/cli/attention.test.ts",
   "src/suites/cli/cleartext.test.ts",
   "src/suites/cli/coverage.test.ts",
   "src/suites/cli/folder-inventory.test.ts",
@@ -19,6 +20,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/cli/item-summaries.test.ts",
   "src/suites/cli/items.test.ts",
   "src/suites/cli/login.test.ts",
+  "src/suites/cli/owner-commands.test.ts",
   "src/suites/cli/views.test.ts",
   "src/suites/compliance/address-check-consequences.test.ts",
   "src/suites/compliance/adversarial.test.ts",

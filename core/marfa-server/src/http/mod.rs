@@ -2,6 +2,7 @@
 
 mod admission;
 pub mod answer;
+mod attention;
 mod audit;
 mod auth;
 mod blobs;
@@ -137,6 +138,12 @@ fn overview_doors(app: Arc<App>) -> Routes {
     Doors::new()
         .route("/overview", get(overview::read))
         .admitting(app, Admission::Mapped)
+}
+
+fn attention_doors(app: Arc<App>) -> Routes {
+    Doors::new()
+        .route("/attention", get(attention::list))
+        .admitting(app, Admission::Presented)
 }
 
 fn count_doors(app: Arc<App>) -> Routes {
@@ -326,6 +333,7 @@ fn shared(app: Arc<App>) -> Routes {
         .merge(blob_doors())
         .merge(connector_doors(app.clone()))
         .merge(overview_doors(app.clone()))
+        .merge(attention_doors(app.clone()))
         .merge(count_doors(app))
         .merge(owner_item_doors())
         .merge(auth::owner_doors())

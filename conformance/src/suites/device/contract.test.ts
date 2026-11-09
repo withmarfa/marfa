@@ -1157,6 +1157,8 @@ const beyondTheTable: Record<string, () => string[]> = {
   "views get": () => [ID],
   // `sources clear` sends the update operation `sources set` is the entry for.
   "sources clear": () => ["--name", "github"],
+  // `sign-ins end-all` sends the list and end operations `sign-ins list` and `sign-ins end` are the entries for.
+  "sign-ins end-all": () => [],
 };
 
 /** Table commands that require private machine authority rather than a key. */
