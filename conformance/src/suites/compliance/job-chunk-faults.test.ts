@@ -92,3 +92,40 @@ describe("a fault that ends a job's write partway through a chunk", () => {
     }
   });
 });
+
+describe("a fault that stops a job's write", () => {
+  const FINISH = "fail:commit=items.bulk_action.finish";
+
+  it("tries the write again from the job's checkpoint, unasked, and the job ends completed", async () => {
+    const tag = "finish-once";
+    await seed(client, tag, 3);
+
+    await server.setFault(FINISH);
+    const { job, errors } = await run(tag, `${tag}-written`);
+    const acted = (await server.faults()).find(
+      (fault) => fault.name === "fail:commit",
+    );
+    // The witness that the job's last step failed once before it ended.
+    expect(acted?.fired).toBe(1);
+    expect(job.status, job.error).toBe("completed");
+    expect(errors).toEqual([]);
+    expect(job).toMatchObject({ matched: 3, processed: 3, succeeded: 3 });
+    expect(await idsWith(client, `${tag}-written`)).toHaveLength(3);
+  });
+
+  it("ends the job failed, with an error and the result it gathered, when the write fails every time it is tried", async () => {
+    const tag = "finish-always";
+    await seed(client, tag, 3);
+
+    await server.setFault(`${FINISH}@always`);
+    const { job } = await run(tag, `${tag}-written`);
+    const acted = (await server.faults()).find(
+      (fault) => fault.name === "fail:commit",
+    );
+    expect(acted?.fired).toBeGreaterThan(1);
+    expect(job.status).toBe("failed");
+    expect(job.error).toEqual(expect.any(String));
+    expect(job.result).toMatchObject({ matched: 3, succeeded: 3, errored: 0 });
+    expect(await idsWith(client, `${tag}-written`)).toHaveLength(3);
+  });
+});

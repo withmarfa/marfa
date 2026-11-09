@@ -83,6 +83,7 @@ points! {
     HOLD_JOB_CLAIMED = Hold "bulk-job:claimed" None;
     HOLD_JOB_IN_CHUNK = Hold "bulk-job:in-chunk" None;
     HOLD_JOB_BETWEEN_CHUNKS = Hold "bulk-job:between-chunks" Nth;
+    HOLD_JOB_FINISHING = Hold "bulk-job:finishing" None;
     FAIL_STREAM_HEAD = Fail "stream-head" Nth;
     FAIL_STREAM_REPLAY = Fail "stream-replay" Nth;
     FAIL_STREAM_CREDENTIAL = Fail "stream-credential" Nth;
@@ -123,6 +124,8 @@ impl Volume {
 const HIDE_POSITION: &str = "hide:webhook-position";
 const HIDE_EVENTS: &str = "hide:event";
 const RESOLVE: &str = "resolve:";
+/// The argument suffix that has a `fail` fault act on every reach of its write.
+const ALWAYS: &str = "always";
 
 const FAIL_JOB: &Point = &Point {
     kind: Kind::Fail,
@@ -133,7 +136,8 @@ const FAIL_JOB: &Point = &Point {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Aim {
     action: Option<String>,
-    nth: u32,
+    /// `None` acts on every reach.
+    nth: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -198,7 +202,7 @@ fn aim(point: &Point, arg: Option<&str>) -> Result<Option<Aim>, String> {
         let counted = point.kind != Kind::Hold && point.argument != Argument::None;
         return Ok(counted.then_some(Aim {
             action: None,
-            nth: 1,
+            nth: Some(1),
         }));
     };
     if point.argument == Argument::None {
@@ -207,7 +211,7 @@ fn aim(point: &Point, arg: Option<&str>) -> Result<Option<Aim>, String> {
     if let Some(whole) = nth(arg) {
         return Ok(Some(Aim {
             action: None,
-            nth: whole,
+            nth: Some(whole),
         }));
     }
     if point.argument != Argument::Write {
@@ -216,15 +220,18 @@ fn aim(point: &Point, arg: Option<&str>) -> Result<Option<Aim>, String> {
         ));
     }
     let (action, count) = match arg.rsplit_once('@') {
-        Some((action, count)) => (action, nth(count)),
-        None => (arg, Some(1)),
+        Some((action, ALWAYS)) if point.kind == Kind::Fail => (action, Some(None)),
+        Some((action, count)) => (action, nth(count).map(Some)),
+        None => (arg, Some(Some(1))),
     };
     match count.filter(|_| is_action(action)) {
-        Some(whole) => Ok(Some(Aim {
+        Some(nth) => Ok(Some(Aim {
             action: Some(action.to_string()),
-            nth: whole,
+            nth,
         })),
-        None => Err(format!("{name} takes <n>, <action> or <action>@<n>")),
+        None => Err(format!(
+            "{name} takes <n>, <action>, <action>@<n> or, to fail, <action>@{ALWAYS}"
+        )),
     }
 }
 
@@ -528,7 +535,7 @@ impl Faults {
                 return None;
             }
             fault.seen += 1;
-            if fault.seen != aim.nth {
+            if aim.nth.is_some_and(|nth| fault.seen != nth) {
                 return None;
             }
         }
@@ -592,7 +599,7 @@ impl Faults {
             return false;
         }
         fault.seen += 1;
-        if fault.seen != aim.nth {
+        if aim.nth.is_some_and(|nth| fault.seen != nth) {
             return false;
         }
         fault.fired += 1;
@@ -944,6 +951,17 @@ mod tests {
         assert!(faults.fail(FAIL_COMMIT, Some("item.create")));
         assert!(!faults.fail(FAIL_COMMIT, Some("item.create")));
         assert_eq!(faults.list()[0].fired, 1);
+    }
+
+    #[test]
+    fn a_fail_aimed_always_acts_on_every_reach_of_its_write() {
+        let faults = Faults::default();
+        faults.set("fail:commit", Some("item.create@always")).unwrap();
+        assert!(!faults.fail(FAIL_COMMIT, Some("item.update")));
+        assert!(faults.fail(FAIL_COMMIT, Some("item.create")));
+        assert!(faults.fail(FAIL_COMMIT, Some("item.create")));
+        assert_eq!(faults.list()[0].fired, 2);
+        assert!(refused("hold:write", Some("item.create@always")));
     }
 
     async fn waiting_after(faults: &Arc<Faults>, reaches: usize, point: &'static Point) -> u64 {

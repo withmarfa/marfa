@@ -11,7 +11,7 @@ use crate::app::App;
 use crate::app::access::{Caller, standing_holder};
 use crate::app::catalog::{self, Snapshot};
 use crate::app::faults::{
-    FAIL_JOB_ROW, HOLD_JOB_BETWEEN_CHUNKS, HOLD_JOB_CLAIMED, HOLD_JOB_IN_CHUNK,
+    FAIL_JOB_ROW, HOLD_JOB_BETWEEN_CHUNKS, HOLD_JOB_CLAIMED, HOLD_JOB_FINISHING, HOLD_JOB_IN_CHUNK,
 };
 use crate::app::items::write::apply_row;
 use crate::app::refusal::{Code, Refusal, Result};
@@ -141,6 +141,7 @@ async fn run_job(app: &Arc<App>, id: &str) -> Ran {
             Chunk::Ended => return Ran::Done,
         }
     }
+    app.faults.hold(HOLD_JOB_FINISHING, None).await;
     if app.jobs.closed() {
         return Ran::Stopped;
     }
