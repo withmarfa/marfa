@@ -420,7 +420,7 @@ If a caller authorized by `blobs.manage` or direct owner or local authority send
 
 **Reason:** a blob has one name, the one every answer gives it, so a hash without its prefix is not a second name for it.
 
-**Tests:** `compliance/blob-rules.test.ts › answers the drop door's refusals in their order`.
+**Tests:** `compliance/blob-order.test.ts › answers a hash without its prefix on the drop door as malformed, before the blob's copies`.
 
 ### `stores/drop-order`
 

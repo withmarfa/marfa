@@ -1112,11 +1112,9 @@ describe("how the copies are placed and removed", () => {
     expect(working.error?.error.code).toBe("forbidden");
 
     // blobs.manage admits hash validation and then the store lookup.
-    for (const form of [malformed, hash.slice("sha256:".length)]) {
-      const bad = await drop(`${form}/copies/${s3.id}`, managementKey);
-      expect(bad.status, form).toBe(400);
-      expect(await code(bad), form).toBe("validation_error");
-    }
+    const bad = await drop(`${malformed}/copies/${s3.id}`, managementKey);
+    expect(bad.status).toBe(400);
+    expect(await code(bad)).toBe("validation_error");
     const unknownBlob = await drop(
       `${unregistered}/copies/no-such-store`,
       managementKey,
