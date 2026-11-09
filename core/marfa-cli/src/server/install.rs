@@ -465,7 +465,10 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
     dotenv.set("MARFA_RUNTIME", runtime.name())?;
     match manager {
         Some(manager) => dotenv.set("MARFA_SERVICE", manager.name())?,
-        None => dotenv.remove("MARFA_SERVICE"),
+        None => {
+            dotenv.remove("MARFA_SERVICE");
+            dotenv.remove("MARFA_APPLIED");
+        }
     }
     match https_port {
         Some(port) => dotenv.set("MARFA_HTTPS_PORT", &port.to_string())?,
@@ -523,11 +526,26 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
             if let Some(identity) = identity {
                 check_account_runs(identity, &binary)?;
             }
+            // The server reads its settings only when it starts, so it restarts
+            // unless what it was last started with is what a start reads now.
+            let applied = folder.applied(port, &release)?;
+            let restart =
+                dotenv.get("MARFA_APPLIED").as_deref() != Some(&applied) || !answers_health(port);
+            if restart {
+                folder.forget_applied(&mut dotenv, kept.dotenv)?;
+            }
             steps.say(&format!("Starting {name}..."));
             let mark = service.mark();
-            linger = service.on(autostart, &binary, server)?.linger;
+            let mut started = service.on(autostart, restart, &binary, server)?;
+            linger = started.linger.take();
             let watch = Watch::Process { service, mark };
             wait_until_healthy(&watch, port, args.wait)?;
+            if restart {
+                if !out.json {
+                    started.say_unconfirmed(port);
+                }
+                folder.keep_applied(&mut dotenv, &applied, kept.dotenv)?;
+            }
         }
         _ => {
             start(&docker, &folder.dir, &name, &release, &steps)?;
@@ -841,6 +859,13 @@ impl Watch<'_> {
             Watch::Process { service, mark } => service.log_after(Some(mark), 20),
         }
     }
+}
+
+fn answers_health(port: u16) -> bool {
+    http_agent()
+        .get(&format!("http://127.0.0.1:{port}/health"))
+        .call()
+        .is_ok_and(|response| response.status().as_u16() == 200)
 }
 
 pub(super) fn wait_until_healthy(watch: &Watch, port: u16, seconds: u64) -> Result<(), CliError> {
