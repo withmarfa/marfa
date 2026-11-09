@@ -66,8 +66,7 @@ impl Declaration {
     }
 }
 
-/// Who shares a count with an address: itself, or for IPv6 the /64 it sits in, since one
-/// household holds a whole /64 and a caller can choose any address in it.
+/// The address a count is kept for: itself, or for IPv6 its /64, which one caller may hold whole.
 pub fn network(address: IpAddr) -> IpAddr {
     match address.to_canonical() {
         IpAddr::V6(address) => IpAddr::V6(Ipv6Addr::from(

@@ -1,5 +1,4 @@
-//! How many connections a listener holds open. A connection over a bound is answered once and
-//! closed, before any request is read.
+//! The bounds on a listener's open connections, judged before any request is read.
 
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -17,8 +16,7 @@ const RETRY_AFTER_SECONDS: u64 = 5;
 pub struct Caps {
     pub total: usize,
     pub per_address: usize,
-    /// A peer this listener believes forwarded addresses from holds many callers' requests on one
-    /// connection, so it is counted in the total alone.
+    /// A believed proxy carries many callers, so it counts in the total alone.
     pub trust: Trust,
 }
 

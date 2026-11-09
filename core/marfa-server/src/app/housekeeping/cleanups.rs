@@ -136,8 +136,7 @@ impl Tally {
     }
 }
 
-/// One run for everything that ends a sign-in: a grant is retired before the purge looks for
-/// withdrawn ones, and a client is removed only after the grants that kept it.
+/// Grants retire before the purge, and clients go only after the grants that kept them.
 pub async fn credentials(app: Arc<App>, run: Run) -> Result<Report> {
     let mut tally = Tally::default();
     let done = tally.deleted(oauth::sweep::sweep_expired(&app, &run).await?)

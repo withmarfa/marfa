@@ -1,5 +1,4 @@
-//! The one rate limiter, held in memory. A window is fixed, opened by its first attempt, and
-//! forgotten when the server stops.
+//! The one rate limiter, in memory: fixed windows, each opened by its first attempt.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
@@ -105,10 +104,7 @@ pub struct Limiter {
 }
 
 impl Limiter {
-    /// Counts one attempt in each lane, in order, and stops counting at the first lane the
-    /// attempt passes the limit of, so that lane's excess never reaches the next. Answers
-    /// `None` when the attempt is allowed, and otherwise the milliseconds until the latest end
-    /// among the lanes the next attempt would find spent.
+    /// Counts up to the first refusing lane; a refusal is the ms to the latest spent lane.
     pub fn admit(&self, now_ms: i64, lanes: &[Lane]) -> Option<i64> {
         let mut windows = self.windows.lock().unwrap_or_else(PoisonError::into_inner);
         windows.prune(now_ms);
