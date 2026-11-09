@@ -78,7 +78,6 @@ const mintKey = async (
       label: "expiring",
       source: "expiring",
       permissions: [],
-      type_permissions: { "core.note": "read" },
       expires_at: "2099-01-01T01:00:00+01:00",
     },
   });
@@ -146,19 +145,19 @@ describe("a time the server keeps", () => {
             .run(value, id),
         );
       expect(
-        (await send(server, "/items?type=core.note", { key })).status,
+        (await send(server, "/keys/current", { key })).status,
       ).toBe(200);
 
       for (const damaged of ["soon", "4070908800000", "2099-01-01T00:00:00Z"]) {
         expiring(damaged);
-        const refused = await send(server, "/items?type=core.note", { key });
+        const refused = await send(server, "/keys/current", { key });
         expect(refused.status, damaged).toBe(500);
         expect(await refused.json()).toEqual(INTERNAL);
       }
 
       expiring("2099-01-01T00:00:00.000Z");
       expect(
-        (await send(server, "/items?type=core.note", { key })).status,
+        (await send(server, "/keys/current", { key })).status,
       ).toBe(200);
     },
     FRESH_SERVER_TIMEOUT_MS,
