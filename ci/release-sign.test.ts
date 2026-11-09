@@ -236,14 +236,15 @@ describe("prove-reading.sh holds the signed server to the reader's protocol", ()
 
   /**
    * A stand-in for `marfa-server` that plays the reading child the way
-   * `isolated/parent.rs` starts one, and exits at once as a server. It ends
+   * `isolated/parent.rs` starts one, and as a server logs a setup code and a
+   * line that must be shown, then exits at once. As a child it ends
    * with status 3 and no frame unless it was started as a parent starts it: an
    * empty environment, `/` as its folder, the picture open for reading as
    * standard input, and the limits and the request as its last three arguments.
    */
   function stand_in(frame: string, status: number, text: string) {
     return `#!/bin/bash
-[ "$1" = --marfa-enrichment-child ] || exit 0
+[ "$1" = --marfa-enrichment-child ] || { echo 'Setup code: 4815-1623'; echo 'the server log line'; exit 0; }
 [ "$#" = 4 ] || exit 3
 [ "$2" = 60000 ] && [ "$3" = 1073741824 ] || exit 3
 [ "$(pwd -P)" = / ] || exit 3
@@ -286,6 +287,8 @@ exit ${status}
     );
     expect(output).toContain(`the reading child read: ${SENTENCE}`);
     expect(output).toContain("marfa-server ended before it listened");
+    expect(output).toContain("the server log line");
+    expect(output).not.toContain("4815-1623");
   });
 
   it.each(["partial", "off"])(
@@ -297,7 +300,7 @@ exit ${status}
     },
   );
 
-  it("refuses a child that starts as a parent would not, and says nothing of a setup code", () => {
+  it("refuses a child that starts as a parent would not", () => {
     const output = prove(
       stand_in('{"sandbox":"full"}', 0, SENTENCE).replace(
         '[ "$#" = 4 ]',
@@ -305,7 +308,6 @@ exit ${status}
       ),
     );
     expect(output).toContain("not the full sandbox");
-    expect(output).not.toMatch(/setup code: \S/i);
   });
 
   it("refuses a child that fails after its frame", () => {

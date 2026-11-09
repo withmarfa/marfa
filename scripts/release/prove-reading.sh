@@ -42,8 +42,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# The server's log names the setup code of an unclaimed instance, so the lines that do are
-# left out of what is printed.
+# The server gives an unclaimed instance's setup code only on its private socket. Lines of
+# its log that name one are still left out of what is printed, so no build can publish it.
 fail() {
   echo "::error::$1"
   echo "--- the server's log"
