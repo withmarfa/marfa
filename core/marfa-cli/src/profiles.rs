@@ -320,7 +320,7 @@ fn permitted(path: &Path, owner: u32, mode: u32, user: u32) -> Result<(), String
 /// check reads.
 #[cfg(target_os = "macos")]
 fn acl_lets_others_write(file: &std::fs::File, owner: u32) -> std::io::Result<bool> {
-    crate::acl::others_may_write(file, owner)
+    marfa_acl::others_may_write_file(file, owner)
 }
 
 #[cfg(not(target_os = "macos"))]

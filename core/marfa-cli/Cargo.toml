@@ -38,4 +38,5 @@ toml = { version = "1.1.8", default-features = false, features = ["std", "parse"
 security-framework = "3"
 
 [dev-dependencies]
+marfa-acl = { workspace = true, features = ["testing"] }
 tempfile = "3"

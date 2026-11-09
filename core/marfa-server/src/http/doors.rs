@@ -110,7 +110,7 @@ pub struct Doors {
     paths: Vec<&'static str>,
     unjudged: HashSet<&'static str>,
     refusals: Vec<(Method, &'static str)>,
-    admissions: HashMap<&'static str, Admission>,
+    admissions: HashMap<(Method, &'static str), Admission>,
     served: Vec<Door>,
 }
 
@@ -145,13 +145,16 @@ impl Doors {
 
     /// Admission and instance checks share the group's credential rule.
     pub fn admitting(mut self, app: Arc<App>, rule: Admission) -> Self {
-        self.admissions
-            .extend(self.paths.iter().map(|path| (*path, rule)));
+        self.admissions.extend(
+            self.served
+                .iter()
+                .map(|door| ((door.method.clone(), door.path), rule)),
+        );
         self.route_layer(from_fn_with_state((app, rule), admit))
     }
 
-    pub(super) fn judged_writes(&self) -> HashMap<&'static str, (Vec<Method>, Admission)> {
-        let mut judged: HashMap<&'static str, (Vec<Method>, Admission)> = HashMap::new();
+    pub(super) fn judged_writes(&self) -> HashMap<&'static str, Vec<(Method, Admission)>> {
+        let mut judged: HashMap<&'static str, Vec<(Method, Admission)>> = HashMap::new();
         for door in &self.served {
             if self.unjudged.contains(door.path)
                 || !super::named_instance::is_write(&door.method)
@@ -164,14 +167,13 @@ impl Doors {
             }
             let rule = self
                 .admissions
-                .get(door.path)
+                .get(&(door.method.clone(), door.path))
                 .copied()
                 .unwrap_or(Admission::Any);
             judged
                 .entry(door.path)
-                .or_insert_with(|| (Vec::new(), rule))
-                .0
-                .push(door.method.clone());
+                .or_default()
+                .push((door.method.clone(), rule));
         }
         judged
     }

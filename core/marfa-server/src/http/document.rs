@@ -192,20 +192,14 @@ const NOT_YET_SERVED: &[&str] = &[
     "GET /connectors/{id}/deliveries",
     "GET /connectors/{id}/deliveries/{delivery_id}/body",
     "GET /connectors/{id}/endpoints",
-    "GET /folders",
-    "GET /folders/{id}/status",
     "GET /items/bulk-actions/jobs/{id}",
     "GET /metrics",
-    "PATCH /folders/{id}",
     "POST /connectors/{id}/deliveries/handled",
     "POST /connectors/{id}/endpoints",
-    "POST /folders",
-    "POST /folders/{id}/revoke",
     "POST /items/bulk-actions",
     "POST /items/bulk-actions/jobs/{id}/cancel",
     "POST /restore",
     "POST /types/{id}/move",
-    "PUT /folders/{id}/status",
 ];
 
 const METHODS: [&str; 8] = [
