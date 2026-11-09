@@ -126,7 +126,7 @@ pub fn restore(
         let size = properties
             .get(FILE_BYTES)
             .and_then(Value::as_str)
-            .and_then(Hash::whole)
+            .and_then(|text| Hash::parse(text).ok())
             .filter(|hash| lent.contains(hash.as_str()))
             .map(|hash| crate::app::blobs::stored_size(tx, &hash))
             .transpose()?
