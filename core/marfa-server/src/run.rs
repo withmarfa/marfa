@@ -17,6 +17,7 @@ use crate::http::listening::{
     CONTROL_HEADER_READ_TIMEOUT, PUBLIC_HEADER_READ_TIMEOUT, Socket, Tcp,
 };
 use crate::listener::Declaration;
+use crate::open_files;
 use crate::settings::Accepted;
 use crate::telemetry::{Config, FLUSH_WITHIN};
 
@@ -76,6 +77,33 @@ async fn stopped(mut stop: watch::Receiver<bool>) {
     let _ = stop.wait_for(|stopping| *stopping).await;
 }
 
+/// The connection caps, lowered to what the open-file limit leaves room for.
+fn caps(app: &App) -> Caps {
+    let start = &app.settings.start;
+    let limit = open_files::raise();
+    let (total, per_address) = open_files::fit(
+        start.max_connections,
+        start.max_connections_per_address,
+        limit,
+    );
+    let open_files = limit.map_or_else(|| "unbounded".to_string(), |limit| limit.to_string());
+    if total < start.max_connections {
+        tracing::warn!(
+            open_files,
+            total,
+            per_address,
+            "The open-file limit leaves room for fewer connections than MARFA_MAX_CONNECTIONS"
+        );
+    } else {
+        tracing::info!(open_files, total, per_address, "Connection caps");
+    }
+    Caps {
+        total,
+        per_address,
+        trust: start.public_listener.trust.clone(),
+    }
+}
+
 fn listen(
     servers: &mut JoinSet<std::io::Result<()>>,
     app: &Arc<App>,
@@ -88,11 +116,7 @@ fn listen(
             http::public(app.clone()),
             stopped(app.stopping()),
             PUBLIC_HEADER_READ_TIMEOUT,
-            Some(Caps {
-                total: app.settings.start.max_connections,
-                per_address: app.settings.start.max_connections_per_address,
-                trust: app.settings.start.public_listener.trust.clone(),
-            }),
+            Some(caps(app)),
         ));
     }
     servers.spawn(http::serve(
