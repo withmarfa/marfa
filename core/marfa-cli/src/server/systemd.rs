@@ -196,6 +196,22 @@ pub fn active(scope: Scope, name: &str) -> bool {
         .is_ok_and(|output| output.status.success())
 }
 
+/// The process systemd runs the service as, while it runs one.
+pub fn process_id(scope: Scope, name: &str) -> Option<u32> {
+    let output = ran(
+        scope,
+        &["show", "--property=MainPID", "--value", &service(name)],
+        false,
+    )
+    .ok()
+    .filter(|output| output.status.success())?;
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .ok()
+        .filter(|pid| *pid != 0)
+}
+
 pub fn enabled(scope: Scope, name: &str) -> bool {
     ran(scope, &["is-enabled", "--quiet", &service(name)], false)
         .is_ok_and(|output| output.status.success())

@@ -4,6 +4,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -99,10 +100,36 @@ pub struct Service<'a> {
     pub trace: bool,
 }
 
-/// What a start at boot did.
+const RESTART_WAIT: Duration = Duration::from_secs(4);
+
+/// What a start left to say.
 pub struct Started {
-    pub changed: bool,
     pub linger: Option<Linger>,
+    /// A restart whose process ID the manager did not report, so that only
+    /// the server's answer on its port can confirm it.
+    pub unconfirmed: Option<When>,
+}
+
+/// Whether the manager gave no process ID before the restart or after it.
+#[derive(Clone, Copy)]
+pub enum When {
+    Before,
+    After,
+}
+
+impl Started {
+    /// Says plainly what the restart left unconfirmed.
+    pub fn say_unconfirmed(&self, port: u16) {
+        if let Some(when) = self.unconfirmed {
+            let when = match when {
+                When::Before => "before",
+                When::After => "after",
+            };
+            eprintln!(
+                "The service manager gave no process ID {when} the restart, so this run cannot show that the process was replaced. It confirms only that the server answers on port {port}."
+            );
+        }
+    }
 }
 
 impl Service<'_> {
@@ -126,10 +153,45 @@ impl Service<'_> {
         }
     }
 
-    /// Writes the service, loads it, and starts it. Only a service that
-    /// `autostart` names starts again when the machine, or the person's
-    /// login, does.
-    pub fn on(&self, autostart: bool, binary: &Path, server: &Path) -> Result<Started, CliError> {
+    /// Writes the service and loads it. With `restart`, the running server
+    /// is replaced, because it reads its settings only when it starts, and
+    /// that happens whatever the process ID query says.
+    pub fn on(
+        &self,
+        autostart: bool,
+        restart: bool,
+        binary: &Path,
+        server: &Path,
+    ) -> Result<Started, CliError> {
+        let running = restart && self.running();
+        let before = if running { self.process_id() } else { None };
+        let (changed, linger) = self.write_and_load(autostart, binary, server)?;
+        // Loading a changed definition restarted the service, and on systemd
+        // loading also started a stopped one.
+        if restart && !changed {
+            if running {
+                self.restart()?;
+            } else {
+                self.start()?;
+            }
+        }
+        let unconfirmed = match (running, before) {
+            (false, _) => None,
+            (true, Some(before)) => self.await_new_process(before)?,
+            (true, None) => Some(When::Before),
+        };
+        Ok(Started {
+            linger,
+            unconfirmed,
+        })
+    }
+
+    fn write_and_load(
+        &self,
+        autostart: bool,
+        binary: &Path,
+        server: &Path,
+    ) -> Result<(bool, Option<Linger>), CliError> {
         match self.manager {
             Manager::Launchd => {
                 let agent = launchd::Agent {
@@ -140,10 +202,7 @@ impl Service<'_> {
                     stdout: launchd::agent_log(self.name)?,
                     at_login: autostart,
                 };
-                Ok(Started {
-                    changed: launchd::on(&agent, self.trace)?,
-                    linger: None,
-                })
+                Ok((launchd::on(&agent, self.trace)?, None))
             }
             manager => {
                 let scope = manager.scope();
@@ -163,7 +222,36 @@ impl Service<'_> {
                 let linger = (scope == Scope::User && autostart)
                     .then(|| systemd::linger(self.trace))
                     .transpose()?;
-                Ok(Started { changed, linger })
+                Ok((changed, linger))
+            }
+        }
+    }
+
+    /// The process the manager runs the service as, while it runs one.
+    pub fn process_id(&self) -> Option<u32> {
+        match self.manager {
+            Manager::Launchd => launchd::process_id(self.name),
+            m => systemd::process_id(m.scope(), self.name),
+        }
+    }
+
+    // Confirms by a changed process ID when the manager reports both, and
+    // says which one it could not read when it does not.
+    fn await_new_process(&self, before: u32) -> Result<Option<When>, CliError> {
+        let deadline = Instant::now() + RESTART_WAIT;
+        loop {
+            let now = self.process_id();
+            match now {
+                Some(now) if now != before => return Ok(None),
+                _ if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(100)),
+                None => return Ok(Some(When::After)),
+                Some(_) => {
+                    return Err(CliError::Install(format!(
+                        "{} did not restart: the service manager still reports process {before}, so the restart could not be confirmed. Run `marfa server stop --dir '{dir}'` and then `marfa server start --dir '{dir}'`",
+                        self.describe(),
+                        dir = self.dir.display().to_string().replace('\'', "'\\''")
+                    )));
+                }
             }
         }
     }
