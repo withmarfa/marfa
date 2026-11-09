@@ -974,12 +974,11 @@ CREATE TABLE IF NOT EXISTS backup_state (
     last_failed_at TEXT
 ) STRICT;
 
--- `seq` is never reused, so a run in `backup_files` covers only backups begun in it. A store's
--- rows are changed only by that store's own thinning.
 CREATE TABLE IF NOT EXISTS backups (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     store_id TEXT NOT NULL,
     name TEXT NOT NULL,
+    confirmed INTEGER NOT NULL DEFAULT 0 CHECK (confirmed IN (0, 1)),
     UNIQUE (store_id, name)
 ) STRICT;
 

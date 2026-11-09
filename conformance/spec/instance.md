@@ -494,7 +494,7 @@ When the server takes a backup, the server MUST list under the manifest's `bucke
 
 While a backup the server put is in the object store and names a file, the server MUST NOT purge that file.
 
-**Reason:** a backup carries no file's bytes, so a restore takes each file from the object store, and a daily backup is kept 31 days, longer than the orphan grace. The server keeps the backups it holds files for in its own database, so the hold lasts across a restart and while the object store does not answer. A hold belongs to the object store its backup was put in: thinning in one store never lets go of a file another store's backup names, so a file stays held on returning to an earlier store. Only that store's own next thinning lets it go.
+**Reason:** Backups contain no file bytes and outlive the orphan grace.
 
 **Tests:** `compliance/backup-files.test.ts › keeps a file a retained backup names once nothing else names it, across a restart, so a fresh server on the bucket restores it whole`.
 
