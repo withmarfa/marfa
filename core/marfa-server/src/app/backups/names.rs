@@ -24,6 +24,16 @@ pub fn parse(name: &str) -> Option<Stamp> {
     Stamp::parsed(name.strip_suffix(SUFFIX)?)
 }
 
+/// The instant at or before which only the newest backup is kept.
+fn oldest_kept(now: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
+    now - Duration::days(1) - Duration::days(DAILY_FOR_DAYS)
+}
+
+/// Whether thinning at `now` deletes a backup taken at `taken` unless it is the newest.
+pub fn past_retention(taken: Stamp, now: Stamp) -> bool {
+    taken.at() <= oldest_kept(now.at())
+}
+
 /// Keeps every backup of the last day, the newest of each day for thirty days, and the newest always.
 pub fn doomed(listed: &[String], now: Stamp) -> Vec<String> {
     let now = now.at();
@@ -33,7 +43,7 @@ pub fn doomed(listed: &[String], now: Stamp) -> Vec<String> {
         .collect();
     backups.sort_by(|a, b| b.cmp(a));
     let day = Duration::days(1);
-    let oldest_daily = now - day - Duration::days(DAILY_FOR_DAYS);
+    let oldest_daily = oldest_kept(now);
     let mut days: HashSet<NaiveDate> = HashSet::new();
     let mut doomed = Vec::new();
     for (index, (at, name)) in backups.into_iter().enumerate() {
@@ -117,6 +127,21 @@ mod tests {
                 "2026-11-08T09:00:00.000Z.tar",
             ]
         );
+    }
+
+    #[test]
+    fn past_retention_is_what_thinning_deletes_of_a_backup_that_is_not_the_newest() {
+        let now = at("2026-11-09T12:00:00.000Z");
+        let newer = "2026-11-09T11:00:00.000Z.tar".to_string();
+        for (taken, past) in [
+            ("2026-10-09T12:00:00.001Z", false),
+            ("2026-10-09T12:00:00.000Z", true),
+            ("2026-10-01T00:00:00.000Z", true),
+        ] {
+            assert_eq!(past_retention(at(taken), now), past, "{taken}");
+            let names = [newer.clone(), name_of(at(taken))];
+            assert_eq!(doomed(&names, now).len() == 1, past, "{taken}");
+        }
     }
 
     #[test]

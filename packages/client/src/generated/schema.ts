@@ -28546,7 +28546,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `housekeeping_job_running`: a backup is running. Try again once it ends.
+             * @description - `conflict`: a file the backup names was purged, or its object store copy was dropped, while the backup was read, or a backup by this name is already recorded. The next run takes the backup again.
+             *     - `housekeeping_job_running`: a backup is running. Try again once it ends.
              *     - `no_bucket`: the instance has no object store, so it keeps no backups.
              */
             409: {
@@ -28557,7 +28558,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HousekeepingJobRunningRefusal"] | components["schemas"]["NoBucketRefusal"];
+                    "application/json": components["schemas"]["ConflictRefusal"] | components["schemas"]["HousekeepingJobRunningRefusal"] | components["schemas"]["NoBucketRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */

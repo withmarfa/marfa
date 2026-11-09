@@ -2,6 +2,7 @@
 //! and purge, and what the drop door refuses, with an object store beside it where a test
 //! says so.
 
+#[allow(dead_code)]
 mod fake_s3;
 mod support;
 
