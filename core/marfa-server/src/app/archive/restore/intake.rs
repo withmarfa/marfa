@@ -160,6 +160,7 @@ struct Rows {
     item_types: HashMap<u128, u32>,
     type_ids: HashSet<String>,
     edge_type_ids: HashSet<String>,
+    setting_keys: HashSet<String>,
     type_names: Vec<String>,
     snapshots: Ids,
     items: usize,
@@ -308,7 +309,16 @@ impl Rows {
                 body,
                 crate::app::items::restored::restored_source,
             )?),
-            "setting" => registrations.settings.push(stored::archived(body)?),
+            "setting" => {
+                let (key, text) = stored::archived(body)?;
+                if !self.setting_keys.insert(key.clone()) {
+                    return Err(invalid(format!(
+                        "The archive carries more than one value for setting {key}."
+                    ))
+                    .with_detail("key", key.as_str()));
+                }
+                registrations.settings.push((key, text));
+            }
             "connector_state" => {
                 let source = body.get("source").and_then(Value::as_str);
                 let state = body.get("state").and_then(Value::as_object);
@@ -618,6 +628,7 @@ impl Intake {
                 item_types: HashMap::new(),
                 type_ids: HashSet::new(),
                 edge_type_ids: HashSet::new(),
+                setting_keys: HashSet::new(),
                 type_names: Vec::new(),
                 snapshots: Ids::default(),
                 items: 0,

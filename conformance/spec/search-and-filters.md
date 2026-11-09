@@ -2056,6 +2056,14 @@ If the settings that `POST /restore` would store, judged with the instance's own
 
 **Tests:** `compliance/export-instance-lines.test.ts › refuses settings the instance cannot hold together, answering as /config does, and stores none`.
 
+### `search-and-filters/restore-setting-twice`
+
+If the `instance.ndjson.gz` of an archive carries more than one `setting` line for the same key, then the server MUST answer `400 validation_error`.
+
+**Reason:** two values for one setting have no single meaning, and the restore would otherwise count both as stored.
+
+**Tests:** `compliance/export-instance-lines.test.ts › refuses an archive that carries one setting twice, and stores neither value`.
+
 ### `search-and-filters/archive-connector-state`
 
 When the credential requesting `GET /export?format=archive` holds `connectors.manage`, the server MUST carry in `instance.ndjson.gz` one `connector_state` line, holding the `source` and its `state` document, for each source with a connector state document.

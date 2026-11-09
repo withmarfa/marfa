@@ -308,4 +308,42 @@ describe("the instance lines of an archive", () => {
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
     expect(restored.data.settings_added).toBe(3);
   });
+
+  it("refuses an archive that carries one setting twice, and stores neither value", async () => {
+    const owner = new MarfaClient({
+      baseUrl: server.apiUrl,
+      ownerCookie: server.ownerCookie,
+      ownerCredentials: TEST_OWNER,
+      ownerSessionFile: `${server.stateDir}/owner-session.json`,
+    });
+    const key = "revoked_grant_retention_days";
+    const before = (await operator.getConfig()).data as unknown as Record<
+      string,
+      unknown
+    >;
+    // The witness: the instance holds no value of its own for the setting.
+    expect(before[key]).toBeUndefined();
+    const withValues = (...values: number[]) =>
+      editLineFile(itemsArchive([]), "instance", (text) =>
+        values.reduce(
+          (lines, value) =>
+            `${lines}${JSON.stringify({ setting: { key, value } })}\n`,
+          text,
+        ),
+      );
+
+    const refused = await owner.restoreArchive(withValues(40, 50));
+    expect(refused.status, JSON.stringify(refused.data)).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    expect(refused.error?.error.message).toContain(key);
+    const after = (await operator.getConfig()).data as unknown as Record<
+      string,
+      unknown
+    >;
+    expect(after[key]).toBeUndefined();
+
+    const restored = await owner.restoreArchive(withValues(40));
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    expect(restored.data.settings_added).toBe(1);
+  });
 });
