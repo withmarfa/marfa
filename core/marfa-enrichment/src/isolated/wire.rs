@@ -65,9 +65,7 @@ impl Request {
     }
 }
 
-/// The first thing a child says: one line, written once it is confined and before it
-/// reads a byte of the file. Until then nothing a file holds has run, so this is the one
-/// thing a child says that the parent can believe, and nothing it says later changes it.
+/// The first line a child says, once confined and before it reads the file: the one thing it says the parent believes.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Frame {

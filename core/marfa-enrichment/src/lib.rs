@@ -1,6 +1,4 @@
-//! Reads the text, the size and the length out of a file, so search can find the
-//! file. It knows nothing of items, a database or HTTP: an open file and a MIME type
-//! go in, and text, a size, a duration or the reason it could not read come out.
+//! Reads the text, size and duration out of a file, so search can find it.
 //!
 //! Every file is read in a process of its own. A program that uses this crate calls
 //! [`serve_child_if_asked`] as the first line of `main`, and then [`read`].
@@ -52,10 +50,8 @@ pub struct Options {
     /// The most bytes a document may inflate to, all of its parts together.
     pub max_inflated_bytes: u64,
     /// The most memory the process that reads may hold. A reading that needs more is
-    /// `OverLimit`. A file is held whole except a sound or a video, which is read
-    /// from the file by its headers, so a file larger than this is `OverLimit` unless
-    /// it is one of those. A picture is read for text only if decoding and scaling it
-    /// fit in three quarters of what is left here once the file is held.
+    /// `OverLimit`. A file held whole larger than this is `OverLimit` too, and a picture is
+    /// read for text only if decoding it fits in three quarters of what is left.
     pub max_memory_bytes: u64,
     /// Reads text from pictures: images, and pages of a PDF that hold no text.
     /// `None` leaves OCR off, and an image then gives its size only. Without the
@@ -94,14 +90,12 @@ pub const DEFAULT_OCR_LANGUAGES: &str = "eng+deu+fra+spa";
 /// Whether this build can read text from pictures and PDFs.
 pub const NATIVE: bool = cfg!(feature = "native");
 
-/// Whether a file of this type is held whole in memory to be read, so that its size
-/// matters. A sound or a video is read from its headers and is held in no memory.
+/// Whether a file of this type is held whole in memory to be read.
 pub fn loads_whole_file(mime: &str) -> bool {
     Kind::of(mime).is_none_or(Kind::loads_whole_file)
 }
 
-/// Whether OCR can give text for a file of this type: an image of a type it decodes, or
-/// a PDF.
+/// Whether OCR can give text for this type: a decodable image or a PDF.
 pub fn ocr_applies(mime: &str) -> bool {
     matches!(Kind::of(mime), Some(Kind::Image { ocr: true } | Kind::Pdf))
 }
@@ -151,14 +145,12 @@ pub struct Reading {
     /// good and `text` is empty, and the file is to be treated as this refusal says.
     /// An image with no readable size is a plain refusal instead.
     pub text_refused: Option<Refusal>,
-    /// How far the process that read the file was shut off from the system, as it said
-    /// before it was given the file.
+    /// How far the process that read the file was shut off from the system. Always
+    /// `Full`: a process that cannot confine itself is given no file.
     pub sandbox: Sandbox,
 }
 
-/// How far a reading's process was shut off from the system. The reading is good
-/// either way: a system that cannot confine a process still reads, and this is how its
-/// owner can learn that.
+/// How far a child process says it is shut off from the system. Only `Full` is given a file.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Sandbox {
@@ -231,12 +223,8 @@ pub enum Refusal {
     ReaderUnavailable(String),
 }
 
-/// Reads `file`, which holds `len` bytes, in this process, by the MIME type `mime`; its
-/// parameters and letter case do not matter, but a `charset` parameter is read as a
-/// hint for text.
-///
-/// A parser that panics on a file it was not built for is a malformed file, not
-/// a reason to end the caller.
+/// Reads `file`, which holds `len` bytes, in this process, by the MIME type `mime`.
+/// A parser that panics is a malformed file, not a reason to end the caller.
 pub(crate) fn read_here(
     file: &File,
     len: u64,

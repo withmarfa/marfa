@@ -103,13 +103,11 @@ case "$TARGET" in
   aarch64-unknown-linux-musl) KIND=linux PLATFORM=linux/arm64 ;;
   x86_64-unknown-linux-musl) KIND=linux PLATFORM=linux/amd64 ;;
 esac
-EXPECT_FULL=
 if [ -n "$VM" ]; then
   [ "$TARGET" = x86_64-unknown-linux-musl ] || die "--vm is for x86_64-unknown-linux-musl"
   [ -z "${MARFA_VERIFY_MEMORY:-}" ] || die "--vm runs with the program's own limits; unset MARFA_VERIFY_MEMORY"
   KIND=vm
   EMULATED="yes (an emulated x86_64 PC in full-system QEMU, on a real Linux kernel; the machine is $(uname -m))"
-  EXPECT_FULL=1
 elif [ "$KIND" = linux ]; then
   need docker
   IMAGE=${MARFA_VERIFY_IMAGE:-marfa-enrichment-verify}-${TARGET%%-*}
@@ -121,7 +119,7 @@ elif [ "$KIND" = linux ]; then
 else
   EMULATED=no
 fi
-[ "$EMULATED" = no ] && EXPECT_FULL=1
+[ -n "$VM" ] || [ "$EMULATED" = no ] || die "a reader that cannot confine itself reads nothing, and an emulated run cannot hold the sandbox; run on this target's own hardware, or use --vm for x86_64"
 
 # The test files.
 chmod -R u+w "$V/models" "$V/context" 2>/dev/null || true
@@ -247,7 +245,7 @@ check() {
   fi
   local ok=1 needle
   [ "$code" -eq "$want" ] || ok=0
-  if [ -n "$EXPECT_FULL" ] && [ "$bin" = marfa-enrichment-read ] && [ "$want" -eq 0 ]; then
+  if [ "$bin" = marfa-enrichment-read ] && [ "$want" -eq 0 ]; then
     needles="$needles|sandbox: Full"
   fi
   local IFS='|'
@@ -345,10 +343,7 @@ read_cases() {
   check refuse-over-limit 1 "refused: the file is past a limit" $R read "$f/sample.gif" --max-memory 100
   check refuse-limit-below-the-reader 1 "refused: no reader could start" $R read "$f/sample.txt" --max-memory 100
   # What the child holds, from the proof program: the limits the parent set.
-  # An emulator may run a program without honoring its filter, and then says so.
-  local sandbox_wants="sandbox: Full"
-  [ -n "$EXPECT_FULL" ] || sandbox_wants="sandbox: "
-  check sandbox-state 0 "$sandbox_wants" marfa-enrichment-read-proof read "$f/faults/report.txt"
+  check sandbox-state 0 "sandbox: Full" marfa-enrichment-read-proof read "$f/faults/report.txt"
 }
 
 # Faults: one file after another by the same parent, and the good file must read.
@@ -443,12 +438,10 @@ fi
 run_cases
 echo "verify: sandbox states the programs reported:" | tee -a "$REPORT"
 cat "$V"/results/*/*.stderr | grep '^sandbox:' | sort | uniq -c | tee -a "$REPORT"
-if [ -n "$EXPECT_FULL" ]; then
-  not_full=$(cat "$V"/results/*/*.stderr | grep '^sandbox:' | grep -vc '^sandbox: Full$' || true)
-  if [ "$not_full" -ne 0 ]; then
-    FAILED=$((FAILED + 1))
-    echo "FAIL $not_full reads reported a sandbox other than Full on a target that must hold it" | tee -a "$REPORT"
-  fi
+not_full=$(cat "$V"/results/*/*.stderr | grep '^sandbox:' | grep -vc '^sandbox: Full$' || true)
+if [ "$not_full" -ne 0 ]; then
+  FAILED=$((FAILED + 1))
+  echo "FAIL $not_full reads reported a sandbox other than Full" | tee -a "$REPORT"
 fi
 echo "verify: $PASSED passed, $FAILED failed ($REPORT)" | tee -a "$REPORT"
 [ "$FAILED" -eq 0 ]
