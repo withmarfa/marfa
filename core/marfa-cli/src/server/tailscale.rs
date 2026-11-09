@@ -31,7 +31,7 @@ fn lists_the_app(processes: &str) -> bool {
 }
 
 /// On a Mac the command line is the app's own program, and started while the
-/// app is closed it brings up Tailscale's network extension switched off.
+/// app is closed it can bring up Tailscale's network extension switched off.
 fn require_the_app_running() -> Result<(), CliError> {
     if !cfg!(target_os = "macos")
         || std::env::var_os("MARFA_TAILSCALE").is_some()
@@ -48,7 +48,7 @@ fn require_the_app_running() -> Result<(), CliError> {
         Ok(())
     } else {
         Err(CliError::Install(
-            "the Tailscale app is not running. Open Tailscale and make sure it is connected, then run this again. This command does not start Tailscale itself, because its command line would start it switched off".into(),
+            "the Tailscale app is not running. Open Tailscale, make sure it is connected, and run this again".into(),
         ))
     }
 }
