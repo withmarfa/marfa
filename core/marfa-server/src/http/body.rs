@@ -19,7 +19,6 @@ use super::answer::{Stopped, refusal_answer};
 use super::mcp;
 use super::observe::RequestContext;
 use crate::app::App;
-use crate::app::items::bulk::BULK_REQUEST_BYTES;
 use crate::app::items::write::ruled;
 use crate::app::oauth::resource::MCP_PATHS;
 use crate::app::refusal::{Code, Refusal};
@@ -207,12 +206,12 @@ impl FromRequest<Arc<App>> for JsonBody {
 
 fn cap_on(app: &App, path: &str, extensions: &Extensions) -> usize {
     if BULK_PATHS.contains(&path) {
-        return BULK_REQUEST_BYTES;
+        return app.bulk_cap();
     }
     if path == REGISTER_PATH {
         return REGISTER_REQUEST_BYTES;
     }
-    if let Some(cap) = connector_cap(path) {
+    if let Some(cap) = connector_cap(app, path) {
         return cap;
     }
     let local = extensions
@@ -235,11 +234,11 @@ fn under_connectors(path: &str) -> bool {
 }
 
 /// The state document and the agreements batch carry more than the usual cap.
-fn connector_cap(path: &str) -> Option<usize> {
+fn connector_cap(app: &App, path: &str) -> Option<usize> {
     let mut parts = path.strip_prefix("/connectors/")?.split('/').skip(1);
     match (parts.next(), parts.next()) {
         (Some("state"), None) => Some(STATE_REQUEST_BYTES),
-        (Some("agreements"), None) => Some(BULK_REQUEST_BYTES),
+        (Some("agreements"), None) => Some(app.bulk_cap()),
         _ => None,
     }
 }

@@ -263,16 +263,17 @@ impl App {
             self.scratch().await?,
         ];
         let room = self.room();
+        let cap = self.bulk_cap();
         let selected = match bucket {
             None => {
                 reading(self, caller, move |read| {
-                    select(read, &ask, scratch, room, None)
+                    select(read, &ask, scratch, room, cap, None)
                 })
                 .await?
             }
             Some(bucket) => {
                 reading_background(self, caller, move |read| {
-                    select(read, &ask, scratch, room, Some(&bucket))
+                    select(read, &ask, scratch, room, cap, Some(&bucket))
                 })
                 .await?
             }
@@ -339,6 +340,7 @@ fn select(
     ask: &Ask,
     [instance, items, edges]: [crate::app::blobs::Scratch; 3],
     room: Room,
+    cap: usize,
     bucket: Option<&str>,
 ) -> Result<Selected> {
     let mut items: Lines<ItemNeed> = Lines::new(items, room.clone())?;
@@ -380,7 +382,7 @@ fn select(
         let rows = items::archived(read.tx, caller, catalog, &read.read_only, &seqs, true)?;
         for row in rows {
             let line = line_value(&row.line)?;
-            checks::item(catalog, &line, items.lines as usize + 1)
+            checks::item(catalog, cap, &line, items.lines as usize + 1)
                 .map_err(|refused| unrestorable(&refused))?;
             items.push(&row.line, |need| {
                 need.rows.insert((row.type_id.clone(), row.source.clone()));
@@ -438,7 +440,7 @@ fn select(
                     None
                 }
             };
-            checks::edge(catalog, &line, edges.lines as usize + 1, ends)
+            checks::edge(catalog, cap, &line, edges.lines as usize + 1, ends)
                 .map_err(|refused| unrestorable(&refused))?;
             edges.push(&text, |need| {
                 need.0

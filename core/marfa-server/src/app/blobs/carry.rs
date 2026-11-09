@@ -14,7 +14,7 @@ use super::rows::{self, Held};
 use super::store::{self, Answer, ByteStream, Hasher, Store};
 use super::{App, Blob, Hash, unavailable};
 use crate::app::access::Caller;
-use crate::app::faults::{FAIL_BLOB_READ, HOLD_BLOB_READ, Lie};
+use crate::app::faults::{FAIL_BLOB_READ, FAIL_BLOB_READ_SHORT, HOLD_BLOB_READ, Lie};
 use crate::app::refusal::{Refusal, Result};
 
 const CHECKS_AT_ONCE: usize = 8;
@@ -152,6 +152,11 @@ impl App {
                 .await
             {
                 Ok(stream) => {
+                    let stream = if self.faults.fail(FAIL_BLOB_READ_SHORT, None) {
+                        store::ended_short(stream, blob.size_bytes)
+                    } else {
+                        stream
+                    };
                     return Ok(Bytes {
                         stream: store::idle_limited(stream, self.blobs.check()),
                         store,
