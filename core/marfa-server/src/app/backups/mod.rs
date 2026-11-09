@@ -1,6 +1,5 @@
-//! Backups: an archive of every row and the instance lines, with no file, put as one object
-//! under `<prefix>/backups/<instance id>/` in the object store, which already keeps a copy of
-//! each file. The files a backup names are held from purging until thinning deletes it.
+//! Backups: an archive without files, put as one object under `<prefix>/backups/<instance id>/`.
+//! The files a backup names are held from purging until thinning deletes it.
 
 mod names;
 
@@ -326,8 +325,7 @@ pub async fn job(app: Arc<App>, _run: Run) -> Result<Report> {
     Ok(Report::done(outcome.to_json()))
 }
 
-/// How many of the archive's bytes the put takes before `backup:put` holds it, unless the
-/// archive ends first: past one part, so a multipart upload has begun.
+/// Past one part, so a multipart upload has begun before `backup:put` holds.
 const HELD_AFTER: u64 = 16 * 1024 * 1024;
 
 struct Sending {
@@ -548,8 +546,7 @@ async fn wake_replication(app: &Arc<App>) {
     }
 }
 
-/// Writes the archive and puts it whole, answering when it was taken, its name, size and change
-/// count.
+/// Writes the archive and puts it whole.
 async fn put(app: &Arc<App>, bucket: &Arc<S3>) -> Result<(Stamp, String, u64, i64)> {
     let began = std::time::Instant::now();
     let mut backup = app.backup_archive(bucket.id(), app.blobs.check()).await?;
@@ -573,9 +570,8 @@ async fn put(app: &Arc<App>, bucket: &Arc<S3>) -> Result<(Stamp, String, u64, i6
     Ok((taken, name, size, changes))
 }
 
-/// Deletes this instance's backups the plan leaves out, judged from when the backup just put
-/// was taken, then stops holding files for every backup not left listed. Only names it listed
-/// in its own folder and could read as a backup are deleted.
+/// Deletes the backups the plan leaves out, then releases the files of every backup not kept.
+/// Only names it listed in its own folder and could read as a backup are deleted.
 async fn thin(app: &Arc<App>, bucket: &Arc<S3>, taken: Stamp, put: &str) -> (usize, usize) {
     let own = format!("{FOLDER}/{}", app.instance_id);
     let listed = match super::blobs::store::within(LIST_DEADLINE, bucket.list_in(&own)).await {

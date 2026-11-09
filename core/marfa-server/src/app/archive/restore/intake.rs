@@ -75,8 +75,7 @@ pub struct Manifest {
     pub missing: BTreeMap<String, (Option<String>, Option<u64>)>,
 }
 
-/// What `instance.ndjson.gz` registers and sets, read whole except the agreements, which
-/// stay in the spool.
+/// What `instance.ndjson.gz` registers and sets; the agreements stay in the spool.
 #[derive(Default)]
 pub struct Registrations {
     pub types: Vec<types::write::Archived>,
@@ -642,11 +641,6 @@ impl Intake {
         })
     }
 
-    /// Whether any byte has arrived.
-    pub fn started(&self) -> bool {
-        self.started
-    }
-
     /// Reads one part of the body. It blocks.
     pub fn push(&mut self, bytes: &[u8]) -> Result<()> {
         if !bytes.is_empty() {
@@ -862,8 +856,7 @@ fn spooled(error: io::Error) -> Refusal {
     crate::app::blobs::restore::unwritten(error)
 }
 
-/// A blob's type as a response header can carry it: one that is not printable ASCII is kept
-/// as bytes of no named type, as an upload that names none is.
+/// A type that is not printable ASCII becomes no named type, as an upload naming none does.
 fn served_type(mime: &str) -> String {
     if !mime.is_empty() && mime.bytes().all(|byte| (0x20..0x7f).contains(&byte)) {
         mime.to_string()
