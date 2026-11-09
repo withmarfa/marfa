@@ -113,7 +113,9 @@ fn strings(sent: &Map<String, Value>, field: &str) -> Result<Option<Vec<String>>
 
 fn timestamp(sent: &Map<String, Value>, field: &str) -> Result<Option<String>> {
     text_of(sent, field)?
-        .map(|text| time::normalize(&text, field).map_err(|error| invalid_field(field, error.message)))
+        .map(|text| {
+            time::normalize(&text, field).map_err(|error| invalid_field(field, error.message))
+        })
         .transpose()
 }
 
@@ -159,8 +161,8 @@ fn ask_of(sent: &Map<String, Value>) -> Result<Ask> {
     let state = one_of(&filter, "state", &STATES)?.unwrap_or_else(|| "active".to_string());
     let expression = match text_of(&filter, "filter")? {
         Some(text) => {
-            let expression =
-                filter::parse(&text).map_err(|error| invalid_field("filter.filter", error.message))?;
+            let expression = filter::parse(&text)
+                .map_err(|error| invalid_field("filter.filter", error.message))?;
             Some(Filter { text, expression })
         }
         None => None,
@@ -300,7 +302,10 @@ pub async fn read(
     uri: Uri,
 ) -> Answer {
     query::only(&uri, &[])?;
-    Ok(json_answer(StatusCode::OK, &jobs::read(&app, &caller, id).await?))
+    Ok(json_answer(
+        StatusCode::OK,
+        &jobs::read(&app, &caller, id).await?,
+    ))
 }
 
 pub async fn cancel(
@@ -328,10 +333,7 @@ fn move_of(body: &ReadBody) -> Result<Move> {
             Some(properties.clone())
         }
         Some(_) => {
-            return Err(invalid_field(
-                "properties",
-                "properties must be an object.",
-            ));
+            return Err(invalid_field("properties", "properties must be an object."));
         }
     };
     Ok(Move {

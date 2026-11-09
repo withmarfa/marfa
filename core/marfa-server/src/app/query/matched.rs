@@ -29,9 +29,11 @@ pub(crate) fn matched(
     let mut selected = selection(&reach, ask, &read.catalog, order.walked())?;
     if let Some(only) = only {
         selected.push(" AND i.id IN (SELECT value FROM json_each(");
-        selected.bind(serde_json::to_string(only).map_err(|_| {
-            crate::app::refusal::Refusal::internal("a list of IDs did not print")
-        })?);
+        selected.bind(
+            serde_json::to_string(only).map_err(|_| {
+                crate::app::refusal::Refusal::internal("a list of IDs did not print")
+            })?,
+        );
         selected.push("))");
     }
     let sql = page_sql(&selected, ask, &order, None, cap);
@@ -81,7 +83,9 @@ pub(crate) fn count_of_exact_type(
     let reach = Reach::within(tx, caller, catalog)?.narrowed(|held| held == type_id);
     let mut sql = Sql::new("SELECT COUNT(*) FROM items i WHERE ");
     sql.append(&selection(&reach, &of_type(type_id), catalog, false)?);
-    Ok(tx.query_row(&sql.text, rusqlite::params_from_iter(&sql.values), |row| {
-        row.get(0)
-    })?)
+    Ok(
+        tx.query_row(&sql.text, rusqlite::params_from_iter(&sql.values), |row| {
+            row.get(0)
+        })?,
+    )
 }

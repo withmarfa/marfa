@@ -272,11 +272,11 @@ pub fn clients_naming_type(tx: &Connection, type_id: &str) -> Result<Vec<String>
     let mut clients: Vec<String> = Vec::new();
     for consent in consents {
         let consent = consent?;
-        let named = consent
-            .scopes
-            .literals()
-            .iter()
-            .any(|scope| scope.rsplit_once(':').is_some_and(|(name, _)| name == type_id));
+        let named = consent.scopes.literals().iter().any(|scope| {
+            scope
+                .rsplit_once(':')
+                .is_some_and(|(name, _)| name == type_id)
+        });
         if named && !clients.contains(&consent.client_id) {
             clients.push(consent.client_id);
         }

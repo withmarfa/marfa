@@ -75,10 +75,7 @@ impl Caller {
     }
 
     fn makes(&self, maker: &Maker) -> bool {
-        matches!(self, Caller::Local(_))
-            || self
-                .webhook_maker()
-                .is_ok_and(|own| own == *maker)
+        matches!(self, Caller::Local(_)) || self.webhook_maker().is_ok_and(|own| own == *maker)
     }
 
     pub fn lists_key_grants(&self) -> bool {

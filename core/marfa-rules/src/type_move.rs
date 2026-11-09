@@ -118,7 +118,10 @@ pub fn names(holder: Holder, settings: &Map<String, Value>, type_id: &str) -> Ve
         .and_then(|text| FilterExpression::decode(text).ok());
     if filter.is_some_and(|expression| {
         expression.conditions.iter().any(|condition| {
-            condition.field == (FilterField::System { name: SystemField::Type })
+            condition.field
+                == (FilterField::System {
+                    name: SystemField::Type,
+                })
                 && matches!(condition.operator, FilterOperator::Eq | FilterOperator::Neq)
                 && condition.value == Some(FilterValue::Text(type_id.to_string()))
         })
@@ -178,7 +181,11 @@ fn retyped_filter(text: &str, from: &str, to: &str) -> Filter {
     };
     let mut rewritten = false;
     for condition in &mut expression.conditions {
-        if condition.field != (FilterField::System { name: SystemField::Type }) {
+        if condition.field
+            != (FilterField::System {
+                name: SystemField::Type,
+            })
+        {
             continue;
         }
         let named = matches!(condition.operator, FilterOperator::Eq | FilterOperator::Neq)
@@ -249,8 +256,16 @@ mod tests {
         );
         assert!(!done.blocked());
         assert_eq!(
-            done.named.iter().map(|named| named.field).collect::<Vec<_>>(),
-            ["query.types", "query.filter", "defaults.type", "first_placement"]
+            done.named
+                .iter()
+                .map(|named| named.field)
+                .collect::<Vec<_>>(),
+            [
+                "query.types",
+                "query.filter",
+                "defaults.type",
+                "first_placement"
+            ]
         );
         assert_eq!(
             Value::Object(done.settings),
@@ -267,8 +282,15 @@ mod tests {
 
     #[test]
     fn keeps_a_parent_beside_its_new_type_and_names_each_once() {
-        let kept = moved(Holder::View, json!({ "query": { "types": ["a.deal"] } }), true);
-        assert_eq!(kept.settings["query"]["types"], json!(["a.deal", "a.contract"]));
+        let kept = moved(
+            Holder::View,
+            json!({ "query": { "types": ["a.deal"] } }),
+            true,
+        );
+        assert_eq!(
+            kept.settings["query"]["types"],
+            json!(["a.deal", "a.contract"])
+        );
         let merged = moved(
             Holder::View,
             json!({ "query": { "types": ["a.contract", "a.deal"] } }),
@@ -315,6 +337,9 @@ mod tests {
             false,
         );
         assert!(!together.blocked());
-        assert_eq!(together.settings["first_placement"], json!({ "a.contract": "Deals" }));
+        assert_eq!(
+            together.settings["first_placement"],
+            json!({ "a.contract": "Deals" })
+        );
     }
 }
