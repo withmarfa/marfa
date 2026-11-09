@@ -148,7 +148,7 @@ fn require_as_seen(tx: &Connection, consent: &Consent, expected: &ScopeSet) -> R
     }
     Err(Refusal::new(
         Code::Conflict,
-        "This app's access changed. Reload its page before saving.",
+        "This app's access changed. Read its access again before saving.",
     ))
 }
 
@@ -181,6 +181,7 @@ pub async fn narrow(
 ) -> Result<ScopeSet> {
     let cache = app.catalog_handle();
     app.write(caller, NARROWED, move |unit| {
+        unit.caller.require_local()?;
         let tx = unit.tx();
         let consent = of_owner(tx, &id)?.ok_or_else(no_such_grant)?;
         require_as_seen(tx, &consent, &asked.expected)?;

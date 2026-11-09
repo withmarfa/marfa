@@ -6,8 +6,15 @@ use std::time::Duration;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{HeaderMap, Method, Request, StatusCode, header};
+use marfa_server::app::access::Caller;
+use marfa_server::app::auth::Visit;
+use marfa_server::app::auth::sign_ins;
+use marfa_server::app::keys;
 use marfa_server::app::oauth::authorize::sign_in_then;
+use marfa_server::app::oauth::grants::{self, Narrowing};
+use marfa_server::app::oauth::scope::ScopeSet;
 use marfa_server::app::oauth::signed_link;
+use marfa_server::app::refusal::Code;
 use marfa_server::app::{App, housekeeping};
 use marfa_server::db::Write;
 use marfa_server::http::{control, public};
@@ -3324,4 +3331,96 @@ async fn the_error_page_explains_each_code_and_shows_nothing_of_the_request() {
         assert!(!page.text.contains(planted), "{code}: {}", page.text);
         assert!(!page.text.contains(unexplained), "{code}");
     }
+}
+
+impl Instance {
+    /// A key that holds the permission each of these writes asks, which only the private local command may use.
+    async fn key_caller(&self) -> (Caller, String) {
+        let key = self.key_holding(&["grants.manage", "keys.manage"]).await;
+        let found = keys::authenticate(&self.app, text_at(&key, "key"))
+            .await
+            .unwrap()
+            .unwrap();
+        (
+            Caller::Key(Box::new(found)),
+            text_at(&key, "id").to_string(),
+        )
+    }
+}
+
+fn only_local(refused: Result<impl std::fmt::Debug, marfa_server::app::refusal::Refusal>) {
+    let refusal = refused.unwrap_err();
+    assert_eq!(refusal.code, Code::Forbidden, "{refusal:?}");
+}
+
+#[tokio::test]
+async fn a_key_cannot_narrow_a_grant_inside_the_write() {
+    let instance = Instance::signed_in().await;
+    let client = instance.register("core.note:read core.note:write").await;
+    instance
+        .tokens(&client, "core.note:read core.note:write")
+        .await;
+    let grant = instance.grant_of(&client).await;
+    let (caller, _) = instance.key_caller().await;
+    let both = ScopeSet::parse("core.note:read core.note:write");
+    let asked = Narrowing {
+        scopes: ScopeSet::parse("core.note:read"),
+        expected: both.clone(),
+    };
+
+    let refused = grants::narrow(
+        &instance.app,
+        &caller,
+        text_at(&grant, "id").to_string(),
+        asked,
+    )
+    .await;
+    only_local(refused);
+    assert_eq!(instance.grant_of(&client).await["scopes"], grant["scopes"]);
+
+    let witness = instance
+        .narrow(
+            &grant,
+            &["core.note:read"],
+            &["core.note:read", "core.note:write"],
+        )
+        .await;
+    assert_eq!(witness.status, StatusCode::OK, "{}", witness.text);
+}
+
+#[tokio::test]
+async fn a_key_cannot_end_or_rename_a_sign_in_inside_the_write() {
+    let instance = Instance::signed_in().await;
+    let client = instance.register(NOTES).await;
+    instance.tokens(&client, NOTES).await;
+    let grant = instance.grant_of(&client).await;
+    let (caller, key_id) = instance.key_caller().await;
+    let before = instance.sign_ins().await;
+
+    for id in [text_at(&grant, "id"), key_id.as_str()] {
+        let ended = sign_ins::end(
+            &instance.app,
+            &caller,
+            id.to_string(),
+            false,
+            Visit::default(),
+        )
+        .await;
+        only_local(ended);
+        let renamed =
+            sign_ins::rename(&instance.app, &caller, id.to_string(), "taken".into()).await;
+        only_local(renamed);
+    }
+    assert_eq!(instance.sign_ins().await.len(), before.len());
+    assert!(
+        instance
+            .sign_ins()
+            .await
+            .iter()
+            .any(|row| row["id"] == grant["id"])
+    );
+    assert_eq!(instance.grant_of(&client).await["id"], grant["id"]);
+
+    let witness = instance.end_sign_in(text_at(&grant, "id")).await;
+    assert_eq!(witness.status, StatusCode::OK, "{}", witness.text);
 }

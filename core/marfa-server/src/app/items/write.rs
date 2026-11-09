@@ -1998,7 +1998,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 body: json!({
                     "error": {
                         "code": "version_conflict",
-                        "message": "This item changed. Refresh the page before trying again.",
+                        "message": "This item changed. Read it again before trying again.",
                     },
                     "current": summary,
                 })

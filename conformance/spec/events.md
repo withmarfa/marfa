@@ -903,7 +903,7 @@ When the server lists or gets a subscription, the server MUST include its maker'
 
 When private local authority requests redelivery, the server MUST apply the same live subscription, maker and retention checks as a request by the subscription's maker.
 
-**Reason:** direct authority can request another attempt, but cannot restore the maker's revoked access or send content the maker can no longer read.
+**Reason:** local authority can request another attempt, but cannot restore the maker's revoked access or send content the maker can no longer read.
 
 **Tests:** `compliance/webhooks-owner.test.ts › retries a failed delivery through local authority without exposing its frame`.
 
@@ -1805,7 +1805,7 @@ The server MUST filter `GET /audit` by `action`, `resource_type` and `resource_i
 
 The server MUST filter `GET /audit` by `kind`, which sorts every entry into one of `access`, `data`, `settings` or `housekeeping` from its `action`, so that each entry is of exactly one kind.
 
-**Reason:** `kind` is the console's Activity filter. `access` holds sign-ins, accounts, keys, folders and the owner's profile; `settings` holds configuration, webhooks and connectors; `housekeeping` holds what Marfa does on its own; `data` holds the rest.
+**Reason:** `kind` lets a reader ask for one area of activity at a time. `access` holds sign-ins, accounts, keys, folders and the owner's profile; `settings` holds configuration, webhooks and connectors; `housekeeping` holds what Marfa does on its own; `data` holds the rest.
 
 **Tests:** `compliance/audit.test.ts › sorts entries by kind, each into exactly one`.
 

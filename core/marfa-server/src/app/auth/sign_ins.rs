@@ -175,6 +175,7 @@ pub async fn end(
     let action = app
         .db
         .read(move |tx| {
+            asking.require_local()?;
             asking.current(tx, &at)?;
             Ok(match to_end(tx, &looked_for, with_keys, &at)? {
                 Named::Key(_) => keys::REVOKED,
@@ -185,6 +186,7 @@ pub async fn end(
         .await?;
     let cache = app.catalog_handle();
     app.write(caller, action, move |unit| {
+        unit.caller.require_local()?;
         match to_end(unit.tx(), &id, with_keys, &unit.at)? {
             Named::Browser(session) => session::ended(
                 unit.tx(),
@@ -224,6 +226,7 @@ pub async fn rename(app: &Arc<App>, caller: &Caller, id: String, name: String) -
     let action = app
         .db
         .read(move |tx| {
+            asking.require_local()?;
             asking.current(tx, &at)?;
             Ok(match to_rename(tx, &looked_for, &at)? {
                 Named::Key(_) => keys::UPDATED,
@@ -234,6 +237,7 @@ pub async fn rename(app: &Arc<App>, caller: &Caller, id: String, name: String) -
     let cache = app.catalog_handle();
     let days = inactivity_days(app);
     app.write(caller, action, move |unit| {
+        unit.caller.require_local()?;
         let tx = unit.tx();
         match to_rename(tx, &id, &unit.at)? {
             Named::App(consent) => {
