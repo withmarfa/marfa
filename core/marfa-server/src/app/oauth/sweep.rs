@@ -8,8 +8,8 @@ use serde_json::json;
 
 use super::grant;
 use super::store::stamp_of;
-use crate::app::App;
 use crate::app::access::Caller;
+use crate::app::{App, stored};
 use crate::app::auth::session;
 use crate::app::housekeeping::{Report, Run, drain};
 use crate::app::refusal::Result;
@@ -29,9 +29,10 @@ const IDLE_GRANTS: &str = "SELECT client_id, user_id FROM auth_oauth_consent \
 const WITHDRAWN_GRANTS: &str = "SELECT client_id, user_id FROM auth_oauth_consent \
                                 WHERE withdrawn_at IS NOT NULL AND withdrawn_at < ?1 LIMIT ?2";
 
-fn cutoff_of(app: &App, retention: Setting<u64>) -> Option<i64> {
-    let days = app.settings.live().get(retention);
-    (days > 0).then(|| app.clock.now_ms() - i64::try_from(days).unwrap_or(0) * MS_PER_DAY)
+/// Read in the write that removes, so a change committed before it holds even before it is live.
+fn cutoff_of(tx: &Transaction<'_>, app: &App, retention: Setting<u64>) -> Result<Option<i64>> {
+    let days = stored::setting(tx, &app.settings.seeds(), retention)?;
+    Ok((days > 0).then(|| app.clock.now_ms() - i64::try_from(days).unwrap_or(0) * MS_PER_DAY))
 }
 
 fn consents_in(
@@ -47,19 +48,22 @@ fn consents_in(
 }
 
 /// So a run with nothing to do takes no write.
-async fn any_consent(app: &App, query: &'static str, cutoff: i64) -> Result<bool> {
-    let found = app
-        .db
-        .read(move |tx| consents_in(tx, query, cutoff, 1))
-        .await?;
-    Ok(!found.is_empty())
+async fn any_consent(app: &Arc<App>, query: &'static str, retention: Setting<u64>) -> Result<bool> {
+    let live = app.clone();
+    app.db
+        .read(move |tx| match cutoff_of(tx, &live, retention)? {
+            Some(cutoff) => Ok(!consents_in(tx, query, cutoff, 1)?.is_empty()),
+            None => Ok(false),
+        })
+        .await
 }
 
 async fn idle_clients(app: &Arc<App>) -> Result<i64> {
-    let Some(cutoff) = cutoff_of(app, DCR_CLIENT_RETENTION_DAYS) else {
-        return Ok(0);
-    };
+    let live = app.clone();
     app.write(&Caller::Server, CLIENTS_PURGED, move |unit| {
+        let Some(cutoff) = cutoff_of(unit.tx(), &live, DCR_CLIENT_RETENTION_DAYS)? else {
+            return Ok(0);
+        };
         let count = unit.tx().execute(
             "DELETE FROM auth_oauth_client WHERE client_id IN ( \
              SELECT client_id FROM auth_oauth_client AS c \
@@ -94,14 +98,14 @@ pub async fn remove_idle_clients(app: Arc<App>, run: Run) -> Result<Report> {
 }
 
 async fn retire_one(app: &Arc<App>) -> Result<i64> {
-    let Some(cutoff) = cutoff_of(app, GRANT_INACTIVITY_DAYS) else {
-        return Ok(0);
-    };
-    if !any_consent(app, IDLE_GRANTS, cutoff).await? {
+    if !any_consent(app, IDLE_GRANTS, GRANT_INACTIVITY_DAYS).await? {
         return Ok(0);
     }
-    let cache = app.catalog_handle();
+    let (live, cache) = (app.clone(), app.catalog_handle());
     app.write(&Caller::Server, GRANT_RETIRED, move |unit| {
+        let Some(cutoff) = cutoff_of(unit.tx(), &live, GRANT_INACTIVITY_DAYS)? else {
+            return Ok(0);
+        };
         let idle = consents_in(unit.tx(), IDLE_GRANTS, cutoff, 1)?;
         for (client_id, user_id) in &idle {
             grant::end(unit, &cache, client_id, user_id)?;
@@ -130,14 +134,14 @@ pub async fn retire_idle_grants(app: Arc<App>, run: Run) -> Result<Report> {
 }
 
 async fn withdrawn_grants(app: &Arc<App>) -> Result<i64> {
-    let Some(cutoff) = cutoff_of(app, REVOKED_GRANT_RETENTION_DAYS) else {
-        return Ok(0);
-    };
-    if !any_consent(app, WITHDRAWN_GRANTS, cutoff).await? {
+    if !any_consent(app, WITHDRAWN_GRANTS, REVOKED_GRANT_RETENTION_DAYS).await? {
         return Ok(0);
     }
-    let cache = app.catalog_handle();
+    let (live, cache) = (app.clone(), app.catalog_handle());
     app.write(&Caller::Server, GRANTS_PURGED, move |unit| {
+        let Some(cutoff) = cutoff_of(unit.tx(), &live, REVOKED_GRANT_RETENTION_DAYS)? else {
+            return Ok(0);
+        };
         let withdrawn = consents_in(unit.tx(), WITHDRAWN_GRANTS, cutoff, BATCH)?;
         for (client_id, user_id) in &withdrawn {
             grant::forget(unit, &cache, client_id, user_id)?;

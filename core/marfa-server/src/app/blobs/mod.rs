@@ -30,7 +30,7 @@ use super::faults::{
     FAIL_BLOB_DELETE, FAIL_BLOB_READ, FAIL_BLOB_WRITE, Faults, HOLD_BLOB_DELETE, HOLD_BLOB_HAS,
     HOLD_BLOB_READ, HOLD_BLOB_WRITE, Lie, Volume,
 };
-use super::housekeeping;
+use super::{housekeeping, stored};
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
 use crate::db::{Db, Write, volume};
@@ -1136,13 +1136,13 @@ impl App {
     }
 
     async fn dropping(&self, caller: &Caller, hash: &Hash, store_id: &str) -> Result<()> {
-        let min_copies = self.settings.live().get(BLOB_MIN_COPIES);
-        let blob = hash.clone();
-        let (found, holders) = self
+        let (blob, seeds) = (hash.clone(), self.settings.seeds());
+        let (found, holders, min_copies) = self
             .db
             .read(move |tx| {
                 let found = rows::find(tx, &blob)?;
-                Ok((found, rows::holders(tx, &blob)?))
+                let min_copies = stored::setting(tx, &seeds, BLOB_MIN_COPIES)?;
+                Ok((found, rows::holders(tx, &blob)?, min_copies))
             })
             .await?;
         let Some(found) = found else {
@@ -1191,14 +1191,19 @@ impl App {
             return Err(below(confirmed + 1, min_copies));
         }
         let (blob, dropped) = (hash.clone(), store_id.to_string());
+        let seeds = self.settings.seeds();
         self.write(caller, "blob.copy_dropped", move |unit| {
             unit.caller.require(Permission::BlobsManage)?;
             let holders = rows::holders(unit.tx(), &blob)?;
             if !holders.iter().any(|held| held.store_id == dropped) {
                 return Err(copy_not_found());
             }
+            let min_copies = stored::setting(unit.tx(), &seeds, BLOB_MIN_COPIES)?;
             if ((holders.len() - 1) as u64) < min_copies {
                 return Err(below(holders.len(), min_copies));
+            }
+            if (confirmed as u64) < min_copies {
+                return Err(below(confirmed + 1, min_copies));
             }
             let object = holders
                 .iter()
