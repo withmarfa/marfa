@@ -107,7 +107,7 @@ pid=$!
 
 port=
 for _ in $(seq 1 120); do
-  port=$(sed -nE 's/.*Marfa server listening on port ([0-9]+).*/\1/p' "$state/log" | head -1)
+  port=$(awk 'match($0, /Marfa server listening on port [0-9]+/) { split(substr($0, RSTART, RLENGTH), w, " "); print w[6]; exit }' "$state/log")
   [ -n "$port" ] && break
   kill -0 "$pid" 2> /dev/null || fail "marfa-server ended before it listened."
   sleep 0.5
@@ -211,7 +211,8 @@ while :; do
 done
 for index in 0 1 2; do
   api "Reading the ${names[index]}" 200 "$url/items/${ids[index]}"
-  echo "the ${names[index]} read: $(jq -r '.item.properties.extracted_text' "$reply" | head -c 60)"
+  text=$(jq -r '.item.properties.extracted_text' "$reply")
+  echo "the ${names[index]} read: ${text:0:60}"
 done
 
 kill -TERM "$pid"
