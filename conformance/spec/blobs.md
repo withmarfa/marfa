@@ -128,6 +128,14 @@ When the server answers `POST /blobs` with `507 insufficient_storage`, the serve
 
 **Tests:** `compliance/disk-reserve.test.ts › refuses an upload 507 insufficient_storage, naming the reserve and the room, and stores nothing`, `› takes the same upload and the same restore once the instance holds no reserve`.
 
+### `blobs/upload-refused-read`
+
+When the server refuses `POST /blobs` after it has started to read the body, the server MUST read the rest of the body, until it ends or no byte arrives for `upload_idle_timeout_ms`, before it answers.
+
+**Reason:** a client that is still sending reads no answer until its body is sent, and a server that closed the connection with bytes unread would reset it, which can drop the refusal before the client reads it.
+
+**Tests:** `compliance/disk-space-faults.test.ts › is answered 507 insufficient_storage and leaves nothing when the volume falls inside the reserve as the bytes arrive`.
+
 ## How long an upload takes
 
 ### `blobs/upload-duration`

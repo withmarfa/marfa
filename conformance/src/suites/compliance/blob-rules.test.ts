@@ -748,8 +748,12 @@ describe("the rules that keep a blob's bytes", () => {
     });
     expect(file.ok, JSON.stringify(file.error)).toBe(true);
     // The link the instance serves itself, so it does not depend on the
-    // object store's copy.
-    for (const copy of (await client.listBlobCopies(hash)).data.data) {
+    // object store's copy. Replication runs first, so the scheduler's own
+    // run cannot place a copy after the drop.
+    await replicateToZero();
+    const copies = (await client.listBlobCopies(hash)).data.data;
+    expect(kinds(copies)).toEqual(["disk", "s3"]);
+    for (const copy of copies) {
       if (copy.kind !== "s3") continue;
       expect((await operator.deleteBlobCopy(hash, copy.store_id)).status).toBe(
         200,

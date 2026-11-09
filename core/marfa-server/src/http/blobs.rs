@@ -17,6 +17,7 @@ use serde_json::json;
 use tokio::sync::mpsc;
 
 use super::answer::{Answer, Stopped, json_answer, refusal_answer};
+use super::body::linger;
 use super::query;
 use crate::app::App;
 use crate::app::access::{Caller, Permission};
@@ -65,8 +66,12 @@ pub async fn upload(State(app): State<Arc<App>>, caller: Caller, request: Reques
         return Err(empty().into());
     }
     let mut intake = app.begin_upload(declared, mime_type).await?;
-    if let Err(stopped) = received(&mut body, &mut intake, app.upload_idle()).await {
+    let idle = app.upload_idle();
+    if let Err(stopped) = received(&mut body, &mut intake, idle).await {
         intake.discard().await;
+        if matches!(&stopped, Stopped::Refused(refusal) if refusal.code != Code::RequestTimeout) {
+            linger(&mut body, idle).await;
+        }
         return Err(stopped);
     }
     let blob = app.finish_upload(&caller, intake).await?;

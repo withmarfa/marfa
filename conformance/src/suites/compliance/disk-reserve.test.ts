@@ -14,10 +14,10 @@ import { clientsFor } from "../../utils/own-blob-server.js";
  * reserve of free space (the `blobs/upload-reserve` and
  * `blobs/restore-reserve` rules, and `errors/storage-reserve-details`).
  *
- * **One server, booted twice on the same state.** A reserve larger than any
- * volume is how a fixture makes the volume short without filling one: the
- * server is booted with a reserve of 2^50 bytes, so every body is one it
- * cannot keep room beside. The same server is then booted again with no
+ * **One server, booted twice on the same state.** A reserve larger than the
+ * volume's free space is how a fixture makes the volume short without filling
+ * one: the server is booted with the largest reserve the setting takes, 2^40
+ * bytes, so every body is one it cannot keep room beside. The same server is then booted again with no
  * reserve, and each request that was refused is sent again and lands. That
  * is the witness for the refusals: the bytes and the rows were producible,
  * so their absence in between is the refusal's doing and not an upload or a
@@ -26,7 +26,7 @@ import { clientsFor } from "../../utils/own-blob-server.js";
  * A body that outgrows the room as it arrives, and a volume that is full, are
  * in `disk-space-faults.test.ts`, which uses `free` and `fail:blob-write`.
  */
-const HUGE_RESERVE = 2 ** 50;
+const HUGE_RESERVE = 2 ** 40;
 
 let server: FreshServer;
 let management: MarfaClient;

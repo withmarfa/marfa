@@ -11,6 +11,7 @@ use axum::response::Response;
 use http_body_util::BodyExt;
 
 use super::answer::{Answer, Stopped, json_answer, refusal_answer};
+use super::body::linger;
 use super::query;
 use crate::app::App;
 use crate::app::access::Caller;
@@ -30,16 +31,6 @@ pub fn is_restore(request: &Request) -> bool {
 struct Read {
     begun: bool,
     ended: bool,
-}
-
-/// Reads and drops the rest of a refused body, so a client still sending reaches the answer.
-async fn linger(body: &mut Body, idle: Duration) {
-    while !body.is_end_stream() {
-        match tokio::time::timeout(idle, body.frame()).await {
-            Ok(Some(Ok(_))) => {}
-            _ => return,
-        }
-    }
 }
 
 /// Before a refusal made ahead of the body, reads and drops what a client already sending has

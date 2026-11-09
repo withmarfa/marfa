@@ -152,6 +152,16 @@ impl HttpBody for Due {
     }
 }
 
+/// Reads and drops the rest of a refused body, so a client still sending reaches the answer.
+pub async fn linger(body: &mut Body, idle: Duration) {
+    while !body.is_end_stream() {
+        match tokio::time::timeout(idle, body.frame()).await {
+            Ok(Some(Ok(_))) => {}
+            _ => return,
+        }
+    }
+}
+
 fn due(body: Body, within: Duration, late: Arc<AtomicBool>) -> Body {
     Body::new(Due {
         body,
