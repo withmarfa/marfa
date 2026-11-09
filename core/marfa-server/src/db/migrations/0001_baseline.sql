@@ -974,6 +974,24 @@ CREATE TABLE IF NOT EXISTS backup_state (
     last_failed_at TEXT
 ) STRICT;
 
+-- `seq` is never reused, so a run in `backup_files` covers only backups begun in it. A store's
+-- rows are changed only by that store's own thinning.
+CREATE TABLE IF NOT EXISTS backups (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    UNIQUE (store_id, name)
+) STRICT;
+
+-- A NULL `last_seq` runs to the newest backup.
+CREATE TABLE IF NOT EXISTS backup_files (
+    store_id TEXT NOT NULL,
+    hash TEXT NOT NULL,
+    first_seq INTEGER NOT NULL,
+    last_seq INTEGER,
+    PRIMARY KEY (store_id, hash)
+) STRICT, WITHOUT ROWID;
+
 CREATE TRIGGER IF NOT EXISTS backup_items_inserted AFTER INSERT ON items BEGIN
     INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
 END;

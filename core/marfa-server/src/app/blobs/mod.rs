@@ -46,7 +46,7 @@ pub use disk::{MARKER, Scratch};
 pub use hash::Hash;
 pub use restore::stored_size;
 use rows::Held;
-pub use rows::{CopyRecord, Lender, OrphanRecord, StoreRecord, held_in};
+pub use rows::{CopyRecord, Lender, OrphanRecord, StoreRecord, held_in, registered};
 use s3::{Marker, S3};
 pub use store::ByteStream;
 use store::{Answer, CHECK_DEADLINE, Failed, Gate, Store};

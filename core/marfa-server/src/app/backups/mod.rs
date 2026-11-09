@@ -1,7 +1,9 @@
 //! Backups: an archive without files, put as one object under `<prefix>/backups/<instance id>/`.
+//! The files a backup names are held from purging until thinning deletes it.
 
 mod names;
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,6 +17,7 @@ use tokio::sync::Mutex;
 use super::App;
 use super::access::Caller;
 use super::archive::Backup;
+use super::blobs::Hash;
 use super::blobs::s3::S3;
 use super::clock::Stamp;
 use super::faults::HOLD_BACKUP_PUT;
@@ -97,6 +100,139 @@ fn record_failure(tx: &Transaction<'_>, error: &str, at: Stamp) -> Result<()> {
         params![error, at],
     )?;
     Ok(())
+}
+
+/// The files the newest backup of `store` named; only one backup run at a time changes them.
+fn open_files(tx: &Transaction<'_>, store: &str) -> Result<HashSet<String>> {
+    Ok(tx
+        .prepare_cached("SELECT hash FROM backup_files WHERE store_id = ?1 AND last_seq IS NULL")?
+        .query_map([store], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+/// Records the backup `name` about to be put in `store`, answering its place in the order.
+fn begin(tx: &Transaction<'_>, store: &str, name: &str) -> Result<i64> {
+    tx.prepare_cached("DELETE FROM backups WHERE store_id = ?1 AND name = ?2")?
+        .execute(params![store, name])?;
+    tx.prepare_cached("INSERT INTO backups (store_id, name) VALUES (?1, ?2)")?
+        .execute(params![store, name])?;
+    Ok(tx.last_insert_rowid())
+}
+
+/// Holds `hashes` from backup `seq` on, refusing when one is already gone from the registry.
+fn open(tx: &Transaction<'_>, store: &str, seq: i64, hashes: &[String]) -> Result<()> {
+    for hash in hashes {
+        if !super::blobs::registered(tx, hash)? {
+            return Err(Refusal::new(
+                Code::Conflict,
+                format!(
+                    "The file {hash} the backup names was purged while the backup was read; \
+                     the next run takes it again."
+                ),
+            ));
+        }
+    }
+    let mut opening = tx.prepare_cached(
+        "INSERT INTO backup_files (store_id, hash, first_seq) VALUES (?1, ?2, ?3) \
+         ON CONFLICT (store_id, hash) DO UPDATE SET last_seq = NULL",
+    )?;
+    for hash in hashes {
+        opening.execute(params![store, hash, seq])?;
+    }
+    Ok(())
+}
+
+/// Ends the run of each file the newest backup before `seq` named and backup `seq` does not.
+fn close(tx: &Transaction<'_>, store: &str, seq: i64, hashes: &[String]) -> Result<()> {
+    let mut closing = tx.prepare_cached(
+        "UPDATE backup_files SET last_seq = ?3 \
+         WHERE store_id = ?1 AND hash = ?2 AND last_seq IS NULL",
+    )?;
+    for hash in hashes {
+        closing.execute(params![store, hash, seq - 1])?;
+    }
+    Ok(())
+}
+
+/// Of the files a backup names, those to open, and of those open now, those to close.
+fn plan(open_now: &HashSet<String>, files: Vec<String>) -> (Vec<String>, Vec<String>) {
+    let named: HashSet<String> = files.into_iter().collect();
+    let closing = open_now.difference(&named).cloned().collect();
+    let opening = named
+        .into_iter()
+        .filter(|hash| !open_now.contains(hash))
+        .collect();
+    (opening, closing)
+}
+
+/// How many files one write of a hold looks up and opens.
+const HOLD_PAGE: usize = 5_000;
+
+/// Records the backup `name` about to be put and holds each file it names, a page per write.
+async fn hold(app: &Arc<App>, store: &str, name: &str, files: Vec<String>) -> Result<()> {
+    let looked = store.to_string();
+    let (mut opening, closing) = app
+        .db
+        .read(move |tx| Ok(plan(&open_files(tx, &looked)?, files)))
+        .await?;
+    let (held, recorded) = (store.to_string(), name.to_string());
+    let seq = app
+        .db
+        .write(Write::own(), move |tx| begin(tx, &held, &recorded))
+        .await?;
+    while !opening.is_empty() {
+        let page = opening.split_off(opening.len().saturating_sub(HOLD_PAGE));
+        let held = store.to_string();
+        app.db
+            .write(Write::own(), move |tx| open(tx, &held, seq, &page))
+            .await?;
+    }
+    for page in closing.chunks(HOLD_PAGE) {
+        let (held, page) = (store.to_string(), page.to_vec());
+        app.db
+            .write(Write::own(), move |tx| close(tx, &held, seq, &page))
+            .await?;
+    }
+    Ok(())
+}
+
+/// Forgets the backups of `store` not in `kept`, and each of its holds no backup left covers.
+/// Another bucket's backups and holds wait for that bucket's own thinning.
+fn release(tx: &Transaction<'_>, store: &str, kept: &HashSet<String>) -> Result<()> {
+    let recorded: Vec<(i64, String)> = tx
+        .prepare_cached("SELECT seq, name FROM backups WHERE store_id = ?1")?
+        .query_map([store], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut forget = tx.prepare_cached("DELETE FROM backups WHERE seq = ?1")?;
+    for (seq, name) in recorded {
+        if !kept.contains(&name) {
+            forget.execute([seq])?;
+        }
+    }
+    tx.prepare_cached(
+        "DELETE FROM backup_files WHERE store_id = ?1 AND last_seq IS NOT NULL \
+         AND NOT EXISTS (SELECT 1 FROM backups b WHERE b.store_id = backup_files.store_id \
+         AND b.seq >= backup_files.first_seq \
+         AND (backup_files.last_seq IS NULL OR b.seq <= backup_files.last_seq))",
+    )?
+    .execute([store])?;
+    Ok(())
+}
+
+/// Of `hashes`, those a backup of `store` that this instance keeps may name.
+pub fn held(tx: &Transaction<'_>, store: &str, hashes: &[Hash]) -> Result<HashSet<Hash>> {
+    let mut statement = tx.prepare_cached(
+        "SELECT 1 FROM backup_files f JOIN backups b ON b.store_id = f.store_id \
+         AND b.seq >= f.first_seq AND (f.last_seq IS NULL OR b.seq <= f.last_seq) \
+         WHERE f.store_id = ?1 AND f.hash = ?2",
+    )?;
+    let mut held = HashSet::new();
+    for hash in hashes {
+        if statement.exists(params![store, hash.as_str()])? {
+            held.insert(hash.clone());
+        }
+    }
+    Ok(held)
 }
 
 fn no_bucket() -> Refusal {
@@ -370,7 +506,7 @@ async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
                     record_put(tx, changes, &recorded, taken)
                 })
                 .await?;
-            let (removed, unremoved) = thin(app, &bucket, taken).await;
+            let (removed, unremoved) = thin(app, &bucket, taken, &name).await;
             Ok(Outcome::Put {
                 instance: app.instance_id.clone(),
                 name,
@@ -412,11 +548,12 @@ async fn wake_replication(app: &Arc<App>) {
 /// Writes the archive and puts it whole.
 async fn put(app: &Arc<App>, bucket: &Arc<S3>) -> Result<(Stamp, String, u64, i64)> {
     let began = std::time::Instant::now();
-    let backup = app.backup_archive(bucket.id(), app.blobs.check()).await?;
+    let mut backup = app.backup_archive(bucket.id(), app.blobs.check()).await?;
     let read_ms = began.elapsed().as_millis() as u64;
     let (taken, changes, limit) = (backup.created_at, backup.changes, backup.limit);
     let name = name_of(taken);
     let key = key_of(&app.instance_id, &name);
+    hold(app, bucket.id(), &name, std::mem::take(&mut backup.files)).await?;
     let bytes = put_stream(app, backup);
     let size = bucket
         .put_whole(&key, "application/x-tar", bytes, limit)
@@ -432,8 +569,9 @@ async fn put(app: &Arc<App>, bucket: &Arc<S3>) -> Result<(Stamp, String, u64, i6
     Ok((taken, name, size, changes))
 }
 
+/// Deletes the backups the plan leaves out, then releases the files of every backup not kept.
 /// Only names it listed in its own folder and could read as a backup are deleted.
-async fn thin(app: &Arc<App>, bucket: &Arc<S3>, taken: Stamp) -> (usize, usize) {
+async fn thin(app: &Arc<App>, bucket: &Arc<S3>, taken: Stamp, put: &str) -> (usize, usize) {
     let own = format!("{FOLDER}/{}", app.instance_id);
     let listed = match super::blobs::store::within(LIST_DEADLINE, bucket.list_in(&own)).await {
         Ok(listed) => listed,
@@ -443,16 +581,195 @@ async fn thin(app: &Arc<App>, bucket: &Arc<S3>, taken: Stamp) -> (usize, usize) 
         }
     };
     let names: Vec<String> = listed.into_iter().map(|(name, _)| name).collect();
+    let mut kept: HashSet<String> = names.iter().cloned().collect();
+    kept.insert(put.to_string());
     let (mut removed, mut unremoved) = (0, 0);
     for name in doomed(&names, taken) {
         let key = key_of(&app.instance_id, &name);
         match super::blobs::store::within(LIST_DEADLINE, bucket.delete(&key)).await {
-            Ok(()) => removed += 1,
+            Ok(()) => {
+                kept.remove(&name);
+                removed += 1;
+            }
             Err(error) => {
                 tracing::warn!(%error, backup = %name, "An old backup was not deleted");
                 unremoved += 1;
             }
         }
     }
+    let store = bucket.id().to_string();
+    if let Err(error) = app
+        .db
+        .write(Write::own(), move |tx| release(tx, &store, &kept))
+        .await
+    {
+        tracing::warn!(%error, "The files of deleted backups are held until the next backup");
+    }
     (removed, unremoved)
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::Connection;
+
+    use super::*;
+    use crate::db::migrate::MIGRATIONS;
+
+    const BUCKET: &str = "bucket";
+
+    fn hash(letter: char) -> Hash {
+        Hash::parse(&format!("sha256:{}", letter.to_string().repeat(64))).unwrap()
+    }
+
+    fn registered(tx: &Transaction<'_>, hashes: &[&Hash]) {
+        for hash in hashes {
+            tx.execute(
+                "INSERT INTO blobs (hash, mime_type, size_bytes, recorded_at) \
+                 VALUES (?1, 'text/plain', 1, '2026-11-09T00:00:00.000Z')",
+                [hash.as_str()],
+            )
+            .unwrap();
+        }
+    }
+
+    /// What `hold` writes, in one transaction.
+    fn hold(tx: &Transaction<'_>, store: &str, name: &str, files: &[String]) -> Result<()> {
+        let (opening, closing) = plan(&open_files(tx, store)?, files.to_vec());
+        let seq = begin(tx, store, name)?;
+        open(tx, store, seq, &opening)?;
+        close(tx, store, seq, &closing)
+    }
+
+    fn files(hashes: &[&Hash]) -> Vec<String> {
+        hashes
+            .iter()
+            .map(|hash| hash.as_str().to_string())
+            .collect()
+    }
+
+    fn kept(names: &[&str]) -> HashSet<String> {
+        names.iter().map(|name| name.to_string()).collect()
+    }
+
+    fn held_of(tx: &Transaction<'_>, hashes: &[&Hash]) -> Vec<char> {
+        held_in(tx, BUCKET, hashes)
+    }
+
+    fn held_in(tx: &Transaction<'_>, store: &str, hashes: &[&Hash]) -> Vec<char> {
+        let asked: Vec<Hash> = hashes.iter().map(|hash| (*hash).clone()).collect();
+        let held = held(tx, store, &asked).unwrap();
+        let mut letters: Vec<char> = held
+            .iter()
+            .map(|hash| hash.hex().chars().next().unwrap())
+            .collect();
+        letters.sort();
+        letters
+    }
+
+    #[test]
+    fn a_file_is_held_while_a_kept_backup_named_it_and_let_go_once_none_does() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        let tx = conn.transaction().unwrap();
+        let (a, b, c) = (hash('a'), hash('b'), hash('c'));
+        registered(&tx, &[&a, &b, &c]);
+
+        hold(&tx, BUCKET, "1.tar", &files(&[&a, &b])).unwrap();
+        hold(&tx, BUCKET, "2.tar", &files(&[&b])).unwrap();
+        release(&tx, BUCKET, &kept(&["1.tar", "2.tar"])).unwrap();
+        assert_eq!(held_of(&tx, &[&a, &b, &c]), ['a', 'b']);
+
+        hold(&tx, BUCKET, "3.tar", &files(&[&b])).unwrap();
+        release(&tx, BUCKET, &kept(&["2.tar", "3.tar"])).unwrap();
+        assert_eq!(held_of(&tx, &[&a, &b, &c]), ['b']);
+        let rows: i64 = tx
+            .query_row("SELECT COUNT(*) FROM backup_files", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(rows, 1);
+    }
+
+    #[test]
+    fn a_file_named_again_after_a_gap_is_held_by_the_backup_before_the_gap() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        let tx = conn.transaction().unwrap();
+        let a = hash('a');
+        registered(&tx, &[&a]);
+
+        hold(&tx, BUCKET, "1.tar", &files(&[&a])).unwrap();
+        hold(&tx, BUCKET, "2.tar", &[]).unwrap();
+        hold(&tx, BUCKET, "3.tar", &files(&[&a])).unwrap();
+        hold(&tx, BUCKET, "4.tar", &[]).unwrap();
+        release(&tx, BUCKET, &kept(&["1.tar", "4.tar"])).unwrap();
+        assert_eq!(held_of(&tx, &[&a]), ['a']);
+        release(&tx, BUCKET, &kept(&["4.tar"])).unwrap();
+        assert!(held_of(&tx, &[&a]).is_empty());
+    }
+
+    #[test]
+    fn a_backup_never_put_holds_nothing_and_another_bucket_keeps_its_holds_after_a_thinning() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        let tx = conn.transaction().unwrap();
+        let (a, b) = (hash('a'), hash('b'));
+        registered(&tx, &[&a, &b]);
+
+        hold(&tx, "earlier bucket", "0.tar", &files(&[&a])).unwrap();
+        hold(&tx, BUCKET, "1.tar", &files(&[&a])).unwrap();
+        hold(&tx, BUCKET, "2.tar", &files(&[&b])).unwrap();
+        assert_eq!(held_of(&tx, &[&a, &b]), ['a', 'b']);
+
+        release(&tx, BUCKET, &kept(&["2.tar"])).unwrap();
+        assert_eq!(held_of(&tx, &[&a, &b]), ['b']);
+        assert_eq!(held_in(&tx, "earlier bucket", &[&a, &b]), ['a']);
+        let names: Vec<String> = tx
+            .prepare("SELECT store_id || '/' || name FROM backups ORDER BY seq")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(|row| row.unwrap())
+            .collect();
+        assert_eq!(names, ["earlier bucket/0.tar", "bucket/2.tar"]);
+        let rows: i64 = tx
+            .query_row("SELECT COUNT(*) FROM backup_files", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(rows, 2);
+    }
+
+    #[test]
+    fn a_file_held_in_one_bucket_stays_held_across_another_buckets_thinning() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        let tx = conn.transaction().unwrap();
+        let x = hash('a');
+        registered(&tx, &[&x]);
+
+        hold(&tx, "bucket A", "a1.tar", &files(&[&x])).unwrap();
+        release(&tx, "bucket A", &kept(&["a1.tar"])).unwrap();
+        hold(&tx, "bucket B", "b1.tar", &[]).unwrap();
+        release(&tx, "bucket B", &kept(&["b1.tar"])).unwrap();
+        hold(&tx, "bucket A", "a2.tar", &[]).unwrap();
+        release(&tx, "bucket A", &kept(&["a1.tar", "a2.tar"])).unwrap();
+
+        assert_eq!(held_in(&tx, "bucket A", &[&x]), ['a']);
+    }
+
+    #[test]
+    fn a_backup_is_refused_when_a_file_its_snapshot_held_was_purged_before_the_hold() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        let tx = conn.transaction().unwrap();
+        let (a, b) = (hash('a'), hash('b'));
+        registered(&tx, &[&a]);
+
+        hold(&tx, BUCKET, "1.tar", &files(&[&a])).unwrap();
+        tx.execute("DELETE FROM blobs WHERE hash = ?1", [a.as_str()])
+            .unwrap();
+        // Held since the first backup, so a second one naming it is not refused.
+        hold(&tx, BUCKET, "2.tar", &files(&[&a])).unwrap();
+
+        let refused = hold(&tx, BUCKET, "3.tar", &files(&[&a, &b])).unwrap_err();
+        assert_eq!(refused.code, Code::Conflict);
+        assert!(refused.message.contains(b.as_str()), "{}", refused.message);
+    }
 }

@@ -490,8 +490,20 @@ pub async fn integrity(app: Arc<App>, run: Run) -> Result<Report> {
     })))
 }
 
-/// Empty while the sweep is off. Read from `tx`, since the live settings lag a committed change.
+/// Empty while the sweep is off, and never a blob a kept backup may name. Read from `tx`, since
+/// the live settings lag a committed change.
 fn purgeable(tx: &rusqlite::Transaction<'_>, app: &App) -> Result<Vec<Hash>> {
+    let mut found = past_grace(tx, app)?;
+    if let Some(bucket) = app.blobs.s3()
+        && !found.is_empty()
+    {
+        let held = crate::app::backups::held(tx, bucket.id(), &found)?;
+        found.retain(|hash| !held.contains(hash));
+    }
+    Ok(found)
+}
+
+fn past_grace(tx: &rusqlite::Transaction<'_>, app: &App) -> Result<Vec<Hash>> {
     let seeds = app.settings.seeds();
     if stored::deciding(tx, &seeds, BLOB_CLEANUP_INTERVAL_MS)? == 0 {
         return Ok(Vec::new());

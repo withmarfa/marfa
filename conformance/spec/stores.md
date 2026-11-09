@@ -658,11 +658,11 @@ When a run of `blob-orphans` finds a blob that something references, the server 
 
 ### `stores/orphan-purges-after-grace`
 
-When a run of `blob-orphans` finds a blob reported by an earlier run at least `blob_cleanup_grace_ms` ago and still unreferenced, the server MUST purge it.
+When a run of `blob-orphans` finds a blob reported by an earlier run at least `blob_cleanup_grace_ms` ago, still unreferenced, and named by no backup the server began in the attached object store since the oldest one it keeps there, the server MUST purge it.
 
 **Reason:** a report made by the run itself waits for the next run. At a grace of zero, the next run purges even when it starts in the same millisecond as the report.
 
-**Tests:** `compliance/blob-rules.test.ts › reports an unreferenced blob on one run and purges it on the next, never one an item names`, `compliance/blob-store-settings.test.ts › leaves a report's first time alone and purges only once the report is older than the grace`.
+**Tests:** `compliance/blob-rules.test.ts › reports an unreferenced blob on one run and purges it on the next, never one an item names`, `compliance/blob-store-settings.test.ts › leaves a report's first time alone and purges only once the report is older than the grace`, `compliance/backup-files.test.ts › purges a file once thinning has deleted every backup that names it`.
 
 ### `stores/orphan-keeps-within-grace`
 

@@ -432,6 +432,13 @@ pub fn recorded_object_store(tx: &Transaction<'_>, id: &str) -> Result<bool> {
     )?)
 }
 
+/// Whether the registry holds a blob of this hash, written as `sha256:<hex>`.
+pub fn registered(tx: &Transaction<'_>, hash: &str) -> Result<bool> {
+    Ok(tx
+        .prepare_cached("SELECT 1 FROM blobs WHERE hash = ?1")?
+        .exists([hash])?)
+}
+
 /// The hashes `store_id` holds a recorded copy of, among `hashes`.
 pub fn held_in(
     tx: &Transaction<'_>,
