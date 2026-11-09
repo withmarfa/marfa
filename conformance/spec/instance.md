@@ -918,7 +918,7 @@ When the server answers with an HTML page, a page a refusal renders and one give
 
 **Reason:** the sign-in, consent, device approval and error pages act on the owner's signed-in session, so a policy limits what an injection into one of them can do. A refusal renders a page like any other, so a refusal a middleware makes before any operation has run carries the policy too.
 
-**Tests:** `compliance/instance.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`, `› sends the page policy on the page a refusal renders, and none on the refusal a program is sent`.
+**Tests:** `compliance/page-policy.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`, `compliance/instance.test.ts › sends the page policy on the page a refusal renders, and none on the refusal a program is sent`.
 
 ### `instance/page-policy-nonce-only`
 
@@ -926,13 +926,13 @@ The server MUST write the `Content-Security-Policy` of an HTML page so that it a
 
 **Reason:** no script or style source is allowed by origin, `'self'` included, because the same origin serves a blob's bytes at its link without a credential and under the type its uploader named, and a source allowed by origin would run them. A blob's bytes are not a page of this server and keep the policy of `blobs/download-sandbox`.
 
-**Tests:** `compliance/instance.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`, `› names in its policy the one nonce its page carries, a new one on each answer at one address`.
+**Tests:** `compliance/page-policy.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`, `compliance/instance.test.ts › names in its policy the one nonce its page carries, a new one on each answer at one address`.
 
 ### `instance/page-policy-default-none`
 
 The server MUST write the `Content-Security-Policy` of an HTML page with `default-src 'none'`.
 
-**Tests:** `compliance/instance.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`.
+**Tests:** `compliance/page-policy.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`.
 
 ### `instance/page-policy-images-other`
 
@@ -940,7 +940,7 @@ When the server writes the `Content-Security-Policy` of an HTML page, the server
 
 **Reason:** no page shows a picture from the server's address, so none has a reason to load an image from it.
 
-**Tests:** `compliance/instance.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`.
+**Tests:** `compliance/page-policy.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`.
 
 ### `instance/page-policy-json-none`
 
@@ -948,7 +948,7 @@ When the server answers the root or a refusal as JSON, the server MUST NOT send 
 
 **Reason:** the policy is the page's, and a JSON answer is not a page.
 
-**Tests:** `compliance/instance.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`, `› sends the page policy on the page a refusal renders, and none on the refusal a program is sent`.
+**Tests:** `compliance/page-policy.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`, `compliance/instance.test.ts › sends the page policy on the page a refusal renders, and none on the refusal a program is sent`.
 
 ### `instance/page-nonce-fresh`
 
@@ -956,7 +956,7 @@ The server MUST name in the `Content-Security-Policy` of each HTML page a nonce 
 
 **Reason:** a nonce that repeats across responses can be read from one page and carried by an injection into the next.
 
-**Tests:** `compliance/instance.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`, `› sends the page policy on the page a refusal renders, and none on the refusal a program is sent`, `› names in its policy the one nonce its page carries, a new one on each answer at one address`.
+**Tests:** `compliance/page-policy.test.ts › sends a content security policy with every HTML page and a nonce of its own with each`, `compliance/instance.test.ts › sends the page policy on the page a refusal renders, and none on the refusal a program is sent`, `› names in its policy the one nonce its page carries, a new one on each answer at one address`.
 
 ### `instance/page-nonce-carried`
 
