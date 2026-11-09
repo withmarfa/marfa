@@ -81,7 +81,7 @@ fn upgrade_native(
     }
     let mark = service.mark();
     // A new release may keep the same service definition.
-    service.on(state.autostart, !unchanged, &binary, &server)?;
+    let started = service.on(state.autostart, !unchanged, &binary, &server)?;
     let watch = Watch::Process {
         service: &service,
         mark,
@@ -96,10 +96,13 @@ fn upgrade_native(
         )));
     }
     if !unchanged {
+        if !out.json {
+            started.say_unconfirmed(state.port);
+        }
         dotenv.set("MARFA_RELEASE", &target)?;
-        files::write_if_changed(
-            &folder.path(files::DOTENV),
-            &dotenv.render(),
+        folder.keep_applied(
+            dotenv,
+            &folder.applied(state.port, &target)?,
             files::kept_for(state.manager).dotenv,
         )?;
     }
@@ -263,7 +266,7 @@ fn refused_update_note(target: &str, from: &str, dir: &Path) -> String {
 pub fn start(args: StartArgs, out: &Printer) -> Result<(), CliError> {
     let steps = Steps { quiet: out.json };
     let folder = Folder::new(&args.dir)?;
-    let (state, _) = folder.require_state()?;
+    let (state, mut dotenv) = folder.require_state()?;
     match state.runtime {
         Runtime::Native => {
             let service = service_of(&state, &folder, !out.json)?;
@@ -279,6 +282,7 @@ pub fn start(args: StartArgs, out: &Printer) -> Result<(), CliError> {
             let mark = service.mark();
             // Written again, so that a binary that has moved is named by its
             // new path.
+            let was_running = service.running();
             service.on(state.autostart, false, &binary, &server)?;
             service.start()?;
             wait_until_healthy(
@@ -289,6 +293,14 @@ pub fn start(args: StartArgs, out: &Printer) -> Result<(), CliError> {
                 state.port,
                 args.wait,
             )?;
+            // A server that was already running keeps what it started with.
+            if !was_running {
+                folder.keep_applied(
+                    &mut dotenv,
+                    &folder.applied(state.port, &state.release)?,
+                    files::kept_for(state.manager).dotenv,
+                )?;
+            }
         }
         Runtime::Docker => {
             let docker = Docker::new(!out.json);

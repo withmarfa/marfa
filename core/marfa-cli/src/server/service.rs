@@ -102,6 +102,36 @@ pub struct Service<'a> {
 
 const RESTART_WAIT: Duration = Duration::from_secs(4);
 
+/// What a start left to say.
+pub struct Started {
+    pub linger: Option<Linger>,
+    /// A restart whose process ID the manager did not report, so that only
+    /// the server's answer on its port can confirm it.
+    pub unconfirmed: Option<When>,
+}
+
+/// Whether the manager gave no process ID before the restart or after it.
+#[derive(Clone, Copy)]
+pub enum When {
+    Before,
+    After,
+}
+
+impl Started {
+    /// Says plainly what the restart left unconfirmed.
+    pub fn say_unconfirmed(&self, port: u16) {
+        if let Some(when) = self.unconfirmed {
+            let when = match when {
+                When::Before => "before",
+                When::After => "after",
+            };
+            eprintln!(
+                "The service manager gave no process ID {when} the restart, so this run cannot show that the process was replaced. It confirms only that the server answers on port {port}."
+            );
+        }
+    }
+}
+
 impl Service<'_> {
     /// What a person calls it.
     pub fn describe(&self) -> String {
@@ -123,23 +153,31 @@ impl Service<'_> {
         }
     }
 
-    // Settings are read at startup, independently of the service definition.
+    /// Writes the service and loads it. With `restart`, the running server
+    /// is replaced, because it reads its settings only when it starts, and
+    /// that happens whatever the process ID query says.
     pub fn on(
         &self,
         autostart: bool,
         restart: bool,
         binary: &Path,
         server: &Path,
-    ) -> Result<Option<Linger>, CliError> {
-        let before = if restart { self.process_id() } else { None };
+    ) -> Result<Started, CliError> {
+        let running = restart && self.running();
+        let before = if running { self.process_id() } else { None };
         let (changed, linger) = self.write_and_load(autostart, binary, server)?;
-        if let Some(before) = before {
-            if !changed {
-                self.restart()?;
-            }
-            self.await_new_process(before)?;
+        if restart && !changed {
+            self.restart()?;
         }
-        Ok(linger)
+        let unconfirmed = match (running, before) {
+            (false, _) => None,
+            (true, Some(before)) => self.await_new_process(before)?,
+            (true, None) => Some(When::Before),
+        };
+        Ok(Started {
+            linger,
+            unconfirmed,
+        })
     }
 
     fn write_and_load(
@@ -191,21 +229,23 @@ impl Service<'_> {
         }
     }
 
-    // The health wait handles a service with no process.
-    fn await_new_process(&self, before: u32) -> Result<(), CliError> {
+    // Confirms by a changed process ID when the manager reports both, and
+    // says which one it could not read when it does not.
+    fn await_new_process(&self, before: u32) -> Result<Option<When>, CliError> {
         let deadline = Instant::now() + RESTART_WAIT;
         loop {
-            match self.process_id() {
-                Some(now) if now != before => return Ok(()),
-                None => return Ok(()),
-                Some(_) if Instant::now() >= deadline => {
+            let now = self.process_id();
+            match now {
+                Some(now) if now != before => return Ok(None),
+                _ if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(100)),
+                None => return Ok(Some(When::After)),
+                Some(_) => {
                     return Err(CliError::Install(format!(
                         "{} did not restart: the service manager still reports process {before}, so the restart could not be confirmed. Run `marfa server stop --dir '{dir}'` and then `marfa server start --dir '{dir}'`",
                         self.describe(),
                         dir = self.dir.display().to_string().replace('\'', "'\\''")
                     )));
                 }
-                Some(_) => std::thread::sleep(Duration::from_millis(100)),
             }
         }
     }

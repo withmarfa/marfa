@@ -189,12 +189,13 @@ begin() {
 case "$1" in
   print)
     [ -e "$H/loaded-$label" ] || exit 1
-    if [ -e "$H/stopped-$label" ]; then echo "	state = waiting"; else echo "	state = running"; echo "	pid = $(cat "$H/pid-$label" 2>/dev/null)"; fi ;;
+    if [ -e "$H/stopped-$label" ]; then echo "	state = waiting"; else echo "	state = running"; [ -e "$H/pid-query-fails" ] || echo "	pid = $(cat "$H/pid-$label" 2>/dev/null)"; fi ;;
   bootstrap)
     [ -e "$H/bootstrap-fails" ] && { echo "Bootstrap failed: 5: Input/output error" >&2; exit 5; }
     label=$(basename "$3" .plist | sed 's/^so\.marfa\.server\.//')
     touch "$H/loaded-$label"; rm -f "$H/stopped-$label"; begin "$3" ;;
   kickstart)
+    [ "$2" = -k ] && [ -e "$H/restart-fails" ] && { echo "Could not kickstart service: 5: Input/output error" >&2; exit 5; }
     if [ "$2" = -k ] && [ ! -e "$H/restart-ignored" ]; then rm -f "$S"/go-* "$H/pid-$label"; settled; fi
     rm -f "$H/stopped-$label"; f="$H/Library/LaunchAgents/so.marfa.server.$label.plist"; [ -e "$f" ] || f="$H/../install/so.marfa.server.$label.plist"; begin "$f" ;;
   bootout) rm -f "$H/loaded-$label" "$H/pid-$label" "$S"/go-*; settled ;;
@@ -242,10 +243,10 @@ case "$cmd" in
   is-active) [ -e "$H/active-$unit" ] ;;
   start) [ -e "$H/start-fails" ] && { echo "Job for $unit failed" >&2; exit 1; }; begin ;;
   restart)
-    [ -e "$H/start-fails" ] && { echo "Job for $unit failed" >&2; exit 1; }
+    [ -e "$H/start-fails" ] || [ -e "$H/restart-fails" ] && { echo "Job for $unit failed" >&2; exit 1; }
     if [ ! -e "$H/restart-ignored" ]; then rm -f "$S"/go-* "$H/pid-$unit"; settled; fi
     begin ;;
-  show) for last; do :; done; cat "$H/pid-$last" 2>/dev/null || echo 0 ;;
+  show) [ -e "$H/pid-query-fails" ] && exit 1; for last; do :; done; cat "$H/pid-$last" 2>/dev/null || echo 0 ;;
   stop) rm -f "$H/active-$unit" "$H/pid-$unit" "$S"/go-*; settled ;;
 esac
 "#;
@@ -2163,6 +2164,108 @@ fn settings_managed_elsewhere_are_applied_by_running_install_again() {
     rig.native_installed(&external);
     assert_eq!(rig.restarts(), restarts + 1, "{}", rig.manager_log());
     assert_ne!(rig.service_pid("marfa"), pid);
+}
+
+#[test]
+fn settings_managed_elsewhere_that_have_not_changed_leave_the_running_server_alone() {
+    let rig = Rig::new("n-external-same");
+    managed_elsewhere(&rig, CLOUDFLARE_FILE);
+    let external = [
+        "--access",
+        "cloudflare",
+        "--external-settings",
+        "--address",
+        "https://marfa.example.com",
+    ];
+    rig.native_installed(&external);
+    let (restarts, pid) = (rig.restarts(), rig.service_pid("marfa"));
+    assert!(pid.is_some());
+    rig.native_installed(&external);
+    assert_eq!(rig.restarts(), restarts, "{}", rig.manager_log());
+    assert_eq!(rig.service_pid("marfa"), pid);
+}
+
+#[test]
+fn what_the_running_server_was_started_with_is_kept_as_a_hash_and_survives_a_stop_and_start() {
+    let rig = Rig::new("n-applied");
+    managed_elsewhere(&rig, CLOUDFLARE_FILE);
+    let external = [
+        "--access",
+        "cloudflare",
+        "--external-settings",
+        "--address",
+        "https://marfa.example.com",
+    ];
+    rig.native_installed(&external);
+    let dotenv = rig.file(".env");
+    let applied = dotenv
+        .lines()
+        .find_map(|line| line.strip_prefix("MARFA_APPLIED="))
+        .expect("no MARFA_APPLIED after a confirmed start");
+    assert_eq!(applied.len(), 64, "{dotenv}");
+    assert!(
+        !dotenv.contains("aaaaaaaa") && !dotenv.contains("CF-Connecting-IP"),
+        "the settings are in .env: {dotenv}"
+    );
+
+    let (code, _, stderr) = rig.marfa(&["stop"]);
+    assert_eq!(code, 0, "{stderr}");
+    let (code, _, stderr) = rig.marfa(&["start", "--wait", "5"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(rig.file(".env"), dotenv);
+    let (restarts, pid) = (rig.restarts(), rig.service_pid("marfa"));
+    rig.native_installed(&external);
+    assert_eq!(rig.restarts(), restarts, "{}", rig.manager_log());
+    assert_eq!(rig.service_pid("marfa"), pid);
+}
+
+#[test]
+fn a_restart_that_failed_is_tried_again_by_running_install_again() {
+    let rig = Rig::new("n-failed-restart");
+    rig.native_installed(&["--access", "local"]);
+    let pid = rig.service_pid("marfa");
+    let proxy = [
+        "--access",
+        "proxy",
+        "--address",
+        "https://marfa.example.com",
+    ];
+    fs::write(rig.home().join("restart-fails"), "").unwrap();
+    let (code, _, stderr) = rig.native(&proxy);
+    assert_ne!(code, 0, "{stderr}");
+    assert_eq!(rig.service_pid("marfa"), pid, "the failed restart ran");
+
+    fs::remove_file(rig.home().join("restart-fails")).unwrap();
+    let restarts = rig.restarts();
+    rig.native_installed(&proxy);
+    assert_eq!(rig.restarts(), restarts + 1, "{}", rig.manager_log());
+    assert_ne!(rig.service_pid("marfa"), pid);
+
+    rig.native_installed(&proxy);
+    assert_eq!(rig.restarts(), restarts + 1, "an applied run restarted it");
+}
+
+#[test]
+fn a_process_id_that_cannot_be_read_does_not_cancel_the_restart_and_is_said() {
+    let rig = Rig::new("n-no-pid");
+    rig.native_installed(&["--access", "local"]);
+    let (restarts, pid) = (rig.restarts(), rig.service_pid("marfa"));
+    fs::write(rig.home().join("pid-query-fails"), "").unwrap();
+    let proxy = [
+        "--access",
+        "proxy",
+        "--address",
+        "https://marfa.example.com",
+    ];
+    let (code, stdout, stderr) = rig.native(&proxy);
+    assert_eq!(code, 0, "{stdout}\n{stderr}");
+    assert_eq!(rig.restarts(), restarts + 1, "{}", rig.manager_log());
+    assert_ne!(rig.service_pid("marfa"), pid);
+    assert!(stderr.contains("process ID"), "{stderr}");
+    assert!(stderr.contains("answers on port"), "{stderr}");
+
+    rig.native_installed(&proxy);
+    assert_eq!(rig.restarts(), restarts + 1, "an applied run restarted it");
 }
 
 #[test]
