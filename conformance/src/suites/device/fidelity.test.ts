@@ -2379,7 +2379,7 @@ describe("the scripted answers match the server's", () => {
       {
         kind: "json",
         status: registry.status,
-        body: { row: { ...scriptedType("core.note"), plural: "Notes" } },
+        body: { row: scriptedType("core.note") },
       },
       {
         same: [
@@ -2398,12 +2398,7 @@ describe("the scripted answers match the server's", () => {
     );
     // A folder writes a file's body and name to the properties these name
     // (`folders/body-property` and `folders/title-property`), so the ones the fixtures lean on are held here.
-    const shippedPlurals = {
-      "core.event": "Events",
-      "core.highlight": "Highlights",
-      "core.bookmark": "Bookmarks",
-    };
-    for (const [id, plural] of Object.entries(shippedPlurals)) {
+    for (const id of ["core.event", "core.highlight", "core.bookmark"]) {
       expectFidelity(
         `the display hints of ${id}`,
         {
@@ -2413,7 +2408,7 @@ describe("the scripted answers match the server's", () => {
         {
           kind: "json",
           status: registry.status,
-          body: { row: { ...scriptedType(id), plural } },
+          body: { row: scriptedType(id) },
         },
         {
           same: [

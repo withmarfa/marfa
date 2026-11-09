@@ -1955,7 +1955,7 @@ describe("a refused write's content is kept", () => {
     expect(edited.ok && tagged.ok).toBe(true);
     if (!edited.ok || !tagged.ok) return;
     scriptWrites(harness.server, {
-      update: [refusal(404, "item_not_found", `Item ${HELD.id} not found`)],
+      update: [refusal(404, "item_not_found", "Item not found")],
       read: [answers.updated(wireItem({ id: HELD.id, version: HELD.version }))],
       tags: [writeAnswers.metadata(HELD.id, ["kept"])],
     });

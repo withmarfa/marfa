@@ -34,6 +34,14 @@ When `POST /edges` meets more than one of the answers this chapter gives it, the
 
 **Tests:** `compliance/edge-check-order.test.ts › refuses an undeclared key after a missing field and before a malformed id`, `› refuses a malformed id before it looks for the source`, `› answers a source in the bin as missing before it asks for write on the source's type`, `› refuses write on the source's type before write on the edge type`, `› refuses write on the edge type before it recognizes a repeated edge id`, `› refuses a reused edge id before it looks up the edge type`, `› answers an unknown edge type before it judges a self-loop`, `› refuses a self-loop before it checks properties`, `› refuses bad properties before it looks for the target`, `› refuses bad properties before it checks the endpoint types`, `› answers a missing target before it checks the endpoint types`, `› answers a missing target as forbidden when the key lacks write on the edge type`, `› checks the source's type before the target's type`, `› refuses an endpoint type before it names a duplicate`, `› names a duplicate before cardinality`, `› refuses cardinality before a cycle`, `› answers a missing edge type as missing_required_field before it judges a malformed id`, `› acknowledges a repeated edge id and triple after the target went to the bin`, `› acknowledges a repeated edge id and triple after its edge type was force deleted`, `› answers an unknown edge type before it refuses an id an unreadable edge holds`, `› answers a self-loop before it refuses an id an unreadable edge holds`, `› answers a duplicate triple before it refuses an id an unreadable edge holds`.
 
+### `edges/inline-order`
+
+When `POST /items`, `PATCH /items/{id}` or an entry of `POST /items/bulk` names `edges` that meet more than one of the answers `POST /edges` gives, the server MUST give the first in the order of `edges/create-order` that applies to the edges an item write names.
+
+**Reason:** an app that sends an edge inside an item write gets the same answer as one that sends it to `POST /edges`, so a refusal does not depend on which door the edge came through.
+
+**Tests:** `compliance/edge-check-order.test.ts › answers an unregistered edge type in an item write before it looks for the target`.
+
 ### `edges/create`
 
 When a key sends `POST /edges` naming a `source_id`, a `target_id` and an `edge_type`, and no rule of this chapter refuses the edge, the server MUST answer `201` with an `edge` carrying its `id`, `source_id`, `target_id`, `edge_type`, `properties`, `created_at`, `updated_at` and `version`.
