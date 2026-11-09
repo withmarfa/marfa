@@ -6,9 +6,7 @@ use std::os::unix::fs::FileExt;
 
 use symphonia::core::io::MediaSource;
 
-/// A file read at positions of its own with `pread`, so it moves nothing the caller
-/// holds: a descriptor's offset is shared with every copy of it. A taken-over child can
-/// still `lseek` that shared offset.
+/// A file read by position with `pread`, so the caller's offset does not move.
 pub(crate) struct Source<'a> {
     file: &'a File,
     position: u64,
@@ -16,8 +14,7 @@ pub(crate) struct Source<'a> {
 }
 
 impl<'a> Source<'a> {
-    /// `len` is the length the file had when the caller looked, and a read never goes
-    /// past it, so a file that grows while it is read is not followed.
+    /// `len` caps every read, so a file that grows is not followed.
     pub(crate) fn new(file: &'a File, len: u64) -> Self {
         Self {
             file,
