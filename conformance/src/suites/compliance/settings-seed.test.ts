@@ -6,11 +6,6 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 
-/**
- * A stored setting's default taken from the environment while the test hooks
- * are on (the instance chapter's `instance/settings-seed`).
- */
-
 afterAll(stopFreshServers, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 interface Entry {

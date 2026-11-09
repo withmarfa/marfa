@@ -8,19 +8,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 
-/**
- * Whom the server believes a caller to be (the instance chapter's
- * `instance/proxy-*` rules).
- *
- * **How the address is seen.** The audit log records the caller's address
- * for every write, so a write sent with chosen headers and read back from
- * `/audit` shows the address the server took. The harness reaches the server
- * from `127.0.0.1`, so a range of `127.0.0.0/8` makes the harness a trusted
- * proxy and a range elsewhere leaves it a stranger.
- *
- * **On servers of the fixture's own.** The trust is fixed when the server
- * starts.
- */
+// Each server fixes its proxy trust at startup; audit records expose the caller's address.
 
 afterAll(stopFreshServers, 2 * FRESH_SERVER_TIMEOUT_MS);
 
@@ -103,8 +91,7 @@ describe("the forwarded chain", () => {
         "forged",
       ),
     ).toBe("203.0.113.5");
-    // Two proxies in a row are both skipped, and a chain split over two
-    // header lines reads as one.
+    // Separate header lines form one chain.
     expect(
       await seenAs(
         server,

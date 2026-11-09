@@ -10,16 +10,7 @@ import { controlRequest } from "../../utils/control-request.js";
 import { testAuthenticator } from "../../utils/passkey-authenticator.js";
 import { TEST_OWNER } from "../../utils/target.js";
 
-/**
- * What an address check says moving the sign-in address would do to passkeys
- * and to connected apps (the instance chapter's
- * `instance/address-check-apps-and-passkeys`).
- *
- * **On a server of the fixture's own.** A passkey and an app's grant stay on
- * an instance once made. Passkeys are refused at an IP address, so the
- * sign-in address is moved to `localhost` first, which ends the sessions the
- * server booted with, and the owner signs in again there.
- */
+// Passkeys require a hostname; moving sign-in to localhost ends the initial session.
 let server: FreshServer;
 let ownerCookie: string;
 

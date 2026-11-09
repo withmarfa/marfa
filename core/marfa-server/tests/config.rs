@@ -509,8 +509,7 @@ async fn only_direct_authority_moves_the_sign_in_address() {
     let tidier = instance.as_key(&key, Method::PATCH, tidier).await;
     assert_eq!(tidier.status, StatusCode::OK, "{}", tidier.text);
 
-    // The list holds the computer's own address too, so that clearing the
-    // sign-in address below leaves a whole list and only authority refuses it.
+    // Keep the fallback address so only authority can refuse clearing sign-in.
     let list = json!({ "addresses": [a, "https://b.example", own] });
     let list = instance.as_key(&key, Method::PATCH, list).await;
     assert_eq!(list.status, StatusCode::OK, "{}", list.text);
@@ -539,8 +538,6 @@ async fn the_addresses_are_judged_against_the_sign_in_address_in_force_stored_or
     let own = instance.app.addresses().sign_in().origin().to_string();
     assert_eq!(instance.row("sign_in_address").await, None);
 
-    // No sign-in address is stored, so the computer's own address is the one in
-    // force, and a list that leaves it out is not whole.
     let elsewhere = json!({ "addresses": ["https://a.example"] });
     let refused = instance.patch(elsewhere).await;
     assert_eq!(refused.code(), "validation_error", "{}", refused.text);

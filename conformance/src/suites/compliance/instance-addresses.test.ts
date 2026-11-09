@@ -85,8 +85,7 @@ describe("an address", () => {
   });
 
   it("is stored in its plainest spelling, with a lowercase host, no default port and no trailing slash", async () => {
-    // No sign-in address is stored, so the one in force is the instance's own
-    // address, which the list has to name beside the others.
+    // The list must include the fallback sign-in address.
     const own = new URL(server.apiUrl).origin;
     // The witness: the same origin spelled plainly is stored as written.
     const answer = await call("key", "PATCH", "/config", {
@@ -111,8 +110,6 @@ describe("an address", () => {
 
 describe("the addresses and the sign-in address in force", () => {
   it("are refused together when the list leaves out the instance's own address, though no sign-in address is stored", async () => {
-    // Nothing is stored for the sign-in address, so the one in force is the
-    // address the server listens on.
     expect(await config()).not.toHaveProperty("sign_in_address");
     const own = new URL(server.apiUrl).origin;
     const answer = await call("key", "PATCH", "/config", {
@@ -165,8 +162,6 @@ describe("the sign-in address", () => {
       cors_origins: ["https://app.example"],
     });
     expect(socket.status, JSON.stringify(socket.body)).toBe(200);
-    // Both settings sent as they already are change nothing, so the key is
-    // let through, while the same write with one value moved is the 403 above.
     const unchanged = await call("key", "PATCH", "/config", {
       sign_in_address: SIGN_IN,
       cors_origins: ["https://app.example"],

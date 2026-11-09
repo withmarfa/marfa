@@ -1092,10 +1092,7 @@ jobs:
           path: ${{ runner.temp }}/marfa-native/out/${{ env.TARGET }}/marfa-server
           if-no-files-found: error
           retention-days: 3
-      # The program a release ships has no hooks, and what the contract says of
-      # it can only be seen by starting that program: `hook-free-server.test.ts`
-      # names it with `MARFA_SERVER_RELEASE_BIN`. The libraries and the cargo
-      # build are the ones above, so this is the link and the last crate.
+      # Release-only fixtures need a separate binary without test hooks.
       - name: Build the Rust server without test hooks
         run: core/marfa-enrichment/native/release.sh "$TARGET" --server
       - name: Keep the server without test hooks

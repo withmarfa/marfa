@@ -19,8 +19,7 @@ pub struct Judged<'a> {
     pub after: &'a Snapshot,
     pub touched: &'a [&'a str],
     pub start: &'a Fixed,
-    /// The sign-in address in force after the change, stored or not; none when
-    /// it is the computer's own address at a port the system has yet to choose.
+    /// None until the system chooses the port for an unstored sign-in address.
     pub sign_in: Option<Address>,
 }
 

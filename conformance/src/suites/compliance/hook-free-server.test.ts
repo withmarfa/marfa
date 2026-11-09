@@ -20,17 +20,7 @@ import {
   stopFreshServers,
 } from "../../utils/fresh-server.js";
 
-/**
- * A server built without the test hooks, started as a person starts it: the
- * instance chapter's `instance/test-hooks-not-built` and `instance/secrets-*`
- * rules.
- *
- * **Why a program of its own.** The harness drives a server through its
- * hooks, and a hooked server takes a fixed key salt in place of generating
- * one. What these rules say about the program a release ships can only be
- * seen by starting that program, which `MARFA_SERVER_RELEASE_BIN` names: the
- * Rust contract job builds it beside the hooked one.
- */
+// The regular harness requires hooks, so release behavior needs a separate process.
 
 const STARTED_BUDGET_MS = 60_000;
 const EXIT_BUDGET_MS = 30_000;
@@ -70,8 +60,6 @@ function folder(prefix: string): string {
   return made;
 }
 
-/** The program with the settings given and the secrets unset, so that only
- *  what a case names reaches it, and reporting off. */
 function start(
   data: string,
   settings: Record<string, string> = {},
@@ -277,8 +265,6 @@ describe("the secrets of a server that was not configured by hand", () => {
     await stop(first);
     expect(existsSync(resolve(data, "marfa.db"))).toBe(true);
 
-    // A file this test writes is what the next start has to use: a key salt
-    // made under it is only ever found again with the same salt.
     const salt = randomBytes(32).toString("hex");
     const auth = randomBytes(32).toString("hex");
     writeFileSync(secretsOf(data), `key_salt=${salt}\nauth_secret=${auth}\n`, {

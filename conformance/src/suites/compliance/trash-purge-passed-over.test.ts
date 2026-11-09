@@ -14,14 +14,7 @@ import {
   writerOf,
 } from "../../utils/moved-clock.js";
 
-/**
- * What a run of `trash-purge` says it left behind (the housekeeping chapter's
- * `housekeeping/trash-purge-passed-over`).
- *
- * No door makes the database refuse to remove one item, so the case arranges
- * it in the stored file, with a trigger that refuses the removal of one row,
- * on a server of the fixture's own. The run's answer is what is asserted.
- */
+// No API refuses removal of one row, so a database trigger creates that failure.
 
 afterAll(stopFreshServers, 2 * FRESH_SERVER_TIMEOUT_MS);
 
@@ -72,8 +65,7 @@ describe("a run of trash-purge", () => {
       expect(first.result).toEqual({ deleted: 0, passed_over: 1 });
       expect(await inBin()).toEqual([stuck, recent].sort());
 
-      // The witness: once the row can go, the run removes it and says nothing
-      // was passed over, and the newer item stays in the bin.
+      // Removing the trigger lets the same purge succeed.
       withInstanceDatabase(server.sqlitePath, (db) => {
         db.exec("DROP TRIGGER refuse_one_purge");
       });
