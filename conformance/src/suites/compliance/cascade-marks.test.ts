@@ -19,7 +19,7 @@ import {
   cleanup,
 } from "../../utils/setup.js";
 import { createNote, createTask } from "../../generators/items.js";
-import { readTarGzEntry } from "../../utils/archive.js";
+import { readLineFile } from "../../utils/archive.js";
 import type { SseEvent } from "../../utils/sse.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
 import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
@@ -1175,10 +1175,10 @@ describe("an archive carries neither what a trash took nor its mark", () => {
       state: "any",
     });
     expect(archive.ok).toBe(true);
-    const line = itemLines(
-      readTarGzEntry(archive.data, "items.ndjson") ?? "",
-    ).get(child);
-    expect(line?.trashed_with, "the child's items.ndjson line").toBe(parent);
+    const line = itemLines(readLineFile(archive.data, "items") ?? "").get(
+      child,
+    );
+    expect(line?.trashed_with, "the child's items.ndjson.gz line").toBe(parent);
     expect(line?.trashed_by_cascade).toBe(true);
     expect((await client.purgeItem(child)).ok).toBe(true);
     expect((await client.purgeItem(parent)).ok).toBe(true);

@@ -467,7 +467,6 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
       "rust-contract",
     ],
   ],
-  [/^conformance\/src\/suites\/backup\//, ["workspace", "conformance-offline"]],
   [
     /^conformance\/src\/suites\/(correctness|sync)\//,
     [
@@ -635,6 +634,11 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // macOS-only calls.
   [
     /^core\/marfa-server\/src\/(control_socket|app\/metrics|open_files)\.rs$/,
+    ["core-checks", "core-checks-linux", "rust-contract"],
+  ],
+  // A background read lowers its thread's priority each system's own way.
+  [
+    /^core\/marfa-server\/src\/db\/reader\.rs$/,
     ["core-checks", "core-checks-linux", "rust-contract"],
   ],
   // The settings are what the Dockerfile's environment names.

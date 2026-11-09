@@ -9,19 +9,17 @@ use std::net::TcpListener;
 use std::process::Output;
 use std::time::Duration;
 
-use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use isolated::Isolated;
 
 const TAR_BLOCK: usize = 512;
 
-/// A gzip-compressed tar of a manifest that lists no missing blobs and one
-/// item line.
+/// A tar of a manifest that lists no missing blobs and one item file.
 fn archive() -> Vec<u8> {
     let manifest = br#"{"version":0,"blobs":{},"missing_blobs":{}}"#;
     let mut tar = Vec::new();
     for (name, body) in [
         ("manifest.json", manifest.as_slice()),
-        ("items.ndjson", b"{}\n".as_slice()),
+        ("items.ndjson.gz", b"\x1f\x8b".as_slice()),
     ] {
         let mut header = [0u8; TAR_BLOCK];
         header[..name.len()].copy_from_slice(name.as_bytes());
@@ -32,9 +30,7 @@ fn archive() -> Vec<u8> {
         tar.resize(tar.len().div_ceil(TAR_BLOCK) * TAR_BLOCK, 0);
     }
     tar.resize(tar.len() + 2 * TAR_BLOCK, 0);
-    let mut gzip = GzEncoder::new(Vec::new(), Compression::default());
-    gzip.write_all(&tar).unwrap();
-    gzip.finish().unwrap()
+    tar
 }
 
 /// A server that answers one request after `delay` with `sent` under a
@@ -50,7 +46,7 @@ fn server(delay: Duration, sent: Vec<u8>, claimed: usize) -> String {
         let _ = socket.read(&mut request);
         std::thread::sleep(delay);
         let head = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/gzip\r\nX-Marfa-Contract: {}\r\nContent-Length: {claimed}\r\nConnection: close\r\n\r\n",
+            "HTTP/1.1 200 OK\r\nContent-Type: application/x-tar\r\nX-Marfa-Contract: {}\r\nContent-Length: {claimed}\r\nConnection: close\r\n\r\n",
             marfa_core::contract::CONTRACT_VERSION,
         );
         let _ = socket.write_all(head.as_bytes());
@@ -89,11 +85,7 @@ fn says_it_is_working_on_standard_error_and_sends_the_whole_archive_to_standard_
         !String::from_utf8_lossy(&output.stdout).contains("still preparing"),
         "progress reached standard output"
     );
-    let mut tar = Vec::new();
-    GzDecoder::new(output.stdout.as_slice())
-        .read_to_end(&mut tar)
-        .unwrap();
-    assert_eq!(&tar[..13], b"manifest.json");
+    assert_eq!(&output.stdout[..13], b"manifest.json");
 }
 
 #[test]

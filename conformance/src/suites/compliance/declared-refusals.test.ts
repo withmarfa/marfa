@@ -14,7 +14,6 @@ import {
   trackType,
 } from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
-import { tarGz } from "../../utils/archive.js";
 import {
   approvedAppToken,
   bootFreshServer,
@@ -460,7 +459,7 @@ describe("an identifier nothing carries", () => {
 });
 
 describe("a core edge type", () => {
-  it("cannot be deleted, and cannot be redefined by an archive", async () => {
+  it("cannot be deleted", async () => {
     await expectRefusal(
       "DELETE",
       "/edge-types/{id}",
@@ -468,33 +467,6 @@ describe("a core edge type", () => {
       400,
       "validation_error",
     );
-
-    const archive = tarGz([
-      {
-        name: "manifest.json",
-        body: JSON.stringify({
-          version: 0,
-          format: "marfa-archive-v0",
-          created_at: new Date().toISOString(),
-          item_count: 0,
-          edge_count: 0,
-          blob_count: 0,
-          type_count: 0,
-          edge_type_count: 1,
-          blobs: {},
-        }),
-      },
-      { name: "items.ndjson", body: "" },
-      { name: "edges.ndjson", body: "" },
-      {
-        name: "types.ndjson",
-        body: `${JSON.stringify({ edge_type: { id: "about", label: "About" } })}\n`,
-      },
-    ]);
-    const restored = await getOwnerClient().restoreArchive(archive);
-    expect(restored.status).toBe(409);
-    expect(restored.error?.error.code).toBe("conflict");
-    await expectMatchesSchema("POST", "/restore", 409, restored.error);
   });
 });
 

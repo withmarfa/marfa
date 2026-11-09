@@ -1,10 +1,12 @@
 //! Every write goes through [`write::apply`]; only `rows` holds the SQL of the item tables.
 
+mod archived;
 pub mod bulk;
 pub mod expiry;
 mod index;
 mod plan;
 mod read;
+pub mod restored;
 mod rows;
 pub mod sweep;
 pub mod thinning;
@@ -23,12 +25,15 @@ use super::connectors::ReadOnly;
 use super::edges::{self, Reach};
 use super::refusal::{Code, Refusal, Result};
 
+pub(crate) use archived::{Archived, archived};
 pub(crate) use plan::require_version;
 pub use read::{
     Caption, Detail, Listing, Many, Selector, bin, bin_selection, bulk_get, captions, detail,
     extension, extensions, history, lookup, metadata, summaries, tag_counts, titles, trash_preview,
 };
-pub(crate) use read::{Reader, listed, listed_rows, readable_tags, reading, reading_under};
+pub(crate) use read::{
+    Reader, listed, listed_rows, readable_tags, reading, reading_background, reading_under,
+};
 pub(crate) use write::settle_late_part;
 
 const UNTITLED: &str = "Untitled";

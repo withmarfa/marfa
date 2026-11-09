@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { v7 as uuidv7 } from "uuid";
-import { listTarGzEntries, tarGz } from "../../utils/archive.js";
+import {
+  editLineFile,
+  readLineFile,
+  type LineFile,
+} from "../../utils/archive.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -64,20 +68,17 @@ async function edgesOf(client: MarfaClient) {
   return [...listed.data.data].sort((a, b) => a.id.localeCompare(b.id));
 }
 
-/** The archive with each named member rewritten, every other as it was. */
+/** The archive with each named line file rewritten, every other entry as it was. */
 function rewritten(
   archive: Uint8Array,
-  changes: Record<string, (body: string) => string>,
+  changes: Partial<Record<LineFile, (body: string) => string>>,
 ) {
-  return tarGz(
-    listTarGzEntries(archive).map((entry) => ({
-      name: entry.name,
-      body: changes[entry.name]?.(entry.body.toString()) ?? entry.body,
-    })),
-  );
+  return (
+    Object.entries(changes) as [LineFile, (body: string) => string][]
+  ).reduce((held, [name, edit]) => editLineFile(held, name, edit), archive);
 }
 
-/** The ids of the item types a `types.ndjson` body registers. */
+/** The ids of the item types an `instance.ndjson.gz` body registers. */
 function registeredTypeIds(body: string) {
   return body
     .split("\n")
@@ -88,7 +89,7 @@ function registeredTypeIds(body: string) {
     });
 }
 
-/** One `edges.ndjson` line for an edge no instance wrote. */
+/** One `edges.ndjson.gz` line for an edge no instance wrote. */
 const edgeLine = (source_id: string, target_id: string, edge_type: string) =>
   `${JSON.stringify({
     edge: { id: uuidv7(), source_id, target_id, edge_type, properties: {} },
@@ -179,18 +180,13 @@ async function roundTrip(
   expected: { edges: number; items: number },
 ) {
   const exported = await archiveOf(source);
-  const members = listTarGzEntries(exported);
-  const carried = registeredTypeIds(
-    members.find((m) => m.name === "types.ndjson")!.body.toString(),
-  );
+  const carried = registeredTypeIds(readLineFile(exported, "instance") ?? "");
   expect(carried, "the archive carries no paper registration").not.toContain(
     PAPER,
   );
+  expect(readLineFile(exported, "instance")).toContain(`"edge_type"`);
   expect(
-    members.find((m) => m.name === "types.ndjson")!.body.toString(),
-  ).toContain(`"edge_type"`);
-  expect(
-    members.find((m) => m.name === "items.ndjson")!.body.toString(),
+    readLineFile(exported, "items"),
     "the archive carries the papers",
   ).toContain(PAPER);
 
@@ -252,7 +248,7 @@ describe("an edge whose endpoint constraint names a force-deleted item type", ()
     // note is no paper, so it is refused as a source, and the same archive
     // restores the edges it carries beside it.
     const crafted = rewritten(exported, {
-      "edges.ndjson": (body) => body + edgeLine(note, papers[0], type),
+      edges: (body) => body + edgeLine(note, papers[0], type),
     });
     const judged = await owner(fourth).restoreArchive(crafted);
     expect(judged.status, JSON.stringify(judged.error)).toBe(200);
@@ -296,7 +292,7 @@ describe("an edge whose endpoint constraint names a force-deleted item type", ()
     // and an end of a registered type that the list does not name is
     // refused, whichever end it is.
     const crafted = rewritten(exported, {
-      "edges.ndjson": (body) =>
+      edges: (body) =>
         body +
         edgeLine(note, task, type) +
         edgeLine(note, papers[0], type) +
@@ -326,12 +322,10 @@ describe("an edge whose endpoint constraint names a force-deleted item type", ()
     // The archive as a build wrote it before the type was deleted, and as one
     // that carried no registration of the type holds the same rows.
     const registrations = (archive: Uint8Array) =>
-      listTarGzEntries(archive)
-        .find((m) => m.name === "types.ndjson")!
-        .body.toString();
+      readLineFile(archive, "instance") ?? "";
     expect(registeredTypeIds(registrations(whole))).toContain(PAPER);
     const older = rewritten(whole, {
-      "types.ndjson": (body) =>
+      instance: (body) =>
         body
           .split("\n")
           .filter(

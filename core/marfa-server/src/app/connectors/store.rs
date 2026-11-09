@@ -399,3 +399,19 @@ pub fn agreements_page(
     )?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
+
+/// Every source's state document, by source.
+pub fn documents(tx: &Transaction<'_>) -> Result<Vec<(String, Map<String, Value>)>> {
+    let mut statement =
+        tx.prepare_cached("SELECT source, state FROM connector_states ORDER BY source")?;
+    let rows = statement.query_map([], |row| Ok((row.get(0)?, stored(row, "state")?)))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// Every agreement, by source and item.
+pub fn every_agreement(tx: &Transaction<'_>) -> Result<Vec<(String, Agreement)>> {
+    let mut statement =
+        tx.prepare_cached("SELECT * FROM connector_agreements ORDER BY source, item_id")?;
+    let rows = statement.query_map([], |row| Ok((row.get("source")?, agreement(row)?)))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}

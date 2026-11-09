@@ -9,6 +9,10 @@ macro_rules! point_list {
         HOLD_READ_SNAPSHOT = Hold "read-snapshot" None;
         HOLD_THINNING_ITEM = Hold "version-thinning:item" None;
         HOLD_BULK_PAGE = Hold "bulk-page" Nth;
+        HOLD_EXPORT_PAGE = Hold "export-page" Nth;
+        HOLD_RESTORE_ITEM = Hold "restore:item" Nth;
+        HOLD_RESTORE_COMMIT = Hold "restore:before-commit" None;
+        HOLD_BACKUP_PUT = Hold "backup:put" None;
         HOLD_STREAM_OPEN = Hold "stream-open" None;
         HOLD_STREAM_HEAD = Hold "stream-head" None;
         HOLD_STREAM_REPLAY = Hold "stream-replay" None;
@@ -41,6 +45,7 @@ macro_rules! point_list {
         FAIL_SESSION_USE = Fail "session-use" Nth;
         FAIL_BLOB_WRITE = Fail "blob-write" Nth;
         FAIL_BLOB_READ = Fail "blob-read" Nth;
+        FAIL_BLOB_READ_SHORT = Fail "blob-read-short" Nth;
         FAIL_BLOB_DELETE = Fail "blob-delete" Nth;
         HOLD_BLOB_HAS = Hold "blob-has" None;
         HOLD_BLOB_READ = Hold "blob-read" Nth;
@@ -48,6 +53,7 @@ macro_rules! point_list {
         HOLD_BLOB_DELETE = Hold "blob-delete" None;
         HOLD_BLOB_PURGE = Hold "blob-orphans:purge" None;
         FAIL_HEALTH_WRITE = Fail "health-write" Nth;
+        FAIL_EXPORT_READ = Fail "export-read" Nth;
         HOLD_DISK_PROBE = Hold "disk-probe" None;
         HOLD_METRICS = Hold "metrics" None;
         FAIL_JOB_ROW = Fail "job-row" Nth;

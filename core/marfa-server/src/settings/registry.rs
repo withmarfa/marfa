@@ -35,6 +35,11 @@ impl Entry {
         }
     }
 
+    /// The value a stored row holds, as the configuration answers it.
+    pub fn row_json(&self, text: &str) -> Result<Json, String> {
+        self.parse(text).map(|value| value.to_json())
+    }
+
     /// The environment name that seeds this setting's default under test hooks.
     pub fn seed_name(&self) -> String {
         format!("MARFA_{}", self.key.to_ascii_uppercase())
@@ -277,6 +282,7 @@ const COUNT_OR_NONE: Rule = Rule::Whole {
 
 registry! {
     MAX_REQUEST_BYTES: u64 = "max_request_bytes", BYTES, "1048576", "The largest request body the server accepts, in bytes.";
+    MAX_BULK_REQUEST_BYTES: u64 = "max_bulk_request_bytes", BYTES, "16777216", "The largest body the bulk operations accept, in bytes. A restore refuses a row larger than this.";
     DISK_RESERVE_BYTES: u64 = "disk_reserve_bytes", BYTES_OR_NONE, "134217728", "Free disk space on the blob volume that an upload must leave, and below which health reports the disk as degraded, in bytes.";
     UPLOAD_IDLE_TIMEOUT_MS: u64 = "upload_idle_timeout_ms", UP_TO_A_DAY, "60000", "How long a blob upload may go without receiving a byte, in milliseconds, before the server ends it.";
     BLOB_READ_IDLE_TIMEOUT_MS: u64 = "blob_read_idle_timeout_ms", UP_TO_A_DAY, "30000", "How long a blob download may make no progress, in milliseconds, before the server closes it.";
@@ -289,6 +295,7 @@ registry! {
     BLOB_INTEGRITY_BATCH_BYTES: u64 = "blob_integrity_batch_bytes", BYTES, "1073741824", "The most bytes one integrity run checks.";
     BLOB_CLEANUP_INTERVAL_MS: u64 = "blob_cleanup_interval_ms", Rule::Whole { min: 0, max: rule::YEAR_MS }, "86400000", "How often the `blob-orphans` job sweeps for blobs nothing references, in milliseconds. 0 turns the sweep off.";
     BLOB_CLEANUP_GRACE_MS: u64 = "blob_cleanup_grace_ms", Rule::Whole { min: 0, max: rule::YEAR_MS }, "86400000", "How long a blob nothing references stands in the orphan report before a later run purges it, in milliseconds.";
+    BACKUP_INTERVAL_MS: u64 = "backup_interval_ms", Rule::Whole { min: 0, max: rule::YEAR_MS }, "3600000", "How often the `backup` job puts a backup in the object store when anything it holds has changed, in milliseconds. 0 turns scheduled backups off.";
     RATE_LIMIT_ENABLED: bool = "rate_limit_enabled", Rule::Boolean, "true", "Whether the rate limiter is on for the requests a key or app makes, app registrations, device code requests, passkey sign-in challenges and deliveries to inbound addresses.";
     RATE_LIMIT_REQUESTS: u64 = "rate_limit_requests", COUNT, "4000", "How many requests one key or app may make in each window, across every operation.";
     RATE_LIMIT_KEYS_REQUESTS: u64 = "rate_limit_keys_requests", COUNT, "200", "How many requests one key may make in each window to the operations under `/keys`.";

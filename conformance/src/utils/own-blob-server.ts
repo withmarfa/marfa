@@ -48,6 +48,23 @@ export function clientsFor(server: FreshServer): {
   };
 }
 
+/** A client whose key the private local command mints naming no map or
+ *  permission, so it holds every permission and reaches every type. */
+export async function everythingClient(
+  server: FreshServer,
+): Promise<MarfaClient> {
+  const local = new MarfaClient({
+    baseUrl: server.apiUrl,
+    controlSocket: server.controlSocket,
+  });
+  const minted = await local.createKey({
+    label: "reaches everything",
+    source: `everything-${randomUUID()}`,
+  });
+  expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+  return new MarfaClient({ baseUrl: server.apiUrl, apiKey: minted.data.key });
+}
+
 /** The folder the server keeps its disk store in. */
 export function blobFolder(server: FreshServer): string {
   return join(dirname(server.sqlitePath), "blobs");

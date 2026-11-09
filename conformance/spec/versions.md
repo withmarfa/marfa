@@ -322,7 +322,7 @@ When the server writes a version that no request asked for, such as an enrichmen
 
 When `GET /export?format=archive` carries an item, the server MUST carry the `writer` of each snapshot and, as the line's `writer`, the writer of the version the line carries the item at, however the item is written to while the archive is read.
 
-**Tests:** `compliance/version-writers.test.ts › carries each writer through an archive, the current version's too, and keeps them on restore`.
+**Tests:** `compliance/version-writers-archive.test.ts › carries each writer through an archive, the current version's too, and keeps them on restore`.
 
 ### `versions/writer-restore`
 
@@ -330,13 +330,13 @@ When `POST /restore` writes an archived item, the server MUST keep as writers th
 
 **Reason:** a restore puts back a history that others wrote, so the sign-in that restores it wrote none of it. Only the local command restores (`search-and-filters/restore-operator`), and the server checks an archived writer's form, not that the sign-in it names wrote the version.
 
-**Tests:** `compliance/version-writers.test.ts › carries each writer through an archive, the current version's too, and keeps them on restore`, `› restores an archive that names no writer with none`.
+**Tests:** `compliance/version-writers-archive.test.ts › carries each writer through an archive, the current version's too, and keeps them on restore`, `› restores an archive that names no writer with none`.
 
 ### `versions/writer-restore-invalid`
 
 If an archive names a writer that is neither `null` nor an object holding a `kind` of `browser`, `app`, `key` or `local`, an `id` of 1 to 200 characters, none of them a control character or a bidirectional formatting character, and a `name` of at least one character that `versions/writer-name-bounds` admits with no space at either end, then the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/version-writers.test.ts › refuses an archive that names a malformed writer`.
+**Tests:** `compliance/version-writers-archive.test.ts › refuses an archive that names a malformed writer`.
 
 ## An exact version precondition
 

@@ -2,9 +2,11 @@
 
 pub mod access;
 pub mod addresses;
+pub mod archive;
 pub mod attention;
 pub mod audit;
 pub mod auth;
+pub mod backups;
 pub mod blobs;
 pub mod catalog;
 pub mod clock;
@@ -80,6 +82,7 @@ pub struct App {
     pub metrics: metrics::Permit,
     pub passwords: Passwords,
     pub housekeeping: Housekeeping,
+    pub backups: backups::Backups,
     pub webhooks: webhooks::Webhooks,
     pub jobs: jobs::Jobs,
     pub blobs: Blobs,
@@ -107,6 +110,9 @@ impl App {
             write_wait: start.write_wait,
             readers: READERS,
             migrations: MIGRATIONS,
+            reserve: settings
+                .live()
+                .get(crate::settings::registry::DISK_RESERVE_BYTES),
         };
         let opening = faults.clone();
         let db = tokio::task::spawn_blocking(move || Db::open(&options, opening))
@@ -162,6 +168,7 @@ impl App {
             metrics: metrics::Permit::default(),
             passwords: Passwords::default(),
             housekeeping: Housekeeping::default(),
+            backups: backups::Backups::default(),
             webhooks: webhooks::Webhooks::default(),
             jobs: jobs::Jobs::default(),
             blobs,

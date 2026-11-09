@@ -5,6 +5,7 @@ pub mod answer;
 mod attention;
 mod audit;
 mod auth;
+mod backups;
 mod blobs;
 pub mod body;
 mod bulk;
@@ -22,6 +23,7 @@ mod doors;
 mod edge_types;
 mod edges;
 mod events;
+mod export;
 mod folders;
 mod health;
 mod housekeeping;
@@ -43,6 +45,7 @@ mod overview;
 pub mod pages;
 mod profile;
 mod query;
+mod restore;
 mod root;
 mod sources;
 #[cfg(feature = "test-hooks")]
@@ -153,6 +156,7 @@ fn attention_doors(app: Arc<App>) -> Routes {
 fn count_doors(app: Arc<App>) -> Routes {
     Doors::new()
         .route("/items/stats", get(listing::stats))
+        .route("/export", get(export::export))
         .admitting(app, Admission::Mapped)
 }
 
@@ -226,6 +230,7 @@ fn folder_status_doors(app: Arc<App>) -> Routes {
 
 fn blob_doors() -> Routes {
     Doors::new()
+        .route("/restore", post(restore::restore))
         .route("/blobs", post(blobs::upload))
         .route("/blobs/stores", get(blobs::stores))
         .route("/blobs/orphans", get(blobs::orphans))
@@ -328,6 +333,11 @@ fn shared(app: Arc<App>) -> Routes {
         .route("/housekeeping", get(housekeeping::list))
         .route("/metrics", get(metrics::read))
         .route("/housekeeping/{name}/run", post(housekeeping::run))
+        .route("/backups", get(backups::list).post(backups::run))
+        .route(
+            "/backups/{instance_id}/{name}/restore",
+            post(backups::restore),
+        )
         .route("/sources", get(sources::list))
         .route("/source", get(sources::read).patch(sources::update))
         .merge(schema_doors())

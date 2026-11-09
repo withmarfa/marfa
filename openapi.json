@@ -1567,6 +1567,67 @@
             "type": "string",
             "description": "The build the instance runs, when it is known."
           },
+          "backups": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "ok",
+                  "failing",
+                  "off"
+                ],
+                "description": "`ok`: Marfa backs up on its schedule and the last backup run succeeded. `failing`: the last backup run failed, which makes the overall `status` at least `degraded`. `off`: Marfa takes no scheduled backups."
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "no_bucket",
+                  "turned_off"
+                ],
+                "description": "Why backups are `off`: `no_bucket` when the instance has no object store, `turned_off` when `backup_interval_ms` is 0."
+              },
+              "last_backup": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The name of the last backup Marfa put. Present only for a caller that holds `instance.read`."
+              },
+              "last_backup_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time",
+                "description": "When Marfa took the last backup it put. Present only for a caller that holds `instance.read`."
+              },
+              "failures": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "How many backup runs in a row have failed. Present only for a caller that holds `instance.read`."
+              },
+              "last_error": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "What went wrong in the last failed run. Present only for a caller that holds `instance.read`."
+              },
+              "last_failed_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time",
+                "description": "When the last failed run ended. Present only for a caller that holds `instance.read`."
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "description": "Whether Marfa backs itself up to its object store, and how the last backup went."
+          },
           "housekeeping": {
             "type": "object",
             "properties": {
@@ -1624,7 +1685,8 @@
         "required": [
           "status",
           "components",
-          "unrecognized_stored_values"
+          "unrecognized_stored_values",
+          "backups"
         ],
         "description": "The instance's health: the worst state of its components, and each one's state.",
         "example": {
@@ -8709,7 +8771,7 @@
         ],
         "description": "The instance configuration: its display name, enforcement levers and live settings, with the instance's ID."
       },
-      "InvalidPropertiesOrInvalidSchemaOrValidationErrorRefusal": {
+      "InheritanceViolationOrInvalidPropertiesOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -8718,8 +8780,10 @@
               "code": {
                 "type": "string",
                 "enum": [
+                  "inheritance_violation",
                   "invalid_properties",
                   "invalid_schema",
+                  "property_shadows_field",
                   "validation_error"
                 ],
                 "description": "A machine-readable code for the error. Use it in your logic."
@@ -9276,43 +9340,6 @@
                 "type": "string",
                 "enum": [
                   "export_rows_unrestorable"
-                ],
-                "description": "A machine-readable code for the error. Use it in your logic."
-              },
-              "message": {
-                "type": "string",
-                "description": "A description of the error for a person to read. It can change, so don't match on it."
-              },
-              "details": {
-                "type": "object",
-                "additionalProperties": {},
-                "description": "More about the error, such as the field it concerns. Each code defines its own details."
-              }
-            },
-            "required": [
-              "code",
-              "message"
-            ],
-            "description": "What went wrong."
-          }
-        },
-        "required": [
-          "error"
-        ],
-        "description": "An error response."
-      },
-      "BlobStoreUnavailableOrExportUnrestorableOrWriteContentionRefusal": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "type": "string",
-                "enum": [
-                  "blob_store_unavailable",
-                  "export_unrestorable",
-                  "write_contention"
                 ],
                 "description": "A machine-readable code for the error. Use it in your logic."
               },
@@ -10618,6 +10645,108 @@
             "$ref": "#/components/schemas/WebhookEdgeEvent"
           }
         ]
+      },
+      "BackupNotFoundRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "backup_not_found"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the error, such as the field it concerns. Each code defines its own details."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
+      },
+      "NoBucketRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "no_bucket"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the error, such as the field it concerns. Each code defines its own details."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
+      },
+      "Backup": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The backup's name: the instant Marfa took it, followed by `.tar`.",
+            "example": "2026-11-09T10:15:30.250Z.tar"
+          },
+          "instance_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The ID of the instance that took the backup. Each instance keeps its backups in a folder of its own, and thins only its own."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When Marfa took the backup."
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The backup's size, in bytes."
+          }
+        },
+        "required": [
+          "name",
+          "instance_id",
+          "created_at",
+          "size_bytes"
+        ],
+        "description": "A backup in the instance's object store."
       },
       "InstanceChangedOrSignInAddressChangeUnconfirmedRefusal": {
         "type": "object",
@@ -50776,10 +50905,10 @@
                 "ndjson",
                 "archive"
               ],
-              "description": "`ndjson` for lines of JSON, or `archive` for a `.tar.gz` file that `POST /restore` reads. Defaults to `ndjson`. An archive's `manifest.json` lists under `missing_blobs` each blob it doesn't hold, including a file's blob your credential can't read."
+              "description": "`ndjson` for lines of JSON, or `archive` for a tar file that `POST /restore` reads. Defaults to `ndjson`. An archive's `manifest.json` lists under `missing_blobs` each blob it doesn't hold, including a file's blob your credential can't read."
             },
             "required": false,
-            "description": "`ndjson` for lines of JSON, or `archive` for a `.tar.gz` file that `POST /restore` reads. Defaults to `ndjson`. An archive's `manifest.json` lists under `missing_blobs` each blob it doesn't hold, including a file's blob your credential can't read.",
+            "description": "`ndjson` for lines of JSON, or `archive` for a tar file that `POST /restore` reads. Defaults to `ndjson`. An archive's `manifest.json` lists under `missing_blobs` each blob it doesn't hold, including a file's blob your credential can't read.",
             "name": "format",
             "in": "query"
           },
@@ -50800,14 +50929,14 @@
         ],
         "responses": {
           "200": {
-            "description": "With `format=ndjson`, one JSON object per line: `item` and `metadata` for each item, then `edge` for each edge between them whose type you can read. With `format=archive`, a `.tar.gz` of the items, history, edges, type registrations and blobs you can read. If the export fails partway or your credential ends or narrows below it, the connection ends early and an archive won't unpack.",
+            "description": "With `format=ndjson`, one JSON object per line: each item, then each readable edge between them. With `format=archive`, a tar of the manifest, compressed line files of your registrations and settings, items with their history, and edges, then the blobs. If the export fails partway or your credential ends or stops reading what it carries, the connection ends early and an archive won't unpack.",
             "content": {
               "application/x-ndjson": {
                 "schema": {
                   "type": "string"
                 }
               },
-              "application/gzip": {
+              "application/x-tar": {
                 "schema": {
                   "type": "string",
                   "format": "binary"
@@ -50887,7 +51016,7 @@
             }
           },
           "409": {
-            "description": "- `export_rows_unrestorable`: with `format=archive`, Marfa read the selection twice, and both times a restore would refuse or skip the same row, which was unchanged between the reads, so no archive was sent. `details.row` names the row by `kind`, `id`, `type` and `field`, with the `code` a restore refuses it with or the reason it skips it. Correct the row or its type, then export again.",
+            "description": "- `export_rows_unrestorable`: with `format=archive`, a restore would refuse or skip a row this instance holds, so no archive was sent. `details.row` names the row by `kind`, `id`, `type` and `field`, with the `code` a restore refuses it with or the reason it skips it. Correct the row or its type, then export again.",
             "content": {
               "application/json": {
                 "schema": {
@@ -50953,11 +51082,11 @@
             }
           },
           "503": {
-            "description": "- `blob_store_unavailable`: a blob store failed, or didn't answer in time, while Marfa checked a blob's copy. Try again later.\n- `write_contention`: the database was busy. Nothing changed. Try the request again.\n- `export_unrestorable`: with `format=archive`, writes changed a row that a restore would refuse, or its type, between two reads. No archive was sent. Retry the export.",
+            "description": "- `blob_store_unavailable`: a blob store failed, or didn't answer in time, while Marfa checked a blob's copy. Try again later.\n- `write_contention`: the database was busy. Nothing changed. Try the request again.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BlobStoreUnavailableOrExportUnrestorableOrWriteContentionRefusal"
+                  "$ref": "#/components/schemas/BlobStoreUnavailableOrWriteContentionRefusal"
                 }
               }
             },
@@ -51007,9 +51136,9 @@
         "description": "Restores an exported archive atomically and returns counts of written and skipped records. Other writes wait until it finishes. Requires the private local command.",
         "requestBody": {
           "required": true,
-          "description": "The archive file, as `GET /export?format=archive` returned it, with its `manifest.json`, `items.ndjson`, `edges.ndjson` and `types.ndjson`. Only the build that wrote an archive is sure to read it.",
+          "description": "The archive file, as `GET /export?format=archive` returned it, with its `manifest.json`, `instance.ndjson.gz`, `items.ndjson.gz` and `edges.ndjson.gz`. Only the build that wrote an archive is sure to read it.",
           "content": {
-            "application/gzip": {
+            "application/x-tar": {
               "schema": {
                 "type": "string",
                 "format": "binary"
@@ -51019,7 +51148,7 @@
         },
         "responses": {
           "200": {
-            "description": "Returns the counts. Items and edges keep their IDs, versions and dates, and items keep their tags, extensions and history. Marfa restores an edge, and an item of a type you registered, as archived, even if its type now refuses it or is gone. Marfa leaves an existing item as it is when an archived one has its ID, natural key or link. An archive holds no keys, webhooks, configuration or tombstones.",
+            "description": "Returns the counts. Items and edges keep their IDs, versions, dates and history, even if their type now refuses them or is gone. An item whose ID, natural key or link is taken is left as it is, and a setting, icon, source name or connector state is set only where none is. An archive holds no sign-in, keys, apps, webhooks or tombstones.",
             "content": {
               "application/json": {
                 "schema": {
@@ -51104,6 +51233,34 @@
                         "type": "number"
                       },
                       "description": "How many source names and marks Marfa skipped for each reason: `already_set` when the instance already has a name or mark for the source, `unknown_mark` when the mark isn't the ID of an icon in a set Marfa pins, `duplicate_code` when another line of the archive lands on the same code and the line already carrying it wins."
+                    },
+                    "settings_added": {
+                      "type": "number",
+                      "description": "How many settings Marfa stored, for settings the instance had not stored."
+                    },
+                    "settings_skipped": {
+                      "type": "number",
+                      "description": "How many settings Marfa skipped because the instance already stores them."
+                    },
+                    "connector_states_added": {
+                      "type": "number",
+                      "description": "How many connector state documents Marfa stored, for sources the instance held none for."
+                    },
+                    "connector_states_skipped": {
+                      "type": "number",
+                      "description": "How many connector state documents Marfa skipped because the instance already holds one for the source."
+                    },
+                    "connector_agreements_added": {
+                      "type": "number",
+                      "description": "How many connector agreements Marfa stored."
+                    },
+                    "connector_agreements_skipped": {
+                      "type": "number",
+                      "description": "How many connector agreements Marfa skipped because the instance holds no such item or already holds an agreement for it."
+                    },
+                    "set_up_again": {
+                      "type": "string",
+                      "description": "A sentence saying that an archive holds no sign-in, keys, apps or webhooks, so you set them up again on this instance."
                     }
                   },
                   "required": [
@@ -51123,7 +51280,14 @@
                     "type_icons_skipped_reasons",
                     "sources_added",
                     "sources_skipped",
-                    "sources_skipped_reasons"
+                    "sources_skipped_reasons",
+                    "settings_added",
+                    "settings_skipped",
+                    "connector_states_added",
+                    "connector_states_skipped",
+                    "connector_agreements_added",
+                    "connector_agreements_skipped",
+                    "set_up_again"
                   ]
                 }
               }
@@ -51138,11 +51302,11 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: the body isn't a valid archive, lacks one of its four files (`details.entries`), repeats an entry, is at another version, has an invalid row, or has a file over 64 MiB.\n- `invalid_properties`: a `core` or `system` item breaks its type or its schedule can't unfold, or `strict_mode` refuses a property.\n- `invalid_schema`: an archived type is invalid or has an unknown key.",
+            "description": "- `validation_error`: the body isn't an archive, lacks or repeats an entry, is at another version, has an invalid row, or a line over 64 MiB.\n- `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.\n- `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InvalidPropertiesOrInvalidSchemaOrValidationErrorRefusal"
+                  "$ref": "#/components/schemas/InheritanceViolationOrInvalidPropertiesOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -51270,6 +51434,27 @@
               }
             }
           },
+          "422": {
+            "description": "`compatible_with_violation`: an archived type's `compatible_with` names a type neither the archive nor this instance holds, or one the type doesn't satisfy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompatibleWithViolationRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
           "429": {
             "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
             "content": {
@@ -51368,6 +51553,893 @@
               "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
             },
             "description": "The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers."
+          }
+        ],
+        "x-marfa-local-command": true
+      }
+    },
+    "/backups": {
+      "get": {
+        "operationId": "listBackups",
+        "tags": [
+          "Export and restore"
+        ],
+        "summary": "List backups",
+        "description": "Returns the backups in the instance's object store, newest first, including those another instance on the same prefix took, so a new instance can restore the one it replaces. Requires the private local command.",
+        "responses": {
+          "200": {
+            "description": "Returns every backup, in one page. A backup is an archive of every item, edge and instance line, the trash included, without file bytes, which the object store already holds.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Backup"
+                      },
+                      "description": "The backups, newest first."
+                    },
+                    "next_cursor": {
+                      "type": "null",
+                      "description": "Always `null`: every backup is in one page."
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "next_cursor"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              }
+            }
+          },
+          "400": {
+            "description": "- `validation_error`: the query has a parameter this endpoint doesn't take.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "403": {
+            "description": "Requires the private local command.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "409": {
+            "description": "`no_bucket`: the instance has no object store, so it keeps no backups. Set `S3_BUCKET` to keep them.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoBucketRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "503": {
+            "description": "`blob_store_unavailable`: the object store failed, or didn't answer in time. Try again later.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlobStoreUnavailableOrWriteContentionRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          }
+        },
+        "x-marfa-local-command": true
+      },
+      "post": {
+        "operationId": "runBackup",
+        "tags": [
+          "Export and restore"
+        ],
+        "summary": "Take a backup",
+        "description": "Takes a backup now and puts it in the instance's object store, whether or not anything changed since the last one, then deletes this instance's backups that thinning no longer keeps. Requires the private local command.",
+        "responses": {
+          "200": {
+            "description": "Returns the backup Marfa put, and how many old backups it deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "outcome": {
+                      "type": "string",
+                      "enum": [
+                        "put"
+                      ],
+                      "description": "Always `put`."
+                    },
+                    "backup": {
+                      "$ref": "#/components/schemas/Backup"
+                    },
+                    "removed": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "How many old backups Marfa deleted."
+                    },
+                    "unremoved": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "How many old backups Marfa tried to delete and couldn't. It tries again after the next backup."
+                    }
+                  },
+                  "required": [
+                    "outcome",
+                    "backup",
+                    "removed",
+                    "unremoved"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              }
+            }
+          },
+          "400": {
+            "description": "- `validation_error`: the query has a parameter this endpoint doesn't take.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "403": {
+            "description": "Requires the private local command.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "409": {
+            "description": "- `housekeeping_job_running`: a backup is running. Try again once it ends.\n- `no_bucket`: the instance has no object store, so it keeps no backups.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/HousekeepingJobRunningRefusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/NoBucketRefusal"
+                    }
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "503": {
+            "description": "`blob_store_unavailable`: the object store failed, or didn't answer in time. Try again later.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlobStoreUnavailableOrWriteContentionRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "507": {
+            "description": "`insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsufficientStorageRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          }
+        },
+        "x-marfa-local-command": true
+      }
+    },
+    "/backups/{instance_id}/{name}/restore": {
+      "post": {
+        "operationId": "restoreBackup",
+        "tags": [
+          "Export and restore"
+        ],
+        "summary": "Restore a backup",
+        "description": "Restores a backup from the instance's object store, as `POST /restore` restores an archive. Other writes wait until it finishes. Requires the private local command.",
+        "responses": {
+          "200": {
+            "description": "Returns the counts. Items and edges keep their IDs, versions, dates and history, even if their type now refuses them or is gone. An item whose ID, natural key or link is taken is left as it is, and a setting, icon, source name or connector state is set only where none is. An archive holds no sign-in, keys, apps, webhooks or tombstones.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "imported": {
+                      "type": "number",
+                      "description": "How many items Marfa wrote."
+                    },
+                    "duplicates": {
+                      "type": "number",
+                      "description": "How many items Marfa skipped because their ID, natural key or link is already taken."
+                    },
+                    "edges_imported": {
+                      "type": "number",
+                      "description": "How many edges Marfa wrote."
+                    },
+                    "edges_skipped": {
+                      "type": "number",
+                      "description": "How many edges Marfa skipped."
+                    },
+                    "edges_skipped_reasons": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "number"
+                      },
+                      "description": "How many edges Marfa skipped for each reason, such as `endpoint_missing` or `already_present`."
+                    },
+                    "blobs_imported": {
+                      "type": "number",
+                      "description": "How many blobs the archive carried whose bytes match their hash, whether or not the instance already had them."
+                    },
+                    "blobs_missing": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The hashes of the blobs the archive names but doesn't carry with matching bytes, and that Marfa holds no copy of. Upload their bytes again with `POST /blobs` to restore them."
+                    },
+                    "types_registered": {
+                      "type": "number",
+                      "description": "How many types Marfa registered."
+                    },
+                    "types_skipped": {
+                      "type": "number",
+                      "description": "How many types Marfa skipped because the instance already registers them identically."
+                    },
+                    "edge_types_registered": {
+                      "type": "number",
+                      "description": "How many edge types Marfa registered."
+                    },
+                    "edge_types_skipped": {
+                      "type": "number",
+                      "description": "How many edge types Marfa skipped because the instance already registers them identically."
+                    },
+                    "type_icons_added": {
+                      "type": "number",
+                      "description": "How many of the owner's type icons Marfa added, for types the instance had no owner icon for."
+                    },
+                    "type_icons_skipped": {
+                      "type": "number",
+                      "description": "How many of the owner's type icons Marfa skipped."
+                    },
+                    "type_icons_skipped_reasons": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "number"
+                      },
+                      "description": "How many of the owner's type icons Marfa skipped for each reason: `already_set` when the instance already has an owner icon for the type, `unknown_icon` when the icon isn't the ID of an icon in a set Marfa pins."
+                    },
+                    "sources_added": {
+                      "type": "number",
+                      "description": "How many source names and marks Marfa added, for sources the instance names nothing yet."
+                    },
+                    "sources_skipped": {
+                      "type": "number",
+                      "description": "How many source names and marks Marfa skipped."
+                    },
+                    "sources_skipped_reasons": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "number"
+                      },
+                      "description": "How many source names and marks Marfa skipped for each reason: `already_set` when the instance already has a name or mark for the source, `unknown_mark` when the mark isn't the ID of an icon in a set Marfa pins, `duplicate_code` when another line of the archive lands on the same code and the line already carrying it wins."
+                    },
+                    "settings_added": {
+                      "type": "number",
+                      "description": "How many settings Marfa stored, for settings the instance had not stored."
+                    },
+                    "settings_skipped": {
+                      "type": "number",
+                      "description": "How many settings Marfa skipped because the instance already stores them."
+                    },
+                    "connector_states_added": {
+                      "type": "number",
+                      "description": "How many connector state documents Marfa stored, for sources the instance held none for."
+                    },
+                    "connector_states_skipped": {
+                      "type": "number",
+                      "description": "How many connector state documents Marfa skipped because the instance already holds one for the source."
+                    },
+                    "connector_agreements_added": {
+                      "type": "number",
+                      "description": "How many connector agreements Marfa stored."
+                    },
+                    "connector_agreements_skipped": {
+                      "type": "number",
+                      "description": "How many connector agreements Marfa skipped because the instance holds no such item or already holds an agreement for it."
+                    },
+                    "set_up_again": {
+                      "type": "string",
+                      "description": "A sentence saying that an archive holds no sign-in, keys, apps or webhooks, so you set them up again on this instance."
+                    },
+                    "backup": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "description": "The backup's name."
+                        },
+                        "instance_id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "description": "The ID of the instance that took the backup."
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "instance_id"
+                      ],
+                      "description": "The backup Marfa restored."
+                    }
+                  },
+                  "required": [
+                    "imported",
+                    "duplicates",
+                    "edges_imported",
+                    "edges_skipped",
+                    "edges_skipped_reasons",
+                    "blobs_imported",
+                    "blobs_missing",
+                    "types_registered",
+                    "types_skipped",
+                    "edge_types_registered",
+                    "edge_types_skipped",
+                    "type_icons_added",
+                    "type_icons_skipped",
+                    "type_icons_skipped_reasons",
+                    "sources_added",
+                    "sources_skipped",
+                    "sources_skipped_reasons",
+                    "settings_added",
+                    "settings_skipped",
+                    "connector_states_added",
+                    "connector_states_skipped",
+                    "connector_agreements_added",
+                    "connector_agreements_skipped",
+                    "set_up_again",
+                    "backup"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              }
+            }
+          },
+          "400": {
+            "description": "- `validation_error`: the body isn't an archive, lacks or repeats an entry, is at another version, has an invalid row, or a line over 64 MiB.\n- `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.\n- `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InheritanceViolationOrInvalidPropertiesOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "403": {
+            "description": "Requires the private local command.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "404": {
+            "description": "`backup_not_found`: the object store holds no backup by that name from that instance.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupNotFoundRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "409": {
+            "description": "- `conflict`: the archive redefines a type this instance registers differently or registered while the restore ran, carries a core edge type, or carries a snapshot ID that already exists.\n- `link_taken`: the archive registers a type naming a `link_field` in which two rows a forced delete left share a value.\n- `no_bucket`: the instance has no object store, so it keeps no backups.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ConflictOrLinkTakenRefusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/InstanceChangedRefusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/NoBucketRefusal"
+                    }
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "413": {
+            "description": "- `request_too_large`: an item's properties, the properties of one of its earlier versions, or an edge's properties are larger than the bulk write endpoints accept. `details` names the row and the field.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestTooLargeRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "422": {
+            "description": "`compatible_with_violation`: an archived type's `compatible_with` names a type neither the archive nor this instance holds, or one the type doesn't satisfy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompatibleWithViolationRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "503": {
+            "description": "- `blob_store_unavailable`: the object store failed, or didn't answer in time, while Marfa read the backup or checked a blob's copy, or a store hasn't finished an earlier write or delete of a blob the archive names. Nothing was written. Try again later.\n- `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlobStoreUnavailableOrWriteContentionRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "507": {
+            "description": "`insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsufficientStorageRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The ID of the instance that took the backup, as `GET /backups` lists it."
+            },
+            "required": true,
+            "description": "The ID of the instance that took the backup, as `GET /backups` lists it.",
+            "name": "instance_id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "The backup's name, as `GET /backups` lists it."
+            },
+            "required": true,
+            "description": "The backup's name, as `GET /backups` lists it.",
+            "name": "name",
+            "in": "path"
           }
         ],
         "x-marfa-local-command": true
@@ -51729,7 +52801,10 @@
       "description": "Export the instance's data, and restore it from an archive.",
       "x-operation-order": [
         "exportArchive",
-        "restoreArchive"
+        "restoreArchive",
+        "listBackups",
+        "runBackup",
+        "restoreBackup"
       ]
     }
   ],

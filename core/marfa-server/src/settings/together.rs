@@ -84,8 +84,8 @@ pub fn judge(
         .collect()
 }
 
-/// A write through `/config` is refused, so a seed is the only way a setting can start
-/// outside a rule.
+/// A write through `/config` or a restore is refused, so a seed is the only way a setting can
+/// start outside a rule.
 #[cfg(feature = "test-hooks")]
 pub fn seed_lines(seeds: &registry::Seeds, start: &Fixed) -> Vec<String> {
     use std::sync::Arc;

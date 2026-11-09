@@ -33,7 +33,10 @@ pub fn is_picture(request: &Request) -> bool {
 
 /// A body the general cap and deadline leave to the door that reads it.
 pub fn reads_own_body(request: &Request) -> bool {
-    super::blobs::is_upload(request) || is_picture(request) || super::inbound::is_delivery(request)
+    super::blobs::is_upload(request)
+        || super::restore::is_restore(request)
+        || is_picture(request)
+        || super::inbound::is_delivery(request)
 }
 
 fn too_large() -> Refusal {

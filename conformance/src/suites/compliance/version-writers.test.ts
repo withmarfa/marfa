@@ -1,4 +1,3 @@
-import { v7 as uuidv7 } from "uuid";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { TEST_OWNER as OWNER } from "../../utils/target.js";
@@ -10,12 +9,6 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { connect, issuerOrigin, registerApp } from "../../utils/signed-in.js";
-import {
-  itemsArchive,
-  listTarGzEntries,
-  readTarGzEntry,
-  tarGz,
-} from "../../utils/archive.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
 /**
@@ -23,10 +16,10 @@ import { expectMatchesSchema } from "../../utils/openapi.js";
  * version. Each kind of sign-in writes here the way it does in use: a key and
  * an app through the item operations, the owner's browser through the approval
  * that records an app, the local command through the sign-in operations that
- * change that record, and the enrichment sweep on its own. A second server takes the archive back.
+ * change that record, and the enrichment sweep on its own. How an archive
+ * carries writers is in `version-writers-archive.test.ts`.
  */
 let server: FreshServer;
-let target: FreshServer;
 let origin: string;
 
 const CLIENT_HEADER = "x-conformance-client";
@@ -35,21 +28,18 @@ const SAFARI =
 let addresses = 0;
 
 beforeAll(async () => {
-  [server, target] = await Promise.all([
-    bootFreshServer("version-writers", {
-      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
-      MARFA_ENRICHMENT_ENABLED: "true",
-      // Driven through the housekeeping operation rather than the scheduler.
-      MARFA_ENRICHMENT_INTERVAL_MS: "3600000",
-    }),
-    bootFreshServer("version-writers-restore"),
-  ]);
+  server = await bootFreshServer("version-writers", {
+    MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+    MARFA_ENRICHMENT_ENABLED: "true",
+    // Driven through the housekeeping operation rather than the scheduler.
+    MARFA_ENRICHMENT_INTERVAL_MS: "3600000",
+  });
   origin = await issuerOrigin(server);
-}, 2 * FRESH_SERVER_TIMEOUT_MS);
+}, FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
-  await Promise.all([server?.stop(), target?.stop()]);
-}, 2 * FRESH_SERVER_TIMEOUT_MS);
+  await server?.stop();
+}, FRESH_SERVER_TIMEOUT_MS);
 
 interface Writer {
   kind: string;
@@ -500,268 +490,6 @@ describe("who wrote each version", () => {
     ]);
   });
 
-  it("carries each writer through an archive, the current version's too, and keeps them on restore", async () => {
-    const first = await mintKey("archived first writer");
-    const second = await mintKey("archived second writer");
-    const id = await createNote(first.key);
-    await changeNote(second.key, id, 1, "second");
-    await changeNote(first.key, id, 2, "third");
-    const byFirst = {
-      kind: "key",
-      id: first.id,
-      name: "archived first writer",
-    };
-    const bySecond = {
-      kind: "key",
-      id: second.id,
-      name: "archived second writer",
-    };
-
-    const exporter = await mintKey("exporter", { "core.note": "read" });
-    const archive = await new MarfaClient({
-      baseUrl: server.apiUrl,
-      apiKey: exporter.key,
-    }).exportArchive({ type: "core.note", source: first.source });
-    expect(archive.status).toBe(200);
-    const line = (readTarGzEntry(archive.data, "items.ndjson") ?? "")
-      .split("\n")
-      .filter((text) => text.trim() !== "")
-      .map((text) => JSON.parse(text) as Record<string, unknown>)
-      .find((parsed) => (parsed.item as { id: string }).id === id);
-    expect(line, "the archive does not carry the note").toBeDefined();
-    expect(writers(line!.versions as Snapshot[])).toEqual([byFirst, bySecond]);
-    expect(line!.writer).toEqual(byFirst);
-
-    const owner = new MarfaClient({
-      baseUrl: target.apiUrl,
-      apiKey: "",
-      controlSocket: target.controlSocket,
-    });
-    const restored = await owner.restoreArchive(archive.data);
-    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
-    expect(
-      writers(await versionsOf(target.workingKey, id, target.apiUrl)),
-    ).toEqual([byFirst, bySecond]);
-    // The archived current version keeps its writer once it is left behind.
-    const changed = await call(
-      target.workingKey,
-      "PATCH",
-      `/items/${id}`,
-      { version: 3, properties: { body: "after the restore" } },
-      target.apiUrl,
-    );
-    expect(changed.status, JSON.stringify(changed.body)).toBe(200);
-    expect(
-      writers(await versionsOf(target.workingKey, id, target.apiUrl)),
-    ).toEqual([byFirst, bySecond, byFirst]);
-  });
-
-  it("marks restored app connections inactive without changing their recorded fields", async () => {
-    const properties = {
-      kind: "app",
-      client_id: "archived-client",
-      user_id: "archived-owner",
-      scopes: [],
-      status: "active",
-      granted_at: "2026-01-01T00:00:00.000Z",
-    };
-    const id = uuidv7();
-    const owner = new MarfaClient({
-      baseUrl: target.apiUrl,
-      apiKey: "",
-      controlSocket: target.controlSocket,
-    });
-    const restored = await owner.restoreArchive(
-      itemsArchive([
-        { id, type: "system.connection", source: "marfa/oauth", properties },
-      ]),
-    );
-    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
-    const row = await new MarfaClient({
-      baseUrl: target.apiUrl,
-      apiKey: target.workingKey,
-    }).getItem(id);
-    expect(row.status).toBe(200);
-    expect(row.data.item.properties).toEqual({
-      ...properties,
-      status: "revoked",
-    });
-  });
-
-  it("restores app-written items twice with their writers and separate natural keys", async () => {
-    const app = await approvedApp(server, ["core.note:write"]);
-    const sourceId = `restore-app-${String(Date.now())}`;
-    const created = await call(app.token, "POST", "/items", {
-      type: "core.note",
-      source_id: sourceId,
-      properties: { body: "old app" },
-    });
-    expect(created.status).toBe(201);
-    const row = created.body.item as { id: string; source: string };
-    await changeNote(app.token, row.id, 1, "old app second version");
-    const before = await versionsOf(app.token, row.id);
-    const exporter = new MarfaClient({
-      baseUrl: server.apiUrl,
-      apiKey: server.workingKey,
-    });
-    const archive = await exporter.exportArchive({ source: row.source });
-    expect(archive.status).toBe(200);
-    const owner = new MarfaClient({
-      baseUrl: target.apiUrl,
-      apiKey: "",
-      controlSocket: target.controlSocket,
-    });
-    const restored = await owner.restoreArchive(archive.data);
-    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
-    expect(
-      (
-        await new MarfaClient({
-          baseUrl: target.apiUrl,
-          apiKey: target.workingKey,
-        }).getItem(row.id)
-      ).data.item.source,
-    ).toBe(`restored:${row.source}`);
-    expect(
-      writers(await versionsOf(target.workingKey, row.id, target.apiUrl)),
-    ).toEqual(writers(before));
-    const nextApp = await approvedApp(target, ["core.note:write"]);
-    const next = await call(
-      nextApp.token,
-      "POST",
-      "/items",
-      {
-        type: "core.note",
-        source_id: sourceId,
-        properties: { body: "new app" },
-      },
-      target.apiUrl,
-    );
-    expect(next.status).toBe(201);
-    expect((next.body.item as { id: string }).id).not.toBe(row.id);
-    const reader = new MarfaClient({
-      baseUrl: target.apiUrl,
-      apiKey: target.workingKey,
-    });
-    const again = await reader.exportArchive({
-      source: `restored:${row.source}`,
-    });
-    expect(again.status).toBe(200);
-    const secondTarget = await bootFreshServer("app-restore-again");
-    try {
-      const secondOwner = new MarfaClient({
-        baseUrl: secondTarget.apiUrl,
-        apiKey: "",
-        controlSocket: secondTarget.controlSocket,
-      });
-      const second = await secondOwner.restoreArchive(again.data);
-      expect(second.status, JSON.stringify(second.error)).toBe(200);
-      expect(second.data.imported).toBe(1);
-      expect(
-        (
-          await new MarfaClient({
-            baseUrl: secondTarget.apiUrl,
-            apiKey: secondTarget.workingKey,
-          }).getItem(row.id)
-        ).data.item.source,
-      ).toBe(`restored:${row.source}`);
-      expect(
-        writers(
-          await versionsOf(
-            secondTarget.workingKey,
-            row.id,
-            secondTarget.apiUrl,
-          ),
-        ),
-      ).toEqual(writers(before));
-      const changed = await call(
-        secondTarget.workingKey,
-        "PATCH",
-        `/items/${row.id}`,
-        { version: 2, properties: { body: "after second restore" } },
-        secondTarget.apiUrl,
-      );
-      expect(changed.status, JSON.stringify(changed.body)).toBe(200);
-      expect(
-        writers(
-          await versionsOf(
-            secondTarget.workingKey,
-            row.id,
-            secondTarget.apiUrl,
-          ),
-        ),
-      ).toEqual([...writers(before), before[0]!.writer]);
-    } finally {
-      await secondTarget.stop();
-    }
-  });
-
-  it("restores an archive that names no writer with none", async () => {
-    const minted = await mintKey("writer the archive forgets");
-    const id = await createNote(minted.key, "forgotten");
-    await changeNote(minted.key, id, 1, "second");
-    await changeNote(minted.key, id, 2, "third");
-    const exporter = await mintKey("forgetting exporter", {
-      "core.note": "read",
-    });
-    const archive = await new MarfaClient({
-      baseUrl: server.apiUrl,
-      apiKey: exporter.key,
-    }).exportArchive({ type: "core.note", source: minted.source });
-    expect(archive.status).toBe(200);
-    let stripped = 0;
-    const forgotten = tarGz(
-      listTarGzEntries(archive.data).map((entry) => ({
-        name: entry.name,
-        body:
-          entry.name === "items.ndjson"
-            ? Buffer.from(
-                entry.body
-                  .toString("utf8")
-                  .split("\n")
-                  .filter((text) => text.trim() !== "")
-                  .map((text) => {
-                    const line = JSON.parse(text) as Record<string, unknown>;
-                    // The witness: the export named a writer to take out.
-                    if (line.writer) stripped += 1;
-                    delete line.writer;
-                    for (const snapshot of line.versions as Record<
-                      string,
-                      unknown
-                    >[]) {
-                      if (snapshot.writer) stripped += 1;
-                      delete snapshot.writer;
-                    }
-                    return `${JSON.stringify(line)}\n`;
-                  })
-                  .join(""),
-              )
-            : entry.body,
-      })),
-    );
-    expect(stripped).toBe(3);
-    const owner = new MarfaClient({
-      baseUrl: target.apiUrl,
-      apiKey: "",
-      controlSocket: target.controlSocket,
-    });
-    const restored = await owner.restoreArchive(forgotten);
-    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
-    expect(
-      writers(await versionsOf(target.workingKey, id, target.apiUrl)),
-    ).toEqual([null, null]);
-    const changed = await call(
-      target.workingKey,
-      "PATCH",
-      `/items/${id}`,
-      { version: 3, properties: { body: "after the restore" } },
-      target.apiUrl,
-    );
-    expect(changed.status, JSON.stringify(changed.body)).toBe(200);
-    expect(
-      writers(await versionsOf(target.workingKey, id, target.apiUrl)),
-    ).toEqual([null, null, null]);
-  });
-
   it("names an app by its client id once its sign-in record is gone, and still takes its write", async () => {
     const browser = await signIn();
     const app = await approveApp(browser, "app whose record goes");
@@ -783,93 +511,6 @@ describe("who wrote each version", () => {
       { kind: "app", id: record.id, name: "app whose record goes" },
       { kind: "app", id: app.clientId, name: "app whose record goes" },
     ]);
-  });
-
-  it("refuses an archive that names a malformed writer", async () => {
-    const minted = await mintKey("archive source");
-    const id = await createNote(minted.key, "malformed source");
-    await changeNote(minted.key, id, 1, "second");
-    const exporter = await mintKey("malformed exporter", {
-      "core.note": "read",
-    });
-    const archive = await new MarfaClient({
-      baseUrl: server.apiUrl,
-      apiKey: exporter.key,
-    }).exportArchive({ type: "core.note", source: minted.source });
-    expect(archive.status).toBe(200);
-    const owner = new MarfaClient({
-      baseUrl: target.apiUrl,
-      apiKey: "",
-      controlSocket: target.controlSocket,
-    });
-
-    const edits: [string, (line: Record<string, unknown>) => void][] = [
-      [
-        "versions.0.writer.kind",
-        (l) => {
-          (l.versions as Record<string, unknown>[])[0]!.writer = {
-            kind: "robot",
-            id: "x",
-            name: "x",
-          };
-        },
-      ],
-      [
-        "versions.0.writer.name",
-        (l) => {
-          (l.versions as Record<string, unknown>[])[0]!.writer = {
-            kind: "key",
-            id: "x",
-            name: "a\u0007b",
-          };
-        },
-      ],
-      [
-        "writer.id",
-        (l) => {
-          l.writer = { kind: "key", id: "", name: "x" };
-        },
-      ],
-      [
-        "writer",
-        (l) => {
-          l.writer = "a key";
-        },
-      ],
-    ];
-    for (const [field, edit] of edits) {
-      const edited = tarGz(
-        listTarGzEntries(archive.data).map((entry) => ({
-          name: entry.name,
-          body:
-            entry.name === "items.ndjson"
-              ? Buffer.from(
-                  entry.body
-                    .toString("utf8")
-                    .split("\n")
-                    .filter((text) => text.trim() !== "")
-                    .map((text) => {
-                      const parsed = JSON.parse(text) as Record<
-                        string,
-                        unknown
-                      >;
-                      if ((parsed.item as { id: string }).id === id)
-                        edit(parsed);
-                      return `${JSON.stringify(parsed)}\n`;
-                    })
-                    .join(""),
-                )
-              : entry.body,
-        })),
-      );
-      const refused = await owner.restoreArchive(edited);
-      expect(refused.status, field).toBe(400);
-      expect(refused.error?.error.code, field).toBe("validation_error");
-      expect(
-        (refused.error?.error.details as { field?: string } | undefined)?.field,
-        field,
-      ).toBe(field);
-    }
   });
 
   it("names a key or an app whose chosen name is unprintable or too long as the listing does", async () => {

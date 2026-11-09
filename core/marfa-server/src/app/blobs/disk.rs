@@ -112,6 +112,17 @@ impl Disk {
         })
     }
 
+    /// A file of the server's own in `tmp`, which a start empties. It blocks.
+    pub fn scratch(&self) -> io::Result<Scratch> {
+        let path = self.tmp().join(Uuid::now_v7().to_string());
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&path)?;
+        Ok(Scratch { path, file })
+    }
+
     /// Moves a sealed file into place over whatever stands there, which may be a damaged
     /// copy's bytes, and syncs it and every folder whose entries changed, the root included.
     pub fn publish(&self, staged: &mut Staged, hash: &Hash) -> io::Result<()> {
@@ -332,6 +343,45 @@ impl Drop for Staged {
         if self.published {
             return;
         }
+        let path = std::mem::take(&mut self.path);
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                runtime.spawn_blocking(move || unspool(&path));
+            }
+            Err(_) => unspool(&path),
+        }
+    }
+}
+
+/// A file in `tmp` the server writes and reads back. It goes when this does.
+#[derive(Debug)]
+pub struct Scratch {
+    path: PathBuf,
+    file: File,
+}
+
+impl Scratch {
+    #[cfg(test)]
+    pub fn at(path: PathBuf) -> io::Result<Scratch> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&path)?;
+        Ok(Scratch { path, file })
+    }
+
+    pub fn file(&mut self) -> &mut File {
+        &mut self.file
+    }
+
+    pub fn reopen(&self) -> io::Result<File> {
+        File::open(&self.path)
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
         let path = std::mem::take(&mut self.path);
         match tokio::runtime::Handle::try_current() {
             Ok(runtime) => {

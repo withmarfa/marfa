@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import { listTarGzEntries, tarGz } from "../../utils/archive.js";
+import { editLineFile } from "../../utils/archive.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -173,67 +173,73 @@ describe("compatible type archives", () => {
           baseUrl: destination.apiUrl,
           apiKey: destination.workingKey,
         });
-        const broken = tarGz(
-          listTarGzEntries(archive).map((entry) => {
-            if (entry.name !== "types.ndjson") return entry;
-            const lines = entry.body
-              .toString()
-              .trim()
-              .split("\n")
-              .map((line) => {
-                const row = JSON.parse(line) as {
-                  type: {
-                    id: string;
-                    compatible_with: unknown;
-                    fields: Record<string, unknown>;
-                    parent?: string;
-                    display_hints?: { title_field: string };
-                    link_field?: string;
-                    merge_policy?: { fields: Record<string, string> };
-                    required?: string[];
-                  };
+        const broken = editLineFile(archive, "instance", (text) => {
+          const lines = text
+            .trim()
+            .split("\n")
+            .map((line) => {
+              const row = JSON.parse(line) as {
+                type?: {
+                  id: string;
+                  compatible_with: unknown;
+                  fields: Record<string, unknown>;
+                  parent?: string;
+                  display_hints?: { title_field: string };
+                  link_field?: string;
+                  merge_policy?: { fields: Record<string, string> };
+                  required?: string[];
                 };
-                if (row.type.id === first) {
-                  if (fault === "missing target")
-                    row.type.compatible_with = ["user.absent_target"];
-                  else if (fault === "incompatible field")
-                    row.type.fields.title = { type: "integer", required: true };
-                  else if (fault === "malformed declaration")
-                    row.type.compatible_with = [42];
-                }
-                if (row.type.id === child) {
-                  if (fault === "missing parent")
-                    row.type.parent = "user.absent_parent";
-                  if (fault === "display hint")
-                    row.type.display_hints = { title_field: "absent" };
-                  if (fault === "link field") row.type.link_field = "absent";
-                  if (fault === "merge field")
-                    row.type.merge_policy = {
-                      fields: { absent: "last_writer_wins" },
-                    };
-                  if (fault === "inherited shape")
-                    row.type.fields.title = { type: "integer", required: true };
-                  if (fault === "inherited thumbnail")
-                    row.type.fields.preview = { type: "thumbnail" };
-                  if (fault === "unknown required field")
-                    row.type.required = ["absent"];
-                }
-                if (row.type.id === parent) {
-                  if (fault === "parent cycle") row.type.parent = child;
-                  if (fault === "inherited thumbnail")
-                    row.type.fields.cover = { type: "thumbnail" };
-                }
-                return JSON.stringify(row);
-              });
-            return { name: entry.name, body: lines.join("\n") + "\n" };
-          }),
-        );
+              };
+              if (row.type === undefined) return line;
+              if (row.type.id === first) {
+                if (fault === "missing target")
+                  row.type.compatible_with = ["user.absent_target"];
+                else if (fault === "incompatible field")
+                  row.type.fields.title = { type: "integer", required: true };
+                else if (fault === "malformed declaration")
+                  row.type.compatible_with = [42];
+              }
+              if (row.type.id === child) {
+                if (fault === "missing parent")
+                  row.type.parent = "user.absent_parent";
+                if (fault === "display hint")
+                  row.type.display_hints = { title_field: "absent" };
+                if (fault === "link field") row.type.link_field = "absent";
+                if (fault === "merge field")
+                  row.type.merge_policy = {
+                    fields: { absent: "last_writer_wins" },
+                  };
+                if (fault === "inherited shape")
+                  row.type.fields.title = { type: "integer", required: true };
+                if (fault === "inherited thumbnail")
+                  row.type.fields.preview = { type: "thumbnail" };
+                if (fault === "unknown required field")
+                  row.type.required = ["absent"];
+              }
+              if (row.type.id === parent) {
+                if (fault === "parent cycle") row.type.parent = child;
+                if (fault === "inherited thumbnail")
+                  row.type.fields.cover = { type: "thumbnail" };
+              }
+              return JSON.stringify(row);
+            });
+          return lines.join("\n") + "\n";
+        });
         const refused = await owner.restoreArchive(broken);
-        expect(refused.status, JSON.stringify(refused.error)).toBe(400);
+        // The status and code `POST /types` answers the same definition with.
+        expect(refused.status, JSON.stringify(refused.error)).toBe(
+          fault === "missing target" || fault === "incompatible field"
+            ? 422
+            : 400,
+        );
         expect(refused.error?.error.code).toBe(
           fault === "missing parent" || fault === "parent cycle"
             ? "validation_error"
-            : "invalid_schema",
+            : fault === "missing target" || fault === "incompatible field"
+              ? "compatible_with_violation"
+              : fault === "inherited shape"
+                ? "inheritance_violation"
+                : "invalid_schema",
         );
         for (const type of allTypes)
           expect((await worker.getType(type)).status).toBe(404);
@@ -330,21 +336,10 @@ describe("compatible type archives", () => {
           apiKey: destination.workingKey,
         });
         const bytes = reversed
-          ? tarGz(
-              listTarGzEntries(archive).map((entry) =>
-                entry.name === "types.ndjson"
-                  ? {
-                      name: entry.name,
-                      body:
-                        entry.body
-                          .toString()
-                          .trim()
-                          .split("\n")
-                          .reverse()
-                          .join("\n") + "\n",
-                    }
-                  : entry,
-              ),
+          ? editLineFile(
+              archive,
+              "instance",
+              (text) => text.trim().split("\n").reverse().join("\n") + "\n",
             )
           : archive;
         const restored = await owner.restoreArchive(bytes);

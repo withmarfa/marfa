@@ -16,6 +16,7 @@ use super::refusal::{Code, Refusal, Result};
 
 pub(crate) use read::hydrate;
 pub use read::{Blocks, ItemListing, Listing, Reach, get, list, of_item};
+pub use rows::End;
 pub(crate) use rows::Store;
 
 #[derive(Clone, Debug)]
@@ -43,6 +44,10 @@ struct EdgeHead<'a> {
 }
 
 impl Edge {
+    pub fn seq(&self) -> i64 {
+        self.seq
+    }
+
     pub fn answered(&self) -> Result<String> {
         with_properties(
             &EdgeHead {
@@ -116,4 +121,32 @@ pub fn count_of_type(tx: &Transaction<'_>, edge_type: &str) -> Result<i64> {
 
 pub fn target_types(tx: &Transaction<'_>, edge_type: &str) -> Result<Vec<String>> {
     rows::target_types(tx, edge_type)
+}
+
+/// An edge, its two ends, and the digests it names that lend.
+pub struct Ended {
+    pub edge: Edge,
+    pub source: End,
+    pub target: End,
+    pub lending: Vec<String>,
+}
+
+/// A page of edges after `after`, in `seq` order, each with its two ends.
+pub fn with_ends(tx: &Transaction<'_>, after: i64, limit: i64) -> Result<Vec<Ended>> {
+    rows::with_ends(tx, after, limit)?
+        .into_iter()
+        .map(|(edge, source, target)| {
+            let lending =
+                super::blobs::references::held(tx, super::blobs::references::Row::Edge(edge.seq))?
+                    .into_iter()
+                    .filter_map(|(hash, lends)| lends.then_some(hash))
+                    .collect();
+            Ok(Ended {
+                edge,
+                source,
+                target,
+                lending,
+            })
+        })
+        .collect()
 }

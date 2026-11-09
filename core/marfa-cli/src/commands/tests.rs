@@ -1551,17 +1551,50 @@ fn a_connector_holds_its_registration_and_keeps_its_state_and_agreements() {
 #[test]
 fn restore_posts_the_archive_under_its_own_type() {
     let request = restore::request(&restore::RestoreArgs {
-        file: PathBuf::from("/nowhere/archive.tar.gz"),
+        file: PathBuf::from("/nowhere/archive.tar"),
     });
     assert_eq!(request.method, Method::Post);
     assert_eq!(request.path(), "/restore");
+    assert!(
+        request
+            .headers
+            .contains(&("Expect".to_string(), "100-continue".to_string()))
+    );
     match &request.body {
         Body::File { path, content_type } => {
-            assert_eq!(path, &PathBuf::from("/nowhere/archive.tar.gz"));
-            assert_eq!(content_type, "application/gzip");
+            assert_eq!(path, &PathBuf::from("/nowhere/archive.tar"));
+            assert_eq!(content_type, "application/x-tar");
         }
         other => panic!("the archive is not sent as a file: {other:?}"),
     }
+}
+
+#[test]
+fn backups_reach_their_doors_and_an_instance_and_a_name_are_one_path_segment_each() {
+    let list = backups::request(&backups::BackupsCommand::List);
+    assert_eq!(
+        (list.method, list.path()),
+        (Method::Get, "/backups".to_string())
+    );
+    let run = backups::request(&backups::BackupsCommand::Run);
+    assert_eq!(
+        (run.method, run.path()),
+        (Method::Post, "/backups".to_string())
+    );
+    let restore = backups::request(&backups::BackupsCommand::Restore {
+        instance_id: "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b".to_string(),
+        name: "2026-11-09T10:15:30.250Z.tar".to_string(),
+    });
+    assert_eq!(restore.method, Method::Post);
+    assert!(
+        restore
+            .path()
+            .starts_with("/backups/0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b/2026-11-09T10")
+            && restore.path().ends_with(".tar/restore")
+            && restore.path().matches('/').count() == 4,
+        "{}",
+        restore.path()
+    );
 }
 
 #[test]

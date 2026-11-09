@@ -8,7 +8,6 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { gunzipSync } from "node:zlib";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -42,10 +41,10 @@ afterAll(async () => {
 it("waits for an archive whose first byte comes after the usual answer budget, says it is working, and writes the path once the archive ends whole", async () => {
   const source = server!;
   const cli = new Cli(requireBinary(), source.apiUrl, source.workingKey);
-  const path = join(dir, "nightly.tar.gz");
+  const path = join(dir, "nightly.tar");
   writeFileSync(path, "an earlier backup");
 
-  await source.setFault("hold:export-validation");
+  await source.setFault("hold:export-page");
   let ended = false;
   const pending = cli
     .run(["export", "--format", "archive", "--output", path])
@@ -53,7 +52,7 @@ it("waits for an archive whose first byte comes after the usual answer budget, s
       ended = true;
     });
   try {
-    await source.waitForHold("hold:export-validation");
+    await source.waitForHold("hold:export-page");
     await new Promise((resolve) =>
       setTimeout(resolve, USUAL_ANSWER_BUDGET_MS + 5_000),
     );
@@ -67,8 +66,6 @@ it("waits for an archive whose first byte comes after the usual answer budget, s
   const outcome = await pending;
   expect(outcome.code, outcome.stderr).toBe(0);
   expect(outcome.stderr).toContain("still preparing the archive");
-  expect(gunzipSync(readFileSync(path)).toString("latin1")).toContain(
-    '"missing_blobs":{}',
-  );
-  expect(readdirSync(dir)).toEqual(["nightly.tar.gz"]);
+  expect(readFileSync(path).toString("latin1")).toContain('"missing_blobs":{}');
+  expect(readdirSync(dir)).toEqual(["nightly.tar"]);
 }, 180_000);

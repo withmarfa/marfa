@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use bytes::Bytes;
-use futures_util::StreamExt;
 use futures_util::stream::{self, BoxStream};
+use futures_util::{StreamExt, TryStreamExt};
 use sha2::{Digest, Sha256};
 use tokio::sync::OwnedMutexGuard;
 
@@ -305,6 +305,20 @@ pub fn first_byte_changed(bytes: ByteStream) -> ByteStream {
             changed[0] ^= 0xff;
             Ok(Bytes::from(changed))
         })
+        .boxed()
+}
+
+/// `bytes` ended cleanly at half of `length`.
+pub fn ended_short(bytes: ByteStream, length: u64) -> ByteStream {
+    let mut left = length / 2;
+    bytes
+        .map(move |chunk| {
+            let chunk = chunk?;
+            let keep = usize::try_from(left).map_or(chunk.len(), |left| left.min(chunk.len()));
+            left -= keep as u64;
+            Ok(chunk.slice(..keep))
+        })
+        .try_filter(|chunk| std::future::ready(!chunk.is_empty()))
         .boxed()
 }
 

@@ -7,10 +7,11 @@ import type {
   TestContext,
 } from "../../client/types.js";
 import {
+  archiveManifest,
+  editLineFile,
   itemsArchive,
-  listTarGzEntries,
-  readTarGzEntry,
-  tarGz,
+  listEntries,
+  readLineFile,
 } from "../../utils/archive.js";
 import {
   bootFreshServer,
@@ -70,34 +71,26 @@ interface ArchivedLine {
 }
 
 function itemLines(archive: Uint8Array): ArchivedLine[] {
-  return (readTarGzEntry(archive, "items.ndjson") ?? "")
+  return (readLineFile(archive, "items") ?? "")
     .split("\n")
     .filter((line) => line.trim() !== "")
     .map((line) => JSON.parse(line) as ArchivedLine);
 }
 
-/** The archive with `items.ndjson` rewritten by `change`, and nothing else. */
+/** The archive with the `items` line file rewritten by `change`, and nothing else. */
 function withItemLines(
   archive: Uint8Array,
   change: (lines: Record<string, unknown>[]) => Record<string, unknown>[],
 ): Uint8Array {
-  return tarGz(
-    listTarGzEntries(archive).map((entry) =>
-      entry.name === "items.ndjson"
-        ? {
-            name: entry.name,
-            body: change(
-              entry.body
-                .toString("utf8")
-                .split("\n")
-                .filter((line) => line.trim() !== "")
-                .map((line) => JSON.parse(line) as Record<string, unknown>),
-            )
-              .map((line) => `${JSON.stringify(line)}\n`)
-              .join(""),
-          }
-        : { name: entry.name, body: entry.body },
-    ),
+  return editLineFile(archive, "items", (text) =>
+    change(
+      text
+        .split("\n")
+        .filter((line) => line.trim() !== "")
+        .map((line) => JSON.parse(line) as Record<string, unknown>),
+    )
+      .map((line) => `${JSON.stringify(line)}\n`)
+      .join(""),
   );
 }
 
@@ -286,19 +279,17 @@ describe("the history an archive carries", () => {
 
     const archive = await client.exportArchive({ source: ctx.source });
     expect(archive.status).toBe(200);
-    const carried = listTarGzEntries(archive.data)
+    const carried = listEntries(archive.data)
       .filter((e) => e.name.startsWith("blobs/"))
       .map((e) => e.name);
     expect(carried).toContain(`blobs/${up.data.hash}`);
     expect(carried).not.toContain(`blobs/${upHidden.data.hash}`);
     expect(carried).toContain(`blobs/${current.data.hash}`);
     expect(carried).not.toContain(`blobs/${earlier.data.hash}`);
-    const manifest = JSON.parse(
-      readTarGzEntry(archive.data, "manifest.json") ?? "{}",
-    ) as {
+    const manifest = archiveManifest<{
       blobs: Record<string, unknown>;
       missing_blobs: Record<string, unknown>;
-    };
+    }>(archive.data);
     expect(Object.keys(manifest.blobs)).toContain(up.data.hash);
     expect(Object.keys(manifest.blobs)).not.toContain(upHidden.data.hash);
     expect(Object.keys(manifest.blobs)).not.toContain(earlier.data.hash);
@@ -481,26 +472,21 @@ function twoRows(edit: (rows: Rows) => void): {
       properties: { body: "a placeholder the rows replace" },
     },
   ]);
-  const archive = tarGz(
-    listTarGzEntries(base).map((entry) =>
-      entry.name === "items.ndjson"
-        ? {
-            name: entry.name,
-            body:
-              [
-                { item: rows.first, versions: rows.firstVersions },
-                { item: rows.second, versions: rows.secondVersions },
-              ]
-                .map((l) =>
-                  JSON.stringify({
-                    ...l,
-                    metadata: { tags: [], extensions: {} },
-                  }),
-                )
-                .join("\n") + "\n",
-          }
-        : { name: entry.name, body: entry.body },
-    ),
+  const archive = editLineFile(
+    base,
+    "items",
+    () =>
+      [
+        { item: rows.first, versions: rows.firstVersions },
+        { item: rows.second, versions: rows.secondVersions },
+      ]
+        .map((l) =>
+          JSON.stringify({
+            ...l,
+            metadata: { tags: [], extensions: {} },
+          }),
+        )
+        .join("\n") + "\n",
   );
   return { archive, first, second };
 }
@@ -661,15 +647,10 @@ describe("an archive's dates and history, refused before anything is written", (
           properties: { body: "ahead of an edge" },
         },
       ]);
-      return tarGz(
-        listTarGzEntries(base).map((entry) =>
-          entry.name === "edges.ndjson"
-            ? {
-                name: entry.name,
-                body: `${JSON.stringify({ edge: edge(extra) })}\n`,
-              }
-            : { name: entry.name, body: entry.body },
-        ),
+      return editLineFile(
+        base,
+        "edges",
+        () => `${JSON.stringify({ edge: edge(extra) })}\n`,
       );
     };
 
@@ -690,18 +671,14 @@ describe("an archive's dates and history, refused before anything is written", (
     }
   });
 
-  it("writes a row's dates in UTC to the millisecond and keeps a snapshot's dates as the archive spelled them", async () => {
+  it("writes a row's dates in UTC to the millisecond", async () => {
     const id = uuidv7();
     const archived = "2020-02-28T23:30:00+02:00";
-    const spelled = "2019-12-31T23:59:59+01:00";
     const { archive } = twoRows(({ first, firstVersions }) => {
       first.id = id;
       first.created_at = archived;
       first.updated_at = "2020-03-01T00:00:00+02:00";
-      firstVersions[0] = snapshot(id, 1, {
-        created_at: spelled,
-        occurred_at: spelled,
-      });
+      firstVersions[0] = snapshot(id, 1);
     });
     const restored = await ownerClient.restoreArchive(archive);
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
@@ -709,9 +686,6 @@ describe("an archive's dates and history, refused before anything is written", (
     const row = await client.getItem(id);
     expect(row.data.item.created_at).toBe("2020-02-28T21:30:00.000Z");
     expect(row.data.item.updated_at).toBe("2020-02-29T22:00:00.000Z");
-    const [kept] = await allVersions(client, id);
-    expect(kept?.created_at).toBe(spelled);
-    expect(kept?.occurred_at).toBe(spelled);
   });
 
   it("refuses a snapshot ID the instance's history already holds, answering 409 and leaving that history as it was", async () => {

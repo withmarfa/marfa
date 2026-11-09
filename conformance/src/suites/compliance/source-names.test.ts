@@ -9,11 +9,7 @@ import {
   trackKey,
 } from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
-import {
-  listTarGzEntries,
-  readTarGzEntry,
-  tarGz,
-} from "../../utils/archive.js";
+import { editLineFile, readEntry, readLineFile } from "../../utils/archive.js";
 import {
   approvedAppToken,
   bootFreshServer,
@@ -434,7 +430,7 @@ describe("source names in an archive", () => {
     ).toBe(200);
     const archive = await client.exportArchive({ source: ctx.source });
     expect(archive.status).toBe(200);
-    const lines = (readTarGzEntry(archive.data, "types.ndjson") ?? "")
+    const lines = (readLineFile(archive.data, "instance") ?? "")
       .split("\n")
       .filter((line) => line.trim() !== "")
       .map((line) => JSON.parse(line) as Record<string, unknown>);
@@ -443,7 +439,7 @@ describe("source names in an archive", () => {
       { source: ctx.source, name: "Archived name", mark: "lucide:box" },
     ]);
     const manifest = JSON.parse(
-      readTarGzEntry(archive.data, "manifest.json") ?? "{}",
+      readEntry(archive.data, "manifest.json") ?? "{}",
     ) as { source_count: number };
     expect(manifest.source_count).toBe(1);
 
@@ -474,15 +470,10 @@ describe("source names in an archive", () => {
     const target = `${ctx.source}-restored`;
     named.add(target);
     const withLine = (line: unknown) =>
-      tarGz(
-        listTarGzEntries(archive.data).map((entry) => ({
-          name: entry.name,
-          body:
-            entry.name === "types.ndjson"
-              ? entry.body.toString("utf8") +
-                `${JSON.stringify({ source: line })}\n`
-              : entry.body,
-        })),
+      editLineFile(
+        archive.data,
+        "instance",
+        (text) => `${text}${JSON.stringify({ source: line })}\n`,
       );
 
     const skipped = await owner.restoreArchive(
@@ -538,17 +529,12 @@ describe("source names in an archive", () => {
     const restoredApp = `restored:${app}`;
     named.add(restoredApp);
     const withLines = (lines: unknown[]) =>
-      tarGz(
-        listTarGzEntries(archive.data).map((entry) => ({
-          name: entry.name,
-          body:
-            entry.name === "types.ndjson"
-              ? entry.body.toString("utf8") +
-                lines
-                  .map((line) => `${JSON.stringify({ source: line })}\n`)
-                  .join("")
-              : entry.body,
-        })),
+      editLineFile(
+        archive.data,
+        "instance",
+        (text) =>
+          text +
+          lines.map((line) => `${JSON.stringify({ source: line })}\n`).join(""),
       );
     const lines = [
       { source: app, name: "From the app" },

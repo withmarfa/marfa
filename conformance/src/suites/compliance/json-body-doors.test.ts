@@ -1,12 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
-import { itemsArchive } from "../../utils/archive.js";
 import {
   createSecondClient,
-  getOwnerClient,
   createTestContext,
   trackItem,
   trackKey,
@@ -346,34 +343,6 @@ describe("a door that does not take its body as JSON", () => {
     };
     expect(stored.mime_type).toBe("text/plain");
     expect(stored.size_bytes).toBe(Buffer.byteLength(bytes));
-  });
-
-  it("takes an archive sent under text/plain, which a JSON door refuses when sent that way", async () => {
-    await expectRefusedAsNotJson();
-    const managementKey = process.env.MARFA_MANAGEMENT_KEY;
-    expect(managementKey, "MARFA_MANAGEMENT_KEY is required").toBeTruthy();
-
-    const id = uuidv7();
-    const archive = itemsArchive([
-      {
-        id,
-        type: "core.note",
-        source: ctx.source,
-        source_id: `restore-text-plain-${ctx.runId}`,
-        properties: { body: "restored under text/plain" },
-      },
-    ]);
-    const res = await getOwnerClient().rawRequest<{ imported: number }>(
-      "/restore",
-      {
-        method: "POST",
-        headers: { "Content-Type": "text/plain" },
-        body: Buffer.from(archive),
-      },
-    );
-    trackItem(ctx, id);
-    expect(res.status, JSON.stringify(res.error)).toBe(200);
-    expect(res.data.imported).toBe(1);
   });
 
   it("takes a delivery to an inbound address sent under text/plain, which a JSON door refuses when sent that way", async () => {

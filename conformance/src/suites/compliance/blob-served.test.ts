@@ -7,7 +7,7 @@ import {
   getManagementClient,
 } from "../../utils/setup.js";
 import { uploadReferenced } from "../../utils/blobs.js";
-import { readTarGzEntry } from "../../utils/archive.js";
+import { readEntry } from "../../utils/archive.js";
 
 let client: MarfaClient;
 let operator: MarfaClient;
@@ -423,12 +423,12 @@ describe("how a blob's bytes are served", () => {
     });
     expect(archive.status).toBe(200);
     // The witness: the archive does carry the blob's bytes.
-    expect(readTarGzEntry(archive.data, `blobs/${hash}`)).toBe(
+    expect(readEntry(archive.data, `blobs/${hash}`)).toBe(
       new TextDecoder().decode(content),
     );
-    expect(archive.headers.get("content-type")).toBe("application/gzip");
+    expect(archive.headers.get("content-type")).toBe("application/x-tar");
     expect(archive.headers.get("content-disposition")).toMatch(
-      /^attachment; filename="marfa-export-\d{4}-\d{2}-\d{2}\.tar\.gz"$/,
+      /^attachment; filename="marfa-export-\d{4}-\d{2}-\d{2}\.tar"$/,
     );
     expect(archive.headers.get("content-disposition")).not.toContain(
       hash.slice("sha256:".length),

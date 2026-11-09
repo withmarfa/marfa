@@ -24,6 +24,8 @@ import { collectUntil, withStream } from "../../utils/stream.js";
  */
 
 const RESTORED = 4_000;
+/** Enough rows that the restore holds the writer well past `BUDGET_MS`. */
+const RESTORED_PAST_THE_WAIT = 20_000;
 
 let ordered: FreshServer;
 let impatient: FreshServer;
@@ -177,7 +179,7 @@ describe("a write that meets a restore", () => {
       apiKey: impatient.workingKey,
     });
     const restoring = ownerOf(impatient).restoreArchive(
-      archiveOf(RESTORED).bytes,
+      archiveOf(RESTORED_PAST_THE_WAIT).bytes,
     );
     const answers = await writesWhile(restoring, () =>
       worker.createItem({

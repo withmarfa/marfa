@@ -698,11 +698,6 @@ describe("what a change runs", () => {
       ["ci-sqlite", "core-checks-linux", "rust-contract", "image"],
     ],
     [
-      "the backup suite, which only the type check and the offline lane read",
-      ["conformance/src/suites/backup/replica-paths.test.ts"],
-      ["ci-sqlite", "workspace", "conformance-offline"],
-    ],
-    [
       "the script that boots the image",
       ["scripts/check-image.sh"],
       ["ci-sqlite", "workspace", "image"],

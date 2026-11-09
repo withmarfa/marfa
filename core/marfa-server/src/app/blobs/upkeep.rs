@@ -157,8 +157,8 @@ async fn copy_to(
                 let limit = store::stall_limit(store::write_deadline(blobs.check(), size));
                 let written = blobs
                     .writing(&blob.hash, size, async move {
-                        let sent = s3.write(&named, &hash, &mime_type, size, bytes);
-                        store::within(limit, sent).await
+                        s3.write(&named, &hash, &mime_type, size, bytes, limit)
+                            .await
                     })
                     .await;
                 (written, object)

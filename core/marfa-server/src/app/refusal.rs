@@ -64,6 +64,7 @@ codes! {
     Forbidden = "forbidden", 403;
     TypeNotPermitted = "type_not_permitted", 403;
     ApiKeyNotFound = "api_key_not_found", 404;
+    BackupNotFound = "backup_not_found", 404;
     BlobCopyNotFound = "blob_copy_not_found", 404;
     BlobNotFound = "blob_not_found", 404;
     BulkJobNotFound = "bulk_job_not_found", 404;
@@ -95,6 +96,7 @@ codes! {
     InstanceChanged = "instance_changed", 409;
     ItemExists = "item_exists", 409;
     LinkTaken = "link_taken", 409;
+    NoBucket = "no_bucket", 409;
     OwnerExists = "owner_exists", 409;
     ReachChanged = "reach_changed", 409;
     SignInAddressChangeUnconfirmed = "sign_in_address_change_unconfirmed", 409;
@@ -115,7 +117,6 @@ codes! {
     RateLimited = "rate_limited", 429;
     InternalError = "internal_error", 500;
     BlobStoreUnavailable = "blob_store_unavailable", 503;
-    ExportUnrestorable = "export_unrestorable", 503;
     InboundUnavailable = "inbound_unavailable", 503;
     StreamCapacityExhausted = "stream_capacity_exhausted", 503;
     TooManyConnections = "too_many_connections", 503;

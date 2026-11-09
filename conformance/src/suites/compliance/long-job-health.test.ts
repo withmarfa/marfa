@@ -1,8 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
-import { itemsArchive } from "../../utils/archive.js";
 import { HOLD, queue, seed } from "../../utils/bulk-jobs.js";
 import {
   bootFreshServer,
@@ -23,7 +21,8 @@ import { heldWhenHealthAnswered } from "../../utils/held-when-answered.js";
  * `GET /health` answered while each long job runs, between two of its steps
  * (`instance/long-job-health`); `heldWhenHealthAnswered` says how the order
  * is witnessed. The credential clean-up's case is in
- * `long-job-health-credentials.test.ts`.
+ * `long-job-health-credentials.test.ts`, and the archive restore's, which
+ * holds the writer throughout, in `long-job-health-restore.test.ts`.
  */
 let server: FreshServer;
 
@@ -33,13 +32,6 @@ const TAG = "long-job-health";
 const NEVER_MS = "31536000000";
 
 const working = (): MarfaClient => writerOf(server);
-
-function owner(): MarfaClient {
-  return new MarfaClient({
-    baseUrl: server.apiUrl,
-    controlSocket: server.controlSocket,
-  });
-}
 
 beforeAll(async () => {
   server = await bootFreshServer("long-job-health", {
@@ -104,34 +96,6 @@ describe("GET /health while a long job runs", () => {
         const exporting = working().exportArchive();
         return async () => {
           expect((await exporting).status).toBe(200);
-        };
-      },
-    });
-    expect(held).toEqual([]);
-  }, 600_000);
-
-  it("is answered between the first and the last row of an archive restore", async () => {
-    // The job waits before the first row, once the blob is placed, and
-    // again with every row written, before it commits.
-    const held = await heldWhenHealthAnswered(server, {
-      start: "hold:restore:item=1",
-      later: "hold:restore:before-commit",
-      begin: async () => {
-        const source = `${TAG}-restore-${uuidv7()}`;
-        const archive = itemsArchive(
-          Array.from({ length: ROWS }, (_, index) => ({
-            id: uuidv7(),
-            type: "core.note",
-            source,
-            properties: { body: `restored ${String(index)}` },
-          })),
-          [{ data: randomBytes(64), mime_type: "application/octet-stream" }],
-        );
-        const restoring = owner().restoreArchive(archive);
-        return async () => {
-          const restored = await restoring;
-          expect(restored.status, JSON.stringify(restored.error)).toBe(200);
-          expect(restored.data.imported).toBe(ROWS);
         };
       },
     });

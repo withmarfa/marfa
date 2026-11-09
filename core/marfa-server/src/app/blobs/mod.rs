@@ -1,20 +1,22 @@
 //! Blobs: content-addressed bytes, kept in every attached store.
 
+pub mod carry;
 mod digests;
 mod disk;
 mod hash;
 pub mod link;
 pub mod range;
 pub mod references;
+pub mod restore;
 mod rows;
-mod s3;
-mod store;
+pub mod s3;
+pub mod store;
 pub mod upkeep;
 
 use std::fs::File;
 use std::future::Future;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -39,11 +41,12 @@ use crate::settings::registry::{
     BLOB_MIN_COPIES, BLOB_READ_IDLE_TIMEOUT_MS, DISK_RESERVE_BYTES, UPLOAD_IDLE_TIMEOUT_MS,
 };
 use crate::settings::start::ObjectStoreSettings;
-pub use disk::MARKER;
 use disk::{Disk, Staged};
+pub use disk::{MARKER, Scratch};
 pub use hash::Hash;
+pub use restore::stored_size;
 use rows::Held;
-pub use rows::{CopyRecord, Lender, OrphanRecord, StoreRecord};
+pub use rows::{CopyRecord, Lender, OrphanRecord, StoreRecord, held_in};
 use s3::{Marker, S3};
 pub use store::ByteStream;
 use store::{Answer, CHECK_DEADLINE, Failed, Gate, Store};
@@ -251,8 +254,14 @@ impl Blobs {
         })
     }
 
-    fn check(&self) -> Duration {
+    /// How long a store is given to answer.
+    pub fn check(&self) -> Duration {
         self.faults.store_check_deadline().unwrap_or(CHECK_DEADLINE)
+    }
+
+    /// The object store, where one is configured.
+    pub fn s3(&self) -> Option<Arc<S3>> {
+        self.s3.clone()
     }
 
     /// The attached stores, the disk first.
@@ -584,13 +593,19 @@ fn insufficient() -> Refusal {
     )
 }
 
-/// A write that ran out of room is `507`; any other failure is the store's.
-fn unwritable(error: io::Error) -> Refusal {
-    if matches!(
+/// `507` for a write that met a volume with no room.
+pub fn out_of_room(error: &io::Error) -> Option<Refusal> {
+    matches!(
         error.kind(),
         io::ErrorKind::StorageFull | io::ErrorKind::QuotaExceeded
-    ) {
-        return insufficient();
+    )
+    .then(insufficient)
+}
+
+/// A write that ran out of room is `507`; any other failure is the store's.
+fn unwritable(error: io::Error) -> Refusal {
+    if let Some(refusal) = out_of_room(&error) {
+        return refusal;
     }
     tracing::error!(%error, "A blob write failed");
     unavailable()
@@ -628,6 +643,30 @@ fn room(faults: &Faults, root: &Path, reserve: u64, incoming: u64) -> Result<()>
             .with_detail("available_bytes", available));
     }
     Ok(())
+}
+
+/// The reserve a file the server writes on the disk store's volume must leave free there.
+#[derive(Clone)]
+pub struct Room {
+    faults: Arc<Faults>,
+    root: PathBuf,
+    reserve: u64,
+}
+
+impl Room {
+    #[cfg(test)]
+    pub fn at(faults: Arc<Faults>, root: PathBuf, reserve: u64) -> Room {
+        Room {
+            faults,
+            root,
+            reserve,
+        }
+    }
+
+    /// Refuses where the volume already has less free than the reserve. It blocks.
+    pub fn check(&self) -> Result<()> {
+        room(&self.faults, &self.root, self.reserve, 0)
+    }
 }
 
 /// Bytes on the disk that no record names yet, locked against deletion until `release_upload`.
@@ -729,6 +768,14 @@ impl App {
 
     pub fn upload_idle(&self) -> Duration {
         Duration::from_millis(self.settings.live().get(UPLOAD_IDLE_TIMEOUT_MS))
+    }
+
+    pub fn room(&self) -> Room {
+        Room {
+            faults: self.faults.clone(),
+            root: self.blobs.disk.root().to_path_buf(),
+            reserve: self.settings.live().get(DISK_RESERVE_BYTES),
+        }
     }
 
     pub fn blob_read_idle(&self) -> Duration {

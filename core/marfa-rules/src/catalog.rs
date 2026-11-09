@@ -934,7 +934,7 @@ impl Catalog {
     }
 
     /// An event's schedule and a task's `recurrence` are judged on the item a write leaves.
-    fn judge_schedule(
+    pub fn judge_schedule(
         &self,
         type_id: &str,
         properties: &Map<String, Value>,

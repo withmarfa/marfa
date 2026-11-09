@@ -1032,10 +1032,9 @@ jobs:
   # part of the contract today, and the score says how much. It fails when it
   # has no report to give. The files the Rust server judges
   # (`conformance/src/utils/rust-judged.ts`) are the part that must pass whole;
-  # the score job fails if one does not, and `Full CI` waits for it. The
-  # backup fixtures are not run: they boot the server through the container's
-  # entrypoint, which starts the Node server. An object store sits beside the
-  # server, as in `Conformance shard`, so the stores chapter is asserted.
+  # the score job fails if one does not, and `Full CI` waits for it. An object
+  # store sits beside the server, as in `Conformance shard`, so the stores
+  # chapter and the backups are asserted.
   rust-contract:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract != 'false') }}

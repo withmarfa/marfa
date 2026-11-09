@@ -72,7 +72,7 @@ pub struct Db {
 impl Db {
     /// Blocks while it judges and updates the file, so it runs before the server takes requests.
     pub fn open(options: &Options, faults: Arc<Faults>) -> std::result::Result<Db, Failure> {
-        let opened = open::open(options)?;
+        let opened = open::open(options, &faults)?;
         let writer = writer::Writer::start(opened.writer, faults.clone())
             .map_err(|error| Failure::start(format!("The writer did not start: {error}")))?;
         Ok(Db {
@@ -103,6 +103,26 @@ impl Db {
             .read(job)
             .await
             .map_err(|refusal| self.with_budget(refusal))
+    }
+
+    /// As `read`, behind other work: for a long read that no request waits on.
+    pub async fn read_background<T, F>(&self, job: F) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Transaction<'_>) -> Result<T> + Send + 'static,
+    {
+        if self.faults.refusing(REFUSE_READ) {
+            return Err(io_refusal());
+        }
+        self.readers
+            .read_background(job)
+            .await
+            .map_err(|refusal| self.with_budget(refusal))
+    }
+
+    /// Empties the log a large write grew, so it does not stay the size of that write.
+    pub async fn empty_log(&self) {
+        self.writer.empty_log().await;
     }
 
     /// Commits on `Ok` and rolls back on `Err` or a panic.

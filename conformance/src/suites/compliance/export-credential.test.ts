@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import { listTarGzEntries } from "../../utils/archive.js";
+import { readLineFile } from "../../utils/archive.js";
 import {
   approvedApp,
   bootFreshServer,
@@ -167,10 +167,8 @@ const noteLines = (bytes: Buffer) =>
     .filter((line) => line.startsWith('{"item"')).length;
 
 function archivedNotes(bytes: Buffer): number {
-  const items = listTarGzEntries(new Uint8Array(bytes)).find(
-    (entry) => entry.name === "items.ndjson",
-  );
-  return items!.body.toString().trim().split("\n").length;
+  const items = readLineFile(new Uint8Array(bytes), "items");
+  return (items ?? "").trim().split("\n").length;
 }
 
 describe("an ndjson export read slowly", () => {

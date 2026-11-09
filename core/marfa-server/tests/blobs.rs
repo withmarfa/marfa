@@ -514,7 +514,8 @@ async fn an_upload_that_would_leave_less_than_the_reserve_is_refused_with_507_an
     .await;
     assert_eq!(refused.status, StatusCode::INSUFFICIENT_STORAGE);
     assert_eq!(refused.code(), "insufficient_storage");
-    assert!(closes(&refused));
+    // The rest of a body refused as it arrives is read, so the connection stays.
+    assert!(!closes(&refused));
     assert_eq!(instance.files(), Vec::<PathBuf>::new());
 
     instance

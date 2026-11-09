@@ -4,10 +4,12 @@ import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import {
-  blobHash,
+  tar,
+  lineFile,
+  readLineFile,
   itemsArchive,
-  readTarGzEntry,
-  tarGz,
+  blobHash,
+  archiveManifest,
 } from "../../utils/archive.js";
 import {
   cleanup,
@@ -57,23 +59,15 @@ function fixture() {
       [{ data, mime_type: "text/plain" }],
       [{ id: typeId, label: "Archive scalar", version: 1, fields: {} }],
     );
-    const entry = (name: string) => {
-      const body = readTarGzEntry(base, name);
-      if (body === null) throw new Error(`Missing archive entry ${name}`);
-      return body;
-    };
-    return tarGz([
+    return tar([
       {
         name: "manifest.json",
-        body: JSON.stringify({
-          ...JSON.parse(entry("manifest.json")),
-          edge_count: 1,
-        }),
+        body: JSON.stringify({ ...archiveManifest(base), edge_count: 1 }),
       },
-      { name: "types.ndjson", body: entry("types.ndjson") },
+      lineFile("instance", readLineFile(base, "instance") ?? ""),
+      lineFile("items", readLineFile(base, "items") ?? ""),
+      lineFile("edges", JSON.stringify({ edge }) + "\n"),
       { name: `blobs/${hash}`, body: data },
-      { name: "items.ndjson", body: entry("items.ndjson") },
-      { name: "edges.ndjson", body: JSON.stringify({ edge }) + "\n" },
     ]);
   };
   // Also track refused fixtures: a regression that accepts them must clean up.

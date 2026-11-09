@@ -296,11 +296,13 @@ describe("the API description follows API-STYLE.md", () => {
       ["503", "WriteContentionRefusal"],
       ["500", "InternalErrorRefusal"],
     ]);
-    // A restore takes no body cap, so its 413 is a row larger than a write
-    // takes. Claim checks machine-issued setup proof and its own persistent
-    // guessing allowance. Each carries its own text, as API-STYLE.md allows.
+    // A restore, of a body or of a backup, takes no body cap, so its 413 is a
+    // row larger than a write takes. Claim checks machine-issued setup proof
+    // and its own persistent guessing allowance. Each carries its own text, as
+    // API-STYLE.md allows.
     const ownMeaning = new Set([
       "POST /restore 413",
+      "POST /backups/{instance_id}/{name}/restore 413",
       "POST /owner 401",
       "POST /owner 429",
     ]);

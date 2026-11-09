@@ -404,7 +404,7 @@ If a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: false` meets t
 
 ## A volume with no room
 
-An instance keeps a reserve of free space on the volume that holds its disk store, set by `disk_reserve_bytes`. `blobs.md` states the uploads and restores that are held to it.
+An instance keeps a reserve of free space on the volume that holds its disk store, set by `disk_reserve_bytes`. `blobs.md` states the uploads and restores that are held to it, and `search-and-filters.md` the archive exports.
 
 ### `errors/storage-full`
 
@@ -432,9 +432,9 @@ The server MUST declare `507 insufficient_storage` in its OpenAPI document on ev
 
 ### `errors/storage-reserve-details`
 
-When the server answers `507 insufficient_storage` because a body would take the volume below the reserve, the server MUST carry the reserve in `details.reserve_bytes` and the free space it found in `details.available_bytes`, both in bytes.
+When the server answers `507 insufficient_storage` because a request would take the volume below the reserve, the server MUST carry the reserve in `details.reserve_bytes` and the free space it found in `details.available_bytes`, both in bytes.
 
-**Tests:** `compliance/disk-reserve.test.ts › refuses an upload 507 insufficient_storage, naming the reserve and the room, and stores nothing`.
+**Tests:** `compliance/disk-reserve.test.ts › refuses an upload 507 insufficient_storage, naming the reserve and the room, and stores nothing`, `compliance/export-reserve.test.ts › is refused 507 insufficient_storage before any archive byte, naming the reserve and the room, and leaves nothing on disk`.
 
 ## What a refusal names of a missing grant
 
@@ -758,6 +758,7 @@ Every code the server answers over HTTP is a row of the table below, and a serve
 | `forbidden`                          | 403                 | The credential is valid but lacks a standing permission, reach or origin the operation needs.                                                                                                  |
 | `type_not_permitted`                 | 403                 | The credential holds no grant on the type at the level the operation asks for.                                                                                                                 |
 | `api_key_not_found`                  | 404                 | No key the caller can reach has this id, or the key was already revoked.                                                                                                                       |
+| `backup_not_found`                   | 404                 | The object store holds no backup by this name from this instance id.                                                                                                                           |
 | `blob_copy_not_found`                | 404                 | The named store holds no copy of the blob, or is not attached.                                                                                                                                 |
 | `blob_not_found`                     | 404                 | No blob the caller may read has this hash, or no attached store holds its bytes. On a write of a file item, no blob the caller uploaded or may read has the hash its `blob_ref` names.         |
 | `bulk_job_not_found`                 | 404                 | No bulk action job the caller can see has this id.                                                                                                                                             |
@@ -789,6 +790,7 @@ Every code the server answers over HTTP is a row of the table below, and a serve
 | `instance_changed`                   | 409                 | A request names another instance in `X-Marfa-Instance-Id`. Nothing is written. Rebuild the working copy from the instance at this address.                                                     |
 | `item_exists`                        | 409                 | A create that asked not to overwrite names a source and source id, or an id, that an item already holds. Nothing is written. `details.existing_id` names the item.                             |
 | `link_taken`                         | 409                 | A write would give an item a link that another item of its type holds.                                                                                                                         |
+| `no_bucket`                          | 409                 | The instance has no object store, so it keeps no backups.                                                                                                                                      |
 | `owner_exists`                       | 409                 | The instance already has an owner.                                                                                                                                                             |
 | `reach_changed`                      | 409                 | A conditional copy read or copy stream carries a proof for a reach that has since changed. Rebuild the working copy.                                                                           |
 | `sign_in_address_change_unconfirmed` | 409                 | A write moves the sign-in address without `confirm_sign_in_address_change`. Nothing is changed; `details.consequences` names what the move would do.                                           |
@@ -809,7 +811,6 @@ Every code the server answers over HTTP is a row of the table below, and a serve
 | `rate_limited`                       | 429                 | A credential, an address or an inbound endpoint is past a limit for its current window. `Retry-After` names the wait.                                                                          |
 | `internal_error`                     | 500                 | A fault that nothing else names a refusal for. The answer says nothing of what failed.                                                                                                         |
 | `blob_store_unavailable`             | 503                 | A blob store failed, or did not answer in time, while Marfa checked, read, wrote or deleted a blob's copy. Nothing was written. Retry later.                                                   |
-| `export_unrestorable`                | 503                 | Writes changed the row an archive export refused, or its type, between two reads. No archive bytes were sent. Retry the export.                                                                |
 | `inbound_unavailable`                | 503                 | An inbound endpoint cannot take a delivery now, because its connector's backlog is full or the instance holds as many bodies in flight as it allows. Retry later.                              |
 | `stream_capacity_exhausted`          | 503                 | The instance is serving as many live event streams as it allows. `details.reason` is `viewer_cap`.                                                                                             |
 | `too_many_connections`               | 503                 | The public listener holds as many open connections as it allows, or the caller's address does. Answered before any request is read; retry later.                                               |

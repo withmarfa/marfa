@@ -29,6 +29,8 @@ impl Faults {
 
     pub fn hold_blocking(&self, _point: &Point) {}
 
+    pub fn hold_writing(&self, _point: &Point) {}
+
     pub fn fail(&self, _point: &Point, _action: Option<&str>) -> bool {
         false
     }

@@ -28,7 +28,6 @@ use crate::settings::registry::MAX_REQUEST_BYTES;
 const LINGER: Duration = Duration::from_secs(5);
 const LINGER_BYTES: usize = 64 * 1024 * 1024;
 const BULK_PATHS: [&str; 2] = ["/items/bulk", "/items/bulk-actions"];
-const BULK_REQUEST_BYTES: usize = 16 * 1024 * 1024;
 const STATE_REQUEST_BYTES: usize = 2 * 512 * 1024 + 100 * 6 + 35;
 const CONNECTORS_PATH: &str = "/connectors";
 const REGISTER_PATH: &str = "/auth/oauth2/register";
@@ -153,6 +152,16 @@ impl HttpBody for Due {
     }
 }
 
+/// Reads and drops the rest of a refused body, so a client still sending reaches the answer.
+pub async fn linger(body: &mut Body, idle: Duration) {
+    while !body.is_end_stream() {
+        match tokio::time::timeout(idle, body.frame()).await {
+            Ok(Some(Ok(_))) => {}
+            _ => return,
+        }
+    }
+}
+
 fn due(body: Body, within: Duration, late: Arc<AtomicBool>) -> Body {
     Body::new(Due {
         body,
@@ -207,12 +216,12 @@ impl FromRequest<Arc<App>> for JsonBody {
 
 fn cap_on(app: &App, path: &str, extensions: &Extensions) -> usize {
     if BULK_PATHS.contains(&path) {
-        return BULK_REQUEST_BYTES;
+        return app.bulk_cap();
     }
     if path == REGISTER_PATH {
         return REGISTER_REQUEST_BYTES;
     }
-    if let Some(cap) = connector_cap(path) {
+    if let Some(cap) = connector_cap(app, path) {
         return cap;
     }
     let local = extensions
@@ -235,11 +244,11 @@ fn under_connectors(path: &str) -> bool {
 }
 
 /// The state document and the agreements batch carry more than the usual cap.
-fn connector_cap(path: &str) -> Option<usize> {
+fn connector_cap(app: &App, path: &str) -> Option<usize> {
     let mut parts = path.strip_prefix("/connectors/")?.split('/').skip(1);
     match (parts.next(), parts.next()) {
         (Some("state"), None) => Some(STATE_REQUEST_BYTES),
-        (Some("agreements"), None) => Some(BULK_REQUEST_BYTES),
+        (Some("agreements"), None) => Some(app.bulk_cap()),
         _ => None,
     }
 }

@@ -16,7 +16,12 @@ import {
   cleanup,
 } from "../../utils/setup.js";
 import { createNote, createBookmark } from "../../generators/items.js";
-import { listTarGzEntries, readTarGzEntry } from "../../utils/archive.js";
+import {
+  listEntries,
+  readEntry,
+  readLineFile,
+  type LineFile,
+} from "../../utils/archive.js";
 import { startReceiver } from "../../utils/webhook-receiver.js";
 
 let client: MarfaClient;
@@ -311,7 +316,7 @@ describe("export", () => {
     }).exportArchive({ source });
     expect(narrowArchive.status).toBe(200);
     const archivedIds = edgeIdsOf(
-      readTarGzEntry(narrowArchive.data, "edges.ndjson") ?? "",
+      readLineFile(narrowArchive.data, "edges") ?? "",
     );
     expect(
       archivedIds,
@@ -361,7 +366,7 @@ describe("export", () => {
     const lineFor = (raw: string) =>
       parseNdjson(raw).find((line) => line.item.id === id);
     const archiveLineFor = (archive: Uint8Array) =>
-      lineFor(readTarGzEntry(archive, "items.ndjson") ?? "");
+      lineFor(readLineFile(archive, "items") ?? "");
 
     // The witness, on both formats: a key that may read the namespace is
     // carried it.
@@ -445,13 +450,13 @@ describe("export", () => {
   });
 });
 
-/** The parsed lines of one line file of an archive. */
+/** The parsed lines of one line file of an archive, which it must carry. */
 function archiveLines<T = Record<string, unknown>>(
   archive: Uint8Array,
-  name: string,
+  name: LineFile,
 ): T[] {
-  const text = readTarGzEntry(archive, name);
-  expect(text, `${name} is a member of the archive`).not.toBeNull();
+  const text = readLineFile(archive, name);
+  expect(text, `${name}.ndjson.gz is a member of the archive`).not.toBeNull();
   return (text ?? "")
     .split("\n")
     .filter((line) => line.trim() !== "")
@@ -459,7 +464,7 @@ function archiveLines<T = Record<string, unknown>>(
 }
 
 function archiveItemIds(archive: Uint8Array): string[] {
-  return archiveLines<{ item: MarfaItem }>(archive, "items.ndjson").map(
+  return archiveLines<{ item: MarfaItem }>(archive, "items").map(
     (line) => line.item.id,
   );
 }
@@ -584,19 +589,19 @@ describe("the archive's contents", () => {
     trackEdge(ctx, edge.data.edge.id);
 
     const archive = await archiveOf(source);
-    const entries = listTarGzEntries(archive).map((e) => e.name);
+    const entries = listEntries(archive).map((e) => e.name);
     expect(entries.slice(0, 4)).toEqual([
       "manifest.json",
-      "items.ndjson",
-      "edges.ndjson",
-      "types.ndjson",
+      "instance.ndjson.gz",
+      "items.ndjson.gz",
+      "edges.ndjson.gz",
     ]);
     expect(entries.slice(4)).toEqual([`blobs/${upload.data.hash}`]);
 
     const manifest = JSON.parse(
-      readTarGzEntry(archive, "manifest.json") ?? "{}",
+      readEntry(archive, "manifest.json") ?? "{}",
     ) as Record<string, unknown>;
-    const typeLines = archiveLines(archive, "types.ndjson");
+    const typeLines = archiveLines(archive, "instance");
     expect(manifest).toMatchObject({
       version: 0,
       format: "marfa-archive-v0",
@@ -613,7 +618,7 @@ describe("the archive's contents", () => {
       },
     });
     expect(archiveItemIds(archive).sort()).toEqual([withBlob, a, b].sort());
-    expect(archiveLines(archive, "edges.ndjson")).toHaveLength(1);
+    expect(archiveLines(archive, "edges")).toHaveLength(1);
     expect(Number.isNaN(Date.parse(String(manifest.created_at)))).toBe(false);
   });
 
@@ -628,14 +633,14 @@ describe("the archive's contents", () => {
 
     // The witness: the same selection carries the file without the parameter.
     const whole = await archiveOf(source);
-    expect(listTarGzEntries(whole).map((e) => e.name)).toContain(
+    expect(listEntries(whole).map((e) => e.name)).toContain(
       `blobs/${upload.data.hash}`,
     );
 
     const res = await client.exportArchive({ source, files: "false" });
     expect(res.status, JSON.stringify(res.error)).toBe(200);
     const manifest = JSON.parse(
-      readTarGzEntry(res.data, "manifest.json") ?? "{}",
+      readEntry(res.data, "manifest.json") ?? "{}",
     ) as Record<string, unknown>;
     expect(manifest).toMatchObject({
       item_count: 1,
@@ -649,12 +654,12 @@ describe("the archive's contents", () => {
       },
     });
     expect(
-      listTarGzEntries(res.data).filter((e) => e.name.startsWith("blobs/")),
+      listEntries(res.data).filter((e) => e.name.startsWith("blobs/")),
     ).toEqual([]);
     expect(archiveItemIds(res.data)).toEqual([note]);
   });
 
-  it("holds nothing in an archive but its manifest, items, edges, types and blobs", async () => {
+  it("holds nothing in an archive but its manifest, line files and blobs, and carries no webhook", async () => {
     // A key, a webhook, a configuration and a tombstone all exist, so what
     // the archive does not carry is a choice it made.
     const { writer, source } = await writerOfItsOwn("scope");
@@ -693,23 +698,28 @@ describe("the archive's contents", () => {
 
       const archive = await client.exportArchive({ state: "any", source });
       expect(archive.status).toBe(200);
-      const entries = listTarGzEntries(archive.data);
-      expect(entries.map((e) => e.name).sort()).toEqual([
-        "edges.ndjson",
-        "items.ndjson",
+      const entries = listEntries(archive.data);
+      expect(entries.map((e) => e.name)).toEqual([
         "manifest.json",
-        "types.ndjson",
+        "instance.ndjson.gz",
+        "items.ndjson.gz",
+        "edges.ndjson.gz",
       ]);
-      const everything = entries.map((e) => e.body.toString("utf8")).join("\n");
-      for (const absent of [
-        hook.data.id,
-        hook.data.secret,
-        receiver.hookUrl(`scope-${ctx.runId}`),
-        purgedLink,
-        apiKey,
-      ]) {
+      const everything = [
+        readEntry(archive.data, "manifest.json"),
+        ...(["instance", "items", "edges"] as const).map((name) =>
+          readLineFile(archive.data, name),
+        ),
+      ].join("\n");
+      for (const absent of [hook.data.secret, purgedLink, apiKey]) {
         expect(everything, absent).not.toContain(absent);
       }
+      expect(
+        archiveLines<{ webhook?: unknown }>(archive.data, "instance").filter(
+          (line) => line.webhook !== undefined,
+        ),
+      ).toEqual([]);
+      expect(everything).not.toContain(hook.data.id);
     } finally {
       await receiver.close();
     }
@@ -761,7 +771,7 @@ describe("the archive's contents", () => {
       const lines = archiveLines<{
         type?: { id: string };
         edge_type?: { id: string };
-      }>(archive.data, "types.ndjson");
+      }>(archive.data, "instance");
       const carriedTypes = lines.flatMap((l) => (l.type ? [l.type.id] : []));
       const carriedEdgeTypes = lines.flatMap((l) =>
         l.edge_type ? [l.edge_type.id] : [],
@@ -780,7 +790,7 @@ describe("the archive's contents", () => {
         expect(carriedEdgeTypes, registered.id).toContain(registered.id);
       }
       const manifest = JSON.parse(
-        readTarGzEntry(archive.data, "manifest.json") ?? "{}",
+        readEntry(archive.data, "manifest.json") ?? "{}",
       ) as { type_count: number; edge_type_count: number };
       expect(manifest.type_count).toBe(carriedTypes.length);
       expect(manifest.edge_type_count).toBe(carriedEdgeTypes.length);
@@ -809,7 +819,7 @@ describe("an archive is the selection as it stood when its headers arrived", () 
   }
 
   const titleOf = (archive: Uint8Array, id: string): unknown =>
-    archiveLines<{ item: MarfaItem }>(archive, "items.ndjson").find(
+    archiveLines<{ item: MarfaItem }>(archive, "items").find(
       (line) => line.item.id === id,
     )?.item.properties.title;
 
@@ -830,12 +840,12 @@ describe("an archive is the selection as it stood when its headers arrived", () 
       writtenAfter = await noteIn(writer, source);
     });
     const manifest = JSON.parse(
-      readTarGzEntry(archive, "manifest.json") ?? "{}",
+      readEntry(archive, "manifest.json") ?? "{}",
     ) as { item_count: number; edge_count: number };
     expect(manifest.item_count).toBe(2);
     expect(manifest.edge_count).toBe(1);
     expect(archiveItemIds(archive).sort()).toEqual([a, b].sort());
-    expect(archiveLines(archive, "edges.ndjson")).toHaveLength(1);
+    expect(archiveLines(archive, "edges")).toHaveLength(1);
     // The witness: a later export carries the row the first one did not.
     const later = await client.exportArchive({ source });
     expect(archiveItemIds(later.data)).toContain(writtenAfter);
@@ -854,7 +864,7 @@ describe("an archive is the selection as it stood when its headers arrived", () 
       });
       expect(patched.ok, JSON.stringify(patched.error)).toBe(true);
     });
-    const [line] = archiveLines<{ item: MarfaItem }>(archive, "items.ndjson");
+    const [line] = archiveLines<{ item: MarfaItem }>(archive, "items");
     expect(line?.item.id).toBe(id);
     expect(titleOf(archive, id)).toBe("as read");
     expect(line?.item.version).toBe(1);
@@ -898,16 +908,15 @@ describe("an archive is the selection as it stood when its headers arrived", () 
       trackEdge(ctx, late.data.edge.id);
       lateId = late.data.edge.id;
     });
-    const carried = archiveLines<{ edge: MarfaEdge }>(
-      archive,
-      "edges.ndjson",
-    ).map((line) => line.edge.id);
+    const carried = archiveLines<{ edge: MarfaEdge }>(archive, "edges").map(
+      (line) => line.edge.id,
+    );
     expect(carried).toEqual([early.data.edge.id]);
     // The witness: both endpoints were carried, so the later edge was
     // eligible and a later export holds it.
     const later = await client.exportArchive({ source });
     expect(
-      archiveLines<{ edge: MarfaEdge }>(later.data, "edges.ndjson")
+      archiveLines<{ edge: MarfaEdge }>(later.data, "edges")
         .map((line) => line.edge.id)
         .sort(),
     ).toEqual([early.data.edge.id, lateId].sort());

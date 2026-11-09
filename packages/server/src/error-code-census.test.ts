@@ -29,6 +29,27 @@ const UNPUBLISHED_DOORS: Record<string, string> = {
   inbound_unavailable: "an inbound webhook address",
 };
 
+/**
+ * The codes this frozen server still sends that the contract has since
+ * removed, each with what replaced it. An entry the chapter holds again, or
+ * that this server no longer sends, fails as stale.
+ */
+const REMOVED_FROM_CONTRACT: Record<string, string> = {
+  export_unrestorable:
+    "an archive export now reads its selection once and answers `export_rows_unrestorable`",
+};
+
+/**
+ * The codes the contract states for doors only the Rust server serves. An
+ * entry this server sends, or that the chapter no longer holds, fails as
+ * stale.
+ */
+const RUST_SERVER_ONLY: Record<string, string> = {
+  backup_not_found: "`POST /backups/{instance_id}/{name}/restore`",
+  no_bucket: "the backup doors, `/backups`",
+  too_many_connections: "any door, past the connection cap",
+};
+
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const path = join(dir, entry.name);
@@ -125,12 +146,11 @@ function declaredCodes(): Set<string> {
   return declared;
 }
 
-/** Codes of the Rust server alone, which this server never sends. */
-const RUST_ONLY = ["too_many_connections"];
-
 describe("the codes the server sends and the error chapter", () => {
   const sent = codesSent();
-  const answered = [...sent.keys()];
+  const answered = [...sent.keys()].filter(
+    (code) => !(code in REMOVED_FROM_CONTRACT),
+  );
 
   it("reads the codes the server sends, the one outside the enum included", () => {
     // The control for the checks below: a read that found nothing would pass
@@ -171,7 +191,21 @@ describe("the codes the server sends and the error chapter", () => {
   it("has no row for a code the server does not send", () => {
     const rows = rowsOf(ERRORS_CHAPTER);
     expect(
-      rows.filter((code) => !sent.has(code) && !RUST_ONLY.includes(code)),
+      rows.filter((code) => !sent.has(code) && !(code in RUST_SERVER_ONLY)),
+    ).toEqual([]);
+  });
+
+  it("lists only codes the contract and this server still differ on", () => {
+    const rows = new Set(rowsOf(ERRORS_CHAPTER));
+    expect(
+      Object.keys(REMOVED_FROM_CONTRACT).filter(
+        (code) => rows.has(code) || !sent.has(code),
+      ),
+    ).toEqual([]);
+    expect(
+      Object.keys(RUST_SERVER_ONLY).filter(
+        (code) => sent.has(code) || !rows.has(code),
+      ),
     ).toEqual([]);
   });
 

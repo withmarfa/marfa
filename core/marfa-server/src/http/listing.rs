@@ -140,7 +140,7 @@ impl Params {
         Ok(first)
     }
 
-    fn time(&self, name: &str) -> Result<Option<String>> {
+    pub(super) fn time(&self, name: &str) -> Result<Option<String>> {
         self.one(name)?
             .map(|value| {
                 time::normalize_bound(value, name)
@@ -188,7 +188,7 @@ fn capped_limit(params: &Params, default: i64, most: i64) -> Result<i64> {
     Ok(value.parse::<i64>().map_or(most, |limit| limit.min(most)))
 }
 
-fn types_of(value: &str) -> Result<Vec<String>> {
+pub(super) fn types_of(value: &str) -> Result<Vec<String>> {
     let refused = |error: marfa_rules::error::RuleError| invalid_field("type", error.message);
     let sent: Vec<String> = value.split(',').map(str::to_string).collect();
     let entries = type_entries(&sent).map_err(refused)?;
@@ -198,7 +198,7 @@ fn types_of(value: &str) -> Result<Vec<String>> {
         .collect()
 }
 
-fn states_of(value: &str) -> Result<States> {
+pub(super) fn states_of(value: &str) -> Result<States> {
     let entries: Vec<&str> = value
         .split(',')
         .map(str::trim)

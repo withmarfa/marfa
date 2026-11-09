@@ -70,7 +70,7 @@ When a request starts or wakes background work, the server MUST evaluate that wo
 
 When `GET /` is answered with the description, the server MUST give it an `instance_id` that is a UUIDv7.
 
-**Tests:** `compliance/instance.test.ts › names itself the same way at the root, at /config and in an archive`, `› describes itself at the root`, `compliance/instance-config.test.ts › answers one identity to every caller, keeps it across a restart, and shares it with no other instance`.
+**Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`, `compliance/instance.test.ts › describes itself at the root`, `compliance/instance-config.test.ts › answers one identity to every caller, keeps it across a restart, and shares it with no other instance`.
 
 ### `instance/request-limit-at-root`
 
@@ -84,7 +84,7 @@ When `GET /` is answered with the description, the server MUST give it a `max_re
 
 When a key holding `config.manage` sends `GET /config`, the server MUST answer an `instance_id` equal to the one the root answers.
 
-**Tests:** `compliance/instance.test.ts › names itself the same way at the root, at /config and in an archive`, `compliance/instance-config.test.ts › answers one identity to every caller, keeps it across a restart, and shares it with no other instance`.
+**Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`, `compliance/instance-config.test.ts › answers one identity to every caller, keeps it across a restart, and shares it with no other instance`.
 
 ### `instance/id-in-archive`
 
@@ -92,7 +92,7 @@ When a credential that may export sends `GET /export?format=archive`, the server
 
 **Reason:** the manifest is a file nothing echoes back, so an export that wrote another name, or none, would go unnoticed at every other operation.
 
-**Tests:** `compliance/instance.test.ts › names itself the same way at the root, at /config and in an archive`.
+**Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`.
 
 ### `instance/id-same-every-answer`
 
@@ -204,7 +204,7 @@ When a request that carries no credential sends `GET /`, the server MUST answer 
 
 **Reason:** the identity is read by a caller that holds no key yet.
 
-**Tests:** `compliance/instance.test.ts › names itself the same way at the root, at /config and in an archive`, `› answers a browser at the root with a page and a program with the JSON`.
+**Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`, `compliance/instance.test.ts › answers a browser at the root with a page and a program with the JSON`.
 
 ### `instance/root-fields`
 
@@ -284,7 +284,7 @@ When a credential that may export sends `GET /export?format=archive`, the server
 
 **Reason:** an archive is read only by the build that wrote it, and the format stays at version 0 until the first public release (`search-and-filters/restore-version`).
 
-**Tests:** `compliance/instance.test.ts › names itself the same way at the root, at /config and in an archive`.
+**Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`.
 
 ### `instance/contract-header`
 
@@ -458,7 +458,195 @@ The server MUST cut each description and title in the `GET /overview` answer at 
 
 ## Backing up
 
-An owner backs up an instance by backing up the machine it runs on. The data directory is the one thing the instance keeps: the database file, the log beside it that holds the writes not yet moved into the file, and the folder of blob files. The setting `MARFA_KEY_SALT` is not in it.
+An owner has two backups of an instance. Where `S3_BUCKET` is set, the server backs itself up to that object store: on a schedule, and when the owner asks. Each backup is an archive, as `GET /export?format=archive` writes one, of every row and instance line, the trash included, and of no file's bytes, since the object store already keeps a copy of each file as an attached store. And an image of the data directory, such as a machine backup takes, holds everything the instance keeps: the database file, the log beside it that holds the writes not yet moved into the file, and the folder of blob files. Neither holds the setting `MARFA_KEY_SALT`, and a backup holds no credential, so sign-in, keys and apps are set up again after a backup is restored.
+
+### `instance/backup-object`
+
+When the server takes a backup, the server MUST put it in the object store as one object named `<S3_PREFIX>/backups/<instance id>/<created_at>.tar`, where `<instance id>` is the instance's id and `<created_at>` is its manifest's `created_at`.
+
+**Reason:** a server that replaces another can start on the same prefix, and the folder keeps each instance's backups apart.
+
+**Tests:** `compliance/backups.test.ts › puts one object in the prefix's backups folder for its instance, named for its created_at, holding what an archive export with state any and files false holds for a key that reaches everything`.
+
+### `instance/backup-holds-export`
+
+When the server takes a backup, the server MUST put in it the items, edges and instance lines that `GET /export?format=archive&state=any&files=false` would send a key that holds every permission and reaches every type at that moment, but for the `source` lines that `search-and-filters/archive-sources` gives a backup.
+
+**Tests:** `compliance/backups.test.ts › puts one object in the prefix's backups folder for its instance, named for its created_at, holding what an archive export with state any and files false holds for a key that reaches everything`.
+
+### `instance/backup-no-file-bytes`
+
+When the server takes a backup, the server MUST name every file its rows name under the manifest's `missing_blobs`, and carry no file's bytes.
+
+**Reason:** the object store already holds a copy of each file the instance has replicated, so a backup that carried them would put every file in the bucket again each time.
+
+**Tests:** `compliance/backups.test.ts › puts one object in the prefix's backups folder for its instance, named for its created_at, holding what an archive export with state any and files false holds for a key that reaches everything`.
+
+### `instance/backup-bucket-blobs`
+
+When the server takes a backup, the server MUST list under the manifest's `bucket_blobs` the hash of each file the backup names that the object store held a recorded copy of in the snapshot the backup was read from.
+
+**Reason:** a restore on the same bucket takes those files from the store, and a file outside the list may still be only on the instance's disk.
+
+**Tests:** `compliance/backups.test.ts › puts one object in the prefix's backups folder for its instance, named for its created_at, holding what an archive export with state any and files false holds for a key that reaches everything`.
+
+### `instance/backup-no-credentials`
+
+When the server takes a backup, the server MUST NOT put in it a key, an app's token, the owner's password or passkeys, the contents of `marfa.secrets`, or the object store's credentials.
+
+**Reason:** a backup that leaked from the bucket gives nobody access to the instance or to the bucket.
+
+**Tests:** `compliance/backups.test.ts › holds no key, token, password, secret or object store credential`.
+
+### `instance/backup-whole`
+
+If a backup run fails, or the process ends, before the object store has taken the whole backup, then the server MUST NOT leave an object under `<S3_PREFIX>/backups/` that holds part of it.
+
+**Reason:** a backup larger than one part goes up as a multipart upload, which no listing or read sees until it completes. An upload the process left unfinished still holds its parts in the bucket until a lifecycle rule or the store's own clean-up removes them.
+
+**Tests:** `compliance/backup-faults.test.ts › leaves no object and no spool when killed while putting a backup larger than one part`.
+
+### `instance/backup-slow-store`
+
+When the object store takes a backup's bytes more slowly than `blob_read_idle_timeout_ms` lets a client download stall, the server MUST still put the whole backup.
+
+**Reason:** `blob_read_idle_timeout_ms` bounds a client that stopped reading. A backup's put has a deadline of its own that allows for a slow uplink.
+
+**Tests:** `compliance/backup-faults.test.ts › puts a backup whole when the object store takes it more slowly than a client download may stall`.
+
+### `instance/backup-spool-gone`
+
+When the server starts after a process that ended during a backup, the server MUST hold none of that backup's spool on its disk.
+
+**Tests:** `compliance/backup-faults.test.ts › leaves no object and no spool when killed while putting a backup larger than one part`.
+
+### `instance/backup-interval`
+
+Where `S3_BUCKET` is set and `backup_interval_ms` is above 0, the server MUST run a backup once that interval has passed since the last run ended.
+
+**Tests:** `compliance/backups.test.ts › backs up on its interval with no request`.
+
+### `instance/backup-off`
+
+Where `backup_interval_ms` is 0, the server MUST NOT run a backup that no request asked for.
+
+**Tests:** `compliance/backups.test.ts › takes no scheduled backup while backup_interval_ms is 0, and leaves backup out of the housekeeping listing`.
+
+### `instance/backup-unchanged`
+
+When a scheduled backup run finds that nothing a backup holds has changed since the last backup the server put, the server MUST NOT put another.
+
+**Reason:** a backup costs a read of the whole database, and an instance that is not being written to has nothing new to keep.
+
+**Tests:** `compliance/backups.test.ts › skips a scheduled run when nothing changed, counts a settings change as a change, and puts one when asked`.
+
+### `instance/backup-setting-change`
+
+The server MUST count a change to a stored setting as a change a backup holds.
+
+**Tests:** `compliance/backups.test.ts › skips a scheduled run when nothing changed, counts a settings change as a change, and puts one when asked`.
+
+### `instance/backup-run-now`
+
+When the private local command sends `POST /backups`, the server MUST put a backup, whether or not anything has changed since the last.
+
+**Tests:** `compliance/backups.test.ts › skips a scheduled run when nothing changed, counts a settings change as a change, and puts one when asked`.
+
+### `instance/backup-one-at-a-time`
+
+While a backup run is under way, when the private local command sends `POST /backups`, the server MUST answer `409 housekeeping_job_running` and start no second run.
+
+**Tests:** `compliance/backup-faults.test.ts › runs one backup at a time, answering a second ask with 409 housekeeping_job_running`.
+
+### `instance/backup-unreachable`
+
+If the object store does not take a backup, then the server MUST count the failed run and run again at the next interval.
+
+**Tests:** `compliance/backup-faults.test.ts › counts a backup the object store cannot take, shows it in health, and clears it with the next backup that is put`, `› runs the next scheduled backup after a failed one when nothing has changed since the last backup put`.
+
+### `instance/backup-health-failing`
+
+While the last backup run failed, the server MUST answer `GET /health` with `backups.status` `failing` and an overall `status` no better than `degraded`.
+
+**Reason:** a backup that stops working is the failure an owner learns of only when they need the backup.
+
+**Tests:** `compliance/backup-faults.test.ts › counts a backup the object store cannot take, shows it in health, and clears it with the next backup that is put`.
+
+### `instance/backup-health-detail`
+
+When a request authorized by `instance.read` or local authority sends `GET /health`, the server MUST include in `backups` the last backup put, how many runs in a row have failed, and the last failure.
+
+**Tests:** `compliance/backup-faults.test.ts › counts a backup the object store cannot take, shows it in health, and clears it with the next backup that is put`.
+
+### `instance/backup-health-off`
+
+Where `S3_BUCKET` is not set, the server MUST answer `GET /health` with `backups.status` `off` and `backups.reason` `no_bucket`.
+
+**Tests:** `compliance/backups.test.ts › says in health that backups are off on an instance with no object store, and answers 409 no_bucket at each door`.
+
+### `instance/backup-no-bucket`
+
+Where `S3_BUCKET` is not set, when the private local command sends `GET /backups`, `POST /backups` or `POST /backups/{instance_id}/{name}/restore`, the server MUST answer `409 no_bucket`.
+
+**Tests:** `compliance/backups.test.ts › says in health that backups are off on an instance with no object store, and answers 409 no_bucket at each door`.
+
+### `instance/backups-owner-only`
+
+When a key or an app's token sends `GET /backups`, `POST /backups` or `POST /backups/{instance_id}/{name}/restore`, the server MUST answer `403 forbidden`.
+
+**Reason:** a backup holds every row of the instance, which no grant of a key or an app covers.
+
+**Tests:** `compliance/backups.test.ts › lists the backups newest first to the owner, and refuses a key at all three doors`.
+
+### `instance/backups-list`
+
+When the private local command sends `GET /backups`, the server MUST answer with each backup in an instance's folder under `<S3_PREFIX>/backups/`, this instance's and any other's, newest first, each with its `name`, `instance_id`, `created_at` and `size_bytes`.
+
+**Reason:** a fresh server started on the prefix of an instance it replaces restores that instance's backup.
+
+**Tests:** `compliance/backups.test.ts › lists the backups newest first to the owner, and refuses a key at all three doors`, `› restores a named backup into a fresh server on the same bucket, files included`.
+
+### `instance/backup-restore`
+
+When the private local command sends `POST /backups/{instance_id}/{name}/restore`, the server MUST restore the backup of that name in that instance's folder from the object store as `POST /restore` restores the same archive.
+
+**Reason:** the server reads the backup itself, so a restore after a move needs no copy of the backup on the owner's computer.
+
+**Tests:** `compliance/backups.test.ts › restores a named backup into a fresh server on the same bucket, files included`.
+
+### `instance/backup-restore-unknown`
+
+If `POST /backups/{instance_id}/{name}/restore` names no backup the object store holds directly under `<S3_PREFIX>/backups/<instance_id>/`, then the server MUST answer `404 backup_not_found`.
+
+**Tests:** `compliance/backups.test.ts › answers 404 backup_not_found for a name the object store does not hold, or one that is not a backup's`.
+
+### `instance/backup-thinning-day`
+
+When the server has put a backup, the server MUST keep every backup of its own taken in the 24 hours before that backup was taken.
+
+**Reason:** the day is counted from when the backup was taken, so a slow put deletes nothing it would otherwise keep.
+
+**Tests:** `compliance/backup-thinning.test.ts › keeps the last day and the newest of each older day for thirty days, and deletes nothing that is not a listed backup of this instance`, `› keeps every backup taken in the day before the one just put, however long the put took`.
+
+### `instance/backup-thinning-daily`
+
+When the server has put a backup, the server MUST keep, of its own backups taken between one and 31 days before, the newest of each UTC day, and delete the others.
+
+**Tests:** `compliance/backup-thinning.test.ts › keeps the last day and the newest of each older day for thirty days, and deletes nothing that is not a listed backup of this instance`.
+
+### `instance/backup-thinning-old`
+
+When the server has put a backup, the server MUST delete each of its own backups taken more than 31 days before.
+
+**Tests:** `compliance/backup-thinning.test.ts › keeps the last day and the newest of each older day for thirty days, and deletes nothing that is not a listed backup of this instance`.
+
+### `instance/backup-thinning-only-backups`
+
+The server MUST NOT delete an object other than one it listed directly under `<S3_PREFIX>/backups/<instance id>/`, where `<instance id>` is its own, whose name is a backup's name.
+
+**Reason:** the prefix also holds the instance's files, another instance on the same prefix keeps its own backups, and the bucket may hold objects the instance did not write.
+
+**Tests:** `compliance/backup-thinning.test.ts › keeps the last day and the newest of each older day for thirty days, and deletes nothing that is not a listed backup of this instance`.
 
 ### `instance/image-starts`
 
@@ -708,7 +896,7 @@ When a request without `instance.read` sends `GET /health`, the server MUST answ
 
 ## A database this build did not write
 
-A database records the schema version of the build that wrote it. The server starts on a database that holds its own schema, and it refuses to start, before changing the database file, on one a newer build wrote and on one whose schema is not the one it declares.
+A database records the schema version of the build that wrote it. The server starts on a database that holds its own schema, and upgrades one an earlier build wrote whole, after copying it. It refuses to start, before changing the database file, on one a newer build wrote and on one whose schema is not the one its version declares.
 
 ### `instance/upgrade-refuses-newer`
 
@@ -725,6 +913,34 @@ If the server starts on a database in which a table, an index or a trigger the s
 **Reason:** an index over a missing column fails with a driver error after the file's header has been rewritten, and a missing column fails nowhere until a request meets it, so the refusal is made before either. A database that lacks tables and holds no row is completed under `instance/unfinished-completed`.
 
 **Tests:** `compliance/database-file.test.ts › refuses a database holding %s, changes nothing in its files, and opens no port`, `› refuses a database that lacks a table and holds a row in one it creates, and changes nothing`, `› refuses a database that lacks a table and has a column it does not declare, though it holds no rows`.
+
+### `instance/upgrade-migrates-older`
+
+When the server starts on a database at an earlier schema version of its own, whose schema is the one that version declares, the server MUST apply every later migration in one transaction before it takes a request.
+
+**Tests:** waiting on #2802.
+
+### `instance/upgrade-copy-before`
+
+When the server upgrades a database that holds a row, the server MUST write a copy of the database as it stands, to the file `<database file>.before-upgrade` beside it, before it applies any migration.
+
+**Reason:** an upgrade that goes wrong, or a build the owner wants to go back from, leaves the database as the earlier build wrote it.
+
+**Tests:** waiting on #2802.
+
+### `instance/upgrade-copy-refused`
+
+If the copy before an upgrade cannot be written, or would leave less free space on the database's volume than `disk_reserve_bytes`, then the server MUST refuse to start and leave the database file byte for byte as it found it.
+
+**Tests:** waiting on #2802.
+
+### `instance/upgrade-copy-last`
+
+When the server has written a copy before an upgrade, the server MUST keep no copy from before an earlier upgrade.
+
+**Reason:** one copy is enough to go back one build, and each copy is as large as the database.
+
+**Tests:** waiting on #2802.
 
 ### `instance/upgrade-names-cause`
 
@@ -886,7 +1102,7 @@ While the server runs an archive export, an archive restore, an NDJSON export, a
 
 **Reason:** a long job that held up other requests would stop every request, `/health` included, for as long as it runs, and a container whose health check waits five seconds restarts a server that is working. The fixture checks the order of the answer and a later step of the job, which the server records, where a time would measure the machine. A restore also holds the write lock, which makes the write probe `degraded` and is not a held process.
 
-**Tests:** `compliance/long-job-health.test.ts › is answered between two pages of an archive export`, `› is answered between the first and the last row of an archive restore`, `› is answered between two pages of an NDJSON export`, `› is answered between two chunks of a bulk action`, `› is answered between two pages of the blob orphan sweep`, `› is answered between two pages of version thinning`, `compliance/long-job-health-credentials.test.ts › is answered between two grants of the retirement of inactive grants`.
+**Tests:** `compliance/long-job-health-restore.test.ts › is answered between the first and the last row of an archive restore`, `compliance/long-job-health.test.ts › is answered between two pages of an archive export`, `› is answered between two pages of an NDJSON export`, `› is answered between two chunks of a bulk action`, `› is answered between two pages of the blob orphan sweep`, `› is answered between two pages of version thinning`, `compliance/long-job-health-credentials.test.ts › is answered between two grants of the retirement of inactive grants`.
 
 ## Open connections
 
@@ -1668,6 +1884,7 @@ Each bound is wide enough that no owner meets it and narrow enough that a slip o
 | `blob_integrity_batch_bytes`     | `1073741824` bytes | Whole number of bytes, 1 to 1099511627776                 | The most bytes one integrity run checks.                                                                                                                                                                                                                                                                                                                                                                   |
 | `blob_cleanup_interval_ms`       | `86400000` ms      | Whole number of milliseconds, 0 to 31536000000            | How often the `blob-orphans` job sweeps for unreferenced blobs. At 0 the sweep is off.                                                                                                                                                                                                                                                                                                                     |
 | `blob_cleanup_grace_ms`          | `86400000` ms      | Whole number of milliseconds, 0 to 31536000000            | How long an unreferenced blob stands in the orphan report before a later run purges it. At 0 the next run purges it.                                                                                                                                                                                                                                                                                       |
+| `backup_interval_ms`             | `3600000` ms       | Whole number of milliseconds, 0 to 31536000000            | How often the `backup` job puts a backup in the object store when anything it holds has changed. At 0 scheduled backups are off.                                                                                                                                                                                                                                                                           |
 | `enrichment_enabled`             | `true`             | `true` or `false`                                         | Whether the server extracts text from uploaded files.                                                                                                                                                                                                                                                                                                                                                      |
 | `enrichment_ocr_enabled`         | `true`             | `true` or `false`                                         | Whether the server reads text from images with OCR. When off, images are recorded as unsupported.                                                                                                                                                                                                                                                                                                          |
 | `enrichment_interval_ms`         | `30000` ms         | Whole number of milliseconds, 1 to 31536000000            | How often the enrichment sweep runs.                                                                                                                                                                                                                                                                                                                                                                       |

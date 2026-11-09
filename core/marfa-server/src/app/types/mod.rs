@@ -2,7 +2,7 @@
 
 mod moving;
 mod read;
-mod write;
+pub mod write;
 
 pub(crate) use moving::{Guard, dry_run, finish_move, start_guarded};
 pub use moving::{Move, move_type};

@@ -12,7 +12,13 @@ import {
   trackKey,
   trackType,
 } from "../../utils/setup.js";
-import { readTarGzEntry, tarGz } from "../../utils/archive.js";
+import {
+  tar,
+  lineFile,
+  readEntry,
+  archiveLines,
+  type LineFile,
+} from "../../utils/archive.js";
 import { v7 as uuidv7 } from "uuid";
 
 let client: MarfaClient;
@@ -517,18 +523,18 @@ describe("who may read and upload a blob", () => {
     });
     expect(archive.status).toBe(200);
     const manifest = JSON.parse(
-      readTarGzEntry(archive.data, "manifest.json") ?? "{}",
+      readEntry(archive.data, "manifest.json") ?? "{}",
     ) as { blobs: Record<string, unknown> };
     for (const hash of [inProperty, inExtension, inEdge]) {
       expect(Object.keys(manifest.blobs)).toContain(hash);
-      expect(readTarGzEntry(archive.data, `blobs/${hash}`)).not.toBeNull();
+      expect(readEntry(archive.data, `blobs/${hash}`)).not.toBeNull();
     }
     for (const hash of [inPlantedExtension, inPlantedEdge]) {
       // The witness: the instance holds the bytes, and the archive leaves
       // them out because the key was never served them.
       expect((await operator.downloadBlob(hash)).status).toBe(200);
       expect(Object.keys(manifest.blobs)).not.toContain(hash);
-      expect(readTarGzEntry(archive.data, `blobs/${hash}`)).toBeNull();
+      expect(readEntry(archive.data, `blobs/${hash}`)).toBeNull();
     }
   });
 
@@ -576,7 +582,7 @@ describe("who may read and upload a blob", () => {
     });
     expect(archive.status).toBe(200);
     for (const hash of [viaEdge, viaExtension]) {
-      expect(readTarGzEntry(archive.data, `blobs/${hash}`)).not.toBeNull();
+      expect(readEntry(archive.data, `blobs/${hash}`)).not.toBeNull();
     }
 
     // Take the rows away, which withdraws both reaches, and restore them.
@@ -620,7 +626,7 @@ describe("who may read and upload a blob", () => {
       { id: uuidv7(), lends: true, data: lent },
       { id: uuidv7(), lends: false, data: unlent },
     ];
-    const archive = tarGz([
+    const archive = tar([
       {
         name: "manifest.json",
         body: JSON.stringify({
@@ -640,9 +646,10 @@ describe("who may read and upload a blob", () => {
           ),
         }),
       },
-      {
-        name: "items.ndjson",
-        body: lines
+      lineFile("instance", ""),
+      lineFile(
+        "items",
+        lines
           .map((line) =>
             JSON.stringify({
               item: {
@@ -657,13 +664,12 @@ describe("who may read and upload a blob", () => {
           )
           .join("\n")
           .concat("\n"),
-      },
+      ),
+      lineFile("edges", ""),
       ...lines.map((line) => ({
         name: `blobs/${sha256(line.data)}`,
         body: line.data,
       })),
-      { name: "edges.ndjson", body: "" },
-      { name: "types.ndjson", body: "" },
     ]);
     const restored = await getOwnerClient().restoreArchive(archive);
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
@@ -1720,12 +1726,12 @@ describe("which write that names a digest lends it", () => {
     });
     expect(archive.status).toBe(200);
     const manifest = JSON.parse(
-      readTarGzEntry(archive.data, "manifest.json") ?? "{}",
+      readEntry(archive.data, "manifest.json") ?? "{}",
     ) as { blobs: Record<string, unknown> };
     expect(Object.keys(manifest.blobs)).toEqual([proved]);
-    expect(readTarGzEntry(archive.data, `blobs/${proved}`)).not.toBeNull();
+    expect(readEntry(archive.data, `blobs/${proved}`)).not.toBeNull();
     for (const hash of [planted, earlier]) {
-      expect(readTarGzEntry(archive.data, `blobs/${hash}`)).toBeNull();
+      expect(readEntry(archive.data, `blobs/${hash}`)).toBeNull();
     }
   });
 
@@ -1775,7 +1781,7 @@ describe("which write that names a digest lends it", () => {
       });
       expect(archive.status, name).toBe(200);
       const carried = (hash: string) =>
-        readTarGzEntry(archive.data, `blobs/${hash}`) !== null;
+        readEntry(archive.data, `blobs/${hash}`) !== null;
       expect(carried(inProperty), name).toBe(true);
       expect(carried(inEdge), name).toBe(edge);
       expect(carried(inExtension), name).toBe(extension);
@@ -1845,12 +1851,9 @@ describe("which write that names a digest lends it", () => {
       source: own.data.source,
     });
     expect(archive.status).toBe(200);
-    const lines = (name: string) =>
-      (readTarGzEntry(archive.data, name) ?? "")
-        .split("\n")
-        .filter((line) => line !== "")
-        .map((line) => JSON.parse(line) as Record<string, any>);
-    const itemLine = lines("items.ndjson").find(
+    const lines = (name: LineFile) =>
+      archiveLines<Record<string, any>>(archive.data, name);
+    const itemLine = lines("items").find(
       (line) => line.item.id === note.data.item.id,
     );
     expect(itemLine?.lending_blobs).toEqual([lendingProperty]);
@@ -1861,7 +1864,7 @@ describe("which write that names a digest lends it", () => {
     expect(itemLine?.metadata.extensions[plantsNamespace]).toEqual({
       cover: plantedExtension,
     });
-    const edgeLine = lines("edges.ndjson").find(
+    const edgeLine = lines("edges").find(
       (line) => line.edge.id === edge.data.edge.id,
     );
     expect(edgeLine?.lending_blobs).toEqual([lendingEdge]);
@@ -1985,7 +1988,7 @@ describe("which write that names a digest lends it", () => {
         },
         lending_blobs: lending,
       });
-    const archive = tarGz([
+    const archive = tar([
       {
         name: "manifest.json",
         body: JSON.stringify({
@@ -2005,22 +2008,22 @@ describe("which write that names a digest lends it", () => {
           ),
         }),
       },
-      {
-        name: "items.ndjson",
-        body: `${noteLine(ids.source, {
+      lineFile("instance", ""),
+      lineFile(
+        "items",
+        `${noteLine(ids.source, {
           [lendsNamespace]: { cover: namespaceLent },
           [plantsNamespace]: { cover: namespaceDead },
         })}\n${noteLine(ids.target, {})}\n`,
-      },
-      {
-        name: "edges.ndjson",
-        body: `${edgeLine({ cover: edgeLent, alt: edgeDead }, [edgeLent])}\n${edgeLine({ cover: edgeUnlisted }, "not a list", [ids.target, ids.source])}\n`,
-      },
+      ),
+      lineFile(
+        "edges",
+        `${edgeLine({ cover: edgeLent, alt: edgeDead }, [edgeLent])}\n${edgeLine({ cover: edgeUnlisted }, "not a list", [ids.target, ids.source])}\n`,
+      ),
       ...Object.values(blobs).map((data) => ({
         name: `blobs/${sha256(data)}`,
         body: data,
       })),
-      { name: "types.ndjson", body: "" },
     ]);
     const restored = await getOwnerClient().restoreArchive(archive);
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);

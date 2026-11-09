@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import type { MarfaClient } from "../../client/api.js";
-import { blobHash, itemsArchive } from "../../utils/archive.js";
+import { itemsArchive, blobHash } from "../../utils/archive.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -55,7 +55,7 @@ beforeAll(async () => {
   ({ operator: management, working } = clientsFor(server));
   longRestore = sendSlowly(
     "/restore",
-    { "content-type": "application/gzip" },
+    { "content-type": "application/x-tar" },
     noteArchive(longRestoreId, "restored after a long upload"),
   );
   longBlob = sendSlowly("/blobs", HEADERS, longBlobBytes);
@@ -146,7 +146,7 @@ describe("a body that stops arriving", () => {
     const archive = noteArchive(id, "never finished arriving");
     const parts = inParts(archive, 4);
     const upload = slowPost({ socketPath: server.controlSocket }, "/restore", {
-      "content-type": "application/gzip",
+      "content-type": "application/x-tar",
     });
     for (const part of parts.slice(0, 3)) await upload.write(part);
     // The witness for the absence below: the part that arrived is on disk.
@@ -163,7 +163,7 @@ describe("a body that stops arriving", () => {
 
     // The same archive, whole, restores: it was the stall that stopped it.
     const whole = slowPost({ socketPath: server.controlSocket }, "/restore", {
-      "content-type": "application/gzip",
+      "content-type": "application/x-tar",
     });
     await whole.write(archive);
     whole.end();

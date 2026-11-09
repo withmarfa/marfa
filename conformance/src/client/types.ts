@@ -351,6 +351,22 @@ export interface HousekeepingRun {
   error: string | null;
 }
 
+/** One backup in the instance's object store, as `GET /backups` lists it. */
+export interface BackupRow {
+  name: string;
+  instance_id: string;
+  created_at: string;
+  size_bytes: number;
+}
+
+/** What `POST /backups` answers. */
+export interface BackupRun {
+  outcome: "put";
+  backup: BackupRow;
+  removed: number;
+  unremoved: number;
+}
+
 export interface ConnectorRun {
   id: string;
   connector_id: string;
@@ -738,6 +754,8 @@ export interface BulkActionJob {
 export interface RestoreArchiveResponse {
   imported: number;
   duplicates: number;
+  types_registered: number;
+  edge_types_registered: number;
   edges_imported: number;
   edges_skipped: number;
   edges_skipped_reasons: Record<string, number>;
@@ -749,6 +767,13 @@ export interface RestoreArchiveResponse {
   sources_added: number;
   sources_skipped: number;
   sources_skipped_reasons: Record<string, number>;
+  settings_added: number;
+  settings_skipped: number;
+  connector_states_added: number;
+  connector_states_skipped: number;
+  connector_agreements_added: number;
+  connector_agreements_skipped: number;
+  set_up_again: string;
 }
 
 export interface PerfResult {

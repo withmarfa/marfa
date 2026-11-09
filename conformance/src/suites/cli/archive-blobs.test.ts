@@ -10,7 +10,6 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { gunzipSync } from "node:zlib";
 import type { MarfaClient } from "../../client/api.js";
 import {
   bootFreshServer,
@@ -19,6 +18,7 @@ import {
 } from "../../utils/fresh-server.js";
 import { bytesOf, clientsFor, DISK_ONLY } from "../../utils/own-blob-server.js";
 import { damageBlobs, loseBlobs } from "../../utils/store-faults.js";
+import { tar } from "../../utils/archive.js";
 import { Cli, releaseHeld, requireBinary } from "./harness.js";
 
 /**
@@ -63,27 +63,25 @@ afterAll(async () => {
 describe("an archive that lacks a blob it names", () => {
   it("replaces the path with a whole archive and leaves no other file", async () => {
     const wholeDir = mkdtempSync(join(dir, "whole-"));
-    const path = join(wholeDir, "nightly.tar.gz");
+    const path = join(wholeDir, "nightly.tar");
     writeFileSync(path, "an earlier backup");
     await cli.json(["export", "--format", "archive", "--output", path]);
 
-    const tar = gunzipSync(readFileSync(path)).toString("latin1");
+    const tar = readFileSync(path).toString("latin1");
     expect(tar).toContain('"missing_blobs":{}');
     expect(tar).toContain(lost);
-    expect(readdirSync(wholeDir)).toEqual(["nightly.tar.gz"]);
+    expect(readdirSync(wholeDir)).toEqual(["nightly.tar"]);
   });
 
   it("keeps an archive that lacks a blob beside the path, exits 1 with blobs_missing, and leaves the earlier archive as it was", async () => {
     const keptDir = mkdtempSync(join(dir, "kept-"));
-    const path = join(keptDir, "nightly.tar.gz");
+    const path = join(keptDir, "nightly.tar");
     const incomplete = `${path}.incomplete`;
     // The witness: the same export, while the file is there, is the earlier
     // complete archive, and it replaces the path.
     await cli.json(["export", "--format", "archive", "--output", path]);
     const earlier = readFileSync(path);
-    expect(gunzipSync(earlier).toString("latin1")).toContain(
-      '"missing_blobs":{}',
-    );
+    expect(earlier.toString("latin1")).toContain('"missing_blobs":{}');
     // An earlier file of the incomplete name is the only file replaced.
     writeFileSync(incomplete, "an earlier incomplete archive");
 
@@ -102,12 +100,12 @@ describe("an archive that lacks a blob it names", () => {
     expect(refused.envelope.error.message).toContain(path);
     expect(refused.envelope.error.message).toContain(incomplete);
     // Written whole: the gzip stream ends, and the manifest names the blob.
-    const tar = gunzipSync(readFileSync(incomplete)).toString("latin1");
+    const tar = readFileSync(incomplete).toString("latin1");
     expect(tar).toContain('"missing_blobs":{');
     expect(tar).toContain(lost);
     expect(readdirSync(keptDir).sort()).toEqual([
-      "nightly.tar.gz",
-      "nightly.tar.gz.incomplete",
+      "nightly.tar",
+      "nightly.tar.incomplete",
     ]);
 
     const toStdout = await cli.run(["--json", "export", "--format", "archive"]);
@@ -116,7 +114,7 @@ describe("an archive that lacks a blob it names", () => {
   });
 
   it("keeps an archive that lacks a blob beside a path where nothing was, and says so", async () => {
-    const path = join(dir, "lacking.tar.gz");
+    const path = join(dir, "lacking.tar");
     const refused = await cli.refused([
       "export",
       "--format",
@@ -131,15 +129,13 @@ describe("an archive that lacks a blob it names", () => {
     expect(refused.envelope.error.message).toContain(
       `nothing was written to ${path}`,
     );
-    const tar = gunzipSync(readFileSync(`${path}.incomplete`)).toString(
-      "latin1",
-    );
+    const tar = readFileSync(`${path}.incomplete`).toString("latin1");
     expect(tar).toContain(lost);
   });
 
   it("keeps the archive where it is, and still names the blobs, when the incomplete name cannot be taken", async () => {
     const heldDir = mkdtempSync(join(dir, "held-"));
-    const path = join(heldDir, "nightly.tar.gz");
+    const path = join(heldDir, "nightly.tar");
     writeFileSync(path, "an earlier backup");
     mkdirSync(`${path}.incomplete`);
     const refused = await cli.refused([
@@ -155,18 +151,16 @@ describe("an archive that lacks a blob it names", () => {
     expect(refused.envelope.error.message).toContain("could not be moved");
     expect(readFileSync(path, "utf8")).toBe("an earlier backup");
     const hidden = readdirSync(heldDir).filter((name) =>
-      name.startsWith(".nightly.tar.gz.partial-"),
+      name.startsWith(".nightly.tar.partial-"),
     );
     expect(hidden).toHaveLength(1);
     const partial = join(heldDir, hidden[0]!);
     expect(refused.envelope.error.message).toContain(partial);
-    expect(gunzipSync(readFileSync(partial)).toString("latin1")).toContain(
-      lost,
-    );
+    expect(readFileSync(partial).toString("latin1")).toContain(lost);
   });
 
   it("prints the answer of a restore of it and exits 1 with blobs_missing", async () => {
-    const path = join(dir, "lacking.tar.gz.incomplete");
+    const path = join(dir, "lacking.tar.incomplete");
     const outcome = await cli
       .viaSocket(server!.controlSocket)
       .run(["--json", "restore", path]);
@@ -182,6 +176,33 @@ describe("an archive that lacks a blob it names", () => {
     expect(envelope.error.message).toContain(lost);
   });
 
+  it("reports the refusal of a large archive the server refuses before or while it arrives", async () => {
+    const path = join(dir, "refused-early.tar");
+    writeFileSync(
+      path,
+      tar([
+        {
+          name: "manifest.json",
+          body: JSON.stringify({ version: 99, format: "marfa-archive-v0" }),
+        },
+        { name: "padding.bin", body: new Uint8Array(64 * 1024 * 1024) },
+      ]),
+    );
+    for (let attempt = 0; attempt < 3; attempt++) {
+      // Refused while the body arrives: the manifest names another version.
+      const late = await cli
+        .viaSocket(server!.controlSocket)
+        .refused(["restore", path]);
+      expect(late.envelope.error.server?.status).toBe(400);
+      expect(late.envelope.error.server?.code).toBe("validation_error");
+      expect(late.envelope.error.message).toContain("version 99");
+      // Refused before the body: a working key is not the owner.
+      const early = await cli.refused(["restore", path]);
+      expect(early.envelope.error.server?.status).toBe(403);
+      expect(early.envelope.error.server?.code).toBe("forbidden");
+    }
+  });
+
   it("leaves the path as it was when the export is cut short, and the next export names the struck blob", async () => {
     const content = bytesOf("a blob whose bytes rot on the disk", 130);
     const upload = await working.uploadBlob(content, "text/plain");
@@ -195,7 +216,7 @@ describe("an archive that lacks a blob it names", () => {
     await damageBlobs(server!, [rotten]);
 
     const cutDir = mkdtempSync(join(dir, "cut-"));
-    const path = join(cutDir, "backup.tar.gz");
+    const path = join(cutDir, "backup.tar");
     writeFileSync(path, "an earlier backup");
     const cut = await cli.refused([
       "export",
@@ -210,7 +231,7 @@ describe("an archive that lacks a blob it names", () => {
       "the partial file was removed",
     );
     expect(readFileSync(path, "utf8")).toBe("an earlier backup");
-    expect(readdirSync(cutDir)).toEqual(["backup.tar.gz"]);
+    expect(readdirSync(cutDir)).toEqual(["backup.tar"]);
 
     // The export that was cut struck the copy, so this one names the blob.
     const lacking = await cli.refused([
@@ -225,12 +246,12 @@ describe("an archive that lacks a blob it names", () => {
     expect(lacking.envelope.error.message).toContain(rotten);
     // The archive that lacks it is kept beside the path, not at it.
     expect(readFileSync(path, "utf8")).toBe("an earlier backup");
-    expect(
-      gunzipSync(readFileSync(`${path}.incomplete`)).toString("latin1"),
-    ).toContain(rotten);
+    expect(readFileSync(`${path}.incomplete`).toString("latin1")).toContain(
+      rotten,
+    );
     expect(readdirSync(cutDir).sort()).toEqual([
-      "backup.tar.gz",
-      "backup.tar.gz.incomplete",
+      "backup.tar",
+      "backup.tar.incomplete",
     ]);
   });
 });

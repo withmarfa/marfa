@@ -23,6 +23,7 @@ The server registers the following jobs when their settings and required stores 
 | `blob-orphans`             | Reports unreferenced blobs and purges them after the grace period.                                                                                                                                                                                                          |
 | `enrichment-sweep`         | Extracts searchable text and image dimensions from uploaded files.                                                                                                                                                                                                          |
 | `bulk-action-gc`           | Removes finished bulk action jobs after 7 days.                                                                                                                                                                                                                             |
+| `backup`                   | Puts a backup of the instance in the object store when anything it holds has changed, and thins this instance's backups.                                                                                                                                                    |
 
 <!-- housekeeping-table:end -->
 

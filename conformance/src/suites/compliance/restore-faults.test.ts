@@ -1,18 +1,25 @@
+import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
 import {
-  blobHash,
+  tar,
+  listEntries,
+  editLineFile,
   itemsArchive,
-  listTarGzEntries,
-  tarGz,
+  blobHash,
 } from "../../utils/archive.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { clientsFor, DISK_ONLY, runJob } from "../../utils/own-blob-server.js";
+import {
+  clientsFor,
+  diskPath,
+  DISK_ONLY,
+  runJob,
+} from "../../utils/own-blob-server.js";
 import {
   diskHolds,
   loseBlobs,
@@ -120,22 +127,19 @@ function carrying(bytes?: Uint8Array): Carried {
     [{ data: blob, mime_type: "application/octet-stream" }],
     [schema],
   );
-  const entries = listTarGzEntries(base).map((entry) => ({
-    name: entry.name,
-    body:
-      entry.name === "edges.ndjson"
-        ? `${JSON.stringify({
-            edge: {
-              id: edgeId,
-              source_id: a,
-              target_id: b,
-              edge_type: edgeType,
-            },
-          })}\n`
-        : entry.name === "types.ndjson"
-          ? `${JSON.stringify({ type: schema })}\n${JSON.stringify({ edge_type: edgeTypeOf(edgeType) })}\n`
-          : entry.body,
-  }));
+  const archive = editLineFile(
+    editLineFile(
+      base,
+      "edges",
+      () =>
+        `${JSON.stringify({
+          edge: { id: edgeId, source_id: a, target_id: b, edge_type: edgeType },
+        })}\n`,
+    ),
+    "instance",
+    () =>
+      `${JSON.stringify({ type: schema })}\n${JSON.stringify({ edge_type: edgeTypeOf(edgeType) })}\n`,
+  );
   return {
     a,
     b,
@@ -145,7 +149,7 @@ function carrying(bytes?: Uint8Array): Carried {
     edgeType,
     bytes: blob,
     hash,
-    archive: tarGz(entries),
+    archive,
   };
 }
 
@@ -285,7 +289,7 @@ describe("a restore that does not finish", () => {
     { fault: "fail:commit-full=restore_archive", status: 507 },
     { fault: "fail:blob-write", status: 507 },
   ])(
-    "leaves no row, type, edge type, blob, event or audit record when a write fails ($fault), and restores whole when it is tried again",
+    "leaves no row, type, edge type, event or audit record when a write fails ($fault), the next blob-integrity run removes the bytes it placed, and it restores whole when tried again",
     async ({ fault, status }) => {
       const rows = carrying();
       const eventId = await eventCursor();
@@ -300,6 +304,9 @@ describe("a restore that does not finish", () => {
       await server.clearFault();
 
       await expectNothingOf(rows, since);
+      // Bytes it placed stay unrecorded, so nothing serves them, and the next
+      // copy cleanup removes them.
+      await runJob(operator, "blob-integrity");
       expect(await diskHolds(server.controlSocket, rows.hash)).toBe(false);
       expect(await spooled()).toEqual([]);
 
@@ -397,6 +404,73 @@ describe("a restore that is still writing", () => {
   });
 });
 
+describe("an archive whose blob the instance holds", () => {
+  it("keeps the copy the disk holds and writes the bytes no second time", async () => {
+    const rows = carrying();
+    const first = await ownerClient().restoreArchive(rows.archive);
+    expect(first.status, JSON.stringify(first.error)).toBe(200);
+    const placed = statSync(diskPath(server, rows.hash));
+    // The witness that a restore writes the bytes it carries: the first did.
+    expect(placed.size).toBe(rows.bytes.length);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const again = await ownerClient().restoreArchive(rows.archive);
+    expect(again.status, JSON.stringify(again.error)).toBe(200);
+    expect(again.data.blobs_imported).toBe(1);
+    const held = statSync(diskPath(server, rows.hash));
+    expect(held.ino).toBe(placed.ino);
+    expect(held.mtimeMs).toBe(placed.mtimeMs);
+    const copies = await operator.listBlobCopies(rows.hash);
+    expect(copies.data.data.map((copy) => copy.kind)).toEqual(["disk"]);
+  });
+
+  it("replaces a disk copy that has rotted at the same size with the bytes the archive carries", async () => {
+    const rows = carrying();
+    const first = await ownerClient().restoreArchive(rows.archive);
+    expect(first.status, JSON.stringify(first.error)).toBe(200);
+    const path = diskPath(server, rows.hash);
+    const rotted = new Uint8Array(rows.bytes.length).fill(0x2a);
+    writeFileSync(path, rotted);
+
+    const again = await ownerClient().restoreArchive(rows.archive);
+    expect(again.status, JSON.stringify(again.error)).toBe(200);
+    expect(new Uint8Array(readFileSync(path))).toEqual(rows.bytes);
+    const read = await operator.downloadBlob(rows.hash);
+    expect(read.status).toBe(200);
+    expect(new Uint8Array(read.data)).toEqual(rows.bytes);
+  });
+});
+
+describe("a writer while a restore writes", () => {
+  it("waits for the restore, and is answered 503 write_contention naming the write wait once it has waited that long", async () => {
+    const rows = carrying();
+    await server.setFault("hold:restore:before-commit");
+    const restoring = ownerClient().restoreArchive(rows.archive);
+    await server.waitForHold("hold:restore:before-commit");
+    const started = performance.now();
+    const waited = await working.createItem({
+      type: "core.note",
+      properties: { body: "written while a restore holds the writer" },
+    });
+    expect(waited.status, JSON.stringify(waited.error)).toBe(503);
+    expect(waited.error?.error.code).toBe("write_contention");
+    const budget = waited.error?.error.details?.budget_ms as number;
+    expect(typeof budget).toBe("number");
+    expect(performance.now() - started).toBeGreaterThanOrEqual(budget * 0.9);
+    await server.clearFault();
+    const done = await restoring;
+    expect(done.status, JSON.stringify(done.error)).toBe(200);
+    await expectAllOf(rows);
+
+    // The witness: the same write is taken once the restore has committed.
+    const after = await working.createItem({
+      type: "core.note",
+      properties: { body: "written after the restore" },
+    });
+    expect(after.status, JSON.stringify(after.error)).toBe(201);
+  });
+});
+
 describe("a restore that does not commit and removes the bytes it placed", () => {
   it("keeps the bytes a committed row names, and removes those no row names", async () => {
     // A blob the instance holds a row for whose bytes are gone from the disk:
@@ -414,7 +488,9 @@ describe("a restore that does not commit and removes the bytes it placed", () =>
     const refused = await ownerClient().restoreArchive(both);
     expect(refused.status, JSON.stringify(refused.error)).toBe(500);
 
-    // The witness that bytes are taken back: the restore's own were.
+    // The witness that bytes are taken back: the restore's own are, by the
+    // next copy cleanup, which leaves those a committed row names.
+    await runJob(operator, "blob-integrity");
     expect(await diskHolds(server.controlSocket, rows.hash)).toBe(false);
     expect(await diskHolds(server.controlSocket, keptHash)).toBe(true);
     // Placing the bytes again ended the loss, so the store reads them now.
@@ -458,7 +534,7 @@ describe("a restore that does not commit and removes the bytes it placed", () =>
 
 function carryingBoth(rows: Carried, extra: Uint8Array): Uint8Array {
   const extraHash = blobHash(extra);
-  const entries = listTarGzEntries(rows.archive).map((entry) => {
+  const entries = listEntries(rows.archive).map((entry) => {
     if (entry.name === "manifest.json") {
       const manifest = JSON.parse(entry.body.toString("utf8")) as {
         blob_count: number;
@@ -474,5 +550,5 @@ function carryingBoth(rows: Carried, extra: Uint8Array): Uint8Array {
     return { name: entry.name, body: entry.body };
   });
   entries.push({ name: `blobs/${extraHash}`, body: Buffer.from(extra) });
-  return tarGz(entries);
+  return tar(entries);
 }

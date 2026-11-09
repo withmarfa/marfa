@@ -17,8 +17,8 @@ import {
 import {
   blobHash,
   itemsArchive,
-  listTarGzEntries,
-  readTarGzEntry,
+  archiveManifest,
+  listEntries,
 } from "../../utils/archive.js";
 import {
   damageBlobs,
@@ -66,10 +66,8 @@ async function archiveOf(client: MarfaClient) {
   const res = await client.exportArchive();
   expect(res.status, JSON.stringify(res.error)).toBe(200);
   const archive = res.data;
-  const manifest = JSON.parse(
-    readTarGzEntry(archive, "manifest.json") ?? "{}",
-  ) as Manifest;
-  const entries = listTarGzEntries(archive).map((entry) => entry.name);
+  const manifest = archiveManifest<Manifest>(archive);
+  const entries = listEntries(archive).map((entry) => entry.name);
   return { archive, manifest, entries };
 }
 
@@ -252,9 +250,7 @@ describe("an archive export on an instance with one disk store", () => {
 
     const res = await working.exportArchive();
     expect(res.status, JSON.stringify(res.error)).toBe(200);
-    const manifest = JSON.parse(
-      readTarGzEntry(res.data, "manifest.json") ?? "{}",
-    ) as Manifest;
+    const manifest = archiveManifest<Manifest>(res.data);
     expect(manifest.missing_blobs[absent]).toEqual({
       mime_type: null,
       size_bytes: null,
@@ -429,9 +425,7 @@ describe("an archive export on an instance with an object store", () => {
     const { archive, manifest } = await archiveOf(working);
     expect(manifest.missing_blobs).toEqual({});
     expect(Object.keys(manifest.blobs)).toEqual([hash]);
-    const entry = listTarGzEntries(archive).find(
-      (e) => e.name === `blobs/${hash}`,
-    );
+    const entry = listEntries(archive).find((e) => e.name === `blobs/${hash}`);
     expect(entry).toBeDefined();
     expect(blobHash(entry!.body)).toBe(hash);
   });

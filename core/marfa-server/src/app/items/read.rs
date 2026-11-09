@@ -52,7 +52,16 @@ where
 {
     let demand = Demand::pending();
     let held = demand.is_some();
-    read_in(app, caller, demand, held, job).await
+    read_in(app, caller, demand, held, false, job).await
+}
+
+/// Reads in one snapshot behind other work, for the server's own long reads.
+pub(crate) async fn reading_background<T, F>(app: &App, caller: &Caller, job: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce(&Reader<'_, '_>) -> Result<T> + Send + 'static,
+{
+    read_in(app, caller, None, false, true, job).await
 }
 
 /// Reads in one snapshot, holding the reach a copy stream announced to that snapshot.
@@ -66,7 +75,7 @@ where
     T: Send + 'static,
     F: FnOnce(&Reader<'_, '_>) -> Result<T> + Send + 'static,
 {
-    read_in(app, caller, demand, false, job).await
+    read_in(app, caller, demand, false, false, job).await
 }
 
 async fn read_in<T, F>(
@@ -74,6 +83,7 @@ async fn read_in<T, F>(
     caller: &Caller,
     demand: Option<Demand>,
     held: bool,
+    background: bool,
     job: F,
 ) -> Result<T>
 where
@@ -86,32 +96,35 @@ where
     let clock = app.clock.clone();
     let faults = app.faults.clone();
     let cursors = app.cursor_secret.clone();
-    app.db
-        .read(move |tx| {
-            let at = clock.stamp();
-            let caller = caller.current(tx, &at)?;
-            if let Some(demand) = &demand {
-                demand.verify(tx, &caller)?;
-                if held {
-                    faults.hold_blocking(HOLD_READ_SNAPSHOT);
-                }
+    let read = move |tx: &rusqlite::Transaction<'_>| {
+        let at = clock.stamp();
+        let caller = caller.current(tx, &at)?;
+        if let Some(demand) = &demand {
+            demand.verify(tx, &caller)?;
+            if held {
+                faults.hold_blocking(HOLD_READ_SNAPSHOT);
             }
-            let catalog = catalog::current(&cache, tx, Snapshot::Committed)?;
-            let read_only = read_only::current(&marked, tx, &at, Snapshot::Committed)?;
-            job(&Reader {
-                tx,
-                caller,
-                catalog,
-                read_only,
-                cursors,
-                faults: &faults,
-                certified: demand.is_some(),
-            })
+        }
+        let catalog = catalog::current(&cache, tx, Snapshot::Committed)?;
+        let read_only = read_only::current(&marked, tx, &at, Snapshot::Committed)?;
+        job(&Reader {
+            tx,
+            caller,
+            catalog,
+            read_only,
+            cursors,
+            faults: &faults,
+            certified: demand.is_some(),
         })
-        .await
+    };
+    if background {
+        app.db.read_background(read).await
+    } else {
+        app.db.read(read).await
+    }
 }
 
-impl Reader<'_, '_> {
+impl<'a, 'c> Reader<'a, 'c> {
     /// Whether the item belongs to the inventory the credential's source filter leaves it.
     fn lists(&self, row: &Item) -> Result<bool> {
         Ok(self
@@ -129,6 +142,23 @@ impl Reader<'_, '_> {
 
     pub(crate) fn hydrating(&self) {
         self.faults.hold_blocking(HOLD_READ_HYDRATION);
+    }
+
+    /// The same snapshot, read as `caller` reads it.
+    pub(crate) fn as_caller(&self, caller: Caller) -> Reader<'a, 'c> {
+        Reader {
+            tx: self.tx,
+            caller,
+            catalog: self.catalog.clone(),
+            read_only: self.read_only.clone(),
+            cursors: self.cursors.clone(),
+            faults: self.faults,
+            certified: false,
+        }
+    }
+
+    pub(crate) fn faults(&self) -> &Faults {
+        self.faults
     }
 
     fn history_page(&self, row: &Item, after: i64, limit: i64) -> Result<String> {
@@ -643,7 +673,7 @@ fn batch_size(limit: i64, passes_over: bool) -> i64 {
     if passes_over { WALK_BATCH } else { limit + 1 }
 }
 
-impl Reader<'_, '_> {
+impl<'a, 'c> Reader<'a, 'c> {
     /// A name exists only once worked out from the row, so a search walks the rows.
     fn named_page(&self, listing: Listing, trashed: bool) -> Result<(Vec<Item>, Option<String>)> {
         let q = listing.q.trim().to_lowercase();
@@ -764,7 +794,7 @@ pub enum Selector {
     Ids(Vec<String>),
 }
 
-impl Reader<'_, '_> {
+impl<'a, 'c> Reader<'a, 'c> {
     fn found_by(&self, type_id: &str, selector: &Selector) -> Result<Vec<Item>> {
         let mut found = Vec::new();
         match selector {

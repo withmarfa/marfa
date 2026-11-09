@@ -206,8 +206,6 @@ stays because that thing is what it checks.
 - `compliance/control-socket-close.test.ts` starts the server directly and
   holds it inside its socket cleanup, where the private socket is already closed
   and so no fault can be set or cleared.
-- `backup/` runs the image's entrypoint and Litestream with a stand-in server
-  and reads the volume, so it judges the image and never the server.
 - `blob-store-folders` moves, empties and unmarks the disk store's folder,
   and looks inside it. A store is its folder, so the folder and its marker
   are the subject.
@@ -712,9 +710,7 @@ The build needs the `test-hooks` feature: the fixtures turn the test hooks on,
 and a server built without it refuses to start with them on. Setting
 `MARFA_SERVER_BIN` also stops `vitest.config.ts` leaving out the files
 listed in `src/utils/rust-judged.ts` (see below). Do not set it together with
-`MARFA_SERVER_BUILT`. The backup fixtures boot the server through the
-container's entrypoint, which starts the Node server, so they do not run
-against another program. The object-store half of the blob chapters needs an
+`MARFA_SERVER_BUILT`. The object-store half of the blob chapters needs an
 object store beside the server: run `pnpm garage:up --state /tmp/garage` and
 source `/tmp/garage/garage.env` before `pnpm marfa:up`, as the Rust contract
 shards in CI do.

@@ -2,36 +2,36 @@ import { createHash } from "node:crypto";
 import { gunzipSync, gzipSync } from "node:zlib";
 
 /**
- * A `marfa-archive-v0` built here rather than exported from the server.
+ * A `marfa-archive-v0`, read and built here rather than taken from the server.
  *
- * Every other archive fixture posts back what `GET /export?format=archive`
- * produced, which keeps the round trip honest and needs no tar of our own.
- * Three preconditions cannot be arranged that way. A row under a source no
- * key may hold: `POST /keys` refuses the `oauth:` prefix as a key's own
- * source and as a claim, and `POST /items` refuses a source the key does not
- * claim, while `POST /restore` writes `item.source` through
- * verbatim. A row in a state its type's lifecycle cannot produce, which no door
- * writes and the restore refuses. And a blob larger than the request cap
- * that nothing on the instance names yet, which only an archive carries in.
+ * An archive is a plain tar: `manifest.json`, then `instance.ndjson.gz`,
+ * `items.ndjson.gz` and `edges.ndjson.gz`, each a gzip-compressed line file,
+ * then a raw `blobs/<hash>` entry for each blob it carries.
  *
- * USTAR, written out rather than taken from a dependency: the suite carries
- * no tar library and this needs a few entries with no links, no directories
- * and no long names.
+ * Most archive fixtures post back what `GET /export?format=archive` produced,
+ * which keeps the round trip honest. A few preconditions cannot be arranged
+ * that way, such as a row under a source no key may hold, a row in a state its
+ * type's lifecycle cannot produce, or a blob larger than the request cap that
+ * nothing on the instance names yet, so those archives are built here.
+ *
+ * USTAR, written out rather than taken from a dependency: the suite carries no
+ * tar library and needs a few entries with no links, no directories and no
+ * long names.
  */
 
 const BLOCK = 512;
 
 /** One regular file in the tar. */
 export interface ArchiveFile {
-  /** Path inside the archive, e.g. `items.ndjson`. */
+  /** Path inside the archive, such as `manifest.json`. */
   name: string;
   body: string | Uint8Array;
 }
 
+/** The three line files, each written as `<name>.ndjson.gz`. */
+export type LineFile = "instance" | "items" | "edges";
+
 function octal(value: number, width: number): string {
-  // `width - 1` digits and a NUL, which is the conservative spelling every
-  // reader accepts; the trailing-space form is equally legal and not worth
-  // the choice.
   return value.toString(8).padStart(width - 1, "0") + "\0";
 }
 
@@ -39,25 +39,24 @@ function header(file: ArchiveFile, size: number): Buffer {
   const block = Buffer.alloc(BLOCK, 0);
   block.write(file.name, 0, 100, "utf8");
   block.write(octal(0o644, 8), 100, 8, "ascii");
-  block.write(octal(0, 8), 108, 8, "ascii"); // uid
-  block.write(octal(0, 8), 116, 8, "ascii"); // gid
+  block.write(octal(0, 8), 108, 8, "ascii");
+  block.write(octal(0, 8), 116, 8, "ascii");
   block.write(octal(size, 12), 124, 12, "ascii");
   block.write(octal(Math.floor(Date.now() / 1000), 12), 136, 12, "ascii");
-  block.write("        ", 148, 8, "ascii"); // checksum placeholder
-  block.write("0", 156, 1, "ascii"); // typeflag: regular file
+  // The checksum is the sum of every header byte, with its own field read as
+  // eight spaces.
+  block.write("        ", 148, 8, "ascii");
+  block.write("0", 156, 1, "ascii");
   block.write("ustar\0", 257, 6, "ascii");
   block.write("00", 263, 2, "ascii");
-
-  // The checksum is the unsigned sum of every header byte with its own field
-  // read as eight spaces, which is what the placeholder above is for.
   let sum = 0;
   for (const byte of block) sum += byte;
   block.write(sum.toString(8).padStart(6, "0") + "\0 ", 148, 8, "ascii");
   return block;
 }
 
-/** A gzip-compressed tar carrying `files`, in the order given. */
-export function tarGz(files: ArchiveFile[]): Uint8Array {
+/** A plain tar carrying `files`, in the order given. */
+export function tar(files: ArchiveFile[]): Uint8Array {
   const parts: Buffer[] = [];
   for (const file of files) {
     const body =
@@ -69,68 +68,123 @@ export function tarGz(files: ArchiveFile[]): Uint8Array {
     const remainder = body.length % BLOCK;
     if (remainder !== 0) parts.push(Buffer.alloc(BLOCK - remainder, 0));
   }
-  // Two zero blocks close the archive.
   parts.push(Buffer.alloc(BLOCK * 2, 0));
-  return new Uint8Array(gzipSync(Buffer.concat(parts)));
+  return new Uint8Array(Buffer.concat(parts));
+}
+
+/** The line file `name`, holding `body`, as an archive carries it. */
+export function lineFile(
+  name: LineFile,
+  body: string | Uint8Array,
+): ArchiveFile {
+  const bytes = typeof body === "string" ? Buffer.from(body, "utf8") : body;
+  return { name: `${name}.ndjson.gz`, body: new Uint8Array(gzipSync(bytes)) };
+}
+
+/** Lines of JSON, one per value, ending with a newline when there is any. */
+export function ndjson(values: unknown[]): string {
+  return values.map((value) => `${JSON.stringify(value)}\n`).join("");
 }
 
 /**
- * Every member of a `tar.gz` the server produced, in the order the archive
- * carries them, as `{ name, body }`.
- *
- * The archive is a wire artifact no route echoes, so the only way to hold it
- * to anything is to open the bytes. Same USTAR subset as the writer, read
- * rather than written: a 512-byte header, an octal size at offset 124, the
- * body padded to the next block.
+ * The size field of a header: octal digits, ended by a NUL or a space and
+ * perhaps left-padded with spaces, or for a member of 8 GiB or more, the
+ * base-256 form, whose first byte has its top bit set.
  */
-export function listTarGzEntries(
+function sizeOf(name: string, field: Buffer): number {
+  const first = field[0] ?? 0;
+  if (first & 0x80) {
+    let size = 0;
+    for (const byte of field.subarray(1)) size = size * 256 + byte;
+    return size;
+  }
+  const text = field.toString("ascii");
+  const size = parseInt(text.replace(/\0.*$/, "").trim(), 8);
+  if (!Number.isInteger(size) || size < 0) {
+    throw new Error(
+      `tar entry ${name} has an unreadable size field: ${JSON.stringify(text)}`,
+    );
+  }
+  return size;
+}
+
+/** Every member of an archive, in the order it carries them. */
+export function listEntries(
   archive: Uint8Array,
 ): { name: string; body: Buffer }[] {
-  const tar = gunzipSync(Buffer.from(archive));
+  const bytes = Buffer.from(archive);
   const entries: { name: string; body: Buffer }[] = [];
   let offset = 0;
-  while (offset + BLOCK <= tar.length) {
-    const header = tar.subarray(offset, offset + BLOCK);
-    // Two zero blocks close the archive, and one is enough to stop on: a
-    // header whose name field is empty is the end of the entries.
-    const name = header.subarray(0, 100).toString("utf8").replace(/\0.*$/, "");
+  while (offset + BLOCK <= bytes.length) {
+    const block = bytes.subarray(offset, offset + BLOCK);
+    // A header whose name is empty is the first of the two closing blocks.
+    const name = block.subarray(0, 100).toString("utf8").replace(/\0.*$/, "");
     if (name === "") break;
-    // The size field is eleven octal digits and a terminator, but the
-    // terminator is a NUL in one legal spelling and a space in another, and
-    // either may be left-padded with spaces. Cutting at the first space
-    // reads a left-padded field as empty, and `parseInt("", 8)` is `NaN` —
-    // which walks the loop off the end of the archive and answers "no such
-    // member" for a member that is there. The throw is what stops that
-    // being a silent wrong answer; it also catches the base-256 encoding a
-    // member of 8 GiB or more would use, which this reader does not read.
-    const field = header.subarray(124, 136).toString("ascii");
-    const size = parseInt(field.replace(/\0.*$/, "").trim(), 8);
-    if (!Number.isInteger(size) || size < 0) {
-      throw new Error(
-        `tar entry ${name} has an unreadable size field: ${JSON.stringify(field)}`,
-      );
-    }
+    const size = sizeOf(name, block.subarray(124, 136));
     const body = offset + BLOCK;
-    entries.push({ name, body: tar.subarray(body, body + size) });
+    entries.push({ name, body: bytes.subarray(body, body + size) });
     offset = body + Math.ceil(size / BLOCK) * BLOCK;
   }
   return entries;
 }
 
 /**
- * The named member of a `tar.gz` the server produced, as text. A name that
- * never appears answers null so the caller can say so rather than reading a
- * member it did not ask for.
+ * The named member as text, or null for a name the archive does not carry, so
+ * the caller can say so rather than read a member it did not ask for.
  */
-export function readTarGzEntry(
-  archive: Uint8Array,
-  name: string,
-): string | null {
-  const found = listTarGzEntries(archive).find((entry) => entry.name === name);
+export function readEntry(archive: Uint8Array, name: string): string | null {
+  const found = listEntries(archive).find((entry) => entry.name === name);
   return found ? found.body.toString("utf8") : null;
 }
 
-/** One `items.ndjson` line: the row, and the metadata layer beside it. */
+/** The text of a line file, decompressed, or null where the archive lacks it. */
+export function readLineFile(
+  archive: Uint8Array,
+  name: LineFile,
+): string | null {
+  const found = listEntries(archive).find(
+    (entry) => entry.name === `${name}.ndjson.gz`,
+  );
+  return found ? gunzipSync(found.body).toString("utf8") : null;
+}
+
+/**
+ * The archive with one line file's text replaced by what `edit` makes of it,
+ * every other member kept as it was, in its place.
+ */
+export function editLineFile(
+  archive: Uint8Array,
+  name: LineFile,
+  edit: (text: string) => string,
+): Uint8Array {
+  return tar(
+    listEntries(archive).map((entry) =>
+      entry.name === `${name}.ndjson.gz`
+        ? lineFile(name, edit(gunzipSync(entry.body).toString("utf8")))
+        : { name: entry.name, body: entry.body },
+    ),
+  );
+}
+
+/** Each line of a line file, parsed. */
+export function archiveLines<T = Record<string, unknown>>(
+  archive: Uint8Array,
+  name: LineFile,
+): T[] {
+  return (readLineFile(archive, name) ?? "")
+    .split("\n")
+    .filter((line) => line !== "")
+    .map((line) => JSON.parse(line) as T);
+}
+
+/** The parsed manifest, or an empty object where the archive has none. */
+export function archiveManifest<T = Record<string, unknown>>(
+  archive: Uint8Array,
+): T {
+  return JSON.parse(readEntry(archive, "manifest.json") ?? "{}") as T;
+}
+
+/** One `items.ndjson.gz` line: the row, and the metadata layer beside it. */
 export interface ArchiveItem {
   id: string;
   type: string;
@@ -157,10 +211,11 @@ export function blobHash(data: Uint8Array): string {
 }
 
 /**
- * A minimal version 0 archive: `items`, and the `blobs` and `types` given.
- * Emitted empty, not omitted, so a restore can tell damaged from empty.
- * `reshape` takes the manifest as built and answers the one written, for a
- * case that needs a manifest the server would not write.
+ * A minimal version 0 archive: `items`, and the `blobs` and type registrations
+ * given. Each line file is written even when empty, so a restore can tell a
+ * damaged archive from an empty one. `reshape` takes the manifest as built and
+ * answers the one written, for a case that needs a manifest the server would
+ * not write.
  */
 export function itemsArchive(
   items: ArchiveItem[],
@@ -184,35 +239,33 @@ export function itemsArchive(
         { mime_type: blob.mime_type, size_bytes: blob.data.length },
       ]),
     ),
+    missing_blobs: {},
   };
   // Each row lends what it names among the blobs carried, as an export
   // writes a row whose writer sent the bytes.
   const carried = blobs.map((blob) => blob.named ?? blobHash(blob.data));
-  const lines = items
-    .map((item) =>
-      JSON.stringify({
-        item,
-        metadata: { tags: [], extensions: {} },
-        lending_blobs: carried.filter((hash) =>
-          JSON.stringify(item).includes(hash.slice("sha256:".length)),
-        ),
-      }),
-    )
-    .join("\n");
-  return tarGz([
+  return tar([
     {
       name: "manifest.json",
       body: JSON.stringify(reshape(manifest), null, 2),
     },
-    { name: "items.ndjson", body: lines === "" ? "" : `${lines}\n` },
+    lineFile("instance", ndjson(types.map((type) => ({ type })))),
+    lineFile(
+      "items",
+      ndjson(
+        items.map((item) => ({
+          item,
+          metadata: { tags: [], extensions: {} },
+          lending_blobs: carried.filter((hash) =>
+            JSON.stringify(item).includes(hash.slice("sha256:".length)),
+          ),
+        })),
+      ),
+    ),
+    lineFile("edges", ""),
     ...blobs.map((blob) => ({
       name: `blobs/${blob.named ?? blobHash(blob.data)}`,
       body: blob.data,
     })),
-    { name: "edges.ndjson", body: "" },
-    {
-      name: "types.ndjson",
-      body: types.map((type) => `${JSON.stringify({ type })}\n`).join(""),
-    },
   ]);
 }

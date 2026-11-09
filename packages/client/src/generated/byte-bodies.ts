@@ -5,5 +5,5 @@ export const BYTE_BODIES: Readonly<Record<string, string>> = {
   "POST /blobs": "application/octet-stream",
   "PUT /owner/picture": "application/octet-stream",
   "PUT /profile/picture": "application/octet-stream",
-  "POST /restore": "application/gzip"
+  "POST /restore": "application/x-tar"
 };
