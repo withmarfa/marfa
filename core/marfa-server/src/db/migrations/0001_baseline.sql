@@ -906,9 +906,7 @@ BEGIN
            OR next_run_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds'));
 END;
 
--- An existing reference alone does not queue changed file properties. A skipped file keeps its
--- refusal and is read once more. The type of file picks the reader, so a changed one counts, and
--- a waiting file that failed under the old type gets its attempts back.
+-- Requeue files after their type, `mime_type` or `blob_ref` changes, or a fillable field is cleared.
 CREATE TRIGGER IF NOT EXISTS enrichment_files_changed AFTER UPDATE OF type, properties ON items
 WHEN NEW.properties ->> '$.blob_ref' IS NOT NULL AND (
     NEW.type IS NOT OLD.type
@@ -941,8 +939,7 @@ END;
 
 CREATE INDEX IF NOT EXISTS enrichment_files_missing ON enrichment_files (hash) WHERE reason = 'missing';
 
--- A file left for want of a copy waits again, with its attempts as they were, once a copy is
--- recorded or the store holding one is attached again.
+-- A file left for want of a copy waits again once a copy is recorded or its store is attached.
 CREATE TRIGGER IF NOT EXISTS enrichment_files_copy_recorded AFTER INSERT ON blob_copies
 WHEN EXISTS (SELECT 1 FROM enrichment_files WHERE hash = NEW.hash AND reason = 'missing')
 BEGIN
