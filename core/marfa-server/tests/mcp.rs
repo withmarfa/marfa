@@ -1658,7 +1658,7 @@ async fn the_documentation_search_names_where_to_search_and_reaches_nowhere() {
 #[tokio::test]
 async fn each_admin_tool_is_offered_only_to_a_credential_that_holds_its_permission() {
     let instance = Instance::start(&[]).await;
-    let cases: [(&str, &[&str]); 6] = [
+    let cases: [(&str, &[&str]); 7] = [
         ("instance.read", &["marfa_health"]),
         ("connectors.manage", &["marfa_health"]),
         ("audit.read", &["marfa_audit"]),
@@ -1669,6 +1669,10 @@ async fn each_admin_tool_is_offered_only_to_a_credential_that_holds_its_permissi
         (
             "keys.manage",
             &["marfa_keys", "marfa_manage_key", "marfa_revoke_key"],
+        ),
+        (
+            "webhooks.manage",
+            &["marfa_webhooks", "marfa_manage_webhook"],
         ),
         ("config.manage", &[]),
     ];
@@ -1701,6 +1705,11 @@ async fn each_admin_tool_is_offered_only_to_a_credential_that_holds_its_permissi
         (
             "marfa_revoke_key",
             json!({ "id": "0192e6a8-7c6e-7000-8000-000000000000" }),
+        ),
+        ("marfa_webhooks", json!({})),
+        (
+            "marfa_manage_webhook",
+            json!({ "action": "delete", "id": "0192e6a8-7c6e-7000-8000-000000000000" }),
         ),
     ] {
         unoffered(&instance, ADMIN, &nobody, name, arguments).await;
@@ -2200,4 +2209,347 @@ async fn many_items_are_saved_in_one_call_and_saving_them_again_skips_them() {
         .await;
     assert!(refused.failed, "{}", refused.value);
     assert_eq!(refused.code(), "invalid_properties");
+}
+
+const RECEIVER: &str = "http://93.184.216.34/";
+
+impl Instance {
+    async fn hooker(&self) -> String {
+        self.key(json!({ "type_permissions": {}, "permissions": ["webhooks.manage"] }))
+            .await
+    }
+
+    async fn hook(&self, token: &str, arguments: Value) -> Tool {
+        self.tool_at(ADMIN, token, "marfa_manage_webhook", arguments)
+            .await
+    }
+
+    async fn hooks(&self, token: &str) -> Vec<Value> {
+        let listed = self
+            .tool_at(ADMIN, token, "marfa_webhooks", json!({}))
+            .await;
+        listed.payload()["webhooks"].as_array().unwrap().clone()
+    }
+
+    /// A made webhook: the answer to the confirmed call.
+    async fn made_hook(&self, token: &str, path: &str) -> Value {
+        let args = json!({ "action": "make", "url": format!("{RECEIVER}{path}"), "events": ["item.created"] });
+        let shown = self.hook(token, args.clone()).await;
+        let mut confirmed = args;
+        confirmed["confirm"] = shown.payload()["confirm"].clone();
+        let done = self.hook(token, confirmed).await;
+        done.payload()["webhook"].clone()
+    }
+}
+
+#[tokio::test]
+async fn a_webhook_is_made_only_by_the_confirmation_its_preview_gave_and_once() {
+    let instance = Instance::start(&[]).await;
+    let token = instance.hooker().await;
+    let args = json!({
+        "action": "make",
+        "url": format!("{RECEIVER}made"),
+        "events": ["item.created", "edge.created"],
+        "type_filter": "core.note",
+    });
+    let shown = instance.hook(&token, args.clone()).await;
+    assert_eq!(shown.payload()["preview"]["host"], "93.184.216.34");
+    assert_eq!(shown.payload()["preview"]["active"], true);
+    assert_eq!(shown.payload()["preview"]["type_filter"], "core.note");
+    assert!(instance.hooks(&token).await.is_empty());
+
+    let mut confirmed = args.clone();
+    confirmed["confirm"] = shown.payload()["confirm"].clone();
+    let done = instance.hook(&token, confirmed.clone()).await;
+    let made = done.payload()["webhook"].clone();
+    assert_eq!(made["url"], format!("{RECEIVER}made"), "{}", done.value);
+    assert_eq!(made["active"], true);
+    assert_eq!(instance.hooks(&token).await.len(), 1);
+    assert_eq!(instance.audited("webhook.create").await.len(), 1);
+
+    let again = instance.hook(&token, confirmed).await;
+    assert_eq!(again.code(), "confirmation_stale", "{}", again.value);
+    assert_eq!(instance.hooks(&token).await.len(), 1);
+}
+
+#[tokio::test]
+async fn a_webhook_confirmation_stops_at_a_changed_result_another_credential_and_five_minutes() {
+    let instance = Instance::start(&[]).await;
+    let token = instance.hooker().await;
+    let args =
+        json!({ "action": "make", "url": format!("{RECEIVER}one"), "events": ["item.created"] });
+    let shown = instance.hook(&token, args.clone()).await;
+    let confirm = shown.payload()["confirm"].clone();
+
+    // The address in the call is not the one previewed.
+    let mut moved = args.clone();
+    moved["url"] = format!("{RECEIVER}elsewhere").into();
+    moved["confirm"] = confirm.clone();
+    let moved = instance.hook(&token, moved).await;
+    assert_eq!(moved.code(), "confirmation_stale", "{}", moved.value);
+    assert_eq!(
+        moved.value["error"]["preview"]["url"],
+        format!("{RECEIVER}elsewhere")
+    );
+    assert!(instance.hooks(&token).await.is_empty());
+
+    // Another credential holding the permission.
+    let other = instance.hooker().await;
+    let mut sent = args.clone();
+    sent["confirm"] = confirm.clone();
+    let refused = instance.hook(&other, sent.clone()).await;
+    assert_eq!(refused.code(), "confirmation_stale", "{}", refused.value);
+    assert!(instance.hooks(&other).await.is_empty());
+    assert!(instance.hooks(&token).await.is_empty());
+
+    // Five minutes later.
+    instance.app.clock.advance(5 * 60_000 + 1).unwrap();
+    let late = instance.hook(&token, sent).await;
+    assert_eq!(late.code(), "confirmation_stale", "{}", late.value);
+    assert!(
+        late.value["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("expired")
+    );
+    assert!(instance.hooks(&token).await.is_empty());
+
+    // The witness: the fresh preview's confirmation, from the same credential, makes it.
+    let mut fresh = args;
+    fresh["confirm"] = late.value["error"]["confirm"].clone();
+    let done = instance.hook(&token, fresh).await;
+    assert!(!done.failed, "{}", done.value);
+    assert_eq!(instance.hooks(&token).await.len(), 1);
+}
+
+#[tokio::test]
+async fn a_make_confirmation_is_stale_once_a_webhook_the_credential_reads_was_made_or_deleted() {
+    let instance = Instance::start(&[]).await;
+    let token = instance.hooker().await;
+    let args =
+        json!({ "action": "make", "url": format!("{RECEIVER}fresh"), "events": ["item.created"] });
+
+    let shown = instance.hook(&token, args.clone()).await;
+    let first = instance.made_hook(&token, "first").await;
+    let mut sent = args.clone();
+    sent["confirm"] = shown.payload()["confirm"].clone();
+    let refused = instance.hook(&token, sent).await;
+    assert_eq!(refused.code(), "confirmation_stale", "{}", refused.value);
+    assert_eq!(instance.hooks(&token).await.len(), 1);
+
+    let shown = instance.hook(&token, args.clone()).await;
+    let deleted = instance
+        .hook(&token, json!({ "action": "delete", "id": first["id"] }))
+        .await;
+    assert!(!deleted.failed, "{}", deleted.value);
+    let mut sent = args.clone();
+    sent["confirm"] = shown.payload()["confirm"].clone();
+    let refused = instance.hook(&token, sent).await;
+    assert_eq!(refused.code(), "confirmation_stale", "{}", refused.value);
+    assert!(instance.hooks(&token).await.is_empty());
+
+    // The witness: a webhook another credential made is not one this credential reads.
+    let other = instance.hooker().await;
+    let shown = instance.hook(&token, args.clone()).await;
+    instance.made_hook(&other, "theirs").await;
+    let mut sent = args;
+    sent["confirm"] = shown.payload()["confirm"].clone();
+    let done = instance.hook(&token, sent).await;
+    assert!(!done.failed, "{}", done.value);
+}
+
+#[tokio::test]
+async fn a_change_is_confirmed_against_the_webhook_it_would_leave() {
+    let instance = Instance::start(&[]).await;
+    let token = instance.hooker().await;
+    let made = instance.made_hook(&token, "change").await;
+    let id = made["id"].as_str().unwrap();
+    let change = json!({ "action": "change", "id": id, "url": format!("{RECEIVER}moved") });
+
+    let shown = instance.hook(&token, change.clone()).await;
+    assert_eq!(shown.payload()["preview"]["id"], id);
+    assert_eq!(
+        shown.payload()["preview"]["events"],
+        json!(["item.created"])
+    );
+    assert_eq!(
+        instance.hooks(&token).await[0]["url"],
+        format!("{RECEIVER}change")
+    );
+
+    // What the webhook sends changes under the preview, so the result differs.
+    let patched = instance
+        .call(
+            &token,
+            Method::PATCH,
+            &format!("/webhooks/{id}"),
+            Some(json!({ "events": ["item.updated"] })),
+        )
+        .await;
+    assert_eq!(patched.status, StatusCode::OK, "{}", patched.body);
+    let mut sent = change.clone();
+    sent["confirm"] = shown.payload()["confirm"].clone();
+    let stale = instance.hook(&token, sent).await;
+    assert_eq!(stale.code(), "confirmation_stale", "{}", stale.value);
+    assert_eq!(
+        stale.value["error"]["preview"]["events"],
+        json!(["item.updated"])
+    );
+    assert_eq!(
+        instance.hooks(&token).await[0]["url"],
+        format!("{RECEIVER}change")
+    );
+
+    // The witness: the new preview's confirmation changes it, once.
+    let mut fresh = change;
+    fresh["confirm"] = stale.value["error"]["confirm"].clone();
+    let before = instance.audited("webhook.update").await.len();
+    let done = instance.hook(&token, fresh.clone()).await;
+    assert_eq!(done.payload()["webhook"]["url"], format!("{RECEIVER}moved"));
+    assert_eq!(instance.audited("webhook.update").await.len(), before + 1);
+    let replay = instance.hook(&token, fresh).await;
+    assert_eq!(replay.code(), "confirmation_stale", "{}", replay.value);
+    assert_eq!(instance.audited("webhook.update").await.len(), before + 1);
+}
+
+#[tokio::test]
+async fn pausing_resuming_and_deleting_a_webhook_take_one_call() {
+    let instance = Instance::start(&[]).await;
+    let token = instance.hooker().await;
+    let id = instance.made_hook(&token, "steps").await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let paused = instance
+        .hook(
+            &token,
+            json!({ "action": "change", "id": id, "active": false }),
+        )
+        .await;
+    assert_eq!(
+        paused.payload()["webhook"]["active"],
+        false,
+        "{}",
+        paused.value
+    );
+    let resumed = instance
+        .hook(
+            &token,
+            json!({ "action": "change", "id": id, "active": true }),
+        )
+        .await;
+    assert_eq!(
+        resumed.payload()["webhook"]["active"],
+        true,
+        "{}",
+        resumed.value
+    );
+    let deleted = instance
+        .hook(&token, json!({ "action": "delete", "id": id }))
+        .await;
+    assert_eq!(
+        deleted.payload()["deleted"],
+        id.as_str(),
+        "{}",
+        deleted.value
+    );
+    assert!(instance.hooks(&token).await.is_empty());
+    let missing = instance
+        .hook(&token, json!({ "action": "delete", "id": id }))
+        .await;
+    assert_eq!(missing.code(), "webhook_not_found", "{}", missing.value);
+}
+
+#[tokio::test]
+async fn an_address_that_is_not_public_is_refused_at_the_preview_and_at_the_commit() {
+    let instance = Instance::start(&[]).await;
+    let token = instance.hooker().await;
+    let id = instance.made_hook(&token, "kept").await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let private =
+        json!({ "action": "make", "url": "http://10.0.0.1/hook", "events": ["item.created"] });
+    let refused = instance.hook(&token, private.clone()).await;
+    assert_eq!(refused.code(), "validation_error", "{}", refused.value);
+
+    let public =
+        json!({ "action": "make", "url": format!("{RECEIVER}public"), "events": ["item.created"] });
+    let shown = instance.hook(&token, public.clone()).await;
+    let mut sent = private;
+    sent["confirm"] = shown.payload()["confirm"].clone();
+    let refused = instance.hook(&token, sent).await;
+    assert_eq!(refused.code(), "validation_error", "{}", refused.value);
+    assert_eq!(instance.hooks(&token).await.len(), 1);
+
+    // A change is judged the same way.
+    let refused = instance
+        .hook(
+            &token,
+            json!({ "action": "change", "id": id, "url": "http://10.0.0.1/hook" }),
+        )
+        .await;
+    assert_eq!(refused.code(), "validation_error", "{}", refused.value);
+
+    // The witness: the public address with the same token makes it.
+    let mut sent = public;
+    sent["confirm"] = shown.payload()["confirm"].clone();
+    let done = instance.hook(&token, sent).await;
+    assert!(!done.failed, "{}", done.value);
+}
+
+#[tokio::test]
+async fn a_webhook_secret_is_shown_once_when_it_is_made_and_in_no_other_answer() {
+    let instance = Instance::start(&[]).await;
+    let token = instance.hooker().await;
+    let args =
+        json!({ "action": "make", "url": format!("{RECEIVER}secret"), "events": ["item.created"] });
+    let shown = instance.hook(&token, args.clone()).await;
+    assert!(shown.payload().get("secret").is_none());
+    assert!(shown.payload()["preview"].get("secret").is_none());
+    let mut confirmed = args;
+    confirmed["confirm"] = shown.payload()["confirm"].clone();
+    let done = instance.hook(&token, confirmed.clone()).await;
+    let secret = done.payload()["webhook"]["secret"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        secret.len() >= 32 && !secret.starts_with("****"),
+        "{}",
+        done.value
+    );
+    let id = done.payload()["webhook"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let mut answers = vec![
+        instance
+            .tool_at(ADMIN, &token, "marfa_webhooks", json!({}))
+            .await,
+    ];
+    answers.push(instance.hook(&token, confirmed).await);
+    answers.push(
+        instance
+            .hook(
+                &token,
+                json!({ "action": "change", "id": id, "active": false }),
+            )
+            .await,
+    );
+    answers.push(
+        instance
+            .hook(
+                &token,
+                json!({ "action": "change", "id": id, "events": ["item.updated"] }),
+            )
+            .await,
+    );
+    for answer in &answers {
+        let text = answer.value.to_string();
+        assert!(!text.contains(&secret), "{text}");
+        assert!(!text.contains("****"), "{text}");
+    }
+    assert!(answers[0].payload()["webhooks"][0].get("secret").is_none());
 }

@@ -8,6 +8,7 @@ mod store;
 
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use marfa_rules::catalog::Catalog as Rules;
 use rusqlite::Transaction;
 use serde_json::{Map, Value, json};
@@ -18,13 +19,15 @@ use super::events::fanout;
 use super::housekeeping::{self, DAY_MS};
 use super::outbound::{self, Reach};
 use super::refusal::{Code, Refusal, Result};
+use super::unit::Unit;
 use super::{App, keys, oauth};
 use crate::settings::registry::AUDIT_RETENTION_DAYS;
 use request::invalid;
-use store::{Delivery, Status, Subscription};
+use store::{Delivery, Status};
 
-pub use request::{CREATE_FIELDS, Create, UPDATE_FIELDS, Update};
+pub use request::{Address, CREATE_FIELDS, Create, UPDATE_FIELDS, Update};
 pub use sender::{Webhooks, start};
+pub use store::Subscription;
 
 const CANCEL_URL: &str = "The subscription was pointed at another URL.";
 const CANCEL_TURNED_OFF: &str = "The subscription was turned off.";
@@ -71,7 +74,7 @@ fn not_found() -> Refusal {
 }
 
 /// An inconclusive registration lookup leaves the decision to the send attempt.
-async fn check_address(app: &App, address: &request::Address) -> Result<()> {
+pub async fn check_address(app: &App, address: &request::Address) -> Result<()> {
     if app.settings.start.webhook_private_addresses {
         return Ok(());
     }
@@ -98,7 +101,7 @@ fn redacted(secret: &str) -> String {
     format!("****{tail}")
 }
 
-fn answer(subscription: &Subscription, secret_shown: bool) -> Map<String, Value> {
+pub fn answer(subscription: &Subscription, secret_shown: bool) -> Map<String, Value> {
     let secret = if secret_shown {
         subscription.secret.clone()
     } else {
@@ -151,36 +154,49 @@ fn read_answer(tx: &Transaction<'_>, subscription: &Subscription) -> Result<Valu
 pub async fn create(app: &App, caller: &Caller, request: Create) -> Result<Value> {
     caller.webhook_maker()?;
     check_address(app, &request.url).await?;
+    let subscription = app
+        .write(caller, "webhook.create", move |unit| {
+            insert_new(unit, request)
+        })
+        .await?;
+    Ok(Value::Object(answer(&subscription, true)))
+}
+
+/// Registers a subscription in `unit`'s write, for the maker it is run by.
+pub fn insert_new(unit: &Unit<'_, '_>, request: Create) -> Result<Subscription> {
+    let maker = unit.caller.webhook_maker()?;
+    let tx = unit.tx();
     let secret = match request.secret {
         Some(secret) => secret,
         None => generated_secret()?,
     };
-    let id = uuid::Uuid::now_v7().to_string();
-    let url = request.url.text;
-    let events = request.events;
-    let type_filter = request.type_filter;
-    let subscription = app
-        .write(caller, "webhook.create", move |unit| {
-            let maker = unit.caller.webhook_maker()?;
-            let tx = unit.tx();
-            let subscription = Subscription {
-                id,
-                url,
-                events,
-                type_filter,
-                secret,
-                active: true,
-                maker,
-                starts_after: fanout::newest(tx)?,
-                created_at: unit.at.clone(),
-                updated_at: unit.at.clone(),
-            };
-            store::insert(tx, &subscription)?;
-            unit.audit("webhook", &subscription.id, None)?;
-            Ok(subscription)
-        })
-        .await?;
-    Ok(Value::Object(answer(&subscription, true)))
+    let subscription = Subscription {
+        id: uuid::Uuid::now_v7().to_string(),
+        url: request.url.text,
+        events: request.events,
+        type_filter: request.type_filter,
+        secret,
+        active: true,
+        maker,
+        starts_after: fanout::newest(tx)?,
+        created_at: unit.at.clone(),
+        updated_at: unit.at.clone(),
+    };
+    store::insert(tx, &subscription)?;
+    unit.audit("webhook", &subscription.id, None)?;
+    Ok(subscription)
+}
+
+/// The subscriptions the caller reaches.
+pub fn reached_in(tx: &Transaction<'_>, caller: &Caller) -> Result<Vec<Subscription>> {
+    let reach = caller.webhook_reach()?;
+    store::list(tx, reach.as_ref())
+}
+
+/// One subscription the caller made, or `webhook_not_found`.
+pub fn made_by(tx: &Transaction<'_>, caller: &Caller, id: &str) -> Result<Subscription> {
+    let maker = caller.webhook_maker()?;
+    store::by_id(tx, id, Some(&maker))?.ok_or_else(not_found)
 }
 
 pub async fn list(app: &App, caller: &Caller) -> Result<Value> {
@@ -211,6 +227,22 @@ pub async fn update(app: &App, caller: &Caller, id: String, request: Update) -> 
     if let Some(address) = &request.url {
         check_address(app, address).await?;
     }
+    let cache = app.catalog_handle();
+    let subscription = app
+        .write(caller, "webhook.update", move |unit| {
+            apply_update(unit, &cache, id, request)
+        })
+        .await?;
+    Ok(Value::Object(answer(&subscription, false)))
+}
+
+/// Changes a subscription in `unit`'s write, for the maker it is run by.
+pub fn apply_update(
+    unit: &Unit<'_, '_>,
+    cache: &ArcSwap<catalog::Catalog>,
+    id: String,
+    request: Update,
+) -> Result<Subscription> {
     let fields: Vec<&'static str> = [
         ("url", request.url.is_some()),
         ("events", request.events.is_some()),
@@ -220,49 +252,43 @@ pub async fn update(app: &App, caller: &Caller, id: String, request: Update) -> 
     .into_iter()
     .filter_map(|(field, named)| named.then_some(field))
     .collect();
-    let cache = app.catalog_handle();
-    let subscription = app
-        .write(caller, "webhook.update", move |unit| {
-            let maker = unit.caller.webhook_maker()?;
-            let tx = unit.tx();
-            let existing = store::by_id(tx, &id, Some(&maker))?.ok_or_else(not_found)?;
-            let mut next = existing.clone();
-            if let Some(address) = request.url {
-                next.url = address.text;
+    let maker = unit.caller.webhook_maker()?;
+    let tx = unit.tx();
+    let existing = store::by_id(tx, &id, Some(&maker))?.ok_or_else(not_found)?;
+    let mut next = existing.clone();
+    if let Some(address) = request.url {
+        next.url = address.text;
+    }
+    if let Some(events) = request.events {
+        next.events = events;
+    }
+    if let Some(type_filter) = request.type_filter {
+        next.type_filter = type_filter;
+    }
+    if let Some(active) = request.active {
+        next.active = active;
+    }
+    next.updated_at = unit.at.clone();
+    store::update(tx, &next)?;
+    if next.url != existing.url {
+        store::cancel_all(tx, &id, CANCEL_URL, &unit.at)?;
+    } else if !next.active {
+        store::cancel_all(tx, &id, CANCEL_TURNED_OFF, &unit.at)?;
+    } else if next.events != existing.events || next.type_filter != existing.type_filter {
+        let catalog = catalog::current(cache, tx, catalog::Snapshot::Committed)?;
+        for delivery in store::pending_of(tx, &id)? {
+            if !selects(
+                &next,
+                &catalog.rules,
+                &delivery.event_type,
+                &delivery.type_id,
+            ) {
+                store::cancel(tx, delivery.seq, CANCEL_UNSELECTED, &unit.at)?;
             }
-            if let Some(events) = request.events {
-                next.events = events;
-            }
-            if let Some(type_filter) = request.type_filter {
-                next.type_filter = type_filter;
-            }
-            if let Some(active) = request.active {
-                next.active = active;
-            }
-            next.updated_at = unit.at.clone();
-            store::update(tx, &next)?;
-            if next.url != existing.url {
-                store::cancel_all(tx, &id, CANCEL_URL, &unit.at)?;
-            } else if !next.active {
-                store::cancel_all(tx, &id, CANCEL_TURNED_OFF, &unit.at)?;
-            } else if next.events != existing.events || next.type_filter != existing.type_filter {
-                let catalog = catalog::current(&cache, tx, catalog::Snapshot::Committed)?;
-                for delivery in store::pending_of(tx, &id)? {
-                    if !selects(
-                        &next,
-                        &catalog.rules,
-                        &delivery.event_type,
-                        &delivery.type_id,
-                    ) {
-                        store::cancel(tx, delivery.seq, CANCEL_UNSELECTED, &unit.at)?;
-                    }
-                }
-            }
-            unit.audit("webhook", &id, Some(json!({ "fields": fields })))?;
-            Ok(next)
-        })
-        .await?;
-    Ok(Value::Object(answer(&subscription, false)))
+        }
+    }
+    unit.audit("webhook", &id, Some(json!({ "fields": fields })))?;
+    Ok(next)
 }
 
 pub async fn delete(app: &App, caller: &Caller, id: String) -> Result<()> {
