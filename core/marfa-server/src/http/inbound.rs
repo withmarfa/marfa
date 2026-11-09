@@ -233,17 +233,16 @@ impl Gathered {
         if !self.sized && needed > self.charged {
             let step = self.charged.clamp(FIRST_GROWTH, LAST_GROWTH);
             let ceiling = usize::try_from(limit).unwrap_or(usize::MAX);
-            let mut target = needed
+            let target = needed
                 .max(self.charged.saturating_add(step))
                 .min(ceiling.max(needed));
-            // A step that does not fit falls back to just what the frame needs.
-            if reservation
-                .take((target - self.charged) as u64, flight)
-                .is_err()
-            {
-                reservation.take((needed - self.charged) as u64, flight)?;
-                target = needed;
-            }
+            // A step that does not fit takes the most that does, so the next frame fits it or is refused.
+            let taken = reservation.take_up_to(
+                (needed - self.charged) as u64,
+                (target - self.charged) as u64,
+                flight,
+            )?;
+            let target = self.charged + taken as usize;
             self.bytes.reserve_exact(target - self.bytes.len());
             self.charged = target;
         }
@@ -396,14 +395,29 @@ mod tests {
     }
 
     #[test]
-    fn a_step_that_does_not_fit_leaves_a_body_that_does_its_exact_need() {
+    fn a_step_that_does_not_fit_takes_what_does_and_does_not_grow_again_per_frame() {
         let flight = InFlight::default();
         let mut reservation = flight.reservation("a");
         let mut chunked = Gathered::new(None);
-        // A source may hold half of 12000, which a second step of 4096 would pass at 5000 bytes.
+        // A source may hold half of 12000, which a second step of 4096 would pass from 4097 bytes.
+        let (mut capacity, mut changes) = (chunked.bytes.capacity(), 0);
         for _ in 0..5000 {
             assert_eq!(chunked.push(&[1], &mut reservation, 12000, 1 << 20), Ok(()));
+            if chunked.bytes.capacity() != capacity {
+                capacity = chunked.bytes.capacity();
+                changes += 1;
+            }
+            assert_eq!(chunked.charged, chunked.bytes.capacity());
         }
-        assert_eq!((chunked.len(), chunked.charged), (5000, 5000));
+        assert_eq!(chunked.len(), 5000);
+        assert!(changes <= 3, "the buffer changed capacity {changes} times");
+        // The rest of the source's half is held, and no byte past it is.
+        for _ in 5000..6000 {
+            assert_eq!(chunked.push(&[1], &mut reservation, 12000, 1 << 20), Ok(()));
+        }
+        assert_eq!(
+            chunked.push(&[1], &mut reservation, 12000, 1 << 20),
+            Err(Full::Source)
+        );
     }
 }

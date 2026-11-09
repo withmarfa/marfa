@@ -66,24 +66,31 @@ pub struct Reservation {
 impl Reservation {
     /// Takes `more` bytes unless that would pass `limit` across all requests, or half of it for this source.
     pub fn take(&mut self, more: u64, limit: u64) -> std::result::Result<(), Full> {
+        self.take_up_to(more, more, limit).map(drop)
+    }
+
+    /// Takes `want` bytes, or the most that fits when that is at least `need`, and returns how many it took.
+    pub fn take_up_to(
+        &mut self,
+        need: u64,
+        want: u64,
+        limit: u64,
+    ) -> std::result::Result<u64, Full> {
         let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
-        let own = held
-            .by_source
-            .get(&self.source)
-            .copied()
-            .unwrap_or(0)
-            .checked_add(more)
-            .filter(|sum| *sum <= limit / 2)
+        let own = held.by_source.get(&self.source).copied().unwrap_or(0);
+        let room_source = (limit / 2)
+            .checked_sub(own)
+            .filter(|room| *room >= need)
             .ok_or(Full::Source)?;
-        let total = held
-            .total
-            .checked_add(more)
-            .filter(|sum| *sum <= limit)
+        let room_total = limit
+            .checked_sub(held.total)
+            .filter(|room| *room >= need)
             .ok_or(Full::Instance)?;
-        held.total = total;
-        held.by_source.insert(self.source.clone(), own);
+        let more = want.min(room_source).min(room_total).max(need);
+        held.total += more;
+        held.by_source.insert(self.source.clone(), own + more);
         self.mine += more;
-        Ok(())
+        Ok(more)
     }
 }
 
