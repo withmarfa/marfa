@@ -1061,7 +1061,7 @@ const invocations: Record<string, () => string[]> = {
   "config replace": () => ["--body", "{}"],
   "config update": () => ["--body", "{}"],
   export: () => [],
-  restore: () => [fileOf("archive.tar.gz", "archive")],
+  restore: () => [fileOf("archive.tar", "archive")],
   "views create": () => [
     "--title",
     "Notes",

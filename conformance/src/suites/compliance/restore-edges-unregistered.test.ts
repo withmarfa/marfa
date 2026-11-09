@@ -1,10 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { v7 as uuidv7 } from "uuid";
-import {
-  tar,
-  listEntries,
-} from "../../utils/archive.js";
+import { tar, listEntries } from "../../utils/archive.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,

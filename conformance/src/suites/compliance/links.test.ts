@@ -17,9 +17,7 @@ import {
   trackItem,
   trackKey,
 } from "../../utils/setup.js";
-import {
-  itemsArchive,
-} from "../../utils/archive.js";
+import { itemsArchive } from "../../utils/archive.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
 // A type's link and the tombstones a purge leaves, so a connector finds its

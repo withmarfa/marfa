@@ -11,8 +11,7 @@ import {
 } from "../../utils/fresh-server.js";
 import { connect, issuerOrigin, registerApp } from "../../utils/signed-in.js";
 import {
-  tar,
-  listEntries,
+  editLineFile,
   readLineFile,
   itemsArchive,
 } from "../../utils/archive.js";
@@ -725,34 +724,22 @@ describe("who wrote each version", () => {
     }).exportArchive({ type: "core.note", source: minted.source });
     expect(archive.status).toBe(200);
     let stripped = 0;
-    const forgotten = tar(
-      listEntries(archive.data).map((entry) => ({
-        name: entry.name,
-        body:
-          entry.name === "items.ndjson"
-            ? Buffer.from(
-                entry.body
-                  .toString("utf8")
-                  .split("\n")
-                  .filter((text) => text.trim() !== "")
-                  .map((text) => {
-                    const line = JSON.parse(text) as Record<string, unknown>;
-                    // The witness: the export named a writer to take out.
-                    if (line.writer) stripped += 1;
-                    delete line.writer;
-                    for (const snapshot of line.versions as Record<
-                      string,
-                      unknown
-                    >[]) {
-                      if (snapshot.writer) stripped += 1;
-                      delete snapshot.writer;
-                    }
-                    return `${JSON.stringify(line)}\n`;
-                  })
-                  .join(""),
-              )
-            : entry.body,
-      })),
+    const forgotten = editLineFile(archive.data, "items", (body) =>
+      body
+        .split("\n")
+        .filter((text) => text.trim() !== "")
+        .map((text) => {
+          const line = JSON.parse(text) as Record<string, unknown>;
+          // The witness: the export named a writer to take out.
+          if (line.writer) stripped += 1;
+          delete line.writer;
+          for (const snapshot of line.versions as Record<string, unknown>[]) {
+            if (snapshot.writer) stripped += 1;
+            delete snapshot.writer;
+          }
+          return `${JSON.stringify(line)}\n`;
+        })
+        .join(""),
     );
     expect(stripped).toBe(3);
     const owner = new MarfaClient({
@@ -856,29 +843,16 @@ describe("who wrote each version", () => {
       ],
     ];
     for (const [field, edit] of edits) {
-      const edited = tar(
-        listEntries(archive.data).map((entry) => ({
-          name: entry.name,
-          body:
-            entry.name === "items.ndjson"
-              ? Buffer.from(
-                  entry.body
-                    .toString("utf8")
-                    .split("\n")
-                    .filter((text) => text.trim() !== "")
-                    .map((text) => {
-                      const parsed = JSON.parse(text) as Record<
-                        string,
-                        unknown
-                      >;
-                      if ((parsed.item as { id: string }).id === id)
-                        edit(parsed);
-                      return `${JSON.stringify(parsed)}\n`;
-                    })
-                    .join(""),
-                )
-              : entry.body,
-        })),
+      const edited = editLineFile(archive.data, "items", (body) =>
+        body
+          .split("\n")
+          .filter((text) => text.trim() !== "")
+          .map((text) => {
+            const parsed = JSON.parse(text) as Record<string, unknown>;
+            if ((parsed.item as { id: string }).id === id) edit(parsed);
+            return `${JSON.stringify(parsed)}\n`;
+          })
+          .join(""),
       );
       const refused = await owner.restoreArchive(edited);
       expect(refused.status, field).toBe(400);

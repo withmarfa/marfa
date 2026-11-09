@@ -651,15 +651,17 @@ describe("a restore", () => {
       },
       ...(where === "manifest" ? [{ name: `blobs/${hash}`, body: blob }] : []),
       lineFile("instance", `${JSON.stringify({ type })}\n`),
-      lineFile("items", [first, second]
-            .map((row) =>
-              JSON.stringify({
-                item: row,
-                metadata:
-                  row === first ? metadata : { tags: [], extensions: {} },
-              }),
-            )
-            .join("\n") + "\n"),
+      lineFile(
+        "items",
+        [first, second]
+          .map((row) =>
+            JSON.stringify({
+              item: row,
+              metadata: row === first ? metadata : { tags: [], extensions: {} },
+            }),
+          )
+          .join("\n") + "\n",
+      ),
       lineFile("edges", `${JSON.stringify(edgeLine)}\n`),
     ]);
   }

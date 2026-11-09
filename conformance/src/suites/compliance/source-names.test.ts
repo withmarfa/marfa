@@ -9,12 +9,7 @@ import {
   trackKey,
 } from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
-import {
-  tar,
-  listEntries,
-  readEntry,
-  readLineFile,
-} from "../../utils/archive.js";
+import { editLineFile, readEntry, readLineFile } from "../../utils/archive.js";
 import {
   approvedAppToken,
   bootFreshServer,
@@ -477,15 +472,10 @@ describe("source names in an archive", () => {
     const target = `${ctx.source}-restored`;
     named.add(target);
     const withLine = (line: unknown) =>
-      tar(
-        listEntries(archive.data).map((entry) => ({
-          name: entry.name,
-          body:
-            entry.name === "types.ndjson"
-              ? entry.body.toString("utf8") +
-                `${JSON.stringify({ source: line })}\n`
-              : entry.body,
-        })),
+      editLineFile(
+        archive.data,
+        "instance",
+        (text) => `${text}${JSON.stringify({ source: line })}\n`,
       );
 
     const skipped = await owner.restoreArchive(
@@ -541,17 +531,12 @@ describe("source names in an archive", () => {
     const restoredApp = `restored:${app}`;
     named.add(restoredApp);
     const withLines = (lines: unknown[]) =>
-      tar(
-        listEntries(archive.data).map((entry) => ({
-          name: entry.name,
-          body:
-            entry.name === "types.ndjson"
-              ? entry.body.toString("utf8") +
-                lines
-                  .map((line) => `${JSON.stringify({ source: line })}\n`)
-                  .join("")
-              : entry.body,
-        })),
+      editLineFile(
+        archive.data,
+        "instance",
+        (text) =>
+          text +
+          lines.map((line) => `${JSON.stringify({ source: line })}\n`).join(""),
       );
     const lines = [
       { source: app, name: "From the app" },

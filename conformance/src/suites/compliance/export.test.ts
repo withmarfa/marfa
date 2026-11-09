@@ -725,7 +725,8 @@ describe("the archive's contents", () => {
           url: receiver.hookUrl(`scope-${ctx.runId}`),
         }),
       );
-      for (const webhook of webhooks) expect(webhook).not.toHaveProperty("secret");
+      for (const webhook of webhooks)
+        expect(webhook).not.toHaveProperty("secret");
     } finally {
       await receiver.close();
     }
@@ -914,10 +915,9 @@ describe("an archive is the selection as it stood when its headers arrived", () 
       trackEdge(ctx, late.data.edge.id);
       lateId = late.data.edge.id;
     });
-    const carried = archiveLines<{ edge: MarfaEdge }>(
-      archive,
-      "edges",
-    ).map((line) => line.edge.id);
+    const carried = archiveLines<{ edge: MarfaEdge }>(archive, "edges").map(
+      (line) => line.edge.id,
+    );
     expect(carried).toEqual([early.data.edge.id]);
     // The witness: both endpoints were carried, so the later edge was
     // eligible and a later export holds it.

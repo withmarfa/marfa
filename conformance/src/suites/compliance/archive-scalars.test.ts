@@ -6,9 +6,10 @@ import type { TestContext } from "../../client/types.js";
 import {
   tar,
   lineFile,
-  readEntry,
+  readLineFile,
   itemsArchive,
   blobHash,
+  archiveManifest,
 } from "../../utils/archive.js";
 import {
   cleanup,
@@ -58,23 +59,15 @@ function fixture() {
       [{ data, mime_type: "text/plain" }],
       [{ id: typeId, label: "Archive scalar", version: 1, fields: {} }],
     );
-    const entry = (name: string) => {
-      const body = readEntry(base, name);
-      if (body === null) throw new Error(`Missing archive entry ${name}`);
-      return body;
-    };
     return tar([
       {
         name: "manifest.json",
-        body: JSON.stringify({
-          ...JSON.parse(entry("manifest.json")),
-          edge_count: 1,
-        }),
+        body: JSON.stringify({ ...archiveManifest(base), edge_count: 1 }),
       },
-      lineFile("instance", entry("types.ndjson")),
-      { name: `blobs/${hash}`, body: data },
-      lineFile("items", entry("items.ndjson")),
+      lineFile("instance", readLineFile(base, "instance") ?? ""),
+      lineFile("items", readLineFile(base, "items") ?? ""),
       lineFile("edges", JSON.stringify({ edge }) + "\n"),
+      { name: `blobs/${hash}`, body: data },
     ]);
   };
   // Also track refused fixtures: a regression that accepts them must clean up.

@@ -646,7 +646,9 @@ describe("who may read and upload a blob", () => {
           ),
         }),
       },
-      lineFile("items", lines
+      lineFile(
+        "items",
+        lines
           .map((line) =>
             JSON.stringify({
               item: {
@@ -660,7 +662,8 @@ describe("who may read and upload a blob", () => {
             }),
           )
           .join("\n")
-          .concat("\n")),
+          .concat("\n"),
+      ),
       ...lines.map((line) => ({
         name: `blobs/${sha256(line.data)}`,
         body: line.data,
@@ -2005,11 +2008,17 @@ describe("which write that names a digest lends it", () => {
           ),
         }),
       },
-      lineFile("items", `${noteLine(ids.source, {
+      lineFile(
+        "items",
+        `${noteLine(ids.source, {
           [lendsNamespace]: { cover: namespaceLent },
           [plantsNamespace]: { cover: namespaceDead },
-        })}\n${noteLine(ids.target, {})}\n`),
-      lineFile("edges", `${edgeLine({ cover: edgeLent, alt: edgeDead }, [edgeLent])}\n${edgeLine({ cover: edgeUnlisted }, "not a list", [ids.target, ids.source])}\n`),
+        })}\n${noteLine(ids.target, {})}\n`,
+      ),
+      lineFile(
+        "edges",
+        `${edgeLine({ cover: edgeLent, alt: edgeDead }, [edgeLent])}\n${edgeLine({ cover: edgeUnlisted }, "not a list", [ids.target, ids.source])}\n`,
+      ),
       ...Object.values(blobs).map((data) => ({
         name: `blobs/${sha256(data)}`,
         body: data,

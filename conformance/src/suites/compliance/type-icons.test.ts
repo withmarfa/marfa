@@ -1,12 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
-import {
-  tar,
-  listEntries,
-  readEntry,
-  readLineFile,
-} from "../../utils/archive.js";
+import { editLineFile, readEntry, readLineFile } from "../../utils/archive.js";
 import type { TestContext, TypeSchema } from "../../client/types.js";
 import {
   createTestContext,
@@ -511,15 +506,10 @@ describe("the owner's icon for a type", () => {
     const archive = await client.exportArchive({ source: ctx.source });
     expect(archive.status).toBe(200);
     const withLine = (line: unknown) =>
-      tar(
-        listEntries(archive.data).map((entry) => ({
-          name: entry.name,
-          body:
-            entry.name === "types.ndjson"
-              ? entry.body.toString("utf8") +
-                `${JSON.stringify({ type_icon: line })}\n`
-              : entry.body,
-        })),
+      editLineFile(
+        archive.data,
+        "instance",
+        (text) => `${text}${JSON.stringify({ type_icon: line })}\n`,
       );
 
     for (const icon of REFUSED_ICONS) {

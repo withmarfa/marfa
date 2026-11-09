@@ -3,9 +3,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
-import {
-  itemsArchive,
-} from "../../utils/archive.js";
+import { itemsArchive } from "../../utils/archive.js";
 import {
   createSecondClient,
   getOwnerClient,

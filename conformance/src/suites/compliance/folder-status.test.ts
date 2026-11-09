@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { readFileSync, rmSync } from "node:fs";
-import { gunzipSync } from "node:zlib";
+import { readLineFile } from "../../utils/archive.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -158,9 +158,12 @@ describe("folder sync reports", () => {
     );
     const archive = await call("GET", "/export?format=archive");
     expect(archive.status).toBe(200);
-    const bytes = gunzipSync(Buffer.from(await archive.arrayBuffer()));
-    expect(bytes.toString("utf8")).toContain(id);
-    expect(bytes.toString("utf8")).not.toContain(folder_store_id);
+    const bytes = new Uint8Array(await archive.arrayBuffer());
+    const text = (["instance", "items", "edges"] as const)
+      .map((name) => readLineFile(bytes, name))
+      .join("\n");
+    expect(text).toContain(id);
+    expect(text).not.toContain(folder_store_id);
   });
   it("lists active folder summaries for the owner and local command with bounded pages", async () => {
     const firstId = await folder();

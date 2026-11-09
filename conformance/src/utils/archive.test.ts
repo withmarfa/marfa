@@ -13,6 +13,7 @@ import {
   archiveLines,
   archiveManifest,
   blobHash,
+  editLineFile,
   itemsArchive,
   lineFile,
   listEntries,
@@ -62,14 +63,16 @@ describe("readEntry", () => {
     const field = Buffer.alloc(12, 0);
     field[0] = 0x80;
     field[11] = 13;
-    expect(readEntry(rewriteFirstSize(tar(three), field), "manifest.json")).toBe(
-      '{"version":2}',
-    );
+    expect(
+      readEntry(rewriteFirstSize(tar(three), field), "manifest.json"),
+    ).toBe('{"version":2}');
   });
 
   it("refuses a size it cannot read rather than reporting the member absent", () => {
     const archive = rewriteFirstSize(tar(three), Buffer.from("zz", "ascii"));
-    expect(() => readEntry(archive, "manifest.json")).toThrow(/unreadable size/);
+    expect(() => readEntry(archive, "manifest.json")).toThrow(
+      /unreadable size/,
+    );
   });
 });
 
@@ -87,6 +90,24 @@ describe("listEntries", () => {
       "notes.txt",
       "edges.ndjson.gz",
     ]);
+  });
+});
+
+describe("editLineFile", () => {
+  it("replaces one line file's text and keeps every other member in its place", () => {
+    const archive = itemsArchive([
+      { id: "x", type: "core.note", properties: {}, source: "s" },
+    ]);
+    const edited = editLineFile(
+      archive,
+      "edges",
+      (text) => `${text}{"edge":{}}\n`,
+    );
+    expect(listEntries(edited).map((e) => e.name)).toEqual(
+      listEntries(archive).map((e) => e.name),
+    );
+    expect(readLineFile(edited, "edges")).toBe('{"edge":{}}\n');
+    expect(readLineFile(edited, "items")).toBe(readLineFile(archive, "items"));
   });
 });
 
@@ -120,9 +141,9 @@ describe("itemsArchive", () => {
       [],
       [{ data, mime_type: "application/octet-stream", named }],
     );
-    expect(Object.keys(archiveManifest<{ blobs: object }>(archive).blobs)).toEqual(
-      [named],
-    );
+    expect(
+      Object.keys(archiveManifest<{ blobs: object }>(archive).blobs),
+    ).toEqual([named]);
     expect(readEntry(archive, `blobs/${named}`)).not.toBeNull();
     expect(readEntry(archive, `blobs/${blobHash(data)}`)).toBeNull();
   });

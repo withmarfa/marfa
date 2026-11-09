@@ -13,9 +13,7 @@ import {
   publishedOperations,
 } from "../../utils/openapi.js";
 import { coverageRows } from "../../utils/coverage-table.js";
-import {
-  readEntry,
-} from "../../utils/archive.js";
+import { readEntry } from "../../utils/archive.js";
 import { uploadReferenced } from "../../utils/blobs.js";
 import { declareOversizeBody } from "../../utils/oversize.js";
 

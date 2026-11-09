@@ -7,9 +7,7 @@ import {
   getManagementClient,
 } from "../../utils/setup.js";
 import { uploadReferenced } from "../../utils/blobs.js";
-import {
-  readEntry,
-} from "../../utils/archive.js";
+import { readEntry } from "../../utils/archive.js";
 
 let client: MarfaClient;
 let operator: MarfaClient;

@@ -2,10 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
-import {
-  itemsArchive,
-  type ArchiveItem,
-} from "../../utils/archive.js";
+import { itemsArchive, type ArchiveItem } from "../../utils/archive.js";
 import {
   cleanup,
   createTestContext,

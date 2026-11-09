@@ -148,6 +148,24 @@ export function readLineFile(
   return found ? gunzipSync(found.body).toString("utf8") : null;
 }
 
+/**
+ * The archive with one line file's text replaced by what `edit` makes of it,
+ * every other member kept as it was, in its place.
+ */
+export function editLineFile(
+  archive: Uint8Array,
+  name: LineFile,
+  edit: (text: string) => string,
+): Uint8Array {
+  return tar(
+    listEntries(archive).map((entry) =>
+      entry.name === `${name}.ndjson.gz`
+        ? lineFile(name, edit(gunzipSync(entry.body).toString("utf8")))
+        : { name: entry.name, body: entry.body },
+    ),
+  );
+}
+
 /** Each line of a line file, parsed. */
 export function archiveLines<T = Record<string, unknown>>(
   archive: Uint8Array,

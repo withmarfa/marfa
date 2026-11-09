@@ -7,7 +7,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { gunzipSync } from "node:zlib";
+import { readLineFile } from "../../utils/archive.js";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import {
   cleanup,
@@ -960,7 +960,7 @@ describe("the instance from the terminal", () => {
     }
     expect(ndjson.stdout).toContain(title);
 
-    const archive = join(dir, "export.tar.gz");
+    const archive = join(dir, "export.tar");
     const report = await c.cli.json<{ path: string; size_bytes: number }>([
       "export",
       "--format",
@@ -970,10 +970,11 @@ describe("the instance from the terminal", () => {
     ]);
     expect(report.size_bytes).toBeGreaterThan(0);
     expect(statSync(archive).size).toBe(report.size_bytes);
-    // The archive is a whole gzip stream, and the tar inside carries the
-    // note by its title: the body is witnessed, not only its length.
-    const tar = gunzipSync(readFileSync(archive));
-    expect(tar.toString("latin1")).toContain(title);
+    // The archive's items carry the note by its title: the body is
+    // witnessed, not only its length.
+    expect(
+      readLineFile(new Uint8Array(readFileSync(archive)), "items"),
+    ).toContain(title);
   });
 
   it("takes an archive back through the private socket and refuses ordinary keys", async () => {
@@ -992,7 +993,7 @@ describe("the instance from the terminal", () => {
     ]);
     trackItem(c.ctx, created.item.id);
 
-    const archive = join(dir, "restore.tar.gz");
+    const archive = join(dir, "restore.tar");
     const written = await c.cli.json<{ size_bytes: number }>([
       "export",
       "--format",

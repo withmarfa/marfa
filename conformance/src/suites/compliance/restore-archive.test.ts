@@ -402,10 +402,7 @@ describe("restore", () => {
     body: JSON.stringify({ version: 0, format: "marfa-archive-v0", blobs: {} }),
   };
   /** The members an archive always carries beside its items, empty. */
-  const noEdgesOrTypes = [
-    lineFile("edges", ""),
-    lineFile("instance", ""),
-  ];
+  const noEdgesOrTypes = [lineFile("edges", ""), lineFile("instance", "")];
 
   it("steps past an entry it does not read", async () => {
     const id = uuidv7();
@@ -427,10 +424,13 @@ describe("restore", () => {
     const refused = await owner.restoreArchive(
       tar([
         manifest,
-        lineFile("items", Buffer.concat([
+        lineFile(
+          "items",
+          Buffer.concat([
             Buffer.from(archivedLine(id, "ahead of a long line") + "\n"),
             Buffer.alloc(64 * 1024 * 1024 + 1, "x"),
-          ])),
+          ]),
+        ),
         ...noEdgesOrTypes,
       ]),
     );
@@ -443,7 +443,8 @@ describe("restore", () => {
   it("refuses an archive carrying an entry twice, and writes nothing", async () => {
     const first = uuidv7();
     const second = uuidv7();
-    const items = (id: string, body: string) => (lineFile("items", archivedLine(id, body) + "\n"));
+    const items = (id: string, body: string) =>
+      lineFile("items", archivedLine(id, body) + "\n");
     const refused = await owner.restoreArchive(
       tar([
         manifest,

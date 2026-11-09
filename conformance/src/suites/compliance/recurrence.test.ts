@@ -9,9 +9,7 @@ import {
   cleanup,
   getOwnerClient,
 } from "../../utils/setup.js";
-import {
-  itemsArchive,
-} from "../../utils/archive.js";
+import { itemsArchive } from "../../utils/archive.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,

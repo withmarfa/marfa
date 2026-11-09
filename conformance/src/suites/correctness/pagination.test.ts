@@ -10,9 +10,7 @@ import {
 } from "../../utils/setup.js";
 import { createNote, generateId } from "../../generators/items.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
-import {
-  itemsArchive,
-} from "../../utils/archive.js";
+import { itemsArchive } from "../../utils/archive.js";
 
 let client: MarfaClient;
 let ctx: TestContext;

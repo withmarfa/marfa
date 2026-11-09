@@ -11,10 +11,7 @@ import {
   trackKey,
   trackType,
 } from "../../utils/setup.js";
-import {
-  tar,
-  lineFile,
-} from "../../utils/archive.js";
+import { tar, lineFile } from "../../utils/archive.js";
 import { v7 as uuidv7 } from "uuid";
 
 /**
@@ -245,7 +242,10 @@ describe("a file item carries the size of the bytes it names", () => {
           ),
         }),
       },
-      lineFile("items", `${line(lentId, lent, true)}\n${line(unlentId, unlent, false)}\n`),
+      lineFile(
+        "items",
+        `${line(lentId, lent, true)}\n${line(unlentId, unlent, false)}\n`,
+      ),
       { name: `blobs/${sha256(lent)}`, body: lent },
       { name: `blobs/${sha256(unlent)}`, body: unlent },
       lineFile("edges", ""),

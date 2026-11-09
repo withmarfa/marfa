@@ -16,9 +16,7 @@ import {
   trackItem,
   cleanup,
 } from "../../utils/setup.js";
-import {
-  itemsArchive,
-} from "../../utils/archive.js";
+import { itemsArchive } from "../../utils/archive.js";
 import {
   approvedAppToken,
   bootFreshServer,

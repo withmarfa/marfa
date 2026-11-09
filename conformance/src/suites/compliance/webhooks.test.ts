@@ -12,9 +12,7 @@ import {
   cleanup,
 } from "../../utils/setup.js";
 import { v7 as uuidv7 } from "uuid";
-import {
-  itemsArchive,
-} from "../../utils/archive.js";
+import { itemsArchive } from "../../utils/archive.js";
 import { createNote, createTask } from "../../generators/items.js";
 import { withStream, collectUntil } from "../../utils/stream.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
