@@ -146,8 +146,18 @@ describe("a time the server keeps", () => {
             .run(value, id),
         );
       expect((await send(server, "/keys/current", { key })).status).toBe(200);
+      // The witness: the stored expiry decides, and one that reads as past refuses 401.
+      expiring("2000-01-01T00:00:00.000Z");
+      expect((await send(server, "/keys/current", { key })).status).toBe(401);
 
-      for (const damaged of ["soon", "4070908800000", "2099-01-01T00:00:00Z"]) {
+      // "0" sorts before any time it could be compared with as text, "z" after.
+      for (const damaged of [
+        "0",
+        "z",
+        "soon",
+        "4070908800000",
+        "2099-01-01T00:00:00Z",
+      ]) {
         expiring(damaged);
         const refused = await send(server, "/keys/current", { key });
         expect(refused.status, damaged).toBe(500);
@@ -173,7 +183,13 @@ describe("a time the server keeps", () => {
           .status,
       ).toBe(200);
 
-      for (const damaged of ["soon", "4070908800", "2099-01-01T00:00:00Z"]) {
+      for (const damaged of [
+        "0",
+        "z",
+        "soon",
+        "4070908800",
+        "2099-01-01T00:00:00Z",
+      ]) {
         ending(damaged);
         const refused = await send(server, "/owner/passkeys", {
           cookie: server.ownerCookie,
