@@ -61901,7 +61901,7 @@
         ],
         "responses": {
           "200": {
-            "description": "With `format=ndjson`, one JSON object per line: each item, then each edge between them that you can read. With `format=archive`, a tar of the manifest, compressed line files of your registrations and settings, items with their history, and edges, then the blobs. If the export fails partway or your credential ends or narrows, the connection ends early and an archive won't unpack.",
+            "description": "With `format=ndjson`, one JSON object per line: each item, then each readable edge between them. With `format=archive`, a tar of the manifest, compressed line files of your registrations and settings, items with their history, and edges, then the blobs. If the export fails partway or your credential ends or stops reading what it carries, the connection ends early and an archive won't unpack.",
             "content": {
               "application/x-ndjson": {
                 "schema": {
