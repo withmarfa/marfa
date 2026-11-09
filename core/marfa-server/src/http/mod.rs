@@ -25,6 +25,7 @@ mod folders;
 mod health;
 mod housekeeping;
 mod items;
+mod jobs;
 mod keys;
 pub mod listening;
 mod listing;
@@ -101,6 +102,8 @@ fn webhook_doors(app: Arc<App>) -> Routes {
             "/webhooks/{id}/deliveries/{delivery_id}/redeliver",
             post(webhooks::redeliver),
         )
+        .route("/items/bulk-actions/jobs/{id}", get(jobs::read))
+        .route("/items/bulk-actions/jobs/{id}/cancel", post(jobs::cancel))
         .admitting(app, Admission::Presented)
 }
 
@@ -121,6 +124,12 @@ fn schema_doors() -> Routes {
             get(edge_types::list).post(edge_types::register),
         )
         .route("/edge-types/{id}", delete(edge_types::delete))
+}
+
+fn type_move_doors(app: Arc<App>) -> Routes {
+    Doors::new()
+        .route("/types/{id}/move", post(jobs::move_type))
+        .admitting(app, Admission::Mapped)
 }
 
 fn overview_doors(app: Arc<App>) -> Routes {
@@ -151,6 +160,7 @@ fn item_doors(app: Arc<App>) -> Routes {
         .route("/views/{id}", patch(views::update).delete(views::delete))
         .route("/views/{id}/items", get(views::items))
         .route("/items/bulk", post(bulk::write))
+        .route("/items/bulk-actions", post(jobs::queue))
         .route("/items/bulk-get", post(items::bulk_get))
         .route("/items/titles", post(items::titles))
         .route("/items/lookup", post(lookup::lookup))
@@ -296,6 +306,7 @@ fn shared(app: Arc<App>) -> Routes {
         .route("/sources", get(sources::list))
         .route("/source", get(sources::read).patch(sources::update))
         .merge(schema_doors())
+        .merge(type_move_doors(app.clone()))
         .merge(key_doors(app.clone()))
         .merge(webhook_doors(app.clone()))
         .merge(item_doors(app.clone()))

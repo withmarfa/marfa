@@ -263,6 +263,27 @@ pub fn consent_by_grant(tx: &Connection, grant_id: &str) -> Result<Option<Consen
         .optional()?)
 }
 
+/// The apps whose standing grant names `type_id` outright in a scope, by client ID.
+pub fn clients_naming_type(tx: &Connection, type_id: &str) -> Result<Vec<String>> {
+    let mut statement = tx.prepare(
+        "SELECT * FROM auth_oauth_consent WHERE withdrawn_at IS NULL ORDER BY created_at, client_id",
+    )?;
+    let consents = statement.query_map([], consent_of)?;
+    let mut clients: Vec<String> = Vec::new();
+    for consent in consents {
+        let consent = consent?;
+        let named = consent.scopes.literals().iter().any(|scope| {
+            scope
+                .rsplit_once(':')
+                .is_some_and(|(name, _)| name == type_id)
+        });
+        if named && !clients.contains(&consent.client_id) {
+            clients.push(consent.client_id);
+        }
+    }
+    Ok(clients)
+}
+
 pub fn standing_grant(tx: &Connection, grant_id: &str, user_id: &str) -> Result<Option<Consent>> {
     Ok(tx
         .query_row(

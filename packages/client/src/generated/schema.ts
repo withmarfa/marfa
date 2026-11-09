@@ -2677,8 +2677,19 @@ export interface components {
             remaining?: number;
             /** @description On a type move, `true` if items your source filter hides are still of the old type. A move takes only items you can see. Absent otherwise. */
             remaining_hidden?: boolean;
-            /** @description On a type move, `true` if Marfa rewrote `settings` to name the new type. `false` if an item of the old type remains, counted in `remaining` or `remaining_hidden`, or a setting has a `reason`: Marfa then rewrote none of them. Absent otherwise. */
+            /** @description On a type move, `true` if Marfa rewrote `settings` to name the new type. `false` if an item of the old type remains, a setting has a `reason`, or `settings_error` names a refusal; then none was rewritten. Absent otherwise. */
             settings_rewritten?: boolean;
+            /** @description On a type move, why Marfa rewrote none of `settings` once no item of the old type remained: the new type is gone, or a folder or view would refuse its rewrite. Change the setting or register the type, then run the move again. Absent otherwise. */
+            settings_error?: {
+                /** @description A machine-readable code for the refusal. Use it in your logic. */
+                code: string;
+                /** @description A description of the refusal for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the refusal, as the setting's own operation gives it. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
         };
         /** @description An item a bulk action left unchanged, and why. */
         BulkActionError: {
@@ -4405,23 +4416,6 @@ export interface components {
             id: string;
             /** @description The key's label. Absent for an app. */
             label?: string;
-        };
-        /** @description An error response. */
-        BulkCapExceededOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal: {
-            /** @description What went wrong. */
-            error: {
-                /**
-                 * @description A machine-readable code for the error. Use it in your logic.
-                 * @enum {string}
-                 */
-                code: "bulk_cap_exceeded" | "missing_required_field" | "unknown_type" | "validation_error";
-                /** @description A description of the error for a person to read. It can change, so don't match on it. */
-                message: string;
-                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
         };
         /** @description An error response. */
         CoreTypeImmutableOrTypeNotPermittedRefusal: {
@@ -16233,7 +16227,6 @@ export interface operations {
              * @description - `missing_required_field`: `to` is missing.
              *     - `validation_error`: `to` is malformed or names the type itself.
              *     - `unknown_type`: no type has the identifier `to`.
-             *     - `bulk_cap_exceeded`: the type holds over 50,000 items.
              */
             400: {
                 headers: {
@@ -16246,7 +16239,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BulkCapExceededOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
