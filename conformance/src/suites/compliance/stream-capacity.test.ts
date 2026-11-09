@@ -42,11 +42,27 @@ async function refusedStream(
   return { response: stream.response, body };
 }
 
-describe("GET /events on an instance that caps its live viewers", () => {
-  it("answers 503 stream_capacity_exhausted to the viewer past the cap, on either stream, and admits one again once a viewer leaves", async () => {
-    const first = await openEventStream(server!.apiUrl, server!.workingKey, {
+/**
+ * Open a stream once the server has seen the previous viewer's connection
+ * close, since the slot frees then and not when the client lets go.
+ */
+async function admittedStream(): Promise<
+  Awaited<ReturnType<typeof openEventStream>>
+> {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const stream = await openEventStream(server!.apiUrl, server!.workingKey, {
       connectTimeoutMs: 30_000,
     });
+    if (stream.response.status === 200) return stream;
+    await stream.close();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("the server never admitted a viewer after the last left");
+}
+
+describe("GET /events on an instance that caps its live viewers", () => {
+  it("answers 503 stream_capacity_exhausted to the viewer past the cap, on either stream, and admits one again once a viewer leaves", async () => {
+    const first = await admittedStream();
     try {
       expect(first.response.status).toBe(200);
       expect(first.response.headers.get("Content-Type")).toContain(
@@ -72,26 +88,12 @@ describe("GET /events on an instance that caps its live viewers", () => {
 
     // The witness: the refusal was the cap and not the credential or the
     // door, because the same request is admitted when the viewer has left.
-    // The slot frees when the server sees the connection close, so ask until
-    // it does.
-    let admitted: Awaited<ReturnType<typeof openEventStream>> | undefined;
-    for (let attempt = 0; attempt < 100 && admitted === undefined; attempt++) {
-      const stream = await openEventStream(server!.apiUrl, server!.workingKey, {
-        connectTimeoutMs: 30_000,
-      });
-      if (stream.response.status === 200) admitted = stream;
-      else {
-        await stream.close();
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-    }
-    expect(admitted?.response.status).toBe(200);
-    await admitted?.close();
+    const admitted = await admittedStream();
+    expect(admitted.response.status).toBe(200);
+    await admitted.close();
   });
   it("answers the fault in a request ahead of 503, so a viewer past the cap learns of a fault it can fix", async () => {
-    const first = await openEventStream(server!.apiUrl, server!.workingKey, {
-      connectTimeoutMs: 30_000,
-    });
+    const first = await admittedStream();
     try {
       expect(first.response.status).toBe(200);
 
