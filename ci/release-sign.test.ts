@@ -255,7 +255,7 @@ printf '%s' "$4" | jq -e --argjson len "$len" \
   '.mime == "image/png" and .len == $len and (.ocr.languages | type) == "string"' > /dev/null || exit 3
 printf '%s\n' '${frame}'
 printf '%s' '{"reading":{"text":"${text}","truncated":false,"cut_short":false,"size":[1,1],"text_refused":null}}'
-exit ${status}
+exit ${String(status)}
 `;
   }
 
@@ -313,6 +313,24 @@ exit ${status}
   it("refuses a child that fails after its frame", () => {
     const output = prove(stand_in('{"sandbox":"full"}', 1, SENTENCE));
     expect(output).toContain("exited with status 1, not 0");
+  });
+
+  it("refuses a child that sends a second frame before its reading", () => {
+    const output = prove(
+      stand_in('{"sandbox":"full"}\n{"sandbox":"full"}', 0, SENTENCE),
+    );
+    expect(output).toContain("gave no reading");
+    expect(output).not.toContain("ended before it listened");
+  });
+
+  it("keeps the child's error output apart from its answer", () => {
+    const output = prove(
+      stand_in('{"sandbox":"full"}', 0, SENTENCE).replace(
+        "exit 0\n",
+        "echo 'a warning' >&2\nexit 0\n",
+      ),
+    );
+    expect(output).toContain(`the reading child read: ${SENTENCE}`);
   });
 
   it("refuses a reading without the sentence", () => {

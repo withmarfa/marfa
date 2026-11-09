@@ -22,7 +22,7 @@ set -euo pipefail
 archive="$1"
 fixtures=$(cd "$2" && pwd -P)
 
-# How long the files get to hold their text after the upload, in real seconds.
+# How long after the upload a last sweep may start, in real seconds; a sweep under way may run on.
 READING_SECONDS=240
 
 for tool in curl jq openssl tar; do
@@ -65,14 +65,14 @@ prove_sandbox() {
       time_budget_ms: 45000, ocr: {languages: "eng+deu+fra+spa", data_dir: null}}')
   # What a parent gives a child: an empty environment, `/` as the working folder, the
   # file open for reading only as standard input, a minute and a gigabyte of memory, and
-  # pipes for output. The child's limit on file size is zero, so output to a file would
-  # kill it; what it writes to either pipe is read here as one stream, frame first.
+  # pipes for output, read apart. The child's limit on file size is zero, so output to a
+  # file would kill it: its error output goes through a pipe to `cat`, which writes it.
   said=$(
     (
       exec 0< "$picture"
       cd /
       exec env -i "$server" --marfa-enrichment-child 60000 1073741824 "$request"
-    ) 2>&1
+    ) 2> >(cat > "$state/child-stderr")
     printf '\nexit %s' "$?"
   )
   code=${said##*$'\n'exit }
@@ -84,8 +84,9 @@ prove_sandbox() {
   echo "sandbox: the reading child reported the full sandbox"
   [ "$code" = 0 ] || fail "The reading child exited with status $code, not 0: ${said:0:300}"
   answer=${said#*$'\n'}
-  text=$(jq -er '.reading.text' <<< "$answer" 2> /dev/null) ||
-    fail "The reading child gave no reading: ${answer:0:300}"
+  # One answer after the frame, as the parent reads it; anything more is refused there.
+  text=$(jq -ser 'if length == 1 then .[0].reading.text // error("no reading") else error("\(length) answers") end' <<< "$answer" 2> /dev/null) ||
+    fail "The reading child gave no reading: ${answer:0:300} (its error output: $(tail -c 300 "$state/child-stderr" 2> /dev/null))"
   grep -qF -- "$phrase" <<< "$text" || fail "The reading child read '${text:0:200}', which lacks '$phrase'. Its answer: ${answer:0:300}"
   echo "sandbox: the reading child read: ${text:0:60}"
 }
