@@ -48,13 +48,13 @@ pub(super) fn account_key(email: &str) -> String {
         .collect()
 }
 
-/// Only the owner's own email has account lanes of its own; every other email shares one.
+/// Once there is an owner, only the owner's email has account lanes of its own and every other
+/// email shares one. Before, each email counts on its own, so what it spent carries into the claim.
 pub fn password_lanes(email: &str, owner: Option<&str>, address: Option<IpAddr>) -> [Lane; 3] {
     let account = account_key(email);
-    let account = if owner.map(account_key).as_deref() == Some(account.as_str()) {
-        account
-    } else {
-        OTHER_EMAILS.to_string()
+    let account = match owner.map(account_key) {
+        Some(owner) if owner != account => OTHER_EMAILS.to_string(),
+        _ => account,
     };
     [
         Lane::new(ADDRESS, bucket(address), 30, 15 * MINUTE_MS),
@@ -214,8 +214,20 @@ mod tests {
         assert!(attempt(&limiter, 1, &stranger).is_some());
         let owner = password_lanes(" A@Example.test ", OWNER, address);
         assert_eq!(attempt(&limiter, 1, &owner), None);
-        let unclaimed = password_lanes("a@example.test", None, address);
-        assert!(attempt(&limiter, 1, &unclaimed).is_some());
+    }
+
+    #[test]
+    fn attempts_before_the_claim_still_count_once_the_email_is_the_owners() {
+        let limiter = Limiter::default();
+        let address = "203.0.113.1".parse().ok();
+        for _ in 0..10 {
+            let unclaimed = password_lanes("a@example.test", None, address);
+            assert_eq!(attempt(&limiter, 0, &unclaimed), None);
+        }
+        let claimed = password_lanes("a@example.test", OWNER, address);
+        assert!(attempt(&limiter, 1, &claimed).is_some());
+        let other = password_lanes("b@example.test", None, address);
+        assert_eq!(attempt(&limiter, 1, &other), None);
     }
 
     #[test]
