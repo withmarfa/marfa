@@ -185,8 +185,16 @@ describe("the instance lines of an archive", () => {
         await working.writeConnectorAgreements(connector.id, {
           process,
           set: [
-            { item_id: note.data.item.id, waiting: true, record: { etag: "a" } },
-            { item_id: cleared.data.item.id, waiting: false, record: { etag: "c" } },
+            {
+              item_id: note.data.item.id,
+              waiting: true,
+              record: { etag: "a" },
+            },
+            {
+              item_id: cleared.data.item.id,
+              waiting: false,
+              record: { etag: "c" },
+            },
           ],
         })
       ).status,
@@ -208,7 +216,11 @@ describe("the instance lines of an archive", () => {
         await working.writeConnectorAgreements(connector.id, {
           process,
           set: [
-            { item_id: note.data.item.id, waiting: false, record: { etag: "b" } },
+            {
+              item_id: note.data.item.id,
+              waiting: false,
+              record: { etag: "b" },
+            },
           ],
           clear: [cleared.data.item.id],
         })
@@ -223,7 +235,9 @@ describe("the instance lines of an archive", () => {
     // Clearing the state cleared the source's agreements, so the one the
     // first case wrote comes back beside the cleared one.
     expect(restored.data.connector_agreements_added).toBe(2);
-    expect(restored.data.connector_agreements_skipped).toBeGreaterThanOrEqual(1);
+    expect(restored.data.connector_agreements_skipped).toBeGreaterThanOrEqual(
+      1,
+    );
 
     const config = await operator.getConfig();
     const value = (key: string) =>

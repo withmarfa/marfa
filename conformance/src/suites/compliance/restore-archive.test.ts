@@ -428,10 +428,7 @@ describe("restore", () => {
     body: JSON.stringify({ version: 0, format: "marfa-archive-v0", blobs: {} }),
   };
   /** An archive of `items`, its other line files empty, then `rest`. */
-  const around = (
-    items: ArchiveFile[],
-    rest: ArchiveFile[] = [],
-  ): Uint8Array =>
+  const around = (items: ArchiveFile[], rest: ArchiveFile[] = []): Uint8Array =>
     tar([
       manifest,
       lineFile("instance", ""),
@@ -666,11 +663,7 @@ describe("an archived item that no instance wrote", () => {
     for (const [what, item, code, field] of cases) {
       const id = uuidv7();
       const refused = await owner.restoreArchive(
-        withLines(
-          itemsArchive([]),
-          "items",
-          good + line({ id, ...item }),
-        ),
+        withLines(itemsArchive([]), "items", good + line({ id, ...item })),
       );
       expect(refused.status, `${what}: ${JSON.stringify(refused.error)}`).toBe(
         400,
@@ -699,7 +692,12 @@ describe("a body that is no archive", () => {
   /** An archive of one note that would restore, so a refusal can be told from
    *  an empty restore by the row it did not write, and where its items file
    *  sits in the tar, so a test can damage the middle of a compressed stream. */
-  function oneNote(): { id: string; archive: Uint8Array; items: number; length: number } {
+  function oneNote(): {
+    id: string;
+    archive: Uint8Array;
+    items: number;
+    length: number;
+  } {
     const id = uuidv7();
     // Random text the gzip stream cannot shrink much, so there is a middle to damage.
     const body = randomBytes(192 * 1024).toString("base64");
@@ -709,7 +707,8 @@ describe("a body that is no archive", () => {
     const entry = listEntries(archive).find(
       (one) => one.name === "items.ndjson.gz",
     );
-    if (entry === undefined) throw new Error("the archive helper wrote no items");
+    if (entry === undefined)
+      throw new Error("the archive helper wrote no items");
     const items = Buffer.from(archive).indexOf(Buffer.from(entry.body));
     return { id, archive, items, length: entry.body.length };
   }
@@ -738,7 +737,10 @@ describe("a body that is no archive", () => {
         new Uint8Array(gzipSync(Buffer.from("not a tar ".repeat(200)))),
       ],
       ["an archive cut short", new Uint8Array(bytes.subarray(0, middle))],
-      ["an items file whose compressed stream breaks partway", new Uint8Array(damaged)],
+      [
+        "an items file whose compressed stream breaks partway",
+        new Uint8Array(damaged),
+      ],
     ];
 
     // The witness: the whole archive restores and writes its row.
@@ -817,11 +819,7 @@ describe("what a restore answers", () => {
       },
     })}\n${JSON.stringify({ edge_type: edgeType(ids.edgeType) })}\n`;
     const archive = (extraEdges: Record<string, unknown>[] = []) =>
-      withLines(
-        withLines(base, "edges", edges(extraEdges)),
-        "instance",
-        types,
-      );
+      withLines(withLines(base, "edges", edges(extraEdges)), "instance", types);
     return { a, b, edgeId, hash, archive };
   }
 
@@ -866,7 +864,9 @@ describe("what a restore answers", () => {
         "set_up_again",
       ].sort(),
     );
-    expect(first.data.set_up_again).toContain("sign-in, keys, apps or webhooks");
+    expect(first.data.set_up_again).toContain(
+      "sign-in, keys, apps or webhooks",
+    );
     expect(first.data).toEqual({
       imported: 2,
       duplicates: 0,

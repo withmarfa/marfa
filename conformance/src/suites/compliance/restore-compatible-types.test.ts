@@ -174,57 +174,57 @@ describe("compatible type archives", () => {
           apiKey: destination.workingKey,
         });
         const broken = editLineFile(archive, "instance", (text) => {
-            const lines = text
-              .trim()
-              .split("\n")
-              .map((line) => {
-                const row = JSON.parse(line) as {
-                  type?: {
-                    id: string;
-                    compatible_with: unknown;
-                    fields: Record<string, unknown>;
-                    parent?: string;
-                    display_hints?: { title_field: string };
-                    link_field?: string;
-                    merge_policy?: { fields: Record<string, string> };
-                    required?: string[];
-                  };
+          const lines = text
+            .trim()
+            .split("\n")
+            .map((line) => {
+              const row = JSON.parse(line) as {
+                type?: {
+                  id: string;
+                  compatible_with: unknown;
+                  fields: Record<string, unknown>;
+                  parent?: string;
+                  display_hints?: { title_field: string };
+                  link_field?: string;
+                  merge_policy?: { fields: Record<string, string> };
+                  required?: string[];
                 };
-                if (row.type === undefined) return line;
-                if (row.type.id === first) {
-                  if (fault === "missing target")
-                    row.type.compatible_with = ["user.absent_target"];
-                  else if (fault === "incompatible field")
-                    row.type.fields.title = { type: "integer", required: true };
-                  else if (fault === "malformed declaration")
-                    row.type.compatible_with = [42];
-                }
-                if (row.type.id === child) {
-                  if (fault === "missing parent")
-                    row.type.parent = "user.absent_parent";
-                  if (fault === "display hint")
-                    row.type.display_hints = { title_field: "absent" };
-                  if (fault === "link field") row.type.link_field = "absent";
-                  if (fault === "merge field")
-                    row.type.merge_policy = {
-                      fields: { absent: "last_writer_wins" },
-                    };
-                  if (fault === "inherited shape")
-                    row.type.fields.title = { type: "integer", required: true };
-                  if (fault === "inherited thumbnail")
-                    row.type.fields.preview = { type: "thumbnail" };
-                  if (fault === "unknown required field")
-                    row.type.required = ["absent"];
-                }
-                if (row.type.id === parent) {
-                  if (fault === "parent cycle") row.type.parent = child;
-                  if (fault === "inherited thumbnail")
-                    row.type.fields.cover = { type: "thumbnail" };
-                }
-                return JSON.stringify(row);
-              });
-            return lines.join("\n") + "\n";
-          });
+              };
+              if (row.type === undefined) return line;
+              if (row.type.id === first) {
+                if (fault === "missing target")
+                  row.type.compatible_with = ["user.absent_target"];
+                else if (fault === "incompatible field")
+                  row.type.fields.title = { type: "integer", required: true };
+                else if (fault === "malformed declaration")
+                  row.type.compatible_with = [42];
+              }
+              if (row.type.id === child) {
+                if (fault === "missing parent")
+                  row.type.parent = "user.absent_parent";
+                if (fault === "display hint")
+                  row.type.display_hints = { title_field: "absent" };
+                if (fault === "link field") row.type.link_field = "absent";
+                if (fault === "merge field")
+                  row.type.merge_policy = {
+                    fields: { absent: "last_writer_wins" },
+                  };
+                if (fault === "inherited shape")
+                  row.type.fields.title = { type: "integer", required: true };
+                if (fault === "inherited thumbnail")
+                  row.type.fields.preview = { type: "thumbnail" };
+                if (fault === "unknown required field")
+                  row.type.required = ["absent"];
+              }
+              if (row.type.id === parent) {
+                if (fault === "parent cycle") row.type.parent = child;
+                if (fault === "inherited thumbnail")
+                  row.type.fields.cover = { type: "thumbnail" };
+              }
+              return JSON.stringify(row);
+            });
+          return lines.join("\n") + "\n";
+        });
         const refused = await owner.restoreArchive(broken);
         // The status and code `POST /types` answers the same definition with.
         expect(refused.status, JSON.stringify(refused.error)).toBe(

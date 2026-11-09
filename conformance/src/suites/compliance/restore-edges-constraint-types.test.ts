@@ -70,10 +70,9 @@ function rewritten(
   archive: Uint8Array,
   changes: Partial<Record<LineFile, (body: string) => string>>,
 ) {
-  return (Object.entries(changes) as [LineFile, (body: string) => string][]).reduce(
-    (held, [name, edit]) => editLineFile(held, name, edit),
-    archive,
-  );
+  return (
+    Object.entries(changes) as [LineFile, (body: string) => string][]
+  ).reduce((held, [name, edit]) => editLineFile(held, name, edit), archive);
 }
 
 /** The ids of the item types an `instance.ndjson.gz` body registers. */
