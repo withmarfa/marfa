@@ -68,10 +68,10 @@ it("admits the owner to filtered counts and both exports without creating a key"
   expect(await all.text()).toContain(trashedId);
   const archive = await owner("/export?format=archive");
   expect(archive.status).toBe(200);
-  expect(archive.headers.get("content-type")).toBe("application/gzip");
+  expect(archive.headers.get("content-type")).toBe("application/x-tar");
   const restored = await owner("/restore", {
     method: "POST",
-    headers: { "content-type": "application/gzip" },
+    headers: { "content-type": "application/x-tar" },
     body: await archive.arrayBuffer(),
   });
   expect(restored.status).toBe(200);
@@ -153,7 +153,7 @@ it("keeps instance source filtering on owner counts and both exports", async () 
   expect(archive.status).toBe(200);
   const restored = await owner("/restore", {
     method: "POST",
-    headers: { "content-type": "application/gzip" },
+    headers: { "content-type": "application/x-tar" },
     body: await archive.arrayBuffer(),
   });
   expect(restored.status).toBe(200);

@@ -2,10 +2,10 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
 import {
-  blobHash,
+  tar,
+  listEntries,
   itemsArchive,
-  listTarGzEntries,
-  tarGz,
+  blobHash,
 } from "../../utils/archive.js";
 import {
   bootFreshServer,
@@ -123,7 +123,7 @@ function carrying(bytes?: Uint8Array): Carried {
     [{ data: blob, mime_type: "application/octet-stream" }],
     [schema],
   );
-  const entries = listTarGzEntries(base).map((entry) => ({
+  const entries = listEntries(base).map((entry) => ({
     name: entry.name,
     body:
       entry.name === "edges.ndjson"
@@ -148,7 +148,7 @@ function carrying(bytes?: Uint8Array): Carried {
     edgeType,
     bytes: blob,
     hash,
-    archive: tarGz(entries),
+    archive: tar(entries),
   };
 }
 
@@ -461,7 +461,7 @@ describe("a restore that does not commit and removes the bytes it placed", () =>
 
 function carryingBoth(rows: Carried, extra: Uint8Array): Uint8Array {
   const extraHash = blobHash(extra);
-  const entries = listTarGzEntries(rows.archive).map((entry) => {
+  const entries = listEntries(rows.archive).map((entry) => {
     if (entry.name === "manifest.json") {
       const manifest = JSON.parse(entry.body.toString("utf8")) as {
         blob_count: number;
@@ -477,5 +477,5 @@ function carryingBoth(rows: Carried, extra: Uint8Array): Uint8Array {
     return { name: entry.name, body: entry.body };
   });
   entries.push({ name: `blobs/${extraHash}`, body: Buffer.from(extra) });
-  return tarGz(entries);
+  return tar(entries);
 }

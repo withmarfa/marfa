@@ -19,7 +19,7 @@ use super::App;
 use super::access::{Caller, Permission};
 use super::blobs::carry::{self, Carried, Copy};
 use super::blobs::{Hash, references};
-use super::faults::FAIL_EXPORT_READ;
+use super::faults::{FAIL_EXPORT_READ, HOLD_EXPORT_PAGE};
 use super::items::{self, Archived, Reader, reading};
 use super::query::{self, Ask};
 use super::refusal::{Code, Refusal, Result};
@@ -219,6 +219,7 @@ fn select(
     let mut selected: Vec<i64> = Vec::new();
     let mut after = 0;
     loop {
+        read.faults().hold_blocking(HOLD_EXPORT_PAGE);
         if read.faults().fail(FAIL_EXPORT_READ, None) {
             return Err(io_refusal());
         }

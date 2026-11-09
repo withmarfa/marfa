@@ -13,7 +13,9 @@ import {
   publishedOperations,
 } from "../../utils/openapi.js";
 import { coverageRows } from "../../utils/coverage-table.js";
-import { readTarGzEntry } from "../../utils/archive.js";
+import {
+  readEntry,
+} from "../../utils/archive.js";
 import { uploadReferenced } from "../../utils/blobs.js";
 import { declareOversizeBody } from "../../utils/oversize.js";
 
@@ -552,7 +554,7 @@ describe("the instance", () => {
 
     const archive = await client.exportArchive({ source: ctx.source });
     expect(archive.ok).toBe(true);
-    const raw = readTarGzEntry(archive.data, "manifest.json");
+    const raw = readEntry(archive.data, "manifest.json");
     expect(raw).not.toBeNull();
     const manifest = JSON.parse(raw as string) as {
       version: number;

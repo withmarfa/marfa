@@ -11,10 +11,10 @@ import {
 } from "../../utils/fresh-server.js";
 import { connect, issuerOrigin, registerApp } from "../../utils/signed-in.js";
 import {
+  tar,
+  listEntries,
+  readLineFile,
   itemsArchive,
-  listTarGzEntries,
-  readTarGzEntry,
-  tarGz,
 } from "../../utils/archive.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
@@ -535,7 +535,7 @@ describe("who wrote each version", () => {
       apiKey: exporter.key,
     }).exportArchive({ type: "core.note", source: first.source });
     expect(archive.status).toBe(200);
-    const line = (readTarGzEntry(archive.data, "items.ndjson") ?? "")
+    const line = (readLineFile(archive.data, "items") ?? "")
       .split("\n")
       .filter((text) => text.trim() !== "")
       .map((text) => JSON.parse(text) as Record<string, unknown>)
@@ -725,8 +725,8 @@ describe("who wrote each version", () => {
     }).exportArchive({ type: "core.note", source: minted.source });
     expect(archive.status).toBe(200);
     let stripped = 0;
-    const forgotten = tarGz(
-      listTarGzEntries(archive.data).map((entry) => ({
+    const forgotten = tar(
+      listEntries(archive.data).map((entry) => ({
         name: entry.name,
         body:
           entry.name === "items.ndjson"
@@ -856,8 +856,8 @@ describe("who wrote each version", () => {
       ],
     ];
     for (const [field, edit] of edits) {
-      const edited = tarGz(
-        listTarGzEntries(archive.data).map((entry) => ({
+      const edited = tar(
+        listEntries(archive.data).map((entry) => ({
           name: entry.name,
           body:
             entry.name === "items.ndjson"

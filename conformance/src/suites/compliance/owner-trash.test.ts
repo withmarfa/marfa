@@ -176,7 +176,7 @@ it("preserves deletion identity and time through an archive and clears them on r
   expect((await act(item.id, "purge")).status).toBe(200);
   const restore = await owner("/restore", {
     method: "POST",
-    headers: { "content-type": "application/gzip" },
+    headers: { "content-type": "application/x-tar" },
     body: bytes,
   });
   expect(restore.status).toBe(200);

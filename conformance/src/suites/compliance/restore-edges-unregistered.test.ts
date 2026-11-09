@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { v7 as uuidv7 } from "uuid";
-import { listTarGzEntries, tarGz } from "../../utils/archive.js";
+import {
+  tar,
+  listEntries,
+} from "../../utils/archive.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -36,8 +39,8 @@ const owner = (server: FreshServer) =>
 
 /** The archive with one member replaced, every other as it was. */
 function withEntry(archive: Uint8Array, name: string, body: string) {
-  return tarGz(
-    listTarGzEntries(archive).map((entry) => ({
+  return tar(
+    listEntries(archive).map((entry) => ({
       name: entry.name,
       body: entry.name === name ? body : entry.body,
     })),
@@ -126,7 +129,7 @@ describe("a restore of an edge whose type was force-deleted", () => {
 
     // The export succeeds, carries the edges and not the types.
     const exported = await archiveOf(source);
-    const members = listTarGzEntries(exported);
+    const members = listEntries(exported);
     const edgeLines = members
       .find((m) => m.name === "edges.ndjson")!
       .body.toString();
@@ -267,7 +270,7 @@ describe("a restore of an edge whose type was force-deleted", () => {
       withEntry(
         exported,
         "edges.ndjson",
-        listTarGzEntries(exported)
+        listEntries(exported)
           .find((m) => m.name === "edges.ndjson")!
           .body.toString() + extra,
       );

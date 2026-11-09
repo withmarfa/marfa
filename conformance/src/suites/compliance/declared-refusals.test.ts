@@ -14,7 +14,10 @@ import {
   trackType,
 } from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
-import { tarGz } from "../../utils/archive.js";
+import {
+  tar,
+  lineFile,
+} from "../../utils/archive.js";
 import {
   approvedAppToken,
   bootFreshServer,
@@ -460,7 +463,7 @@ describe("a core edge type", () => {
       "validation_error",
     );
 
-    const archive = tarGz([
+    const archive = tar([
       {
         name: "manifest.json",
         body: JSON.stringify({
@@ -475,12 +478,9 @@ describe("a core edge type", () => {
           blobs: {},
         }),
       },
-      { name: "items.ndjson", body: "" },
-      { name: "edges.ndjson", body: "" },
-      {
-        name: "types.ndjson",
-        body: `${JSON.stringify({ edge_type: { id: "about", label: "About" } })}\n`,
-      },
+      lineFile("items", ""),
+      lineFile("edges", ""),
+      lineFile("instance", `${JSON.stringify({ edge_type: { id: "about", label: "About" } })}\n`),
     ]);
     const restored = await getOwnerClient().restoreArchive(archive);
     expect(restored.status).toBe(409);

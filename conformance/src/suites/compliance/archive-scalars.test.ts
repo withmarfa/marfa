@@ -4,10 +4,11 @@ import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import {
-  blobHash,
+  tar,
+  lineFile,
+  readEntry,
   itemsArchive,
-  readTarGzEntry,
-  tarGz,
+  blobHash,
 } from "../../utils/archive.js";
 import {
   cleanup,
@@ -58,11 +59,11 @@ function fixture() {
       [{ id: typeId, label: "Archive scalar", version: 1, fields: {} }],
     );
     const entry = (name: string) => {
-      const body = readTarGzEntry(base, name);
+      const body = readEntry(base, name);
       if (body === null) throw new Error(`Missing archive entry ${name}`);
       return body;
     };
-    return tarGz([
+    return tar([
       {
         name: "manifest.json",
         body: JSON.stringify({
@@ -70,10 +71,10 @@ function fixture() {
           edge_count: 1,
         }),
       },
-      { name: "types.ndjson", body: entry("types.ndjson") },
+      lineFile("instance", entry("types.ndjson")),
       { name: `blobs/${hash}`, body: data },
-      { name: "items.ndjson", body: entry("items.ndjson") },
-      { name: "edges.ndjson", body: JSON.stringify({ edge }) + "\n" },
+      lineFile("items", entry("items.ndjson")),
+      lineFile("edges", JSON.stringify({ edge }) + "\n"),
     ]);
   };
   // Also track refused fixtures: a regression that accepts them must clean up.

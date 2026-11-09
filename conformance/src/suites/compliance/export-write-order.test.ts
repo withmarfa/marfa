@@ -1,15 +1,13 @@
-import { readdirSync } from "node:fs";
-import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { MarfaItem } from "../../client/types.js";
-import { listTarGzEntries } from "../../utils/archive.js";
+import { archiveLines } from "../../utils/archive.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { blobFolder, DISK_ONLY } from "../../utils/own-blob-server.js";
+import { DISK_ONLY } from "../../utils/own-blob-server.js";
 
 let source: FreshServer;
 let target: FreshServer;
@@ -21,7 +19,7 @@ afterEach(async () => {
   await Promise.all([source?.stop(), target?.stop()]);
 }, FRESH_SERVER_TIMEOUT_MS);
 
-it("restores an archive after writes land between its item pages", async () => {
+it("restores an archive as its selection stood when read, whatever lands while it is read", async () => {
   const client = new MarfaClient({
     baseUrl: source.apiUrl,
     apiKey: source.workingKey,
@@ -74,19 +72,16 @@ it("restores an archive after writes land between its item pages", async () => {
     await source.clearFault();
     const exported = await pending;
     expect(exported.status).toBe(200);
-    const entries = listTarGzEntries(exported.data);
-    const items = entries
-      .find((entry) => entry.name === "items.ndjson")!
-      .body.toString()
-      .trim()
-      .split("\n")
-      .map((line) => (JSON.parse(line) as { item: MarfaItem }).item);
-    expect(items).toHaveLength(59);
+    const items = archiveLines<{ item: MarfaItem }>(exported.data, "items").map(
+      (line) => line.item,
+    );
+    expect(items).toHaveLength(60);
     expect(items.find((item) => item.id === newest.id)?.properties).toEqual(
       newest.properties,
     );
-    expect(items.map((item) => item.id)).not.toContain(oldest.id);
+    expect(items.map((item) => item.id)).toContain(oldest.id);
     expect(items.map((item) => item.id)).not.toContain(added.data.item.id);
+    expect(archiveLines(exported.data, "edges")).toHaveLength(1);
     const owner = new MarfaClient({
       baseUrl: target.apiUrl,
       ownerCookie: target.ownerCookie,
@@ -94,7 +89,7 @@ it("restores an archive after writes land between its item pages", async () => {
     const restored = await owner.restoreArchive(exported.data);
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
     expect(restored.data).toMatchObject({
-      imported: 59,
+      imported: 60,
       edges_imported: 1,
       edges_skipped: 0,
     });
@@ -200,134 +195,4 @@ it("restores a custom type retyped away and deleted between archive pages", asyn
     await source.clearFault();
     await pending;
   }
-});
-
-const IMPOSSIBLE_RULE = "RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30";
-const REPAIRED_RULE = "RRULE:FREQ=YEARLY";
-
-async function incompatibleSelection(change: "repair" | "reregister") {
-  const client = new MarfaClient({
-    baseUrl: source.apiUrl,
-    apiKey: source.workingKey,
-  });
-  const type = "snapshot.changing";
-  // Shaped as an event is, so the type can become one: the row it holds then
-  // names a rule that no calendar read can unfold, and a restore refuses it.
-  const fields = {
-    title: { type: "string" as const, required: true },
-    starts_at: { type: "string" as const, format: "datetime" as const },
-    recurrence: { type: "array" as const, items_type: "string" as const },
-  };
-  expect(
-    (await client.registerType({ id: type, version: 1, fields })).status,
-  ).toBe(201);
-  expect(
-    (
-      await client.bulkItems(
-        Array.from({ length: 59 }, () => ({
-          type,
-          properties: { title: "a plain row" },
-        })),
-      )
-    ).status,
-  ).toBe(200);
-  const made = await client.createItem({
-    type,
-    properties: {
-      title: "the series",
-      starts_at: "2041-01-15T09:00:00.000Z",
-      recurrence: [IMPOSSIBLE_RULE],
-    },
-  });
-  expect(made.status).toBe(201);
-  const before = await client.listItems({ type, limit: 100 });
-  expect(before.data.data).toHaveLength(60);
-  expect(before.data.data[0]!.id).toBe(made.data.item.id);
-  // A valid archive witnesses the selection and spool before the incompatible replacement.
-  const witness = await client.exportArchive();
-  expect(witness.status).toBe(200);
-  expect(
-    listTarGzEntries(witness.data).some(
-      (entry) => entry.name === "items.ndjson",
-    ),
-  ).toBe(true);
-  await source.setFault("hold:export-page=1");
-  if (change === "reregister") await source.setFault("hold:export-validation");
-  const pending = client.exportArchive();
-  try {
-    await source.waitForHold("hold:export-page");
-    expect(readdirSync(join(blobFolder(source), "tmp")).length).toBeGreaterThan(
-      0,
-    );
-    const replaced = await client.replaceType(type, {
-      version: 2,
-      parent: "core.event",
-      fields,
-    });
-    expect(replaced.status, JSON.stringify(replaced.error)).toBe(200);
-    if (change === "repair") {
-      const repaired = await client.updateItem(made.data.item.id, {
-        version: made.data.item.version,
-        properties: { recurrence: [REPAIRED_RULE] },
-      });
-      expect(repaired.status, JSON.stringify(repaired.error)).toBe(200);
-      await source.clearFault();
-    } else {
-      // The first selection is complete and waits before its rows are
-      // checked, so this change lands between the two reads.
-      await source.clearFault("hold:export-page");
-      await source.waitForHold("hold:export-validation");
-      const again = await client.replaceType(type, {
-        version: 3,
-        parent: "core.event",
-        fields,
-      });
-      expect(again.status, JSON.stringify(again.error)).toBe(200);
-      await source.clearFault();
-    }
-    return {
-      exported: await pending,
-      item: made.data.item,
-      ids: before.data.data.map((item) => item.id).sort(),
-    };
-  } finally {
-    await source.clearFault();
-    await pending;
-  }
-}
-
-it("retries an incompatible selection from the beginning and restores every item after repair", async () => {
-  const { exported, item, ids } = await incompatibleSelection("repair");
-  expect(exported.status).toBe(200);
-  const owner = new MarfaClient({
-    baseUrl: target.apiUrl,
-    ownerCookie: target.ownerCookie,
-  });
-  const restored = await owner.restoreArchive(exported.data);
-  expect(restored.status, JSON.stringify(restored.error)).toBe(200);
-  expect(restored.data).toMatchObject({
-    imported: 60,
-    duplicates: 0,
-    edges_imported: 0,
-    edges_skipped: 0,
-  });
-  const reader = new MarfaClient({
-    baseUrl: target.apiUrl,
-    apiKey: target.workingKey,
-  });
-  const listed = await reader.listItems({ limit: 100 });
-  expect(listed.data.data.map((row) => row.id).sort()).toEqual(ids);
-  expect((await reader.getItem(item.id)).data.item.properties).toMatchObject({
-    recurrence: [REPAIRED_RULE],
-  });
-});
-
-it("refuses with export_unrestorable when the refused row's type is registered again between the reads", async () => {
-  const { exported } = await incompatibleSelection("reregister");
-  expect(exported.status).toBe(503);
-  expect(exported.headers.get("content-type")).toContain("application/json");
-  expect(JSON.parse(Buffer.from(exported.data).toString())).toMatchObject({
-    error: { code: "export_unrestorable" },
-  });
-  expect(readdirSync(join(blobFolder(source), "tmp"))).toEqual([]);
 });

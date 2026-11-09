@@ -72,6 +72,7 @@ points! {
     HOLD_READ_SNAPSHOT = Hold "read-snapshot" None;
     HOLD_THINNING_ITEM = Hold "version-thinning:item" None;
     HOLD_BULK_PAGE = Hold "bulk-page" Nth;
+    HOLD_EXPORT_PAGE = Hold "export-page" Nth;
     HOLD_STREAM_OPEN = Hold "stream-open" None;
     HOLD_STREAM_HEAD = Hold "stream-head" None;
     HOLD_STREAM_REPLAY = Hold "stream-replay" None;

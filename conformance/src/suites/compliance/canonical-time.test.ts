@@ -8,7 +8,9 @@ import {
   getOwnerClient,
   trackItem,
 } from "../../utils/setup.js";
-import { itemsArchive } from "../../utils/archive.js";
+import {
+  itemsArchive,
+} from "../../utils/archive.js";
 
 let client: MarfaClient;
 let ctx: TestContext;

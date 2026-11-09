@@ -19,11 +19,13 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
 import {
-  blobHash,
+  tar,
+  lineFile,
+  listEntries,
+  readEntry,
+  readLineFile,
   itemsArchive,
-  listTarGzEntries,
-  readTarGzEntry,
-  tarGz,
+  blobHash,
 } from "../../utils/archive.js";
 import type { TestContext } from "../../client/types.js";
 import {
@@ -82,7 +84,7 @@ describe("restore", () => {
       headers: { Authorization: `Bearer ${fileKey}` },
     });
     expect(archiveRes.status).toBe(200);
-    expect(archiveRes.headers.get("Content-Type")).toBe("application/gzip");
+    expect(archiveRes.headers.get("Content-Type")).toBe("application/x-tar");
     const archiveBytes = new Uint8Array(await archiveRes.arrayBuffer());
     expect(archiveBytes.byteLength).toBeGreaterThan(0);
 
@@ -348,12 +350,12 @@ describe("restore", () => {
           properties: { body: `an archived row at format ${version}` },
         },
       ]);
-      const manifest = readTarGzEntry(zero, "manifest.json");
-      const items = readTarGzEntry(zero, "items.ndjson");
+      const manifest = readEntry(zero, "manifest.json");
+      const items = readLineFile(zero, "items");
       if (manifest === null || items === null) {
         throw new Error("the archive helper wrote no manifest or no items");
       }
-      return tarGz([
+      return tar([
         {
           name: "manifest.json",
           body: JSON.stringify({
@@ -362,9 +364,9 @@ describe("restore", () => {
             format: `marfa-archive-v${version}`,
           }),
         },
-        { name: "items.ndjson", body: items },
-        { name: "edges.ndjson", body: "" },
-        { name: "types.ndjson", body: "" },
+        lineFile("items", items),
+        lineFile("edges", ""),
+        lineFile("instance", ""),
       ]);
     };
 
@@ -386,7 +388,7 @@ describe("restore", () => {
 
   /** One archived note of this file's source, as an `items.ndjson` line. */
   const archivedLine = (id: string, body: string): string => {
-    const lines = readTarGzEntry(
+    const lines = readEntry(
       itemsArchive([
         { id, type: "core.note", source: ctx.source, properties: { body } },
       ]),
@@ -401,19 +403,16 @@ describe("restore", () => {
   };
   /** The members an archive always carries beside its items, empty. */
   const noEdgesOrTypes = [
-    { name: "edges.ndjson", body: "" },
-    { name: "types.ndjson", body: "" },
+    lineFile("edges", ""),
+    lineFile("instance", ""),
   ];
 
   it("steps past an entry it does not read", async () => {
     const id = uuidv7();
     const restored = await owner.restoreArchive(
-      tarGz([
+      tar([
         manifest,
-        {
-          name: "items.ndjson",
-          body: archivedLine(id, "beside padding") + "\n",
-        },
+        lineFile("items", archivedLine(id, "beside padding") + "\n"),
         ...noEdgesOrTypes,
         { name: "padding.bin", body: new Uint8Array(16 * 1024 * 1024) },
       ]),
@@ -426,15 +425,12 @@ describe("restore", () => {
   it("refuses a line longer than 64 MiB, and writes nothing", async () => {
     const id = uuidv7();
     const refused = await owner.restoreArchive(
-      tarGz([
+      tar([
         manifest,
-        {
-          name: "items.ndjson",
-          body: Buffer.concat([
+        lineFile("items", Buffer.concat([
             Buffer.from(archivedLine(id, "ahead of a long line") + "\n"),
             Buffer.alloc(64 * 1024 * 1024 + 1, "x"),
-          ]),
-        },
+          ])),
         ...noEdgesOrTypes,
       ]),
     );
@@ -447,12 +443,9 @@ describe("restore", () => {
   it("refuses an archive carrying an entry twice, and writes nothing", async () => {
     const first = uuidv7();
     const second = uuidv7();
-    const items = (id: string, body: string) => ({
-      name: "items.ndjson",
-      body: archivedLine(id, body) + "\n",
-    });
+    const items = (id: string, body: string) => (lineFile("items", archivedLine(id, body) + "\n"));
     const refused = await owner.restoreArchive(
-      tarGz([
+      tar([
         manifest,
         items(first, "first copy"),
         items(second, "second copy"),
@@ -469,7 +462,7 @@ describe("restore", () => {
 
     // The witness: either copy alone restores.
     const restored = await owner.restoreArchive(
-      tarGz([manifest, items(first, "first copy"), ...noEdgesOrTypes]),
+      tar([manifest, items(first, "first copy"), ...noEdgesOrTypes]),
     );
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     trackItem(ctx, first);
@@ -516,14 +509,14 @@ function withEntry(
   name: string,
   body: string,
 ): Uint8Array {
-  const entries = listTarGzEntries(archive).map((entry) => ({
+  const entries = listEntries(archive).map((entry) => ({
     name: entry.name,
     body: entry.name === name ? body : entry.body,
   }));
   if (!entries.some((entry) => entry.name === name)) {
     entries.push({ name, body });
   }
-  return tarGz(entries);
+  return tar(entries);
 }
 
 describe("an archive that lacks a member", () => {
@@ -553,7 +546,7 @@ describe("an archive that lacks a member", () => {
     return { id, hash, archive };
   }
   const without = (archive: Uint8Array, member: string): Uint8Array =>
-    tarGz(listTarGzEntries(archive).filter((entry) => entry.name !== member));
+    tar(listEntries(archive).filter((entry) => entry.name !== member));
 
   it.each(MEMBERS)(
     "refuses an archive without %s, naming it, and writes nothing",
@@ -579,7 +572,7 @@ describe("an archive that lacks a member", () => {
   );
 
   it("refuses a gzip-compressed tar that is no archive, naming every member it lacks", async () => {
-    const unrelated = tarGz([{ name: "notes.txt", body: "not an archive" }]);
+    const unrelated = tar([{ name: "notes.txt", body: "not an archive" }]);
     const refused = await owner.restoreArchive(unrelated);
     expect(refused.status, JSON.stringify(refused.error)).toBe(400);
     expect(refused.error?.error.code).toBe("validation_error");
@@ -591,7 +584,7 @@ describe("an archive that lacks a member", () => {
     // The witness: the same tar with the four members, all empty, is an
     // archive of nothing and restores as one.
     const nothing = await owner.restoreArchive(
-      tarGz([
+      tar([
         { name: "notes.txt", body: "not an archive" },
         {
           name: "manifest.json",
@@ -680,8 +673,8 @@ describe("a body that is no archive", () => {
     const id = uuidv7();
     // Random bytes the gzip stream cannot shrink, so there is a middle to damage.
     const padding = 256 * 1024;
-    const archive = tarGz([
-      ...listTarGzEntries(
+    const archive = tar([
+      ...listEntries(
         itemsArchive([
           {
             id,

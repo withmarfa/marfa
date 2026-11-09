@@ -2,9 +2,10 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import {
-  listTarGzEntries,
-  readTarGzEntry,
-  tarGz,
+  tar,
+  listEntries,
+  readEntry,
+  readLineFile,
 } from "../../utils/archive.js";
 import type { TestContext, TypeSchema } from "../../client/types.js";
 import {
@@ -475,7 +476,7 @@ describe("the owner's icon for a type", () => {
     expect((await setIcon(owner, id, "lucide:box")).status).toBe(200);
     const archive = await client.exportArchive({ source: ctx.source });
     expect(archive.status).toBe(200);
-    const lines = (readTarGzEntry(archive.data, "types.ndjson") ?? "")
+    const lines = (readLineFile(archive.data, "instance") ?? "")
       .split("\n")
       .filter((line) => line.trim() !== "")
       .map((line) => JSON.parse(line) as Record<string, unknown>);
@@ -485,7 +486,7 @@ describe("the owner's icon for a type", () => {
       icon: "lucide:box",
     });
     const manifest = JSON.parse(
-      readTarGzEntry(archive.data, "manifest.json") ?? "{}",
+      readEntry(archive.data, "manifest.json") ?? "{}",
     ) as { type_icon_count: number };
     expect(manifest.type_icon_count).toBe(carried.length);
 
@@ -510,8 +511,8 @@ describe("the owner's icon for a type", () => {
     const archive = await client.exportArchive({ source: ctx.source });
     expect(archive.status).toBe(200);
     const withLine = (line: unknown) =>
-      tarGz(
-        listTarGzEntries(archive.data).map((entry) => ({
+      tar(
+        listEntries(archive.data).map((entry) => ({
           name: entry.name,
           body:
             entry.name === "types.ndjson"

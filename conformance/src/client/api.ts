@@ -595,7 +595,7 @@ export class MarfaClient {
   }
 
   /**
-   * `GET /export?format=archive` — the tar.gz restore format, returned as
+   * `GET /export?format=archive` — the tar a restore reads, returned as
    * raw bytes that `restoreArchive` posts back.
    */
   async exportArchive(
@@ -836,7 +836,7 @@ export class MarfaClient {
     return this.requestBinary<RestoreArchiveResponse>(
       "/restore",
       archive,
-      "application/gzip",
+      "application/x-tar",
     );
   }
 

@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { v7 as uuidv7 } from "uuid";
-import { listTarGzEntries, tarGz } from "../../utils/archive.js";
+import {
+  tar,
+  listEntries,
+} from "../../utils/archive.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -66,8 +69,8 @@ function rewritten(
   archive: Uint8Array,
   changes: Record<string, (body: string) => string>,
 ) {
-  return tarGz(
-    listTarGzEntries(archive).map((entry) => ({
+  return tar(
+    listEntries(archive).map((entry) => ({
       name: entry.name,
       body: changes[entry.name]?.(entry.body.toString()) ?? entry.body,
     })),
@@ -176,7 +179,7 @@ async function roundTrip(
   expected: { edges: number; items: number },
 ) {
   const exported = await archiveOf(source);
-  const members = listTarGzEntries(exported);
+  const members = listEntries(exported);
   const carried = registeredTypeIds(
     members.find((m) => m.name === "types.ndjson")!.body.toString(),
   );
@@ -323,7 +326,7 @@ describe("an edge whose endpoint constraint names a force-deleted item type", ()
     // The archive as a build wrote it before the type was deleted, and as one
     // that carried no registration of the type holds the same rows.
     const registrations = (archive: Uint8Array) =>
-      listTarGzEntries(archive)
+      listEntries(archive)
         .find((m) => m.name === "types.ndjson")!
         .body.toString();
     expect(registeredTypeIds(registrations(whole))).toContain(PAPER);

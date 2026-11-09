@@ -1,6 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import { listTarGzEntries, tarGz } from "../../utils/archive.js";
+import {
+  tar,
+  listEntries,
+} from "../../utils/archive.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -173,8 +176,8 @@ describe("compatible type archives", () => {
           baseUrl: destination.apiUrl,
           apiKey: destination.workingKey,
         });
-        const broken = tarGz(
-          listTarGzEntries(archive).map((entry) => {
+        const broken = tar(
+          listEntries(archive).map((entry) => {
             if (entry.name !== "types.ndjson") return entry;
             const lines = entry.body
               .toString()
@@ -330,8 +333,8 @@ describe("compatible type archives", () => {
           apiKey: destination.workingKey,
         });
         const bytes = reversed
-          ? tarGz(
-              listTarGzEntries(archive).map((entry) =>
+          ? tar(
+              listEntries(archive).map((entry) =>
                 entry.name === "types.ndjson"
                   ? {
                       name: entry.name,

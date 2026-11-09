@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import { listTarGzEntries } from "../../utils/archive.js";
+import {
+  listEntries,
+} from "../../utils/archive.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -111,7 +113,7 @@ describe("a restore of rows whose type no longer shapes them", () => {
     // The witness: the type is gone from the instance, from its export, and
     // from the writes that need it, and the item stays.
     const exported = await archiveOf(source);
-    const members = listTarGzEntries(exported);
+    const members = listEntries(exported);
     expect(
       members.find((m) => m.name === "types.ndjson")!.body.toString(),
     ).not.toContain(type);

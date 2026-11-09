@@ -3,7 +3,9 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import type { MarfaClient } from "../../client/api.js";
-import { itemsArchive } from "../../utils/archive.js";
+import {
+  itemsArchive,
+} from "../../utils/archive.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -57,7 +59,7 @@ function restoreFrom(cookie: string) {
   const upload = slowPost({ apiUrl: server.apiUrl }, "/restore", {
     cookie,
     origin,
-    "content-type": "application/gzip",
+    "content-type": "application/x-tar",
   });
   return {
     id,

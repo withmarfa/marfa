@@ -3,7 +3,9 @@ import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import { listTarGzEntries } from "../../utils/archive.js";
+import {
+  listEntries,
+} from "../../utils/archive.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -50,8 +52,7 @@ beforeAll(async () => {
     expect(upload.status, JSON.stringify(upload.error)).toBe(201);
     hashes.push(upload.data.hash);
   }
-  // Sixty notes are three pages of the export's read, so a page after the
-  // first exists to fail; two of them name the blobs.
+  // Two of the notes name the blobs.
   const created = await working.bulkItems(
     Array.from({ length: ITEMS }, (_, at) => ({
       type: "core.note",
@@ -92,7 +93,7 @@ describe("an archive export that reads everything", () => {
     const response = await exportArchive();
     expect(response.status).toBe(200);
     const archive = new Uint8Array(await response.arrayBuffer());
-    const names = listTarGzEntries(archive).map((entry) => entry.name);
+    const names = listEntries(archive).map((entry) => entry.name);
     for (const hash of hashes) expect(names).toContain(`blobs/${hash}`);
     await waitFor("the spool to empty", () =>
       Promise.resolve(spooled().length === 0 ? true : undefined),
@@ -102,7 +103,7 @@ describe("an archive export that reads everything", () => {
 
 describe("an archive export whose read of a page of items fails", () => {
   it("is answered with an error, not an archive, and leaves nothing of the export on disk", async () => {
-    // The first page has been read and kept in the spool when the second fails.
+    // The first page has been read and kept in the spool when the next read fails.
     await server.setFault("fail:export-read=2");
     const response = await exportArchive();
     expect(response.status).toBe(500);

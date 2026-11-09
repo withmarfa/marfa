@@ -10,10 +10,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import {
-  blobHash,
+  tar,
+  lineFile,
+  readEntry,
   itemsArchive,
-  readTarGzEntry,
-  tarGz,
+  blobHash,
 } from "../../utils/archive.js";
 import {
   cleanup,
@@ -628,9 +629,9 @@ describe("a restore", () => {
     const blob = new Uint8Array(randomBytes(16));
     const hash = blobHash(blob);
     const base = itemsArchive([first, second], [], [type]);
-    const manifest = readTarGzEntry(base, "manifest.json");
+    const manifest = readEntry(base, "manifest.json");
     if (manifest === null) throw new Error("the archive has no manifest");
-    return tarGz([
+    return tar([
       {
         name: "manifest.json",
         body: JSON.stringify({
@@ -649,11 +650,8 @@ describe("a restore", () => {
         }),
       },
       ...(where === "manifest" ? [{ name: `blobs/${hash}`, body: blob }] : []),
-      { name: "types.ndjson", body: `${JSON.stringify({ type })}\n` },
-      {
-        name: "items.ndjson",
-        body:
-          [first, second]
+      lineFile("instance", `${JSON.stringify({ type })}\n`),
+      lineFile("items", [first, second]
             .map((row) =>
               JSON.stringify({
                 item: row,
@@ -661,9 +659,8 @@ describe("a restore", () => {
                   row === first ? metadata : { tags: [], extensions: {} },
               }),
             )
-            .join("\n") + "\n",
-      },
-      { name: "edges.ndjson", body: `${JSON.stringify(edgeLine)}\n` },
+            .join("\n") + "\n"),
+      lineFile("edges", `${JSON.stringify(edgeLine)}\n`),
     ]);
   }
 

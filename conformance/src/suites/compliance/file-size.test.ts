@@ -11,7 +11,10 @@ import {
   trackKey,
   trackType,
 } from "../../utils/setup.js";
-import { tarGz } from "../../utils/archive.js";
+import {
+  tar,
+  lineFile,
+} from "../../utils/archive.js";
 import { v7 as uuidv7 } from "uuid";
 
 /**
@@ -222,7 +225,7 @@ describe("a file item carries the size of the bytes it names", () => {
         metadata: { tags: [], extensions: {} },
         ...(lends && { lending_blobs: [sha256(bytes)] }),
       });
-    const archive = tarGz([
+    const archive = tar([
       {
         name: "manifest.json",
         body: JSON.stringify({
@@ -242,14 +245,11 @@ describe("a file item carries the size of the bytes it names", () => {
           ),
         }),
       },
-      {
-        name: "items.ndjson",
-        body: `${line(lentId, lent, true)}\n${line(unlentId, unlent, false)}\n`,
-      },
+      lineFile("items", `${line(lentId, lent, true)}\n${line(unlentId, unlent, false)}\n`),
       { name: `blobs/${sha256(lent)}`, body: lent },
       { name: `blobs/${sha256(unlent)}`, body: unlent },
-      { name: "edges.ndjson", body: "" },
-      { name: "types.ndjson", body: "" },
+      lineFile("edges", ""),
+      lineFile("instance", ""),
     ]);
     const restored = await getOwnerClient().restoreArchive(archive);
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
