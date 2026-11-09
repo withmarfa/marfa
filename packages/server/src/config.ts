@@ -556,9 +556,8 @@ export function defaultTessdataDir(sqlitePath: string): string {
 // ---------------------------------------------------------------------------
 
 /**
- * What a setting accepts, as data. The refusal text a parser throws and the
- * settings table in `conformance/spec/instance.md` are both written from the
- * same numbers, so neither can drift from the rule.
+ * What a setting accepts, as data. The refusal text a parser throws is
+ * written from the same numbers, so it cannot drift from the rule.
  */
 export type SettingRule =
   | { kind: "count"; min: number; max?: number; unit?: SettingUnit }
@@ -1094,8 +1093,7 @@ const on = (fallback: boolean, description: string) =>
  * Every setting the server reads, by the environment variable that carries
  * it. Read once, at boot, by {@link loadConfig}; nothing else in the server
  * reads the environment. A value outside its rule stops the server with a
- * message naming the setting. `.env.example` lists every name here, and the
- * settings table in `conformance/spec/instance.md` is written from it.
+ * message naming the setting. `.env.example` lists every name here.
  */
 const settingsShape = {
   NODE_ENV: grouped(
