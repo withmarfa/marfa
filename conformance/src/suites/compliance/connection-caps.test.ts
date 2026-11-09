@@ -118,61 +118,73 @@ async function servedAgain(port: number, host?: string): Promise<void> {
 }
 
 describe("the public listener's open connections", () => {
-  it("turns a connection away past the listener's cap and serves again once one closes", async () => {
-    const server = await bootFreshServer("connection-caps-listener", {
-      MARFA_MAX_CONNECTIONS: "3",
-      MARFA_MAX_CONNECTIONS_PER_ADDRESS: "1000",
-    });
-    const port = portOf(server);
-    const held = await holding(port, 3);
-    try {
-      const over = await ask(port);
-      expectTurnedAway(over);
-      over.socket.destroy();
+  it(
+    "turns a connection away past the listener's cap and serves again once one closes",
+    async () => {
+      const server = await bootFreshServer("connection-caps-listener", {
+        MARFA_MAX_CONNECTIONS: "3",
+        MARFA_MAX_CONNECTIONS_PER_ADDRESS: "1000",
+      });
+      const port = portOf(server);
+      const held = await holding(port, 3);
+      try {
+        const over = await ask(port);
+        expectTurnedAway(over);
+        over.socket.destroy();
 
-      held.pop()!.destroy();
-      await servedAgain(port);
-    } finally {
+        held.pop()!.destroy();
+        await servedAgain(port);
+      } finally {
+        for (const socket of held) socket.destroy();
+      }
+    },
+    4 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "turns an address away past its share and serves the same address again once one closes",
+    async () => {
+      // The listener binds both families, so a second address exists on every
+      // machine: the IPv6 loopback beside the IPv4 one.
+      const server = await bootFreshServer("connection-caps-address", {
+        MARFA_LISTEN_HOST: "::",
+        MARFA_MAX_CONNECTIONS: "100",
+        MARFA_MAX_CONNECTIONS_PER_ADDRESS: "2",
+      });
+      const port = portOf(server);
+      const held = await holding(port, 2);
+      try {
+        const over = await ask(port);
+        expectTurnedAway(over);
+        over.socket.destroy();
+
+        // The witness: another address is served while this one is held.
+        const other = await ask(port, "::1");
+        expect(other.status).toBe(200);
+        other.socket.destroy();
+
+        held.pop()!.destroy();
+        await servedAgain(port);
+      } finally {
+        for (const socket of held) socket.destroy();
+      }
+    },
+    4 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "counts a believed proxy's connections in the listener's cap alone",
+    async () => {
+      const server = await bootFreshServer("connection-caps-proxy", {
+        MARFA_MAX_CONNECTIONS: "100",
+        MARFA_MAX_CONNECTIONS_PER_ADDRESS: "1",
+        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+      });
+      // Three connections from one address, where a share of one would hold
+      // back the second if the address counted.
+      const held = await holding(portOf(server), 3);
       for (const socket of held) socket.destroy();
-    }
-  }, 4 * FRESH_SERVER_TIMEOUT_MS);
-
-  it("turns an address away past its share and serves the same address again once one closes", async () => {
-    // The listener binds both families, so a second address exists on every
-    // machine: the IPv6 loopback beside the IPv4 one.
-    const server = await bootFreshServer("connection-caps-address", {
-      MARFA_LISTEN_HOST: "::",
-      MARFA_MAX_CONNECTIONS: "100",
-      MARFA_MAX_CONNECTIONS_PER_ADDRESS: "2",
-    });
-    const port = portOf(server);
-    const held = await holding(port, 2);
-    try {
-      const over = await ask(port);
-      expectTurnedAway(over);
-      over.socket.destroy();
-
-      // The witness: another address is served while this one is held.
-      const other = await ask(port, "::1");
-      expect(other.status).toBe(200);
-      other.socket.destroy();
-
-      held.pop()!.destroy();
-      await servedAgain(port);
-    } finally {
-      for (const socket of held) socket.destroy();
-    }
-  }, 4 * FRESH_SERVER_TIMEOUT_MS);
-
-  it("counts a believed proxy's connections in the listener's cap alone", async () => {
-    const server = await bootFreshServer("connection-caps-proxy", {
-      MARFA_MAX_CONNECTIONS: "100",
-      MARFA_MAX_CONNECTIONS_PER_ADDRESS: "1",
-      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
-    });
-    // Three connections from one address, where a share of one would hold
-    // back the second if the address counted.
-    const held = await holding(portOf(server), 3);
-    for (const socket of held) socket.destroy();
-  }, 4 * FRESH_SERVER_TIMEOUT_MS);
+    },
+    4 * FRESH_SERVER_TIMEOUT_MS,
+  );
 });

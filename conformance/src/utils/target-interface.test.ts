@@ -58,13 +58,10 @@ afterAll(async () => {
 
 /** When the server says a run of a housekeeping job started: its clock. */
 async function serverNow(): Promise<number> {
-  const run = await fetch(
-    `${server.apiUrl}/housekeeping/audit-cleanup/run`,
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${server.managementKey}` },
-    },
-  );
+  const run = await fetch(`${server.apiUrl}/housekeeping/audit-cleanup/run`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${server.managementKey}` },
+  });
   expect(run.status).toBe(200);
   return Date.parse(((await run.json()) as { started_at: string }).started_at);
 }

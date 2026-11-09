@@ -1238,6 +1238,37 @@ async fn an_idle_grant_retires_then_goes_and_its_client_can_follow() {
 }
 
 #[tokio::test]
+async fn a_refreshed_token_spends_the_allowance_of_the_one_before_it() {
+    let instance = Instance::signed_in().await;
+    instance.app.settings.apply_stored(&[
+        ("rate_limit_enabled".to_string(), "true".to_string()),
+        ("rate_limit_requests".to_string(), "3".to_string()),
+    ]);
+    let client = instance.register(OFFLINE_NOTES).await;
+    let issued = instance.tokens(&client, OFFLINE_NOTES).await;
+    let first = text_at(&issued, "access_token").to_string();
+    let refreshed = instance
+        .refresh(&client, text_at(&issued, "refresh_token"))
+        .await;
+    let second = text_at(&refreshed.json(), "access_token").to_string();
+    assert_ne!(first, second);
+
+    let read = async |token: &str| {
+        let request = Request::builder()
+            .uri("/items?type=core.note")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap();
+        instance.send(request).await.status
+    };
+    assert_eq!(read(&first).await, StatusCode::OK);
+    assert_eq!(read(&second).await, StatusCode::OK);
+    assert_eq!(read(&first).await, StatusCode::OK);
+    assert_eq!(read(&second).await, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(read(&first).await, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
 async fn a_grant_in_use_is_not_idle() {
     let instance = Instance::signed_in().await;
     let client = instance.register(OFFLINE_NOTES).await;
