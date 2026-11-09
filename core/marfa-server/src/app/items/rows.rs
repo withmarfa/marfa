@@ -854,19 +854,60 @@ pub(super) fn insert_snapshot(tx: &Transaction<'_>, snapshot: &NewSnapshot<'_>) 
     Ok(())
 }
 
-/// Every stored snapshot id that `wanted` asks for, read in one pass over the history.
+const SNAPSHOT_BATCH: usize = 500;
+
+/// The ids of `ids` that the instance's history already holds, looked up in batches.
 pub(super) fn snapshot_ids(
     tx: &Transaction<'_>,
-    wanted: impl Fn(&str) -> bool,
+    ids: impl Iterator<Item = String>,
 ) -> Result<std::collections::HashSet<String>> {
-    let mut statement = tx.prepare("SELECT id FROM item_versions")?;
-    let mut rows = statement.query([])?;
     let mut held = std::collections::HashSet::new();
-    while let Some(row) = rows.next()? {
-        let id: String = row.get(0)?;
-        if wanted(&id) {
-            held.insert(id);
+    let mut ids = ids.peekable();
+    let mut batch = Vec::with_capacity(SNAPSHOT_BATCH);
+    while ids.peek().is_some() {
+        batch.clear();
+        batch.extend(ids.by_ref().take(SNAPSHOT_BATCH));
+        let marks = vec!["?"; batch.len()].join(", ");
+        let mut statement = tx.prepare_cached(&format!(
+            "SELECT id FROM item_versions WHERE id IN ({marks})"
+        ))?;
+        let mut rows = statement.query(params_from_iter(batch.iter()))?;
+        while let Some(row) = rows.next()? {
+            held.insert(row.get(0)?);
         }
     }
     Ok(held)
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::{Connection, StatementStatus};
+
+    use super::*;
+    use crate::db::migrate::MIGRATIONS;
+
+    #[test]
+    fn a_snapshot_lookup_costs_the_ids_asked_for_and_not_the_history_held() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        conn.pragma_update(None, "foreign_keys", false).unwrap();
+        let tx = conn.transaction().unwrap();
+        let id = |at: u32| format!("01a1bdba-8640-72ba-b7d6-{at:012x}");
+        for at in 0..5_000u32 {
+            tx.execute(
+                "INSERT INTO item_versions (item_seq, version, id, properties, type, occurred_at, \
+                 created_at) VALUES (?1, 1, ?2, X'', 'core.note', '', '')",
+                params![at, id(at)],
+            )
+            .unwrap();
+        }
+        let asked = [id(7), id(4_000), id(9_999)];
+        let held = snapshot_ids(&tx, asked.iter().cloned()).unwrap();
+        assert_eq!(held, [id(7), id(4_000)].into_iter().collect());
+        let statement = tx
+            .prepare_cached("SELECT id FROM item_versions WHERE id IN (?, ?, ?)")
+            .unwrap();
+        let steps = statement.get_status(StatementStatus::VmStep);
+        assert!(steps < 100, "{steps} steps for three ids among 5,000 held");
+    }
 }

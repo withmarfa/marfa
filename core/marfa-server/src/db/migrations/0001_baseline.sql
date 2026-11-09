@@ -194,6 +194,8 @@ CREATE TABLE IF NOT EXISTS item_versions (
     PRIMARY KEY (item_seq, version)
 ) STRICT;
 
+CREATE INDEX IF NOT EXISTS item_versions_id ON item_versions (id);
+
 CREATE TABLE IF NOT EXISTS link_tombstones (
     type TEXT NOT NULL,
     value TEXT NOT NULL,
