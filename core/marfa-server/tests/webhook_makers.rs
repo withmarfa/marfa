@@ -19,7 +19,7 @@ const SHARE: usize = 8;
 
 struct Instance {
     _dir: TempDir,
-    _app: Arc<App>,
+    app: Arc<App>,
     public: Router,
     control: Router,
 }
@@ -44,7 +44,7 @@ impl Instance {
         Instance {
             public: public(app.clone()),
             control: control(app.clone()),
-            _app: app,
+            app,
             _dir: dir,
         }
     }
@@ -99,6 +99,22 @@ impl Instance {
         answer["key"].as_str().unwrap().to_string()
     }
 
+    /// Holds the sender at the start of its next pass, which an item written now begins.
+    async fn sender_parked(&self, writer: &str) {
+        self.app.faults.set("hold:webhook-schedule", None).unwrap();
+        announce(self, writer).await;
+        until(
+            "the sender did not begin another pass",
+            Duration::from_secs(5),
+            || self.app.faults.list().iter().any(|fault| fault.waiting > 0),
+        )
+        .await;
+    }
+
+    fn sender_released(&self) {
+        self.app.faults.clear(Some("hold:webhook-schedule"));
+    }
+
     async fn register(&self, key: &str, url: &str) -> (StatusCode, Value) {
         let body = json!({ "url": url, "events": ["item.created"] });
         self.send(key, Method::POST, "/webhooks", body).await
@@ -123,6 +139,11 @@ async fn stalling() -> (String, Arc<AtomicUsize>) {
 
 /// Answers every delivery `200`; counts those it has read in full.
 async fn answering() -> (String, Arc<AtomicUsize>) {
+    replying(200).await
+}
+
+/// Answers the first delivery with `first` and every later one `200`; counts those it has read in full.
+async fn replying(first: u16) -> (String, Arc<AtomicUsize>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/hook", listener.local_addr().unwrap());
     let received = Arc::new(AtomicUsize::new(0));
@@ -145,9 +166,18 @@ async fn answering() -> (String, Arc<AtomicUsize>) {
                         break;
                     }
                 }
-                counted.fetch_add(1, Ordering::SeqCst);
+                let status = if counted.fetch_add(1, Ordering::SeqCst) == 0 {
+                    first
+                } else {
+                    200
+                };
                 let _ = stream
-                    .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 {status} X\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                        )
+                        .as_bytes(),
+                    )
                     .await;
             });
         }
@@ -270,11 +300,18 @@ async fn a_maker_holds_at_most_its_share_of_attempts_while_another_makers_delive
     until(
         "the second maker's delivery was not attempted",
         Duration::from_secs(5),
-        || also_accepted.load(Ordering::SeqCst) == 1,
+        || also_accepted.load(Ordering::SeqCst) == 1 && accepted.load(Ordering::SeqCst) == SHARE,
     )
     .await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // Each pass the sender begins has finished the one before it, fill included.
+    for _ in 0..2 {
+        instance.sender_parked(&writer).await;
+        instance.sender_released();
+    }
+    instance.sender_parked(&writer).await;
     assert_eq!(accepted.load(Ordering::SeqCst), SHARE);
+    assert_eq!(also_accepted.load(Ordering::SeqCst), 1);
+    instance.sender_released();
 }
 
 #[tokio::test]
@@ -293,6 +330,35 @@ async fn a_maker_no_other_maker_waits_behind_attempts_past_its_share() {
         "the maker's attempts stopped at its share",
         Duration::from_secs(5),
         || accepted.load(Ordering::SeqCst) == SHARE + 4,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_maker_no_other_maker_waits_behind_is_retried_at_its_due_time_while_its_attempts_stall() {
+    let instance = Instance::start().await;
+    let writer = instance.key("writer", true).await;
+    let slow = instance.key("slow-maker", false).await;
+    let (stalled, accepted) = stalling().await;
+    let (retrying, received) = replying(503).await;
+    for _ in 0..SHARE {
+        let (status, made) = instance.register(&slow, &stalled).await;
+        assert_eq!(status, StatusCode::CREATED, "{made}");
+    }
+    let (status, made) = instance.register(&slow, &retrying).await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+
+    announce(&instance, &writer).await;
+    until(
+        "the maker's attempts did not all start",
+        Duration::from_secs(5),
+        || accepted.load(Ordering::SeqCst) == SHARE && received.load(Ordering::SeqCst) == 1,
+    )
+    .await;
+    until(
+        "the retry waited for a stalled attempt to end",
+        Duration::from_secs(5),
+        || received.load(Ordering::SeqCst) == 2,
     )
     .await;
 }

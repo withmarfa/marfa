@@ -248,7 +248,7 @@ impl Sender {
                 excluded.extend(due.iter().map(|due| due.seq));
                 holding.extend(due.iter().map(|due| due.maker.clone()));
                 let full = full_makers(&holding);
-                Ok((due, store::next_due(tx, &excluded, &full)?))
+                Ok((due, store::next_due(tx, now_ms, &excluded, &full)?))
             })
             .await;
         let (due, next) = match read {
