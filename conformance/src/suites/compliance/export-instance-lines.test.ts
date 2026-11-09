@@ -11,7 +11,11 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { clientsFor, DISK_ONLY } from "../../utils/own-blob-server.js";
+import {
+  clientsFor,
+  DISK_ONLY,
+  everythingClient,
+} from "../../utils/own-blob-server.js";
 
 /**
  * What an archive carries of the instance beside its rows: stored settings,
@@ -88,7 +92,7 @@ describe("the instance lines of an archive", () => {
     });
     expect(hook.status, JSON.stringify(hook.error)).toBe(201);
 
-    const whole = await operator.exportArchive();
+    const whole = await (await everythingClient(server)).exportArchive();
     expect(whole.status).toBe(200);
     const lines = archiveLines<InstanceLine>(whole.data, "instance");
     const settings = lines.flatMap((line) =>
@@ -201,7 +205,9 @@ describe("the instance lines of an archive", () => {
         })
       ).status,
     ).toBe(200);
-    const archive = await operator.exportArchive({ state: "any" });
+    const archive = await (
+      await everythingClient(server)
+    ).exportArchive({ state: "any" });
     expect(archive.status).toBe(200);
 
     // Since the export: one setting is cleared and one changed, the state is
