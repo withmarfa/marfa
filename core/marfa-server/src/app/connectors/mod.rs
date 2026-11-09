@@ -7,14 +7,13 @@ mod store;
 use std::collections::HashSet;
 use std::time::Duration;
 
-use chrono::{DateTime, SecondsFormat, Utc};
 use rusqlite::Transaction;
 use rusqlite::types::Value as Stored;
 use serde_json::{Map, Value, json};
 
+use crate::app::clock::Stamp;
 use super::App;
 use super::access::Caller;
-use super::auth;
 use super::faults::HOLD_CONNECTOR_WRITE;
 use super::housekeeping;
 use super::items;
@@ -49,12 +48,8 @@ pub(crate) fn find(tx: &Transaction<'_>, id: &str) -> Result<Registration> {
 }
 
 fn after(at: &str, window: Duration) -> Result<String> {
-    let start = DateTime::parse_from_rfc3339(at)
-        .map_err(|_| Refusal::internal("the clock did not read"))?
-        .with_timezone(&Utc);
-    let wait =
-        chrono::Duration::milliseconds(i64::try_from(window.as_millis()).unwrap_or(i64::MAX));
-    Ok((start + wait).to_rfc3339_opts(SecondsFormat::Millis, true))
+    let wait = i64::try_from(window.as_millis()).unwrap_or(i64::MAX);
+    Ok(Stamp::read(at)?.plus_ms(wait)?.text())
 }
 
 fn run_json(run: &store::Run) -> Value {
@@ -188,7 +183,7 @@ pub struct Concern {
 /// Every connector whose last run failed, that reports problems, or that has said nothing for
 /// more than a day, read in one snapshot at `at`.
 pub fn concerns(tx: &Transaction<'_>, at: &str) -> Result<Vec<Concern>> {
-    let now = auth::millis_of(at)?;
+    let now = Stamp::read(at)?.ms();
     let mut found = Vec::new();
     for registration in store::newest_first(tx)? {
         let run = store::last_run(tx, &registration.id)?;
@@ -207,7 +202,7 @@ pub fn concerns(tx: &Transaction<'_>, at: &str) -> Result<Vec<Concern>> {
         ]
         .into_iter()
         .flatten()
-        .map(auth::millis_of);
+        .map(|at| Stamp::read(at).map(Stamp::ms));
         let latest = heard.try_fold(i64::MIN, |latest, at| at.map(|at| latest.max(at)))?;
         if now - latest > housekeeping::DAY_MS {
             reasons.push(Reason::Quiet);

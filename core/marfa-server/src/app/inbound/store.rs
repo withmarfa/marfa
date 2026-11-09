@@ -2,7 +2,7 @@
 
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 
-use crate::app::auth;
+use crate::app::clock::Stamp;
 use crate::app::refusal::Result;
 
 pub struct Endpoint {
@@ -78,17 +78,11 @@ fn unread(row: &Row<'_>, column: &str, what: &str) -> rusqlite::Error {
 
 /// A stored time that does not read is a fault, never a default.
 fn moment(row: &Row<'_>, column: &str) -> rusqlite::Result<String> {
-    let text: String = row.get(column)?;
-    auth::millis_of(&text).map_err(|_| unread(row, column, "a stored time"))?;
-    Ok(text)
+    row.get::<_, Stamp>(column).map(Stamp::text)
 }
 
 fn optional_moment(row: &Row<'_>, column: &str) -> rusqlite::Result<Option<String>> {
-    let present: Option<String> = row.get(column)?;
-    present
-        .map(|text| auth::millis_of(&text).map(|_| text))
-        .transpose()
-        .map_err(|_| unread(row, column, "a stored time"))
+    Ok(row.get::<_, Option<Stamp>>(column)?.map(Stamp::text))
 }
 
 fn endpoint(row: &Row<'_>) -> rusqlite::Result<Endpoint> {

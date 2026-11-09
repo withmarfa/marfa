@@ -5,23 +5,22 @@ use serde_json::{Value, json};
 
 use super::owner::checked_name;
 use super::session::{self, ENDED, Session};
-use super::{Visit, names, seconds_of, stamp_of};
+use super::{Visit, names};
 use crate::app::App;
 use crate::app::access::Caller;
+use crate::app::clock::Stamp;
 use crate::app::keys::{self, Key};
 use crate::app::oauth::grants;
-use crate::app::oauth::store::{Consent, ms_of};
+use crate::app::oauth::store::Consent;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::settings::registry::GRANT_INACTIVITY_DAYS;
-
-const MS_PER_SECOND: i64 = 1_000;
 
 #[derive(Clone, Debug)]
 pub struct SignIn {
     id: String,
     kind: &'static str,
     name: String,
-    created_ms: i64,
+    created: Stamp,
     created_at: String,
     last_used_at: Option<String>,
     expires_at: Option<String>,
@@ -52,10 +51,10 @@ fn browser(session: &Session, ip_address: Option<String>) -> SignIn {
         id: session.id.clone(),
         kind: "browser",
         name: session.name(),
-        created_ms: session.created_at * MS_PER_SECOND,
-        created_at: stamp_of(session.created_at),
-        last_used_at: Some(stamp_of(session.updated_at)),
-        expires_at: Some(stamp_of(session.expires_at)),
+        created: session.created_at,
+        created_at: session.created_at.text(),
+        last_used_at: Some(session.updated_at.text()),
+        expires_at: Some(session.expires_at.text()),
         ip_address,
         user_agent: session.user_agent.clone(),
         minted_by: None,
@@ -67,10 +66,10 @@ fn app_of(tx: &Transaction<'_>, consent: &Consent, inactivity_days: u64) -> Resu
         id: consent.grant_id.clone(),
         kind: "app",
         name: grants::sign_in_name(tx, consent)?,
-        created_ms: consent.updated_at,
+        created: consent.updated_at,
         created_at: grants::granted_at(consent),
-        last_used_at: consent.last_used_at.map(crate::app::oauth::store::stamp_of),
-        expires_at: grants::boundary(consent, inactivity_days),
+        last_used_at: consent.last_used_at.map(Stamp::text),
+        expires_at: grants::boundary(consent, inactivity_days)?,
         ip_address: None,
         user_agent: None,
         minted_by: None,
@@ -89,7 +88,7 @@ fn key_of(key: &Key, apps: &[Consent]) -> Result<SignIn> {
         name: names::usable(Some(&key.label))
             .unwrap_or(&key.id)
             .to_string(),
-        created_ms: ms_of(&key.created_at)?,
+        created: Stamp::read(&key.created_at)?,
         created_at: key.created_at.clone(),
         last_used_at: key.last_used_at.clone(),
         expires_at: key.expires_at.clone(),
@@ -111,7 +110,7 @@ pub async fn list(app: &App, caller: &Caller) -> Result<Vec<SignIn>> {
         .read(move |tx| {
             caller.current(tx, &at)?;
             let mut found = Vec::new();
-            for (session, ip_address) in session::all_live(tx, seconds_of(&at)?)? {
+            for (session, ip_address) in session::all_live(tx, Stamp::read(&at)?)? {
                 found.push(browser(&session, ip_address));
             }
             let apps = grants::all_of_owner(tx)?;
@@ -122,7 +121,7 @@ pub async fn list(app: &App, caller: &Caller) -> Result<Vec<SignIn>> {
                 found.push(key_of(&key, &apps)?);
             }
             found.sort_by(|left, right| {
-                (left.created_ms, &left.id).cmp(&(right.created_ms, &right.id))
+                (left.created, &left.id).cmp(&(right.created, &right.id))
             });
             Ok(found)
         })
@@ -138,7 +137,7 @@ enum Named {
 
 impl Named {
     fn read(tx: &Transaction<'_>, id: &str, at: &str) -> Result<Named> {
-        if let Some(session) = session::live_by_id(tx, id, seconds_of(at)?)? {
+        if let Some(session) = session::live_by_id(tx, id, Stamp::read(at)?)? {
             return Ok(Named::Browser(Box::new(session)));
         }
         if let Some(consent) = grants::of_owner(tx, id)? {

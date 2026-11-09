@@ -12,7 +12,7 @@ use crate::app::faults::{FAIL_FOLDER_STATUS_REPORT, HOLD_FOLDER_STATUS_READ};
 use crate::app::items::{parsed, readable_of, reading};
 use crate::app::keys;
 use crate::app::oauth::grants;
-use crate::app::oauth::store::ms_of;
+use crate::app::clock::Stamp;
 use crate::app::refusal::{Code, Refusal, Result};
 
 const ACTION: &str = "folder.status";
@@ -229,7 +229,7 @@ impl Totals {
 }
 
 fn copy_json(copy: &Copy, at_ms: i64) -> Result<Value> {
-    let age = (at_ms - ms_of(&copy.received_at)?).max(0) / 1_000;
+    let age = (at_ms - Stamp::read(&copy.received_at)?.ms()).max(0) / 1_000;
     Ok(json!({
         "folder_store_id": copy.folder_store_id,
         "sequence": copy.sequence,
@@ -246,7 +246,7 @@ fn copy_json(copy: &Copy, at_ms: i64) -> Result<Value> {
 
 /// Each sign-in's copies, and the totals of the sign-ins that still stand.
 fn gathered(tx: &Transaction<'_>, folder_id: &str, at: &str) -> Result<(Vec<Value>, Totals)> {
-    let at_ms = ms_of(at)?;
+    let at_ms = Stamp::read(at)?.ms();
     let mut totals = Totals::default();
     let mut groups: Vec<Value> = Vec::new();
     let mut at_group: Option<(String, String, bool)> = None;

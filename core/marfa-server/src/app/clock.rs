@@ -1,16 +1,23 @@
 //! The instance's clock: the one place code asks the time. Under test hooks a
-//! harness can move it forward and pause it; it never goes back.
+//! harness can move it forward and pause it; it never goes back. Every time a
+//! table holds is a [`Stamp`].
 
 #[cfg(feature = "test-hooks")]
 use std::sync::Mutex;
 
-use chrono::{DateTime, SecondsFormat, Utc};
+use std::fmt;
+
+use chrono::{DateTime, Utc};
+use marfa_rules::time;
+use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 use tokio::sync::watch;
+
+use crate::app::refusal::{self, Refusal};
 
 #[cfg(feature = "test-hooks")]
 pub const MAX_OFFSET_MS: u64 = 3_153_600_000_000;
-#[cfg(feature = "test-hooks")]
-const MAX_INSTANT_MS: i64 = 8_640_000_000_000_000;
+const FIRST_MS: i64 = -62_167_219_200_000;
+const LAST_MS: i64 = 253_402_300_799_999;
 
 #[cfg(feature = "test-hooks")]
 #[derive(Debug)]
@@ -70,19 +77,20 @@ impl Clock {
         system_ms()
     }
 
+    /// The time to the millisecond, which never leaves the years a [`Stamp`] holds.
+    pub fn instant(&self) -> Stamp {
+        Stamp(
+            DateTime::from_timestamp_millis(self.now_ms().clamp(FIRST_MS, LAST_MS))
+                .unwrap_or_default(),
+        )
+    }
+
     pub fn now(&self) -> DateTime<Utc> {
-        DateTime::from_timestamp_millis(self.now_ms()).unwrap_or(DateTime::<Utc>::MAX_UTC)
+        self.instant().at()
     }
 
-    /// UTC text that sorts as it reads.
     pub fn stamp(&self) -> String {
-        self.now().to_rfc3339_opts(SecondsFormat::Millis, true)
-    }
-
-    pub fn stamp_ago(&self, ms: i64) -> String {
-        DateTime::from_timestamp_millis(self.now_ms() - ms)
-            .unwrap_or(DateTime::<Utc>::MIN_UTC)
-            .to_rfc3339_opts(SecondsFormat::Millis, true)
+        self.instant().text()
     }
 
     #[cfg(feature = "test-hooks")]
@@ -119,7 +127,7 @@ impl Clock {
             .filter(|offset| *offset <= MAX_OFFSET_MS)
             .ok_or(Refused::TooFarAhead)?;
         let base = state.paused_at_ms.unwrap_or_else(system_ms);
-        if base + offset as i64 > MAX_INSTANT_MS {
+        if base + offset as i64 > LAST_MS {
             return Err(Refused::PastLastInstant);
         }
         state.offset_ms = offset;
@@ -139,6 +147,83 @@ impl Clock {
         };
         drop(state);
         self.tell_moved();
+    }
+}
+
+/// A time as every table holds it: RFC 3339 UTC text with milliseconds, which sorts as it reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Stamp(DateTime<Utc>);
+
+impl Stamp {
+    /// Refuses an instant outside the years 0000 to 9999, which no text of this form can hold.
+    pub fn from_ms(ms: i64) -> refusal::Result<Stamp> {
+        (FIRST_MS..=LAST_MS)
+            .contains(&ms)
+            .then(|| DateTime::from_timestamp_millis(ms))
+            .flatten()
+            .map(Stamp)
+            .ok_or_else(|| Refusal::internal("a time outside the years 0000 to 9999"))
+    }
+
+    /// Refuses any text but the one form a time is stored in.
+    pub fn read(stored: &str) -> refusal::Result<Stamp> {
+        Stamp::parsed(stored).ok_or_else(|| Refusal::internal("a stored time did not read"))
+    }
+
+    /// For a caller that reports a time that does not read itself.
+    pub fn parsed(stored: &str) -> Option<Stamp> {
+        time::instant(stored, "")
+            .ok()
+            .filter(|at| time::written(at) == stored)
+            .map(Stamp)
+    }
+
+    pub fn ms(self) -> i64 {
+        self.0.timestamp_millis()
+    }
+
+    pub fn at(self) -> DateTime<Utc> {
+        self.0
+    }
+
+    pub fn text(self) -> String {
+        time::written(&self.0)
+    }
+
+    pub fn plus_ms(self, ms: i64) -> refusal::Result<Stamp> {
+        Stamp::from_ms(self.ms().saturating_add(ms))
+    }
+
+    /// `None` once no stored time can be that early, so a cutoff there keeps everything.
+    pub fn earlier_by(self, ms: i64) -> Option<Stamp> {
+        let at = self.ms().saturating_sub(ms);
+        (at >= FIRST_MS).then(|| DateTime::from_timestamp_millis(at)).flatten().map(Stamp)
+    }
+}
+
+impl fmt::Display for Stamp {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.text())
+    }
+}
+
+impl serde::Serialize for Stamp {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.text())
+    }
+}
+
+impl ToSql for Stamp {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(ToSqlOutput::from(self.text()))
+    }
+}
+
+impl FromSql for Stamp {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Stamp> {
+        Stamp::parsed(value.as_str()?).ok_or_else(|| {
+            FromSqlError::Other("a stored time is not RFC 3339 UTC text with milliseconds".into())
+        })
     }
 }
 
@@ -172,5 +257,49 @@ mod tests {
         let stamp = Clock::new(0).stamp();
         assert_eq!(stamp.len(), "2026-11-07T01:39:37.000Z".len());
         assert!(stamp.ends_with('Z'));
+    }
+
+    #[test]
+    fn reads_only_the_form_it_writes() {
+        let at = Stamp::from_ms(1_762_672_580_123).unwrap();
+        assert_eq!(at.text(), "2025-11-09T07:16:20.123Z");
+        assert_eq!(Stamp::read(&at.text()).unwrap(), at);
+        for stored in [
+            "",
+            "soon",
+            "1762672580",
+            "2025-11-09T07:16:20Z",
+            "2025-11-09T07:16:20.1Z",
+            "2025-11-09T07:16:20.123+00:00",
+            "2025-11-09t07:16:20.123z",
+            "2025-11-09T07:16:20.1234Z",
+            "2025-11-09 07:16:20.123Z",
+        ] {
+            assert!(Stamp::read(stored).is_err(), "{stored}");
+        }
+    }
+
+    #[test]
+    fn holds_the_years_0000_to_9999_and_refuses_the_rest() {
+        assert_eq!(Stamp::from_ms(FIRST_MS).unwrap().text(), "0000-01-01T00:00:00.000Z");
+        assert_eq!(Stamp::from_ms(LAST_MS).unwrap().text(), "9999-12-31T23:59:59.999Z");
+        assert!(Stamp::from_ms(FIRST_MS - 1).is_err());
+        assert!(Stamp::from_ms(LAST_MS + 1).is_err());
+        assert!(Stamp::from_ms(LAST_MS).unwrap().plus_ms(1).is_err());
+        let first = Stamp::from_ms(FIRST_MS + 1).unwrap();
+        assert_eq!(first.earlier_by(1).map(Stamp::ms), Some(FIRST_MS));
+        assert_eq!(first.earlier_by(2), None);
+    }
+
+    #[test]
+    fn sorts_as_text_in_the_order_of_its_instants() {
+        let times = [FIRST_MS, -1, 0, 1, 999, 1_000, 1_762_672_580_123, LAST_MS];
+        let texts: Vec<String> = times
+            .iter()
+            .map(|ms| Stamp::from_ms(*ms).unwrap().text())
+            .collect();
+        let mut sorted = texts.clone();
+        sorted.sort();
+        assert_eq!(texts, sorted);
     }
 }

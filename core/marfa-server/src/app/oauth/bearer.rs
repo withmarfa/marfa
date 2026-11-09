@@ -4,7 +4,8 @@ use rusqlite::{Connection, Transaction};
 
 use super::grants;
 use super::scope::to_grants;
-use super::store::{self, AccessToken, Consent, ms_of};
+use super::store::{self, AccessToken, Consent};
+use crate::app::clock::Stamp;
 use crate::app::App;
 use crate::app::access::{Caller, OwnLevers, Standing};
 use crate::app::config;
@@ -23,7 +24,7 @@ pub struct Granted {
 }
 
 /// A token's own scopes are what it reaches, which may be fewer than its grant holds.
-fn caller_of(tx: &Connection, token: AccessToken, now: i64) -> Result<Option<(Caller, Consent)>> {
+fn caller_of(tx: &Connection, token: AccessToken, now: Stamp) -> Result<Option<(Caller, Consent)>> {
     if token.expires_at <= now {
         return Ok(None);
     }
@@ -42,7 +43,7 @@ fn caller_of(tx: &Connection, token: AccessToken, now: i64) -> Result<Option<(Ca
         grants: to_grants(&token.scopes),
         levers: OwnLevers::Unset,
         standing: Standing::default(),
-        created_at: store::stamp_of(token.created_at),
+        created_at: token.created_at.text(),
         expires_at: None,
         last_used_at: None,
         id: token.id,
@@ -77,7 +78,7 @@ pub fn grant_caller(tx: &Transaction<'_>, grant_id: &str) -> Result<Option<Calle
         grants: to_grants(&consent.scopes),
         levers: OwnLevers::Unset,
         standing: config::standing(tx, None)?,
-        created_at: store::stamp_of(consent.created_at),
+        created_at: consent.created_at.text(),
         expires_at: None,
         last_used_at: None,
         id: consent.grant_id.clone(),
@@ -106,7 +107,7 @@ pub fn live_by_id(tx: &Connection, id: &str, at: &str) -> Result<Option<Caller>>
     let Some(token) = store::access_token_by_id(tx, id)? else {
         return Ok(None);
     };
-    Ok(caller_of(tx, token, ms_of(at)?)?.map(|(caller, _)| caller))
+    Ok(caller_of(tx, token, Stamp::read(at)?)?.map(|(caller, _)| caller))
 }
 
 pub async fn authenticate(app: &Arc<App>, token: &str) -> Result<Option<Caller>> {
@@ -114,7 +115,7 @@ pub async fn authenticate(app: &Arc<App>, token: &str) -> Result<Option<Caller>>
         return Ok(None);
     }
     let digest = digest_of(&app.settings.start.key_salt, token)?;
-    let now = app.clock.now_ms();
+    let now = app.clock.instant();
     let found = app
         .db
         .read(move |tx| {
@@ -129,7 +130,7 @@ pub async fn authenticate(app: &Arc<App>, token: &str) -> Result<Option<Caller>>
     };
     let due = consent
         .last_used_at
-        .is_none_or(|last| last <= now - USE_EVERY_MS);
+        .is_none_or(|last| last.ms() <= now.ms() - USE_EVERY_MS);
     if due {
         let client_id = consent.client_id;
         let user_id = consent.user_id;

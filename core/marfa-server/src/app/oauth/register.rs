@@ -36,14 +36,14 @@ pub async fn register(
         return Ok(Err(RegistrationError::bearer()));
     }
     let id = Uuid::now_v7().to_string();
-    let now = app.clock.now_ms();
-    let at = app.clock.stamp();
+    let now = app.clock.instant();
+    let at = now.text();
     let ip = visit.client_ip();
     let mut answer = registration.to_json();
     answer.insert("client_id".to_string(), Value::from(id.clone()));
     answer.insert(
         "client_id_issued_at".to_string(),
-        Value::from(now / super::MS_PER_SECOND),
+        Value::from(now.ms() / super::MS_PER_SECOND),
     );
     app.db
         .write(Write::caller(CLIENT_CREATED), move |tx| {

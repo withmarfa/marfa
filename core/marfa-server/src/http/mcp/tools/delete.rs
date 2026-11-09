@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 
-use super::{Definition, instant, item_id, texts};
+use super::{Definition, item_id, texts};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::items::captions;
@@ -135,7 +135,7 @@ async fn preview_body(
     body.insert("preview".into(), Value::Array(shown));
     body.insert("total".into(), preview.count.into());
     body.insert("confirm".into(), token.text.into());
-    body.insert("expires_at".into(), instant(token.expires_at_ms).into());
+    body.insert("expires_at".into(), token.expires_at.text().into());
     body.insert("next".into(), PREVIEW_NEXT.into());
     Ok(body)
 }

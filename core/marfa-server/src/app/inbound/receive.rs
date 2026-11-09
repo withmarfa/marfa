@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use sha2::{Digest, Sha256};
 
+use crate::app::clock::Stamp;
 use super::super::App;
-use super::super::auth;
 use super::super::faults::FAIL_INBOUND_RECEIPT;
 use super::super::refusal::{Code, Refusal, Result};
 use super::store;
@@ -196,7 +196,7 @@ pub async fn admit(app: &App, token: &str, arrival: Arrival) -> Result<Place> {
 fn lapsed(expires_at: Option<&str>, at: &str) -> Result<bool> {
     match expires_at {
         None => Ok(false),
-        Some(expires_at) => Ok(auth::millis_of(expires_at)? <= auth::millis_of(at)?),
+        Some(expires_at) => Ok(Stamp::read(expires_at)?.ms() <= Stamp::read(at)?.ms()),
     }
 }
 

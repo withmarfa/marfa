@@ -5,7 +5,7 @@ use std::sync::Arc;
 use serde_json::{Map, Value, json};
 
 use super::keys::{own_id, view};
-use super::{Definition, instant, item_id, text};
+use super::{Definition, item_id, text};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::keys::Key;
@@ -66,7 +66,7 @@ fn preview_body(app: &App, caller: &Caller, key: &Key) -> Result<Map<String, Val
     let mut body = Map::new();
     body.insert("key".into(), view(key, yours.as_deref()));
     body.insert("confirm".into(), token.text.into());
-    body.insert("expires_at".into(), instant(token.expires_at_ms).into());
+    body.insert("expires_at".into(), token.expires_at.text().into());
     body.insert(
         "next".into(),
         format!("Nothing has been revoked. {warning}The key stops working at once. Show the person, and call again with the same id and confirm to revoke it.").into(),

@@ -4,6 +4,7 @@ use rusqlite::{OptionalExtension, Transaction, params};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use crate::app::clock::Stamp;
 use crate::app::keys::digest_of;
 use crate::app::refusal::{Refusal, Result};
 
@@ -58,10 +59,10 @@ fn looks_like_a_token(text: &str) -> bool {
     text.len() == TOKEN_BYTES * 2 && text.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-fn make_room(tx: &Transaction<'_>, now_ms: i64, purpose: Purpose) -> Result<()> {
+fn make_room(tx: &Transaction<'_>, now: Stamp, purpose: Purpose) -> Result<()> {
     tx.execute(
         "DELETE FROM auth_passkey_challenge WHERE expires_at <= ?1",
-        params![now_ms],
+        params![now],
     )?;
     tx.execute(
         "DELETE FROM auth_passkey_challenge WHERE digest IN (SELECT digest \
@@ -75,10 +76,10 @@ fn make_room(tx: &Transaction<'_>, now_ms: i64, purpose: Purpose) -> Result<()> 
 pub fn issue<S: Serialize>(
     tx: &Transaction<'_>,
     salt: &str,
-    now_ms: i64,
+    now: Stamp,
     new: New<'_, S>,
 ) -> Result<String> {
-    make_room(tx, now_ms, new.purpose)?;
+    make_room(tx, now, new.purpose)?;
     let token = new_token()?;
     let state = serde_json::to_string(new.state)
         .map_err(|_| Refusal::internal("a passkey challenge did not write"))?;
@@ -91,7 +92,7 @@ pub fn issue<S: Serialize>(
             new.origin,
             new.session_id,
             state,
-            now_ms + LIFE_MS,
+            now.plus_ms(LIFE_MS)?,
         ],
     )?;
     Ok(token)
@@ -102,12 +103,12 @@ pub fn take(
     salt: &str,
     token: Option<&str>,
     purpose: Purpose,
-    now_ms: i64,
+    now: Stamp,
 ) -> Result<Option<Taken>> {
     let Some(token) = token.filter(|token| looks_like_a_token(token)) else {
         return Ok(None);
     };
-    let found: Option<(String, i64, Taken)> = tx
+    let found: Option<(String, Stamp, Taken)> = tx
         .query_row(
             "DELETE FROM auth_passkey_challenge WHERE digest = ?1 \
              RETURNING purpose, expires_at, origin, session_id, state",
@@ -126,6 +127,6 @@ pub fn take(
         )
         .optional()?;
     Ok(found.and_then(|(word, expires_at, taken)| {
-        (word == purpose.word() && expires_at > now_ms).then_some(taken)
+        (word == purpose.word() && expires_at > now).then_some(taken)
     }))
 }

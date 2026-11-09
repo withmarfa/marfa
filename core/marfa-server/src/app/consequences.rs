@@ -1,6 +1,7 @@
 use rusqlite::Transaction;
 use serde_json::{Value, json};
 
+use crate::app::clock::Stamp;
 use super::addresses::{Address, Addresses};
 use super::auth::{passkeys, session};
 use super::oauth::grants;
@@ -28,7 +29,7 @@ struct Registered {
 }
 
 fn live_browser_sessions(tx: &Transaction<'_>, _: &Address, now_ms: i64) -> Result<i64> {
-    session::live_count(tx, now_ms / 1000)
+    session::live_count(tx, Stamp::from_ms(now_ms)?)
 }
 
 fn stranded_passkeys(tx: &Transaction<'_>, sign_in: &Address, _: i64) -> Result<i64> {

@@ -4,8 +4,9 @@
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 use serde_json::{Value, json};
 
-use super::{Note, Visit, names, note, seconds_of, stamp_of};
+use super::{Note, Visit, names, note};
 use crate::app::access::{Caller, Standing, unauthorized};
+use crate::app::clock::Stamp;
 use crate::app::faults::{FAIL_SESSION_DELETE, FAIL_SESSION_LOOKUP, FAIL_SESSION_USE};
 use crate::app::keys::digest_of;
 use crate::app::refusal::{Code, Refusal, Result};
@@ -14,9 +15,9 @@ use crate::db::Write;
 
 const TOKEN_BYTES: usize = 32;
 /// A week and a minute, since a use is recorded at most once a minute.
-const IDLE_SECONDS: i64 = 7 * 24 * 3600 + 60;
-const USE_EVERY_SECONDS: i64 = 60;
-const RECENT_SECONDS: i64 = 5 * 60;
+const IDLE_MS: i64 = (7 * 24 * 3600 + 60) * 1000;
+const USE_EVERY_MS: i64 = 60 * 1000;
+const RECENT_MS: i64 = 5 * 60 * 1000;
 pub(super) const ENDED: &str = "auth.session.delete";
 /// Bookkeeping, named so a fault can reach it. It leaves no audit entry.
 const USE: Write = Write {
@@ -28,9 +29,9 @@ const USE: Write = Write {
 pub struct Session {
     pub id: String,
     pub user_id: String,
-    pub created_at: i64,
-    pub updated_at: i64,
-    pub expires_at: i64,
+    pub created_at: Stamp,
+    pub updated_at: Stamp,
+    pub expires_at: Stamp,
     pub remembered: bool,
     pub user_agent: Option<String>,
     /// What the instance's levers hold it to, once a transaction has read them.
@@ -38,9 +39,8 @@ pub struct Session {
 }
 
 impl Session {
-    /// Second-resolution storage makes the recency check conservative.
-    pub fn is_recent(&self, now_ms: i64) -> bool {
-        now_ms.saturating_sub(self.created_at.saturating_mul(1000)) <= RECENT_SECONDS * 1000
+    pub fn is_recent(&self, now: Stamp) -> bool {
+        now.ms().saturating_sub(self.created_at.ms()) <= RECENT_MS
     }
 
     /// What a sign-in is called where it wrote something.
@@ -52,9 +52,9 @@ impl Session {
         json!({
             "id": self.id,
             "userId": self.user_id,
-            "createdAt": stamp_of(self.created_at),
-            "updatedAt": stamp_of(self.updated_at),
-            "expiresAt": stamp_of(self.expires_at),
+            "createdAt": self.created_at,
+            "updatedAt": self.updated_at,
+            "expiresAt": self.expires_at,
         })
     }
 }
@@ -82,14 +82,14 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Session> {
 const COLUMNS: &str = "id, user_id, created_at, updated_at, expires_at, remembered, user_agent";
 
 /// Only the owner's session counts, and only while it lasts.
-fn live(tx: &Transaction<'_>, found: Option<Session>, now: i64) -> Result<Option<Session>> {
+fn live(tx: &Transaction<'_>, found: Option<Session>, now: Stamp) -> Result<Option<Session>> {
     let owner = instance::owner_id(tx)?;
     Ok(found.filter(|session| {
         session.expires_at > now && owner.as_deref() == Some(session.user_id.as_str())
     }))
 }
 
-pub fn live_by_id(tx: &Transaction<'_>, id: &str, now: i64) -> Result<Option<Session>> {
+pub fn live_by_id(tx: &Transaction<'_>, id: &str, now: Stamp) -> Result<Option<Session>> {
     let found = tx
         .query_row(
             &format!("SELECT {COLUMNS} FROM auth_session WHERE id = ?1"),
@@ -101,7 +101,7 @@ pub fn live_by_id(tx: &Transaction<'_>, id: &str, now: i64) -> Result<Option<Ses
 }
 
 /// Every live session of the owner, each with the address it signed in from.
-pub(super) fn all_live(tx: &Transaction<'_>, now: i64) -> Result<Vec<(Session, Option<String>)>> {
+pub(super) fn all_live(tx: &Transaction<'_>, now: Stamp) -> Result<Vec<(Session, Option<String>)>> {
     let Some(owner) = instance::owner_id(tx)? else {
         return Ok(Vec::new());
     };
@@ -116,7 +116,7 @@ pub(super) fn all_live(tx: &Transaction<'_>, now: i64) -> Result<Vec<(Session, O
         .collect::<rusqlite::Result<_>>()?)
 }
 
-fn live_by_digest(tx: &Transaction<'_>, digest: &str, now: i64) -> Result<Option<Session>> {
+fn live_by_digest(tx: &Transaction<'_>, digest: &str, now: Stamp) -> Result<Option<Session>> {
     let found = tx
         .query_row(
             &format!("SELECT {COLUMNS} FROM auth_session WHERE token = ?1"),
@@ -128,7 +128,7 @@ fn live_by_digest(tx: &Transaction<'_>, digest: &str, now: i64) -> Result<Option
 }
 
 /// How many browsers hold a session that still opens at `now`.
-pub fn live_count(tx: &Transaction<'_>, now: i64) -> Result<i64> {
+pub fn live_count(tx: &Transaction<'_>, now: Stamp) -> Result<i64> {
     let Some(owner) = instance::owner_id(tx)? else {
         return Ok(0);
     };
@@ -156,14 +156,14 @@ pub(super) struct New<'a> {
     pub visit: &'a Visit,
 }
 
-pub(super) fn open(tx: &Transaction<'_>, now: i64, new: New<'_>) -> Result<Opened> {
+pub(super) fn open(tx: &Transaction<'_>, now: Stamp, new: New<'_>) -> Result<Opened> {
     let token = new_token()?;
     let session = Session {
         id: uuid::Uuid::now_v7().to_string(),
         user_id: new.user_id.to_string(),
         created_at: now,
         updated_at: now,
-        expires_at: now + IDLE_SECONDS,
+        expires_at: now.plus_ms(IDLE_MS)?,
         remembered: new.remembered,
         user_agent: new.visit.user_agent.clone(),
         standing: Standing::default(),
@@ -194,18 +194,18 @@ pub struct Seen {
 
 /// What a use of `id` found once it held the writer: nothing if the session
 /// ended meanwhile.
-fn record_use(tx: &Transaction<'_>, id: &str, now: i64) -> Result<Option<Seen>> {
+fn record_use(tx: &Transaction<'_>, id: &str, now: Stamp) -> Result<Option<Seen>> {
     let Some(mut session) = live_by_id(tx, id, now)? else {
         return Ok(None);
     };
-    if now - session.updated_at < USE_EVERY_SECONDS {
+    if !use_due(&session, now) {
         return Ok(Some(Seen {
             session,
             recorded: false,
         }));
     }
     session.updated_at = now;
-    session.expires_at = now + IDLE_SECONDS;
+    session.expires_at = now.plus_ms(IDLE_MS)?;
     tx.execute(
         "UPDATE auth_session SET updated_at = ?2, expires_at = ?3 WHERE id = ?1",
         params![id, session.updated_at, session.expires_at],
@@ -214,6 +214,10 @@ fn record_use(tx: &Transaction<'_>, id: &str, now: i64) -> Result<Option<Seen>> 
         session,
         recorded: true,
     }))
+}
+
+fn use_due(session: &Session, now: Stamp) -> bool {
+    now.ms() - session.updated_at.ms() >= USE_EVERY_MS
 }
 
 /// Storage that is full, read-only or held by another writer costs a session
@@ -231,7 +235,7 @@ pub async fn find(app: &App, token: &str) -> Result<Option<Session>> {
         return Ok(None);
     }
     let digest = digest_of(&app.settings.start.key_salt, token)?;
-    let now = app.clock.now_ms() / 1000;
+    let now = app.clock.instant();
     app.db
         .read(move |tx| live_by_digest(tx, &digest, now))
         .await
@@ -240,8 +244,7 @@ pub async fn find(app: &App, token: &str) -> Result<Option<Session>> {
 /// Records a use of `session` if the last is a minute old. Nothing comes back
 /// if it ended meanwhile.
 pub async fn seen(app: &App, session: Session) -> Result<Option<Seen>> {
-    let now = app.clock.now_ms() / 1000;
-    if now - session.updated_at < USE_EVERY_SECONDS {
+    if !use_due(&session, app.clock.instant()) {
         return Ok(Some(Seen {
             session,
             recorded: false,
@@ -259,7 +262,7 @@ pub async fn seen(app: &App, session: Session) -> Result<Option<Seen>> {
                     "The database is busy; try again.",
                 ));
             }
-            record_use(tx, &id, clock.now_ms() / 1000)
+            record_use(tx, &id, clock.instant())
         })
         .await
     {
@@ -320,7 +323,7 @@ pub(super) fn end_all(
     user_id: &str,
     keeping: Option<&str>,
 ) -> Result<()> {
-    let now = seconds_of(at)?;
+    let now = Stamp::read(at)?;
     tx.execute(
         "DELETE FROM auth_session WHERE user_id = ?1 AND expires_at <= ?2",
         params![user_id, now],
@@ -336,11 +339,11 @@ pub(super) fn end_all(
 }
 
 /// Removes up to `batch` sessions past their end, which no cookie opens any more.
-pub fn remove_expired(tx: &Transaction<'_>, now_ms: i64, batch: i64) -> Result<i64> {
+pub fn remove_expired(tx: &Transaction<'_>, now: Stamp, batch: i64) -> Result<i64> {
     let count = tx.execute(
         "DELETE FROM auth_session WHERE id IN ( \
          SELECT id FROM auth_session WHERE expires_at <= ?1 LIMIT ?2)",
-        params![now_ms / 1_000, batch],
+        params![now, batch],
     )?;
     Ok(i64::try_from(count).unwrap_or(i64::MAX))
 }

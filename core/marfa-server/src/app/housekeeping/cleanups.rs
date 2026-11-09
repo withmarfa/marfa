@@ -121,7 +121,10 @@ pub async fn rate_limit(app: Arc<App>, run: Run) -> Result<Report> {
 }
 
 async fn reap_batch(app: &Arc<App>) -> Result<i64> {
-    let before = app.clock.stamp_ago(reap::KEPT_DAYS * DAY_MS);
+    let Some(before) = app.clock.instant().earlier_by(reap::KEPT_DAYS * DAY_MS) else {
+        return Ok(0);
+    };
+    let before = before.text();
     let seen = before.clone();
     if !app.db.read(move |tx| reap::any(tx, &seen)).await? {
         return Ok(0);

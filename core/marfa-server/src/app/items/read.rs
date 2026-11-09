@@ -4,11 +4,12 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use chrono::{DateTime, Days, SecondsFormat, Utc};
 use marfa_rules::names;
 use rusqlite::Transaction;
 use serde_json::{Value, json};
 
+use crate::app::clock::Stamp;
+use crate::app::housekeeping::DAY_MS;
 use super::plan::{self, Act, Asked, Gate};
 use super::rows::Position;
 use super::{
@@ -703,15 +704,12 @@ pub async fn summaries(app: &App, caller: &Caller, listing: Listing) -> Result<S
     .await
 }
 
-fn eligible_at(trashed_at: Option<&str>, retention_days: u64) -> Option<String> {
-    if retention_days == 0 {
-        return None;
-    }
-    let trashed_at = DateTime::parse_from_rfc3339(trashed_at?).ok()?;
-    let eligible = trashed_at
-        .with_timezone(&Utc)
-        .checked_add_days(Days::new(retention_days))?;
-    Some(eligible.to_rfc3339_opts(SecondsFormat::Millis, true))
+fn eligible_at(trashed_at: Option<&str>, retention_days: u64) -> Result<Option<String>> {
+    let (Some(trashed_at), true) = (trashed_at, retention_days > 0) else {
+        return Ok(None);
+    };
+    let kept = i64::try_from(retention_days).unwrap_or(i64::MAX).saturating_mul(DAY_MS);
+    Ok(Some(Stamp::read(trashed_at)?.plus_ms(kept)?.text()))
 }
 
 pub async fn bin(app: &App, caller: &Caller, listing: Listing) -> Result<String> {
@@ -725,7 +723,7 @@ pub async fn bin(app: &App, caller: &Caller, listing: Listing) -> Result<String>
                 summary["trashed_at"] = json!(row.trashed_at);
                 summary["trashed_by"] = json!(row.trashed_by);
                 summary["eligible_for_deletion_at"] =
-                    json!(eligible_at(row.trashed_at.as_deref(), retention_days));
+                    json!(eligible_at(row.trashed_at.as_deref(), retention_days)?);
                 Ok(summary)
             })
             .collect::<Result<Vec<Value>>>()?;

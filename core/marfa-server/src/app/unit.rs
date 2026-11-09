@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
-use chrono::SecondsFormat;
 use rusqlite::Transaction;
 use serde_json::Value;
 
@@ -9,6 +8,7 @@ use super::App;
 use super::access::Caller;
 use super::audit::{self, Entry};
 use super::catalog::Snapshot;
+use super::clock::Stamp;
 use super::connectors::{ReadOnly, Registry, read_only};
 use super::events::{self, Event};
 use super::provenance::{self, Origin};
@@ -22,8 +22,8 @@ pub struct Unit<'t, 'c> {
     pub caller: Caller,
     pub at: String,
     fanout: bool,
-    /// The same instant as `at`, in milliseconds.
-    pub at_ms: i64,
+    /// The same instant as `at`.
+    pub instant: Stamp,
     origin: Origin,
     read_only: Arc<ArcSwap<Registry>>,
     /// A job's chunk records one entry for its rows, as an atomic page does.
@@ -47,7 +47,7 @@ impl<'c> Unit<'_, 'c> {
             caller: self.caller.clone(),
             at: self.at.clone(),
             fanout: self.fanout,
-            at_ms: self.at_ms,
+            instant: self.instant,
             origin: self.origin.clone(),
             read_only: self.read_only.clone(),
             summarised: self.summarised,
@@ -159,9 +159,8 @@ impl App {
         };
         self.db
             .write(write, move |tx| {
-                let now = clock.now();
-                let at = now.to_rfc3339_opts(SecondsFormat::Millis, true);
-                let at_ms = now.timestamp_millis();
+                let instant = clock.instant();
+                let at = instant.text();
                 let caller = caller.current(tx, &at)?;
                 job(&Unit {
                     tx,
@@ -169,7 +168,7 @@ impl App {
                     caller,
                     at,
                     fanout: true,
-                    at_ms,
+                    instant,
                     origin,
                     read_only,
                     summarised: false,

@@ -3,7 +3,7 @@
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 use serde_json::{Map, Value};
 
-use crate::app::auth;
+use crate::app::clock::Stamp;
 use crate::app::refusal::{Refusal, Result};
 
 pub struct Registration {
@@ -33,13 +33,13 @@ pub struct Run {
 pub struct Hold {
     pub process: String,
     pub expires_at: String,
-    expires_ms: i64,
+    expires: Stamp,
 }
 
 impl Hold {
     /// Whether the hold still stands at the stored-form moment `at`.
     pub fn stands_at(&self, at: &str) -> Result<bool> {
-        Ok(self.expires_ms > auth::millis_of(at)?)
+        Ok(self.expires > Stamp::read(at)?)
     }
 }
 
@@ -69,32 +69,12 @@ fn stored<T: serde::de::DeserializeOwned>(row: &Row<'_>, column: &str) -> rusqli
     })
 }
 
-fn unread(row: &Row<'_>, column: &str) -> rusqlite::Error {
-    let index = row.as_ref().column_index(column).unwrap_or(0);
-    rusqlite::Error::FromSqlConversionFailure(
-        index,
-        rusqlite::types::Type::Text,
-        format!("{column} is not a stored time").into(),
-    )
-}
-
-/// A stored time that does not read is a fault, never a default.
-fn time(row: &Row<'_>, column: &str) -> rusqlite::Result<(String, i64)> {
-    let text: String = row.get(column)?;
-    let millis = auth::millis_of(&text).map_err(|_| unread(row, column))?;
-    Ok((text, millis))
-}
-
 fn moment(row: &Row<'_>, column: &str) -> rusqlite::Result<String> {
-    Ok(time(row, column)?.0)
+    row.get::<_, Stamp>(column).map(Stamp::text)
 }
 
 fn optional_moment(row: &Row<'_>, column: &str) -> rusqlite::Result<Option<String>> {
-    let present: Option<String> = row.get(column)?;
-    present
-        .map(|text| auth::millis_of(&text).map(|_| text))
-        .transpose()
-        .map_err(|_| unread(row, column))
+    Ok(row.get::<_, Option<Stamp>>(column)?.map(Stamp::text))
 }
 
 fn registration(row: &Row<'_>) -> rusqlite::Result<Registration> {
@@ -276,11 +256,11 @@ pub fn hold(tx: &Transaction<'_>, connector_id: &str) -> Result<Option<Hold>> {
     Ok(tx
         .prepare_cached("SELECT process, expires_at FROM connector_holds WHERE connector_id = ?1")?
         .query_row([connector_id], |row| {
-            let (expires_at, expires_ms) = time(row, "expires_at")?;
+            let expires: Stamp = row.get("expires_at")?;
             Ok(Hold {
                 process: row.get("process")?,
-                expires_at,
-                expires_ms,
+                expires_at: expires.text(),
+                expires,
             })
         })
         .optional()?)

@@ -1,4 +1,4 @@
-use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike};
+use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, Timelike, Utc};
 
 use crate::error::{Result, RuleError};
 
@@ -19,16 +19,26 @@ pub fn epoch_ms(value: &str) -> Option<i64> {
 
 /// RFC 3339 as written: a date, `T`, a time with seconds, and a zone (`Z` or `±hh:mm`); `t` and `z` may be lowercase. The hour is 00 to 23 and the second 00 to 59, so a leap second is refused. A fraction longer than milliseconds is cut, not rounded. The UTC year must be 0000 to 9999. Answers `YYYY-MM-DDTHH:MM:SS.sssZ`.
 pub fn rfc3339(value: &str, field: &str) -> Result<String> {
+    instant(value, field).map(|instant| written(&instant))
+}
+
+/// The UTC instant [`rfc3339`] reads, to the precision written.
+pub fn instant(value: &str, field: &str) -> Result<DateTime<Utc>> {
     let bytes = value.as_bytes();
     let zoned = matches!(bytes.last(), Some(b'Z' | b'z'))
         || bytes.len() > 6 && bytes[bytes.len() - 3] == b':';
     let instant = (zoned && matches!(bytes.get(10), Some(b'T' | b't')))
-        .then(|| chrono::DateTime::parse_from_rfc3339(value).ok())
+        .then(|| DateTime::parse_from_rfc3339(value).ok())
         .flatten()
         .map(|instant| instant.naive_utc())
         .filter(|instant| instant.nanosecond() < 1_000_000_000)
         .ok_or_else(|| invalid(field, "expected an RFC 3339 timestamp"))?;
-    answered(instant, field)
+    in_range(instant, field).map(|instant| instant.and_utc())
+}
+
+/// `YYYY-MM-DDTHH:MM:SS.sssZ`, cut to the millisecond, which sorts as it reads for the years 0000 to 9999.
+pub fn written(instant: &DateTime<Utc>) -> String {
+    instant.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
 }
 
 /// A date-time as [`rfc3339`] reads it, or a date alone as `YYYY-MM-DD`, which is its midnight in UTC.
@@ -56,10 +66,14 @@ fn date_alone(value: &str) -> Option<NaiveDateTime> {
 }
 
 fn answered(instant: NaiveDateTime, field: &str) -> Result<String> {
+    in_range(instant, field).map(|instant| written(&instant.and_utc()))
+}
+
+fn in_range(instant: NaiveDateTime, field: &str) -> Result<NaiveDateTime> {
     if !(0..=9999).contains(&instant.year()) {
         return Err(invalid(field, "the UTC year must be between 0000 and 9999"));
     }
-    Ok(instant.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
+    Ok(instant)
 }
 
 pub fn invalid(field: &str, reason: &str) -> RuleError {

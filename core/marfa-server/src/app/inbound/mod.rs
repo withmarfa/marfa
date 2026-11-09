@@ -11,9 +11,9 @@ use rusqlite::Transaction;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+use crate::app::clock::Stamp;
 use super::App;
 use super::access::Caller;
-use super::auth;
 use super::connectors::{self, Registration, Window};
 use super::keys;
 use super::refusal::{Code, Refusal, Result};
@@ -66,7 +66,7 @@ fn key_stands(tx: &Transaction<'_>, key_id: &str, at: &str) -> Result<bool> {
     };
     match key.expires_at.as_deref() {
         None => Ok(true),
-        Some(expires_at) => Ok(auth::millis_of(expires_at)? > auth::millis_of(at)?),
+        Some(expires_at) => Ok(Stamp::read(expires_at)?.ms() > Stamp::read(at)?.ms()),
     }
 }
 

@@ -3,6 +3,7 @@
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 
 use crate::app::access::Maker;
+use crate::app::clock::Stamp;
 use crate::app::refusal::{Refusal, Result};
 
 #[derive(Clone, Debug)]
@@ -295,7 +296,7 @@ pub fn queue(tx: &Transaction<'_>, queued: &Queued<'_>) -> Result<bool> {
             queued.type_id,
             queued.source,
             queued.payload,
-            queued.due_at,
+            Stamp::from_ms(queued.due_at)?,
             queued.at,
         ],
     )?;
@@ -360,7 +361,7 @@ pub fn due(tx: &Transaction<'_>, now_ms: i64, busy: &[i64], limit: usize) -> Res
          WHERE seq IN (SELECT value FROM json_each(?2)))) WHERE turn = 1 ORDER BY due_at, seq LIMIT ?3",
     )?;
     let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-    let rows = statement.query_map(params![now_ms, busy, limit], |row| row.get(0))?;
+    let rows = statement.query_map(params![Stamp::from_ms(now_ms)?, busy, limit], |row| row.get(0))?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
@@ -368,22 +369,24 @@ pub fn due(tx: &Transaction<'_>, now_ms: i64, busy: &[i64], limit: usize) -> Res
 pub fn next_due(tx: &Transaction<'_>, busy: &[i64]) -> Result<Option<i64>> {
     let busy =
         serde_json::to_string(busy).map_err(|_| Refusal::internal("a list did not print"))?;
-    Ok(tx.query_row(
+    let next: Option<Stamp> = tx.query_row(
         "SELECT MIN(due_at) FROM webhook_deliveries WHERE status = 'pending' \
          AND webhook_id NOT IN (SELECT webhook_id FROM webhook_deliveries \
          WHERE seq IN (SELECT value FROM json_each(?1)))",
         [busy],
         |row| row.get(0),
-    )?)
+    )?;
+    Ok(next.map(Stamp::ms))
 }
 
 #[test]
 fn due_takes_one_turn_per_subscription_and_excludes_busy_subscriptions() {
     let mut db = rusqlite::Connection::open_in_memory().unwrap();
     let tx = db.transaction().unwrap();
-    tx.execute_batch("CREATE TABLE webhook_deliveries (seq INTEGER, webhook_id TEXT, status TEXT, due_at INTEGER);
-        INSERT INTO webhook_deliveries VALUES (1, 'a', 'pending', 0), (2, 'a', 'pending', 0),
-        (3, 'b', 'pending', 0), (4, 'c', 'pending', 5);").unwrap();
+    tx.execute_batch("CREATE TABLE webhook_deliveries (seq INTEGER, webhook_id TEXT, status TEXT, due_at TEXT);
+        INSERT INTO webhook_deliveries VALUES (1, 'a', 'pending', '1970-01-01T00:00:00.000Z'),
+        (2, 'a', 'pending', '1970-01-01T00:00:00.000Z'), (3, 'b', 'pending', '1970-01-01T00:00:00.000Z'),
+        (4, 'c', 'pending', '1970-01-01T00:00:00.005Z');").unwrap();
     assert_eq!(due(&tx, 0, &[], 10).unwrap(), vec![1, 3]);
     assert_eq!(due(&tx, 0, &[], 1).unwrap(), vec![1]);
     assert_eq!(due(&tx, 0, &[1], 10).unwrap(), vec![3]);
@@ -429,7 +432,7 @@ pub fn record(tx: &Transaction<'_>, seq: i64, recorded: &Recorded<'_>, at: &str)
             recorded.status.wire(),
             recorded.status_code,
             recorded.error,
-            recorded.due_at,
+            Stamp::from_ms(recorded.due_at)?,
             at
         ],
     )?;
@@ -440,7 +443,7 @@ pub fn redeliver(tx: &Transaction<'_>, seq: i64, due_at: i64, at: &str) -> Resul
     tx.execute(
         "UPDATE webhook_deliveries SET status = 'pending', cycle_attempt = 0, due_at = ?2, \
          updated_at = ?3 WHERE seq = ?1 AND status = 'dead_letter'",
-        params![seq, due_at, at],
+        params![seq, Stamp::from_ms(due_at)?, at],
     )?;
     Ok(())
 }

@@ -7,11 +7,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use axum::body::Bytes;
-use chrono::DateTime;
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, watch};
 use tokio::time::{Instant, sleep_until, timeout, timeout_at};
 
+use crate::app::clock::Stamp;
 use super::frame::{Filter, Judge, Verdict, marker};
 use super::page::{self, Next};
 use crate::app::App;
@@ -478,14 +478,15 @@ impl Run {
 
     fn credential_read(&mut self, expires_at: Option<&str>) {
         self.checked = Instant::now();
-        self.expiry = expires_at
-            .and_then(|at| DateTime::parse_from_rfc3339(at).ok())
-            .map(|at| {
-                let wait = (at.to_utc() - self.app.clock.now())
+        self.expiry = expires_at.map(|at| match Stamp::read(at) {
+            Ok(at) => {
+                let wait = (at.at() - self.app.clock.now())
                     .to_std()
                     .unwrap_or_default();
                 Instant::now() + wait.max(MIN_EXPIRY_WAIT)
-            });
+            }
+            Err(_) => Instant::now(),
+        });
     }
 
     /// Reads the credential again while a page is handed over.

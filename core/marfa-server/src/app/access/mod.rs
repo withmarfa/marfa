@@ -19,7 +19,7 @@ use rusqlite::Transaction;
 use serde_json::{Value, json};
 
 use super::auth::session::{self, Session};
-use super::auth::{millis_of, seconds_of};
+use super::clock::Stamp;
 use super::config;
 use super::keys::{self, Key};
 use super::oauth;
@@ -222,7 +222,7 @@ impl Caller {
                 Ok(Caller::Key(Box::new(standing_key(tx, key)?)))
             }
             Caller::Owner(session) => {
-                let mut session = session::live_by_id(tx, &session.id, seconds_of(at)?)?
+                let mut session = session::live_by_id(tx, &session.id, Stamp::read(at)?)?
                     .ok_or_else(unauthorized)?;
                 session.standing = config::standing(tx, None)?;
                 Ok(Caller::Owner(Box::new(session)))
@@ -250,7 +250,7 @@ impl Caller {
 
     pub fn require_recent(&self, at: &str) -> Result<()> {
         match self.session() {
-            Some(session) if !session.is_recent(millis_of(at)?) => {
+            Some(session) if !session.is_recent(Stamp::read(at)?) => {
                 Err(Refusal::new(Code::Forbidden, SIGN_IN_AGAIN))
             }
             _ => Ok(()),

@@ -3,9 +3,9 @@ use std::sync::Arc;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use chrono::DateTime;
 use serde_json::{Map, Value, json};
 
+use crate::app::clock::Stamp;
 use super::origin;
 use super::sign_in::{refuse_elsewhere, signed_in};
 use super::{
@@ -144,20 +144,18 @@ pub async fn add_url(State(app): State<Arc<App>>, caller: Caller) -> Answer {
     Ok(json_answer(StatusCode::OK, &json!({ "url": url })))
 }
 
-fn day_of(stamp: &str) -> String {
-    DateTime::parse_from_rfc3339(stamp)
-        .map(|at| at.format("%b %-d, %Y").to_string())
-        .unwrap_or_default()
+fn day_of(stored: &str) -> Result<String, Refusal> {
+    Ok(Stamp::read(stored)?.at().format("%b %-d, %Y").to_string())
 }
 
-fn shown(passkey: Listed, host: &str) -> OwnerPasskey {
-    OwnerPasskey {
+fn shown(passkey: Listed, host: &str) -> Result<OwnerPasskey, Refusal> {
+    Ok(OwnerPasskey {
         name: passkey.name.unwrap_or_else(|| "Passkey".to_string()),
-        added: day_of(&passkey.created_at),
-        last_used: passkey.last_used_at.as_deref().map(day_of),
+        added: day_of(&passkey.created_at)?,
+        last_used: passkey.last_used_at.as_deref().map(day_of).transpose()?,
         made_for: (passkey.host != host).then_some(passkey.host),
         id: passkey.id,
-    }
+    })
 }
 
 /// `GET /auth/owner/passkeys`. Anyone but the signed-in owner goes to sign in.
@@ -171,7 +169,7 @@ pub async fn page(State(app): State<Arc<App>>, caller: Option<Caller>) -> Answer
         .await?
         .into_iter()
         .map(|passkey| shown(passkey, address.host()))
-        .collect();
+        .collect::<Result<_, Refusal>>()?;
     let view = OwnerPasskeys {
         instance_name: instance::name(&app).await?,
         rows,

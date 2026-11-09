@@ -48,7 +48,7 @@ fn window(catalog: &Catalog, type_id: &str) -> Option<i64> {
 }
 
 fn cutoff_of(app: &App, catalog: &Catalog, type_id: &str) -> Option<String> {
-    window(catalog, type_id).map(|days| ago(app, days, DAY_MS))
+    window(catalog, type_id).and_then(|days| ago(app, days, DAY_MS))
 }
 
 fn expired(

@@ -12,7 +12,7 @@ use super::pkce;
 use super::resource::{Refused, at_token};
 use super::scope::{OFFLINE_ACCESS, ScopeSet, first_uncovered};
 use super::signed_link::has_repeat;
-use super::store::{self, AccessToken, Client, DeviceStatus, RefreshToken, ms_of};
+use super::store::{self, AccessToken, Client, DeviceStatus, RefreshToken};
 use super::tokens::{new_access_token, new_refresh_token};
 use super::{ACCESS_TOKEN_SECONDS, Answered, MS_PER_SECOND, Problem, REFRESH_TOKEN_SECONDS};
 use crate::app::App;
@@ -180,7 +180,7 @@ struct Issue<'i> {
 
 fn issue(app: &App, unit: &Unit<'_, '_>, issue: Issue<'_>) -> Result<Map<String, Value>> {
     let tx = unit.tx();
-    let now = ms_of(&unit.at)?;
+    let now = unit.instant;
     let salt = &app.settings.start.key_salt;
     let access = new_access_token()?;
     store::insert_access_token(
@@ -194,7 +194,7 @@ fn issue(app: &App, unit: &Unit<'_, '_>, issue: Issue<'_>) -> Result<Map<String,
             scopes: issue.scopes.clone(),
             audience: issue.audience.map(str::to_string),
             created_at: now,
-            expires_at: now + ACCESS_TOKEN_SECONDS * MS_PER_SECOND,
+            expires_at: now.plus_ms(ACCESS_TOKEN_SECONDS * MS_PER_SECOND)?,
         },
     )?;
     let mut answer = Map::new();
@@ -215,7 +215,7 @@ fn issue(app: &App, unit: &Unit<'_, '_>, issue: Issue<'_>) -> Result<Map<String,
                 scopes: issue.keeps.clone(),
                 audience: issue.audience.map(str::to_string),
                 created_at: now,
-                expires_at: now + REFRESH_TOKEN_SECONDS * MS_PER_SECOND,
+                expires_at: now.plus_ms(REFRESH_TOKEN_SECONDS * MS_PER_SECOND)?,
                 rotated_at: None,
                 ended_at: None,
             },
@@ -259,7 +259,7 @@ async fn by_code(
     let shared = app.clone();
     app.write(&Caller::Server, TOKEN_ISSUED, move |unit| {
         let tx = unit.tx();
-        let now = ms_of(&unit.at)?;
+        let now = unit.instant;
         let digest = digest_of(&shared.settings.start.key_salt, &code)?;
         let spent = || invalid_grant("This code cannot be exchanged.");
         let Some(code) = store::code(tx, &digest)?.filter(|code| code.expires_at > now) else {
@@ -303,7 +303,7 @@ async fn by_code(
                 "This resource was not authorized.",
             )));
         }
-        if session::live_by_id(tx, &code.session_id, now / MS_PER_SECOND)?.is_none() {
+        if session::live_by_id(tx, &code.session_id, now)?.is_none() {
             return Ok(Err(Problem::new(
                 "invalid_request",
                 "The browser session that approved this code has ended.",
@@ -348,7 +348,7 @@ async fn by_refresh(
     let shared = app.clone();
     app.write(&Caller::Server, TOKEN_ISSUED, move |unit| {
         let tx = unit.tx();
-        let now = ms_of(&unit.at)?;
+        let now = unit.instant;
         let digest = digest_of(&shared.settings.start.key_salt, &token)?;
         let dead = || invalid_grant("This refresh token cannot be used.");
         let Some(old) = store::refresh_token_by_digest(tx, &digest)?
@@ -421,7 +421,7 @@ async fn by_device_code(
     let shared = app.clone();
     app.write(&Caller::Server, TOKEN_ISSUED, move |unit| {
         let tx = unit.tx();
-        let now = ms_of(&unit.at)?;
+        let now = unit.instant;
         let digest = digest_of(&shared.settings.start.key_salt, &code)?;
         let spent = || invalid_grant("This device code cannot be exchanged.");
         let Some(code) =
@@ -441,7 +441,7 @@ async fn by_device_code(
         }
         let waited = code
             .last_polled_at
-            .is_none_or(|last| now >= last + code.interval_seconds * MS_PER_SECOND);
+            .is_none_or(|last| now.ms() >= last.ms().saturating_add(code.interval_seconds * MS_PER_SECOND));
         store::note_device_poll(tx, &digest, now)?;
         if !waited {
             return Ok(Err(Problem::new("slow_down", "Poll less often.")));

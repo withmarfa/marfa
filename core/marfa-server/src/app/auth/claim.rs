@@ -8,7 +8,8 @@ use subtle::ConstantTimeEq;
 
 use super::limits::{self, spent};
 use super::owner::{self, Details, Owner};
-use super::{Note, Visit, note, password, seconds_of};
+use super::{Note, Visit, note, password};
+use crate::app::clock::Stamp;
 use crate::app::access::Caller;
 use crate::app::keys::digest_of;
 use crate::app::refusal::{Code, Refusal, Result};
@@ -108,23 +109,23 @@ fn require_unclaimed(tx: &Transaction<'_>) -> Result<()> {
     Ok(())
 }
 
-fn holds(tx: &Transaction<'_>, kind: &str, digest: &str, now_ms: i64) -> Result<bool> {
+fn holds(tx: &Transaction<'_>, kind: &str, digest: &str, now: Stamp) -> Result<bool> {
     let mut statement = tx.prepare(
         "SELECT digest FROM setup_proof \
          WHERE kind = ?1 AND (expires_at IS NULL OR expires_at > ?2)",
     )?;
     let digests = statement
-        .query_map(params![kind, now_ms], |row| row.get::<_, String>(0))?
+        .query_map(params![kind, now], |row| row.get::<_, String>(0))?
         .collect::<rusqlite::Result<Vec<String>>>()?;
     Ok(digests.iter().fold(false, |found, held| {
         found | bool::from(held.as_bytes().ct_eq(digest.as_bytes()))
     }))
 }
 
-fn drop_expired(tx: &Transaction<'_>, now_ms: i64) -> Result<()> {
+fn drop_expired(tx: &Transaction<'_>, now: Stamp) -> Result<()> {
     tx.execute(
         "DELETE FROM setup_proof WHERE expires_at IS NOT NULL AND expires_at <= ?1",
-        [now_ms],
+        [now],
     )?;
     Ok(())
 }
@@ -134,7 +135,7 @@ fn add(
     digest: &str,
     kind: &str,
     generation: &str,
-    expires_at: Option<i64>,
+    expires_at: Option<Stamp>,
 ) -> Result<()> {
     tx.execute(
         "INSERT INTO setup_proof (digest, kind, generation, expires_at) VALUES (?1, ?2, ?3, ?4)",
@@ -173,7 +174,7 @@ pub async fn announce_at_start(app: &App) -> Result<()> {
     Ok(())
 }
 
-pub async fn issue_ticket(app: &App, caller: &Caller) -> Result<(String, i64)> {
+pub async fn issue_ticket(app: &App, caller: &Caller) -> Result<(String, Stamp)> {
     let ticket = hex::encode(random::<TOKEN_BYTES>()?);
     let digest = digest_of(&app.settings.start.key_salt, &ticket)?;
     let instance_id = app.instance_id.clone();
@@ -182,12 +183,13 @@ pub async fn issue_ticket(app: &App, caller: &Caller) -> Result<(String, i64)> {
         .write(caller, "instance.setup_ticket.issued", move |unit| {
             unit.caller.require_direct()?;
             require_unclaimed(unit.tx())?;
-            let now = clock.now_ms();
+            let now = clock.instant();
             drop_expired(unit.tx(), now)?;
             let held = generation(unit.tx())?.ok_or_else(invalid_proof)?;
-            add(unit.tx(), &digest, TICKET, &held, Some(now + TICKET_MS))?;
+            let expires_at = now.plus_ms(TICKET_MS)?;
+            add(unit.tx(), &digest, TICKET, &held, Some(expires_at))?;
             unit.audit("instance", &instance_id, None)?;
-            Ok(now + TICKET_MS)
+            Ok(expires_at)
         })
         .await?;
     Ok((ticket, expires_at))
@@ -195,13 +197,14 @@ pub async fn issue_ticket(app: &App, caller: &Caller) -> Result<(String, i64)> {
 
 pub struct SetupSession {
     pub token: String,
-    pub expires_at: i64,
+    pub expires_at: Stamp,
 }
 
-fn add_session(tx: &Transaction<'_>, digest: &str, now_ms: i64) -> Result<i64> {
+fn add_session(tx: &Transaction<'_>, digest: &str, now: Stamp) -> Result<Stamp> {
     let held = generation(tx)?.ok_or_else(invalid_proof)?;
-    add(tx, digest, SESSION, &held, Some(now_ms + SESSION_MS))?;
-    Ok(now_ms + SESSION_MS)
+    let expires_at = now.plus_ms(SESSION_MS)?;
+    add(tx, digest, SESSION, &held, Some(expires_at))?;
+    Ok(expires_at)
 }
 
 async fn count_code(app: &App, address: Option<IpAddr>) -> Result<()> {
@@ -237,7 +240,7 @@ async fn exchange(
         .db
         .write(Write::caller(action), move |tx| {
             require_unclaimed(tx)?;
-            let now = clock.now_ms();
+            let now = clock.instant();
             if !holds(tx, kind, &digest, now)? {
                 return Err(invalid_proof());
             }
@@ -304,11 +307,11 @@ fn sought(app: &App, proof: &Proof) -> Result<Option<(&'static str, String)>> {
 fn proof_stands(
     tx: &Transaction<'_>,
     sought: Option<&(&'static str, String)>,
-    now_ms: i64,
+    now: Stamp,
 ) -> Result<()> {
     require_unclaimed(tx)?;
     match sought {
-        Some((kind, digest)) if !holds(tx, kind, digest, now_ms)? => Err(invalid_proof()),
+        Some((kind, digest)) if !holds(tx, kind, digest, now)? => Err(invalid_proof()),
         _ => Ok(()),
     }
 }
@@ -317,7 +320,7 @@ pub async fn session_stands(app: &App, token: &str) -> Result<bool> {
     let digest = digest_of(&app.settings.start.key_salt, token)?;
     let clock = app.clock.clone();
     app.db
-        .read(move |tx| holds(tx, SESSION, &digest, clock.now_ms()))
+        .read(move |tx| holds(tx, SESSION, &digest, clock.instant()))
         .await
 }
 
@@ -338,7 +341,7 @@ pub async fn claim(app: &App, details: Details, proof: Proof, visit: Visit) -> R
     let clock = app.clock.clone();
     let judged = sought.clone();
     app.db
-        .read(move |tx| proof_stands(tx, judged.as_ref(), clock.now_ms()))
+        .read(move |tx| proof_stands(tx, judged.as_ref(), clock.instant()))
         .await?;
     password::check_new(&details.password)?;
     let hash = app.passwords.hash(details.password.clone()).await?;
@@ -346,8 +349,8 @@ pub async fn claim(app: &App, details: Details, proof: Proof, visit: Visit) -> R
     app.db
         .write(Write::caller(CLAIMED), move |tx| {
             let at = clock.stamp();
-            proof_stands(tx, sought.as_ref(), clock.now_ms())?;
-            let owner = owner::create(tx, &details, &hash, seconds_of(&at)?)?;
+            proof_stands(tx, sought.as_ref(), clock.instant())?;
+            let owner = owner::create(tx, &details, &hash, Stamp::read(&at)?)?;
             if !instance::mark_claimed(tx, &at, &owner.id)? {
                 return Err(already_claimed());
             }

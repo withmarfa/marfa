@@ -7,9 +7,9 @@ use rusqlite::{Transaction, params};
 use serde_json::json;
 
 use super::grant;
-use super::store::stamp_of;
 use crate::app::access::Caller;
 use crate::app::auth::session;
+use crate::app::clock::Stamp;
 use crate::app::housekeeping::{Report, Run, drain};
 use crate::app::refusal::Result;
 use crate::app::{App, stored};
@@ -30,15 +30,19 @@ const WITHDRAWN_GRANTS: &str = "SELECT client_id, user_id FROM auth_oauth_consen
                                 WHERE withdrawn_at IS NOT NULL AND withdrawn_at < ?1 LIMIT ?2";
 
 /// Read from `tx`, since the live settings lag a change the writer has committed.
-fn cutoff_of(tx: &Transaction<'_>, app: &App, retention: Setting<u64>) -> Result<Option<i64>> {
+fn cutoff_of(tx: &Transaction<'_>, app: &App, retention: Setting<u64>) -> Result<Option<Stamp>> {
     let days = stored::deciding(tx, &app.settings.seeds(), retention)?;
-    Ok((days > 0).then(|| app.clock.now_ms() - i64::try_from(days).unwrap_or(0) * MS_PER_DAY))
+    if days == 0 {
+        return Ok(None);
+    }
+    let kept = i64::try_from(days).unwrap_or(i64::MAX).saturating_mul(MS_PER_DAY);
+    Ok(app.clock.instant().earlier_by(kept))
 }
 
 fn consents_in(
     tx: &Transaction<'_>,
     query: &str,
-    cutoff: i64,
+    cutoff: Stamp,
     limit: i64,
 ) -> Result<Vec<(String, String)>> {
     let mut found = tx.prepare(query)?;
@@ -80,7 +84,7 @@ async fn idle_clients(app: &Arc<App>) -> Result<i64> {
         if count > 0 {
             unit.audit_set(
                 "oauth_client",
-                Some(json!({ "count": count, "cutoff": stamp_of(cutoff) })),
+                Some(json!({ "count": count, "cutoff": cutoff })),
             )?;
         }
         Ok(i64::try_from(count).unwrap_or(i64::MAX))
@@ -115,7 +119,7 @@ async fn retire_one(app: &Arc<App>) -> Result<i64> {
                 Some(json!({
                     "client_id": client_id,
                     "user_id": user_id,
-                    "cutoff": stamp_of(cutoff),
+                    "cutoff": cutoff,
                 })),
             )?;
         }
@@ -149,7 +153,7 @@ async fn withdrawn_grants(app: &Arc<App>) -> Result<i64> {
         if !withdrawn.is_empty() {
             unit.audit_set(
                 "oauth_grant",
-                Some(json!({ "count": withdrawn.len(), "cutoff": stamp_of(cutoff) })),
+                Some(json!({ "count": withdrawn.len(), "cutoff": cutoff })),
             )?;
         }
         Ok(i64::try_from(withdrawn.len()).unwrap_or(i64::MAX))
@@ -172,7 +176,9 @@ async fn expired_in(
     key: &'static str,
     kept_ms: i64,
 ) -> Result<i64> {
-    let cutoff = app.clock.now_ms() - kept_ms;
+    let Some(cutoff) = app.clock.instant().earlier_by(kept_ms) else {
+        return Ok(0);
+    };
     app.db
         .write(Write::own(), move |tx| {
             let count = tx.execute(
@@ -188,10 +194,10 @@ async fn expired_in(
 }
 
 async fn expired_sessions(app: &Arc<App>) -> Result<i64> {
-    let now_ms = app.clock.now_ms();
+    let now = app.clock.instant();
     app.db
         .write(Write::own(), move |tx| {
-            session::remove_expired(tx, now_ms, BATCH)
+            session::remove_expired(tx, now, BATCH)
         })
         .await
 }

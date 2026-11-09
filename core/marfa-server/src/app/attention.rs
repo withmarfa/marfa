@@ -7,10 +7,11 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
+use crate::app::clock::Stamp;
 use super::connectors::{self, Reason};
 use super::faults::{FAIL_ATTENTION, HOLD_ATTENTION};
 use super::refusal::Result;
-use super::{App, auth, folders, health, housekeeping, keys};
+use super::{App, folders, health, housekeeping, keys};
 
 const CHECK_WAIT: Duration = Duration::from_secs(3);
 const SOON_MS: i64 = 7 * housekeeping::DAY_MS;
@@ -165,13 +166,13 @@ async fn ending(app: &Arc<App>, at: &str) -> Result<Vec<Concern>> {
     let live = app
         .db
         .read(move |tx| {
-            let now = auth::millis_of(&at)?;
+            let now = Stamp::read(&at)?.ms();
             let mut soon = Vec::new();
             for key in keys::all_live(tx, &at)? {
                 let Some(expires) = key.expires_at.as_deref() else {
                     continue;
                 };
-                if auth::millis_of(expires)? - now <= SOON_MS {
+                if Stamp::read(expires)?.ms() - now <= SOON_MS {
                     soon.push((key.id, key.label, expires.to_string()));
                 }
             }

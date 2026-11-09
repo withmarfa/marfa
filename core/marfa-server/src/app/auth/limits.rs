@@ -3,9 +3,9 @@
 
 use std::net::IpAddr;
 
-use chrono::{DateTime, SecondsFormat, Utc};
 use rusqlite::{OptionalExtension, Transaction, params};
 
+use crate::app::clock::Stamp;
 use super::owner::MAX_EMAIL_CHARS;
 use crate::app::App;
 use crate::app::refusal::{Code, Refusal, Result};
@@ -182,14 +182,8 @@ pub async fn hold_to(app: &App, lanes: [Lane; 1], message: &'static str) -> Resu
     wait.map_or(Ok(()), |wait| Err(spent(message, wait)))
 }
 
-fn stamp(ms: i64) -> String {
-    DateTime::<Utc>::from_timestamp_millis(ms)
-        .unwrap_or_default()
-        .to_rfc3339_opts(SecondsFormat::Millis, true)
-}
-
 fn read(tx: &Transaction<'_>, lane: &Lane, now_ms: i64) -> Result<Option<(i64, i64)>> {
-    let row: Option<(i64, String)> = tx
+    let row: Option<(i64, Stamp)> = tx
         .query_row(
             "SELECT count, expires_at FROM rate_limit_windows \
              WHERE family = ?1 AND window_key = ?2",
@@ -198,10 +192,7 @@ fn read(tx: &Transaction<'_>, lane: &Lane, now_ms: i64) -> Result<Option<(i64, i
         )
         .optional()?;
     Ok(row.and_then(|(count, expires_at)| {
-        let end = DateTime::parse_from_rfc3339(&expires_at)
-            .ok()?
-            .timestamp_millis();
-        (end > now_ms).then_some((count, end))
+        (expires_at.ms() > now_ms).then_some((count, expires_at.ms()))
     }))
 }
 
@@ -209,7 +200,7 @@ pub fn remove_expired(tx: &Transaction<'_>, now_ms: i64, batch: i64) -> Result<i
     let count = tx.execute(
         "DELETE FROM rate_limit_windows WHERE (family, window_key) IN ( \
          SELECT family, window_key FROM rate_limit_windows WHERE expires_at <= ?1 LIMIT ?2)",
-        params![stamp(now_ms), batch],
+        params![Stamp::from_ms(now_ms)?, batch],
     )?;
     Ok(i64::try_from(count).unwrap_or(i64::MAX))
 }
@@ -221,7 +212,7 @@ pub fn admit(tx: &Transaction<'_>, now_ms: i64, lanes: &[Lane]) -> Result<Option
         "DELETE FROM rate_limit_windows WHERE expires_at <= ?1 AND family IN \
          (?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
-            stamp(now_ms),
+            Stamp::from_ms(now_ms)?,
             ADDRESS,
             ACCOUNT_ADDRESS,
             ACCOUNT,
@@ -249,7 +240,7 @@ pub fn admit(tx: &Transaction<'_>, now_ms: i64, lanes: &[Lane]) -> Result<Option
                 "INSERT INTO rate_limit_windows (family, window_key, count, expires_at) \
                  VALUES (?1, ?2, ?3, ?4) ON CONFLICT (family, window_key) \
                  DO UPDATE SET count = excluded.count, expires_at = excluded.expires_at",
-                params![lane.family, lane.key, count + 1, stamp(lane_end)],
+                params![lane.family, lane.key, count + 1, Stamp::from_ms(lane_end)?],
             )?;
             refused = count + 1 > lane.limit;
             (count + 1, lane_end)
@@ -363,7 +354,7 @@ mod tests {
         let tx = conn.transaction().unwrap();
         tx.execute(
             "INSERT INTO rate_limit_windows VALUES (?1, ?2, 100, ?3)",
-            params![ACCOUNT, "a@example.test", stamp(50 * MINUTE_MS)],
+            params![ACCOUNT, "a@example.test", Stamp::from_ms(50 * MINUTE_MS).unwrap()],
         )
         .unwrap();
         tx.commit().unwrap();

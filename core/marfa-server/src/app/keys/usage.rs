@@ -38,10 +38,11 @@ impl Usage {
 }
 
 pub fn note(app: &Arc<App>, key: &Key) {
+    let cutoff = app.clock.instant().earlier_by(COALESCE_MS).map(|at| at.text());
     let due = key
         .last_used_at
         .as_ref()
-        .is_none_or(|last| *last <= app.clock.stamp_ago(COALESCE_MS));
+        .is_none_or(|last| cutoff.as_ref().is_some_and(|cutoff| last <= cutoff));
     if !due {
         return;
     }
