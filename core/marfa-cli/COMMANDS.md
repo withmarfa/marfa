@@ -314,6 +314,14 @@ The owner's name and picture, changed with a key or app's profile write permissi
 marfa profile [OPTIONS] <COMMAND>
 ```
 
+### marfa profile show
+
+Show the owner's name, email address and avatar, as far as profile read permission reaches.
+
+```text
+marfa profile show [OPTIONS]
+```
+
 ### marfa profile update
 
 Change the owner's name or avatar with profile write permission for each field.

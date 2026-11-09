@@ -3,7 +3,6 @@ use std::collections::BTreeMap;
 use serde_json::{Map, Value};
 
 use crate::error::{Code, FieldError, RuleError, field_code};
-use crate::js;
 use crate::thumbnail::{THUMBNAIL_MAX_BYTES, Thumbnail};
 use crate::url_host;
 
@@ -109,7 +108,7 @@ pub fn tags(tags: &[String]) -> Result<(), RuleError> {
         .filter_map(|(index, tag)| {
             let (code, problem) = if tag.is_empty() {
                 (field_code::EMPTY, "A tag must not be empty".to_string())
-            } else if tag.chars().all(js::is_space) {
+            } else if tag.chars().all(char::is_whitespace) {
                 (
                     field_code::INVALID_VALUE,
                     "A tag must not be blank".to_string(),
@@ -119,10 +118,10 @@ pub fn tags(tags: &[String]) -> Result<(), RuleError> {
                     field_code::INVALID_VALUE,
                     format!("A tag must not be {tag:?}, which a URL path cannot name"),
                 )
-            } else if tag.encode_utf16().count() > MAX_TAG_LENGTH {
+            } else if tag.chars().count() > MAX_TAG_LENGTH {
                 (
                     field_code::TOO_LONG,
-                    format!("A tag must contain at most {MAX_TAG_LENGTH} UTF-16 code units"),
+                    format!("A tag must contain at most {MAX_TAG_LENGTH} characters"),
                 )
             } else {
                 return None;
@@ -293,10 +292,10 @@ fn field(kind: &str, definition: &Value, value: &Value) -> Result<Option<Problem
     };
     let bounded = |text: &str| {
         let max = limit("maxLength", STRING_MAX_LENGTH);
-        if text.encode_utf16().count() as u64 > max {
+        if text.chars().count() as u64 > max {
             Some(Problem::new(
                 field_code::TOO_LONG,
-                format!("Must contain at most {max} UTF-16 code units"),
+                format!("Must contain at most {max} characters"),
             ))
         } else if text.contains('\0') {
             invalid(NUL_REFUSED)
@@ -456,7 +455,7 @@ fn entry(
 /// None where the text is refused. It is trimmed, judged as the WHATWG URL standard judges it, and kept without the tabs and line breaks the standard ignores. The `url` crate parts from the standard on some authorities, which `url_host` corrects.
 pub fn url_value(text: &str) -> Option<String> {
     let kept: String = text
-        .trim_matches(js::is_space)
+        .trim()
         .chars()
         .filter(|ch| !matches!(ch, '\t' | '\n' | '\r'))
         .collect();
@@ -656,7 +655,7 @@ mod tests {
     }
 
     #[test]
-    fn a_url_is_trimmed_and_judged_as_the_server_does() {
+    fn a_url_is_trimmed_of_unicode_whitespace_and_judged_as_the_standard_judges_it() {
         for (text, stored) in [
             ("https://example.com/a", "https://example.com/a"),
             ("  https://example.com/a  ", "https://example.com/a"),
@@ -664,11 +663,8 @@ mod tests {
                 "\u{3000}https://example.com/a\u{3000}",
                 "https://example.com/a",
             ),
-            ("\u{feff}https://example.com/a", "https://example.com/a"),
-            (
-                "\u{feff}https://example.com/a\u{feff}",
-                "https://example.com/a",
-            ),
+            ("\u{85}https://example.com/a", "https://example.com/a"),
+            ("\u{85}https://example.com/a\u{85}", "https://example.com/a"),
             (
                 "\u{a0}https://example.com/a\u{2028}",
                 "https://example.com/a",
@@ -707,7 +703,7 @@ mod tests {
             assert_eq!(url_value(text).as_deref(), Some(stored), "{text:?}");
         }
         for text in [
-            "\u{85}https://example.com/a",
+            "\u{feff}https://example.com/a",
             "not a url",
             "",
             "   ",

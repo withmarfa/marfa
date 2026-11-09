@@ -298,7 +298,7 @@ fn refuses_with_the_servers_message_a_model_the_server_would_refuse() {
 }
 
 #[test]
-fn takes_text_of_exactly_2048_utf16_units_and_refuses_one_more_as_the_server_does() {
+fn takes_text_of_exactly_2048_characters_and_refuses_one_more() {
     let at = |emoji: usize, extra: &str| {
         condition(
             property("a"),
@@ -306,18 +306,18 @@ fn takes_text_of_exactly_2048_utf16_units_and_refuses_one_more_as_the_server_doe
             text(&format!("{}{extra}", "\u{1F389}".repeat(emoji))),
         )
     };
-    let written = at(1015, "").encode().unwrap();
-    assert_eq!(written.encode_utf16().count(), 2048);
-    assert_eq!(written.chars().count(), 1033);
+    let written = at(2030, "").encode().unwrap();
+    assert_eq!(written.chars().count(), 2048);
+    assert_eq!(written.encode_utf16().count(), 4078);
     assert_eq!(
-        refusal(at(1015, "x").encode()),
+        refusal(at(2030, "x").encode()),
         (
             "validation_error".to_string(),
             "Filter expression too long (2049 characters). Maximum is 2048".to_string()
         )
     );
     let quotes = condition(property("a"), FilterOperator::Eq, text(&"\"".repeat(1015)));
-    assert_eq!(quotes.encode().unwrap().encode_utf16().count(), 2048);
+    assert_eq!(quotes.encode().unwrap().chars().count(), 2048);
     let quotes = condition(property("a"), FilterOperator::Eq, text(&"\"".repeat(1016)));
     assert_eq!(
         refusal(quotes.encode()).1,

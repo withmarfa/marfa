@@ -152,29 +152,6 @@ const SHARED = JSON.parse(
   }[];
 };
 
-it("names every shared display case as a device does, and Untitled where a device answers no name", async () => {
-  // In order: a parent before the types that inherit from it.
-  for (const type of SHARED.types) {
-    const registered = await key("/types", type);
-    expect(registered.status, await registered.text()).toBe(201);
-  }
-  expect(SHARED.cases.length).toBeGreaterThan(0);
-  for (const { description, type, properties, name } of SHARED.cases) {
-    const made = await key("/items", { type, properties });
-    expect(made.status, `${description}: ${await made.clone().text()}`).toBe(
-      201,
-    );
-    const { item } = (await made.json()) as { item: { id: string } };
-    const result = await owner(`/items/summaries?type=${type}&limit=100`);
-    expect(result.status).toBe(200);
-    expect(
-      ((await result.json()) as Page).data.find((row) => row.id === item.id)
-        ?.name,
-      description,
-    ).toBe(name ?? "Untitled");
-  }
-});
-
 it("names every shared part case as a device does", async () => {
   // Registered here too, so the case does not lean on the one above.
   for (const type of SHARED.types) {

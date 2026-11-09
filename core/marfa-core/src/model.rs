@@ -1716,11 +1716,11 @@ mod tests {
     fn timestamp_projection_keeps_the_original_request() {
         let draft = Draft {
             r#type: "core.note".into(),
-            occurred_at: Some("2026-01-01T01:00:00.500+0100".into()),
+            occurred_at: Some("2026-01-01T01:00:00.500+01:00".into()),
             ..Default::default()
         };
         let body: Value = serde_json::from_str(&draft.payload("held").unwrap()).unwrap();
-        assert_eq!(body["occurred_at"], "2026-01-01T01:00:00.500+0100");
+        assert_eq!(body["occurred_at"], "2026-01-01T01:00:00.500+01:00");
         let row = draft.wire("held");
         assert_eq!(row.occurred_at, "2026-01-01T00:00:00.500Z");
         assert_eq!(row.created_at, row.occurred_at);

@@ -111,11 +111,13 @@ fn strings(sent: &Map<String, Value>, field: &str) -> Result<Option<Vec<String>>
         .map(Some)
 }
 
-fn timestamp(sent: &Map<String, Value>, field: &str) -> Result<Option<String>> {
+fn timestamp(
+    sent: &Map<String, Value>,
+    field: &str,
+    reads: fn(&str, &str) -> marfa_rules::error::Result<String>,
+) -> Result<Option<String>> {
     text_of(sent, field)?
-        .map(|text| {
-            time::normalize(&text, field).map_err(|error| invalid_field(field, error.message))
-        })
+        .map(|text| reads(&text, field).map_err(|error| invalid_field(field, error.message)))
         .transpose()
 }
 
@@ -178,8 +180,8 @@ fn ask_of(sent: &Map<String, Value>) -> Result<Ask> {
             .filter(|tag| !tag.trim().is_empty())
             .collect(),
         filter: expression,
-        occurred_after: timestamp(&filter, "occurred_after")?,
-        occurred_before: timestamp(&filter, "occurred_before")?,
+        occurred_after: timestamp(&filter, "occurred_after", time::normalize_bound)?,
+        occurred_before: timestamp(&filter, "occurred_before", time::normalize_bound)?,
         ..Ask::default()
     })
 }
@@ -253,7 +255,7 @@ fn action_of(name: &str, sent: &Map<String, Value>) -> Result<(Action, Option<Ve
             Some(_) => return Err(invalid_field("patch", "patch must be an object.")),
         },
         "update_occurred_at" => Action::UpdateOccurredAt {
-            occurred_at: required(timestamp(sent, "occurred_at")?, "occurred_at")?,
+            occurred_at: required(timestamp(sent, "occurred_at", time::rfc3339)?, "occurred_at")?,
         },
         _ => {
             return Err(invalid_field(

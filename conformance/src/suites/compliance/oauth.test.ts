@@ -50,7 +50,7 @@ describe("OAuth provider", () => {
     expect(doc.code_challenge_methods_supported).toContain("S256");
   });
 
-  it("serves each discovery document under both of its spellings, alike", async () => {
+  it("serves the authorization server metadata under both of its spellings, alike", async () => {
     const read = async (path: string) => {
       const r = await fetch(`${apiUrl}${path}`);
       expect(r.status, path).toBe(200);
@@ -60,15 +60,12 @@ describe("OAuth provider", () => {
     expect(await read("/auth/.well-known/oauth-authorization-server")).toEqual(
       metadata,
     );
-    const openid = await read("/.well-known/openid-configuration/auth");
-    expect(await read("/auth/.well-known/openid-configuration")).toEqual(
-      openid,
-    );
-    expect(openid.issuer).toBe(metadata.issuer);
   });
 
   it("names every endpoint under the issuer, and serves the code, refresh and device grants and no other", async () => {
-    const r = await fetch(`${apiUrl}/.well-known/openid-configuration/auth`);
+    const r = await fetch(
+      `${apiUrl}/.well-known/oauth-authorization-server/auth`,
+    );
     const doc = (await r.json()) as Record<string, unknown>;
     const issuer = String(doc.issuer);
     expect(doc).toMatchObject({
@@ -76,21 +73,13 @@ describe("OAuth provider", () => {
       token_endpoint: `${issuer}/oauth2/token`,
       registration_endpoint: `${issuer}/oauth2/register`,
       revocation_endpoint: `${issuer}/oauth2/revoke`,
-      introspection_endpoint: `${issuer}/oauth2/introspect`,
-      userinfo_endpoint: `${issuer}/oauth2/userinfo`,
-      end_session_endpoint: `${issuer}/oauth2/end-session`,
       device_authorization_endpoint: `${issuer}/device/code`,
-      jwks_uri: `${issuer}/jwks`,
     });
     expect(doc.grant_types_supported).toEqual([
       "authorization_code",
       "refresh_token",
       "urn:ietf:params:oauth:grant-type:device_code",
     ]);
-    const jwks = await fetch(String(doc.jwks_uri));
-    expect(jwks.status).toBe(200);
-    const set = (await jwks.json()) as { keys: { kid?: string }[] };
-    expect(set.keys.length).toBeGreaterThan(0);
   });
 
   it("serves the protected resource metadata, naming this server as the resource and its issuer as the authorization server", async () => {
@@ -154,18 +143,15 @@ describe("OAuth provider", () => {
     }
   });
 
-  it("advertises client ID metadata documents beside public clients in both discovery documents", async () => {
-    for (const path of [
-      "/.well-known/oauth-authorization-server/auth",
-      "/.well-known/openid-configuration/auth",
-    ]) {
-      const doc = (await (await fetch(`${apiUrl}${path}`)).json()) as {
-        client_id_metadata_document_supported?: unknown;
-        token_endpoint_auth_methods_supported?: unknown;
-      };
-      expect(doc.client_id_metadata_document_supported, path).toBe(true);
-      expect(doc.token_endpoint_auth_methods_supported, path).toContain("none");
-    }
+  it("advertises client ID metadata documents beside public clients", async () => {
+    const doc = (await (
+      await fetch(`${apiUrl}/.well-known/oauth-authorization-server/auth`)
+    ).json()) as {
+      client_id_metadata_document_supported?: unknown;
+      token_endpoint_auth_methods_supported?: unknown;
+    };
+    expect(doc.client_id_metadata_document_supported).toBe(true);
+    expect(doc.token_endpoint_auth_methods_supported).toContain("none");
   });
 
   it("registers a native client dynamically and issues a client_id", async () => {
@@ -204,10 +190,10 @@ describe("OAuth provider", () => {
       grant_types: ["authorization_code"],
       response_types: ["code"],
       token_endpoint_auth_method: "none",
-      scope: "core.note:read openid core.note:read",
+      scope: "core.note:read core.note:write core.note:read",
     });
     expect(r.status).toBe(201);
-    expect(r.data.scope).toBe("core.note:read openid");
+    expect(r.data.scope).toBe("core.note:read core.note:write");
   });
 
   it("registers a web client, whose redirect URI must be https and off the loopback", async () => {

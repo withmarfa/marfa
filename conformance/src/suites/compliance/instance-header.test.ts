@@ -180,7 +180,7 @@ describe("a write that names an instance", () => {
       expect(await codeOf(res)).toBe("validation_error");
     }
 
-    // The same for text that is not well-formed UTF-16.
+    // The same for a surrogate escape with no partner.
     const lone = { type: "core.note", properties: { body: "lone \ud83d" } };
     const loneElsewhere = await send("/items", {
       body: lone,

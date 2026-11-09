@@ -417,6 +417,11 @@ describe("the folder door", () => {
       "removal_threshold.files",
     ],
     [
+      { removal_threshold: { files: 9007199254740992 } },
+      "validation_error",
+      "removal_threshold.files",
+    ],
+    [
       { full_pass_interval_seconds: 59 },
       "validation_error",
       "full_pass_interval_seconds",
@@ -443,6 +448,19 @@ describe("the folder door", () => {
     ],
     [{ outside_query: "keep" }, "validation_error", "outside_query"],
     [{ outside_query: null }, "validation_error", "outside_query"],
+    [
+      { query: { types: ["core.note"] }, defaults: { type: "core.task" } },
+      "validation_error",
+      "defaults.type",
+    ],
+    [{ defaults: { tier: "feed" } }, "validation_error", "defaults.tier"],
+    [
+      { query: { tier: "feed" }, defaults: { tier: "library" } },
+      "validation_error",
+      "defaults.tier",
+    ],
+    [{ include: ["{a,b"] }, "validation_error", "include"],
+    [{ ignore: ["[z-a]"] }, "validation_error", "ignore"],
   ])(
     "refuses a malformed setting %j with %s naming %s, on a create and on a change",
     async (settings, code, path) => {
@@ -458,6 +476,48 @@ describe("the folder door", () => {
       }
     },
   );
+
+  it("refuses include and ignore lines that hold more than 6144 characters together, on a create and on a change", async () => {
+    const { id } = await folder();
+    const lines = Array.from({ length: 4 }, () => "a".repeat(1000));
+    const alone = await client.createFolder({
+      title: "alone",
+      include: lines,
+    });
+    expect(alone.status).toBe(201);
+    const settings = { include: lines, ignore: lines };
+    for (const r of [
+      await client.createFolder({ title: "refused", ...settings }),
+      await client.updateFolder(id, { version: 1, ...settings }),
+    ]) {
+      expect(r.status).toBe(400);
+      const refusal = r.error as unknown as Refusal;
+      expect(refusal.error.code).toBe("validation_error");
+      expect(refusal.error.details?.errors?.[0]?.path).toBe("ignore");
+    }
+  });
+
+  it("refuses a list that compiles past the bound with its list named, on a create and on a change", async () => {
+    const { id } = await folder();
+    const wild = Array.from({ length: 12 }, () => "?".repeat(500));
+    const one = await client.createFolder({
+      title: "one",
+      include: ["?".repeat(500)],
+      ignore: ["?".repeat(500)],
+    });
+    expect(one.status).toBe(201);
+    for (const list of ["include", "ignore"] as const) {
+      for (const r of [
+        await client.createFolder({ title: "refused", [list]: wild }),
+        await client.updateFolder(id, { version: 1, [list]: wild }),
+      ]) {
+        expect(r.status).toBe(400);
+        const refusal = r.error as unknown as Refusal;
+        expect(refusal.error.code).toBe("validation_error");
+        expect(refusal.error.details?.errors?.[0]?.path).toBe(list);
+      }
+    }
+  });
 
   it("refuses a key a folder setting does not declare, naming its path from the body, on a create and on a change", async () => {
     const { id } = await folder();
@@ -527,6 +587,59 @@ describe("the folder door", () => {
     const { id } = await folder(settings);
     const changed = await client.updateFolder(id, { version: 1, ...settings });
     expect(changed.status).toBe(200);
+  });
+
+  it("refuses a change that leaves a default type outside the query, whichever setting it changes", async () => {
+    const { id } = await folder({
+      query: { types: ["core.note"] },
+      defaults: { type: "core.note" },
+    });
+    for (const change of [
+      { defaults: { type: "core.task" } },
+      { query: { types: ["core.task"] } },
+    ]) {
+      const r = await client.updateFolder(id, { version: 1, ...change });
+      expect(r.status, JSON.stringify(change)).toBe(400);
+      const refusal = r.error as unknown as Refusal;
+      expect(refusal.error.code).toBe("validation_error");
+      expect(refusal.error.details?.errors?.[0]?.path).toBe("defaults.type");
+    }
+    // The witness: both changed together leave the default inside the query.
+    const both = await client.updateFolder(id, {
+      version: 1,
+      query: { types: ["core.task"] },
+      defaults: { type: "core.task" },
+    });
+    expect(both.status).toBe(200);
+  });
+
+  it("takes a default tier the query holds, and the feed beside a query of both tiers", async () => {
+    for (const settings of [
+      { defaults: { tier: "library" } },
+      { query: { tier: "feed" }, defaults: { tier: "feed" } },
+      { query: { tier: "all" }, defaults: { tier: "feed" } },
+    ]) {
+      const r = await client.createFolder({ title: "tiers", ...settings });
+      expect(r.status, JSON.stringify(settings)).toBe(201);
+    }
+  });
+
+  it("takes the star in a folder's query types and reads it back", async () => {
+    const settings = {
+      query: { types: ["*"] },
+      defaults: { type: "core.task" },
+    };
+    const { id } = await folder(settings);
+    const read = await client.getItem(id);
+    expect(read.data.item.properties).toMatchObject(settings);
+    const changed = await client.updateFolder(id, {
+      version: 1,
+      query: { types: ["*", "core.note"] },
+    });
+    expect(changed.status).toBe(200);
+    expect(changed.data.item.properties.query).toEqual({
+      types: ["*", "core.note"],
+    });
   });
 
   it("answers a folder create repeated under one Idempotency-Key once", async () => {

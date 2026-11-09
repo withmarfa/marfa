@@ -20,6 +20,7 @@ mod doors;
 mod edge_types;
 mod edges;
 mod events;
+mod folders;
 mod health;
 mod housekeeping;
 mod items;
@@ -109,7 +110,6 @@ fn schema_doors() -> Routes {
     Doors::new()
         .route("/types", get(types::list).post(types::register))
         .route("/types/normalize", post(types::normalize))
-        .route("/types/{id}/move", post(jobs::move_type))
         .route(
             "/types/{id}",
             get(types::read).put(types::replace).delete(types::delete),
@@ -123,6 +123,12 @@ fn schema_doors() -> Routes {
             get(edge_types::list).post(edge_types::register),
         )
         .route("/edge-types/{id}", delete(edge_types::delete))
+}
+
+fn type_move_doors(app: Arc<App>) -> Routes {
+    Doors::new()
+        .route("/types/{id}/move", post(jobs::move_type))
+        .admitting(app, Admission::Mapped)
 }
 
 fn overview_doors(app: Arc<App>) -> Routes {
@@ -187,13 +193,31 @@ fn item_doors(app: Arc<App>) -> Routes {
         .admitting(app, Admission::Mapped)
 }
 
+fn folder_doors(app: Arc<App>) -> Routes {
+    let settings = Doors::new()
+        .route("/folders", post(folders::create))
+        .route("/folders/{id}", patch(folders::update))
+        .route("/folders/{id}/revoke", post(folders::revoke))
+        .admitting(app.clone(), Admission::Mapped);
+    let status = Doors::new()
+        .route("/folders", get(folders::inventory))
+        .route(
+            "/folders/{id}/status",
+            put(folders::report).get(folders::status),
+        )
+        .admitting(app, Admission::Presented);
+    settings.merge(status)
+}
+
 fn blob_doors() -> Routes {
     Doors::new()
         .route("/blobs", post(blobs::upload))
         .route("/blobs/stores", get(blobs::stores))
+        .route("/blobs/orphans", get(blobs::orphans))
         .route("/blobs/{hash}", get(blobs::download).head(blobs::head))
         .route("/blobs/{hash}/url", get(blobs::url))
         .route("/blobs/{hash}/copies", get(blobs::copies))
+        .route("/blobs/{hash}/copies/{store}", delete(blobs::drop_copy))
         .route(
             "/blobs/{hash}/fetch",
             get(blobs::fetch).head(blobs::fetch_head),
@@ -213,7 +237,7 @@ fn owner_item_doors() -> Routes {
 fn profile_doors() -> Routes {
     Doors::new()
         .route("/owner/picture", get(profile::read).put(profile::put_owner))
-        .route("/profile", patch(profile::update))
+        .route("/profile", get(profile::read_own).patch(profile::update))
         .route("/profile/picture", put(profile::put_profile))
 }
 
@@ -275,9 +299,11 @@ fn shared(app: Arc<App>) -> Routes {
         .route("/sources", get(sources::list))
         .route("/source", get(sources::read).patch(sources::update))
         .merge(schema_doors())
+        .merge(type_move_doors(app.clone()))
         .merge(key_doors(app.clone()))
         .merge(webhook_doors(app.clone()))
         .merge(item_doors(app.clone()))
+        .merge(folder_doors(app.clone()))
         .merge(blob_doors())
         .merge(connector_doors(app.clone()))
         .merge(overview_doors(app.clone()))
@@ -361,6 +387,10 @@ fn control_doors(app: &Arc<App>) -> Routes {
                 get(test_hooks::read_faults)
                     .put(test_hooks::set_fault)
                     .delete(test_hooks::clear_faults),
+            )
+            .route(
+                "/_control/test/blob-stores",
+                get(test_hooks::inspect_stores),
             );
     }
     routes

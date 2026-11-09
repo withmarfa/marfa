@@ -157,23 +157,23 @@ describe("a device refuses a filter outside the listing grammar", () => {
     }
   });
 
-  it("counts a filter's length in UTF-16 code units, as the server does", async () => {
+  it("counts a filter's length in characters, as the server does", async () => {
     harness = await hydrated("filter-units");
     const { device } = harness;
     const room = 2048 - 'properties.title eq ""'.length;
-    // Each of these characters is two UTF-16 code units and one code point.
+    // Each of these characters is one Unicode character and two UTF-16 units.
     const within = await device.list({
-      filter: `properties.title eq "${"\u{1F600}".repeat(room / 2)}"`,
+      filter: `properties.title eq "${"\u{1F600}".repeat(room)}"`,
     });
     expect(
       within.ok,
-      `2048 code units were refused: ${JSON.stringify(within)}`,
+      `2048 characters were refused: ${JSON.stringify(within)}`,
     ).toBe(true);
     expectRefusedAsTheServerDoes(
       await device.list({
-        filter: `properties.title eq "${"\u{1F600}".repeat(room / 2 + 1)}"`,
+        filter: `properties.title eq "${"\u{1F600}".repeat(room + 1)}"`,
       }),
-      "2050 code units in fewer than 2048 characters",
+      "2049 characters",
     );
   });
 

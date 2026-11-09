@@ -11,7 +11,7 @@ use super::oauth::grants;
 use super::query;
 use super::refusal::{Code, Refusal, Result};
 
-const MAX_UNITS: usize = 200;
+const MAX_LENGTH: usize = 200;
 const RESTORED: &str = "restored:";
 const ICON_SETS: [(&str, &str); 2] = [
     (
@@ -26,12 +26,12 @@ const ICON_SETS: [(&str, &str); 2] = [
 
 pub const FIELDS: [&str; 2] = ["name", "mark"];
 
-pub fn units(text: &str) -> usize {
-    text.encode_utf16().count()
+pub fn length(text: &str) -> usize {
+    text.chars().count()
 }
 
 pub fn check_code(code: &str) -> Result<()> {
-    let short = |text: &str| units(text) <= MAX_UNITS;
+    let short = |text: &str| length(text) <= MAX_LENGTH;
     if !code.is_empty()
         && code.trim() == code
         && (short(code) || code.strip_prefix(RESTORED).is_some_and(short))
@@ -81,7 +81,7 @@ fn name(value: &Value) -> Result<Option<String>> {
     }
     let refused = || Refusal::validation("name must be text of 1 to 200 characters to show.");
     let trimmed = value.as_str().ok_or_else(refused)?.trim();
-    if trimmed.is_empty() || units(trimmed) > MAX_UNITS || trimmed.chars().any(hidden) {
+    if trimmed.is_empty() || length(trimmed) > MAX_LENGTH || trimmed.chars().any(hidden) {
         return Err(refused());
     }
     Ok(Some(trimmed.to_string()))
@@ -254,7 +254,7 @@ mod tests {
             Some("GitHub")
         );
         assert_eq!(name(&Value::Null).unwrap(), None);
-        assert!(name(&json!(&"😀".repeat(100))).is_ok());
+        assert!(name(&json!(&"😀".repeat(200))).is_ok());
         for bad in [
             json!("   "),
             json!(5),
@@ -265,7 +265,7 @@ mod tests {
             json!("a\u{200f}b"),
             json!("a\u{061c}b"),
             json!("a\u{2068}b"),
-            json!("😀".repeat(101)),
+            json!("😀".repeat(201)),
         ] {
             assert!(name(&bad).is_err(), "{bad}");
         }

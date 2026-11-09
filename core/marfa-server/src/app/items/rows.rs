@@ -123,6 +123,31 @@ pub(super) fn by_id(tx: &Transaction<'_>, id: &str) -> Result<Option<Item>> {
     Ok(statement.query_row([id], item_of).optional()?)
 }
 
+pub(super) fn newest_of(
+    tx: &Transaction<'_>,
+    type_id: &str,
+    state: &str,
+    after: Option<(&str, &str)>,
+    limit: i64,
+) -> Result<Vec<Item>> {
+    let mut statement = tx.prepare_cached(&format!(
+        "{ITEM} WHERE type = ?1 AND state = ?2 \
+         AND (?3 IS NULL OR (created_at, id) < (?3, ?4)) \
+         ORDER BY created_at DESC, id DESC LIMIT ?5"
+    ))?;
+    let found = statement.query_map(
+        params![
+            type_id,
+            state,
+            after.map(|at| at.0),
+            after.map(|at| at.1),
+            limit
+        ],
+        item_of,
+    )?;
+    Ok(found.collect::<rusqlite::Result<_>>()?)
+}
+
 pub(super) fn by_natural_key(
     tx: &Transaction<'_>,
     source: &str,

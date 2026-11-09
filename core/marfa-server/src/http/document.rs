@@ -178,29 +178,25 @@ const UNPUBLISHED: &[(&str, &str)] = &[
         "DELETE /_control/test/faults",
         "the private control socket, with test hooks on",
     ),
+    (
+        "GET /_control/test/blob-stores",
+        "the private control socket, with test hooks on",
+    ),
 ];
 
 /// Published operations the router does not serve yet. An entry that becomes
 /// served fails the test, so the list only shrinks.
 const NOT_YET_SERVED: &[&str] = &[
-    "DELETE /blobs/{hash}/copies/{store}",
     "DELETE /connectors/{id}/endpoints/{endpoint_id}",
     "GET /attention",
-    "GET /blobs/orphans",
     "GET /connectors/{id}/deliveries",
     "GET /connectors/{id}/deliveries/{delivery_id}/body",
     "GET /connectors/{id}/endpoints",
     "GET /export",
-    "GET /folders",
-    "GET /folders/{id}/status",
     "GET /metrics",
-    "PATCH /folders/{id}",
     "POST /connectors/{id}/deliveries/handled",
     "POST /connectors/{id}/endpoints",
-    "POST /folders",
-    "POST /folders/{id}/revoke",
     "POST /restore",
-    "PUT /folders/{id}/status",
 ];
 
 const METHODS: [&str; 8] = [

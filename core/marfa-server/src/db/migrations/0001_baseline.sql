@@ -244,6 +244,7 @@ CREATE TABLE IF NOT EXISTS event_log (
 CREATE TABLE IF NOT EXISTS housekeeping_jobs (
     name TEXT PRIMARY KEY,
     next_run_at TEXT NOT NULL,
+    wake_requested INTEGER NOT NULL DEFAULT 0 CHECK (wake_requested IN (0, 1)),
     running_since TEXT,
     last_started_at TEXT,
     last_finished_at TEXT,
@@ -475,6 +476,18 @@ CREATE TABLE IF NOT EXISTS webhooks (
 CREATE INDEX IF NOT EXISTS webhooks_key ON webhooks (key_id) WHERE key_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS webhooks_grant ON webhooks (grant_id) WHERE grant_id IS NOT NULL;
 
+-- Moves whenever its maker makes or deletes a webhook, so a confirmation can
+-- tell the maker's webhooks changed and no one else's can move it.
+CREATE TABLE IF NOT EXISTS webhook_turns (
+    key_id TEXT REFERENCES api_keys (id) ON DELETE CASCADE,
+    grant_id TEXT REFERENCES auth_oauth_consent (grant_id) ON DELETE CASCADE,
+    turns INTEGER NOT NULL,
+    CHECK ((key_id IS NULL) <> (grant_id IS NULL))
+) STRICT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS webhook_turns_key ON webhook_turns (key_id) WHERE key_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS webhook_turns_grant ON webhook_turns (grant_id) WHERE grant_id IS NOT NULL;
+
 -- Payloads outlive log expiry; cycle_attempt restarts on redelivery.
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
     seq INTEGER PRIMARY KEY,
@@ -643,16 +656,28 @@ CREATE TABLE IF NOT EXISTS stores (
     detached_at TEXT
 ) STRICT, WITHOUT ROWID;
 
--- A store holds the bytes of a blob only while a row here says so.
+-- A store holds the bytes of a blob only while a row here says so. `object`
+-- names an object store's copy under its prefix, as the hash's hex and a name
+-- of its own write, so no other write or deletion ever names it; it is empty
+-- for a disk copy, whose file the hash names.
 CREATE TABLE IF NOT EXISTS blob_copies (
     hash TEXT NOT NULL REFERENCES blobs (hash) ON DELETE CASCADE,
     store_id TEXT NOT NULL REFERENCES stores (id),
+    object TEXT NOT NULL DEFAULT '',
     recorded_at TEXT NOT NULL,
     verified_at TEXT,
     PRIMARY KEY (hash, store_id)
 ) STRICT, WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS blob_copies_store ON blob_copies (store_id, verified_at);
+
+-- Failure counts keep one uncopyable blob from monopolizing replication.
+CREATE TABLE IF NOT EXISTS blob_copy_failures (
+    hash TEXT NOT NULL REFERENCES blobs (hash) ON DELETE CASCADE,
+    store_id TEXT NOT NULL REFERENCES stores (id),
+    failures INTEGER NOT NULL CHECK (failures > 0),
+    PRIMARY KEY (hash, store_id)
+) STRICT, WITHOUT ROWID;
 
 -- Who uploaded a blob: an API key's id, or the grant id of an app's tokens.
 CREATE TABLE IF NOT EXISTS blob_proofs (
@@ -700,14 +725,17 @@ CREATE TABLE IF NOT EXISTS blob_orphans (
     reported_at TEXT NOT NULL
 ) STRICT, WITHOUT ROWID;
 
--- Bytes a store still holds for a copy that left the copy record.
+-- Bytes a store may hold that no copy records: a copy that left the copy
+-- record, or an object a write was sent to before it was recorded. `object` is
+-- as in `blob_copies`.
 CREATE TABLE IF NOT EXISTS blob_pending_deletions (
     hash TEXT NOT NULL,
     store_id TEXT NOT NULL REFERENCES stores (id),
+    object TEXT NOT NULL DEFAULT '',
     queued_at TEXT NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 0,
     last_error TEXT,
-    PRIMARY KEY (hash, store_id)
+    PRIMARY KEY (hash, store_id, object)
 ) STRICT, WITHOUT ROWID;
 
 -- The digest omits the `sha256:` prefix used by `blobs.hash`.
@@ -717,6 +745,25 @@ CREATE TABLE IF NOT EXISTS owner_picture (
     mime_type TEXT NOT NULL CHECK (mime_type IN ('image/png', 'image/jpeg', 'image/webp')),
     updated_at TEXT NOT NULL
 ) STRICT;
+
+-- Physical backups keep reports; portable archives exclude them.
+CREATE TABLE IF NOT EXISTS folder_status (
+    folder_id TEXT NOT NULL REFERENCES items (id) ON DELETE CASCADE,
+    sign_in_kind TEXT NOT NULL CHECK (sign_in_kind IN ('app', 'key')),
+    sign_in_id TEXT NOT NULL,
+    sign_in_name TEXT NOT NULL,
+    folder_store_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL CHECK (sequence >= 1),
+    received_at TEXT NOT NULL,
+    last_success_at TEXT,
+    pending_uploads INTEGER NOT NULL CHECK (pending_uploads >= 0),
+    pending_downloads INTEGER NOT NULL CHECK (pending_downloads >= 0),
+    paused_removals INTEGER NOT NULL CHECK (paused_removals >= 0),
+    first_sync_waiting INTEGER NOT NULL CHECK (first_sync_waiting IN (0, 1)),
+    problems TEXT NOT NULL CHECK (json_valid(problems)),
+    PRIMARY KEY (folder_id, sign_in_kind, sign_in_id, folder_store_id)
+) STRICT, WITHOUT ROWID;
+
 
 -- A registration belongs to one key and outlives it; state, problems and agreements belong to the source.
 CREATE TABLE IF NOT EXISTS connectors (

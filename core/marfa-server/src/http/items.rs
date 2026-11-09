@@ -291,7 +291,7 @@ pub(super) fn time_of(body: &Map<String, Value>) -> Result<Option<String>> {
     let Some(text) = text_of(body, "occurred_at")? else {
         return Ok(None);
     };
-    time::normalize(&text, "occurred_at")
+    time::rfc3339(&text, "occurred_at")
         .map(Some)
         .map_err(|error| invalid_field("occurred_at", error.message))
 }
@@ -680,13 +680,13 @@ pub async fn titles(State(app): State<Arc<App>>, caller: Caller, body: JsonBody)
     }
     if wanted
         .iter()
-        .any(|name| name.encode_utf16().count() > names::MAX_NAME_UNITS)
+        .any(|name| name.chars().count() > names::MAX_NAME_LENGTH)
     {
         return Err(invalid_field(
             "names",
             format!(
-                "A name must contain at most {} UTF-16 code units",
-                names::MAX_NAME_UNITS
+                "A name must contain at most {} characters",
+                names::MAX_NAME_LENGTH
             ),
         )
         .into());

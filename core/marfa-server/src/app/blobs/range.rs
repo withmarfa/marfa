@@ -11,7 +11,7 @@ pub enum Slice {
     Unsatisfiable,
 }
 
-/// Bounds past this do not fit a JavaScript integer, and are not read.
+/// Bounds past this, 2^53 - 1, are not read: a double holds no more whole numbers exactly.
 const SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 
 fn bound(text: &str) -> Option<u64> {
