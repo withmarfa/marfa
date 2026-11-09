@@ -30,6 +30,14 @@ pub enum Mode {
     NotFoundAfterMarkers(u32),
 }
 
+/// A multipart upload begun and not yet completed or aborted.
+#[derive(Clone, Debug, Default)]
+struct Upload {
+    key: String,
+    metadata: Vec<(String, String)>,
+    parts: std::collections::BTreeMap<u32, Vec<u8>>,
+}
+
 /// An object's bytes and the `x-amz-meta-` headers it was written with.
 #[derive(Clone, Debug, Default)]
 pub struct Object {
@@ -50,6 +58,8 @@ struct Held {
     /// The next marker read says so on the sender and waits for the receiver.
     marker_held: Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>,
     landed: usize,
+    uploads: HashMap<String, Upload>,
+    next_upload: u64,
 }
 
 #[derive(Clone)]
@@ -86,6 +96,93 @@ fn named_for_deletion(bucket: &str, body: &[u8]) -> Vec<(String, String)> {
         .filter_map(|part| part.split_once("</Key>"))
         .map(|(key, _)| (key.to_string(), format!("{bucket}/{key}")))
         .collect()
+}
+
+fn metadata_of(headers: &HeaderMap) -> Vec<(String, String)> {
+    headers
+        .iter()
+        .filter(|(name, _)| name.as_str().starts_with("x-amz-meta-"))
+        .filter_map(|(name, value)| Some((name.to_string(), value.to_str().ok()?.to_string())))
+        .collect()
+}
+
+fn query_value<'a>(query: &'a str, name: &str) -> Option<&'a str> {
+    query.split('&').find_map(|pair| {
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        (key == name).then_some(value)
+    })
+}
+
+fn xml(body: String) -> Response {
+    Response::builder()
+        .header(header::CONTENT_TYPE, "application/xml")
+        .body(Body::from(body))
+        .unwrap()
+}
+
+/// Begins, fills, completes and aborts multipart uploads, as S3 does.
+async fn multipart(
+    held: Arc<Mutex<Held>>,
+    method: &Method,
+    key: &str,
+    query: &str,
+    headers: &HeaderMap,
+    body: Bytes,
+) -> Option<Response> {
+    if *method == Method::POST && query_value(query, "uploads").is_some() {
+        let mut held = held.lock().unwrap();
+        held.next_upload += 1;
+        let id = format!("upload-{}", held.next_upload);
+        let upload = Upload {
+            key: key.to_string(),
+            metadata: metadata_of(headers),
+            ..Upload::default()
+        };
+        held.uploads.insert(id.clone(), upload);
+        return Some(xml(format!(
+            "<InitiateMultipartUploadResult><Bucket>b</Bucket><Key>{key}</Key>\
+             <UploadId>{id}</UploadId></InitiateMultipartUploadResult>"
+        )));
+    }
+    let id = query_value(query, "uploadId")?.to_string();
+    match *method {
+        Method::PUT => {
+            let number: u32 = query_value(query, "partNumber")?.parse().ok()?;
+            let mut held = held.lock().unwrap();
+            let upload = held.uploads.get_mut(&id)?;
+            upload.parts.insert(number, body.to_vec());
+            Some(
+                Response::builder()
+                    .header(header::ETAG, format!("\"part-{number}\""))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+        }
+        Method::POST => {
+            let mut held = held.lock().unwrap();
+            let upload = held.uploads.remove(&id)?;
+            let bytes = upload.parts.into_values().flatten().collect();
+            let object = Object {
+                bytes,
+                metadata: upload.metadata,
+            };
+            held.objects.insert(upload.key, object);
+            Some(xml(format!(
+                "<CompleteMultipartUploadResult><Bucket>b</Bucket><Key>{key}</Key>\
+                 <ETag>\"e\"</ETag></CompleteMultipartUploadResult>"
+            )))
+        }
+        Method::DELETE => {
+            held.lock().unwrap().uploads.remove(&id);
+            Some(
+                Response::builder()
+                    .status(StatusCode::NO_CONTENT)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+        }
+        _ => None,
+    }
 }
 
 /// The prefix of a `ListObjectsV2` request, percent-decoded.
@@ -171,6 +268,19 @@ async fn answer(State(held): State<Arc<Mutex<Held>>>, request: Request) -> Respo
         let _ = release.await;
     }
     let (method, headers) = (request.method().clone(), request.headers().clone());
+    let query = request.uri().query().unwrap_or("").to_string();
+    if query_value(&query, "uploads").is_some() || query_value(&query, "uploadId").is_some() {
+        held.lock()
+            .unwrap()
+            .requests
+            .push((method.clone(), key.clone()));
+        let body = axum::body::to_bytes(request.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        return multipart(held, &method, &key, &query, &headers, body)
+            .await
+            .unwrap_or_else(not_found);
+    }
     if method == Method::POST && request.uri().query() == Some("delete") {
         let body = axum::body::to_bytes(request.into_body(), usize::MAX)
             .await
@@ -444,6 +554,18 @@ impl FakeS3 {
     pub fn swap_buckets(&self) {
         let held = &mut *self.held.lock().unwrap();
         std::mem::swap(&mut held.objects, &mut held.other);
+    }
+
+    /// The keys of the multipart uploads begun and neither completed nor aborted.
+    pub fn unfinished_uploads(&self) -> Vec<String> {
+        let held = self.held.lock().unwrap();
+        let mut keys: Vec<String> = held
+            .uploads
+            .values()
+            .map(|upload| upload.key.clone())
+            .collect();
+        keys.sort();
+        keys
     }
 
     /// How many deletions held by `delay_next_delete` have been carried out.
