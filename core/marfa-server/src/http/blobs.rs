@@ -1,6 +1,5 @@
 //! The blob doors: an upload streamed to disk, and a download streamed from it.
 
-use std::os::unix::fs::FileExt;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,6 +10,7 @@ use axum::body::{Body, Bytes, HttpBody};
 use axum::extract::{Path, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use axum::response::Response;
+use futures_util::StreamExt;
 use http_body::{Frame, SizeHint};
 use http_body_util::BodyExt;
 use serde_json::json;
@@ -19,13 +19,12 @@ use tokio::sync::mpsc;
 use super::answer::{Answer, Stopped, json_answer, refusal_answer};
 use super::query;
 use crate::app::App;
-use crate::app::access::Caller;
+use crate::app::access::{Caller, Permission};
 use crate::app::blobs::range::{self, Slice};
-use crate::app::blobs::{DEFAULT_TYPE, Found, Hash, Intake, link};
+use crate::app::blobs::{ByteStream, DEFAULT_TYPE, Found, Hash, Intake, link};
 use crate::app::refusal::{Code, Refusal};
 use crate::app::types::missing_field;
 
-const CHUNK: u64 = 256 * 1024;
 const QUEUED: usize = 2;
 pub(super) const SANDBOX: &str = "sandbox; default-src 'none'";
 const POLICY: &str = "all";
@@ -112,7 +111,7 @@ pub(super) fn header_of(value: &str) -> HeaderValue {
     HeaderValue::from_str(value).unwrap_or_else(|_| HeaderValue::from_static(DEFAULT_TYPE))
 }
 
-/// Streams a window of a file, one chunk ahead of a reader that must keep reading.
+/// Streams a window of a blob, one chunk ahead of a reader that must keep reading.
 struct Reading {
     chunks: mpsc::Receiver<std::io::Result<Bytes>>,
     stalled: Arc<AtomicBool>,
@@ -141,33 +140,31 @@ impl HttpBody for Reading {
     }
 }
 
-pub(super) fn stream(file: std::fs::File, first: u64, length: u64, idle: Duration) -> Body {
+/// Sends exactly `length` bytes from a store, and fails a body that the store ends short or
+/// that either side leaves idle for `idle`.
+pub(super) fn stream(mut bytes: ByteStream, length: u64, idle: Duration) -> Body {
     let (send, chunks) = mpsc::channel(QUEUED);
     let stalled = Arc::new(AtomicBool::new(false));
     let flag = stalled.clone();
-    let file = Arc::new(file);
     tokio::spawn(async move {
-        let (mut at, mut left) = (first, length);
+        let mut left = length;
         while left > 0 {
-            let want = usize::try_from(left.min(CHUNK)).unwrap_or(CHUNK as usize);
-            let reader = file.clone();
-            let read = tokio::task::spawn_blocking(move || {
-                let mut buffer = vec![0; want];
-                let count = reader.read_at(&mut buffer, at)?;
-                buffer.truncate(count);
-                Ok::<_, std::io::Error>(buffer)
-            })
-            .await;
-            let chunk = match read {
-                Ok(Ok(buffer)) if !buffer.is_empty() => Ok(buffer),
-                Ok(Ok(_)) => Err(std::io::ErrorKind::UnexpectedEof.into()),
-                Ok(Err(error)) => Err(error),
-                Err(error) => Err(std::io::Error::other(error)),
+            let chunk = match tokio::time::timeout(idle, bytes.next()).await {
+                Ok(Some(Ok(chunk))) if chunk.is_empty() => continue,
+                Ok(Some(Ok(mut chunk))) => {
+                    chunk.truncate(usize::try_from(left).unwrap_or(usize::MAX));
+                    Ok(chunk)
+                }
+                Ok(Some(Err(error))) => Err(error),
+                Ok(None) => Err(std::io::ErrorKind::UnexpectedEof.into()),
+                Err(_) => Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "the store stopped sending",
+                )),
             };
-            let outcome = chunk.map(Bytes::from);
-            let count = outcome.as_ref().map_or(0, |bytes| bytes.len() as u64);
-            let failed = outcome.is_err();
-            match tokio::time::timeout(idle, send.send(outcome)).await {
+            let count = chunk.as_ref().map_or(0, |bytes| bytes.len() as u64);
+            let failed = chunk.is_err();
+            match tokio::time::timeout(idle, send.send(chunk)).await {
                 Ok(Ok(())) if !failed => {}
                 Ok(_) => return,
                 Err(_) => {
@@ -175,7 +172,6 @@ pub(super) fn stream(file: std::fs::File, first: u64, length: u64, idle: Duratio
                     return;
                 }
             }
-            at += count;
             left -= count;
         }
     });
@@ -205,15 +201,20 @@ async fn serve(app: &App, found: Found, range: Option<&str>, head: bool) -> Answ
     if slice == Slice::Unsatisfiable {
         return Ok(unsatisfiable(size));
     }
-    let file = app.bytes_of(&found).await?;
     let (status, first, length) = match slice {
         Slice::Part { first, last } => (StatusCode::PARTIAL_CONTENT, first, last - first + 1),
         _ => (StatusCode::OK, 0, size),
     };
-    let body = if head || length == 0 {
+    let body = if head {
+        app.check_bytes(&found).await?;
         Body::empty()
     } else {
-        stream(file, first, length, app.blob_read_idle())
+        let bytes = app.bytes_of(&found, first, length).await?;
+        if length == 0 {
+            Body::empty()
+        } else {
+            stream(bytes, length, app.blob_read_idle())
+        }
     };
     let mut response = Response::new(body);
     *response.status_mut() = status;
@@ -355,6 +356,38 @@ pub async fn stores(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> An
         StatusCode::OK,
         &json!({ "data": data, "next_cursor": null, "min_copies": min_copies }),
     ))
+}
+
+pub async fn orphans(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
+    let orphans = app.blob_orphans(&caller).await?;
+    query::only(&uri, &[])?;
+    let data: Vec<_> = orphans
+        .iter()
+        .map(|orphan| {
+            json!({
+                "hash": orphan.blob.hash.as_str(),
+                "mime_type": orphan.blob.mime_type,
+                "size_bytes": orphan.blob.size_bytes,
+                "reported_at": orphan.reported_at,
+            })
+        })
+        .collect();
+    Ok(json_answer(
+        StatusCode::OK,
+        &json!({ "data": data, "next_cursor": null }),
+    ))
+}
+
+pub async fn drop_copy(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    uri: Uri,
+    Path((hash, store)): Path<(String, String)>,
+) -> Answer {
+    caller.require(Permission::BlobsManage)?;
+    query::only(&uri, &[])?;
+    app.drop_copy(&caller, &Hash::parse(&hash)?, &store).await?;
+    Ok(json_answer(StatusCode::OK, &json!({ "ok": true })))
 }
 
 async fn fetched(app: &App, uri: &Uri, headers: &HeaderMap, hash: &str, head: bool) -> Answer {

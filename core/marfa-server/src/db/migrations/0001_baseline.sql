@@ -244,6 +244,7 @@ CREATE TABLE IF NOT EXISTS event_log (
 CREATE TABLE IF NOT EXISTS housekeeping_jobs (
     name TEXT PRIMARY KEY,
     next_run_at TEXT NOT NULL,
+    wake_requested INTEGER NOT NULL DEFAULT 0 CHECK (wake_requested IN (0, 1)),
     running_since TEXT,
     last_started_at TEXT,
     last_finished_at TEXT,
@@ -598,16 +599,28 @@ CREATE TABLE IF NOT EXISTS stores (
     detached_at TEXT
 ) STRICT, WITHOUT ROWID;
 
--- A store holds the bytes of a blob only while a row here says so.
+-- A store holds the bytes of a blob only while a row here says so. `object`
+-- names an object store's copy under its prefix, as the hash's hex and a name
+-- of its own write, so no other write or deletion ever names it; it is empty
+-- for a disk copy, whose file the hash names.
 CREATE TABLE IF NOT EXISTS blob_copies (
     hash TEXT NOT NULL REFERENCES blobs (hash) ON DELETE CASCADE,
     store_id TEXT NOT NULL REFERENCES stores (id),
+    object TEXT NOT NULL DEFAULT '',
     recorded_at TEXT NOT NULL,
     verified_at TEXT,
     PRIMARY KEY (hash, store_id)
 ) STRICT, WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS blob_copies_store ON blob_copies (store_id, verified_at);
+
+-- Failure counts keep one uncopyable blob from monopolizing replication.
+CREATE TABLE IF NOT EXISTS blob_copy_failures (
+    hash TEXT NOT NULL REFERENCES blobs (hash) ON DELETE CASCADE,
+    store_id TEXT NOT NULL REFERENCES stores (id),
+    failures INTEGER NOT NULL CHECK (failures > 0),
+    PRIMARY KEY (hash, store_id)
+) STRICT, WITHOUT ROWID;
 
 -- Who uploaded a blob: an API key's id, or the grant id of an app's tokens.
 CREATE TABLE IF NOT EXISTS blob_proofs (
@@ -655,14 +668,17 @@ CREATE TABLE IF NOT EXISTS blob_orphans (
     reported_at TEXT NOT NULL
 ) STRICT, WITHOUT ROWID;
 
--- Bytes a store still holds for a copy that left the copy record.
+-- Bytes a store may hold that no copy records: a copy that left the copy
+-- record, or an object a write was sent to before it was recorded. `object` is
+-- as in `blob_copies`.
 CREATE TABLE IF NOT EXISTS blob_pending_deletions (
     hash TEXT NOT NULL,
     store_id TEXT NOT NULL REFERENCES stores (id),
+    object TEXT NOT NULL DEFAULT '',
     queued_at TEXT NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 0,
     last_error TEXT,
-    PRIMARY KEY (hash, store_id)
+    PRIMARY KEY (hash, store_id, object)
 ) STRICT, WITHOUT ROWID;
 
 -- The digest omits the `sha256:` prefix used by `blobs.hash`.

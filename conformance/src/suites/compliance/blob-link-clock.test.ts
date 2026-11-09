@@ -6,13 +6,15 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { movedClock, operatorOf, writerOf } from "../../utils/moved-clock.js";
+import { DISK_ONLY } from "../../utils/own-blob-server.js";
 
 /**
  * How long a link the instance serves lives, read against a clock the fixture
  * moves. A lifetime of seconds to days cannot be waited out, so the server's
  * clock is moved forward through the target interface and the link is fetched
  * again. The sweep that removes unreferenced blobs is off, so the clock move
- * does not take the bytes.
+ * does not take the bytes, and no object store is attached, so the link stays
+ * the instance's rather than becoming the store's once it holds the blob.
  */
 
 let server: FreshServer;
@@ -21,6 +23,7 @@ let writer: MarfaClient;
 
 beforeAll(async () => {
   server = await bootFreshServer("blob-link-clock", {
+    ...DISK_ONLY,
     MARFA_BLOB_CLEANUP_INTERVAL_MS: "0",
   });
   operator = operatorOf(server);
