@@ -217,7 +217,7 @@ pub fn item(catalog: &Catalog, line: &Value, row: usize) -> Result<(), Box<Refus
         row,
     };
     let Some(item) = line.get("item").and_then(Value::as_object) else {
-        return Err(unnamed.skipped(None, "malformed", "an item line it cannot read"));
+        return Err(unnamed.invalid("item", "an object"));
     };
     let id = item.get("id").and_then(Value::as_str);
     let type_id = item.get("type").and_then(Value::as_str);
@@ -440,6 +440,12 @@ pub fn edge<'a>(
         type_id: edge_type,
         row,
     };
+    if edge.get("id").is_some_and(|id| {
+        !id.as_str()
+            .is_some_and(|id| marfa_rules::validation::id("id", id).is_ok())
+    }) {
+        return Err(at.invalid("id", "an edge ID"));
+    }
     for field in ["created_at", "updated_at"] {
         if edge.get(field).is_some_and(|value| !is_instant(value)) {
             return Err(at.invalid(field, "an instant"));
@@ -622,13 +628,29 @@ mod tests {
                 type_id: "core.note",
             })
         };
-        let edge_line = |edge_type: &str, target: &str| {
+        let edge_with = |id: Value, edge_type: &str, target: &str| {
             json!({ "edge": {
-                "id": "e", "source_id": "a", "target_id": target, "edge_type": edge_type,
+                "id": id, "source_id": "a", "target_id": target, "edge_type": edge_type,
                 "version": 1, "properties": {},
             }, "lending_blobs": [] })
         };
+        let edge_line = |edge_type: &str, target: &str| {
+            edge_with(
+                json!("01a1bdba-8640-72ba-b7d6-9e27d94e7541"),
+                edge_type,
+                target,
+            )
+        };
         assert!(edge(&catalog, &edge_line("about", "b"), 1, ends).is_ok());
+        for id in [
+            json!("e"),
+            json!(7),
+            json!("01A1BDBA-8640-72BA-B7D6-9E27D94E7541"),
+        ] {
+            let refused = edge(&catalog, &edge_with(id, "about", "b"), 1, ends).unwrap_err();
+            assert_eq!(refused.field.as_deref(), Some("id"));
+            assert!(refused.skip.is_none());
+        }
         assert!(edge(&catalog, &edge_line("user.gone", "b"), 1, ends).is_ok());
         let bad = edge(&catalog, &edge_line("Not An Id", "b"), 1, ends).unwrap_err();
         assert_eq!(bad.field.as_deref(), Some("edge_type"));

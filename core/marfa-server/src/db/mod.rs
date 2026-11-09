@@ -120,6 +120,11 @@ impl Db {
             .map_err(|refusal| self.with_budget(refusal))
     }
 
+    /// Empties the log a large write grew, so it does not stay the size of that write.
+    pub async fn empty_log(&self) {
+        self.writer.empty_log().await;
+    }
+
     /// Commits on `Ok` and rolls back on `Err` or a panic.
     pub async fn write<T, F>(&self, write: Write, job: F) -> Result<T>
     where

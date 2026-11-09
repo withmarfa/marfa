@@ -18,6 +18,7 @@ import {
 } from "../../utils/fresh-server.js";
 import { bytesOf, clientsFor, DISK_ONLY } from "../../utils/own-blob-server.js";
 import { damageBlobs, loseBlobs } from "../../utils/store-faults.js";
+import { tar } from "../../utils/archive.js";
 import { Cli, releaseHeld, requireBinary } from "./harness.js";
 
 /**
@@ -173,6 +174,33 @@ describe("an archive that lacks a blob it names", () => {
     };
     expect(envelope.error.code).toBe("blobs_missing");
     expect(envelope.error.message).toContain(lost);
+  });
+
+  it("reports the refusal of a large archive the server refuses before or while it arrives", async () => {
+    const path = join(dir, "refused-early.tar");
+    writeFileSync(
+      path,
+      tar([
+        {
+          name: "manifest.json",
+          body: JSON.stringify({ version: 99, format: "marfa-archive-v0" }),
+        },
+        { name: "padding.bin", body: new Uint8Array(64 * 1024 * 1024) },
+      ]),
+    );
+    for (let attempt = 0; attempt < 3; attempt++) {
+      // Refused while the body arrives: the manifest names another version.
+      const late = await cli
+        .viaSocket(server!.controlSocket)
+        .refused(["restore", path]);
+      expect(late.envelope.error.server?.status).toBe(400);
+      expect(late.envelope.error.server?.code).toBe("validation_error");
+      expect(late.envelope.error.message).toContain("version 99");
+      // Refused before the body: a working key is not the owner.
+      const early = await cli.refused(["restore", path]);
+      expect(early.envelope.error.server?.status).toBe(403);
+      expect(early.envelope.error.server?.code).toBe("forbidden");
+    }
   });
 
   it("leaves the path as it was when the export is cut short, and the next export names the struck blob", async () => {

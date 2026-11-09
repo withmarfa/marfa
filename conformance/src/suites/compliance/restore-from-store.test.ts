@@ -134,4 +134,20 @@ describe("a restore of files the archive names and does not carry", () => {
     expect(restored.data.blobs_missing).toEqual([absent]);
     expect(restored.data.imported).toBe(1);
   });
+
+  it("answers nothing in blobs_missing on an instance that holds every file the archive names", async () => {
+    const held = await fileInTheBucket("held by the instance that exported it");
+    const archive = await ownerOf(origin).exportArchive({ files: "false" });
+    expect(archive.status).toBe(200);
+    const manifest = archiveManifest<{ missing_blobs: Record<string, unknown> }>(
+      archive.data,
+    );
+    // The witness: the archive names the file and carries none of its bytes.
+    expect(Object.keys(manifest.missing_blobs)).toContain(held.hash);
+
+    const restored = await ownerOf(origin).restoreArchive(archive.data);
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    expect(restored.data.blobs_missing).toEqual([]);
+    expect(restored.data.blobs_imported).toBe(0);
+  });
 });

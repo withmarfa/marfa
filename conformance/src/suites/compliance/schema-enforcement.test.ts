@@ -300,6 +300,32 @@ describe("strict_mode lever", () => {
     expect((await client.getItem(fine)).status).toBe(200);
   });
 
+  it("strict-on counts a restored row the instance already holds as a duplicate", async () => {
+    await setConfig({});
+    const held = uuidv7();
+    const archive = itemsArchive([
+      {
+        id: held,
+        type: "core.note",
+        source: ctx.source,
+        properties: { body: "written before the lever", not_a_real_field: "x" },
+      },
+    ]);
+    const owner = getOwnerClient();
+    const first = await owner.restoreArchive(archive);
+    expect(first.status, JSON.stringify(first.error)).toBe(200);
+    expect(first.data.imported).toBe(1);
+    trackItem(ctx, held);
+
+    await setConfig({
+      enforcement: { strict_mode: { types: ["core.note"] } },
+    });
+    const again = await owner.restoreArchive(archive);
+    expect(again.status, JSON.stringify(again.error)).toBe(200);
+    expect(again.data.imported).toBe(0);
+    expect(again.data.duplicates).toBe(1);
+  });
+
   it("strict-on rejects the same unknown property through the bulk door, on both halves of an upsert", async () => {
     // The door built for volume, reachable by any working key, writes
     // through a store whose validation runs loose whatever the lever says,

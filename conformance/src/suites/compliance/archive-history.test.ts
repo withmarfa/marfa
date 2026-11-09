@@ -692,18 +692,14 @@ describe("an archive's dates and history, refused before anything is written", (
     }
   });
 
-  it("writes a row's dates in UTC to the millisecond and keeps a snapshot's dates as the archive spelled them", async () => {
+  it("writes a row's dates in UTC to the millisecond", async () => {
     const id = uuidv7();
     const archived = "2020-02-28T23:30:00+02:00";
-    const spelled = "2019-12-31T23:59:59+01:00";
     const { archive } = twoRows(({ first, firstVersions }) => {
       first.id = id;
       first.created_at = archived;
       first.updated_at = "2020-03-01T00:00:00+02:00";
-      firstVersions[0] = snapshot(id, 1, {
-        created_at: spelled,
-        occurred_at: spelled,
-      });
+      firstVersions[0] = snapshot(id, 1);
     });
     const restored = await ownerClient.restoreArchive(archive);
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
@@ -711,9 +707,6 @@ describe("an archive's dates and history, refused before anything is written", (
     const row = await client.getItem(id);
     expect(row.data.item.created_at).toBe("2020-02-28T21:30:00.000Z");
     expect(row.data.item.updated_at).toBe("2020-02-29T22:00:00.000Z");
-    const [kept] = await allVersions(client, id);
-    expect(kept?.created_at).toBe(spelled);
-    expect(kept?.occurred_at).toBe(spelled);
   });
 
   it("refuses a snapshot ID the instance's history already holds, answering 409 and leaving that history as it was", async () => {

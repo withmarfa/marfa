@@ -14,6 +14,8 @@ use crate::settings::DatabasePath;
 use crate::settings::registry::DISK_RESERVE_BYTES;
 
 const HEADER: &[u8; 16] = b"SQLite format 3\0";
+/// What the log is cut back to once a checkpoint has moved it into the file.
+const JOURNAL_SIZE_LIMIT: i64 = 64 * 1024 * 1024;
 
 #[derive(Debug)]
 pub struct Options {
@@ -227,6 +229,7 @@ fn prepare_writer(conn: &Connection, options: &Options) -> rusqlite::Result<()> 
     conn.pragma_update_and_check(None, "journal_mode", "WAL", |_| Ok(()))?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     conn.pragma_update(None, "foreign_keys", true)?;
+    conn.pragma_update(None, "journal_size_limit", JOURNAL_SIZE_LIMIT)?;
     Ok(())
 }
 

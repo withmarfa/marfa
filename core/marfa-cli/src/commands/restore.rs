@@ -14,8 +14,11 @@ pub struct RestoreArgs {
     pub file: PathBuf,
 }
 
+/// The server answers a refusal it makes before reading the body without the body being sent.
 pub fn request(args: &RestoreArgs) -> Request {
-    Request::post(&["restore"]).file(args.file.clone(), "application/x-tar")
+    Request::post(&["restore"])
+        .file(args.file.clone(), "application/x-tar")
+        .header("Expect", "100-continue")
 }
 
 pub fn run(args: RestoreArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {

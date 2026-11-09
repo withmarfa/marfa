@@ -1,6 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import { archiveLines, archiveManifest } from "../../utils/archive.js";
+import {
+  archiveLines,
+  archiveManifest,
+  editLineFile,
+  itemsArchive,
+} from "../../utils/archive.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -254,5 +259,91 @@ describe("the instance lines of an archive", () => {
     expect(JSON.stringify(agreed.data)).toContain('"etag":"b"');
     expect(JSON.stringify(agreed.data)).toContain('"etag":"c"');
     expect(JSON.stringify(agreed.data)).not.toContain('"etag":"a"');
+  });
+
+  it("refuses settings the instance cannot hold together, answering as /config does, and stores none", async () => {
+    const owner = new MarfaClient({
+      baseUrl: server.apiUrl,
+      ownerCookie: server.ownerCookie,
+      ownerCredentials: TEST_OWNER,
+      ownerSessionFile: `${server.stateDir}/owner-session.json`,
+    });
+    const withSettings = (settings: Record<string, unknown>) =>
+      editLineFile(itemsArchive([]), "instance", (text) =>
+        Object.entries(settings).reduce(
+          (lines, [key, value]) =>
+            `${lines}${JSON.stringify({ setting: { key, value } })}\n`,
+          text,
+        ),
+      );
+    for (const settings of [
+      { heartbeat_enabled: true },
+      { version_daily_snapshot_days: 7 },
+    ]) {
+      const configured = await operator.patchConfig(settings);
+      // The witness: /config refuses the same settings on this instance.
+      expect(configured.status, JSON.stringify(configured.data)).toBe(400);
+      const refused = await owner.restoreArchive(withSettings(settings));
+      expect(refused.status, JSON.stringify(refused.data)).toBe(400);
+      expect(refused.error?.error.code).toBe(configured.error?.error.code);
+      expect(refused.error?.error.details?.errors).toEqual(
+        configured.error?.error.details?.errors,
+      );
+      const config = (await operator.getConfig()).data as unknown as Record<
+        string,
+        unknown
+      >;
+      for (const key of Object.keys(settings)) {
+        expect(config[key]).toBeUndefined();
+      }
+    }
+
+    const restored = await owner.restoreArchive(
+      withSettings({
+        version_recent_days: 7,
+        version_daily_snapshot_days: 7,
+        version_weekly_snapshot_days: 14,
+      }),
+    );
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    expect(restored.data.settings_added).toBe(3);
+  });
+
+  it("refuses an archive that carries one setting twice, and stores neither value", async () => {
+    const owner = new MarfaClient({
+      baseUrl: server.apiUrl,
+      ownerCookie: server.ownerCookie,
+      ownerCredentials: TEST_OWNER,
+      ownerSessionFile: `${server.stateDir}/owner-session.json`,
+    });
+    const key = "revoked_grant_retention_days";
+    const before = (await operator.getConfig()).data as unknown as Record<
+      string,
+      unknown
+    >;
+    // The witness: the instance holds no value of its own for the setting.
+    expect(before[key]).toBeUndefined();
+    const withValues = (...values: number[]) =>
+      editLineFile(itemsArchive([]), "instance", (text) =>
+        values.reduce(
+          (lines, value) =>
+            `${lines}${JSON.stringify({ setting: { key, value } })}\n`,
+          text,
+        ),
+      );
+
+    const refused = await owner.restoreArchive(withValues(40, 50));
+    expect(refused.status, JSON.stringify(refused.data)).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    expect(refused.error?.error.message).toContain(key);
+    const after = (await operator.getConfig()).data as unknown as Record<
+      string,
+      unknown
+    >;
+    expect(after[key]).toBeUndefined();
+
+    const restored = await owner.restoreArchive(withValues(40));
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    expect(restored.data.settings_added).toBe(1);
   });
 });

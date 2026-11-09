@@ -367,20 +367,7 @@ impl Plan {
     /// Refuses a change that breaks a rule across settings.
     fn judge(&self, app: &App) -> Result<Snapshot> {
         self.refuse_unread_rows(app)?;
-        let after = app.settings.candidate(&pairs(&self.after));
-        let breaches = together::judge(&after, &self.touched, &app.settings.start);
-        if breaches.is_empty() {
-            return Ok(after);
-        }
-        Err(
-            Refusal::validation("The settings cannot be used together").with_detail(
-                "errors",
-                breaches
-                    .into_iter()
-                    .map(|Breach { path, message }| json!({ "path": path, "message": message }))
-                    .collect::<Vec<_>>(),
-            ),
-        )
+        judge_together(app, &pairs(&self.after), &self.touched)
     }
 
     /// Whether the origins sign-in forms are taken from change. Those forms
@@ -453,6 +440,28 @@ pub fn standing(tx: &Transaction<'_>, own: Option<&Levers>) -> Result<Standing> 
             Standing::closed()
         }
     })
+}
+
+/// Refuses settings `stored` that break a rule across settings naming one of `touched`.
+pub fn judge_together(
+    app: &App,
+    stored: &[(String, String)],
+    touched: &[&str],
+) -> Result<Snapshot> {
+    let after = app.settings.candidate(stored);
+    let breaches = together::judge(&after, touched, &app.settings.start);
+    if breaches.is_empty() {
+        return Ok(after);
+    }
+    Err(
+        Refusal::validation("The settings cannot be used together").with_detail(
+            "errors",
+            breaches
+                .into_iter()
+                .map(|Breach { path, message }| json!({ "path": path, "message": message }))
+                .collect::<Vec<_>>(),
+        ),
+    )
 }
 
 /// The configuration as `/config` answers it: each field that has been set.

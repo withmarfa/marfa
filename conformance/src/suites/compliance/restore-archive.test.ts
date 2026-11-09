@@ -14,6 +14,8 @@
  */
 
 import { randomBytes } from "node:crypto";
+import { request as httpRequest } from "node:http";
+import { connect } from "node:net";
 import { gzipSync } from "node:zlib";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { v7 as uuidv7 } from "uuid";
@@ -1427,5 +1429,271 @@ describe("type creator provenance in archives", () => {
     expect(
       (await client.getType(unknown)).data.provenance?.created_by,
     ).toBeNull();
+  });
+});
+
+describe("a restore refused while its body is still arriving", () => {
+  /** A manifest the restore refuses on reading it, then `size` bytes more. */
+  const refusedEarly = (size: number): Uint8Array =>
+    tar([
+      {
+        name: "manifest.json",
+        body: JSON.stringify({ version: 99, format: "marfa-archive-v0" }),
+      },
+      { name: "padding.bin", body: new Uint8Array(size) },
+    ]);
+
+  /**
+   * Sends `body` the way `marfa restore` does, after `Expect: 100-continue`:
+   * it is sent only once the server says `100 Continue`, and not at all if
+   * the server answers first.
+   */
+  const sendAfterContinue = (
+    authorization: string,
+    body: Uint8Array,
+  ): Promise<{ status: number; sent: boolean; text: string }> =>
+    new Promise((resolve, reject) => {
+      const url = new URL(`${apiUrl}/restore`);
+      let sent = false;
+      const request = httpRequest(
+        url,
+        {
+          method: "POST",
+          headers: {
+            Authorization: authorization,
+            "Content-Type": "application/x-tar",
+            "Content-Length": String(body.length),
+            Expect: "100-continue",
+          },
+        },
+        (response) => {
+          let text = "";
+          response.setEncoding("utf8");
+          response.on("data", (chunk: string) => (text += chunk));
+          response.on("end", () =>
+            resolve({ status: response.statusCode ?? 0, sent, text }),
+          );
+        },
+      );
+      request.on("error", reject);
+      request.on("continue", () => {
+        sent = true;
+        request.end(body);
+      });
+      request.flushHeaders();
+    });
+
+  it("reads the rest of a large body and answers the refusal, to the owner, and answers a working key before the body", async () => {
+    const body = refusedEarly(64 * 1024 * 1024);
+    const keyResp = await client.createKey({
+      label: "restore-refused-early",
+      source: `${ctx.source}-refused-early`,
+      type_permissions: { "*": "write" },
+    });
+    expect(keyResp.ok).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const forbidden = await sendAfterContinue(
+        `Bearer ${keyResp.data.key}`,
+        body,
+      );
+      expect(forbidden.status).toBe(403);
+      expect(
+        (JSON.parse(forbidden.text) as { error: { code: string } }).error.code,
+      ).toBe("forbidden");
+      expect(forbidden.sent).toBe(false);
+
+      const refused = await owner.restoreArchive(body);
+      expect(refused.status, JSON.stringify(refused.error)).toBe(400);
+      expect(refused.error?.error.message).toContain("version 99");
+    }
+  });
+
+  it("answers a caller with no credential at once and closes the connection while it keeps sending", async () => {
+    const url = new URL(apiUrl);
+    const started = Date.now();
+    const answer = await new Promise<{ head: string; at: number }>(
+      (resolve, reject) => {
+        const socket = connect(Number(url.port || 80), url.hostname);
+        let head = "";
+        const sender = setInterval(() => {
+          socket.write(Buffer.alloc(64 * 1024), () => {});
+        }, 50);
+        const stop = () => {
+          clearInterval(sender);
+          clearTimeout(giveUp);
+          socket.destroy();
+        };
+        const giveUp = setTimeout(() => {
+          stop();
+          reject(new Error(`no answer in 5 s; the server read on: ${head}`));
+        }, 5000);
+        socket.on("error", () => {});
+        socket.on("connect", () => {
+          socket.write(
+            `POST /restore HTTP/1.1\r\nHost: ${url.host}\r\n` +
+              `Content-Type: application/x-tar\r\n` +
+              `Content-Length: ${64 * 1024 * 1024 * 1024}\r\n\r\n`,
+          );
+        });
+        socket.on("data", (chunk) => {
+          head += chunk.toString("latin1");
+          if (head.includes("\r\n\r\n")) {
+            stop();
+            resolve({ head, at: Date.now() - started });
+          }
+        });
+      },
+    );
+    expect(answer.head).toMatch(/^HTTP\/1\.1 401 /);
+    expect(answer.head.toLowerCase()).toContain("connection: close");
+    expect(answer.at).toBeLessThan(3000);
+  });
+});
+
+describe("lines an archive holds that no instance writes", () => {
+  const note = (id: string) => ({
+    id,
+    type: "core.note",
+    source: ctx.source,
+    properties: { body: `line ${id}` },
+  });
+
+  it("refuses an item line that holds no item, naming its row, and writes nothing", async () => {
+    const kept = uuidv7();
+    const good = `${JSON.stringify({ item: note(kept), metadata: { tags: [], extensions: {} } })}\n`;
+    for (const line of [
+      { metadata: { tags: [], extensions: {} } },
+      { item: "a note", metadata: { tags: [], extensions: {} } },
+      { item: null },
+    ]) {
+      const refused = await owner.restoreArchive(
+        withLines(itemsArchive([]), "items", good + JSON.stringify(line) + "\n"),
+      );
+      expect(refused.status, JSON.stringify(refused.error)).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+      expect(refused.error?.error.details?.row).toBe(2);
+      expect((await client.getItem(kept)).status).toBe(404);
+    }
+
+    // The witness: the item line alone restores.
+    const restored = await owner.restoreArchive(
+      withLines(itemsArchive([]), "items", good),
+    );
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, kept);
+    expect(restored.data.imported).toBe(1);
+  });
+
+  it("refuses an edge whose ID is not a lowercase UUIDv7, and writes nothing", async () => {
+    const [a, b] = [uuidv7(), uuidv7()];
+    const items = itemsArchive([note(a), note(b)]);
+    const edge = (id: unknown) =>
+      `${JSON.stringify({ edge: { id, source_id: a, target_id: b, edge_type: "references" } })}\n`;
+    for (const id of ["x", 7, uuidv7().toUpperCase(), ""]) {
+      const refused = await owner.restoreArchive(
+        withLines(items, "edges", edge(id)),
+      );
+      expect(refused.status, `${String(id)}: ${JSON.stringify(refused.error)}`).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+      expect(refused.error?.error.details?.field).toBe("id");
+      expect((await client.getItem(a)).status).toBe(404);
+    }
+
+    // The witness: the same edge under a lowercase UUIDv7 restores, once.
+    const id = uuidv7();
+    const archive = withLines(items, "edges", edge(id));
+    const restored = await owner.restoreArchive(archive);
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, a);
+    trackItem(ctx, b);
+    expect(restored.data.edges_imported).toBe(1);
+    expect((await client.getEdge(id)).status).toBe(200);
+    const again = await owner.restoreArchive(archive);
+    expect(again.ok, JSON.stringify(again.error)).toBe(true);
+    expect(again.data.edges_imported).toBe(0);
+  });
+
+  it("refuses an archive that registers a type or an edge type twice, and writes nothing", async () => {
+    const id = uuidv7();
+    const type = {
+      type: {
+        id: `user.twice${ctx.runId.replace(/[^a-z0-9]/g, "")}`,
+        label: "Twice",
+        version: 1,
+        fields: { body: { type: "string" } },
+      },
+    };
+    const edgeType = {
+      edge_type: {
+        id: `twice.x${ctx.runId.replace(/[^a-z0-9]/g, "")}`,
+        label: "Twice",
+        cardinality: "many-to-many",
+        source_type_constraints: ["*"],
+        target_type_constraints: ["*"],
+        cascade_on_delete: "orphan",
+        property_schema: {},
+        written_at: "source",
+      },
+    };
+    for (const line of [type, edgeType]) {
+      const twice = `${JSON.stringify(line)}\n`.repeat(2);
+      const refused = await owner.restoreArchive(
+        withLines(itemsArchive([note(id)]), "instance", twice),
+      );
+      expect(refused.status, JSON.stringify(refused.error)).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+      expect(refused.error?.error.message).toContain("more than once");
+      expect((await client.getItem(id)).status).toBe(404);
+    }
+    expect((await client.getType(type.type.id)).status).toBe(404);
+
+    // The witness: each line once restores.
+    const restored = await owner.restoreArchive(
+      withLines(
+        itemsArchive([note(id)]),
+        "instance",
+        `${JSON.stringify(type)}\n${JSON.stringify(edgeType)}\n`,
+      ),
+    );
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, id);
+    trackType(ctx, type.type.id);
+    trackEdgeType(ctx, edgeType.edge_type.id);
+    expect(restored.data.types_registered).toBe(1);
+    expect(restored.data.edge_types_registered).toBe(1);
+  });
+
+  it("writes a snapshot's dates in UTC to the millisecond", async () => {
+    const id = uuidv7();
+    const spelled = "2019-12-31T23:59:59+01:00";
+    const line = {
+      item: { ...note(id), version: 2 },
+      metadata: { tags: [], extensions: {} },
+      versions: [
+        {
+          id: uuidv7(),
+          item_id: id,
+          version: 1,
+          properties: { body: "the first version" },
+          type: "core.note",
+          tier: "library",
+          created_at: spelled,
+          occurred_at: spelled,
+          source_id: null,
+          writer: null,
+        },
+      ],
+    };
+    const restored = await owner.restoreArchive(
+      withLines(itemsArchive([]), "items", `${JSON.stringify(line)}\n`),
+    );
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, id);
+    const versions = await client.getVersions(id);
+    expect(versions.status, JSON.stringify(versions.error)).toBe(200);
+    expect(versions.data.data).toHaveLength(1);
+    expect(versions.data.data[0]?.created_at).toBe("2019-12-31T22:59:59.000Z");
+    expect(versions.data.data[0]?.occurred_at).toBe("2019-12-31T22:59:59.000Z");
   });
 });

@@ -76,12 +76,12 @@ fn lending(value: Option<&Value>) -> BTreeSet<String> {
         .unwrap_or_default()
 }
 
-/// The snapshot ids of `wanted` that the instance's history already holds, read in one pass.
+/// The snapshot ids of `ids` that the instance's history already holds.
 pub fn held_snapshots(
     tx: &Transaction<'_>,
-    wanted: impl Fn(&str) -> bool,
+    ids: impl Iterator<Item = String>,
 ) -> Result<HashSet<String>> {
-    rows::snapshot_ids(tx, wanted)
+    rows::snapshot_ids(tx, ids)
 }
 
 /// Writes the item an archive line holds, already judged by the archive's row checks, unless
@@ -107,7 +107,6 @@ pub fn restore(
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    refuse_undeclared(unit, catalog, type_id, &properties, named)?;
     if let Some(id) = named
         && rows::by_id(tx, id)?.is_some()
     {
@@ -118,6 +117,16 @@ pub fn restore(
     {
         return Ok(Restored::Duplicate);
     }
+    let link = match catalog.link_field(type_id) {
+        Some(field) => link_in(field, &properties).map(str::to_string),
+        None => None,
+    };
+    if let Some(link) = &link
+        && rows::link_holder(tx, type_id, link)?.is_some()
+    {
+        return Ok(Restored::Duplicate);
+    }
+    refuse_undeclared(unit, catalog, type_id, &properties, named)?;
     if type_id == CONNECTION && text(&properties, "kind") == Some("app") {
         properties.insert("status".into(), "revoked".into());
     }
@@ -135,15 +144,6 @@ pub fn restore(
             Some(size) => properties.insert(FILE_SIZE.into(), Value::from(size)),
             None => properties.shift_remove(FILE_SIZE),
         };
-    }
-    let link = match catalog.link_field(type_id) {
-        Some(field) => link_in(field, &properties).map(str::to_string),
-        None => None,
-    };
-    if let Some(link) = &link
-        && rows::link_holder(tx, type_id, link)?.is_some()
-    {
-        return Ok(Restored::Duplicate);
     }
     let created_at = instant(item.get("created_at"), "created_at")?.unwrap_or(unit.at.clone());
     let updated_at = instant(item.get("updated_at"), "updated_at")?.unwrap_or(created_at.clone());
@@ -265,6 +265,10 @@ fn restore_snapshot(
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
+    let occurred_at = instant(snapshot.get("occurred_at"), "occurred_at")?
+        .ok_or_else(|| Refusal::internal("a checked snapshot has no occurred_at"))?;
+    let created_at = instant(snapshot.get("created_at"), "created_at")?
+        .ok_or_else(|| Refusal::internal("a checked snapshot has no created_at"))?;
     rows::insert_snapshot(
         tx,
         &rows::NewSnapshot {
@@ -274,10 +278,10 @@ fn restore_snapshot(
             properties: &number::object(&properties),
             type_id: text(snapshot, "type").unwrap_or_default(),
             tier: text(snapshot, "tier"),
-            occurred_at: text(snapshot, "occurred_at").unwrap_or_default(),
+            occurred_at: &occurred_at,
             source_id: text(snapshot, "source_id"),
             writer: writer_of(snapshot.get("writer")).as_ref(),
-            created_at: text(snapshot, "created_at").unwrap_or_default(),
+            created_at: &created_at,
         },
     )?;
     references::archived(&properties, &BTreeSet::new()).apply(tx, Row::Version(seq, version))

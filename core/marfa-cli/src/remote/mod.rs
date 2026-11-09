@@ -1586,6 +1586,57 @@ mod tests {
     }
 
     #[test]
+    fn a_restore_refused_after_a_pause_reports_the_refusal_and_sends_no_body() {
+        use std::io::{Read, Write};
+        let dir = std::env::temp_dir().join(format!("marfa-slow-refusal-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("archive.tar");
+        std::fs::write(&path, vec![7u8; 16 * 1024 * 1024]).unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let serving = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut head = Vec::new();
+            let mut chunk = [0u8; 4096];
+            while !head.windows(4).any(|window| window == b"\r\n\r\n") {
+                let read = socket.read(&mut chunk).unwrap();
+                head.extend_from_slice(&chunk[..read]);
+            }
+            // Longer than any wait for `100 Continue` that ureq has by default.
+            std::thread::sleep(std::time::Duration::from_millis(2_500));
+            let body = r#"{"error":{"code":"forbidden","message":"not the owner"}}"#;
+            write!(
+                socket,
+                "HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\n{}: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                marfa_core::http::CONTRACT_HEADER,
+                marfa_core::contract::CONTRACT_VERSION,
+                body.len()
+            )
+            .unwrap();
+            socket.flush().unwrap();
+            let mut sent = 0;
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_millis(300)))
+                .ok();
+            while let Ok(read @ 1..) = socket.read(&mut chunk) {
+                sent += read;
+            }
+            sent
+        });
+        let remote = Remote::keyed(&url, "marfa_k1_x").unwrap();
+        let request = crate::commands::restore::request(&crate::commands::restore::RestoreArgs {
+            file: path,
+        });
+        match remote.json(&request) {
+            Err(CliError::Refused { status, code, .. }) => {
+                assert_eq!((status, code.as_str()), (403, "forbidden"));
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(serving.join().unwrap(), 0, "the body was sent anyway");
+    }
+
+    #[test]
     fn a_file_refused_for_an_expired_token_is_sent_again_once_renewed() {
         let dir = std::env::temp_dir().join(format!("marfa-resend-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();

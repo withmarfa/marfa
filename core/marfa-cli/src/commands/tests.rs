@@ -1551,6 +1551,11 @@ fn restore_posts_the_archive_under_its_own_type() {
     });
     assert_eq!(request.method, Method::Post);
     assert_eq!(request.path(), "/restore");
+    assert!(
+        request
+            .headers
+            .contains(&("Expect".to_string(), "100-continue".to_string()))
+    );
     match &request.body {
         Body::File { path, content_type } => {
             assert_eq!(path, &PathBuf::from("/nowhere/archive.tar"));

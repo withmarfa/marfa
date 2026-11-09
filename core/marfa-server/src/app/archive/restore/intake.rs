@@ -30,30 +30,41 @@ fn invalid(message: impl Into<String>) -> Refusal {
     Refusal::validation(message.into())
 }
 
+fn registered_twice(field: &str, id: &str) -> Refusal {
+    invalid(format!("The archive registers {id} more than once.")).with_detail(field, id)
+}
+
 fn damaged_schema(message: impl Into<String>) -> Refusal {
     Refusal::new(Code::InvalidSchema, message.into())
 }
 
-/// Item and snapshot ids, a UUID kept as its 128 bits.
-#[derive(Default)]
-pub struct Ids {
-    uuids: HashSet<u128>,
-    other: HashSet<String>,
+/// The 128 bits of an id in its lowercase hyphenated form; the row checks refuse every other.
+fn bits(id: &str) -> Option<u128> {
+    uuid::Uuid::parse_str(id)
+        .ok()
+        .filter(|held| held.hyphenated().to_string() == id)
+        .map(|held| held.as_u128())
 }
 
+/// Snapshot ids, each kept as its 128 bits.
+#[derive(Default)]
+pub struct Ids(HashSet<u128>);
+
 impl Ids {
+    /// Whether `id` was not held before.
     fn insert(&mut self, id: &str) -> bool {
-        match uuid::Uuid::parse_str(id) {
-            Ok(held) if held.hyphenated().to_string() == id => self.uuids.insert(held.as_u128()),
-            _ => self.other.insert(id.to_string()),
-        }
+        bits(id).is_none_or(|held| self.0.insert(held))
     }
 
     pub fn contains(&self, id: &str) -> bool {
-        match uuid::Uuid::parse_str(id) {
-            Ok(held) if held.hyphenated().to_string() == id => self.uuids.contains(&held.as_u128()),
-            _ => self.other.contains(id),
-        }
+        bits(id).is_some_and(|held| self.0.contains(&held))
+    }
+
+    /// Each id, in its lowercase hyphenated form.
+    pub fn each(&self) -> impl Iterator<Item = String> + '_ {
+        self.0
+            .iter()
+            .map(|held| uuid::Uuid::from_u128(*held).hyphenated().to_string())
     }
 }
 
@@ -147,7 +158,9 @@ struct Rows {
     registrations: Registrations,
     icon_types: HashSet<String>,
     item_types: HashMap<u128, u32>,
-    other_items: HashMap<String, u32>,
+    type_ids: HashSet<String>,
+    edge_type_ids: HashSet<String>,
+    setting_keys: HashSet<String>,
     type_names: Vec<String>,
     snapshots: Ids,
     items: usize,
@@ -235,6 +248,11 @@ impl Rows {
                         "The archive claims a type is platform-shipped, which no archive can restore.",
                     ));
                 }
+                if let Some(id) = body.get("id").and_then(Value::as_str)
+                    && !self.type_ids.insert(id.to_string())
+                {
+                    return Err(registered_twice("type_id", id));
+                }
                 registrations.types.push(types::write::Archived {
                     definition: body.clone(),
                     created_by: line
@@ -249,6 +267,11 @@ impl Rows {
                         "Line {row} of {INSTANCE} holds an edge type that is not an object."
                     ))
                 })?;
+                if let Some(id) = definition.get("id").and_then(Value::as_str)
+                    && !self.edge_type_ids.insert(id.to_string())
+                {
+                    return Err(registered_twice("edge_type", id));
+                }
                 registrations.edge_types.push(definition.clone());
             }
             "type_icon" => {
@@ -286,7 +309,16 @@ impl Rows {
                 body,
                 crate::app::items::restored::restored_source,
             )?),
-            "setting" => registrations.settings.push(stored::archived(body)?),
+            "setting" => {
+                let (key, text) = stored::archived(body)?;
+                if !self.setting_keys.insert(key.clone()) {
+                    return Err(invalid(format!(
+                        "The archive carries more than one value for setting {key}."
+                    ))
+                    .with_detail("key", key.as_str()));
+                }
+                registrations.settings.push((key, text));
+            }
             "connector_state" => {
                 let source = body.get("source").and_then(Value::as_str);
                 let state = body.get("state").and_then(Value::as_object);
@@ -355,11 +387,7 @@ impl Rows {
         let Some(catalog) = &self.catalog else {
             return Ok(());
         };
-        match checks::item(catalog, line, row) {
-            Ok(()) => {}
-            Err(refused) if refused.skip.is_some() => return Ok(()),
-            Err(refused) => return Err(refused.refusal),
-        }
+        checks::item(catalog, line, row).map_err(|refused| refused.refusal)?;
         let item = &line["item"];
         let id = item.get("id").and_then(Value::as_str);
         if let Some(Value::Array(versions)) = line.get("versions") {
@@ -380,16 +408,11 @@ impl Rows {
                 }
             }
         }
-        if let (Some(id), Some(type_id)) = (id, item.get("type").and_then(Value::as_str)) {
+        if let (Some(held), Some(type_id)) =
+            (id.and_then(bits), item.get("type").and_then(Value::as_str))
+        {
             let index = self.type_index(type_id);
-            match uuid::Uuid::parse_str(id) {
-                Ok(held) => {
-                    self.item_types.insert(held.as_u128(), index);
-                }
-                Err(_) => {
-                    self.other_items.insert(id.to_string(), index);
-                }
-            }
+            self.item_types.insert(held, index);
         }
         Ok(())
     }
@@ -398,13 +421,9 @@ impl Rows {
         let Some(catalog) = &self.catalog else {
             return Ok(());
         };
-        let names = &self.type_names;
-        let (uuids, other) = (&self.item_types, &self.other_items);
+        let (names, items) = (&self.type_names, &self.item_types);
         let ends = |id: &str| {
-            let index = match uuid::Uuid::parse_str(id) {
-                Ok(held) => uuids.get(&held.as_u128()),
-                Err(_) => other.get(id),
-            }?;
+            let index = items.get(&bits(id)?)?;
             Some(checks::End {
                 type_id: names.get(*index as usize)?.as_str(),
             })
@@ -607,7 +626,9 @@ impl Intake {
                 registrations: Registrations::default(),
                 icon_types: HashSet::new(),
                 item_types: HashMap::new(),
-                other_items: HashMap::new(),
+                type_ids: HashSet::new(),
+                edge_type_ids: HashSet::new(),
+                setting_keys: HashSet::new(),
                 type_names: Vec::new(),
                 snapshots: Ids::default(),
                 items: 0,
@@ -998,12 +1019,16 @@ mod tests {
     }
 
     #[test]
-    fn ids_tell_uuids_and_other_ids_apart_without_keeping_text() {
+    fn ids_hold_lowercase_uuids_and_find_no_other_id() {
         let mut ids = Ids::default();
         assert!(ids.insert("01a1bdba-8640-72ba-b7d6-9e27d94e7540"));
         assert!(!ids.insert("01a1bdba-8640-72ba-b7d6-9e27d94e7540"));
-        assert!(ids.insert("not-a-uuid"));
-        assert!(ids.contains("not-a-uuid"));
+        assert!(ids.contains("01a1bdba-8640-72ba-b7d6-9e27d94e7540"));
+        assert!(!ids.contains("not-a-uuid"));
         assert!(!ids.contains("01A1BDBA-8640-72BA-B7D6-9E27D94E7540"));
+        assert_eq!(
+            ids.each().collect::<Vec<_>>(),
+            ["01a1bdba-8640-72ba-b7d6-9e27d94e7540"]
+        );
     }
 }
