@@ -372,7 +372,8 @@ jobs:
   # After notarizing, the programs are asked their version from the archive a
   # person unpacks, and the server unpacked from it reads a text file, a PDF
   # and a picture (`prove-reading.sh`). The server does not report how far its
-  # reader was sandboxed, so the sandbox itself is not proved here.
+  # reader was sandboxed, so the same script also runs the signed server as its
+  # own reading child and requires the full sandbox in the child's first frame.
   sign:
     name: Sign the programs
     needs: [version, programs-macos]

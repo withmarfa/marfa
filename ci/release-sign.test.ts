@@ -3,9 +3,16 @@
  * binary that Apple has not notarized. The release signs and notarizes the
  * programs before it packs them, so the archive on the release page runs
  * however it was downloaded. The server unpacked from the signed archive
- * must read a text file, a PDF, and a picture.
+ * must read a text file, a PDF, and a picture, and as its own reading child
+ * must report the full sandbox.
  */
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -220,5 +227,94 @@ describe("sign-binary.sh refuses before it touches a keychain", () => {
     const result = runSign(all, join(ROOT, "no-such-binary"));
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("no-such-binary is not a file");
+  });
+});
+
+describe("prove-reading.sh holds the signed server to the reader's protocol", () => {
+  const PROVE = join(ROOT, "scripts", "release", "prove-reading.sh");
+  const FIXTURES = join(ROOT, "core", "marfa-enrichment", "fixtures");
+
+  /**
+   * A stand-in for `marfa-server` that plays the reading child the way
+   * `isolated/parent.rs` starts one, and exits at once as a server. It ends
+   * with status 3 and no frame unless it was started as a parent starts it: an
+   * empty environment, `/` as its folder, the picture open for reading as
+   * standard input, and the limits and the request as its last three arguments.
+   */
+  function stand_in(frame: string, status: number, text: string) {
+    return `#!/bin/bash
+[ "$1" = --marfa-enrichment-child ] || exit 0
+[ "$#" = 4 ] || exit 3
+[ "$2" = 60000 ] && [ "$3" = 1073741824 ] || exit 3
+[ "$(pwd -P)" = / ] || exit 3
+env | grep -qE '^(HOME|PATH|TMPDIR|USER|MARFA_[A-Z_]*)=' && exit 3
+[ -f /dev/stdin ] || exit 3
+len=$(wc -c)
+printf '%s' "$4" | jq -e --argjson len "$len" \
+  '.mime == "image/png" and .len == $len and (.ocr.languages | type) == "string"' > /dev/null || exit 3
+printf '%s\n' '${frame}'
+printf '%s' '{"reading":{"text":"${text}","truncated":false,"cut_short":false,"size":[1,1],"text_refused":null}}'
+exit ${status}
+`;
+  }
+
+  function prove(program: string) {
+    const directory = mkdtempSync(join(tmpdir(), "marfa-prove-reading-"));
+    try {
+      const server = join(directory, "marfa-server");
+      writeFileSync(server, program);
+      chmodSync(server, 0o755);
+      const archive = join(directory, "marfa.tar.gz");
+      spawnSync("tar", ["-czf", archive, "-C", directory, "marfa-server"]);
+      const result = spawnSync("bash", [PROVE, archive, FIXTURES], {
+        encoding: "utf8",
+      });
+      return `${result.stdout}${result.stderr}`.concat(
+        result.status === 0 ? "\nEXIT 0" : "",
+      );
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }
+
+  const SENTENCE = "Marfa reads this sentence upright.";
+
+  it("goes on to the HTTP proof once the child reports the full sandbox and reads the picture", () => {
+    const output = prove(stand_in('{"sandbox":"full"}', 0, SENTENCE));
+    expect(output).toContain(
+      "sandbox: the reading child reported the full sandbox",
+    );
+    expect(output).toContain(`the reading child read: ${SENTENCE}`);
+    expect(output).toContain("marfa-server ended before it listened");
+  });
+
+  it.each(["partial", "off"])(
+    "refuses a child that reports the %s sandbox",
+    (sandbox) => {
+      const output = prove(stand_in(`{"sandbox":"${sandbox}"}`, 0, SENTENCE));
+      expect(output).toContain("not the full sandbox");
+      expect(output).not.toContain("ended before it listened");
+    },
+  );
+
+  it("refuses a child that starts as a parent would not, and says nothing of a setup code", () => {
+    const output = prove(
+      stand_in('{"sandbox":"full"}', 0, SENTENCE).replace(
+        '[ "$#" = 4 ]',
+        '[ "$#" = 5 ]',
+      ),
+    );
+    expect(output).toContain("not the full sandbox");
+    expect(output).not.toMatch(/setup code: \S/i);
+  });
+
+  it("refuses a child that fails after its frame", () => {
+    const output = prove(stand_in('{"sandbox":"full"}', 1, SENTENCE));
+    expect(output).toContain("exited with status 1, not 0");
+  });
+
+  it("refuses a reading without the sentence", () => {
+    const output = prove(stand_in('{"sandbox":"full"}', 0, "something else"));
+    expect(output).toContain(`lacks '${SENTENCE}'`);
   });
 });
