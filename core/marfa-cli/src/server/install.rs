@@ -523,9 +523,7 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
             if let Some(identity) = identity {
                 check_account_runs(identity, &binary)?;
             }
-            // A running server reads its settings once: restart it when they
-            // changed, when another program owns them, or when it does not
-            // answer on its port, as after a run that failed past the write.
+            // External settings have no recorded applied version.
             let restart = wrote_settings
                 || external
                 || existing

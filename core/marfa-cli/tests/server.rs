@@ -166,8 +166,6 @@ settled() {
 }
 echo "$*" >> "$H/launchctl.log"
 label=$(printf '%s' "$*" | sed -n 's/.*so\.marfa\.server\.\([a-z0-9_-]*\).*/\1/p')
-# A new process takes the next number, unless the stand-in is told that a
-# restart does nothing.
 spawn() {
   [ -e "$H/loaded-$label" ] || return 0
   if [ -e "$H/restart-ignored" ] && [ -e "$H/pid-$label" ]; then return 0; fi
@@ -1950,8 +1948,6 @@ impl Rig {
         fs::read_to_string(self.home().join(name)).unwrap_or_default()
     }
 
-    /// How many times the service manager was told to restart a running
-    /// service.
     fn restarts(&self) -> usize {
         let word = if cfg!(target_os = "macos") {
             "kickstart -k"
@@ -2727,7 +2723,7 @@ fn a_server_that_refuses_its_database_is_not_started_again_and_run_waits_to_be_s
     for command in ["stop", "start"] {
         assert!(
             said.contains(&format!(
-                "`marfa server {command} --dir {}",
+                "`marfa server {command} --dir '{}'",
                 rig.real_dir().display()
             )),
             "{said}"

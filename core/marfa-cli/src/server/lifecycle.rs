@@ -80,9 +80,7 @@ fn upgrade_native(
         ));
     }
     let mark = service.mark();
-    // The service is written again, because the binary it names may have
-    // moved with the release. A changed service restarts by itself; a new
-    // release needs the restart even when the service is the same.
+    // A new release may keep the same service definition.
     service.on(state.autostart, !unchanged, &binary, &server)?;
     let watch = Watch::Process {
         service: &service,
@@ -252,10 +250,9 @@ fn database_update(log: &str) -> Option<DatabaseUpdate> {
         .next_back()
 }
 
-/// What to do after a service refused the database a newer release could not
-/// update. The service stays up and idle, so `start` alone finds it running.
+// The idle supervisor must stop before the earlier release can start.
 fn refused_update_note(target: &str, from: &str, dir: &Path) -> String {
-    let dir = dir.display();
+    let dir = format!("'{}'", dir.display().to_string().replace('\'', "'\\''"));
     format!(
         "{target} did not update the database, and the server says why above. A refused update leaves the database as it was, so {from} still reads it. The service stays up and idle after a refusal, so run `marfa server stop --dir {dir}`, install {from} again, then run `marfa server start --dir {dir}`."
     )
@@ -679,11 +676,11 @@ mod tests {
     fn a_refused_update_says_to_stop_the_idle_service_before_starting_it_again() {
         let note = refused_update_note("0.0.71", "0.0.70", Path::new("/srv/marfa one"));
         let stop = note
-            .find("`marfa server stop --dir /srv/marfa one`")
+            .find("`marfa server stop --dir '/srv/marfa one'`")
             .unwrap();
         let install = note.find("install 0.0.70 again").unwrap();
         let start = note
-            .find("`marfa server start --dir /srv/marfa one`")
+            .find("`marfa server start --dir '/srv/marfa one'`")
             .unwrap();
         assert!(stop < install && install < start, "{note}");
     }

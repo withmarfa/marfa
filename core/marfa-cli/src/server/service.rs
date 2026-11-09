@@ -100,7 +100,6 @@ pub struct Service<'a> {
     pub trace: bool,
 }
 
-/// How long a restart is given to show a new process.
 const RESTART_WAIT: Duration = Duration::from_secs(4);
 
 impl Service<'_> {
@@ -124,11 +123,7 @@ impl Service<'_> {
         }
     }
 
-    /// Writes the service, loads it, and starts it. Only a service that
-    /// `autostart` names starts again when the machine, or the person's
-    /// login, does. A running service on an unchanged definition keeps
-    /// running, unless `restart` says the server must read its settings
-    /// again, and then it restarts and is shown to have a new process.
+    // Settings are read at startup, independently of the service definition.
     pub fn on(
         &self,
         autostart: bool,
@@ -196,8 +191,7 @@ impl Service<'_> {
         }
     }
 
-    /// Waits for the manager to show another process than `before`. A service
-    /// that shows none is left to the wait for the server, which says why.
+    // The health wait handles a service with no process.
     fn await_new_process(&self, before: u32) -> Result<(), CliError> {
         let deadline = Instant::now() + RESTART_WAIT;
         loop {
@@ -206,9 +200,9 @@ impl Service<'_> {
                 None => return Ok(()),
                 Some(_) if Instant::now() >= deadline => {
                     return Err(CliError::Install(format!(
-                        "{} did not restart: it still runs as process {before}, so the server has not read its new settings. Run `marfa server stop --dir {dir}` and then `marfa server start --dir {dir}`",
+                        "{} did not restart: the service manager still reports process {before}, so the restart could not be confirmed. Run `marfa server stop --dir '{dir}'` and then `marfa server start --dir '{dir}'`",
                         self.describe(),
-                        dir = self.dir.display()
+                        dir = self.dir.display().to_string().replace('\'', "'\\''")
                     )));
                 }
                 Some(_) => std::thread::sleep(Duration::from_millis(100)),

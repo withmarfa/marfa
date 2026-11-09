@@ -172,7 +172,10 @@ pub fn run(dir: &DirArgs) -> Result<(), CliError> {
     if dir.dir.is_some() {
         let folder = Folder::new(dir)?;
         let (state, _) = folder.require_state()?;
-        folder_arg = format!(" --dir {}", folder.dir.display());
+        folder_arg = format!(
+            " --dir '{}'",
+            folder.dir.display().to_string().replace('\'', "'\\''")
+        );
         let settings = folder.read(files::SETTINGS)?.unwrap_or_default();
         command.envs(native::environment(&folder.dir, state.port, &settings));
         if launchd::supported() {
