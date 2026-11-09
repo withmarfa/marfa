@@ -49615,7 +49615,7 @@
           "Health and maintenance"
         ],
         "summary": "Get instance metrics",
-        "description": "Returns instance-wide counters, how much memory, CPU and disk this server uses, and process uptime. Requires `instance.read`; the counters include records outside your content permissions.",
+        "description": "Returns instance-wide counters, how much memory, CPU and disk this server uses, and process uptime. The counters are counted when you ask. Requires `instance.read`; the counters include records outside your content permissions.",
         "security": [
           {
             "bearerAuth": []
@@ -49803,27 +49803,15 @@
                             "event_log",
                             "audit_log"
                           ],
-                          "description": "Row counts of the largest tables, as of `counted_at`. `null` if a count can't be read, and all `null` until the first count finishes."
-                        },
-                        "counted_at": {
-                          "type": [
-                            "string",
-                            "null"
-                          ],
-                          "description": "When the row counts were taken, in UTC. `null` until the first count finishes. A request never counts: when there is no count or it is over an hour old, Marfa starts one in the background."
+                          "description": "Row counts of the largest tables, counted when the request is read. `null` if a count can't be read."
                         }
                       },
                       "required": [
                         "database_bytes",
                         "wal_bytes",
-                        "rows",
-                        "counted_at"
+                        "rows"
                       ],
                       "description": "Database size and row counts."
-                    },
-                    "cached_at": {
-                      "type": "string",
-                      "description": "When the item, blob, type, key and webhook counters were collected, in UTC. They are reused for up to a minute. The `process` and `storage` blocks are read on each request."
                     }
                   },
                   "required": [
@@ -49834,8 +49822,7 @@
                     "webhooks",
                     "uptime_seconds",
                     "process",
-                    "storage",
-                    "cached_at"
+                    "storage"
                   ]
                 }
               }

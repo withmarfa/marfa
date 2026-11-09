@@ -137,6 +137,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/media-progress.test.ts",
   "src/suites/compliance/media-rating-game.test.ts",
   "src/suites/compliance/metadata-routes.test.ts",
+  "src/suites/compliance/metrics.test.ts",
   "src/suites/compliance/namespace.test.ts",
   "src/suites/compliance/null-filter.test.ts",
   "src/suites/compliance/numeric-property-filters.test.ts",

@@ -26,6 +26,7 @@ pub mod jobs;
 pub mod keys;
 pub mod limiter;
 pub mod mcp;
+pub mod metrics;
 pub mod oauth;
 pub mod occurrences;
 pub mod outbound;
@@ -42,6 +43,7 @@ pub mod views;
 pub mod webhooks;
 
 use std::sync::{Arc, OnceLock};
+use std::time::Instant;
 
 use arc_swap::ArcSwap;
 use tokio::sync::{Notify, watch};
@@ -81,6 +83,7 @@ pub struct App {
     pub blobs: Blobs,
     pub mcp: mcp::Mcp,
     pub telemetry: Telemetry,
+    pub started: Instant,
     pub cursor_secret: Secret,
     pub reindexing: Arc<Notify>,
     pub viewers: events::Viewers,
@@ -159,6 +162,7 @@ impl App {
             blobs,
             mcp,
             telemetry: Telemetry::default(),
+            started: Instant::now(),
             catalog,
             read_only: Arc::new(ArcSwap::from_pointee(connectors::Registry::empty())),
             bound_port: OnceLock::new(),

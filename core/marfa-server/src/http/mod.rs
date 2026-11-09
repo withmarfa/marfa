@@ -33,6 +33,7 @@ pub mod listening;
 mod listing;
 mod lookup;
 mod mcp;
+mod metrics;
 mod named_instance;
 mod oauth;
 pub mod observe;
@@ -306,6 +307,7 @@ fn shared(app: Arc<App>) -> Routes {
         .route("/openapi.json", get(root::document))
         .route("/audit", get(audit::list))
         .route("/housekeeping", get(housekeeping::list))
+        .route("/metrics", get(metrics::read))
         .route("/housekeeping/{name}/run", post(housekeeping::run))
         .route("/sources", get(sources::list))
         .route("/source", get(sources::read).patch(sources::update))
