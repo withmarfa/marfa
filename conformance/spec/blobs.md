@@ -766,7 +766,7 @@ When a working key sends `GET /export?format=archive`, the server MUST name a bl
 
 ### `blobs/export-download-name`
 
-When a working key sends `GET /export?format=archive`, the server MUST answer as a download named `marfa-export-<date>.tar.gz`, whatever blobs the archive carries.
+When a working key sends `GET /export?format=archive`, the server MUST answer as a download named `marfa-export-<date>.tar`, whatever blobs the archive carries.
 
 **Reason:** the name is not a blob's hash, so a download of the archive is not taken for a download of a blob.
 
