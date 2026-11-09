@@ -14,13 +14,14 @@ use marfa_server::settings::{Environment, Settings};
 use rusqlite::Connection;
 use serde_json::{Value, json};
 use tempfile::TempDir;
+use tokio::sync::Notify;
 use tokio::time::{sleep, timeout};
 use tower::ServiceExt;
 
 const ORIGIN: &str = "http://127.0.0.1:8600";
 
-/// A body that sends its bytes and then waits for ever.
-struct Stalled(Option<Bytes>);
+/// A body that sends its bytes and then waits for ever, telling `asked_again` when it is asked for a frame after them.
+struct Stalled(Option<Bytes>, Option<Arc<Notify>>);
 
 impl HttpBody for Stalled {
     type Data = Bytes;
@@ -32,7 +33,12 @@ impl HttpBody for Stalled {
     ) -> Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
         match self.0.take() {
             Some(bytes) => Poll::Ready(Some(Ok(Frame::data(bytes)))),
-            None => Poll::Pending,
+            None => {
+                if let Some(asked_again) = &self.1 {
+                    asked_again.notify_one();
+                }
+                Poll::Pending
+            }
         }
     }
 }
@@ -204,7 +210,7 @@ async fn a_refusal_the_store_already_knows_is_given_before_the_body_is_read() {
     ])
     .await;
     let stalled = |declared: &str| {
-        let mut request = Instance::post(&instance.address, Body::new(Stalled(None)));
+        let mut request = Instance::post(&instance.address, Body::new(Stalled(None, None)));
         request
             .headers_mut()
             .insert(header::CONTENT_LENGTH, declared.parse().unwrap());
@@ -249,7 +255,7 @@ async fn the_bytes_a_declared_length_would_add_are_refused_before_the_body_is_re
 
     assert_eq!(
         instance
-            .answered(declared("1", Body::new(Stalled(None))))
+            .answered(declared("1", Body::new(Stalled(None, None))))
             .await,
         Some(StatusCode::SERVICE_UNAVAILABLE)
     );
@@ -283,22 +289,23 @@ async fn one_source_may_hold_half_the_bytes_in_flight_and_no_more() {
     let instance = Instance::start(&[("MARFA_INBOUND_IN_FLIGHT_BYTES", "8")]).await;
     let other = instance.source("other").await;
 
-    // The first source holds four bytes of a body that has not ended.
+    // The first source holds four bytes of a body that has not ended. The server asks the body for
+    // another frame only after it has taken the first frame's bytes into its reservation.
+    let asked_again = Arc::new(Notify::new());
     let held = {
         let router = instance.public.clone();
         let request = Instance::post(
             &instance.address,
-            Body::new(Stalled(Some(Bytes::from("abcd")))),
+            Body::new(Stalled(
+                Some(Bytes::from("abcd")),
+                Some(asked_again.clone()),
+            )),
         );
         tokio::spawn(async move { router.oneshot(request).await })
     };
-    for _ in 0..100 {
-        let probe = Instance::post(&instance.address, Body::from("e"));
-        if instance.answered(probe).await == Some(StatusCode::SERVICE_UNAVAILABLE) {
-            break;
-        }
-        sleep(Duration::from_millis(20)).await;
-    }
+    timeout(Duration::from_secs(30), asked_again.notified())
+        .await
+        .expect("the server never asked for a frame after the first");
 
     assert_eq!(
         instance
@@ -312,5 +319,6 @@ async fn one_source_may_hold_half_the_bytes_in_flight_and_no_more() {
             .await,
         Some(StatusCode::ACCEPTED)
     );
+    assert!(!held.is_finished(), "the stalled delivery was answered");
     held.abort();
 }
