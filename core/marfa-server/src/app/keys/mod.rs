@@ -1,4 +1,3 @@
-mod limit;
 pub mod reap;
 mod request;
 mod secret;
@@ -15,7 +14,6 @@ use super::connectors;
 use super::items::reading;
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
-pub use limit::Limiter;
 pub use request::{MINT_FIELDS, Mint, UPDATE_FIELDS, Update};
 pub use secret::hash as digest_of;
 pub use usage::Usage;

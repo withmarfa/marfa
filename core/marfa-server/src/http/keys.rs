@@ -13,57 +13,47 @@ use super::query;
 use crate::app::App;
 use crate::app::access::{Caller, Permission};
 use crate::app::keys::{self, MINT_FIELDS, Mint, UPDATE_FIELDS, Update};
+use crate::app::limiter::{KEY_OPERATIONS, Lane, retry_seconds};
 use crate::app::refusal::{Code, Refusal};
 use crate::settings::registry::{
     RATE_LIMIT_ENABLED, RATE_LIMIT_KEYS_REQUESTS, RATE_LIMIT_WINDOW_MS,
 };
 
-const LIMIT_HEADER: &str = "x-ratelimit-limit";
-
 /// Takes one key operation from the caller's allowance, shared by every door that
 /// reaches the key operations, and answers the seconds to wait when none is left.
-pub fn key_operation_wait(app: &App, caller: &Caller) -> Option<u64> {
+pub fn key_operation_wait(app: &App, caller: &Caller) -> Option<i64> {
     let live = app.settings.live();
     if !live.get(RATE_LIMIT_ENABLED) {
         return None;
     }
-    app.key_limit.take(
+    let lane = Lane::credential(
+        KEY_OPERATIONS,
         &caller.credential_handle(),
-        app.clock.now_ms(),
         live.get(RATE_LIMIT_KEYS_REQUESTS),
         live.get(RATE_LIMIT_WINDOW_MS),
-    )
+    );
+    app.limiter
+        .admit(app.clock.now_ms(), &[lane])
+        .map(retry_seconds)
 }
 
 pub async fn limited(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
-    let live = app.settings.live();
-    if !live.get(RATE_LIMIT_ENABLED) {
-        return next.run(request).await;
-    }
-    let cap = live.get(RATE_LIMIT_KEYS_REQUESTS);
     let (mut parts, body) = request.into_parts();
     let wait = identify(&mut parts, &app)
         .await
         .ok()
         .flatten()
         .and_then(|caller| key_operation_wait(&app, &caller));
-    let mut response = match wait {
-        Some(seconds) => {
-            let mut refused = refusal_answer(&Refusal::new(
+    match wait {
+        Some(seconds) => refusal_answer(
+            &Refusal::new(
                 Code::RateLimited,
                 "Too many requests to the key operations; try again later.",
-            ));
-            refused
-                .headers_mut()
-                .insert(header::RETRY_AFTER, HeaderValue::from(seconds));
-            refused
-        }
+            )
+            .with_detail("retry_after", seconds),
+        ),
         None => next.run(Request::from_parts(parts, body)).await,
-    };
-    response
-        .headers_mut()
-        .insert(LIMIT_HEADER, HeaderValue::from(cap));
-    response
+    }
 }
 
 pub async fn mint(State(app): State<Arc<App>>, caller: Caller, body: JsonBody) -> Answer {

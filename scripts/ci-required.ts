@@ -258,8 +258,9 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // table, and `compliance/instance.test.ts` holds the published operations
   // to the coverage table. No other server fixture reads the contract, and
   // `ci/ci-required.test.ts` fails when one starts to. A unit test of the Rust
-  // server holds its refusal codes to `errors.md`, and two more hold its
-  // settings to the tables of `instance.md`, so those chapters reach it.
+  // server holds its refusal codes to `errors.md`, two more hold its
+  // settings to the tables of `instance.md`, and one holds its jobs to the
+  // table of `housekeeping.md`, so those chapters reach it.
   [
     /^conformance\/spec\/errors\.md$/,
     [
@@ -280,7 +281,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     ],
   ],
   [
-    /^conformance\/spec\/instance\.md$/,
+    /^conformance\/spec\/(instance|housekeeping)\.md$/,
     ["workspace", "conformance-offline", "core-checks-linux", "rust-contract"],
   ],
   [/^conformance\/spec\//, ["workspace", "conformance-offline"]],
@@ -339,10 +340,10 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [/^\.(agents|claude|codex|githooks)\//, []],
 
   // The drill runs Litestream's configuration, which the offline lane's own
-  // test reads too, and `ci/entrypoint.test.ts` and the backup fixtures run
-  // the entrypoint. Neither is in the image.
+  // test reads too, and `ci/entrypoint.test.ts` runs the entrypoint. Neither
+  // is in the image.
   [/^deploy\/litestream\.yml$/, ["restore-drill", ...CONFORMANCE]],
-  [/^deploy\/entrypoint\.sh$/, ["workspace", "restore-drill"]],
+  [/^deploy\/entrypoint\.sh$/, ["workspace"]],
   // The Dockerfile is the image; `ci/test-hooks-release.test.ts` reads it.
   [/^deploy\/Dockerfile$/, ["workspace", "image"]],
   [/^deploy\//, []],
@@ -628,9 +629,11 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // The ACL reading both the command line and the Rust server's private
   // socket use has macOS-only code, so a Mac builds and tests it too.
   [/^core\/marfa-acl\//, RUST],
-  // The server's own use of it has a macOS-only test.
+  // The server's own use of it has a macOS-only test, and its process figures
+  // read the resident size, and the open-file limit is raised, through
+  // macOS-only calls.
   [
-    /^core\/marfa-server\/src\/control_socket\.rs$/,
+    /^core\/marfa-server\/src\/(control_socket|app\/metrics|open_files)\.rs$/,
     ["core-checks", "core-checks-linux", "rust-contract"],
   ],
   // A background read lowers its thread's priority each system's own way.

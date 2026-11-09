@@ -141,7 +141,7 @@ describe("the test hooks", () => {
       const level = await bootFreshServer("test-hooks-level");
       try {
         const read = async (server: FreshServer) =>
-          Date.parse((await runJob(server, "rate-limit-cleanup")).started_at);
+          Date.parse((await runJob(server, "audit-cleanup")).started_at);
         // The witness: the same read on a server with no offset is the
         // system clock's.
         expect(Math.abs((await read(level)) - Date.now())).toBeLessThan(10_000);

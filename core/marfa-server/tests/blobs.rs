@@ -537,6 +537,7 @@ async fn over_a_socket(public: &Router, request: &str, then_wait: Duration) -> (
         public.clone(),
         std::future::pending(),
         Duration::from_secs(30),
+        None,
     ));
     let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
     stream.write_all(request.as_bytes()).await.unwrap();

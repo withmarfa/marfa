@@ -1,11 +1,4 @@
-/**
- * A browser marks the archive it downloads, and macOS refuses to run a marked
- * binary that Apple has not notarized. The release signs and notarizes the
- * programs before it packs them, so the archive on the release page runs
- * however it was downloaded. The server unpacked from the signed archive
- * must read a text file, a PDF, and a picture, and as its own reading child
- * must report the full sandbox.
- */
+// Exercises the signing step and the reading proof of the signed server.
 import {
   chmodSync,
   mkdtempSync,
@@ -234,14 +227,8 @@ describe("prove-reading.sh holds the signed server to the reader's protocol", ()
   const PROVE = join(ROOT, "scripts", "release", "prove-reading.sh");
   const FIXTURES = join(ROOT, "core", "marfa-enrichment", "fixtures");
 
-  /**
-   * A stand-in for `marfa-server` that plays the reading child the way
-   * `isolated/parent.rs` starts one, and as a server logs a setup code and a
-   * line that must be shown, then exits at once. As a child it ends
-   * with status 3 and no frame unless it was started as a parent starts it: an
-   * empty environment, `/` as its folder, the picture open for reading as
-   * standard input, and the limits and the request as its last three arguments.
-   */
+  // A stand-in for `marfa-server`. As a reading child it ends with status 3 and no frame
+  // unless started as `isolated/parent.rs` starts one.
   function stand_in(frame: string, status: number, text: string) {
     return `#!/bin/bash
 [ "$1" = --marfa-enrichment-child ] || { echo 'Setup code: 4815-1623'; echo 'the server log line'; exit 0; }

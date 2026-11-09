@@ -6,7 +6,7 @@ use axum::response::Response;
 use serde_json::{Map, Value, json};
 
 use crate::app::App;
-use crate::app::access::Caller;
+use crate::app::access::{Caller, Permission};
 use crate::app::oauth::grants::{self, Narrowing};
 use crate::app::oauth::scope::ScopeSet;
 use crate::app::refusal::{Code, Refusal};
@@ -37,6 +37,7 @@ fn scopes_in(body: &Map<String, Value>, field: &'static str) -> Result<ScopeSet,
 }
 
 pub async fn list(State(app): State<Arc<App>>, uri: Uri, caller: Caller) -> Answer {
+    caller.require(Permission::GrantsManage)?;
     query::only(&uri, &[])?;
     let data = grants::list(&app, &caller).await?;
     Ok(json_answer(
@@ -70,6 +71,8 @@ pub async fn revoke(
     uri: Uri,
     caller: Caller,
 ) -> Answer {
+    caller.require(Permission::GrantsManage)?;
+    query::only(&uri, &["revoke_keys"])?;
     let with_keys = query::pairs(&uri)?
         .iter()
         .any(|(name, value)| name == "revoke_keys" && matches!(value.as_str(), "1" | "true"));

@@ -232,17 +232,11 @@ When the private local command recovers the owner's password, the server MUST pr
 
 ## Durability
 
-### `instance-claim/attempt-counter-restart`
-
-When an unclaimed instance restarts, the server MUST retain an address's exhausted setup-code allowance until its window ends.
-
-**Tests:** `compliance/owner.test.ts › keeps code-attempt counters through restart and replaces unclaimed setup proof`.
-
 ### `instance-claim/unclaimed-restart-proof`
 
 When an unclaimed instance restarts, the server MUST refuse its previous setup code with `401 setup_proof_invalid`.
 
-**Tests:** `compliance/owner.test.ts › keeps code-attempt counters through restart and replaces unclaimed setup proof`.
+**Tests:** `compliance/owner.test.ts › replaces unclaimed setup proof on restart`.
 
 ### `instance-claim/concurrent-claim`
 
@@ -272,19 +266,27 @@ When the private local command recovers the owner's password, the server MUST pr
 
 When a credential with `instance.read` requests `GET /metrics`, the server MUST return its instance-wide counters using the schema published for that operation.
 
-**Tests:** `compliance/instance.test.ts › reports documented instance-wide counters with instance.read`.
+**Tests:** `compliance/metrics.test.ts › reports documented instance-wide counters with instance.read`.
 
 ### `instance-claim/management-metrics-resources`
 
 When a credential with `instance.read` requests `GET /metrics`, the server MUST include a `process` block holding its `release` and the memory and CPU its process uses, each figure but the release a number, or `null` where the server cannot read it.
 
-**Tests:** `compliance/instance.test.ts › reports documented instance-wide counters with instance.read`.
+**Tests:** `compliance/metrics.test.ts › reports documented instance-wide counters with instance.read`.
 
 ### `instance-claim/management-metrics-storage`
 
-When a credential with `instance.read` requests `GET /metrics`, the server MUST include a `storage` block holding the size of its database, the row counts of its largest tables and `counted_at`, the UTC time of the count (`null` before the first count), each size and row count a number, or `null` where the server cannot read it or has not counted it yet.
+When a credential with `instance.read` requests `GET /metrics`, the server MUST include a `storage` block holding the size of its database, the size of its write-ahead log and the row counts of its largest tables, each a number, or `null` where the server cannot read it.
 
-**Tests:** `compliance/instance.test.ts › reports documented instance-wide counters with instance.read`, `› reports the row counts once the background count has finished`.
+**Tests:** `compliance/metrics.test.ts › reports documented instance-wide counters with instance.read`.
+
+### `instance-claim/management-metrics-current`
+
+When a credential with `instance.read` requests `GET /metrics`, the server MUST count the items, blobs, types, keys, webhooks and storage rows from the database as it stands when the request is read, the first request included.
+
+**Reason:** A count kept for a while and reported later is a figure about the past, and an owner looks at `GET /metrics` to see the instance now.
+
+**Tests:** `compliance/metrics.test.ts › counts the instance as it stands when asked, with the first request as with any other`.
 
 ### `instance-claim/control-only-recovery`
 

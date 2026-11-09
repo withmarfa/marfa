@@ -1,24 +1,13 @@
 #!/usr/bin/env bash
-# Install the release's own programs the way a person does, put HTTPS in front,
-# and hold the result to what an install promises. Nothing is published.
+# Installs the release's programs as a person does, behind HTTPS, and checks the result.
 #
 #   install-proof.sh <folder holding the release's files> <version> <mode>...
 #
-# The folder holds the archives and the checksum file `collect` makes. A mode is
-# one way to install, and each is a clean install of its own:
+# Each mode is a clean install of its own:
 #
-#   native-user  a service of the account running this: a launchd agent on a
-#                Mac, a systemd user unit on Linux (lingering is enabled first)
+#   native-user  a launchd agent on a Mac, a systemd user unit on Linux
 #   native-root  Linux, as root: a system unit run by the `marfa` account
-#   docker       Linux: the image this script builds from the same archives
-#
-# The programs come through `scripts/install.sh`, so the script and its checksum
-# check are proved too. Caddy, a pinned release checked by SHA-256, puts HTTPS in
-# front on a port that needs no privilege, with its own certificate authority,
-# which the checks trust and nothing else does. For each mode the install is
-# claimed on the server's private socket, and then it must report the release,
-# hold the sign-in address, answer through HTTPS, and stop, start and uninstall
-# without leaving a service, a process or a container behind.
+#   docker       Linux: an image built from the same archives
 #
 # Settings, all optional:
 #   MARFA_PROOF_NAME        the install's name, "proof"; the Docker one adds "-docker"
@@ -30,8 +19,7 @@
 # The single-quoted programs handed to jq use jq's variables, not the shell's.
 # shellcheck disable=SC2016
 set -euo pipefail
-# A runner's umask can leave new folders group-writable, which the server refuses
-# above its private socket, as a person's own machine would not.
+# The server refuses a group-writable folder above its private socket.
 umask 022
 if [ "$#" -lt 3 ]; then
   echo "usage: install-proof.sh <folder holding the release's files> <version> <mode>..." >&2
@@ -51,8 +39,7 @@ hosts=${MARFA_PROOF_HOSTS:-edit}
 hosts_mark="# marfa install proof"
 image=ghcr.io/withmarfa/marfa-server
 
-# A release of Caddy and the SHA-256 of each archive this script can run. They
-# are moved together: look the archives up at the release, and hash them.
+# A Caddy release and the SHA-256 of each archive; move them together.
 caddy_version=2.11.9
 caddy_sha_mac_arm64=d075afc620376679a77b453399bf7ada264cab3280b2833e4ed1372abc0c1c13
 caddy_sha_linux_amd64=5b8cb7faf8726a2028ad96a66e54e6e81e8f361bc6175e5d22bbd997cc5177fb
@@ -95,8 +82,7 @@ done
 
 # ---- naming: everything about one mode in one place --------------------------
 
-# Sets name, host, address, port, dir (empty for root's default), sock and the
-# arguments every `marfa server` command of that install takes.
+# Sets name, host, address, port, dir, sock and the arguments of every `marfa server` command.
 configure() {
   current=$1
   case $current in
@@ -126,8 +112,7 @@ configure() {
 
 # ---- running the programs as the install's own account ------------------------
 
-# `marfa server` commands: as root for the root install, which keeps its state
-# in a folder only root and the `marfa` account can read.
+# The root install keeps its state where only root and the `marfa` account can read.
 server() {
   if [ "$current" = native-root ]; then
     sudo "$marfa" server "$@"
@@ -136,9 +121,7 @@ server() {
   fi
 }
 
-# A command to the server's private socket, with the caller's standard input.
-# The root install's socket answers only its own account, so the call becomes
-# that account, from the install folder, with an environment of its own.
+# The root install's socket answers only its own account, so the call becomes that account.
 socket() {
   case $current in
     docker)
@@ -187,8 +170,7 @@ free_port() {
 
 listening() { (exec 3<> "/dev/tcp/127.0.0.1/$1") 2> /dev/null; }
 
-# systemd runs the unit of an account that is not logged in only while the
-# account lingers, and a shell that is not a login has no runtime folder.
+# systemd runs a logged-out account's unit only while it lingers.
 prepare_user_systemd() {
   [ "$os" = Linux ] || return 0
   sudo loginctl enable-linger "$USER"
@@ -221,8 +203,7 @@ fetch_caddy() {
   say "Caddy $("$work/caddy-bin/caddy" version | cut -d' ' -f1) for $platform, checked against its pinned SHA-256"
 }
 
-# One site for each mode, each proxying to its install's loopback port, with a
-# certificate authority of Caddy's own kept in a folder of this run.
+# One site for each mode, with a certificate authority of Caddy's own.
 start_caddy() {
   local mode
   {
@@ -323,9 +304,7 @@ install_programs() {
   [ "$("$dir/marfa-server" --version)" = "marfa-server $version" ] || fail "The installed marfa-server does not report $version."
 }
 
-# The image a Docker install runs, made from the release's own Linux archives
-# and tagged as the install names it. The installer finds it on this machine and
-# pulls nothing.
+# Tagged as the install names it, so the installer pulls nothing.
 build_image() {
   step "Build the server image from the release's Linux archives"
   image_context=$work/image-context
@@ -353,8 +332,7 @@ prove() {
 
   local runtime=()
   [ "$current" != docker ] || runtime=(--docker)
-  # Counted as installed before the install runs: one that fails halfway still
-  # leaves a container or a unit that the clean-up has to remove.
+  # Counted before the install runs: a failure halfway still leaves something to remove.
   installed="$installed$current "
   server install ${dir_args[@]+"${dir_args[@]}"} --yes --name "$name" --access proxy --address "$address" --port "$port" \
     ${runtime[@]+"${runtime[@]}"} > "$work/install.log" 2>&1 ||
@@ -388,8 +366,7 @@ prove() {
   code=$(through_caddy -o /dev/null -w '%{http_code}' "$address/health") || fail "$address/health could not be reached through Caddy."
   [ "$code" = 200 ] || fail "$address/health answered $code, not 200."
   through_caddy "$address/" | holds '.version == $version' "GET $address/ does not report version $version."
-  # The witness: the system does not trust Caddy's authority, so the success
-  # above is the trust the check gave it and not an unchecked connection.
+  # The witness: the system does not trust Caddy's authority, so the success above was checked.
   if without_caddy_authority -o /dev/null "$address/health" 2> /dev/null; then
     fail "$address/health answered without Caddy's authority being trusted, so the check above proved nothing."
   fi

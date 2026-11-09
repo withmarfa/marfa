@@ -733,6 +733,7 @@ async fn a_refusal_that_leaves_the_body_unread_still_reaches_the_client() {
         router,
         std::future::pending(),
         PUBLIC_HEADER_READ_TIMEOUT,
+        None,
     ));
 
     let answers = tokio::task::spawn_blocking(move || {

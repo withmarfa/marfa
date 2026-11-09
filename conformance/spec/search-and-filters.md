@@ -28,7 +28,7 @@ If a credential that the operation's standing rule turns away sends an undeclare
 
 **Reason:** the refusal of the key comes after the standing rule (`keys-and-oauth/permission-before-body`), so a credential that reaches no type learns nothing about the keys an operation declares.
 
-**Tests:** `compliance/declared-refusals.test.ts › answers a copy stream request with a stray key 401, then 403 for a key that reads no type`.
+**Tests:** `compliance/declared-refusals.test.ts › answers a copy stream request with a stray key 401, then 403 for a key that reads no type`, `compliance/auth-grants.test.ts › refuses a caller without grants.manage 403 whatever query it sends, at both doors`.
 
 ### `search-and-filters/undeclared-key-first`
 

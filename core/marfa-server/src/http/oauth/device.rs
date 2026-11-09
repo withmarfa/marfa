@@ -78,7 +78,7 @@ pub async fn enter(
     if typed.is_empty() {
         return to_entry("missing_code");
     }
-    if let Some(wait) = device::admit_lookup(&app, visit.address, owner.as_ref()).await? {
+    if let Some(wait) = device::admit_lookup(&app, visit.address, owner.as_ref()) {
         return too_many(wait);
     }
     match device::look_up(&app, typed).await? {
@@ -119,7 +119,7 @@ pub async fn screen(
     let Some(typed) = typed else {
         return to_entry("missing_code");
     };
-    if let Some(wait) = device::admit_lookup(&app, visit.address, Some(&owner)).await? {
+    if let Some(wait) = device::admit_lookup(&app, visit.address, Some(&owner)) {
         return too_many(wait);
     }
     match device::screen(&app, &typed, &owner).await? {
@@ -157,7 +157,7 @@ pub async fn answer(
         Some("deny") => false,
         _ => return Err(Refusal::validation("Provide `decision` as approve or deny.").into()),
     };
-    if let Some(wait) = device::admit_lookup(&app, visit.address, Some(&owner)).await? {
+    if let Some(wait) = device::admit_lookup(&app, visit.address, Some(&owner)) {
         return too_many(wait);
     }
     let answered = device::answer(&app, &owner, typed, approve, fields.post()).await?;

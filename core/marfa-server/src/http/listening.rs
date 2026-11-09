@@ -18,10 +18,13 @@ use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioIo, TokioTimer};
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream, unix};
-use tokio::sync::{Notify, watch};
+use tokio::sync::{Notify, Semaphore, watch};
 use tokio::task::JoinSet;
 use tower::ServiceExt;
+
+use super::connections::{self, Caps, Gate};
 
 /// Long enough for a server out of file descriptors not to spin.
 const ACCEPT_PAUSE: Duration = Duration::from_millis(250);
@@ -36,6 +39,29 @@ pub struct Peer(pub Option<IpAddr>);
 
 pub trait Source: Listener<Addr: Debug> {
     fn peer(address: &Self::Addr) -> Peer;
+}
+
+/// How many turned-away connections are being answered at once. Past it a connection is closed
+/// unanswered, so a flood cannot hold file descriptors by being refused.
+const MOST_REFUSALS_AT_ONCE: usize = 64;
+const TURN_AWAY_BUDGET: Duration = Duration::from_secs(1);
+
+fn turn_away<Io: AsyncWrite + Unpin + Send + 'static>(
+    mut stream: Io,
+    answer: Arc<[u8]>,
+    room: &Arc<Semaphore>,
+) {
+    let Ok(place) = room.clone().try_acquire_owned() else {
+        return;
+    };
+    tokio::spawn(async move {
+        let _place = place;
+        let _ = tokio::time::timeout(TURN_AWAY_BUDGET, async {
+            stream.write_all(&answer).await?;
+            stream.shutdown().await
+        })
+        .await;
+    });
 }
 
 /// Ending a response body cannot close a connection blocked on queued output.
@@ -63,7 +89,11 @@ pub async fn serve<L: Source>(
     router: Router,
     stop: impl Future<Output = ()> + Send + 'static,
     header_read_timeout: Duration,
+    caps: Option<Caps>,
 ) -> io::Result<()> {
+    let gate = caps.map(Gate::new);
+    let turned_away: Arc<[u8]> = connections::turned_away().into();
+    let refusals = Arc::new(Semaphore::new(MOST_REFUSALS_AT_ONCE));
     let (stopping, _) = watch::channel(false);
     let mut connections = JoinSet::new();
     let mut stop = pin!(stop);
@@ -74,6 +104,15 @@ pub async fn serve<L: Source>(
             () = &mut stop => break,
         };
         let peer = L::peer(&address);
+        let slot = match gate.as_ref().map(|gate| gate.enter(peer)) {
+            Some(Err(turned)) => {
+                tracing::debug!(?turned, "A connection was turned away");
+                turn_away(stream, turned_away.clone(), &refusals);
+                continue;
+            }
+            Some(Ok(slot)) => Some(slot),
+            None => None,
+        };
         let router = router.clone();
         let asked = Arc::new(AtomicBool::new(false));
         let (open, watching) = watch::channel(());
@@ -99,6 +138,7 @@ pub async fn serve<L: Source>(
         let mut stopped = stopping.subscribe();
         connections.spawn(async move {
             let _open = open;
+            let _slot = slot;
             let mut connection = pin!(connection);
             let mut told = false;
             loop {
@@ -348,6 +388,7 @@ mod tests {
             router(&dir, "10.0.0.0/8").await,
             std::future::pending(),
             PUBLIC_HEADER_READ_TIMEOUT,
+            None,
         ));
         for (peer, answer) in [
             (Some("10.0.0.1"), "Some(203.0.113.9)"),
@@ -376,6 +417,7 @@ mod tests {
             router(&dir, "127.0.0.1/32").await,
             std::future::pending(),
             PUBLIC_HEADER_READ_TIMEOUT,
+            None,
         ));
         let stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
         let asked = answer_of(stream, &asking("203.0.113.9", false)).await;
@@ -396,6 +438,7 @@ mod tests {
                 let _ = stopping.await;
             },
             PUBLIC_HEADER_READ_TIMEOUT,
+            None,
         ));
 
         let mut kept = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
@@ -415,6 +458,110 @@ mod tests {
             .unwrap();
         assert_eq!(kept.read(&mut first).await.unwrap(), 0);
         assert_eq!(silent.read(&mut first).await.unwrap(), 0);
+    }
+
+    async fn turned_away(mut stream: impl AsyncReadExt + Unpin) -> String {
+        let mut answer = String::new();
+        timeout(Duration::from_secs(5), stream.read_to_string(&mut answer))
+            .await
+            .expect("a refused connection was never answered and closed")
+            .unwrap();
+        answer
+    }
+
+    async fn served_within(
+        mut connect: impl FnMut() -> Option<DuplexStream>,
+        ask: &str,
+    ) -> Option<String> {
+        for _ in 0..100 {
+            if let Some(mut near) = connect() {
+                near.write_all(ask.as_bytes()).await.unwrap();
+                let mut answer = String::new();
+                near.read_to_string(&mut answer).await.unwrap();
+                if answer.starts_with("HTTP/1.1 200") {
+                    return Some(answer);
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        None
+    }
+
+    #[tokio::test]
+    async fn a_listener_at_its_total_turns_a_connection_away_and_serves_again_once_one_ends() {
+        let dir = TempDir::new().unwrap();
+        let (connect, incoming) = mpsc::unbounded_channel();
+        let caps = Caps {
+            total: 2,
+            per_address: 2,
+            trust: Trust::Nothing,
+        };
+        let server = tokio::spawn(serve(
+            Memory(incoming),
+            router(&dir, "10.0.0.0/8").await,
+            std::future::pending(),
+            PUBLIC_HEADER_READ_TIMEOUT,
+            Some(caps),
+        ));
+        let open = |peer: &str| {
+            let (near, far) = duplex(4096);
+            connect
+                .send((far, Peer(Some(peer.parse().unwrap()))))
+                .unwrap();
+            near
+        };
+        let first = open("192.0.2.1");
+        let _second = open("192.0.2.2");
+        let answer = turned_away(open("192.0.2.3")).await;
+        assert!(answer.starts_with("HTTP/1.1 503 "), "{answer}");
+        assert!(answer.contains("Retry-After: 5"), "{answer}");
+        assert!(answer.contains("too_many_connections"), "{answer}");
+
+        drop(first);
+        let served = served_within(|| Some(open("192.0.2.3")), &asking("203.0.113.9", false)).await;
+        assert!(
+            served.is_some(),
+            "no place was freed by the closed connection"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn an_address_at_its_share_is_turned_away_and_another_address_is_served() {
+        let dir = TempDir::new().unwrap();
+        let (connect, incoming) = mpsc::unbounded_channel();
+        let caps = Caps {
+            total: 10,
+            per_address: 1,
+            trust: Trust::Nothing,
+        };
+        let server = tokio::spawn(serve(
+            Memory(incoming),
+            router(&dir, "10.0.0.0/8").await,
+            std::future::pending(),
+            PUBLIC_HEADER_READ_TIMEOUT,
+            Some(caps),
+        ));
+        let open = |peer: &str| {
+            let (near, far) = duplex(4096);
+            connect
+                .send((far, Peer(Some(peer.parse().unwrap()))))
+                .unwrap();
+            near
+        };
+        let held = open("192.0.2.1");
+        let answer = turned_away(open("192.0.2.1")).await;
+        assert!(answer.starts_with("HTTP/1.1 503 "), "{answer}");
+        let other = answer_of(open("192.0.2.2"), &asking("203.0.113.9", false)).await;
+        assert_eq!(other, "Some(192.0.2.2)");
+
+        drop(held);
+        let served = served_within(|| Some(open("192.0.2.1")), &asking("203.0.113.9", false)).await;
+        assert!(
+            served.is_some(),
+            "no place was freed by the closed connection"
+        );
+        server.abort();
     }
 
     #[tokio::test]
@@ -452,6 +599,7 @@ mod tests {
             router(&dir, "10.0.0.0/8").await,
             std::future::pending(),
             Duration::from_millis(200),
+            None,
         ));
         let mut stalled = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
         stalled.write_all(PARTIAL_HEAD).await.unwrap();
@@ -480,6 +628,7 @@ mod tests {
                 let _ = stopping.await;
             },
             PUBLIC_HEADER_READ_TIMEOUT,
+            None,
         ));
         let mut stalled = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
         stalled.write_all(PARTIAL_HEAD).await.unwrap();
@@ -522,6 +671,7 @@ mod tests {
                 let _ = stopping.await;
             },
             PUBLIC_HEADER_READ_TIMEOUT,
+            None,
         ));
         let mut open = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
         open.write_all(b"GET /slow HTTP/1.1\r\nHost: x\r\n\r\n")
@@ -679,6 +829,7 @@ mod tests {
                 let _ = stop.await;
             },
             PUBLIC_HEADER_READ_TIMEOUT,
+            None,
         ));
         (port, server, dropped)
     }
@@ -720,6 +871,7 @@ mod tests {
             router(&dir, "10.0.0.0/8").await,
             std::future::pending(),
             PUBLIC_HEADER_READ_TIMEOUT,
+            None,
         ));
         let (mut near, far) = duplex(4096);
         connect.send((far, Peer(None))).unwrap();

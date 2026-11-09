@@ -16,6 +16,8 @@ use tower::ServiceExt;
 
 const CAP: usize = 100;
 const SHARE: usize = 8;
+const SLOTS: usize = 64;
+const HEADROOM: usize = 8;
 
 struct Instance {
     _dir: TempDir,
@@ -361,4 +363,42 @@ async fn a_maker_no_other_maker_waits_behind_is_retried_at_its_due_time_while_it
         || received.load(Ordering::SeqCst) == 2,
     )
     .await;
+}
+
+#[tokio::test]
+async fn a_maker_alone_leaves_slots_free_for_a_maker_whose_delivery_falls_due_later() {
+    let instance = Instance::start().await;
+    let writer = instance.key("writer", true).await;
+    let slow = instance.key("slow-maker", false).await;
+    let later = instance.key("later-maker", false).await;
+    let (stalled, accepted) = stalling().await;
+    let (answered, received) = answering().await;
+    for _ in 0..SLOTS + 6 {
+        let (status, made) = instance.register(&slow, &stalled).await;
+        assert_eq!(status, StatusCode::CREATED, "{made}");
+    }
+
+    announce(&instance, &writer).await;
+    until(
+        "the first maker did not reach its attempts",
+        Duration::from_secs(5),
+        || accepted.load(Ordering::SeqCst) >= SLOTS - HEADROOM,
+    )
+    .await;
+    let (status, made) = instance.register(&later, &answered).await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    announce(&instance, &writer).await;
+    until(
+        "the later maker's delivery waited for a stalled attempt to end",
+        Duration::from_secs(5),
+        || received.load(Ordering::SeqCst) == 1,
+    )
+    .await;
+    for _ in 0..2 {
+        instance.sender_parked(&writer).await;
+        instance.sender_released();
+    }
+    instance.sender_parked(&writer).await;
+    assert_eq!(accepted.load(Ordering::SeqCst), SLOTS - HEADROOM);
+    instance.sender_released();
 }

@@ -332,6 +332,23 @@ mod tests {
     }
 
     #[test]
+    fn the_connection_caps_start_at_their_defaults_and_refuse_a_value_outside_their_rule() {
+        let start = opened(&[]).start;
+        assert_eq!(start.max_connections, 1_024);
+        assert_eq!(start.max_connections_per_address, 256);
+        assert_eq!(
+            refused(&[
+                ("MARFA_MAX_CONNECTIONS", "0"),
+                ("MARFA_MAX_CONNECTIONS_PER_ADDRESS", "many"),
+            ]),
+            [
+                r#"MARFA_MAX_CONNECTIONS must be a whole number, from 1 to 1000000 (got "0")"#,
+                r#"MARFA_MAX_CONNECTIONS_PER_ADDRESS must be a whole number, from 1 to 1000000 (got "many")"#,
+            ]
+        );
+    }
+
+    #[test]
     fn with_hooks_off_a_stale_value_cannot_refuse_a_start() {
         assert!(read(&[("MARFA_MAX_REQUEST_BYTES", "0")]).is_ok());
     }

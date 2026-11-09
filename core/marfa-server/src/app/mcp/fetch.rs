@@ -14,6 +14,7 @@ use url::Url;
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::blobs::{Blob, DEFAULT_TYPE};
+use crate::app::limiter::{FILE_FETCHES, Lane, retry_seconds};
 use crate::app::oauth::metadata_document::Pinned;
 use crate::app::outbound::{self, Reach};
 use crate::app::provenance;
@@ -45,7 +46,7 @@ pub enum Reason {
     Status(u16),
     Busy,
     Disabled,
-    RateLimited(u64),
+    RateLimited(i64),
 }
 
 impl Reason {
@@ -304,15 +305,16 @@ async fn attempt(
     if !live.get(MCP_FETCH_ENABLED) {
         return Err(Failed::Not(Reason::Disabled));
     }
-    if live.get(RATE_LIMIT_ENABLED)
-        && let Some(retry_after) = app.key_limit.take(
-            &format!("mcp-fetch:{}", caller.credential_handle()),
-            app.clock.now_ms(),
+    if live.get(RATE_LIMIT_ENABLED) {
+        let lane = Lane::credential(
+            FILE_FETCHES,
+            &caller.credential_handle(),
             PER_WINDOW,
             live.get(RATE_LIMIT_WINDOW_MS),
-        )
-    {
-        return Err(Failed::Not(Reason::RateLimited(retry_after)));
+        );
+        if let Some(wait) = app.limiter.admit(app.clock.now_ms(), &[lane]) {
+            return Err(Failed::Not(Reason::RateLimited(retry_seconds(wait))));
+        }
     }
     let permit = app
         .mcp

@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Refuse an npm tarball missing a file its package ships, or holding it
-# empty. A pack that found no build still succeeds, with package.json and
-# whatever else is not built, so what a package ships is asked for by name.
+# Refuses an npm tarball missing a named file or holding it empty; a pack with no build still succeeds.
 #
 #   hold-tarball.sh <tarball> <path inside the package>...
 set -euo pipefail

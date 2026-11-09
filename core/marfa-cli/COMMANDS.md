@@ -421,7 +421,7 @@ marfa apps disconnect [OPTIONS] <ID>
 
 | Option | Description |
 | --- | --- |
-| `--revoke-keys` | Also revoke keys the app minted. |
+| `--revoke-keys` | Also revoke every key the app minted, and every key those keys minted. |
 
 ## sign-ins
 
@@ -468,7 +468,7 @@ marfa sign-ins end [OPTIONS] <ID>
 
 | Option | Description |
 | --- | --- |
-| `--revoke-keys` | For an app, also revoke every key it minted. Refused for a browser or a key. |
+| `--revoke-keys` | For an app, also revoke every key it minted, and every key those keys minted. Refused for a browser or a key. |
 
 ### marfa sign-ins end-all
 

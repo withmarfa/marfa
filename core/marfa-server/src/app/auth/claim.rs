@@ -204,16 +204,8 @@ fn add_session(tx: &Transaction<'_>, digest: &str, now_ms: i64) -> Result<i64> {
     Ok(now_ms + SESSION_MS)
 }
 
-async fn count_code(app: &App, address: Option<IpAddr>) -> Result<()> {
-    let lanes = limits::setup_code_lanes(address);
-    let clock = app.clock.clone();
-    let wait = app
-        .db
-        .write(Write::own(), move |tx| {
-            limits::admit(tx, clock.now_ms(), &lanes)
-        })
-        .await?;
-    match wait {
+fn count_code(app: &App, address: Option<IpAddr>) -> Result<()> {
+    match limits::admit(app, &limits::setup_code_lanes(address)) {
         Some(wait) => Err(spent(
             "Too many setup code attempts. Try again later.",
             wait,
@@ -280,7 +272,7 @@ pub async fn exchange_code(app: &App, code: &str, visit: Visit) -> Result<SetupS
     if is_claimed(app).await? {
         return Err(already_claimed());
     }
-    count_code(app, visit.address).await?;
+    count_code(app, visit.address)?;
     let digest = digest_of(&app.settings.start.key_salt, &normalized(code))?;
     exchange(app, "instance.setup_code.exchanged", CODE, digest, visit).await
 }
@@ -332,7 +324,7 @@ pub async fn claim(app: &App, details: Details, proof: Proof, visit: Visit) -> R
         return Err(already_claimed());
     }
     if let Proof::Code(_) = proof {
-        count_code(app, visit.address).await?;
+        count_code(app, visit.address)?;
     }
     let sought = sought(app, &proof)?;
     let clock = app.clock.clone();

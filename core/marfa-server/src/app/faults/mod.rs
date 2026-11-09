@@ -55,6 +55,7 @@ macro_rules! point_list {
         FAIL_HEALTH_WRITE = Fail "health-write" Nth;
         FAIL_EXPORT_READ = Fail "export-read" Nth;
         HOLD_DISK_PROBE = Hold "disk-probe" None;
+        HOLD_METRICS = Hold "metrics" None;
         FAIL_JOB_ROW = Fail "job-row" Nth;
         FAIL_INBOUND_RECEIPT = Fail "inbound-receipt" Nth;
         FAIL_INBOUND_CLEANUP = Fail "inbound-cleanup" Nth;

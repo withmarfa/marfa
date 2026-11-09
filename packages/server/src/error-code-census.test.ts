@@ -47,6 +47,7 @@ const REMOVED_FROM_CONTRACT: Record<string, string> = {
 const RUST_SERVER_ONLY: Record<string, string> = {
   backup_not_found: "`POST /backups/{instance_id}/{name}/restore`",
   no_bucket: "the backup doors, `/backups`",
+  too_many_connections: "any door, past the connection cap",
 };
 
 function sourceFiles(dir: string): string[] {

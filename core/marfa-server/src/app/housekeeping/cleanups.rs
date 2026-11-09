@@ -8,15 +8,12 @@ use rusqlite::Transaction;
 use serde_json::json;
 
 use super::super::access::Caller;
-use super::super::auth::limits;
 use super::super::keys::reap;
-use super::super::refusal::Result;
-use super::super::{App, audit, events, idempotency, webhooks};
+use super::super::refusal::{Refusal, Result};
+use super::super::{App, audit, events, idempotency, oauth, webhooks};
 use super::{DAY_MS, HOUR_MS, Report, Run, cutoff};
 use crate::db::Write;
-use crate::settings::registry::{
-    AUDIT_RETENTION_DAYS, EVENT_LOG_RETENTION_HOURS, RATE_LIMIT_WINDOW_MS, Setting,
-};
+use crate::settings::registry::{AUDIT_RETENTION_DAYS, EVENT_LOG_RETENTION_HOURS, Setting};
 
 const BATCH: i64 = 1_000;
 
@@ -101,25 +98,6 @@ pub async fn audit(app: Arc<App>, run: Run) -> Result<Report> {
     })
 }
 
-async fn ended_windows(app: &Arc<App>) -> Result<i64> {
-    let now_ms = app.clock.now_ms();
-    app.db
-        .write(Write::own(), move |tx| {
-            limits::remove_expired(tx, now_ms, BATCH)
-        })
-        .await
-}
-
-pub async fn rate_limit(app: Arc<App>, run: Run) -> Result<Report> {
-    let window_ms = app.settings.live().get(RATE_LIMIT_WINDOW_MS);
-    let swept = app.key_limit.sweep(app.clock.now_ms(), window_ms);
-    let (deleted, done) = drain(&run, BATCH, || ended_windows(&app)).await?;
-    Ok(Report {
-        result: json!({ "deleted": i64::try_from(swept).unwrap_or(i64::MAX) + deleted }),
-        again: !done,
-    })
-}
-
 async fn reap_batch(app: &Arc<App>) -> Result<i64> {
     let before = app.clock.stamp_ago(reap::KEPT_DAYS * DAY_MS);
     let seen = before.clone();
@@ -136,10 +114,92 @@ async fn reap_batch(app: &Arc<App>) -> Result<i64> {
     .await
 }
 
-pub async fn revoked_keys(app: Arc<App>, run: Run) -> Result<Report> {
-    let (deleted, done) = drain(&run, BATCH, || reap_batch(&app)).await?;
-    Ok(Report {
-        result: json!({ "deleted": deleted }),
-        again: !done,
-    })
+async fn revoked_keys(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
+    drain(run, BATCH, || reap_batch(app)).await
+}
+
+#[derive(Default)]
+struct Tally {
+    deleted: i64,
+    retired: i64,
+    stopped: bool,
+    failed: Vec<(&'static str, Refusal)>,
+}
+
+impl Tally {
+    /// Whether the run goes on to the next stage. A stage that failed leaves the rest to run.
+    fn take(
+        &mut self,
+        stage: &'static str,
+        ran: Result<(i64, bool)>,
+        count: fn(&mut Tally) -> &mut i64,
+    ) -> bool {
+        match ran {
+            Ok((taken, done)) => {
+                *count(self) += taken;
+                self.stopped = !done;
+                done
+            }
+            Err(refused) => {
+                self.failed.push((stage, refused));
+                true
+            }
+        }
+    }
+
+    fn deleted(&mut self, stage: &'static str, ran: Result<(i64, bool)>) -> bool {
+        self.take(stage, ran, |tally| &mut tally.deleted)
+    }
+
+    fn retired(&mut self, stage: &'static str, ran: Result<(i64, bool)>) -> bool {
+        self.take(stage, ran, |tally| &mut tally.retired)
+    }
+
+    fn report(self) -> Result<Report> {
+        let Some((_, first)) = self.failed.first() else {
+            return Ok(Report {
+                result: json!({ "deleted": self.deleted, "retired": self.retired }),
+                again: self.stopped,
+            });
+        };
+        let told: Vec<String> = self
+            .failed
+            .iter()
+            .map(|(stage, refused)| {
+                let message = refused
+                    .fault
+                    .as_ref()
+                    .map_or_else(|| refused.to_string(), |fault| fault.message.clone());
+                format!("{stage}: {message}")
+            })
+            .collect();
+        let told = told.join("; ");
+        let mut failed = Refusal::new(first.code, told.clone());
+        failed.fault = self
+            .failed
+            .iter()
+            .find_map(|(_, refused)| refused.fault.as_ref())
+            .map(|fault| Arc::new(fault.retold(told)));
+        Err(failed)
+    }
+}
+
+/// Grants retire before the purge, and clients go only after the grants that kept them.
+pub async fn credentials(app: Arc<App>, run: Run) -> Result<Report> {
+    let mut tally = Tally::default();
+    let _ = tally.deleted("expired", oauth::sweep::sweep_expired(&app, &run).await)
+        && tally.retired(
+            "idle grants",
+            oauth::sweep::retire_idle_grants(&app, &run).await,
+        )
+        && tally.deleted(
+            "withdrawn grants",
+            oauth::sweep::purge_withdrawn_grants(&app, &run).await,
+        )
+        && tally.deleted(
+            "idle clients",
+            oauth::sweep::remove_idle_clients(&app, &run).await,
+        )
+        && tally.deleted("revoked keys", revoked_keys(&app, &run).await);
+    tally.report()
 }

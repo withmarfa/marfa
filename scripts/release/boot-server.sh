@@ -1,12 +1,7 @@
 #!/usr/bin/env bash
-# Start a `marfa-server` for a moment on throwaway state and secrets, wait for
-# `/health` to answer 200, then stop it with SIGTERM and require a clean exit.
+# Boots a `marfa-server` on throwaway state, waits for `/health`, and requires a clean stop.
 #
 #   boot-server.sh <marfa-server>
-#
-# The server runs in an empty folder, so it keeps its database and files there
-# and its private socket path stays short. It listens on a port it picks, which
-# its log names.
 set -euo pipefail
 
 server="$1"
@@ -30,6 +25,7 @@ fail() {
   exit 1
 }
 
+# The server's default paths are relative, so in this folder its socket path stays under the OS limit.
 (
   cd "$state"
   exec env -i HOME="$state" PATH="$PATH" MARFA_PORT=0 MARFA_LISTEN_HOST=127.0.0.1 \

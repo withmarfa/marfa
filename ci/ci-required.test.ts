@@ -678,9 +678,9 @@ describe("what a change runs", () => {
       ["ci-sqlite", ...CONFORMANCE, "restore-drill"],
     ],
     [
-      "the entrypoint, which a ci/ test and the drill's backup fixtures run",
+      "the entrypoint, which a ci/ test runs",
       ["deploy/entrypoint.sh"],
-      ["ci-sqlite", "workspace", "restore-drill"],
+      ["ci-sqlite", "workspace"],
     ],
     [
       "the script that builds the release's programs, which the image is made from",
@@ -926,7 +926,7 @@ describe("what a change runs", () => {
                 "core-checks-linux",
                 "rust-contract",
               ]
-            : chapter === "instance.md"
+            : chapter === "instance.md" || chapter === "housekeeping.md"
               ? [
                   "workspace",
                   "conformance-offline",

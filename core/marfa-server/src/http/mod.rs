@@ -14,6 +14,7 @@ mod caller_address;
 mod compression;
 mod conditional;
 mod config;
+mod connections;
 mod connectors;
 mod control;
 #[cfg(test)]
@@ -30,10 +31,12 @@ mod inbound;
 mod items;
 mod jobs;
 mod keys;
+mod limit;
 pub mod listening;
 mod listing;
 mod lookup;
 mod mcp;
+mod metrics;
 mod named_instance;
 mod oauth;
 pub mod observe;
@@ -66,6 +69,7 @@ use crate::app::refusal::{Code, Refusal};
 use crate::listener::Declaration;
 use admission::Admission;
 use answer::{panicked, refusal_answer};
+pub use connections::Caps;
 pub use listening::serve;
 use observe::{Observed, Unmatched, observe as observe_request, remember_route};
 
@@ -327,6 +331,7 @@ fn shared(app: Arc<App>) -> Routes {
         .route("/openapi.json", get(root::document))
         .route("/audit", get(audit::list))
         .route("/housekeeping", get(housekeeping::list))
+        .route("/metrics", get(metrics::read))
         .route("/housekeeping/{name}/run", post(housekeeping::run))
         .route("/backups", get(backups::list).post(backups::run))
         .route(
@@ -368,6 +373,7 @@ fn finished(routes: Routes, app: Arc<App>, listener: Declaration) -> Router {
         .route_layer(from_fn_with_state(app.clone(), body::checked))
         .route_layer(from_fn_with_state(app.clone(), conditional::judged))
         .route_layer(from_fn_with_state(judging, named_instance::judged))
+        .route_layer(from_fn_with_state(app.clone(), limit::requests))
         .route_layer(from_fn(remember_route))
         .fallback(unmatched)
         .layer(CatchPanicLayer::custom(panicked))

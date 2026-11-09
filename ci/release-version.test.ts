@@ -1,10 +1,4 @@
-/**
- * A release's version is the tag's, and each version is the one before it plus
- * 0.0.1, starting at 0.0.70, the first Rust release, which follows the last
- * TypeScript release (0.0.66) across a gap; nothing below it is released from
- * this workflow. These tests run the workflow's own step against a stand-in
- * `git` and `gh`.
- */
+// Exercises the workflow's version gate.
 import {
   chmodSync,
   mkdtempSync,

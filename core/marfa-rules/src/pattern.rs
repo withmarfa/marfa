@@ -251,17 +251,7 @@ fn limited(builder: &mut RegexBuilder) -> &mut RegexBuilder {
         .dfa_size_limit(SET_LIMIT)
 }
 
-/// A glob's regex, read over characters. globset writes its regex over bytes,
-/// spelling each character outside ASCII as its UTF-8 bytes, so a class, a
-/// negated class or a `?` meets such a character as several bytes and cannot
-/// match it as one. Read again with those bytes as the characters they spell,
-/// the regex matches by character, as the pattern's literals already do.
-///
-/// Case is ignored for ASCII letters, as globset ignores it, and for a class
-/// member by adding every character the name comparison folds with it. The
-/// folded form carries the rest, its literals folded already, so a pattern
-/// matches what the name comparison (`names::same`) calls the same name and
-/// nothing more, negated or not.
+/// Match Unicode characters using the same case folding as names::same.
 fn by_character(bytes: &str) -> String {
     let source = bytes.strip_prefix("(?-u)").unwrap_or(bytes);
     let mut decoded = String::with_capacity(source.len());

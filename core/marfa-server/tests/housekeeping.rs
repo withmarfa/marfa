@@ -565,7 +565,7 @@ async fn event_log_cleanup_keeps_an_old_entry_behind_a_newer_one() {
 }
 
 #[tokio::test]
-async fn revoked_key_reap_takes_a_key_a_second_past_its_thirty_days() {
+async fn credential_cleanup_takes_a_revoked_key_a_second_past_its_thirty_days() {
     let instance = Instance::start(&[]).await;
     let body = json!({ "label": "ended", "source": "ended", "permissions": [] });
     let minted = instance.ok(Method::POST, "/keys", body).await;
@@ -576,10 +576,11 @@ async fn revoked_key_reap_takes_a_key_a_second_past_its_thirty_days() {
     let held = instance.count("SELECT count(*) FROM api_keys");
 
     instance.forward(30 * DAY - SECOND);
-    assert_eq!(instance.run("revoked-key-reap").await["deleted"], 0);
+    instance.run("credential-cleanup").await;
+    assert_eq!(instance.count("SELECT count(*) FROM api_keys"), held);
 
     instance.forward(2 * SECOND);
-    assert_eq!(instance.run("revoked-key-reap").await["deleted"], 1);
+    instance.run("credential-cleanup").await;
     assert_eq!(instance.count("SELECT count(*) FROM api_keys"), held - 1);
     let audited = "SELECT count(*) FROM audit_log WHERE action = 'keys.purged'";
     assert_eq!(instance.count(audited), 1);
@@ -952,21 +953,17 @@ async fn the_scheduler_follows_a_shortened_interval_and_repairs_a_schedule() {
 }
 
 #[tokio::test]
-async fn a_job_the_contract_paces_lists_its_fixed_interval() {
+async fn the_credential_job_lists_the_interval_the_instance_sets() {
     let instance = Instance::start(&[]).await;
     assert_eq!(
-        instance.job("revoked-grant-purge").await["interval_ms"],
+        instance.job("credential-cleanup").await["interval_ms"],
         3_600_000
     );
-    assert_eq!(
-        instance.job("grant-inactivity-retirement").await["interval_ms"],
-        86_400_000
-    );
     instance
-        .store("auth_session_cleanup_interval_ms", "60000")
+        .store("credential_cleanup_interval_ms", "60000")
         .await;
     assert_eq!(
-        instance.job("auth-session-cleanup").await["interval_ms"],
+        instance.job("credential-cleanup").await["interval_ms"],
         60_000
     );
 }

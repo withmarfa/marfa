@@ -100,12 +100,10 @@ describe("the instance from the terminal", () => {
       items: { total: number };
       keys: { total: number };
       uptime_seconds: number;
-      cached_at: string;
     }>(["metrics"]);
     expect(metrics.items.total).toBeGreaterThanOrEqual(0);
     expect(metrics.keys.total).toBeGreaterThan(0);
     expect(metrics.uptime_seconds).toBeGreaterThanOrEqual(0);
-    expect(Number.isNaN(Date.parse(metrics.cached_at))).toBe(false);
     const refused = await c.cli.refused(["metrics"]);
     expect(refused.envelope.error.server?.status).toBe(403);
     expect(refused.envelope.error.server?.code).toBe("forbidden");

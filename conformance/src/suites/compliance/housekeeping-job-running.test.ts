@@ -142,7 +142,7 @@ describe("POST /housekeeping/{name}/run while the job is in the middle of a run"
     expect(runningSince).not.toBeNull();
 
     const other = await fetch(
-      `${server!.apiUrl}/housekeeping/rate-limit-cleanup/run`,
+      `${server!.apiUrl}/housekeeping/audit-cleanup/run`,
       {
         method: "POST",
         headers: { Authorization: `Bearer ${server!.managementKey}` },
@@ -196,7 +196,7 @@ describe("POST /housekeeping/{name}/run while the job is in the middle of a run"
       ((await listed.json()) as { error: { code: string } }).error.code,
     ).toBe("forbidden");
     const run = await fetch(
-      `${server!.apiUrl}/housekeeping/rate-limit-cleanup/run`,
+      `${server!.apiUrl}/housekeeping/audit-cleanup/run`,
       { method: "POST", headers: app },
     );
     expect(run.status).toBe(403);

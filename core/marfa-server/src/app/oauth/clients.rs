@@ -85,11 +85,7 @@ where
         return Ok(Err(refused_document()));
     }
     let keep_or_busy = |stored: Option<Client>| Ok(stored.ok_or_else(busy));
-    let lanes = document_lanes(visit.address);
-    let wait = app
-        .db
-        .write(Write::own(), move |tx| admit(tx, now, &lanes))
-        .await?;
+    let wait = admit(app, &document_lanes(visit.address));
     let permit = app.documents.permits.clone().try_acquire_owned();
     let (None, Ok(permit)) = (wait, permit) else {
         return keep_or_busy(stored);

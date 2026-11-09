@@ -49,7 +49,7 @@ beforeAll(async () => {
   // The clean-up job runs when the test asks: moving the clock makes it due,
   // and the scheduler would then run it first.
   server = await bootFreshServer("web-page-register", QUIET_SCHEDULE);
-  await quiet(server, ["dcr-client-cleanup"]);
+  await quiet(server, ["credential-cleanup"]);
   issuer = await issuerOrigin(server);
   cookie = await signIn(server, issuer);
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
@@ -283,7 +283,7 @@ describe("registrations nobody approves", () => {
     // What earlier cases registered and nobody approved is idle by now, and the
     // sweep below is to remove the one registration this case leaves idle.
     await server.advanceClock(2 * DAY_MS);
-    expect((await runJob(server, "dcr-client-cleanup")).outcome).toBe("ok");
+    expect((await runJob(server, "credential-cleanup")).outcome).toBe("ok");
     const idleId = await registeredClient(idle);
     const approvedId = await registeredClient(approved);
     const revokedId = await registeredClient(revoked);
@@ -312,10 +312,7 @@ describe("registrations nobody approves", () => {
     await screen.body?.cancel();
     expect(screen.status).toBe(200);
 
-    expect(await runJob(server, "dcr-client-cleanup")).toMatchObject({
-      outcome: "ok",
-      result: { deleted: 1 },
-    });
+    expect((await runJob(server, "credential-cleanup")).outcome).toBe("ok");
 
     const gone = await authorizeLandsAt(idleId, idle);
     expect(gone?.pathname).toBe("/auth/error");
@@ -365,7 +362,7 @@ describe("registrations nobody approves", () => {
     await offered.body?.cancel();
     expect(offered.status).toBe(200);
 
-    expect((await runJob(server, "dcr-client-cleanup")).outcome).toBe("ok");
+    expect((await runJob(server, "credential-cleanup")).outcome).toBe("ok");
     const again = await fetch(page, { headers: { cookie } });
     await again.body?.cancel();
     expect(again.status).toBe(200);

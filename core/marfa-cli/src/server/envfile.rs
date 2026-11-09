@@ -1,7 +1,5 @@
-//! A settings file read and rewritten line by line, so a setting the person
-//! added by hand and every comment survive a rewrite. A value is read the
-//! way Docker Compose reads it from `env_file`, which is how the container
-//! gets it.
+//! A settings file rewritten line by line, so hand-added settings and comments
+//! survive. Values are read as Docker Compose reads `env_file`.
 
 use crate::error::CliError;
 
@@ -20,14 +18,9 @@ fn assignment(line: &str) -> Option<(&str, &str)> {
     (!name.is_empty()).then_some((name, value))
 }
 
-/// A value as Docker Compose (the `compose-go` dotenv parser) reads it. An
-/// unquoted value ends at the first ` #` and loses its trailing space. A value
-/// in matching quotes is what lies between them; whatever follows the closing
-/// quote, such as a comment, is dropped. Single quotes keep every backslash
-/// but one before a quote. Double quotes decode `\a \b \f \n \r \t \v \$ \" \\`.
-/// A quote with no partner on the line is left as written, because a value
-/// that runs over several lines is beyond a line-by-line reader. `$` and `${}`
-/// are not expanded, since that needs the environment Compose runs in.
+/// A value as the `compose-go` dotenv parser reads it. A quote with no partner on
+/// the line is left as written, since a multi-line value is beyond a line reader.
+/// `$` and `${}` are not expanded, which needs Compose's environment.
 fn read_value(raw: &str) -> String {
     let raw = raw.trim_start();
     let Some(quote @ ('\'' | '"')) = raw.chars().next() else {
@@ -99,10 +92,7 @@ impl EnvFile {
             .map(|(_, value)| read_value(value))
     }
 
-    /// Replaces the first assignment of `name`, or appends one. A value the
-    /// two readers of this file, Docker Compose and `docker run --env-file`,
-    /// would read differently is refused, because the container would then
-    /// start on a setting the person never wrote.
+    /// Refuses a value that Compose and `docker run --env-file` would read differently.
     pub fn set(&mut self, name: &str, value: &str) -> Result<(), CliError> {
         if value.is_empty()
             || !value
