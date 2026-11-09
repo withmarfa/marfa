@@ -373,7 +373,7 @@ marfa apps narrow [OPTIONS] <ID>
 
 ### marfa apps disconnect
 
-End an app's grant, and every key the app minted. Requires grants.manage or private machine authority.
+End an app's grant. Requires grants.manage or private machine authority.
 
 ```text
 marfa apps disconnect [OPTIONS] <ID>
@@ -382,6 +382,10 @@ marfa apps disconnect [OPTIONS] <ID>
 | Argument | Description |
 | --- | --- |
 | `<ID>` | The app grant's ID. |
+
+| Option | Description |
+| --- | --- |
+| `--revoke-keys` | Also revoke every key the app minted, and every key those keys minted. |
 
 ## sign-ins
 
@@ -416,7 +420,7 @@ marfa sign-ins rename [OPTIONS] <ID> <NAME>
 
 ### marfa sign-ins end
 
-End a sign-in at once: its next request is refused, and an app can't refresh its tokens. Ending an app also revokes every key it minted. What it wrote stays. Needs direct local authority (--socket).
+End a sign-in at once: its next request is refused, and an app can't refresh its tokens. What it wrote stays, and so do the keys an app minted unless --revoke-keys is given. Needs direct local authority (--socket).
 
 ```text
 marfa sign-ins end [OPTIONS] <ID>
@@ -425,6 +429,10 @@ marfa sign-ins end [OPTIONS] <ID>
 | Argument | Description |
 | --- | --- |
 | `<ID>` | The sign-in's id. |
+
+| Option | Description |
+| --- | --- |
+| `--revoke-keys` | For an app, also revoke every key it minted, and every key those keys minted. Refused for a browser or a key. |
 
 ## items
 
