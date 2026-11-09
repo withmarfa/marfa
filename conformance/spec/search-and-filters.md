@@ -2990,7 +2990,13 @@ If the server refuses an archive, then the server MUST leave no row, history, ty
 
 ### `search-and-filters/restore-failed-nothing`
 
-If a write fails while the server restores an archive, then the server MUST leave no row, type, edge type, event or audit record that the restore wrote, and leave the blob bytes it placed that no row names for the next `blob-integrity` run to remove.
+If a write fails while the server restores an archive, then the server MUST leave no row, type, edge type, event or audit record that the restore wrote.
+
+**Tests:** `compliance/restore-faults.test.ts › leaves no row, type, edge type, event or audit record when a write fails ($fault), the next blob-integrity run removes the bytes it placed, and it restores whole when tried again`.
+
+### `search-and-filters/restore-failed-blobs`
+
+If a write fails while the server restores an archive, then the server MUST remove the blob bytes the restore placed that no row names on the next `blob-integrity` run.
 
 **Reason:** the bytes are placed before the transaction opens and stay unrecorded and queued for deletion, so nothing serves them, and clean-up removes only what no record names.
 
