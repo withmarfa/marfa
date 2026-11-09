@@ -224,12 +224,6 @@ pub fn item(catalog: &Catalog, line: &Value, row: usize) -> Result<(), Box<Refus
     if item.get("version").is_some_and(|value| !is_version(value)) {
         return Err(at.invalid("version", "a positive safe integer"));
     }
-    if item
-        .get("source")
-        .is_some_and(|source| !source.as_str().is_some_and(|code| crate::app::sources::check_code(code).is_ok()))
-    {
-        return Err(at.invalid("source", "a source code"));
-    }
     let binned = matches!(item.get("state").and_then(Value::as_str), Some("trashed" | "revoked"));
     if let Some(trashed_at) = item.get("trashed_at").filter(|value| !value.is_null()) {
         if !is_instant(trashed_at) {

@@ -556,7 +556,6 @@ pub fn write_restored(
         return Ok(());
     }
     let tx = unit.tx();
-    let creator = unit.caller.actor();
     let mut ids = Vec::new();
     for (id, schema, created_by) in plan.fresh {
         let parent = text_of(&schema, "parent").map(str::to_string);
@@ -566,11 +565,12 @@ pub fn write_restored(
             params![
                 id,
                 parent,
-                created_by.unwrap_or_else(|| creator.clone()).to_string(),
+                created_by.map(|by| by.to_string()),
                 Value::Object(schema).to_string(),
                 unit.at,
             ],
         )?;
+        unit.audit("type", &id, None)?;
         ids.push(id);
     }
     catalog::raise(tx)?;

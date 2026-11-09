@@ -21,6 +21,9 @@ pub fn request(args: &RestoreArgs) -> Request {
 pub fn run(args: RestoreArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let answer = remote.json(&request(&args))?;
     out.value(&answer)?;
+    if let Some(note) = answer.get("set_up_again").and_then(serde_json::Value::as_str) {
+        eprintln!("{note}");
+    }
     let missing: Vec<String> = answer
         .get("blobs_missing")
         .and_then(serde_json::Value::as_array)

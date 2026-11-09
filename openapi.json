@@ -62206,7 +62206,7 @@
         },
         "responses": {
           "200": {
-            "description": "Returns the counts. Items and edges keep their IDs, versions and dates, and items keep their tags, extensions and history. Marfa restores an edge, and an item of a type you registered, as archived, even if its type now refuses it or is gone. Marfa leaves an existing item as it is when an archived one has its ID, natural key or link. An archive holds no keys, webhooks, configuration or tombstones.",
+            "description": "Returns the counts. Items and edges keep their IDs, versions and dates, and items keep their tags, extensions and history. Marfa restores an edge, and an item of a type you registered, as archived, even if its type now refuses it or is gone. Marfa leaves an existing item as it is when an archived one has its ID, natural key or link, and sets a setting, type icon, source name or connector state only where the instance has none. An archive holds no sign-in, keys, apps, webhooks or tombstones.",
             "content": {
               "application/json": {
                 "schema": {
@@ -62291,6 +62291,34 @@
                         "type": "number"
                       },
                       "description": "How many source names and marks Marfa skipped for each reason: `already_set` when the instance already has a name or mark for the source, `unknown_mark` when the mark isn't the ID of an icon in a set Marfa pins, `duplicate_code` when another line of the archive lands on the same code and the line already carrying it wins."
+                    },
+                    "settings_added": {
+                      "type": "number",
+                      "description": "How many settings Marfa stored, for settings the instance had not stored."
+                    },
+                    "settings_skipped": {
+                      "type": "number",
+                      "description": "How many settings Marfa skipped because the instance already stores them."
+                    },
+                    "connector_states_added": {
+                      "type": "number",
+                      "description": "How many connector state documents Marfa stored, for sources the instance held none for."
+                    },
+                    "connector_states_skipped": {
+                      "type": "number",
+                      "description": "How many connector state documents Marfa skipped because the instance already holds one for the source."
+                    },
+                    "connector_agreements_added": {
+                      "type": "number",
+                      "description": "How many connector agreements Marfa stored."
+                    },
+                    "connector_agreements_skipped": {
+                      "type": "number",
+                      "description": "How many connector agreements Marfa skipped because the instance holds no such item or already holds an agreement for it."
+                    },
+                    "set_up_again": {
+                      "type": "string",
+                      "description": "A sentence saying that an archive holds no sign-in, keys, apps or webhooks, so you set them up again on this instance."
                     }
                   },
                   "required": [
@@ -62310,7 +62338,14 @@
                     "type_icons_skipped_reasons",
                     "sources_added",
                     "sources_skipped",
-                    "sources_skipped_reasons"
+                    "sources_skipped_reasons",
+                    "settings_added",
+                    "settings_skipped",
+                    "connector_states_added",
+                    "connector_states_skipped",
+                    "connector_agreements_added",
+                    "connector_agreements_skipped",
+                    "set_up_again"
                   ]
                 }
               }

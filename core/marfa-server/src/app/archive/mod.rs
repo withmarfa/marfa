@@ -24,7 +24,7 @@ use super::faults::{FAIL_EXPORT_READ, HOLD_EXPORT_PAGE};
 use super::items::{self, Archived, Reader, reading};
 use super::query::{self, Ask};
 use super::refusal::{Code, Refusal, Result};
-use super::{connectors, edges, sources, stored, webhooks};
+use super::{connectors, edges, sources, stored};
 use crate::db::io_refusal;
 use crate::settings::registry::{self, ADDRESSES, SIGN_IN_ADDRESS};
 use spool::{Lines, Spooled};
@@ -414,19 +414,6 @@ fn select(
         })
         .collect::<Result<_>>()?;
     count("connector_agreement_count", &mut instance, kept)?;
-    let hooks = webhooks::archived(read.tx, caller)?
-        .into_iter()
-        .map(|hook| {
-            print(&json!({ "webhook": {
-                "id": hook.id,
-                "url": hook.url,
-                "events": hook.events,
-                "type_filter": hook.type_filter,
-                "active": hook.active,
-            } }))
-        })
-        .collect::<Result<_>>()?;
-    count("webhook_count", &mut instance, hooks)?;
     Ok(Selected {
         instance: instance.finish().map_err(written)?,
         items: items.finish().map_err(written)?,

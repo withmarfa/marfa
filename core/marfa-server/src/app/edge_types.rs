@@ -370,6 +370,7 @@ pub fn write_restored(unit: &Unit<'_, '_>, plan: Restoring) -> Result<()> {
                 unit.at,
             ],
         )?;
+        unit.audit("edge_type", &id, None)?;
     }
     catalog::raise(unit.tx())?;
     instance::raise_reach(unit.tx())

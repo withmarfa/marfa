@@ -766,11 +766,14 @@ fn manifest(bytes: &[u8]) -> Result<Manifest> {
             for (hash, entry) in blobs {
                 let mime = entry.get("mime_type").and_then(Value::as_str);
                 let size = entry.get("size_bytes").and_then(Value::as_u64);
-                match (mime, size) {
-                    (Some(mime), Some(size)) => {
-                        manifest.blobs.insert(hash.clone(), (mime.to_string(), size));
-                    }
-                    _ => wrong(format!("blobs.{hash}"), "Must hold a string mime_type and a non-negative integer size_bytes."),
+                if mime.is_none() {
+                    wrong(format!("blobs.{hash}.mime_type"), "Must be a string.");
+                }
+                if size.is_none() {
+                    wrong(format!("blobs.{hash}.size_bytes"), "Must be a non-negative integer.");
+                }
+                if let (Some(mime), Some(size)) = (mime, size) {
+                    manifest.blobs.insert(hash.clone(), (mime.to_string(), size));
                 }
             }
         }
@@ -784,6 +787,12 @@ fn manifest(bytes: &[u8]) -> Result<Manifest> {
                 let size = entry.get("size_bytes");
                 let mime_ok = mime.is_some_and(|mime| mime.is_null() || mime.is_string());
                 let size_ok = size.is_some_and(|size| size.is_null() || size.as_u64().is_some());
+                if !mime_ok {
+                    wrong(format!("missing_blobs.{hash}.mime_type"), "Must be a string or null.");
+                }
+                if !size_ok {
+                    wrong(format!("missing_blobs.{hash}.size_bytes"), "Must be a non-negative integer or null.");
+                }
                 if mime_ok && size_ok {
                     manifest.missing.insert(
                         hash.clone(),
@@ -792,8 +801,6 @@ fn manifest(bytes: &[u8]) -> Result<Manifest> {
                             size.and_then(Value::as_u64),
                         ),
                     );
-                } else {
-                    wrong(format!("missing_blobs.{hash}"), "Must hold a mime_type and a size_bytes, each its value or null.");
                 }
             }
         }

@@ -659,7 +659,7 @@ describe("the archive's contents", () => {
     expect(archiveItemIds(res.data)).toEqual([note]);
   });
 
-  it("holds nothing in an archive but its manifest, line files and blobs, and carries a webhook without its secret", async () => {
+  it("holds nothing in an archive but its manifest, line files and blobs, and carries no webhook", async () => {
     // A key, a webhook, a configuration and a tombstone all exist, so what
     // the archive does not carry is a choice it made.
     const { writer, source } = await writerOfItsOwn("scope");
@@ -714,19 +714,12 @@ describe("the archive's contents", () => {
       for (const absent of [hook.data.secret, purgedLink, apiKey]) {
         expect(everything, absent).not.toContain(absent);
       }
-      const webhooks = archiveLines<{
-        webhook?: { id: string; url: string; secret?: string };
-      }>(archive.data, "instance").flatMap((line) =>
-        line.webhook ? [line.webhook] : [],
-      );
-      expect(webhooks).toContainEqual(
-        expect.objectContaining({
-          id: hook.data.id,
-          url: receiver.hookUrl(`scope-${ctx.runId}`),
-        }),
-      );
-      for (const webhook of webhooks)
-        expect(webhook).not.toHaveProperty("secret");
+      expect(
+        archiveLines<{ webhook?: unknown }>(archive.data, "instance").filter(
+          (line) => line.webhook !== undefined,
+        ),
+      ).toEqual([]);
+      expect(everything).not.toContain(hook.data.id);
     } finally {
       await receiver.close();
     }

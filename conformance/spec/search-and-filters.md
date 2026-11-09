@@ -1834,11 +1834,11 @@ The server MUST write an archive's entries in this order: `manifest.json`, then 
 
 ### `search-and-filters/archive-manifest`
 
-The server MUST write into the manifest of an archive its `version`, its `format` of `marfa-archive-v0`, a `created_at` instant, and in `item_count`, `edge_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `connector_state_count`, `connector_agreement_count` and `webhook_count` the number of each kind of entry or line the archive holds.
+The server MUST write into the manifest of an archive its `version`, its `format` of `marfa-archive-v0`, a `created_at` instant, and in `item_count`, `edge_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `connector_state_count` and `connector_agreement_count` the number of each kind of entry or line the archive holds.
 
 **Reason:** `instance/archive-version` and `instance/id-in-archive` state the version and the instance's name in the manifest.
 
-**Tests:** `compliance/export.test.ts › opens an archive with its manifest, and the manifest counts what the archive holds`, `compliance/export-instance-lines.test.ts › carries the instance's settings, connector state, agreements and webhooks to a credential that manages them, and none to one that does not`.
+**Tests:** `compliance/export.test.ts › opens an archive with its manifest, and the manifest counts what the archive holds`, `compliance/export-instance-lines.test.ts › carries the instance's settings, connector state and agreements to a credential that manages them, and none to one that does not`.
 
 ### `search-and-filters/archive-manifest-blobs`
 
@@ -1942,9 +1942,9 @@ If a store fails, or does not answer within 15 seconds, while the server checks 
 
 The server MUST hold nothing in an archive but `manifest.json`, `instance.ndjson.gz`, `items.ndjson.gz`, `edges.ndjson.gz` and the `blobs/` entries.
 
-**Reason:** an archive carries no credential, so no key, session, grant, passkey, connector registration, webhook secret or `marfa.secrets`, and no tombstone or runtime record, such as a run, a hold, a delivery, a folder report or a bulk job, though an instance holds them. A restore means setting up sign-in again.
+**Reason:** an archive carries no credential, so no key, session, grant, passkey, connector registration, webhook subscription or `marfa.secrets`, and no tombstone or runtime record, such as a run, a hold, a delivery, a folder report or a bulk job, though an instance holds them. A restore means setting up sign-in again.
 
-**Tests:** `compliance/export.test.ts › holds nothing in an archive but its manifest, line files and blobs, and carries a webhook without its secret`.
+**Tests:** `compliance/export.test.ts › holds nothing in an archive but its manifest, line files and blobs, and carries no webhook`.
 
 ### `search-and-filters/archive-types`
 
@@ -2038,7 +2038,7 @@ When the credential requesting `GET /export?format=archive` holds `config.manage
 
 **Reason:** an owner's settings are their own choices, and a restore that reset them would change the instance without saying so. The two addresses name where this instance answers, which a move changes. No setting holds a secret.
 
-**Tests:** `compliance/export-instance-lines.test.ts › carries the instance's settings, connector state, agreements and webhooks to a credential that manages them, and none to one that does not`.
+**Tests:** `compliance/export-instance-lines.test.ts › carries the instance's settings, connector state and agreements to a credential that manages them, and none to one that does not`.
 
 ### `search-and-filters/restore-settings`
 
@@ -2046,7 +2046,7 @@ When `POST /restore` reads a `setting` line, the server MUST store that setting 
 
 **Reason:** a restore adds what the instance lacks and replaces nothing, and a setting chosen here since the export is newer than the archive's.
 
-**Tests:** waiting on #2717.
+**Tests:** `compliance/export-instance-lines.test.ts › restores the settings, connector state and agreements the instance lacks, and replaces none it holds`.
 
 ### `search-and-filters/archive-connector-state`
 
@@ -2054,13 +2054,13 @@ When the credential requesting `GET /export?format=archive` holds `connectors.ma
 
 **Reason:** the state is what a connector has agreed with the instance about its source, and without it a restored instance has every connector import everything again. A connector's registration belongs to its key and stays out.
 
-**Tests:** `compliance/export-instance-lines.test.ts › carries the instance's settings, connector state, agreements and webhooks to a credential that manages them, and none to one that does not`.
+**Tests:** `compliance/export-instance-lines.test.ts › carries the instance's settings, connector state and agreements to a credential that manages them, and none to one that does not`.
 
 ### `search-and-filters/restore-connector-state`
 
 When `POST /restore` reads a `connector_state` line, the server MUST store that state document only where the instance holds none for the source, and replace none it holds.
 
-**Tests:** waiting on #2717.
+**Tests:** `compliance/export-instance-lines.test.ts › restores the settings, connector state and agreements the instance lacks, and replaces none it holds`.
 
 ### `search-and-filters/archive-connector-agreements`
 
@@ -2068,29 +2068,21 @@ When the credential requesting `GET /export?format=archive` holds `connectors.ma
 
 **Reason:** an agreement pairs an item with a record outside, so it travels with the item and not without it.
 
-**Tests:** `compliance/export-instance-lines.test.ts › carries the instance's settings, connector state, agreements and webhooks to a credential that manages them, and none to one that does not`.
+**Tests:** `compliance/export-instance-lines.test.ts › carries the instance's settings, connector state and agreements to a credential that manages them, and none to one that does not`.
 
 ### `search-and-filters/restore-connector-agreements`
 
 When `POST /restore` reads a `connector_agreement` line whose item the instance holds once the archive's items are written, the server MUST store that agreement only where the instance holds none for the source and the item, and replace none it holds.
 
-**Tests:** waiting on #2717.
+**Tests:** `compliance/export-instance-lines.test.ts › restores the settings, connector state and agreements the instance lacks, and replaces none it holds`.
 
-### `search-and-filters/archive-webhooks`
+### `search-and-filters/archive-no-webhooks`
 
-When `GET /export?format=archive` is requested through the owner's browser session or by a credential that holds `webhooks.manage`, the server MUST carry in `instance.ndjson.gz` one `webhook` line, holding the subscription's `id`, `url`, `events`, `type_filter` and `active`, and never its secret, for each subscription that caller may read.
+The server MUST NOT carry a webhook subscription in an archive.
 
-**Reason:** a subscription is made by the owner or an app and is worth keeping, but its secret is a credential, and a backup holds no credentials.
+**Reason:** a subscription belongs to the key or app that made it, and neither travels in an archive (`search-and-filters/archive-only`), so a restored subscription would belong to nothing. The owner makes it again after a restore.
 
-**Tests:** `compliance/export.test.ts › holds nothing in an archive but its manifest, line files and blobs, and carries a webhook without its secret`, `compliance/export-instance-lines.test.ts › carries the instance's settings, connector state, agreements and webhooks to a credential that manages them, and none to one that does not`.
-
-### `search-and-filters/restore-webhooks`
-
-When `POST /restore` reads a `webhook` line whose `id` no subscription on the instance holds, the server MUST add the subscription inactive and holding no secret, and replace no subscription the instance holds.
-
-**Reason:** a restored subscription sends nothing until the owner sets a secret and turns it on again.
-
-**Tests:** waiting on #2717.
+**Tests:** `compliance/export.test.ts › holds nothing in an archive but its manifest, line files and blobs, and carries no webhook`, `compliance/export-instance-lines.test.ts › carries the instance's settings, connector state and agreements to a credential that manages them, and none to one that does not`.
 
 ### `search-and-filters/archive-history`
 
@@ -2272,9 +2264,25 @@ When direct owner or local authority sends `POST /restore` with an archive that 
 
 ### `search-and-filters/restore-counts`
 
-When `POST /restore` succeeds, the server MUST carry the counts `imported`, `duplicates`, `edges_imported`, `edges_skipped`, `edges_skipped_reasons`, `blobs_imported`, `types_registered`, `types_skipped`, `edge_types_registered`, `edge_types_skipped`, `type_icons_added`, `type_icons_skipped`, `type_icons_skipped_reasons`, `sources_added`, `sources_skipped` and `sources_skipped_reasons`, each for the kind of thing it counts.
+When `POST /restore` succeeds, the server MUST carry the counts `imported`, `duplicates`, `edges_imported`, `edges_skipped`, `edges_skipped_reasons`, `blobs_imported`, `types_registered`, `types_skipped`, `edge_types_registered`, `edge_types_skipped`, `type_icons_added`, `type_icons_skipped`, `type_icons_skipped_reasons`, `sources_added`, `sources_skipped`, `sources_skipped_reasons`, `settings_added`, `settings_skipped`, `connector_states_added`, `connector_states_skipped`, `connector_agreements_added` and `connector_agreements_skipped`, each for the kind of thing it counts.
 
 **Tests:** `compliance/restore-archive.test.ts › answers the restore result fields on the first restore and on a repeat`.
+
+### `search-and-filters/restore-set-up-again`
+
+When `POST /restore` succeeds, the server MUST answer in `set_up_again` a sentence saying that an archive holds no sign-in, keys, apps or webhooks, and that they are set up again on the instance.
+
+**Reason:** an archive holds no credential (`search-and-filters/archive-only`), so after a move the owner signs in, makes keys, approves apps and makes webhooks again, and the answer says so where the owner reads the outcome.
+
+**Tests:** `compliance/restore-archive.test.ts › answers the restore result fields on the first restore and on a repeat`.
+
+### `search-and-filters/cli-restore-set-up-again`
+
+When `POST /restore` answers `marfa restore` with `set_up_again`, the CLI MUST print that sentence on standard error.
+
+**Reason:** the person running the command learns there and then that sign-in, keys, apps and webhooks are not restored.
+
+**Tests:** `cli/archive-blobs.test.ts › prints the answer of a restore of it and exits 1 with blobs_missing`.
 
 ### `search-and-filters/restore-blobs-missing`
 
@@ -2516,7 +2524,7 @@ If an archive lacks `manifest.json`, `instance.ndjson.gz`, `items.ndjson.gz` or 
 
 **Reason:** an export writes all four even when it holds no row (`search-and-filters/archive-entries`), so a missing entry is a damaged archive or a file that is no archive, and an archive of nothing is told from it by its entries being empty (`search-and-filters/restore-nothing`). Without the check a restore answers `200` with counts of zero for a file it never read.
 
-**Tests:** `compliance/restore-archive.test.ts › refuses an archive without %s, naming it, and writes nothing`, `› refuses a gzip-compressed tar that is no archive, naming every member it lacks`.
+**Tests:** `compliance/restore-archive.test.ts › refuses an archive without %s, naming it, and writes nothing`, `› refuses a tar that is no archive, naming every member it lacks`.
 
 ### `search-and-filters/restore-not-archive`
 
@@ -2524,7 +2532,7 @@ If the body of `POST /restore` is not a tar, or a line file in it is not a gzip 
 
 **Reason:** a damaged backup is an ordinary input and not a fault in the server.
 
-**Tests:** `compliance/restore-archive.test.ts › refuses a body that is not a gzip-compressed tar, or whose compressed stream breaks partway, and goes on serving`.
+**Tests:** `compliance/restore-archive.test.ts › refuses a body that is not a tar, or whose line file breaks partway, and goes on serving`.
 
 ### `search-and-filters/restore-keeps-serving`
 
@@ -2532,7 +2540,7 @@ When the server refuses a body of `POST /restore` that it cannot read, the serve
 
 **Reason:** the process is every client's server, and a file that one operator sends must not stop it.
 
-**Tests:** `compliance/restore-archive.test.ts › refuses a body that is not a gzip-compressed tar, or whose compressed stream breaks partway, and goes on serving`.
+**Tests:** `compliance/restore-archive.test.ts › refuses a body that is not a tar, or whose line file breaks partway, and goes on serving`.
 
 ### `search-and-filters/restore-version`
 
