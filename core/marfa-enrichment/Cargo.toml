@@ -65,3 +65,8 @@ harness = false
 [[test]]
 name = "forgotten"
 harness = false
+
+[[test]]
+name = "unconfined"
+harness = false
+required-features = ["fault-injection"]

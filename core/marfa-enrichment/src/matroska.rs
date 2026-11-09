@@ -1,11 +1,4 @@
-//! A Matroska or WebM file's length and picture size, from its element headers.
-//!
-//! The file is walked by element headers and each element it does not need is stepped
-//! over. A walk reads at most `MOST_ELEMENTS` headers, so the cost does not grow with
-//! the size of the file. When a file states no duration, the length comes from the last
-//! cluster: the last one of stated size the walk stepped over, or, when the walk is cut
-//! off before its end, the last one found by searching back from the end of the
-//! segment. If a cut-off walk finds none, no length is told.
+//! Reads Matroska and WebM duration and dimensions.
 
 use std::io::{self, BufReader, ErrorKind, Read, Seek, SeekFrom};
 
@@ -33,19 +26,16 @@ const BLOCK_DURATION: u32 = 0x9B;
 /// Nanoseconds in a timecode tick unless the file says otherwise.
 const DEFAULT_TIMECODE_SCALE: u64 = 1_000_000;
 
-/// The most element headers one walk reads. A real file has far fewer before its
-/// clusters, and a hostile one is cut off here.
+/// The most element headers one walk reads.
 const MOST_ELEMENTS: u32 = 1 << 20;
 
-/// The most of the end of the file searched, back from its last byte, for the last
-/// cluster of a file that states no duration.
+/// The most of the file's end searched for the last cluster.
 const TAIL_SEARCH_BYTES: u64 = 32 << 20;
 
 /// The size of one step of that search.
 const TAIL_STEP_BYTES: u64 = 1 << 20;
 
-/// The file through a small buffer, so a walk that reads an element's id and size a
-/// byte at a time does not make a system call for each.
+/// A buffered view of the file, so byte-wise header reads make few system calls.
 struct Input<'a, 'b> {
     reader: BufReader<&'b mut Source<'a>>,
     len: u64,
@@ -94,13 +84,11 @@ impl Seek for Input<'_, '_> {
 enum Walked {
     /// It reached the end it was given, or a stop it was allowed.
     Done,
-    /// It read `MOST_ELEMENTS` headers and stopped with more ahead, so what it found
-    /// is the start of the file and not the whole.
+    /// It stopped at the header limit with more ahead.
     Cut,
 }
 
-/// An element's header: its id, and the size of what follows, or none when the size is
-/// not stated.
+/// An element's id and size; the size is none when unstated.
 struct Header {
     id: u32,
     size: Option<u64>,
@@ -117,8 +105,7 @@ struct Found {
     height: Option<u32>,
     cluster_time: i64,
     block_start: i64,
-    /// The latest block start seen, or block end where a block states its length, in
-    /// ticks.
+    /// The latest block start, or end where a block states its length, in ticks.
     latest: Option<i64>,
     /// Where the last cluster with a stated size holds its data, and where it ends.
     last_cluster: Option<(u64, u64)>,
@@ -149,8 +136,7 @@ pub(crate) fn read(file: &mut Source) -> Result<Media, Refusal> {
     if found.duration.is_none() {
         let (from, until) = match walked {
             Walked::Done => found.last_cluster.unzip(),
-            // The walk stopped with the file unread, so neither its latest block nor
-            // the last cluster it met is the last of the file.
+            // A cut-off walk has not seen the file's end.
             Walked::Cut => {
                 found.latest = None;
                 (
@@ -191,8 +177,7 @@ pub(crate) fn read(file: &mut Source) -> Result<Media, Refusal> {
     })
 }
 
-/// Reads elements up to `end`. With `first`, the walk stops at the first cluster once
-/// the segment has said how long it is, and keeps the last cluster whose size it knows.
+/// Reads elements up to `end`; `first` stops at the first cluster once the segment's length is known.
 fn walk(source: &mut Input, found: &mut Found, end: u64, first: bool) -> io::Result<Walked> {
     while source.stream_position()? < end {
         if found.elements >= MOST_ELEMENTS {
@@ -208,8 +193,7 @@ fn walk(source: &mut Input, found: &mut Found, end: u64, first: bool) -> io::Res
                 if found.duration.is_some() {
                     return Ok(Walked::Done);
                 }
-                // Without a size a cluster cannot be stepped over, so its blocks are read
-                // in place.
+                // A cluster of unstated size is read in place.
                 if let Some(size) = element.size {
                     let last = element.data.saturating_add(size).min(source.len());
                     found.last_cluster = Some((element.data, last));
@@ -243,11 +227,7 @@ fn walk(source: &mut Input, found: &mut Found, end: u64, first: bool) -> io::Res
     Ok(Walked::Done)
 }
 
-/// Where the last cluster of the segment holds its data, found by searching back from
-/// `end` in steps, not further than `TAIL_SEARCH_BYTES` and not before `floor`. What
-/// looks like a cluster is a cluster id, then a size, then the cluster's timecode. A
-/// cluster larger than the search, or one that opens with anything but its timecode,
-/// is not found.
+/// Where the last cluster's data starts, searched back from `end` within `TAIL_SEARCH_BYTES`.
 fn last_cluster_from_the_end(
     source: &mut Input,
     floor: u64,
@@ -287,8 +267,7 @@ fn last_cluster_from_the_end(
     Ok(None)
 }
 
-/// Where the data of the cluster that starts at `at` begins, when what is there is the
-/// header of a cluster whose first element is its timecode.
+/// Where the data of the cluster at `at` starts, if it opens with a timecode.
 fn opens_a_cluster(source: &mut Input, at: u64) -> io::Result<Option<u64>> {
     source.seek(SeekFrom::Start(at))?;
     let Ok(Some(cluster)) = header(source) else {
@@ -321,8 +300,7 @@ fn block(source: &mut Input, element: &Header, found: &mut Found) -> io::Result<
     skip(source, element)
 }
 
-/// Reads an element id, then its size. `None` at the end of the file, and an error for
-/// bytes that are no header.
+/// Reads an element id, then its size; `None` at the end of the file.
 fn header(source: &mut Input) -> io::Result<Option<Header>> {
     let Some((id, id_length)) = vint(source)? else {
         return Ok(None);

@@ -7473,11 +7473,11 @@
               "key",
               "unavailable"
             ],
-            "description": "health: degraded or down; job: failed last run; connector: failed, problems, or quiet; folder: sync concern; key: expires within seven days; unavailable: check failed or timed out."
+            "description": "health: a component is degraded or down; job: a job failed its last run; connector: failed, reports problems, or quiet over a day; folder: sync problems; key: expires within seven days; unavailable: a check failed or ran out of time."
           },
           "reference": {
             "type": "string",
-            "description": "The component or job name, connector, folder, or key ID, or unavailable check name."
+            "description": "The component, job, connector, folder, or key ID, or the name of the check that could not answer."
           },
           "title": {
             "type": "string",
@@ -7486,26 +7486,13 @@
           "description": {
             "type": "string",
             "description": "What needs attention or remains unknown."
-          },
-          "href": {
-            "type": "string",
-            "description": "The local console path for the concern."
-          },
-          "tone": {
-            "type": "string",
-            "enum": [
-              "warn",
-              "danger"
-            ],
-            "description": "warn: needs a look; danger: a component or connector failed. Present when the concern has a severity."
           }
         },
         "required": [
           "kind",
           "reference",
           "title",
-          "description",
-          "href"
+          "description"
         ],
         "description": "One known concern or unavailable check."
       },
@@ -49447,12 +49434,8 @@
           "Health and maintenance"
         ],
         "summary": "List attention items",
-        "description": "Returns current concerns for the owner or a private local command. Failed or timed-out checks appear as unavailable items alongside known concerns. An empty list means every check completed without a concern.",
-        "security": [
-          {
-            "ownerSession": []
-          }
-        ],
+        "description": "Returns what needs the owner's attention, to the private local command. A check that fails or runs out of time appears as an unavailable item beside the known concerns. An empty list means every check completed without a concern.",
+        "security": [],
         "responses": {
           "200": {
             "description": "Returns concerns and any checks whose state is unknown.",
@@ -49515,7 +49498,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: only the owner or a private local command can read this inventory.",
+            "description": "- `forbidden`: only the private local command can read what needs attention.",
             "content": {
               "application/json": {
                 "schema": {

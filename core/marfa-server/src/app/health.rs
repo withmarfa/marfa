@@ -10,7 +10,7 @@ use tokio::sync::watch;
 
 use super::App;
 use super::blobs::MARKER;
-use super::faults::{FAIL_HEALTH_WRITE, REFUSE_BLOB_STORE, Volume};
+use super::faults::{FAIL_HEALTH_WRITE, HOLD_DISK_PROBE, REFUSE_BLOB_STORE, Volume};
 use super::refusal::{Code, Refusal};
 use super::stored;
 use crate::db::{Write, volume};
@@ -107,6 +107,23 @@ impl Report {
         .map(|component| component.status)
         .max()
         .unwrap_or(Status::Ok)
+    }
+
+    /// Each component that is not ok, with its status word and the reason it gave.
+    pub fn failing(&self) -> Vec<(&'static str, &'static str, String)> {
+        [
+            ("database", &self.database),
+            ("database_write", &self.database_write),
+            ("disk", &self.disk),
+            ("blob_storage", &self.blob_storage),
+        ]
+        .into_iter()
+        .filter(|(_, component)| component.status != Status::Ok)
+        .map(|(name, component)| {
+            let reason = component.error.clone().unwrap_or_default();
+            (name, component.status.word(), reason)
+        })
+        .collect()
     }
 
     pub fn to_json(&self, with_errors: bool) -> Value {
@@ -212,22 +229,40 @@ async fn database_write(app: &Arc<App>) -> Component {
     }
 }
 
-fn disk(app: &App) -> Component {
-    let start = &app.settings.start;
-    let free = |volume: Volume, path: &Path| match app.faults.free(volume) {
-        Some(set) => set,
-        None => volume::free_bytes(path),
+/// Runs filesystem work off the async runtime, so a mount that hangs holds a
+/// blocking thread and not a worker, and gives up on it after the probe's wait.
+async fn bounded<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    tokio::time::timeout(PROBE_WAIT, tokio::task::spawn_blocking(work))
+        .await
+        .ok()?
+        .ok()
+}
+
+async fn disk(app: &Arc<App>) -> Component {
+    let app = app.clone();
+    let measured = bounded(move || {
+        app.faults.hold_blocking(HOLD_DISK_PROBE);
+        let start = &app.settings.start;
+        let free = |volume: Volume, path: &Path| match app.faults.free(volume) {
+            Some(set) => set,
+            None => volume::free_bytes(path),
+        };
+        let database = free(Volume::Database, &start.database.folder());
+        let blobs = free(Volume::Blobs, &start.blob_path);
+        let reserve = app
+            .settings
+            .live()
+            .get(crate::settings::registry::DISK_RESERVE_BYTES);
+        (database, blobs, reserve)
+    })
+    .await;
+    let Some((database, blobs, reserve)) = measured else {
+        return Component::silent("free space read");
     };
-    let database = free(Volume::Database, &start.database.folder());
-    let blobs = free(Volume::Blobs, &start.blob_path);
     let (Some(database), Some(blobs)) = (database, blobs) else {
         return Component::not_ok(Status::Degraded, "free space unknown");
     };
     let least = database.min(blobs);
-    let reserve = app
-        .settings
-        .live()
-        .get(crate::settings::registry::DISK_RESERVE_BYTES);
     if least < DISK_DOWN_BELOW {
         Component::not_ok(Status::Down, format!("{least} bytes free"))
     } else if least < DISK_DEGRADED_FLOOR.max(reserve) {
@@ -237,21 +272,63 @@ fn disk(app: &App) -> Component {
     }
 }
 
-fn blob_storage(app: &App) -> Component {
-    let folder = &app.settings.start.blob_path;
-    if !app.faults.refusing(REFUSE_BLOB_STORE) && folder.is_dir() && folder.join(MARKER).is_file() {
-        Component::ok(None)
-    } else {
-        Component::not_ok(Status::Down, "the blob folder or its marker is missing")
+async fn blob_storage(app: &Arc<App>) -> Component {
+    let app = app.clone();
+    let present = bounded(move || {
+        app.faults.hold_blocking(HOLD_DISK_PROBE);
+        let folder = &app.settings.start.blob_path;
+        !app.faults.refusing(REFUSE_BLOB_STORE) && folder.is_dir() && folder.join(MARKER).is_file()
+    })
+    .await;
+    match present {
+        Some(true) => Component::ok(None),
+        Some(false) => Component::not_ok(Status::Down, "the blob folder or its marker is missing"),
+        None => Component::silent("blob folder answer"),
     }
 }
 
 pub async fn check(app: &Arc<App>) -> Report {
-    let (database, database_write) = tokio::join!(database(app), database_write(app));
+    let (database, database_write, disk, blob_storage) = tokio::join!(
+        database(app),
+        database_write(app),
+        disk(app),
+        blob_storage(app)
+    );
     Report {
         database,
         database_write,
-        disk: disk(app),
-        blob_storage: blob_storage(app),
+        disk,
+        blob_storage,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn a_filesystem_call_that_hangs_is_given_up_on_and_leaves_the_runtime_running() {
+        let (release, held) = mpsc::channel::<()>();
+        let ticker = tokio::spawn(async {
+            let started = Instant::now();
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            started.elapsed()
+        });
+        let started = Instant::now();
+        let answered = bounded(move || {
+            let _ = held.recv_timeout(Duration::from_secs(30));
+        })
+        .await;
+        assert!(answered.is_none());
+        assert!(started.elapsed() < PROBE_WAIT + Duration::from_secs(1));
+        assert!(ticker.await.unwrap() < Duration::from_secs(1));
+        drop(release);
+    }
+
+    #[tokio::test]
+    async fn a_filesystem_call_that_answers_is_returned() {
+        assert_eq!(bounded(|| 7).await, Some(7));
     }
 }

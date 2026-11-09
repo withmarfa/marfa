@@ -858,7 +858,7 @@ CREATE TABLE IF NOT EXISTS enrichment_files (
     hash TEXT NOT NULL,
     state TEXT NOT NULL DEFAULT 'waiting' CHECK (state IN ('waiting', 'read', 'skipped')),
     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
-    reason TEXT CHECK (reason IN ('unsupported', 'encrypted', 'over_limit', 'ocr')),
+    reason TEXT CHECK (reason IN ('unsupported', 'encrypted', 'over_limit', 'ocr', 'missing')),
     signature TEXT NOT NULL DEFAULT '',
     -- The limit that stopped an over-limit file, and what it was then.
     capped_by TEXT CHECK (capped_by IN ('blob', 'inflated', 'memory', 'fixed')),
@@ -889,11 +889,13 @@ BEGIN
 END;
 
 -- An existing reference alone does not queue changed file properties. A skipped file keeps its
--- refusal and is read once more.
+-- refusal and is read once more. The type of file picks the reader, so a changed one counts, and
+-- a waiting file that failed under the old type gets its attempts back.
 CREATE TRIGGER IF NOT EXISTS enrichment_files_changed AFTER UPDATE OF type, properties ON items
 WHEN NEW.properties ->> '$.blob_ref' IS NOT NULL AND (
     NEW.type IS NOT OLD.type
     OR NEW.properties ->> '$.blob_ref' IS NOT OLD.properties ->> '$.blob_ref'
+    OR NEW.properties ->> '$.mime_type' IS NOT OLD.properties ->> '$.mime_type'
     OR (NEW.properties ->> '$.extracted_text' IS NULL AND OLD.properties ->> '$.extracted_text' IS NOT NULL)
     OR (NEW.properties ->> '$.width' IS NULL AND OLD.properties ->> '$.width' IS NOT NULL)
     OR (NEW.properties ->> '$.height' IS NULL AND OLD.properties ->> '$.height' IS NOT NULL)
@@ -908,7 +910,41 @@ BEGIN
         signature = CASE enrichment_files.state WHEN 'read' THEN '' ELSE enrichment_files.signature END,
         refill = CASE enrichment_files.state WHEN 'skipped' THEN 1 ELSE 0 END,
         updated_at = excluded.updated_at
-    WHERE enrichment_files.state IN ('read', 'skipped');
+    WHERE enrichment_files.state IN ('read', 'skipped')
+       OR (enrichment_files.state = 'waiting' AND enrichment_files.attempts > 0
+           AND (NEW.type IS NOT OLD.type
+                OR NEW.properties ->> '$.mime_type' IS NOT OLD.properties ->> '$.mime_type'));
+    UPDATE housekeeping_jobs
+    SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds')
+    WHERE name = 'enrichment-sweep'
+      AND (running_since IS NOT NULL
+           OR next_run_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds'));
+END;
+
+CREATE INDEX IF NOT EXISTS enrichment_files_missing ON enrichment_files (hash) WHERE reason = 'missing';
+
+-- A file left for want of a copy waits again, with its attempts as they were, once a copy is
+-- recorded or the store holding one is attached again.
+CREATE TRIGGER IF NOT EXISTS enrichment_files_copy_recorded AFTER INSERT ON blob_copies
+WHEN EXISTS (SELECT 1 FROM enrichment_files WHERE hash = NEW.hash AND reason = 'missing')
+BEGIN
+    UPDATE enrichment_files
+    SET state = 'waiting', reason = NULL, refill = 0, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE hash = NEW.hash AND reason = 'missing';
+    UPDATE housekeeping_jobs
+    SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds')
+    WHERE name = 'enrichment-sweep'
+      AND (running_since IS NOT NULL
+           OR next_run_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds'));
+END;
+
+CREATE TRIGGER IF NOT EXISTS enrichment_files_store_attached AFTER UPDATE OF detached_at ON stores
+WHEN OLD.detached_at IS NOT NULL AND NEW.detached_at IS NULL
+BEGIN
+    UPDATE enrichment_files
+    SET state = 'waiting', reason = NULL, refill = 0, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE reason = 'missing'
+      AND hash IN (SELECT hash FROM blob_copies WHERE store_id = NEW.id);
     UPDATE housekeeping_jobs
     SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds')
     WHERE name = 'enrichment-sweep'

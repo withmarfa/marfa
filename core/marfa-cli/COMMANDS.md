@@ -69,6 +69,42 @@ The trace's root span is named for the command, such as `marfa items create`, an
 
 A command that ends in a fault also sends one exception to PostHog's error tracking when `MARFA_POSTHOG_HOST` and `MARFA_POSTHOG_PROJECT_TOKEN` are both set, whether or not an OTLP endpoint is. The trace needs an endpoint and the exception does not, so a malformed endpoint turns off the trace only, and a malformed host the exception only. With either PostHog variable unset, no exception is sent. With only one of the two PostHog variables set, or a host that is neither `https` nor on this machine, the command prints one line on standard error that names the variable, and nothing under `--json`. The exception has the command's name, the error code, the exit code, the version, the operating system and the architecture, and a fixed sentence for the kind of error in place of its message. It names no person, and holds no argument, address, credential, item content or message. A fault is something the command line or the core itself got wrong: a panic, including one the core caught and ended with the code `fault`, the local store failing for a reason of its own, an answer that cannot be read, or an answer status the command line should never cause and no refusal is named for, such as `405` or `415`. Nothing the server or the environment did is a fault, and sends nothing: a refusal by design (a `4xx` answer that names a refusal, a usage error, a missing credential or docs page), a command that Ctrl-C stopped or that ended `canceled`, and an environment that failed (offline, a timeout, a rate limit, a `408` or `425` answer, any `5xx` answer, which the server reports itself, or full local storage). A command that panics sends an exception of type `panic` with no message, and `OTEL_TRACES_SAMPLER` does not change what is sent. A PostHog that is unreachable, slow or refusing changes neither the command's output nor its exit code, and the command waits no longer than the timeout above.
 
+## Owner tasks
+
+The instance draws no owner console, so each task an owner has is a command. Most need `--socket`, the private socket on the server's machine, or a key that holds the permission the command names.
+
+| Task | Commands |
+| --- | --- |
+| See what needs attention | `marfa attention` |
+| Check the instance's health | `marfa status` |
+| Read the instance's metrics | `marfa metrics` |
+| See what a key can read | `marfa overview` |
+| Read the instance's name and enforcement | `marfa config get` |
+| Change a setting | `marfa config update`, `marfa config replace` |
+| List every setting with its default and rule | `marfa config settings` |
+| Check what changing the addresses would do | `marfa config check-address` |
+| Make, list, change and revoke a key | `marfa keys create`, `marfa keys list`, `marfa keys update`, `marfa keys revoke` |
+| List the browsers, apps and keys that can sign in | `marfa sign-ins list` |
+| Rename a sign-in | `marfa sign-ins rename` |
+| End one sign-in | `marfa sign-ins end` |
+| End every sign-in of a kind at once | `marfa sign-ins end-all` |
+| List, narrow and disconnect a connected app | `marfa apps list`, `marfa apps narrow`, `marfa apps disconnect` |
+| Read and change the owner's email, name and picture, or clear the picture | `marfa owner show`, `marfa owner update`, `marfa owner picture` |
+| Manage the owner's passkeys | `marfa owner passkeys list`, `marfa owner passkeys rename`, `marfa owner passkeys remove` |
+| Set a new owner password | `marfa owner recover` |
+| Claim a new instance | `marfa setup status`, `marfa setup code`, `marfa setup open`, `marfa setup claim` |
+| Read and change the profile apps show | `marfa profile show`, `marfa profile update` |
+| See connectors, their runs and their problems | `marfa connectors list`, `marfa connectors get`, `marfa connectors runs` |
+| Remove a connector | `marfa connectors delete` |
+| Manage a connector's inbound endpoints and deliveries | `marfa connectors endpoints list`, `marfa connectors endpoints create`, `marfa connectors endpoints retire`, `marfa connectors deliveries list`, `marfa connectors deliveries body`, `marfa connectors deliveries handle` |
+| List, make, change and revoke folders, and read their sync reports | `marfa folders inventory`, `marfa folders create`, `marfa folders change`, `marfa folders revoke`, `marfa folders health` |
+| Manage webhooks and their deliveries | `marfa webhooks create`, `marfa webhooks list`, `marfa webhooks get`, `marfa webhooks update`, `marfa webhooks delete`, `marfa webhooks deliveries`, `marfa webhooks redeliver` |
+| Read the audit log | `marfa audit` |
+| List and run the housekeeping jobs | `marfa housekeeping list`, `marfa housekeeping run` |
+| Manage blob stores and copies | `marfa blobs stores`, `marfa blobs copies`, `marfa blobs delete-copy`, `marfa blobs orphans` |
+| Empty and restore the trash | `marfa items trash list`, `marfa items trash restore`, `marfa items trash purge`, `marfa items trash empty` |
+| Export and restore the instance | `marfa export`, `marfa restore` |
+
 ## status
 
 What the instance says about itself, and item counts where the credential reaches them.
@@ -433,6 +469,19 @@ marfa sign-ins end [OPTIONS] <ID>
 | Option | Description |
 | --- | --- |
 | `--revoke-keys` | For an app, also revoke every key it minted. Refused for a browser or a key. |
+
+### marfa sign-ins end-all
+
+End every sign-in of the chosen kinds at once, except the ones named with --keep. With no --kind it ends every browser. It refuses, ending nothing, when a --keep names no sign-in. It ends them one at a time, carries on past one it cannot end, says how many it ended and names each one it could not. Needs direct local authority (--socket).
+
+```text
+marfa sign-ins end-all [OPTIONS]
+```
+
+| Option | Description |
+| --- | --- |
+| `--kind <KIND>` | The kinds to end. Repeat it for several; the default is browser. One of `browser`, `app`, `key`. |
+| `--keep <ID>` | A sign-in to leave as it is. Repeat it for several. |
 
 ## items
 
@@ -2208,7 +2257,7 @@ marfa events [OPTIONS]
 
 ## attention
 
-Current concerns and unavailable checks. Requires the owner or --socket.
+What needs the owner's attention: a degraded component, a failed job, a connector or folder with a problem, a key about to expire, and any check that could not answer. Needs --socket.
 
 ### marfa attention
 
