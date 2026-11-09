@@ -3,7 +3,11 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import { bucketAt, ownerOf } from "../../utils/backups.js";
+import {
+  afterFirstScheduledBackup,
+  bucketAt,
+  ownerOf,
+} from "../../utils/backups.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -17,12 +21,12 @@ import {
 
 /**
  * A backup that cannot finish: an object store the server cannot reach, a
- * process killed while the store takes the backup, and two asks at once.
- * `hold:backup:put` stops a backup once the put has some of its bytes in
- * hand: more than one part of a large backup, so its multipart upload has
- * begun, or all of a small one. Each server has a prefix of its own. The
- * backup interval is a year, so `backup` is listed and no scheduled run
- * comes during a test.
+ * process killed while the store takes the backup, two asks at once, and a
+ * store that takes a backup slowly. `hold:backup:put` stops a backup once the
+ * put has some of its bytes in hand: more than one part of a large backup, so
+ * its multipart upload has begun, or all of a small one. Each server has a
+ * prefix of its own. The backup interval is a year, so `backup` is listed,
+ * and once the first scheduled run has ended no other comes during a test.
  */
 const YEAR_MS = "31536000000";
 const UNREACHABLE = "http://127.0.0.1:9";
@@ -52,6 +56,7 @@ describe("a backup the object store does not take", () => {
       ...store,
       MARFA_BACKUP_INTERVAL_MS: YEAR_MS,
     });
+    await afterFirstScheduledBackup(server);
   }, FRESH_SERVER_TIMEOUT_MS);
 
   afterAll(async () => {
@@ -59,6 +64,7 @@ describe("a backup the object store does not take", () => {
   }, FRESH_SERVER_TIMEOUT_MS);
 
   it("counts a backup the object store cannot take, shows it in health, and clears it with the next backup that is put", async () => {
+    const before = await bucket.backupKeys();
     const created = await clientsFor(server).working.createItem({
       type: "core.note",
       properties: { title: "waiting for a backup" },
@@ -86,7 +92,7 @@ describe("a backup the object store does not take", () => {
     expect(scheduled.data.outcome).toBe("error");
     seen = await health(server);
     expect(seen.backups.failures).toBe(2);
-    expect(await bucket.backupKeys()).toEqual([]);
+    expect(await bucket.backupKeys()).toEqual(before);
 
     await server.restart();
     const next = await clientsFor(server).operator.runHousekeeping("backup");
@@ -97,7 +103,25 @@ describe("a backup the object store does not take", () => {
     expect(seen.backups.status).toBe("ok");
     expect(seen.backups.failures).toBe(0);
     expect(seen.status).toBe("ok");
-    expect(await bucket.backupKeys()).toHaveLength(1);
+    expect(await bucket.backupKeys()).toHaveLength(before.length + 1);
+  });
+
+  it("runs the next scheduled backup after a failed one when nothing has changed since the last backup put", async () => {
+    const before = await bucket.backupKeys();
+    await server.restart({ env: { S3_ENDPOINT: UNREACHABLE } });
+    const refused = await ownerOf(server).runBackup();
+    expect(refused.status, JSON.stringify(refused.data)).toBe(503);
+    expect((await health(server)).backups.status).toBe("failing");
+
+    await server.restart();
+    const next = await clientsFor(server).operator.runHousekeeping("backup");
+    expect(next.status, JSON.stringify(next.error)).toBe(200);
+    expect(next.data.outcome, next.data.error ?? "").toBe("ok");
+    expect((next.data.result as { outcome: string }).outcome).toBe("put");
+    const seen = await health(server);
+    expect(seen.backups.status).toBe("ok");
+    expect(seen.backups.failures).toBe(0);
+    expect(await bucket.backupKeys()).toHaveLength(before.length + 1);
   });
 });
 
@@ -111,6 +135,7 @@ describe("a backup cut short", () => {
       ...store,
       MARFA_BACKUP_INTERVAL_MS: YEAR_MS,
     });
+    await afterFirstScheduledBackup(server);
   }, FRESH_SERVER_TIMEOUT_MS);
 
   afterAll(async () => {
@@ -119,6 +144,7 @@ describe("a backup cut short", () => {
 
   it("runs one backup at a time, answering a second ask with 409 housekeeping_job_running", async () => {
     const owner = ownerOf(server);
+    const before = await bucket.backupKeys();
     await server.setFault("hold:backup:put");
     const first = owner.runBackup();
     await server.waitForHold("hold:backup:put");
@@ -132,9 +158,10 @@ describe("a backup cut short", () => {
     await server.clearFault();
     const done = await first;
     expect(done.status, JSON.stringify(done.error)).toBe(200);
-    expect(await bucket.backupKeys()).toEqual([
-      `${store.S3_PREFIX}/backups/${done.data.backup.name}`,
-    ]);
+    const { instance_id, name } = done.data.backup;
+    expect(await bucket.backupKeys()).toEqual(
+      [...before, `${store.S3_PREFIX}/backups/${instance_id}/${name}`].sort(),
+    );
   });
 
   it("leaves no object and no spool when killed while putting a backup larger than one part", async () => {
@@ -171,7 +198,29 @@ describe("a backup cut short", () => {
     const keys = await bucket.backupKeys();
     expect(keys).toHaveLength(before.length + 1);
     expect(keys).toContain(
-      `${store.S3_PREFIX}/backups/${done.data.backup.name}`,
+      `${store.S3_PREFIX}/backups/${done.data.backup.instance_id}/${done.data.backup.name}`,
     );
+  });
+
+  it("puts a backup whole when the object store takes it more slowly than a client download may stall", async () => {
+    const owner = ownerOf(server);
+    // The archive is the previous test's, more than two parts.
+    const changed = await owner.patchConfig({
+      blob_read_idle_timeout_ms: 1000,
+    });
+    expect(changed.status, JSON.stringify(changed.error)).toBe(200);
+    const before = await bucket.backupKeys();
+    const uploads = await bucket.unfinishedUploads();
+
+    await server.setFault("hold:backup:put");
+    const slow = owner.runBackup();
+    await server.waitForHold("hold:backup:put");
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await server.clearFault();
+    const done = await slow;
+    expect(done.status, JSON.stringify(done.error)).toBe(200);
+    expect(done.data.backup.size_bytes).toBeGreaterThan(2 * PART_BYTES);
+    expect(await bucket.backupKeys()).toHaveLength(before.length + 1);
+    expect(await bucket.unfinishedUploads()).toEqual(uploads);
   });
 });

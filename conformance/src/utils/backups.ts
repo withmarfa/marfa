@@ -7,7 +7,9 @@ import {
 } from "@aws-sdk/client-s3";
 import { MarfaClient } from "../client/api.js";
 import type { FreshServer } from "./fresh-server.js";
+import { clientsFor } from "./own-blob-server.js";
 import { TEST_OWNER } from "./target.js";
+import { waitFor } from "./wait.js";
 
 /**
  * The run's object store, reached directly with the credentials the
@@ -92,4 +94,30 @@ export function ownerOf(server: FreshServer): MarfaClient {
 /** The name a backup taken at `at` carries. */
 export function backupName(at: Date): string {
   return `${at.toISOString()}.tar`;
+}
+
+/** The server's instance id, which names the folder its backups go in. */
+export async function instanceIdOf(server: FreshServer): Promise<string> {
+  const root = await fetch(`${server.apiUrl}/`);
+  return ((await root.json()) as { instance_id: string }).instance_id;
+}
+
+/**
+ * Waits until the first scheduled backup run of a server that has the
+ * schedule on has ended, so that with a long interval no scheduled run comes
+ * during the test that follows, whenever the first one falls due.
+ */
+export async function afterFirstScheduledBackup(
+  server: FreshServer,
+): Promise<void> {
+  const { operator } = clientsFor(server);
+  await waitFor(
+    "the first scheduled backup",
+    async () => {
+      const jobs = await operator.listHousekeeping();
+      const backup = jobs.data.data.find((job) => job.name === "backup");
+      return backup?.last_finished_at ? true : undefined;
+    },
+    60_000,
+  );
 }

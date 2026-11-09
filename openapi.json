@@ -10686,6 +10686,11 @@
             "description": "The backup's name: the instant Marfa took it, followed by `.tar`.",
             "example": "2026-11-09T10:15:30.250Z.tar"
           },
+          "instance_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The ID of the instance that took the backup. Each instance keeps its backups in a folder of its own, and thins only its own."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -10699,6 +10704,7 @@
         },
         "required": [
           "name",
+          "instance_id",
           "created_at",
           "size_bytes"
         ],
@@ -62866,7 +62872,7 @@
           "Export and restore"
         ],
         "summary": "List backups",
-        "description": "Returns the backups in the instance's object store, newest first. A backup is an archive of every item, edge and instance line, the trash included, without file bytes, which the object store already holds. Requires direct owner or local authority.",
+        "description": "Returns the backups in the instance's object store, newest first, including those another instance on the same prefix took, so a new instance can restore the one it replaces. A backup is an archive of every item, edge and instance line, the trash included, without file bytes, which the object store already holds. Requires direct owner or local authority.",
         "security": [
           {
             "ownerSession": []
@@ -63138,7 +63144,7 @@
           "Export and restore"
         ],
         "summary": "Take a backup",
-        "description": "Takes a backup now and puts it in the instance's object store, whether or not anything changed since the last one, then deletes the backups that thinning no longer keeps. Requires direct owner or local authority.",
+        "description": "Takes a backup now and puts it in the instance's object store, whether or not anything changed since the last one, then deletes this instance's backups that thinning no longer keeps. Requires direct owner or local authority.",
         "security": [
           {
             "ownerSession": []
@@ -63453,7 +63459,7 @@
         }
       }
     },
-    "/backups/{name}/restore": {
+    "/backups/{instance_id}/{name}/restore": {
       "post": {
         "operationId": "restoreBackup",
         "tags": [
@@ -63583,8 +63589,23 @@
                       "description": "A sentence saying that an archive holds no sign-in, keys, apps or webhooks, so you set them up again on this instance."
                     },
                     "backup": {
-                      "type": "string",
-                      "description": "The name of the backup Marfa restored."
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "description": "The backup's name."
+                        },
+                        "instance_id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "description": "The ID of the instance that took the backup."
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "instance_id"
+                      ],
+                      "description": "The backup Marfa restored."
                     }
                   },
                   "required": [
@@ -63726,7 +63747,7 @@
             }
           },
           "404": {
-            "description": "`backup_not_found`: the object store holds no backup by that name.",
+            "description": "`backup_not_found`: the object store holds no backup by that name from that instance.",
             "content": {
               "application/json": {
                 "schema": {
@@ -63971,6 +63992,17 @@
           }
         },
         "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The ID of the instance that took the backup, as `GET /backups` lists it."
+            },
+            "required": true,
+            "description": "The ID of the instance that took the backup, as `GET /backups` lists it.",
+            "name": "instance_id",
+            "in": "path"
+          },
           {
             "schema": {
               "type": "string",

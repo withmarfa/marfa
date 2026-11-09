@@ -8,7 +8,12 @@ import {
   archiveManifest,
   listEntries,
 } from "../../utils/archive.js";
-import { bucketAt, ownerOf } from "../../utils/backups.js";
+import {
+  afterFirstScheduledBackup,
+  bucketAt,
+  instanceIdOf,
+  ownerOf,
+} from "../../utils/backups.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -26,16 +31,19 @@ import { waitFor } from "../../utils/wait.js";
 
 /**
  * Backups to the object store a server is given: one archive object per
- * backup under `<S3_PREFIX>/backups/`, with no file bytes, taken on a
- * schedule or when the owner asks, listed and restored by the owner alone.
- * Each server here has a prefix of its own, so its bucket holds only what it
- * wrote; the restore boots a second server on the first one's prefix.
+ * backup under `<S3_PREFIX>/backups/<instance id>/`, with no file bytes,
+ * taken on a schedule or when the owner asks, listed and restored by the
+ * owner alone. Each server here has a prefix of its own, so its bucket holds
+ * only what it wrote; the restore boots a second server on the first one's
+ * prefix.
  */
+const OTHER_INSTANCE = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
 const YEAR_MS = "31536000000";
 const AUTH_SECRET = `backups-${"s".repeat(40)}-${String(Date.now())}`;
 const store = ownObjectStore();
 const bucket = bucketAt(store.S3_PREFIX);
 let origin: FreshServer;
+let originId: string;
 let fresh: FreshServer | undefined;
 
 beforeAll(async () => {
@@ -44,6 +52,7 @@ beforeAll(async () => {
     MARFA_BACKUP_INTERVAL_MS: "0",
     MARFA_AUTH_SECRET: AUTH_SECRET,
   });
+  originId = await instanceIdOf(origin);
 }, FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
@@ -112,20 +121,23 @@ function sortedById<T extends { item?: { id: string }; edge?: { id: string } }>(
 }
 
 describe("a backup in the object store", () => {
-  it("puts one object under the prefix's backups folder, named for its created_at, holding what an owner's archive export with state any and files false holds", async () => {
+  it("puts one object in the prefix's backups folder for its instance, named for its created_at, holding what an owner's archive export with state any and files false holds", async () => {
     made = await contents(origin);
     const owner = ownerOf(origin);
     const run = await owner.runBackup();
     expect(run.status, JSON.stringify(run.error)).toBe(200);
     expect(run.data.outcome).toBe("put");
-    const { name, created_at, size_bytes } = run.data.backup;
+    const { name, instance_id, created_at, size_bytes } = run.data.backup;
     expect(name).toBe(`${created_at}.tar`);
+    expect(instance_id).toBe(originId);
     firstName = name;
 
     expect(await bucket.backupKeys()).toEqual([
-      `${store.S3_PREFIX}/backups/${name}`,
+      `${store.S3_PREFIX}/backups/${originId}/${name}`,
     ]);
-    const backup = await bucket.get(`${store.S3_PREFIX}/backups/${name}`);
+    const backup = await bucket.get(
+      `${store.S3_PREFIX}/backups/${originId}/${name}`,
+    );
     expect(backup.length).toBe(size_bytes);
     const manifest = archiveManifest<{
       created_at: string;
@@ -173,7 +185,9 @@ describe("a backup in the object store", () => {
     // The witness: each credential is live, so a backup could have held it.
     expect((await working.getItem(made.note)).status).toBe(200);
     expect((await operator.listHousekeeping()).status).toBe(200);
-    const backup = await bucket.get(`${store.S3_PREFIX}/backups/${firstName}`);
+    const backup = await bucket.get(
+      `${store.S3_PREFIX}/backups/${originId}/${firstName}`,
+    );
     const text = listEntries(backup)
       .map((entry) =>
         entry.name.endsWith(".gz")
@@ -219,7 +233,7 @@ describe("a backup in the object store", () => {
     for (const answer of [
       await operator.listBackups(),
       await operator.runBackup(),
-      await operator.restoreBackup(firstName),
+      await operator.restoreBackup(originId, firstName),
     ]) {
       expect(answer.status, JSON.stringify(answer.data)).toBe(403);
       expect(answer.error?.error.code).toBe("forbidden");
@@ -232,11 +246,20 @@ describe("a backup in the object store", () => {
       ...store,
       MARFA_BACKUP_INTERVAL_MS: "0",
     });
+    expect(await instanceIdOf(fresh)).not.toBe(originId);
     const { operator, working } = clientsFor(fresh);
     expect((await working.getItem(made.note)).status).toBe(404);
-    const restored = await ownerOf(fresh).restoreBackup(firstName);
+    const listed = await ownerOf(fresh).listBackups();
+    expect(listed.status, JSON.stringify(listed.error)).toBe(200);
+    expect(listed.data.data).toContainEqual(
+      expect.objectContaining({ name: firstName, instance_id: originId }),
+    );
+    const restored = await ownerOf(fresh).restoreBackup(originId, firstName);
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
-    expect(restored.data.backup).toBe(firstName);
+    expect(restored.data.backup).toEqual({
+      name: firstName,
+      instance_id: originId,
+    });
     expect(restored.data.blobs_missing).toEqual([]);
     expect(typeof restored.data.set_up_again).toBe("string");
     expect((await working.getItem(made.note)).status).toBe(200);
@@ -246,10 +269,22 @@ describe("a backup in the object store", () => {
   });
 
   it("answers 404 backup_not_found for a name the object store does not hold, or one that is not a backup's", async () => {
-    await bucket.put(`${store.S3_PREFIX}/backups/notes.tar`, "not a backup");
+    await bucket.put(
+      `${store.S3_PREFIX}/backups/${originId}/notes.tar`,
+      "not a backup",
+    );
+    await bucket.put(
+      `${store.S3_PREFIX}/backups/deeper/${firstName}`,
+      "not a backup",
+    );
     const owner = ownerOf(origin);
-    for (const name of ["2020-01-01T00:00:00.000Z.tar", "notes.tar"]) {
-      const answer = await owner.restoreBackup(name);
+    for (const [instance, name] of [
+      [originId, "2020-01-01T00:00:00.000Z.tar"],
+      [originId, "notes.tar"],
+      [OTHER_INSTANCE, firstName],
+      ["deeper", firstName],
+    ] as const) {
+      const answer = await owner.restoreBackup(instance, name);
       expect(answer.status, JSON.stringify(answer.data)).toBe(404);
       expect(answer.error?.error.code).toBe("backup_not_found");
     }
@@ -271,8 +306,7 @@ describe("the backup schedule", () => {
     try {
       const { operator } = clientsFor(server);
       const owner = ownerOf(server);
-      const first = await runJob<{ outcome: string }>(operator, "backup");
-      expect(first.result.outcome).toBe("put");
+      await afterFirstScheduledBackup(server);
       expect((await mine.backupKeys()).length).toBe(1);
 
       const again = await runJob<{ outcome: string }>(operator, "backup");
@@ -308,7 +342,9 @@ describe("the backup schedule", () => {
         const found = await mine.backupKeys();
         return found.length > 0 ? found : undefined;
       });
-      expect(keys[0]).toMatch(/\/backups\/\d{4}-\d\d-\d\dT[\d:.]+Z\.tar$/);
+      expect(keys[0]).toMatch(
+        /\/backups\/[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}\/\d{4}-\d\d-\d\dT[\d:.]+Z\.tar$/,
+      );
       const answer = await health(server, clientsFor(server).operator);
       expect(answer.backups.status).toBe("ok");
       expect(answer.backups.last_backup).toBe(keys[0]!.split("/").pop());
@@ -353,7 +389,10 @@ describe("the backup schedule", () => {
       for (const refused of [
         await owner.listBackups(),
         await owner.runBackup(),
-        await owner.restoreBackup("2026-11-09T10:15:30.250Z.tar"),
+        await owner.restoreBackup(
+          OTHER_INSTANCE,
+          "2026-11-09T10:15:30.250Z.tar",
+        ),
       ]) {
         expect(refused.status, JSON.stringify(refused.data)).toBe(409);
         expect(refused.error?.error.code).toBe("no_bucket");

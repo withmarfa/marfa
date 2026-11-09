@@ -448,15 +448,17 @@ An owner has two backups of an instance. Where `S3_BUCKET` is set, the server ba
 
 ### `instance/backup-object`
 
-When the server takes a backup, the server MUST put it in the object store as one object named `<S3_PREFIX>/backups/<created_at>.tar`, where `<created_at>` is its manifest's `created_at`.
+When the server takes a backup, the server MUST put it in the object store as one object named `<S3_PREFIX>/backups/<instance id>/<created_at>.tar`, where `<instance id>` is the instance's id and `<created_at>` is its manifest's `created_at`.
 
-**Tests:** `compliance/backups.test.ts › puts one object under the prefix's backups folder, named for its created_at, holding what an owner's archive export with state any and files false holds`.
+**Reason:** a server that replaces another, or an older image of it, can start on the same prefix, and the folder keeps each instance's backups apart.
+
+**Tests:** `compliance/backups.test.ts › puts one object in the prefix's backups folder for its instance, named for its created_at, holding what an owner's archive export with state any and files false holds`.
 
 ### `instance/backup-holds-export`
 
 When the server takes a backup, the server MUST put in it the items, edges and instance lines that `GET /export?format=archive&state=any&files=false` would send the owner at that moment.
 
-**Tests:** `compliance/backups.test.ts › puts one object under the prefix's backups folder, named for its created_at, holding what an owner's archive export with state any and files false holds`.
+**Tests:** `compliance/backups.test.ts › puts one object in the prefix's backups folder for its instance, named for its created_at, holding what an owner's archive export with state any and files false holds`.
 
 ### `instance/backup-no-file-bytes`
 
@@ -464,7 +466,7 @@ When the server takes a backup, the server MUST name every file its rows name un
 
 **Reason:** the object store already holds a copy of each file the instance has replicated, so a backup that carried them would put every file in the bucket again each time.
 
-**Tests:** `compliance/backups.test.ts › puts one object under the prefix's backups folder, named for its created_at, holding what an owner's archive export with state any and files false holds`.
+**Tests:** `compliance/backups.test.ts › puts one object in the prefix's backups folder for its instance, named for its created_at, holding what an owner's archive export with state any and files false holds`.
 
 ### `instance/backup-bucket-blobs`
 
@@ -472,7 +474,7 @@ When the server takes a backup, the server MUST list under the manifest's `bucke
 
 **Reason:** a restore on the same bucket takes those files from the store, and a file outside the list may still be only on the instance's disk.
 
-**Tests:** `compliance/backups.test.ts › puts one object under the prefix's backups folder, named for its created_at, holding what an owner's archive export with state any and files false holds`.
+**Tests:** `compliance/backups.test.ts › puts one object in the prefix's backups folder for its instance, named for its created_at, holding what an owner's archive export with state any and files false holds`.
 
 ### `instance/backup-no-credentials`
 
@@ -489,6 +491,14 @@ If a backup run fails, or the process ends, before the object store has taken th
 **Reason:** a backup larger than one part goes up as a multipart upload, which no listing or read sees until it completes. An upload the process left unfinished still holds its parts in the bucket until a lifecycle rule or the store's own clean-up removes them.
 
 **Tests:** `compliance/backup-faults.test.ts › leaves no object and no spool when killed while putting a backup larger than one part`.
+
+### `instance/backup-slow-store`
+
+When the object store takes a backup's bytes more slowly than `blob_read_idle_timeout_ms` lets a client download stall, the server MUST still put the whole backup.
+
+**Reason:** `blob_read_idle_timeout_ms` bounds a client that stopped reading. A backup's put has a deadline of its own that allows for a slow uplink.
+
+**Tests:** `compliance/backup-faults.test.ts › puts a backup whole when the object store takes it more slowly than a client download may stall`.
 
 ### `instance/backup-spool-gone`
 
@@ -538,7 +548,7 @@ While a backup run is under way, when the owner or a private local command sends
 
 If the object store does not take a backup, then the server MUST count the failed run and run again at the next interval.
 
-**Tests:** `compliance/backup-faults.test.ts › counts a backup the object store cannot take, shows it in health, and clears it with the next backup that is put`.
+**Tests:** `compliance/backup-faults.test.ts › counts a backup the object store cannot take, shows it in health, and clears it with the next backup that is put`, `› runs the next scheduled backup after a failed one when nothing has changed since the last backup put`.
 
 ### `instance/backup-health-failing`
 
@@ -562,13 +572,13 @@ Where `S3_BUCKET` is not set, the server MUST answer `GET /health` with `backups
 
 ### `instance/backup-no-bucket`
 
-Where `S3_BUCKET` is not set, when the owner or a private local command sends `GET /backups`, `POST /backups` or `POST /backups/{name}/restore`, the server MUST answer `409 no_bucket`.
+Where `S3_BUCKET` is not set, when the owner or a private local command sends `GET /backups`, `POST /backups` or `POST /backups/{instance_id}/{name}/restore`, the server MUST answer `409 no_bucket`.
 
 **Tests:** `compliance/backups.test.ts › says in health that backups are off on an instance with no object store, and answers 409 no_bucket at each door`.
 
 ### `instance/backups-owner-only`
 
-When a key or an app's token sends `GET /backups`, `POST /backups` or `POST /backups/{name}/restore`, the server MUST answer `403 forbidden`.
+When a key or an app's token sends `GET /backups`, `POST /backups` or `POST /backups/{instance_id}/{name}/restore`, the server MUST answer `403 forbidden`.
 
 **Reason:** a backup holds every row of the instance, which no grant of a key or an app covers.
 
@@ -576,13 +586,15 @@ When a key or an app's token sends `GET /backups`, `POST /backups` or `POST /bac
 
 ### `instance/backups-list`
 
-When the owner or a private local command sends `GET /backups`, the server MUST answer with each backup directly under `<S3_PREFIX>/backups/`, newest first, each with its `name`, `created_at` and `size_bytes`.
+When the owner or a private local command sends `GET /backups`, the server MUST answer with each backup in an instance's folder under `<S3_PREFIX>/backups/`, this instance's and any other's, newest first, each with its `name`, `instance_id`, `created_at` and `size_bytes`.
 
-**Tests:** `compliance/backups.test.ts › lists the backups newest first to the owner, and refuses a key at all three doors`.
+**Reason:** a fresh server started on the prefix of an instance it replaces restores that instance's backup.
+
+**Tests:** `compliance/backups.test.ts › lists the backups newest first to the owner, and refuses a key at all three doors`, `› restores a named backup into a fresh server on the same bucket, files included`.
 
 ### `instance/backup-restore`
 
-When the owner or a private local command sends `POST /backups/{name}/restore`, the server MUST restore the backup of that name from the object store as `POST /restore` restores the same archive.
+When the owner or a private local command sends `POST /backups/{instance_id}/{name}/restore`, the server MUST restore the backup of that name in that instance's folder from the object store as `POST /restore` restores the same archive.
 
 **Reason:** the server reads the backup itself, so a restore after a move needs no copy of the backup on the owner's computer.
 
@@ -590,35 +602,37 @@ When the owner or a private local command sends `POST /backups/{name}/restore`, 
 
 ### `instance/backup-restore-unknown`
 
-If `POST /backups/{name}/restore` names no backup the object store holds directly under `<S3_PREFIX>/backups/`, then the server MUST answer `404 backup_not_found`.
+If `POST /backups/{instance_id}/{name}/restore` names no backup the object store holds directly under `<S3_PREFIX>/backups/<instance_id>/`, then the server MUST answer `404 backup_not_found`.
 
 **Tests:** `compliance/backups.test.ts › answers 404 backup_not_found for a name the object store does not hold, or one that is not a backup's`.
 
 ### `instance/backup-thinning-day`
 
-When the server has put a backup, the server MUST keep every backup taken in the 24 hours before it.
+When the server has put a backup, the server MUST keep every backup of its own taken in the 24 hours before that backup was taken.
 
-**Tests:** `compliance/backup-thinning.test.ts › keeps the last day and the newest of each older day for thirty days, and deletes nothing that is not a listed backup`.
+**Reason:** the day is counted from when the backup was taken, so a slow put deletes nothing it would otherwise keep.
+
+**Tests:** `compliance/backup-thinning.test.ts › keeps the last day and the newest of each older day for thirty days, and deletes nothing that is not a listed backup of this instance`, `› keeps every backup taken in the day before the one just put, however long the put took`.
 
 ### `instance/backup-thinning-daily`
 
-When the server has put a backup, the server MUST keep, of the backups taken between one and 31 days before, the newest of each UTC day, and delete the others.
+When the server has put a backup, the server MUST keep, of its own backups taken between one and 31 days before, the newest of each UTC day, and delete the others.
 
-**Tests:** `compliance/backup-thinning.test.ts › keeps the last day and the newest of each older day for thirty days, and deletes nothing that is not a listed backup`.
+**Tests:** `compliance/backup-thinning.test.ts › keeps the last day and the newest of each older day for thirty days, and deletes nothing that is not a listed backup of this instance`.
 
 ### `instance/backup-thinning-old`
 
-When the server has put a backup, the server MUST delete each backup taken more than 31 days before.
+When the server has put a backup, the server MUST delete each of its own backups taken more than 31 days before.
 
-**Tests:** `compliance/backup-thinning.test.ts › keeps the last day and the newest of each older day for thirty days, and deletes nothing that is not a listed backup`.
+**Tests:** `compliance/backup-thinning.test.ts › keeps the last day and the newest of each older day for thirty days, and deletes nothing that is not a listed backup of this instance`.
 
 ### `instance/backup-thinning-only-backups`
 
-The server MUST NOT delete an object other than one it listed directly under `<S3_PREFIX>/backups/` whose name is a backup's name.
+The server MUST NOT delete an object other than one it listed directly under `<S3_PREFIX>/backups/<instance id>/`, where `<instance id>` is its own, whose name is a backup's name.
 
-**Reason:** the prefix also holds the instance's files, and the bucket may hold objects the instance did not write.
+**Reason:** the prefix also holds the instance's files, another instance on the same prefix keeps its own backups, and the bucket may hold objects the instance did not write.
 
-**Tests:** `compliance/backup-thinning.test.ts › keeps the last day and the newest of each older day for thirty days, and deletes nothing that is not a listed backup`.
+**Tests:** `compliance/backup-thinning.test.ts › keeps the last day and the newest of each older day for thirty days, and deletes nothing that is not a listed backup of this instance`.
 
 ### `instance/image-starts`
 

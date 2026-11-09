@@ -354,6 +354,7 @@ export interface HousekeepingRun {
 /** One backup in the instance's object store, as `GET /backups` lists it. */
 export interface BackupRow {
   name: string;
+  instance_id: string;
   created_at: string;
   size_bytes: number;
 }

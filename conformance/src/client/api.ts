@@ -1047,12 +1047,19 @@ export class MarfaClient {
     return this.request<BackupRun>("/backups", { method: "POST" });
   }
 
-  /** `POST /backups/{name}/restore`: the named backup, read by the server. */
+  /** `POST /backups/{instance_id}/{name}/restore`: the named backup, read by the server. */
   async restoreBackup(
+    instanceId: string,
     name: string,
-  ): Promise<ApiResponse<RestoreArchiveResponse & { backup: string }>> {
-    return this.request<RestoreArchiveResponse & { backup: string }>(
-      `/backups/${encodeURIComponent(name)}/restore`,
+  ): Promise<
+    ApiResponse<
+      RestoreArchiveResponse & { backup: { name: string; instance_id: string } }
+    >
+  > {
+    return this.request<
+      RestoreArchiveResponse & { backup: { name: string; instance_id: string } }
+    >(
+      `/backups/${encodeURIComponent(instanceId)}/${encodeURIComponent(name)}/restore`,
       { method: "POST" },
     );
   }
