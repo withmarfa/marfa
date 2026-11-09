@@ -733,6 +733,8 @@ export interface BulkActionJob {
 export interface RestoreArchiveResponse {
   imported: number;
   duplicates: number;
+  types_registered: number;
+  edge_types_registered: number;
   edges_imported: number;
   edges_skipped: number;
   edges_skipped_reasons: Record<string, number>;
