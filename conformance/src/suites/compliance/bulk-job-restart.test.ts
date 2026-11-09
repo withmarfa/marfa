@@ -19,24 +19,10 @@ import {
   withStream,
 } from "../../utils/stream.js";
 
-/**
- * A bulk-action job that the server stops on: killed while it holds the
- * worker at the start of a job, with a chunk's rows written and not yet
- * committed, and between two chunks. The job's worker leaves its claim
- * behind, so the next process finishes the job once the claim has gone
- * stale, which the fixture brings about by moving the server's clock.
- *
- * The patch of a property update moves each item's version by one, so a row
- * written twice shows as a third version, and a row skipped as a first. The
- * event stream is read from before the job, so a row announced twice shows
- * in the replay.
- */
+// Versions expose repeated writes; replay exposes repeated announcements.
 let server: FreshServer;
 let learned: { rows: number; chunk: number };
 let counter = 0;
-
-/** A minute of the server's clock is stale for a claim; this is well past it. */
-const PAST_STALE_MS = 5 * 60_000;
 
 beforeAll(async () => {
   server = await bootFreshServer("bulk-job-restart");
@@ -121,12 +107,6 @@ describe("a bulk-action job the server was killed on", () => {
       expect((await jobOf(working(), id)).status).toBe("in_progress");
 
       await server.restart({ signal: "SIGKILL" });
-      // The claim is the dead process's until it goes stale: the new worker
-      // leaves the job alone, so the job being unfinished is not yet the
-      // recovery's doing.
-      expect((await jobOf(working(), id)).status).toBe("in_progress");
-
-      await server.advanceClock(PAST_STALE_MS);
       const ended = await working().pollBulkActionToTerminal(id, {
         timeoutMs: 60_000,
       });

@@ -21,6 +21,7 @@ pub mod housekeeping;
 pub mod idempotency;
 pub mod instance;
 pub mod items;
+pub mod jobs;
 pub mod keys;
 pub mod mcp;
 pub mod oauth;
@@ -73,6 +74,7 @@ pub struct App {
     pub passwords: Passwords,
     pub housekeeping: Housekeeping,
     pub webhooks: webhooks::Webhooks,
+    pub jobs: jobs::Jobs,
     pub blobs: Blobs,
     pub mcp: mcp::Mcp,
     pub telemetry: Telemetry,
@@ -150,6 +152,7 @@ impl App {
             passwords: Passwords::default(),
             housekeeping: Housekeeping::default(),
             webhooks: webhooks::Webhooks::default(),
+            jobs: jobs::Jobs::default(),
             blobs,
             mcp,
             telemetry: Telemetry::default(),
