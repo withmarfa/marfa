@@ -2,8 +2,8 @@
  * A browser marks the archive it downloads, and macOS refuses to run a marked
  * binary that Apple has not notarized. The release signs and notarizes the
  * programs before it packs them, so the archive on the release page runs
- * however it was downloaded, and the signed file reader is made to read a
- * picture under the full sandbox.
+ * however it was downloaded. The server unpacked from the signed archive
+ * must read a text file, a PDF, and a picture.
  */
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
