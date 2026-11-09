@@ -144,6 +144,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/local-authority-content.test.ts",
   "src/suites/compliance/mcp-scripted.test.ts",
   "src/suites/compliance/mcp-single-use.test.ts",
+  "src/suites/compliance/mcp.test.ts",
   "src/suites/compliance/media-progress.test.ts",
   "src/suites/compliance/media-rating-game.test.ts",
   "src/suites/compliance/metadata-routes.test.ts",

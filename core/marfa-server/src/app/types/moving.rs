@@ -98,6 +98,7 @@ enum Rewrite {
 }
 
 struct Plan {
+    subtypes: bool,
     named: Vec<Named>,
     rewrites: Vec<Rewrite>,
 }
@@ -159,6 +160,7 @@ fn settings_of(item: &items::Item) -> Result<Map<String, Value>> {
 fn plan(tx: &Transaction<'_>, caller: &Caller, from: &str, to: &str) -> Result<Plan> {
     let subtypes = !subtypes_of(tx, from)?.is_empty();
     let mut plan = Plan {
+        subtypes,
         named: Vec::new(),
         rewrites: Vec::new(),
     };
@@ -281,6 +283,36 @@ fn judge(caller: &Caller, catalog: &Catalog, from: &str, to: &str) -> Result<()>
     caller.require_type(to, Level::Write)
 }
 
+/// What a move would take, and whether the type has subtypes, on one read.
+pub(crate) async fn dry_run(
+    app: &App,
+    caller: &Caller,
+    from: String,
+    to: String,
+) -> Result<(Value, bool)> {
+    let at = app.clock.stamp();
+    crate::app::items::reading(app, caller, move |read| {
+        let (caller, tx) = (&read.caller, read.tx);
+        judge(caller, &read.catalog, &from, &to)?;
+        let plan = plan(tx, caller, &from, &to)?;
+        if plan.blocked() {
+            return Err(plan.refusal(&from));
+        }
+        let ids = query::of_exact_type(tx, caller, &read.catalog, &from)?;
+        let answer = json!({
+            "dry_run": true,
+            "from": from,
+            "to": to,
+            "matched": ids.len(),
+            "ids": ids,
+            "settings": plan.settings(),
+            "grants": grants(tx, caller, &from, &at)?,
+        });
+        Ok((answer, plan.subtypes))
+    })
+    .await
+}
+
 /// `POST /types/{id}/move`: answers a dry run, or queues the move.
 pub async fn move_type(
     app: &App,
@@ -291,27 +323,8 @@ pub async fn move_type(
 ) -> Result<(u16, String)> {
     let cache = app.catalog_handle();
     if asked.dry_run {
-        let at = app.clock.stamp();
         let named = [from.clone(), asked.to.clone()];
-        let answer = crate::app::items::reading(app, caller, move |read| {
-            let (caller, tx) = (&read.caller, read.tx);
-            judge(caller, &read.catalog, &from, &asked.to)?;
-            let plan = plan(tx, caller, &from, &asked.to)?;
-            if plan.blocked() {
-                return Err(plan.refusal(&from));
-            }
-            let ids = query::of_exact_type(tx, caller, &read.catalog, &from)?;
-            Ok(json!({
-                "dry_run": true,
-                "from": from,
-                "to": asked.to,
-                "matched": ids.len(),
-                "ids": ids,
-                "settings": plan.settings(),
-                "grants": grants(tx, caller, &from, &at)?,
-            }))
-        })
-        .await?;
+        let (answer, _) = dry_run(app, caller, from, asked.to).await?;
         let body = answer.to_string();
         let Some(claim) = claim else {
             return Ok((200, body));
@@ -328,43 +341,97 @@ pub async fn move_type(
             .await?;
         return Ok((200, kept));
     }
-    let answered = app
+    let queued = app
         .write(caller, "items.bulk_action", move |unit| {
-            let tx = unit.tx();
-            let catalog = catalog::current(&cache, tx, Snapshot::Pending)?;
-            judge(&unit.caller, &catalog, &from, &asked.to)?;
-            let plan = plan(tx, &unit.caller, &from, &asked.to)?;
-            if plan.blocked() {
-                return Err(plan.refusal(&from));
-            }
-            let ids = query::of_exact_type(tx, &unit.caller, &catalog, &from)?;
-            let selected = items::selected(tx, &ids)?;
-            if let Some(claim) = &claim {
-                claim.note(Need::Reach);
-                for name in [&from, &asked.to] {
-                    claim.note(Need::Type {
-                        name: name.clone(),
-                        write: true,
-                    });
-                }
-            }
-            let queued = Queued {
-                action: Action::TypeMove {
-                    from,
-                    to: asked.to,
-                    properties: asked.properties,
-                },
-                fanout: false,
-            };
-            let body = jobs::enqueue(unit, &queued, &selected)?;
-            if let Some(claim) = &claim {
-                idempotency::complete(unit, claim, 202, body.as_bytes())?;
-            }
-            Ok(body)
+            queue(unit, &cache, from, asked, claim.as_ref(), None)
         })
         .await?;
+    let body = queued.ok_or_else(|| Refusal::internal("a move without a guard did not start"))?;
     app.jobs.wake();
-    Ok((202, answered))
+    Ok((202, body))
+}
+
+/// What a move would take, as the write commits it.
+pub(crate) struct Taking<'a> {
+    pub ids: &'a [String],
+    pub settings: &'a Value,
+    /// Whether the type has subtypes, which decides how a view's type list is rewritten.
+    pub subtypes: bool,
+}
+
+/// Decides, on the state the write commits, whether the move may start.
+pub(crate) type Guard<'a> = Box<dyn FnOnce(&Unit<'_, '_>, &Taking<'_>) -> Result<bool> + Send + 'a>;
+
+/// Starts the move as a job if `guard` accepts what it would take; `None` when it does not.
+pub(crate) async fn start_guarded(
+    app: &App,
+    caller: &Caller,
+    from: String,
+    asked: Move,
+    guard: Guard<'static>,
+) -> Result<Option<String>> {
+    let cache = app.catalog_handle();
+    let queued = app
+        .write(caller, "items.bulk_action", move |unit| {
+            queue(unit, &cache, from, asked, None, Some(guard))
+        })
+        .await?;
+    if queued.is_some() {
+        app.jobs.wake();
+    }
+    Ok(queued)
+}
+
+fn queue(
+    unit: &Unit<'_, '_>,
+    cache: &ArcSwap<Catalog>,
+    from: String,
+    asked: Move,
+    claim: Option<&Claim>,
+    guard: Option<Guard<'_>>,
+) -> Result<Option<String>> {
+    let tx = unit.tx();
+    let catalog = catalog::current(cache, tx, Snapshot::Pending)?;
+    judge(&unit.caller, &catalog, &from, &asked.to)?;
+    let plan = plan(tx, &unit.caller, &from, &asked.to)?;
+    if guard.is_none() && plan.blocked() {
+        return Err(plan.refusal(&from));
+    }
+    let ids = query::of_exact_type(tx, &unit.caller, &catalog, &from)?;
+    if let Some(guard) = guard {
+        let settings = plan.settings();
+        let taking = Taking {
+            ids: &ids,
+            settings: &settings,
+            subtypes: plan.subtypes,
+        };
+        if !guard(unit, &taking)? {
+            return Ok(None);
+        }
+    }
+    let selected = items::selected(tx, &ids)?;
+    if let Some(claim) = claim {
+        claim.note(Need::Reach);
+        for name in [&from, &asked.to] {
+            claim.note(Need::Type {
+                name: name.clone(),
+                write: true,
+            });
+        }
+    }
+    let queued = Queued {
+        action: Action::TypeMove {
+            from,
+            to: asked.to,
+            properties: asked.properties,
+        },
+        fanout: false,
+    };
+    let body = jobs::enqueue(unit, &queued, &selected)?;
+    if let Some(claim) = claim {
+        idempotency::complete(unit, claim, 202, body.as_bytes())?;
+    }
+    Ok(Some(body))
 }
 
 /// What a finished move leaves of its type, and the settings it rewrites once none remains.
