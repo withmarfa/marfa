@@ -534,7 +534,7 @@ If a request meets a fault for which the server holds no refusal, and the fault 
 
 ### `errors/stored-time-unreadable`
 
-If a request depends on a stored time that is not RFC 3339 UTC text with milliseconds, as `YYYY-MM-DDTHH:mm:ss.sssZ`, then the server MUST answer `500 internal_error`.
+If the server needs a stored time as an instant to answer a request, such as to judge an expiry, a lease or a retention window, and that time is not RFC 3339 UTC text with milliseconds, as `YYYY-MM-DDTHH:mm:ss.sssZ`, then the server MUST answer `500 internal_error`.
 
 **Reason:** the server stores every time in that one form (`instance/stored-time-form`), so a time in any other form was not written by it. Read as some other time, an expiry could keep a key or a sign-in open past its end, or end it early.
 
