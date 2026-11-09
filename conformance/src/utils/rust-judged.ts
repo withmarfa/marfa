@@ -126,6 +126,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/inbound-check-order.test.ts",
   "src/suites/compliance/inbound-faults.test.ts",
   "src/suites/compliance/inbound-logs.test.ts",
+  "src/suites/compliance/inbound-rate-limit.test.ts",
   "src/suites/compliance/inbound-retention.test.ts",
   "src/suites/compliance/inbound-source-continuity.test.ts",
   "src/suites/compliance/inbound-webhooks.test.ts",
