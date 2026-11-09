@@ -13,7 +13,10 @@ use super::connectors::{ReadOnly, Registry, read_only};
 use super::events::{self, Event};
 use super::provenance::{self, Origin};
 use super::refusal::Result;
+use super::stored;
 use crate::db::Write;
+use crate::settings::Snapshot as Settled;
+use crate::settings::registry::{Kind, Seeds, Setting};
 
 /// What a write records goes in here, so it commits or rolls back with the write.
 pub struct Unit<'t, 'c> {
@@ -26,6 +29,7 @@ pub struct Unit<'t, 'c> {
     pub at_ms: i64,
     origin: Origin,
     read_only: Arc<ArcSwap<Registry>>,
+    seeds: Arc<Seeds>,
 }
 
 impl<'c> Unit<'_, 'c> {
@@ -48,7 +52,14 @@ impl<'c> Unit<'_, 'c> {
             at_ms: self.at_ms,
             origin: self.origin.clone(),
             read_only: self.read_only.clone(),
+            seeds: self.seeds.clone(),
         }
+    }
+
+    /// A setting as the table stands in this transaction, so a change committed while the write
+    /// waited is seen.
+    pub fn setting<T: Kind>(&self, setting: Setting<T>) -> Result<T> {
+        Ok(Settled::resolve(&self.seeds, &stored::rows(self.tx)?, 0).get(setting))
     }
 
     /// An inner write cannot re-enable fan-out disabled by its caller.
@@ -124,6 +135,7 @@ impl App {
         let clock = self.clock.clone();
         let origin = provenance::current();
         let read_only = self.read_only_handle();
+        let seeds = self.settings.seeds();
         let write = if matches!(caller, Caller::Server) {
             Write::server(action)
         } else {
@@ -144,6 +156,7 @@ impl App {
                     at_ms,
                     origin,
                     read_only,
+                    seeds,
                 })
             })
             .await

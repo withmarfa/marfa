@@ -1947,15 +1947,15 @@ describe("the hold window changed while the instance runs", () => {
     });
   }
 
-  it("stamps a hold taken after a write to connector_hold_ms with the new window, and refuses a window outside its rule", async () => {
+  async function registered(label: string) {
     if (server === undefined) throw new Error("no server");
     const minter = new MarfaClient({
       baseUrl: server.apiUrl,
       apiKey: server.workingKey,
     });
     const minted = await minter.createKey({
-      label: "hold-changed",
-      source: "hold-window-changed",
+      label,
+      source: `hold-window-${label}`,
       default_tier: "library",
     });
     expect(minted.status, JSON.stringify(minted.error)).toBe(201);
@@ -1963,9 +1963,13 @@ describe("the hold window changed while the instance runs", () => {
       baseUrl: server.apiUrl,
       apiKey: minted.data.key,
     });
-    const registration = await own.registerConnector({ name: "hold-changed" });
+    const registration = await own.registerConnector({ name: label });
     expect(registration.status).toBe(201);
-    const id = registration.data.id;
+    return { own, id: registration.data.id };
+  }
+
+  it("stamps a hold taken after a write to connector_hold_ms with the new window, and refuses a window outside its rule", async () => {
+    const { own, id } = await registered("hold-changed");
     const process = randomUUID();
 
     // The witness: before the write, a hold lasts the default window.
@@ -1998,5 +2002,22 @@ describe("the hold window changed while the instance runs", () => {
     await sleep(Date.parse(renewed.data.expires_at) - Date.now() + 250);
     const other = await own.takeConnectorHold(id, randomUUID());
     expect(other.status).toBe(200);
+  });
+
+  it("stamps a hold that waited for the writer with the window committed while it waited", async () => {
+    if (server === undefined) throw new Error("no server");
+    const { own, id } = await registered("hold-waited");
+    const process = randomUUID();
+
+    await server.setFault("hold:write=connector.hold");
+    const pending = own.takeConnectorHold(id, process);
+    await server.waitForHold("hold:write");
+    const changed = await setWindow(3_000);
+    expect(changed.status, await changed.clone().text()).toBe(200);
+    await server.clearFault("hold:write");
+
+    const taken = await pending;
+    expect(taken.status).toBe(200);
+    expect(taken.data.ttl_ms).toBe(3_000);
   });
 });

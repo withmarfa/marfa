@@ -72,7 +72,7 @@ impl Accepted {
         let live = Snapshot::resolve(&self.seeds, &[], 0);
         Ok(Settings {
             start: Arc::new(Start::new(self.fixed, filled.key_salt, filled.auth_secret)),
-            seeds: self.seeds,
+            seeds: Arc::new(self.seeds),
             start_only: self.start_only,
             live: ArcSwap::from_pointee(live),
             generation: AtomicU64::new(0),
@@ -95,7 +95,7 @@ fn warn_of_ignored(environment: &Environment) {
 
 pub struct Settings {
     pub start: Arc<Start>,
-    seeds: Seeds,
+    seeds: Arc<Seeds>,
     start_only: Vec<start_only::Listed>,
     live: ArcSwap<Snapshot>,
     generation: AtomicU64,
@@ -167,6 +167,10 @@ impl Settings {
                 current.clone()
             }
         });
+    }
+
+    pub(crate) fn seeds(&self) -> Arc<Seeds> {
+        self.seeds.clone()
     }
 
     pub fn candidate(&self, stored: &[(String, String)]) -> Snapshot {

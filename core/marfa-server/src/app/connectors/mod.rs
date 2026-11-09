@@ -379,9 +379,9 @@ pub async fn clear_state(app: &App, caller: &Caller, id: String) -> Result<()> {
 }
 
 pub async fn take_hold(app: &App, caller: &Caller, id: String, request: Take) -> Result<Value> {
-    let window = Duration::from_millis(app.settings.live().get(CONNECTOR_HOLD_MS));
     app.write(caller, "connector.hold", move |unit| {
         let tx = unit.tx();
+        let window = Duration::from_millis(unit.setting(CONNECTOR_HOLD_MS)?);
         let registration = find(tx, &id)?;
         unit.caller
             .require_own_connector_key(&registration.key_id)?;

@@ -12,7 +12,7 @@ use crate::db::Pulse;
 
 const MAX_NTH: u32 = 1_000_000;
 const MAX_FREE_BYTES: u64 = 9_007_199_254_740_991;
-const MAX_DEADLINE_MS: u64 = 2_147_483_647;
+const MAX_DEADLINE_MS: u64 = 86_400_000;
 const MAX_BLOB_HASHES: usize = 1_000;
 
 const BEAT: Duration = Duration::from_millis(25);
@@ -251,9 +251,9 @@ fn blob_hashes(arg: Option<&str>) -> Result<HashSet<String>, String> {
 fn unfold_deadline_of(arg: Option<&str>) -> Result<u64, String> {
     arg.filter(|text| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit()))
         .and_then(|text| text.parse::<u64>().ok())
-        .filter(|check| (1..=MAX_DEADLINE_MS).contains(check))
+        .filter(|check| (1..=u64::from(MAX_NTH)).contains(check))
         .ok_or_else(|| {
-            format!("{UNFOLD_DEADLINE} takes a deadline check number, from 1 to {MAX_DEADLINE_MS}")
+            format!("{UNFOLD_DEADLINE} takes a deadline check number, from 1 to {MAX_NTH}")
         })
 }
 const LIMIT_LANES: [&str; 1] = [DEVICE_OWNER_INSTANCE_LANE];
@@ -840,7 +840,8 @@ mod tests {
         assert!(refused("fail:housekeeping:heartbeat", None));
         assert!(refused("deadline:trash-purge", None));
         assert!(refused("deadline:trash-purge", Some("0")));
-        assert!(refused("deadline:trash-purge", Some("2147483648")));
+        assert!(refused("deadline:trash-purge", Some("86400001")));
+        assert!(!refused("deadline:trash-purge", Some("86400000")));
         assert!(!refused("hold:housekeeping:trash-purge", None));
         assert!(!refused("release:housekeeping:trash-purge", None));
         assert!(!refused("fail:housekeeping:trash-purge", Some("2")));
@@ -852,6 +853,8 @@ mod tests {
         assert!(refused("unfold-deadline", None));
         assert!(refused("unfold-deadline", Some("0")));
         assert!(refused("unfold-deadline", Some("soon")));
+        assert!(refused("unfold-deadline", Some("1000001")));
+        assert!(!refused("unfold-deadline", Some("1000000")));
         let faults = Faults::default();
         assert_eq!(faults.unfold_deadline(), None);
         faults.set("unfold-deadline", Some("1")).unwrap();
