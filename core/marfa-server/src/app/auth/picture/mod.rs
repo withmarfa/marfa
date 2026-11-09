@@ -54,14 +54,14 @@ fn unread() -> Refusal {
 fn stored(tx: &Transaction<'_>) -> Result<Option<Picture>> {
     let row = tx
         .query_row(
-            "SELECT sha256, mime_type FROM owner_picture WHERE id = 1",
+            "SELECT hash, mime_type FROM owner_picture WHERE id = 1",
             [],
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .optional()?;
-    row.map(|(sha256, mime_type)| {
+    row.map(|(hash, mime_type)| {
         Ok(Picture {
-            hash: Hash::parse(&sha256).map_err(|_| unread())?,
+            hash: Hash::parse(&hash).map_err(|_| unread())?,
             mime_type,
         })
     })
@@ -98,10 +98,10 @@ fn set(
     references::decide(tx, caller, Some(Referencing::Owner), &properties, naming)?
         .apply(tx, Referencing::Owner)?;
     tx.execute(
-        "INSERT INTO owner_picture (id, sha256, mime_type, updated_at) VALUES (1, ?1, ?2, ?3) \
-         ON CONFLICT (id) DO UPDATE SET sha256 = excluded.sha256, \
+        "INSERT INTO owner_picture (id, hash, mime_type, updated_at) VALUES (1, ?1, ?2, ?3) \
+         ON CONFLICT (id) DO UPDATE SET hash = excluded.hash, \
          mime_type = excluded.mime_type, updated_at = excluded.updated_at",
-        params![hash.hex(), mime_type, at],
+        params![hash.as_str(), mime_type, at],
     )?;
     Ok(())
 }

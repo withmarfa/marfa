@@ -11,16 +11,11 @@ pub enum Slice {
     Unsatisfiable,
 }
 
-/// Bounds past this, 2^53 - 1, are not read: a double holds no more whole numbers exactly.
-const SAFE_INTEGER: u64 = 9_007_199_254_740_991;
-
 fn bound(text: &str) -> Option<u64> {
     if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
     }
-    text.parse::<u64>()
-        .ok()
-        .filter(|number| *number <= SAFE_INTEGER)
+    text.parse::<u64>().ok()
 }
 
 pub fn of(header: Option<&str>, size: u64) -> Slice {
@@ -64,6 +59,7 @@ mod tests {
         assert_eq!(of(Some("bytes=4-"), 10), part(4, 9));
         assert_eq!(of(Some("bytes=4-400"), 10), part(4, 9));
         assert_eq!(of(Some("bytes=0-0"), 1), part(0, 0));
+        assert_eq!(of(Some("bytes=4-18446744073709551615"), 10), part(4, 9));
     }
 
     #[test]
@@ -71,6 +67,10 @@ mod tests {
         assert_eq!(of(Some("bytes=10-"), 10), Slice::Unsatisfiable);
         assert_eq!(of(Some("bytes=3-2"), 10), Slice::Unsatisfiable);
         assert_eq!(of(Some("bytes=0-"), 0), Slice::Unsatisfiable);
+        assert_eq!(
+            of(Some("bytes=9007199254740992-"), 10),
+            Slice::Unsatisfiable
+        );
     }
 
     #[test]
@@ -83,8 +83,8 @@ mod tests {
             Some("bytes=a-b"),
             Some("bytes=1"),
             Some("bytes="),
-            Some("bytes=0-9007199254740992"),
-            Some("bytes=9007199254740992-"),
+            Some("bytes=0-18446744073709551616"),
+            Some("bytes=18446744073709551616-"),
             Some("bytes=+1-2"),
         ] {
             assert_eq!(of(header, 10), Slice::Whole, "{header:?}");

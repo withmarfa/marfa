@@ -1583,7 +1583,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         let bytes = properties
             .get(FILE_BYTES)
             .and_then(Value::as_str)
-            .and_then(Hash::whole)
+            .and_then(|text| Hash::parse(text).ok())
             .filter(|_| file);
         let decided = references::decide(
             tx,
