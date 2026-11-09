@@ -745,11 +745,14 @@ CREATE TABLE IF NOT EXISTS owner_picture (
     updated_at TEXT NOT NULL
 ) STRICT;
 
--- Physical backups keep reports; portable archives exclude them.
+-- Physical backups keep reports; portable archives exclude them. A report goes
+-- with the key or app grant that made it.
 CREATE TABLE IF NOT EXISTS folder_status (
     folder_id TEXT NOT NULL REFERENCES items (id) ON DELETE CASCADE,
-    sign_in_kind TEXT NOT NULL CHECK (sign_in_kind IN ('app', 'key')),
-    sign_in_id TEXT NOT NULL,
+    key_id TEXT REFERENCES api_keys (id) ON DELETE CASCADE,
+    grant_id TEXT REFERENCES auth_oauth_consent (grant_id) ON DELETE CASCADE,
+    sign_in_kind TEXT GENERATED ALWAYS AS (CASE WHEN key_id IS NULL THEN 'app' ELSE 'key' END) VIRTUAL,
+    sign_in_id TEXT GENERATED ALWAYS AS (coalesce(key_id, grant_id)) VIRTUAL,
     sign_in_name TEXT NOT NULL,
     folder_store_id TEXT NOT NULL,
     sequence INTEGER NOT NULL CHECK (sequence >= 1),
@@ -760,8 +763,13 @@ CREATE TABLE IF NOT EXISTS folder_status (
     paused_removals INTEGER NOT NULL CHECK (paused_removals >= 0),
     first_sync_waiting INTEGER NOT NULL CHECK (first_sync_waiting IN (0, 1)),
     problems TEXT NOT NULL CHECK (json_valid(problems)),
-    PRIMARY KEY (folder_id, sign_in_kind, sign_in_id, folder_store_id)
-) STRICT, WITHOUT ROWID;
+    CHECK ((key_id IS NULL) <> (grant_id IS NULL))
+) STRICT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS folder_status_copy
+    ON folder_status (folder_id, sign_in_kind, sign_in_id, folder_store_id);
+CREATE INDEX IF NOT EXISTS folder_status_key ON folder_status (key_id) WHERE key_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS folder_status_grant ON folder_status (grant_id) WHERE grant_id IS NOT NULL;
 
 
 -- A registration belongs to one key and outlives it; state, problems and agreements belong to the source.

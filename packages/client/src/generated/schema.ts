@@ -1245,12 +1245,12 @@ export interface paths {
         };
         /**
          * Get a folder status
-         * @description Returns the latest folder-copy reports grouped by sign-in, with receipt ages and totals from sign-ins that still stand. Historical reports remain visible.
+         * @description Returns the latest folder-copy reports grouped by sign-in, with receipt ages and totals from sign-ins that still stand. A sign-in's reports stay as history until its key or app grant is removed.
          */
         get: operations["getFolderStatus"];
         /**
          * Report a folder status
-         * @description Reports your sign-in's status for one folder copy, replacing its earlier report, and returns the latest accepted sequence and receipt time. An equal or older sequence leaves the stored report unchanged.
+         * @description Reports your sign-in's status for one folder copy and returns the latest accepted sequence and receipt time. An equal or older sequence changes nothing. A sign-in keeps at most 16 copies of a folder; a new copy past that replaces its oldest.
          */
         put: operations["reportFolderStatus"];
         post?: never;
