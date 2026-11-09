@@ -236,7 +236,7 @@ impl App {
                         }
                         let named = sources::restore(tx, &unit.at, &registrations.sources)?;
                         let (settings_added, settings_skipped) =
-                            stored::restore(tx, &registrations.settings)?;
+                            stored::restore(tx, &settings, &registrations.settings)?;
                         let mut states = Counted::default();
                         for (source, state) in &registrations.states {
                             if connectors::restore_state(tx, source, state, &unit.at)? {
@@ -246,15 +246,11 @@ impl App {
                             }
                         }
                         blobs::record(tx, &copies, replicates, &unit.caller.credential_handle(), &unit.at)?;
-                        let held = restored::held_snapshots(tx, |id| snapshots.contains(id))?;
+                        let held = restored::held_snapshots(tx, snapshots.each())?;
                         let (mut imported, mut duplicates) = (0usize, 0usize);
                         for (row, line) in lines(&spools[1])?.enumerate() {
                             let line = line?;
-                            match checks::item(&catalog, &line, row + 1) {
-                                Ok(()) => {}
-                                Err(refused) if refused.skip.is_some() => continue,
-                                Err(refused) => return Err(refused.refusal),
-                            }
+                            checks::item(&catalog, &line, row + 1).map_err(|refused| refused.refusal)?;
                             match restored::restore(unit, &catalog, &line, &held)? {
                                 Restored::Written => imported += 1,
                                 Restored::Duplicate => duplicates += 1,
@@ -339,6 +335,8 @@ impl App {
                 .await;
             placed.release(&app, written.is_ok());
             let (mut answer, staged) = written?;
+            let emptying = app.clone();
+            tokio::spawn(async move { emptying.db.empty_log().await });
             if let Some(staged) = staged {
                 staged.publish(&app);
             }
