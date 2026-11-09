@@ -1,4 +1,8 @@
-import { Agent } from "undici";
+import {
+  Agent,
+  fetch as undiciFetch,
+  type RequestInit as UndiciInit,
+} from "undici";
 import { request } from "node:http";
 
 /**
@@ -88,5 +92,9 @@ export function localFetch(
     agent = new Agent({ connect: { socketPath } });
     agents.set(socketPath, agent);
   }
-  return fetch(url, { ...init, dispatcher: agent } as RequestInit);
+  // Node's own fetch carries an older undici, which refuses this Agent.
+  return undiciFetch(url, {
+    ...(init as UndiciInit),
+    dispatcher: agent,
+  }) as unknown as Promise<Response>;
 }

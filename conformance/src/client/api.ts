@@ -1,5 +1,5 @@
-import { ofetch, type FetchOptions } from "ofetch";
-import { Agent } from "undici";
+import { createFetch, ofetch, type FetchOptions } from "ofetch";
+import { localFetch } from "../utils/control-request.js";
 import type {
   ApiResponse,
   MarfaItem,
@@ -150,26 +150,26 @@ function pageQuery(page: { limit?: number; cursor?: string }): string {
 export class MarfaClient {
   private baseUrl: string;
   private apiKey: string;
-  private local: Agent | undefined;
+  private local: boolean;
+  /** Sends to the local listener's socket, or over the network. */
+  private send: typeof fetch;
+  private http: typeof ofetch;
 
   constructor(options: MarfaClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
     this.apiKey = options.apiKey ?? "";
-    this.local =
-      options.controlSocket === undefined
-        ? undefined
-        : new Agent({ connect: { socketPath: options.controlSocket } });
+    const socket = options.controlSocket;
+    this.local = socket !== undefined;
+    this.send =
+      socket === undefined
+        ? fetch
+        : (input, init) => localFetch(socket, String(input), init);
+    this.http =
+      socket === undefined ? ofetch : createFetch({ fetch: this.send });
   }
 
   private authHeaders(): Record<string, string> {
-    return this.local === undefined
-      ? { Authorization: `Bearer ${this.apiKey}` }
-      : {};
-  }
-
-  /** Where a request goes: the local listener's socket, or the network. */
-  private transport(): { dispatcher?: Agent } {
-    return this.local === undefined ? {} : { dispatcher: this.local };
+    return this.local ? {} : { Authorization: `Bearer ${this.apiKey}` };
   }
 
   /**
@@ -562,9 +562,8 @@ export class MarfaClient {
     }
     const url = `${this.baseUrl}/export?${params.toString()}`;
     try {
-      const response = await ofetch.raw(url, {
+      const response = await this.http.raw(url, {
         headers: { ...this.authHeaders() },
-        ...this.transport(),
         responseType: "arrayBuffer",
         ignoreResponseError: true,
       });
@@ -1172,9 +1171,9 @@ export class MarfaClient {
     id: string,
     deliveryId: string,
   ): Promise<Response> {
-    return fetch(
+    return this.send(
       `${this.baseUrl}/connectors/${id}/deliveries/${deliveryId}/body`,
-      { headers: { ...this.authHeaders() }, ...this.transport() },
+      { headers: { ...this.authHeaders() } },
     );
   }
 
@@ -1503,7 +1502,7 @@ export class MarfaClient {
   ): Promise<ApiResponse<Record<string, unknown>>> {
     const url = `${this.baseUrl}/auth/oauth2/register`;
     try {
-      const response = await ofetch.raw(url, {
+      const response = await this.http.raw(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body,
@@ -1606,10 +1605,9 @@ export class MarfaClient {
     }
 
     try {
-      const response = await ofetch.raw(url, {
+      const response = await this.http.raw(url, {
         ...options,
         headers,
-        ...this.transport(),
         responseType: "json",
         ignoreResponseError: true,
       });
@@ -1646,10 +1644,9 @@ export class MarfaClient {
   ): Promise<ApiResponse<ArrayBuffer>> {
     const url = `${this.baseUrl}${path}`;
     try {
-      const response = await ofetch.raw(url, {
+      const response = await this.http.raw(url, {
         method,
         headers: { ...this.authHeaders(), ...extraHeaders },
-        ...this.transport(),
         responseType: "arrayBuffer",
         ignoreResponseError: true,
       });
@@ -1697,9 +1694,8 @@ export class MarfaClient {
   private async requestText(path: string): Promise<ApiResponse<string>> {
     const url = `${this.baseUrl}${path}`;
     try {
-      const response = await ofetch.raw(url, {
+      const response = await this.http.raw(url, {
         headers: { ...this.authHeaders() },
-        ...this.transport(),
         responseType: "text",
         ignoreResponseError: true,
       });
@@ -1750,13 +1746,12 @@ export class MarfaClient {
   ): Promise<ApiResponse<T>> {
     const url = `${this.baseUrl}${path}`;
     try {
-      const response = await ofetch.raw(url, {
+      const response = await this.http.raw(url, {
         method: "POST",
         headers: {
           ...this.authHeaders(),
           "Content-Type": contentType,
         },
-        ...this.transport(),
         body,
         responseType: "json",
         ignoreResponseError: true,
