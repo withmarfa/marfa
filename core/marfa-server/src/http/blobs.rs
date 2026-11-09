@@ -139,8 +139,7 @@ impl HttpBody for Reading {
     }
 }
 
-/// Sends exactly `length` bytes from a store, and fails a body that the store ends short or
-/// that either side leaves idle for `idle`.
+/// Fails a body the store ends short or either side leaves idle for `idle`.
 pub(super) fn stream(mut bytes: ByteStream, length: u64, idle: Duration) -> Body {
     let (send, chunks) = mpsc::channel(QUEUED);
     let stalled = Arc::new(AtomicBool::new(false));
