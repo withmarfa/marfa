@@ -573,12 +573,17 @@ pub fn uninstall(args: UninstallArgs, out: &Printer) -> Result<(), CliError> {
     }
     let mut unserved = false;
     if state.access == Access::Tailscale {
-        unserved = tailscale::unserve(
-            state.https_port.unwrap_or(443),
+        let https = state.https_port.unwrap_or(443);
+        match tailscale::unserve(
+            https,
             &format!("http://127.0.0.1:{}", state.port),
             !out.json,
-        )
-        .unwrap_or(false);
+        ) {
+            Ok(done) => unserved = done,
+            Err(error) => eprintln!(
+                "The address stays on your tailnet: {error}. Remove it with `tailscale serve --https={https} off`."
+            ),
+        }
     }
     if args.delete_data {
         let mut names = vec![files::SETTINGS, files::UNCONFIRMED, files::DOTENV];
