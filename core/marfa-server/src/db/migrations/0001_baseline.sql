@@ -701,6 +701,25 @@ CREATE TABLE IF NOT EXISTS owner_picture (
     updated_at TEXT NOT NULL
 ) STRICT;
 
+-- Physical backups keep reports; portable archives exclude them.
+CREATE TABLE IF NOT EXISTS folder_status (
+    folder_id TEXT NOT NULL REFERENCES items (id) ON DELETE CASCADE,
+    sign_in_kind TEXT NOT NULL CHECK (sign_in_kind IN ('app', 'key')),
+    sign_in_id TEXT NOT NULL,
+    sign_in_name TEXT NOT NULL,
+    folder_store_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL CHECK (sequence >= 1),
+    received_at TEXT NOT NULL,
+    last_success_at TEXT,
+    pending_uploads INTEGER NOT NULL CHECK (pending_uploads >= 0),
+    pending_downloads INTEGER NOT NULL CHECK (pending_downloads >= 0),
+    paused_removals INTEGER NOT NULL CHECK (paused_removals >= 0),
+    first_sync_waiting INTEGER NOT NULL CHECK (first_sync_waiting IN (0, 1)),
+    problems TEXT NOT NULL CHECK (json_valid(problems)),
+    PRIMARY KEY (folder_id, sign_in_kind, sign_in_id, folder_store_id)
+) STRICT, WITHOUT ROWID;
+
+
 -- A registration belongs to one key and outlives it; state, problems and agreements belong to the source.
 CREATE TABLE IF NOT EXISTS connectors (
     seq INTEGER PRIMARY KEY,

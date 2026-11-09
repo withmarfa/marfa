@@ -59,9 +59,6 @@ impl OutsideQuery {
     }
 }
 
-/// The fewest and most seconds between a watch's full passes.
-pub const FULL_PASS_INTERVAL_LEAST: u64 = 60;
-pub const FULL_PASS_INTERVAL_MOST: u64 = 86_400;
 const FULL_PASS_INTERVAL_DEFAULT: u64 = 600;
 
 /// An unknown member is refused rather than ignored, which would answer the
@@ -219,8 +216,11 @@ impl Settings {
             && !value.is_null()
             && !value.is_u64()
         {
+            let seconds = marfa_rules::folder::FULL_PASS_SECONDS;
             return Err(CoreError::Invalid(format!(
-                "a folder's full_pass_interval_seconds is {value}, and a full pass runs every {FULL_PASS_INTERVAL_LEAST} to {FULL_PASS_INTERVAL_MOST} whole seconds"
+                "a folder's full_pass_interval_seconds is {value}, and a full pass runs every {} to {} whole seconds",
+                seconds.start(),
+                seconds.end()
             )));
         }
         let settings: Settings =
@@ -233,151 +233,71 @@ impl Settings {
     }
 
     fn check(&self) -> Result<()> {
-        if let Some(states) = &self.query.state {
-            if states.is_empty() {
-                return Err(CoreError::Invalid(
-                    "a folder's query names no state, so it would hold nothing".into(),
-                ));
-            }
-            for state in states {
-                if !matches!(state.as_str(), "active" | "archived") {
-                    return Err(CoreError::Invalid(format!(
-                        "a folder holds active and archived items, and its query names {state:?}"
-                    )));
-                }
-            }
-        }
-        if let Some(filter) = &self.query.filter {
-            crate::filter::check(filter).map_err(|error| match error {
-                CoreError::Validation {
-                    code,
-                    message,
-                    details,
-                } => CoreError::Validation {
-                    code,
-                    message: format!(
-                        "the folder's query.filter is refused: {message}. Change the filter with `marfa folders change`"
-                    ),
-                    details,
+        let placements: Vec<(&str, &str)> = self
+            .first_placement
+            .iter()
+            .map(|(r#type, dir)| (r#type.as_str(), dir.as_str()))
+            .collect();
+        let count = |threshold: Option<u64>| threshold.map(|files| files as f64);
+        marfa_rules::folder::check(
+            None,
+            &marfa_rules::folder::Settings {
+                types: &self.query.types,
+                tier: self.query.tier.map(SliceTier::as_str),
+                state: self.query.state.as_deref(),
+                filter: self.query.filter.as_deref(),
+                default_type: self.defaults.r#type.as_deref(),
+                default_tier: self.defaults.tier.map(Tier::as_str),
+                tags: &self.defaults.tags,
+                properties: Some(&self.defaults.properties),
+                include: &self.include,
+                ignore: &self.ignore,
+                first_placement: &placements,
+                removal: marfa_rules::folder::Threshold {
+                    files: count(self.removal_threshold.files),
+                    fraction: self.removal_threshold.fraction,
                 },
-                other => other,
-            })?;
-        }
-        // The server holds the same defaults to the same bounds, so a new
-        // file is never made with a tag or a property name it would refuse.
-        let named = |setting: &str, refusal: Result<()>| {
-            refusal.map_err(|error| match error {
-                CoreError::Validation {
-                    code,
-                    message,
-                    details,
-                } => CoreError::Validation {
-                    code,
-                    message: format!(
-                        "the folder's {setting} is refused: {message}. Change it with `marfa folders change`"
-                    ),
-                    details,
+                addition: marfa_rules::folder::Threshold {
+                    files: count(self.addition_threshold.files),
+                    fraction: self.addition_threshold.fraction,
                 },
-                other => other,
-            })
-        };
-        named(
-            "defaults.tags",
-            marfa_rules::validation::tags(&self.defaults.tags).map_err(CoreError::from),
-        )?;
-        named(
-            "defaults.properties",
-            marfa_rules::validation::property_names(&self.defaults.properties)
-                .and_then(|()| marfa_rules::integers::refuse_in_value(&self.defaults.properties))
-                .map_err(CoreError::from),
-        )?;
-        named("first_placement", self.placements())?;
-        self.lists()?;
-        if let Some(fraction) = self.removal_threshold.fraction
-            && !(0.0..=1.0).contains(&fraction)
-        {
-            return Err(CoreError::Invalid(format!(
-                "a folder's removal threshold names a fraction of {fraction}, and a fraction of the folder runs from 0 to 1"
-            )));
-        }
-        if let Some(seconds) = self.full_pass_interval_seconds
-            && !(FULL_PASS_INTERVAL_LEAST..=FULL_PASS_INTERVAL_MOST).contains(&seconds)
-        {
-            return Err(CoreError::Invalid(format!(
-                "a folder's full_pass_interval_seconds is {seconds}, and a full pass runs every {FULL_PASS_INTERVAL_LEAST} to {FULL_PASS_INTERVAL_MOST} seconds"
-            )));
-        }
-        if let Some(fraction) = self.addition_threshold.fraction
-            && !(0.0..=1.0).contains(&fraction)
-        {
-            return Err(CoreError::Invalid(format!(
-                "a folder's addition threshold names a fraction of {fraction}, and a fraction of the folder runs from 0 to 1"
-            )));
-        }
-        if let Some(tier) = self.defaults.tier
-            && !self.tier().takes(Some(tier))
-        {
-            return Err(CoreError::Invalid(format!(
-                "a new file would be made at the {} tier, and the query holds the {} tier",
-                tier.as_str(),
-                self.tier().as_str()
-            )));
-        }
-        Ok(())
+                full_pass_interval_seconds: count(self.full_pass_interval_seconds),
+            },
+        )
+        .map_err(|violation| {
+            let message = if violation.message.starts_with("the folder's") {
+                violation.message
+            } else {
+                format!(
+                    "the folder's {} is refused: {}. Change it with `marfa folders change`",
+                    violation.path,
+                    violation.message.trim_end_matches('.')
+                )
+            };
+            CoreError::from(marfa_rules::RuleError::new(violation.code, message))
+        })
     }
 
-    /// The server refuses a placement directory a device cannot write to: an
-    /// absolute or drive-absolute one, one with a backslash or NUL, and one
-    /// with a `..` name, which a device counts `outside` wherever it climbs
-    /// back (`items/folder-setting-followable`).
-    fn placements(&self) -> Result<()> {
-        for (r#type, dir) in &self.first_placement {
-            let outside = dir.starts_with('/')
-                || dir.contains(['\\', '\0'])
-                || dir.split('/').any(|name| name == "..")
-                || dir.split_once(':').is_some_and(|(drive, _)| {
-                    drive.len() == 1 && drive.chars().all(|c| c.is_ascii_alphabetic())
-                });
-            if outside {
-                return Err(CoreError::Validation {
-                    code: "validation_error".into(),
-                    message: format!(
-                        "{type}: {dir:?} is not a directory inside the folder: write a path relative to its root, with \"/\" between names and no \"..\" name"
-                    ),
-                    details: None,
-                });
-            }
-        }
-        Ok(())
-    }
-
-    /// A default type the query does not hold would put every new file
-    /// outside its own folder.
+    /// Whether the query holds the type new files become, which only the
+    /// working copy's catalog can say.
     pub(crate) fn check_types(&self, catalog: &Catalog) -> Result<()> {
-        if let Some(named) = &self.defaults.r#type
-            && !self.holds_type(catalog, named)
-        {
-            return Err(CoreError::Invalid(format!(
-                "a new file would become a {named}, which the query does not hold"
-            )));
-        }
-        Ok(())
+        marfa_rules::folder::check_default_type(
+            catalog,
+            &self.query.types,
+            self.defaults.r#type.as_deref(),
+        )
+        .map_err(CoreError::Invalid)
     }
 
     /// Whether the query names no type or names `*`: every type but
     /// `system.*`. The one reading of the star, so a folder naming it holds,
     /// writes and reports exactly what a folder naming no type does.
     pub(crate) fn names_every_type(&self) -> bool {
-        self.query.types.is_empty()
-            || self
-                .query
-                .types
-                .iter()
-                .any(|named| named.trim() == crate::store::EVERY_TYPE)
+        marfa_rules::folder::names_every_type(&self.query.types)
     }
 
     pub(crate) fn holds_type(&self, catalog: &Catalog, named: &str) -> bool {
-        crate::store::declares_type(catalog, &self.slice_types(), named)
+        marfa_rules::folder::holds_type(catalog, &self.query.types, named)
     }
 
     /// What the query holds, as clauses on `items`: the one evaluation a
@@ -534,15 +454,7 @@ impl Settings {
     /// type or names `*`, which `narrow` reads as every type, and the types
     /// otherwise.
     pub(crate) fn slice_types(&self) -> Vec<String> {
-        if self.names_every_type() {
-            vec![crate::store::EVERY_TYPE.to_string()]
-        } else {
-            self.query
-                .types
-                .iter()
-                .map(|named| named.trim().to_string())
-                .collect()
-        }
+        marfa_rules::folder::slice_types(&self.query.types)
     }
 
     pub fn tier(&self) -> SliceTier {
@@ -880,6 +792,17 @@ mod tests {
         )
         .unwrap();
         assert!(unheld.check_types(&catalog).is_err());
+    }
+
+    #[test]
+    fn a_query_state_the_folder_cannot_hold_is_refused_naming_it() {
+        let refused = |state: Value| read(json!({ "query": { "state": state } })).unwrap_err();
+        let empty = refused(json!([])).to_string();
+        assert!(empty.contains("no state"), "{empty}");
+        assert!(!empty.contains(".."), "{empty}");
+        let unknown = refused(json!(["trashed"])).to_string();
+        assert!(unknown.contains("trashed"), "{unknown}");
+        assert!(read(json!({ "query": { "state": ["archived"] } })).is_ok());
     }
 
     #[test]

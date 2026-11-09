@@ -1181,7 +1181,7 @@ export interface paths {
         };
         /**
          * List folders
-         * @description Returns active folder summaries, newest first, for the owner or a private local command. Revoked folders are excluded. Read reported copies with `GET /folders/{id}/status`.
+         * @description Returns active folder summaries, newest first, to the private local command. Revoked folders are excluded. Read reported copies with `GET /folders/{id}/status`.
          */
         get: operations["listFolders"];
         put?: never;
@@ -1211,7 +1211,7 @@ export interface paths {
         head?: never;
         /**
          * Update a folder
-         * @description Updates a folder's title and settings at the version you read. Each setting you send replaces its value whole; omitted settings stay. Removes stored properties the folder type does not declare.
+         * @description Updates a folder's title and settings at the version you read. Each setting you send replaces its value whole; omitted settings stay.
          */
         patch: operations["updateFolder"];
         trace?: never;
@@ -5371,10 +5371,10 @@ export interface components {
             /** @description The sign-in that owns these reports. */
             sign_in: {
                 /**
-                 * @description browser: owner browser session; app: signed-in app grant; key: API key.
+                 * @description app: signed-in app grant; key: API key.
                  * @enum {string}
                  */
-                kind: "browser" | "app" | "key";
+                kind: "app" | "key";
                 /**
                  * @description The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.
                  * @example Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M
@@ -19988,7 +19988,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: only the owner or a private local command can list folders. */
+            /** @description - `forbidden`: only the private local command can list folders. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

@@ -5,6 +5,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { controlRequest } from "../../utils/control-request.js";
 import { servedDocument } from "../../utils/openapi.js";
 import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
 
@@ -16,7 +17,7 @@ import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
 
 interface Door {
   door: string;
-  who: "working" | "management" | "owner";
+  who: "working" | "management" | "owner" | "local";
   max: number;
   capped?: boolean;
   /** The page a request with no `limit` gets, where more rows than that are seeded. */
@@ -144,7 +145,7 @@ const doors: Door[] = [
     max: 200,
     path: () => `/connectors/${connector}/deliveries`,
   },
-  { door: "GET /folders", who: "owner", max: 200, path: () => "/folders" },
+  { door: "GET /folders", who: "local", max: 200, path: () => "/folders" },
 ];
 const sized = doors.filter((door) => door.size !== undefined);
 const refusing = doors.filter((door) => door.capped !== true);
@@ -152,6 +153,24 @@ const refusing = doors.filter((door) => door.capped !== true);
 async function read(door: Door, query = ""): Promise<Answer> {
   const path = door.path();
   const url = `${server.apiUrl}${path}${path.includes("?") ? "&" : "?"}${query}`;
+  if (door.who === "local") {
+    const answered = await controlRequest(
+      server.controlSocket,
+      `${path}${path.includes("?") ? "&" : "?"}${query}`,
+    );
+    const body = answered.body as {
+      data?: unknown[];
+      next_cursor?: string | null;
+      error?: { code: string; details?: { errors?: unknown } };
+    };
+    return {
+      status: answered.status,
+      rows: body.data ?? [],
+      nextCursor: body.next_cursor ?? null,
+      code: body.error?.code,
+      errors: body.error?.details?.errors,
+    };
+  }
   const response = await fetch(url, {
     headers:
       door.who === "owner"

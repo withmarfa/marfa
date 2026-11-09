@@ -17,6 +17,7 @@ import {
   servedDocument,
 } from "../../utils/openapi.js";
 import { uploadReferenced } from "../../utils/blobs.js";
+import { controlRequest } from "../../utils/control-request.js";
 
 /**
  * Every list and every search answers one envelope: the rows under `data`
@@ -91,8 +92,18 @@ afterAll(async () => {
 
 /** Answers the owner's own doors, which no key opens. */
 const ownerCookie = process.env.MARFA_OWNER_COOKIE ?? "";
+/** Stands for the private local command, which answers over the control socket. */
+const LOCAL = "local command";
 
 async function read(path: string, key = apiKey): Promise<unknown> {
+  if (key === LOCAL) {
+    const answer = await controlRequest(
+      process.env.MARFA_CONTROL_SOCKET ?? "",
+      path,
+    );
+    expect(answer.status, path).toBe(200);
+    return answer.body;
+  }
   const response = await fetch(`${apiUrl}${path}`, {
     headers:
       key === ownerCookie
@@ -110,6 +121,7 @@ describe("one envelope for every list and search", () => {
     siblings?: string[];
     operator?: boolean;
     owner?: boolean;
+    local?: boolean;
   }[] = [
     { template: "/items", path: () => `/items?source=${ctx.source}` },
     {
@@ -186,12 +198,18 @@ describe("one envelope for every list and search", () => {
       siblings: ["window", "scan"],
     },
     { template: "/auth/grants", path: () => "/auth/grants", owner: true },
-    { template: "/folders", path: () => "/folders", owner: true },
+    { template: "/folders", path: () => "/folders", local: true },
     { template: "/owner/sign-ins", path: () => "/owner/sign-ins", owner: true },
     { template: "/owner/passkeys", path: () => "/owner/passkeys", owner: true },
   ];
   const credentialOf = (door: (typeof doors)[number]) =>
-    door.owner ? ownerCookie : door.operator ? managementKey : apiKey;
+    door.local
+      ? LOCAL
+      : door.owner
+        ? ownerCookie
+        : door.operator
+          ? managementKey
+          : apiKey;
 
   it("names thirty-one doors, every one the document publishes as a page", async () => {
     // The derived set holds the rows to the document, so a door that starts

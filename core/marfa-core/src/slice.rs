@@ -10,6 +10,7 @@ use crate::Result;
 use crate::error::CoreError;
 use crate::model::ItemState;
 use marfa_rules::catalog::Catalog;
+use marfa_rules::query::{StateFault, check_states};
 
 /// A slice with a query also takes the conflicted copies of the types and
 /// tier it takes, whatever the filter says, so a conflict made by a write
@@ -56,18 +57,15 @@ pub(crate) struct Listing {
 impl SliceQuery {
     pub fn check(&self) -> Result<()> {
         if let Some(states) = &self.states {
-            if states.is_empty() {
-                return Err(CoreError::Invalid(
+            check_states(states).map_err(|fault| match fault {
+                StateFault::Empty => CoreError::Invalid(
                     "a slice's query names no state, so it would hold nothing".into(),
-                ));
-            }
-            for state in states {
-                if !matches!(state.as_str(), "active" | "archived") {
-                    return Err(CoreError::Invalid(format!(
-                        "a slice's query holds active and archived items, and names {state:?}"
-                    )));
-                }
-            }
+                ),
+                StateFault::Unknown(index) => CoreError::Invalid(format!(
+                    "a slice's query holds active and archived items, and names {:?}",
+                    states[index]
+                )),
+            })?;
         }
         if let Some(filter) = &self.filter {
             crate::filter::check(filter)?;

@@ -156,14 +156,9 @@ const seeds: Record<string, () => Promise<Read>> = {
       const query = new URLSearchParams({ limit: String(limit) });
       if (cursor) query.set("cursor", cursor);
       const path = `/folders?${query}`;
-      const response = await fetch(`${server.apiUrl}${path}`, {
-        headers: { cookie: server.ownerCookie },
-      });
-      expect(response.status).toBe(200);
-      const body = (await response.json()) as Page;
       const local = await controlRequest(server.controlSocket, path);
       expect(local.status).toBe(200);
-      expect(local.body).toEqual(body);
+      const body = local.body as unknown as Page;
       expect(body.data.every((row) => ids.includes(row.id!))).toBe(true);
       return body;
     };
