@@ -518,12 +518,15 @@ describe("restore", () => {
     // minimal archive to isolate the 403 path. Reuse the server-built archive,
     // valid by construction and scoped to this file's own `source`: this case
     // needs only *a* valid body, and an unscoped export is work it has no use
-    // for.
-    const url = `${apiUrl}/export?source=${encodeURIComponent(ctx.source)}&format=archive`;
+    // for. Without file bytes it stays under the request cap, so the server
+    // reads all of it before it closes the connection.
+    const url = `${apiUrl}/export?source=${encodeURIComponent(ctx.source)}&format=archive&files=false`;
     const archiveRes = await fetch(url, {
       headers: { Authorization: `Bearer ${fileKey}` },
     });
     const archiveBytes = new Uint8Array(await archiveRes.arrayBuffer());
+    expect(archiveRes.status).toBe(200);
+    expect(archiveBytes.byteLength).toBeLessThan(1024 * 1024);
 
     const res = await scoped.restoreArchive(archiveBytes);
     expect(res.status).toBe(403);
