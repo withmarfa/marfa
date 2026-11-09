@@ -16,7 +16,7 @@ import {
   serverOutput,
 } from "../../utils/fresh-server.js";
 import { idOf, send } from "../../utils/inbound-sender.js";
-import { DAY_MS, quiet } from "../../utils/moved-clock.js";
+import { DAY_MS, QUIET_SCHEDULE, quiet } from "../../utils/moved-clock.js";
 
 /**
  * What the server does when storing an inbound receipt, or removing what is
@@ -33,12 +33,8 @@ beforeAll(async () => {
   sinks = await startFaultSinks();
   server = await bootFreshServer("inbound-faults", {
     ...sinks.env(),
-    // Far enough off that no pass but the ones this file asks for runs.
-    MARFA_INBOUND_CLEANUP_INTERVAL_MS: "31536000000",
+    ...QUIET_SCHEDULE,
   });
-  // The scheduler makes the job's first run itself some seconds after the
-  // boot, and the clock moved below would make it due again. Waiting for it
-  // here puts the job's next run an interval away.
   await quiet(server, ["inbound-delivery-cleanup"]);
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 

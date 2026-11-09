@@ -7,7 +7,12 @@ import {
   startDeviceFlow,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { DAY_MS, movedClock, runJob } from "../../utils/moved-clock.js";
+import {
+  DAY_MS,
+  movedClock,
+  QUIET_SCHEDULE,
+  runJob,
+} from "../../utils/moved-clock.js";
 import {
   authorize,
   authorizeQuery,
@@ -35,7 +40,7 @@ let management: MarfaClient;
 const NOTES = "core.note:read";
 
 beforeAll(async () => {
-  server = await bootFreshServer("credential-audit");
+  server = await bootFreshServer("credential-audit", QUIET_SCHEDULE);
   origin = await issuerOrigin(server);
   cookie = await signIn(server, origin);
   management = new MarfaClient({

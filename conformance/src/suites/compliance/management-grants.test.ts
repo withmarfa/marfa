@@ -6,12 +6,16 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { QUIET_SCHEDULE } from "../../utils/moved-clock.js";
 
 let server: FreshServer;
 let owner: MarfaClient;
 let working: MarfaClient;
 beforeAll(async () => {
-  server = await bootFreshServer("management-grants", { S3_BUCKET: "" });
+  server = await bootFreshServer("management-grants", {
+    ...QUIET_SCHEDULE,
+    S3_BUCKET: "",
+  });
   owner = new MarfaClient({
     baseUrl: server.apiUrl,
     controlSocket: server.controlSocket,

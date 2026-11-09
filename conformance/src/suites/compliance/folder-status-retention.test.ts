@@ -4,7 +4,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { DAY_MS, runJob } from "../../utils/moved-clock.js";
+import { DAY_MS, QUIET_SCHEDULE, runJob } from "../../utils/moved-clock.js";
 import {
   connect,
   issuerOrigin,
@@ -30,7 +30,7 @@ interface Status {
 }
 
 beforeAll(async () => {
-  server = await bootFreshServer("folder-status-retention");
+  server = await bootFreshServer("folder-status-retention", QUIET_SCHEDULE);
   origin = await issuerOrigin(server);
 }, FRESH_SERVER_TIMEOUT_MS);
 afterAll(async () => {

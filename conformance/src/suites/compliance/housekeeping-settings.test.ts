@@ -5,7 +5,12 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   stopFreshServers,
 } from "../../utils/fresh-server.js";
-import { jobs, operatorOf, runJob } from "../../utils/moved-clock.js";
+import {
+  jobs,
+  operatorOf,
+  QUIET_SCHEDULE,
+  runJob,
+} from "../../utils/moved-clock.js";
 import { listened, settingLines } from "../../utils/refused-boot.js";
 
 /**
@@ -135,7 +140,10 @@ describe("a retention setting inside its range", () => {
   it(
     "finishes each cleanup job that reads a retention setting at the largest value with last_outcome ok",
     async () => {
-      const server = await bootFreshServer("retention-settings-widest", WIDEST);
+      const server = await bootFreshServer("retention-settings-widest", {
+        ...WIDEST,
+        ...QUIET_SCHEDULE,
+      });
       try {
         const readers = [
           "audit-cleanup",

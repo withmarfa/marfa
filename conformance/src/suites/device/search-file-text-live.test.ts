@@ -9,6 +9,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { QUIET_SCHEDULE } from "../../utils/moved-clock.js";
 import { requireBinary } from "./harness.js";
 
 /**
@@ -31,8 +32,8 @@ function value<T>(result: Outcome<T>): T {
 
 beforeAll(async () => {
   server = await bootFreshServer("search-file-text-live", {
+    ...QUIET_SCHEDULE,
     MARFA_ENRICHMENT_ENABLED: "true",
-    MARFA_ENRICHMENT_INTERVAL_MS: "3600000",
   });
   client = new MarfaClient({
     baseUrl: server.apiUrl,

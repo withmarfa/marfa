@@ -10,6 +10,7 @@ import {
   DAY_MS,
   jobs,
   movedClock,
+  QUIET_SCHEDULE,
   quiet,
   writerOf,
 } from "../../utils/moved-clock.js";
@@ -31,13 +32,12 @@ const ROWS = 350;
 
 beforeAll(async () => {
   server = await bootFreshServer("stop-waits-for-work", {
+    ...QUIET_SCHEDULE,
     // The instance defaults the thinning of a plain type follows: a day, two
-    // days, twenty. The interval is past reach, so the only runs are the
-    // fixture's own.
+    // days, twenty.
     MARFA_VERSION_RECENT_DAYS: "1",
     MARFA_VERSION_DAILY_SNAPSHOT_DAYS: "2",
     MARFA_VERSION_WEEKLY_SNAPSHOT_DAYS: "20",
-    MARFA_VERSION_THINNING_INTERVAL_MS: "31536000000",
   });
   writer = writerOf(server);
 }, 2 * FRESH_SERVER_TIMEOUT_MS);

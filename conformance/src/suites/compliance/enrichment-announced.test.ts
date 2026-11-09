@@ -9,6 +9,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { QUIET_SCHEDULE } from "../../utils/moved-clock.js";
 import { createNote } from "../../generators/items.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
 
@@ -18,8 +19,8 @@ let operator: MarfaClient;
 
 beforeAll(async () => {
   server = await bootFreshServer("enrichment-announced", {
+    ...QUIET_SCHEDULE,
     MARFA_ENRICHMENT_ENABLED: "true",
-    MARFA_ENRICHMENT_INTERVAL_MS: "3600000",
   });
   client = new MarfaClient({
     baseUrl: server.apiUrl,

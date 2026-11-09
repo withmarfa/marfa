@@ -2,7 +2,12 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { MarfaClient } from "../../client/api.js";
 import { controlRequest } from "../../utils/control-request.js";
-import { DAY_MS, movedClock, runJob } from "../../utils/moved-clock.js";
+import {
+  DAY_MS,
+  movedClock,
+  QUIET_SCHEDULE,
+  runJob,
+} from "../../utils/moved-clock.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -38,7 +43,7 @@ let management: MarfaClient;
 const SCOPE = "core.note:read keys.mint";
 
 beforeAll(async () => {
-  server = await bootFreshServer("auth-grants");
+  server = await bootFreshServer("auth-grants", QUIET_SCHEDULE);
   origin = await issuerOrigin(server);
   cookie = await signIn(server, origin);
   management = new MarfaClient({

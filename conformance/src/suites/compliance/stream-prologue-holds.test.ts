@@ -5,6 +5,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { QUIET_SCHEDULE } from "../../utils/moved-clock.js";
 import type { SseEvent } from "../../utils/sse.js";
 import {
   announces,
@@ -22,7 +23,7 @@ let working: MarfaClient;
 let operator: MarfaClient;
 
 beforeAll(async () => {
-  server = await bootFreshServer("stream-prologue-holds");
+  server = await bootFreshServer("stream-prologue-holds", QUIET_SCHEDULE);
   working = new MarfaClient({
     baseUrl: server.apiUrl,
     apiKey: server.workingKey,

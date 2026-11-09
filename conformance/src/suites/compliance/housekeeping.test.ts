@@ -8,6 +8,7 @@ import {
 } from "../../utils/setup.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { bootFreshServer } from "../../utils/fresh-server.js";
+import { QUIET_SCHEDULE } from "../../utils/moved-clock.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -54,9 +55,10 @@ describe("the housekeeping the server runs on itself", () => {
   });
 
   it("runs a housekeeping job on demand and the listing records the run", async () => {
-    const server = await bootFreshServer("housekeeping-cleanup", {
-      MARFA_TRASH_PURGE_INTERVAL_MS: "31536000000",
-    });
+    const server = await bootFreshServer(
+      "housekeeping-cleanup",
+      QUIET_SCHEDULE,
+    );
     try {
       const operator = new MarfaClient({
         baseUrl: server.apiUrl,

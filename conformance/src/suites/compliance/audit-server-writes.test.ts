@@ -6,7 +6,7 @@ import {
   stopFreshServers,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { waitFor } from "../../utils/wait.js";
+import { QUIET_SCHEDULE, runJob } from "../../utils/moved-clock.js";
 
 /**
  * A write the server makes on its own account has no credential to name.
@@ -18,29 +18,17 @@ let server: FreshServer | undefined;
 
 beforeAll(async () => {
   server = await bootFreshServer("audit-server-writes", {
+    ...QUIET_SCHEDULE,
     MARFA_BLOB_CLEANUP_GRACE_MS: "0",
   });
 }, FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(stopFreshServers, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-/** One run of a job, again while the server's own run holds its name. */
+/** One run of a job, which must end ok. */
 async function run(name: string): Promise<void> {
-  const operator = new MarfaClient({
-    baseUrl: server!.apiUrl,
-    apiKey: server!.managementKey,
-  });
-  await waitFor(
-    `${name} to run`,
-    async () => {
-      const ran = await operator.runHousekeeping(name);
-      if (ran.status === 409) return undefined;
-      expect(ran.status, JSON.stringify(ran.error)).toBe(200);
-      expect(ran.data.outcome, ran.data.error ?? "").toBe("ok");
-      return true;
-    },
-    30_000,
-  );
+  const ran = await runJob(server!, name);
+  expect(ran.outcome, ran.error ?? "").toBe("ok");
 }
 
 describe("the audit log's record of the server's own writes", () => {
