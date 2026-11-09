@@ -270,7 +270,7 @@ async fn send(app: &App, ready: &Ready) -> Result<Attempted> {
     body.insert("event_id".into(), ready.event_id.to_string().into());
     body.insert("delivery_id".into(), ready.delivery_id.clone().into());
     body.insert("delivered_at".into(), app.clock.stamp().into());
-    let printed = marfa_rules::js::to_vec(&Value::Object(body))
+    let printed = marfa_rules::number::to_vec(&Value::Object(body))
         .map_err(|_| Refusal::internal("a webhook delivery did not print"))?;
     let signed = signature(&ready.secret, now_ms.div_euclid(1_000), &printed)?;
     let headers = [

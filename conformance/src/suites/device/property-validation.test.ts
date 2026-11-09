@@ -98,7 +98,8 @@ describe("a working copy checks the fields its catalog holds", () => {
     const good = await device.create({
       type: TYPE,
       properties: {
-        title: "😀abc",
+        // Five characters and six UTF-16 units: the limit counts characters.
+        title: "😀abcd",
         body: "",
         read: null,
         count: 9007199254740991,
@@ -126,7 +127,7 @@ describe("a working copy checks the fields its catalog holds", () => {
     invalid(await device.create({ type: TYPE, properties: {} }), "title");
     for (const [field, value] of [
       ["title", null],
-      ["title", "😀abcd"],
+      ["title", "😀abcde"],
       ["title", "a\u0000b"],
       ["read", "yes"],
       ["count", 9007199254740992],

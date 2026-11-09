@@ -286,7 +286,7 @@ describe("occurrences", () => {
     expect(inverted.error?.error.code).toBe("validation_error");
   });
 
-  it("reads each bound of the window in any ISO 8601 spelling and answers the window in UTC", async () => {
+  it("reads each bound of the window in any RFC 3339 spelling and answers the window in UTC", async () => {
     const id = await seedEvent(
       `occ-spelling-${ctx.runId}`,
       "2031-08-10T10:00:00.000Z",
@@ -298,7 +298,7 @@ describe("occurrences", () => {
       ["2031-08-10T10:00:00.000Z", "2031-08-10T12:00:00.000Z"],
       ["2031-08-10T12:00:00+02:00", "2031-08-10T14:00:00+02:00"],
       ["2031-08-10T05:00:00-05:00", "2031-08-10T07:00:00-05:00"],
-      ["2031-08-10T10:00Z", "2031-08-10T12:00Z"],
+      ["2031-08-10t10:00:00z", "2031-08-10t12:00:00z"],
     ]) {
       const r = await client.listOccurrences({ from, to });
       expect(r.status, `${from} ${to}: ${JSON.stringify(r.error)}`).toBe(200);

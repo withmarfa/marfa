@@ -410,7 +410,7 @@ The server MUST NOT let an item's `occurred_at` change the order of a `GET /item
 
 ### `search-and-filters/bound-not-instant`
 
-If `GET /items`, `GET /items/stats` or `GET /search` names `occurred_after`, `occurred_before`, `updated_after` or `updated_before`, or `GET /export` names `occurred_after` or `occurred_before`, with a value that is not an instant, then the server MUST answer `400 validation_error`.
+If `GET /items`, `GET /items/stats` or `GET /search` names `occurred_after`, `occurred_before`, `updated_after` or `updated_before`, or `GET /export` names `occurred_after` or `occurred_before`, with a value that is neither an RFC 3339 date-time (`items/occurred-at-form`) nor a date alone as `YYYY-MM-DD`, which names its midnight in UTC, then the server MUST answer `400 validation_error`.
 
 **Reason:** the export streams, so a bound refused after the response began would hand the caller an empty body under a success status.
 
@@ -716,15 +716,15 @@ When a tag holds a `?`, the server MUST count it under its own name on `GET /met
 
 ### `search-and-filters/filter-max-length`
 
-The server MUST take a `filter` of 2,048 UTF-16 code units on `GET /items`, `GET /items/stats` and `GET /search`, inside the filter of `POST /items/bulk-actions`, and as a view's or a folder's `query.filter`.
+The server MUST take a `filter` of 2,048 characters on `GET /items`, `GET /items/stats` and `GET /search`, inside the filter of `POST /items/bulk-actions`, and as a view's or a folder's `query.filter`.
 
-**Tests:** `compliance/validation.test.ts › takes a filter of 2,048 characters and refuses one of 2,049, on the listing and the search`, `compliance/filter-grammar.test.ts › takes 2,048 code units and refuses 2,049, at each door`.
+**Tests:** `compliance/validation.test.ts › takes a filter of 2,048 characters and refuses one of 2,049, on the listing and the search`, `compliance/filter-grammar.test.ts › takes 2,048 characters and refuses 2,049, at each door`, `compliance/filter-characters.test.ts › counts a character outside the basic plane once, at each door`.
 
 ### `search-and-filters/filter-over-length`
 
-If a `filter` on `GET /items`, `GET /items/stats` or `GET /search`, inside the filter of `POST /items/bulk-actions`, or as a view's or a folder's `query.filter` is longer than 2,048 UTF-16 code units, then the server MUST answer `400 validation_error`.
+If a `filter` on `GET /items`, `GET /items/stats` or `GET /search`, inside the filter of `POST /items/bulk-actions`, or as a view's or a folder's `query.filter` is longer than 2,048 characters, then the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/validation.test.ts › takes a filter of 2,048 characters and refuses one of 2,049, on the listing and the search`, `compliance/filter-grammar.test.ts › takes 2,048 code units and refuses 2,049, at each door`.
+**Tests:** `compliance/validation.test.ts › takes a filter of 2,048 characters and refuses one of 2,049, on the listing and the search`, `compliance/filter-grammar.test.ts › takes 2,048 characters and refuses 2,049, at each door`, `compliance/filter-characters.test.ts › counts a character outside the basic plane once, at each door`.
 
 ### `search-and-filters/filter-max-conditions`
 
@@ -746,9 +746,9 @@ When `GET /items` or `GET /items/stats` carries an `edge[<edge type>]` or `backr
 
 ### `search-and-filters/filter-shorthand-length`
 
-When `GET /items` or `GET /items/stats` carries a `filter` and an `edge[<edge type>]` or `backref[<edge type>]` key, the server MUST count the length of ` AND <key> eq "<value>"`, with a space either side of `AND`, for each such key toward the 2,048 UTF-16 code units of `search-and-filters/filter-over-length`.
+When `GET /items` or `GET /items/stats` carries a `filter` and an `edge[<edge type>]` or `backref[<edge type>]` key, the server MUST count the length of ` AND <key> eq "<value>"`, with a space either side of `AND`, for each such key toward the 2,048 characters of `search-and-filters/filter-over-length`.
 
-**Tests:** `compliance/filter-grammar.test.ts › counts an edge key's clause and its AND toward the 2,048 code units`.
+**Tests:** `compliance/filter-grammar.test.ts › counts an edge key's clause and its AND toward the 2,048 characters`.
 
 ### `search-and-filters/filter-mixed-logic`
 
@@ -850,13 +850,13 @@ When a double-quoted value in a `filter` holds a backslash that is not followed 
 
 ### `search-and-filters/filter-time-instant`
 
-When a `filter` on `GET /items` or `GET /search` compares `created_at`, `updated_at` or `occurred_at` with a timestamp literal using `eq`, `neq`, `gt`, `gte`, `lt` or `lte`, the server MUST compare it as the instant it names, however it is spelled.
+When a `filter` on `GET /items` or `GET /search` compares `created_at`, `updated_at` or `occurred_at` with a timestamp literal using `eq`, `neq`, `gt`, `gte`, `lt` or `lte`, the server MUST compare it as the instant it names, however its zone is spelled, reading a date alone as its midnight in UTC.
 
 **Tests:** `compliance/canonical-time.test.ts › normalizes filter timestamps on listing and search`, `› compares filter timestamps with neq, gt, lt and lte as instants, on listing and search`.
 
 ### `search-and-filters/filter-time-refused`
 
-If a `filter` on `GET /items` or `GET /search` compares `created_at`, `updated_at` or `occurred_at` with `eq`, `neq`, `gt`, `gte`, `lt` or `lte` against a literal that is not a timestamp or is not text, then the server MUST answer `400 validation_error`.
+If a `filter` on `GET /items` or `GET /search` compares `created_at`, `updated_at` or `occurred_at` with `eq`, `neq`, `gt`, `gte`, `lt` or `lte` against a literal that is not text, or is text that is neither an RFC 3339 date-time (`items/occurred-at-form`) nor a date alone as `YYYY-MM-DD`, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/canonical-time.test.ts › refuses a time comparison with a literal that is not a timestamp, on every operator, naming validation_error`, `› refuses invalid time comparisons while retaining text operators`.
 
@@ -1328,7 +1328,7 @@ When a double quote in a query is not the first and the last character of a phra
 
 ### `search-and-filters/search-trim`
 
-When a query has whitespace or byte-order marks around it, the server MUST ignore them.
+When a query has Unicode `White_Space` around it, the server MUST ignore it.
 
 **Reason:** a pasted query carries them, and they must not change whether it is a phrase or what it matches.
 
@@ -2546,11 +2546,11 @@ If an archive records a `version` of an item or an edge that is not a positive s
 
 ### `search-and-filters/restore-text`
 
-If the `manifest.json` of an archive, or a line the restore reads as an item, an edge or a registration in its `items.ndjson`, `edges.ndjson` or `types.ndjson`, holds a string or an object key that is not well-formed UTF-16, then the server MUST answer `400 validation_error` naming the entry or the row and the JSON pointer of the text, and write nothing.
+If the `manifest.json` of an archive, or a line the restore reads as an item, an edge or a registration in its `items.ndjson`, `edges.ndjson` or `types.ndjson`, holds a string or an object key with a surrogate escape that has no partner, then the server MUST answer `400 validation_error` naming the entry or the row and the JSON pointer of the text, and write nothing.
 
 **Reason:** a restore is not a way to plant text the write doors refuse (`items/json-text-well-formed`).
 
-**Tests:** `compliance/well-formed-text.test.ts › refuses a %s that is not well-formed UTF-16, naming the row and where, and takes a pair there`.
+**Tests:** `compliance/well-formed-text.test.ts › refuses a %s that holds a surrogate escape with no partner, naming the row and where, and takes a pair there`.
 
 ### `search-and-filters/restore-scalars-held`
 

@@ -515,7 +515,7 @@ fn date_bucket(value: &Value, bucket: &str, zone: Option<chrono_tz::Tz>) -> Valu
     let date = if let Ok(date) = NaiveDate::parse_from_str(text, "%Y-%m-%d") {
         date
     } else {
-        let Ok(normalized) = marfa_rules::time::normalize(text, "view date") else {
+        let Ok(normalized) = marfa_rules::time::rfc3339(text, "view date") else {
             return Value::Null;
         };
         let Ok(instant) = chrono::DateTime::parse_from_rfc3339(&normalized) else {

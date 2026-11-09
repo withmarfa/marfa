@@ -527,17 +527,11 @@ When `POST /keys` or `PATCH /keys/{id}` names an `expires_at`, the server MUST a
 
 **Tests:** `compliance/key-expiry.test.ts › is minted with the expiry named, and answers it in UTC on the mint, the listing and its own read`.
 
-### `keys-and-oauth/expiry-zoneless`
-
-When `POST /keys` or `PATCH /keys/{id}` names an `expires_at` date-time with no zone, the server MUST read it as UTC.
-
-**Tests:** `compliance/key-expiry.test.ts › reads an expires_at with no zone as UTC`.
-
 ### `keys-and-oauth/expiry-invalid`
 
-If `POST /keys` or `PATCH /keys/{id}` names an `expires_at` string that is not a timestamp with a date and a time, then the server MUST answer `400 validation_error` with `details.field` `expires_at`.
+If `POST /keys` or `PATCH /keys/{id}` names an `expires_at` string that is not an RFC 3339 date-time, as `items/occurred-at-form` states, then the server MUST answer `400 validation_error` with `details.field` `expires_at`.
 
-**Tests:** `compliance/key-expiry.test.ts › refuses an expires_at that %s, naming the field, on a mint and on an update`.
+**Tests:** `compliance/key-expiry.test.ts › refuses an expires_at that %s, naming the field, on a mint and on an update`, `› takes an expiry written with a lowercase t or z, as RFC 3339 allows, on a mint and on an update`.
 
 ### `keys-and-oauth/expiry-range`
 
@@ -917,11 +911,11 @@ The server MUST take the source code of `GET /source` and `PATCH /source` from t
 
 ### `keys-and-oauth/source-code-length`
 
-The server MUST take a nonempty source code with no space at either end at `GET /source`, `PATCH /source` and every other door that takes one only if it is at most 200 UTF-16 code units long or is `restored:` followed by at most 200 UTF-16 code units.
+The server MUST take a nonempty source code with no Unicode `White_Space` at either end at `GET /source`, `PATCH /source` and every other door that takes one only if it is at most 200 characters long or is `restored:` followed by at most 200 characters.
 
-**Reason:** a key holds a source of at most 200 code units, and a restore puts `restored:`, 9 more, before an app's source of that length, so no door may refuse a code the instance can hold.
+**Reason:** a key holds a source of at most 200 characters, and a restore puts `restored:`, 9 more, before an app's source of that length, so no door may refuse a code the instance can hold.
 
-**Tests:** `compliance/source-names.test.ts › takes a code as long as a restore can make one, and refuses a longer`.
+**Tests:** `compliance/source-names.test.ts › takes a code as long as a restore can make one, and refuses a longer`, `compliance/source-name-characters.test.ts › counts a code in characters and takes no Unicode White_Space at either end`.
 
 ### `keys-and-oauth/source-read`
 
@@ -983,11 +977,11 @@ When the key whose own `source` a source is ends, the server MUST NOT answer tha
 
 ### `keys-and-oauth/source-name-length`
 
-If `PATCH /source` sends a `name` that is empty once trimmed, holds a control character or a bidirectional formatting character, or is longer than 200 UTF-16 code units once trimmed, then the server MUST answer `400 validation_error` and leave the source's name and mark as they were.
+If `PATCH /source` sends a `name` that is empty once trimmed, holds a control character or a bidirectional formatting character, or is longer than 200 characters once trimmed, then the server MUST answer `400 validation_error` and leave the source's name and mark as they were.
 
 **Reason:** it is the rule a sign-in's name is held to, and an archive refuses a name that `PATCH /source` could not store, so a name measured another way would stop an export.
 
-**Tests:** `compliance/source-names.test.ts › refuses a name an archive could not carry, and keeps what was set`.
+**Tests:** `compliance/source-names.test.ts › refuses a name an archive could not carry, and keeps what was set`, `compliance/source-name-characters.test.ts › counts a name in characters`.
 
 ### `keys-and-oauth/source-set-own`
 

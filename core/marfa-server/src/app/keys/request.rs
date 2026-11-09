@@ -5,7 +5,7 @@ use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::sources;
 
 const MAX_CLAIMS: usize = 1000;
-const MAX_SOURCE_UNITS: usize = 200;
+const MAX_SOURCE_LENGTH: usize = 200;
 const RESERVED_SOURCES: [&str; 2] = ["oauth:", "restored:"];
 
 pub const MINT_FIELDS: [&str; 12] = [
@@ -138,7 +138,7 @@ fn reserved(source: &str) -> bool {
 
 fn held_source(text: &str, field: &str) -> Result<String> {
     let trimmed = text.trim();
-    if trimmed.is_empty() || sources::units(trimmed) > MAX_SOURCE_UNITS {
+    if trimmed.is_empty() || sources::length(trimmed) > MAX_SOURCE_LENGTH {
         return Err(Refusal::validation(format!(
             "{field} must hold 1 to 200 characters once trimmed."
         )));
@@ -202,25 +202,14 @@ pub fn bad_expiry(value: impl Into<Value>) -> Refusal {
         .with_detail("value", value)
 }
 
-fn has_a_time(text: &str) -> bool {
-    let date_and_hour = text.get(..16).map(str::as_bytes);
-    let shape = b"dddd-dd-ddTdd:dd";
-    date_and_hour.is_some_and(|held| {
-        held.iter().zip(shape).all(|(byte, want)| match want {
-            b'd' => byte.is_ascii_digit(),
-            other => byte == other,
-        })
-    })
-}
-
 fn expiry(value: &Value) -> Result<Option<String>> {
     if value.is_null() {
         return Ok(None);
     }
-    let Some(text) = value.as_str().filter(|text| has_a_time(text)) else {
+    let Some(text) = value.as_str() else {
         return Err(bad_expiry(value.clone()));
     };
-    marfa_rules::time::normalize(text, "expires_at")
+    marfa_rules::time::rfc3339(text, "expires_at")
         .map(Some)
         .map_err(|_| bad_expiry(text))
 }
@@ -301,7 +290,9 @@ mod tests {
     fn an_end_needs_a_date_and_a_time() {
         for (value, ok) in [
             (json!("2030-01-02T03:04:05Z"), true),
-            (json!("2030-01-02T03:04"), true),
+            (json!("2030-01-02t03:04:05z"), true),
+            (json!("2030-01-02T03:04"), false),
+            (json!("2030-01-02T03:04:05"), false),
             (json!("2030-01-02"), false),
             (json!("2030"), false),
             (json!("soon"), false),
@@ -322,6 +313,8 @@ mod tests {
     #[test]
     fn a_held_source_is_trimmed_bounded_and_kept_from_what_is_reserved() {
         assert_eq!(held_source("  mine ", "source").unwrap(), "mine");
+        assert_eq!(held_source("\u{85}mine\u{3000}", "source").unwrap(), "mine");
+        assert!(held_source("\u{feff}", "source").is_ok());
         for text in [
             "   ",
             &"x".repeat(201),
@@ -331,8 +324,8 @@ mod tests {
         ] {
             assert!(held_source(text, "source").is_err(), "{text}");
         }
-        assert!(held_source(&"😀".repeat(101), "source").is_err());
-        assert!(held_source(&"😀".repeat(100), "source").is_ok());
+        assert!(held_source(&"😀".repeat(201), "source").is_err());
+        assert!(held_source(&"😀".repeat(200), "source").is_ok());
         assert!(held_source("oauthish:mine", "source").is_ok());
     }
 

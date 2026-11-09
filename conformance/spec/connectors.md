@@ -238,7 +238,7 @@ If a request to an operation under `/connectors/{id}` whose body and query fit t
 
 ### `connectors/no-credential`
 
-If a request to an operation under `/connectors` carries no credential and no body over the operation's cap, nested more than 64 levels or holding text that is not well-formed UTF-16, then the server MUST answer `401 unauthorized`.
+If a request to an operation under `/connectors` carries no credential and no body over the operation's cap, nested more than 64 levels or holding a surrogate escape with no partner, then the server MUST answer `401 unauthorized`.
 
 **Tests:** `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`.
 
@@ -332,7 +332,7 @@ When a key is revoked, the server MUST keep the runs its connector reported, and
 
 ### `connectors/revoked-unauthorized`
 
-If a revoked key sends a request to any operation under `/connectors` with no body over the operation's cap, nested more than 64 levels or holding text that is not well-formed UTF-16, then the server MUST answer `401 unauthorized`.
+If a revoked key sends a request to any operation under `/connectors` with no body over the operation's cap, nested more than 64 levels or holding a surrogate escape with no partner, then the server MUST answer `401 unauthorized`.
 
 **Tests:** `compliance/connector-codes.test.ts › answers 401 unauthorized to a revoked key on every door, and leaves its runs to the manager`, `compliance/connectors.test.ts › keeps a registration whose key was revoked, until the manager removes it`.
 

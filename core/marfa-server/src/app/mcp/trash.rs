@@ -33,10 +33,6 @@ pub enum Confirmed {
     Stale,
 }
 
-pub fn is_expired(app: &App, token: &str) -> bool {
-    confirm::parse(token).is_some_and(|parsed| parsed.expires_at_ms <= app.clock.now_ms())
-}
-
 pub async fn preview(app: &App, caller: &Caller, ids: Vec<String>) -> Result<Preview> {
     let text = trash_preview(app, caller, ids).await?;
     let unreadable = || Refusal::internal("a trash preview did not read");

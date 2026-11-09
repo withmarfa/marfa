@@ -2,14 +2,14 @@
 
 use std::sync::Arc;
 
-use chrono::{DateTime, SecondsFormat};
 use serde_json::{Map, Value, json};
 
 use super::keys::{own_id, view};
-use super::{Definition, item_id, text};
+use super::{Definition, instant, item_id, text};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::keys::Key;
+use crate::app::mcp::confirm;
 use crate::app::mcp::revoke::{self, Confirmed};
 use crate::app::refusal::Refusal;
 use crate::http::mcp::results::{Outcome, Stop};
@@ -53,12 +53,6 @@ pub fn definition() -> Definition {
         }),
         meta: None,
     }
-}
-
-fn instant(ms: i64) -> String {
-    DateTime::from_timestamp_millis(ms)
-        .unwrap_or(DateTime::<chrono::Utc>::MAX_UTC)
-        .to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
 fn preview_body(app: &App, caller: &Caller, key: &Key) -> Result<Map<String, Value>, Refusal> {
@@ -120,7 +114,7 @@ pub async fn run(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>)
             "next": "This confirmation already revoked the key, and nothing more was changed.",
         })),
         Confirmed::Stale => {
-            let expired = revoke::is_expired(app, &token);
+            let expired = confirm::is_expired(&token, app.clock.now_ms());
             Err(stale(preview_body(app, caller, &fresh?)?, expired))
         }
     }
