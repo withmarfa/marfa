@@ -1134,6 +1134,7 @@ const invocations: Record<string, () => string[]> = {
   "sign-ins list": () => [],
   "sign-ins rename": () => [ID, "n"],
   "sign-ins end": () => [ID],
+  "sign-ins end-all": () => [],
   "setup claim": () => ["--stdin"],
 };
 
