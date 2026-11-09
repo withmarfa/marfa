@@ -198,11 +198,11 @@ pub async fn confirmed(
     let action = request.action();
     app.write(caller, action, move |unit| {
         unit.caller.webhook_maker()?;
-        let now_ms = unit.at_ms;
+        let now_ms = unit.instant.ms();
         if parsed.expires_at_ms <= now_ms {
             return Ok(Confirmed::Stale);
         }
-        confirm::sweep(unit.tx(), now_ms)?;
+        confirm::sweep(unit.tx(), unit.instant)?;
         if confirm::spent(unit.tx(), &parsed.signature)?.is_some() {
             return Ok(Confirmed::Stale);
         }

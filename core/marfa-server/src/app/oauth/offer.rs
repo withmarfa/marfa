@@ -570,7 +570,7 @@ mod tests {
     fn client(name: Option<&str>, redirects: &[&str], kind: AppKind) -> Client {
         Client {
             id: "client-1".to_string(),
-            created_at: 0,
+            created_at: crate::app::clock::Stamp::from_ms(0).unwrap(),
             registration: Registration {
                 application_type: kind,
                 token_endpoint_auth_method: AuthMethod::None,

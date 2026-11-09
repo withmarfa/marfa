@@ -17,6 +17,7 @@ use super::super::housekeeping::{DAY_MS, Report, Run};
 use super::super::refusal::Result;
 use super::super::unit::Unit;
 use super::super::{App, stored};
+use crate::app::clock::Stamp;
 use crate::settings::registry::{
     VERSION_DAILY_SNAPSHOT_DAYS, VERSION_MAX_VERSIONS, VERSION_RECENT_DAYS,
     VERSION_WEEKLY_SNAPSHOT_DAYS,
@@ -42,9 +43,11 @@ struct Kept {
 }
 
 fn parsed(text: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(text)
-        .ok()
-        .map(|instant| instant.with_timezone(&Utc))
+    let read = Stamp::parsed(text).map(Stamp::at);
+    if read.is_none() {
+        tracing::warn!("A snapshot's stored time does not read; the snapshot is kept");
+    }
+    read
 }
 
 /// Snapshots inside `recent_days` stay, then the latest of each day to `daily_days` and of each
@@ -299,9 +302,7 @@ mod tests {
     const HOUR_MS: i64 = 3_600_000;
 
     fn at(ms: i64) -> String {
-        DateTime::from_timestamp_millis(ms)
-            .unwrap()
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+        Stamp::from_ms(ms).unwrap().text()
     }
 
     fn snapshots(ages_ms: &[i64]) -> Vec<Kept> {

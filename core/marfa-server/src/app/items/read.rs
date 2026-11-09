@@ -4,13 +4,11 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use chrono::{DateTime, Days, SecondsFormat, Utc};
 use marfa_rules::names;
 use rusqlite::Transaction;
 use serde_json::{Value, json};
 
 use super::plan::{self, Act, Asked, Gate};
-use super::rows::Position;
 use super::{
     Item, Keys, check_keys, extensions_text, metadata_for, name_of, not_found, rows, summary_of,
     with_blocks,
@@ -19,10 +17,13 @@ use crate::app::App;
 use crate::app::access::reach::Demand;
 use crate::app::access::{Caller, Level};
 use crate::app::catalog::{self, Catalog, Snapshot};
+use crate::app::clock::Stamp;
 use crate::app::connectors::{ReadOnly, read_only};
 use crate::app::edges::{self, Reach};
 use crate::app::faults::{Faults, HOLD_READ_HYDRATION, HOLD_READ_SNAPSHOT};
-use crate::app::refusal::{Refusal, Result};
+use crate::app::housekeeping::DAY_MS;
+use crate::app::query::{Secret, bad_cursor};
+use crate::app::refusal::Result;
 use crate::settings::registry::TRASH_RETENTION_DAYS;
 
 const TITLES_PER_NAME: i64 = 20;
@@ -36,6 +37,8 @@ pub(crate) struct Reader<'a, 'c> {
     pub caller: Caller,
     pub catalog: Arc<Catalog>,
     pub read_only: ReadOnly,
+    /// What every listing signs its cursor with.
+    pub cursors: Secret,
     faults: &'a Faults,
     /// The read answers a request that presented a reach, which it found current.
     certified: bool,
@@ -92,6 +95,7 @@ where
     let marked = app.read_only_handle();
     let clock = app.clock.clone();
     let faults = app.faults.clone();
+    let cursors = app.cursor_secret.clone();
     let read = move |tx: &rusqlite::Transaction<'_>| {
         let at = clock.stamp();
         let caller = caller.current(tx, &at)?;
@@ -108,6 +112,7 @@ where
             caller,
             catalog,
             read_only,
+            cursors,
             faults: &faults,
             certified: demand.is_some(),
         })
@@ -146,6 +151,7 @@ impl<'a, 'c> Reader<'a, 'c> {
             caller,
             catalog: self.catalog.clone(),
             read_only: self.read_only.clone(),
+            cursors: self.cursors.clone(),
             faults: self.faults,
             certified: false,
         }
@@ -176,7 +182,11 @@ impl<'a, 'c> Reader<'a, 'c> {
         let more = page.len() as i64 > limit;
         page.truncate(limit as usize);
         let next = match page.last().filter(|_| more) {
-            Some(snapshot) => Value::from(cursor_of(snapshot.version)).to_string(),
+            Some(snapshot) => Value::from(
+                self.cursors
+                    .issue(VERSIONS, &Value::from(snapshot.version))?,
+            )
+            .to_string(),
             None => "null".to_string(),
         };
         let data: Vec<String> = page
@@ -190,19 +200,15 @@ impl<'a, 'c> Reader<'a, 'c> {
     }
 }
 
-fn cursor_of(version: i64) -> String {
-    hex::encode(format!("versions\0{version}"))
-}
+/// One item's history continues on another's, as both order by version alone.
+const VERSIONS: &str = "versions";
 
-fn version_at(cursor: &str) -> Result<i64> {
-    let refused = || Refusal::validation("The cursor does not belong to this listing.");
-    let text = hex::decode(cursor)
-        .ok()
-        .and_then(|bytes| String::from_utf8(bytes).ok())
-        .ok_or_else(refused)?;
-    text.strip_prefix("versions\0")
-        .and_then(|version| version.parse().ok())
-        .ok_or_else(refused)
+fn version_at(cursors: &Secret, cursor: &str) -> Result<i64> {
+    cursors
+        .open(VERSIONS, cursor)?
+        .as_i64()
+        .filter(|version| *version >= 0)
+        .ok_or_else(bad_cursor)
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -260,6 +266,7 @@ pub async fn detail(app: &App, caller: &Caller, id: String, include: Detail) -> 
             read.tx,
             &read.caller,
             &read.catalog,
+            &read.cursors,
             &row.id,
             Reach::Outbound,
         )?;
@@ -269,6 +276,7 @@ pub async fn detail(app: &App, caller: &Caller, id: String, include: Detail) -> 
                 read.tx,
                 &read.caller,
                 &read.catalog,
+                &read.cursors,
                 &row.id,
                 Reach::Inbound,
             )?;
@@ -310,7 +318,7 @@ pub async fn history(
     reading(app, caller, move |read| {
         let row = read.row(&id)?;
         let after = match cursor.as_deref() {
-            Some(cursor) => version_at(cursor)?,
+            Some(cursor) => version_at(&read.cursors, cursor)?,
             None => 0,
         };
         read.history_page(&row, after, limit)
@@ -356,7 +364,13 @@ pub async fn bulk_get(
         let mut metadata = Vec::new();
         for row in &visible {
             let mut text = if include.edges {
-                row.hydrated(read.tx, &read.read_only, &read.caller, &read.catalog)?
+                row.hydrated(
+                    read.tx,
+                    &read.read_only,
+                    &read.caller,
+                    &read.catalog,
+                    &read.cursors,
+                )?
             } else {
                 row.answered(&read.read_only, &read.caller)?
             };
@@ -400,7 +414,13 @@ pub(crate) fn listed_rows(
         .iter()
         .map(|row| {
             let mut text = if include.edges {
-                row.hydrated(read.tx, &read.read_only, &read.caller, &read.catalog)?
+                row.hydrated(
+                    read.tx,
+                    &read.read_only,
+                    &read.caller,
+                    &read.catalog,
+                    &read.cursors,
+                )?
             } else {
                 row.answered(&read.read_only, &read.caller)?
             };
@@ -649,24 +669,6 @@ pub struct Listing {
     pub cursor: Option<String>,
 }
 
-pub(crate) fn position_cursor(scope: &str, position: &Position) -> String {
-    hex::encode(format!("{scope}\0{}\0{}", position.0, position.1))
-}
-
-pub(crate) fn position_at(cursor: &str, scope: &str) -> Result<Position> {
-    let refused = || Refusal::validation("The cursor does not belong to this listing.");
-    let text = hex::decode(cursor)
-        .ok()
-        .and_then(|bytes| String::from_utf8(bytes).ok())
-        .ok_or_else(refused)?;
-    let (at, id) = text
-        .strip_prefix(scope)
-        .and_then(|rest| rest.strip_prefix('\0'))
-        .and_then(|rest| rest.split_once('\0'))
-        .ok_or_else(refused)?;
-    Ok((at.to_string(), id.to_string()))
-}
-
 fn batch_size(limit: i64, passes_over: bool) -> i64 {
     if passes_over { WALK_BATCH } else { limit + 1 }
 }
@@ -679,7 +681,7 @@ impl<'a, 'c> Reader<'a, 'c> {
         let mut after = listing
             .cursor
             .as_deref()
-            .map(|cursor| position_at(cursor, &scope))
+            .map(|cursor| self.cursors.open_at(&scope, cursor))
             .transpose()?;
         let batch_size = batch_size(
             listing.limit,
@@ -720,10 +722,10 @@ impl<'a, 'c> Reader<'a, 'c> {
         }
         let more = page.len() as i64 > listing.limit;
         page.truncate(listing.limit as usize);
-        let next = page
-            .last()
-            .filter(|_| more)
-            .map(|row| position_cursor(&scope, &(row.created_at.clone(), row.id.clone())));
+        let next = match page.last().filter(|_| more) {
+            Some(row) => Some(self.cursors.issue_at(&scope, &row.created_at, &row.id)?),
+            None => None,
+        };
         Ok((page, next))
     }
 }
@@ -740,15 +742,14 @@ pub async fn summaries(app: &App, caller: &Caller, listing: Listing) -> Result<S
     .await
 }
 
-fn eligible_at(trashed_at: Option<&str>, retention_days: u64) -> Option<String> {
-    if retention_days == 0 {
-        return None;
-    }
-    let trashed_at = DateTime::parse_from_rfc3339(trashed_at?).ok()?;
-    let eligible = trashed_at
-        .with_timezone(&Utc)
-        .checked_add_days(Days::new(retention_days))?;
-    Some(eligible.to_rfc3339_opts(SecondsFormat::Millis, true))
+fn eligible_at(trashed_at: Option<&str>, retention_days: u64) -> Result<Option<String>> {
+    let (Some(trashed_at), true) = (trashed_at, retention_days > 0) else {
+        return Ok(None);
+    };
+    let kept = i64::try_from(retention_days)
+        .unwrap_or(i64::MAX)
+        .saturating_mul(DAY_MS);
+    Ok(Some(Stamp::read(trashed_at)?.plus_ms(kept)?.text()))
 }
 
 pub async fn bin(app: &App, caller: &Caller, listing: Listing) -> Result<String> {
@@ -762,7 +763,7 @@ pub async fn bin(app: &App, caller: &Caller, listing: Listing) -> Result<String>
                 summary["trashed_at"] = json!(row.trashed_at);
                 summary["trashed_by"] = json!(row.trashed_by);
                 summary["eligible_for_deletion_at"] =
-                    json!(eligible_at(row.trashed_at.as_deref(), retention_days));
+                    json!(eligible_at(row.trashed_at.as_deref(), retention_days)?);
                 Ok(summary)
             })
             .collect::<Result<Vec<Value>>>()?;
@@ -853,7 +854,13 @@ pub async fn lookup(
                 continue;
             }
             data.push(if edges {
-                row.hydrated(read.tx, &read.read_only, &read.caller, &read.catalog)?
+                row.hydrated(
+                    read.tx,
+                    &read.read_only,
+                    &read.caller,
+                    &read.catalog,
+                    &read.cursors,
+                )?
             } else {
                 row.answered(&read.read_only, &read.caller)?
             });

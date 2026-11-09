@@ -16,7 +16,7 @@ use super::reprompt;
 use super::resource::{self, at_authorize};
 use super::scope::{Registries, ScopeSet, first_uncovered, narrow, needs_recent_sign_in};
 use super::signed_link::{self, Refused, Verified, has_repeat};
-use super::store::{self, Client, Code, Consent, ms_of};
+use super::store::{self, Client, Code, Consent};
 use super::tokens::new_authorization_code;
 use super::{Answered, CODE_SECONDS, MS_PER_SECOND, Problem, issuer};
 use crate::app::App;
@@ -358,7 +358,7 @@ async fn answer_signed_in(app: &Arc<App>, owner: &Caller, asked: Asked) -> Resul
                 issue_code(&shared, unit, ticket)
             }
             _ => {
-                let exp = ms_of(&unit.at)? / MS_PER_SECOND + CODE_SECONDS;
+                let exp = unit.instant.ms() / MS_PER_SECOND + CODE_SECONDS;
                 let listed = destinations_digest(&shared, &client)?;
                 let mut params = asked.link_params(&judged.kept);
                 params.push(("destinations".to_string(), listed));
@@ -406,7 +406,7 @@ fn issue_code(app: &App, unit: &Unit<'_, '_>, ticket: Ticket<'_>) -> Result<Stri
             scopes: ticket.scopes.clone(),
             challenge: ticket.challenge.to_string(),
             resources: ticket.resources.to_vec(),
-            expires_at: ms_of(&unit.at)? + CODE_SECONDS * MS_PER_SECOND,
+            expires_at: unit.instant.plus_ms(CODE_SECONDS * MS_PER_SECOND)?,
             spent_at: None,
             chain_id: None,
         },
@@ -489,7 +489,7 @@ pub async fn screen(app: &Arc<App>, query: &str, owner: Option<&Caller>) -> Resu
         return Ok(Screen::SignIn(sign_in_for(app, query, &back)));
     };
     let cache = app.catalog_handle();
-    let now = app.clock.now_ms();
+    let now = app.clock.instant();
     app.db
         .write(Write::own(), move |tx| {
             let Some(client) = store::client(tx, &linked.client_id)? else {

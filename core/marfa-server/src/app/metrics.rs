@@ -2,11 +2,12 @@
 
 use std::path::{Path, PathBuf};
 
-use rusqlite::Transaction;
+use rusqlite::{Transaction, params};
 use serde_json::{Map, Value, json};
 use tokio::sync::Semaphore;
 
 use super::App;
+use super::clock::Stamp;
 use super::faults::HOLD_METRICS;
 use super::instance::VERSION;
 use super::refusal::{Refusal, Result};
@@ -29,7 +30,7 @@ fn one(tx: &Transaction<'_>, sql: &str) -> Result<i64> {
     Ok(tx.query_row(sql, [], |row| row.get(0))?)
 }
 
-fn count(tx: &Transaction<'_>, now: &str) -> Result<Counts> {
+fn count(tx: &Transaction<'_>, now: Stamp) -> Result<Counts> {
     let mut by_state = Map::new();
     let mut items = 0;
     let mut grouped = tx.prepare("SELECT state, count(*) FROM items GROUP BY state")?;
@@ -62,7 +63,7 @@ fn count(tx: &Transaction<'_>, now: &str) -> Result<Counts> {
         keys: tx.query_row(
             "SELECT count(*) FROM api_keys \
              WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?1)",
-            [now],
+            params![now],
             |row| row.get(0),
         )?,
         webhooks: one(tx, "SELECT count(*) FROM webhooks")?,
@@ -173,14 +174,14 @@ pub async fn read(app: &App) -> Result<Value> {
         .acquire()
         .await
         .map_err(|_| Refusal::internal("the metrics permit has closed"))?;
-    let now = app.clock.stamp();
+    let now = app.clock.instant();
     let database = app.settings.start.database.file();
     let faults = app.faults.clone();
     let (counts, files, resident) = app
         .db
         .read(move |tx| {
             faults.hold_blocking(HOLD_METRICS);
-            let counts = count(tx, &now)?;
+            let counts = count(tx, now)?;
             Ok((counts, file_sizes(database.as_deref()), resident_bytes()))
         })
         .await?;

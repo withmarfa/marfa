@@ -7,7 +7,7 @@ use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
 use super::scope::{ScopeSet, combined};
-use super::store::{self, Client, Consent, ms_of};
+use super::store::{self, Client, Consent};
 use crate::app::catalog::Catalog;
 use crate::app::items::write::{Change, Put, Update, apply_server_own};
 use crate::app::refusal::{Refusal, Result};
@@ -147,7 +147,7 @@ pub(super) fn stand(
     source: &str,
 ) -> Result<Stood> {
     let tx = unit.tx();
-    let now = ms_of(&unit.at)?;
+    let now = unit.instant;
     let Some(consent) = store::consent(tx, &client.id, user_id)? else {
         let grant_id = Uuid::now_v7().to_string();
         create_item(unit, cache, client, &grant_id, approved, source)?;
@@ -211,7 +211,7 @@ pub(super) fn end(
     user_id: &str,
 ) -> Result<bool> {
     let tx = unit.tx();
-    let now = ms_of(&unit.at)?;
+    let now = unit.instant;
     let Some(consent) = store::consent(tx, client_id, user_id)?.filter(Consent::stands) else {
         return Ok(false);
     };

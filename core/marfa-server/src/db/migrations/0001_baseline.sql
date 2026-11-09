@@ -352,16 +352,16 @@ CREATE TABLE IF NOT EXISTS auth_user (
     name TEXT NOT NULL,
     email TEXT NOT NULL UNIQUE,
     email_verified INTEGER NOT NULL DEFAULT 0,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS auth_account (
     id TEXT PRIMARY KEY NOT NULL,
     user_id TEXT NOT NULL UNIQUE REFERENCES auth_user (id) ON DELETE CASCADE,
     password TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 ) STRICT;
 
 -- `token` holds a digest, never the cookie's value. `updated_at` is the last
@@ -370,9 +370,9 @@ CREATE TABLE IF NOT EXISTS auth_session (
     id TEXT PRIMARY KEY NOT NULL,
     token TEXT NOT NULL UNIQUE,
     user_id TEXT NOT NULL REFERENCES auth_user (id) ON DELETE CASCADE,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
-    expires_at INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
     remembered INTEGER NOT NULL DEFAULT 1,
     user_agent TEXT,
     ip_address TEXT
@@ -381,28 +381,27 @@ CREATE TABLE IF NOT EXISTS auth_session (
 CREATE INDEX IF NOT EXISTS auth_session_user ON auth_session (user_id);
 
 -- What leads to a claim. Every row holds a digest, and goes with the claim.
--- `expires_at` is in milliseconds, and a setup code has none.
+-- A setup code has no `expires_at`.
 CREATE TABLE IF NOT EXISTS setup_proof (
     digest TEXT PRIMARY KEY NOT NULL,
     kind TEXT NOT NULL CHECK (kind IN ('code', 'ticket', 'session')),
     generation TEXT NOT NULL,
-    expires_at INTEGER
+    expires_at TEXT
 ) STRICT, WITHOUT ROWID;
 
--- Spent signatures expire at `expires_at`, in milliseconds.
+-- Spent signatures expire at `expires_at`.
 CREATE TABLE IF NOT EXISTS mcp_spent_confirmations (
     token TEXT PRIMARY KEY NOT NULL,
     credential TEXT NOT NULL,
     subject_digest TEXT NOT NULL,
     total INTEGER NOT NULL,
-    expires_at INTEGER NOT NULL
+    expires_at TEXT NOT NULL
 ) STRICT, WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS mcp_spent_confirmations_expiry
     ON mcp_spent_confirmations (expires_at);
 
--- What the OAuth server keeps. A secret is held only as a digest, and every
--- time is in milliseconds.
+-- What the OAuth server keeps. A secret is held only as a digest.
 
 CREATE TABLE IF NOT EXISTS auth_oauth_client (
     client_id TEXT PRIMARY KEY NOT NULL,
@@ -421,8 +420,8 @@ CREATE TABLE IF NOT EXISTS auth_oauth_client (
     contacts TEXT NOT NULL,
     software_id TEXT,
     software_version TEXT,
-    created_at INTEGER NOT NULL,
-    offered_at INTEGER
+    created_at TEXT NOT NULL,
+    offered_at TEXT
 ) STRICT;
 
 -- The clients that name themselves by a metadata document, and how long the
@@ -430,8 +429,8 @@ CREATE TABLE IF NOT EXISTS auth_oauth_client (
 CREATE TABLE IF NOT EXISTS auth_oauth_client_document (
     client_id TEXT PRIMARY KEY NOT NULL
         REFERENCES auth_oauth_client (client_id) ON DELETE CASCADE,
-    fetched_at INTEGER NOT NULL,
-    fresh_until INTEGER NOT NULL
+    fetched_at TEXT NOT NULL,
+    fresh_until TEXT NOT NULL
 ) STRICT, WITHOUT ROWID;
 
 -- One row per app and person, for as long as the client is kept. A withdrawn
@@ -442,10 +441,10 @@ CREATE TABLE IF NOT EXISTS auth_oauth_consent (
     user_id TEXT NOT NULL REFERENCES auth_user (id) ON DELETE CASCADE,
     grant_id TEXT NOT NULL UNIQUE,
     scopes TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
-    last_used_at INTEGER,
-    withdrawn_at INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_used_at TEXT,
+    withdrawn_at TEXT,
     PRIMARY KEY (client_id, user_id)
 ) STRICT, WITHOUT ROWID;
 
@@ -495,7 +494,7 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
     attempt INTEGER NOT NULL DEFAULT 0,
     cycle_attempt INTEGER NOT NULL DEFAULT 0,
     error TEXT,
-    due_at INTEGER NOT NULL,
+    due_at TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     UNIQUE (webhook_id, event_id),
@@ -540,8 +539,8 @@ CREATE TABLE IF NOT EXISTS auth_oauth_code (
     scopes TEXT NOT NULL,
     challenge TEXT NOT NULL,
     resources TEXT NOT NULL,
-    expires_at INTEGER NOT NULL,
-    spent_at INTEGER,
+    expires_at TEXT NOT NULL,
+    spent_at TEXT,
     chain_id TEXT
 ) STRICT, WITHOUT ROWID;
 
@@ -558,8 +557,8 @@ CREATE TABLE IF NOT EXISTS auth_oauth_device_code (
     status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'denied', 'spent')),
     user_id TEXT REFERENCES auth_user (id) ON DELETE CASCADE,
     interval_seconds INTEGER NOT NULL,
-    last_polled_at INTEGER,
-    expires_at INTEGER NOT NULL
+    last_polled_at TEXT,
+    expires_at TEXT NOT NULL
 ) STRICT, WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS auth_oauth_device_code_client ON auth_oauth_device_code (client_id);
@@ -573,8 +572,8 @@ CREATE TABLE IF NOT EXISTS auth_oauth_access_token (
     chain_id TEXT NOT NULL,
     scopes TEXT NOT NULL,
     audience TEXT,
-    created_at INTEGER NOT NULL,
-    expires_at INTEGER NOT NULL
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS auth_oauth_access_token_chain ON auth_oauth_access_token (chain_id);
@@ -590,10 +589,10 @@ CREATE TABLE IF NOT EXISTS auth_oauth_refresh_token (
     chain_id TEXT NOT NULL,
     scopes TEXT NOT NULL,
     audience TEXT,
-    created_at INTEGER NOT NULL,
-    expires_at INTEGER NOT NULL,
-    rotated_at INTEGER,
-    ended_at INTEGER
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    rotated_at TEXT,
+    ended_at TEXT
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS auth_oauth_refresh_token_chain ON auth_oauth_refresh_token (chain_id);
@@ -617,14 +616,13 @@ CREATE INDEX IF NOT EXISTS auth_passkey_user ON auth_passkey (user_id);
 
 -- A ceremony under way. The browser holds a token and this table its digest,
 -- so a copy of the database starts nothing. A row goes at its first use.
--- `expires_at` is in milliseconds.
 CREATE TABLE IF NOT EXISTS auth_passkey_challenge (
     digest TEXT PRIMARY KEY NOT NULL,
     purpose TEXT NOT NULL CHECK (purpose IN ('add', 'prove')),
     origin TEXT NOT NULL,
     session_id TEXT,
     state TEXT NOT NULL,
-    expires_at INTEGER NOT NULL
+    expires_at TEXT NOT NULL
 ) STRICT, WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS auth_passkey_challenge_expiry ON auth_passkey_challenge (expires_at);
@@ -872,7 +870,7 @@ CREATE TABLE IF NOT EXISTS enrichment_files (
     signature TEXT NOT NULL DEFAULT '',
     -- The limit that stopped an over-limit file, and what it was then.
     capped_by TEXT CHECK (capped_by IN ('blob', 'inflated', 'memory', 'fixed')),
-    capped_at INTEGER,
+    cap INTEGER,
     -- A skipped file offered once more because a field a read fills was cleared; the refusal stays.
     refill INTEGER NOT NULL DEFAULT 0 CHECK (refill IN (0, 1)),
     updated_at TEXT NOT NULL,
@@ -880,7 +878,7 @@ CREATE TABLE IF NOT EXISTS enrichment_files (
     CHECK (refill = 0 OR state = 'skipped'),
     CHECK ((state = 'skipped') = (reason IS NOT NULL)),
     CHECK ((reason IS 'over_limit') = (capped_by IS NOT NULL)),
-    CHECK ((capped_by IS NULL) = (capped_at IS NULL))
+    CHECK ((capped_by IS NULL) = (cap IS NULL))
 ) STRICT, WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS enrichment_files_state ON enrichment_files (state, attempts);

@@ -787,7 +787,7 @@ async fn reads_a_skipped_file_again_for_a_cleared_field_and_still_holds_its_refu
     assert_eq!(one.sweep().await, counts(0, 0, 0));
     let held = "SELECT count(*) FROM enrichment_files f JOIN items i ON i.seq = f.item_seq \
                 WHERE i.id = ?1 AND f.state = 'skipped' AND f.reason = 'over_limit' \
-                AND f.capped_by = 'blob' AND f.capped_at = 10";
+                AND f.capped_by = 'blob' AND f.cap = 10";
     assert_eq!(one.count(held, &id), 1);
     let (status, body) = one
         .local(

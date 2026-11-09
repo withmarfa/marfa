@@ -497,10 +497,14 @@ fn purgeable(tx: &rusqlite::Transaction<'_>, app: &App) -> Result<Vec<Hash>> {
         return Ok(Vec::new());
     }
     let grace = stored::deciding(tx, &seeds, BLOB_CLEANUP_GRACE_MS)?;
-    let cutoff = app
+    match app
         .clock
-        .stamp_ago(i64::try_from(grace).unwrap_or(i64::MAX));
-    rows::purge_candidates(tx, &cutoff)
+        .instant()
+        .earlier_by(i64::try_from(grace).unwrap_or(i64::MAX))
+    {
+        Some(cutoff) => rows::purge_candidates(tx, &cutoff.text()),
+        None => Ok(Vec::new()),
+    }
 }
 
 /// Finishes the deletions a purge left, reports every blob nothing references, and purges

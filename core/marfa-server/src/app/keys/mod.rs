@@ -14,6 +14,7 @@ use super::connectors;
 use super::items::reading;
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
+use crate::app::clock::Stamp;
 pub use request::{MINT_FIELDS, Mint, UPDATE_FIELDS, Update};
 pub use secret::hash as digest_of;
 pub use usage::Usage;
@@ -115,9 +116,11 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Key> {
         },
         levers: OwnLevers::from_row(row.get("enforcement_override")?),
         standing: Standing::default(),
-        created_at: row.get("created_at")?,
-        expires_at: row.get("expires_at")?,
-        last_used_at: row.get("last_used_at")?,
+        created_at: row.get::<_, Stamp>("created_at")?.text(),
+        expires_at: row.get::<_, Option<Stamp>>("expires_at")?.map(Stamp::text),
+        last_used_at: row
+            .get::<_, Option<Stamp>>("last_used_at")?
+            .map(Stamp::text),
     })
 }
 

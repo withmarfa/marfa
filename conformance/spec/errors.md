@@ -532,6 +532,14 @@ If a request meets a fault for which the server holds no refusal, and the fault 
 
 **Tests:** `compliance/internal-error.test.ts › answers 500 internal_error with the code and a fixed message and nothing else, and the instance answers again once it is gone`.
 
+### `errors/stored-time-unreadable`
+
+If the server needs a stored time as an instant to answer a request, such as to judge an expiry, a lease or a retention window, and that time is not RFC 3339 UTC text with milliseconds, as `YYYY-MM-DDTHH:mm:ss.sssZ`, then the server MUST answer `500 internal_error`.
+
+**Reason:** the server stores every time in that one form (`instance/stored-time-form`), so a time in any other form was not written by it. Read as some other time, an expiry could keep a key or a sign-in open past its end, or end it early.
+
+**Tests:** `compliance/stored-times.test.ts › answers 500 internal_error to a key whose stored expiry does not read, and answers again once it reads`, `› answers 500 internal_error to a browser session whose stored end does not read, and answers again once it reads`.
+
 ### `errors/client-closed-request`
 
 When a client closes its connection while the server is still reading the request body, the server MUST NOT report the request as an unhandled fault.

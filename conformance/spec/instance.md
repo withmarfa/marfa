@@ -994,6 +994,16 @@ If the server stops for a failure to start that is not a refusal under `instance
 
 **Tests:** `compliance/database-file.test.ts › exits with status 1, not 78, when the database file is not a database at all`, `compliance/instance-lifecycle.test.ts › exits with status 1, not 78, when the port it was given is already taken`.
 
+## Stored times
+
+### `instance/stored-time-form`
+
+The server MUST store every time it keeps as RFC 3339 UTC text with milliseconds, as `YYYY-MM-DDTHH:mm:ss.sssZ`.
+
+**Reason:** text in this form sorts in the order of its instants for the years 0000 to 9999, so the database compares and orders times as instants, and it is the form every time is answered in. A time an RFC fixes as whole seconds on the wire, such as `expires_in`, is still answered that way.
+
+**Tests:** `compliance/stored-times.test.ts › keeps every time in its database as UTC text with milliseconds`.
+
 ## Stopping
 
 An instance is stopped by `SIGTERM` or `SIGINT`, and a container runtime follows `SIGTERM` with `SIGKILL` after ten seconds by default.

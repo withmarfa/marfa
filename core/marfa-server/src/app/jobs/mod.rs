@@ -388,8 +388,9 @@ pub async fn cancel(app: &App, caller: &Caller, id: String) -> Result<Value> {
 pub async fn gc(app: Arc<App>, run: Run) -> Result<Report> {
     let (removed, done) = super::housekeeping::drain(&run, GC_BATCH, || {
         let before = super::housekeeping::ago(&app, KEPT_DAYS, DAY_MS);
-        app.db.write(Write::own(), move |tx| {
-            store::remove_ended(tx, &before, GC_BATCH)
+        app.db.write(Write::own(), move |tx| match before {
+            Some(before) => store::remove_ended(tx, &before, GC_BATCH),
+            None => Ok(0),
         })
     })
     .await?;

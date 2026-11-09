@@ -1,8 +1,8 @@
 //! A folder copy's report of its own sync, judged before the store is asked anything.
 
-use chrono::{DateTime, SecondsFormat};
 use serde_json::{Map, Value, json};
 
+use crate::app::clock::Stamp;
 use crate::app::refusal::{Refusal, Result};
 use crate::app::types::missing_field;
 
@@ -97,11 +97,7 @@ fn success_time(body: &Map<String, Value>) -> Result<Option<String>> {
     }
     value
         .as_str()
-        .filter(|text| {
-            text.ends_with('Z')
-                && DateTime::parse_from_rfc3339(text)
-                    .is_ok_and(|time| time.to_rfc3339_opts(SecondsFormat::Millis, true) == *text)
-        })
+        .filter(|text| Stamp::parsed(text).is_some())
         .map(|text| Some(text.to_string()))
         .ok_or_else(|| {
             invalid(

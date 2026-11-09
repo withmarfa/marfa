@@ -65,11 +65,11 @@ pub async fn confirmed(
     let token = token.to_string();
     app.write(caller, keys::REVOKED, move |unit| {
         unit.caller.require_key_door()?;
-        let now_ms = unit.at_ms;
+        let now_ms = unit.instant.ms();
         if parsed.expires_at_ms <= now_ms {
             return Ok(Confirmed::Stale);
         }
-        confirm::sweep(unit.tx(), now_ms)?;
+        confirm::sweep(unit.tx(), unit.instant)?;
         let named = confirm::ids_digest(std::slice::from_ref(&id));
         if let Some(spent) = confirm::spent(unit.tx(), &parsed.signature)? {
             return Ok(

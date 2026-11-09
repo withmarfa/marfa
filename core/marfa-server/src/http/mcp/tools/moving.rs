@@ -5,7 +5,7 @@ use std::sync::Arc;
 use marfa_rules::validation;
 use serde_json::{Map, Value, json};
 
-use super::{Definition, instant, item_id, parsed, text};
+use super::{Definition, item_id, parsed, text};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::items::write::ruled;
@@ -98,7 +98,7 @@ fn preview_body(
         body.insert(name.into(), field(name));
     }
     body.insert("confirm".into(), token.text.into());
-    body.insert("expires_at".into(), instant(token.expires_at_ms).into());
+    body.insert("expires_at".into(), token.expires_at.text().into());
     body.insert(
         "next".into(),
         format!(

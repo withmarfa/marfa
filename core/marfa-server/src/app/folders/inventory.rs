@@ -1,13 +1,11 @@
 //! The active folders, newest first, without their settings.
 
-use rusqlite::types::Value as Sql;
 use serde_json::{Value, json};
 
 use super::FOLDER_TYPE;
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::items::{newest_of, parsed, reading};
-use crate::app::query::Position;
 use crate::app::refusal::Result;
 
 const UNTITLED: &str = "Untitled folder";
@@ -29,25 +27,19 @@ pub(super) fn shown(title: Option<&str>) -> String {
 }
 
 pub async fn list(app: &App, caller: &Caller, page: Page) -> Result<String> {
-    let secret = app.cursor_secret.clone();
     reading(app, caller, move |read| {
         let after = page
             .cursor
             .as_deref()
-            .map(|cursor| Position::from_payload(&secret.open(SCOPE, cursor)?, 1))
+            .map(|cursor| read.cursors.open_at(SCOPE, cursor))
             .transpose()?;
-        let created = after.as_ref().and_then(|at| match at.keys.first() {
-            Some(Sql::Text(created)) => Some(created.as_str()),
-            _ => None,
-        });
         let rows = newest_of(
             read.tx,
             FOLDER_TYPE,
             "active",
             after
                 .as_ref()
-                .zip(created)
-                .map(|(at, created)| (created, at.id.as_str())),
+                .map(|(created, id)| (created.as_str(), id.as_str())),
             page.limit + 1,
         )?;
         let more = rows.len() as i64 > page.limit;
@@ -62,16 +54,7 @@ pub async fn list(app: &App, caller: &Caller, page: Page) -> Result<String> {
             }));
         }
         let next_cursor = match rows.last().filter(|_| more) {
-            Some(last) => Value::from(
-                secret.issue(
-                    SCOPE,
-                    &Position {
-                        keys: vec![Sql::Text(last.created_at.clone())],
-                        id: last.id.clone(),
-                    }
-                    .payload(),
-                )?,
-            ),
+            Some(last) => Value::from(read.cursors.issue_at(SCOPE, &last.created_at, &last.id)?),
             None => Value::Null,
         };
         Ok(json!({ "data": data, "next_cursor": next_cursor }).to_string())
