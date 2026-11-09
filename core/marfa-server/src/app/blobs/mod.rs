@@ -1,5 +1,4 @@
-//! Blobs: bytes named by the hash of what they hold, kept in every attached store, and who may
-//! read them.
+//! Blobs: content-addressed bytes, kept in every attached store.
 
 pub mod carry;
 mod digests;
@@ -62,8 +61,7 @@ pub struct Blob {
     pub size_bytes: u64,
 }
 
-/// A blob a caller may read, the copies the copy record names in attached stores, and whether
-/// it records a copy anywhere.
+/// `recorded` counts copies in detached stores too.
 #[derive(Debug)]
 pub struct Found {
     pub blob: Blob,
@@ -81,8 +79,7 @@ impl Found {
     }
 }
 
-/// A blob's bytes in a file open for one read. A copy fetched from another store is spooled in
-/// the disk store's `tmp`, and is removed with this.
+/// A copy from another store is spooled in `tmp` and removed on `close`.
 pub struct Opened {
     file: File,
     spool: Option<Staged>,
@@ -118,8 +115,6 @@ fn started(error: impl std::fmt::Display) -> Failure {
     Failure::start(error.to_string())
 }
 
-/// The refusal for a start over a blob folder that is missing or holds no marker while the
-/// copy record names copies there.
 fn folder_missing(root: &Path, why: &str) -> Failure {
     Failure::start(format!(
         "The blob folder {} is missing or holds no store marker, and the copy record names \
@@ -128,10 +123,7 @@ fn folder_missing(root: &Path, why: &str) -> Failure {
     ))
 }
 
-/// The object store named by the configuration: the one its marker names, writing a marker
-/// for a store that has none, or, while it is not reached, the one the copy record names at
-/// its locator. With `unfilled` naming a blob folder that lost its copies, only a store the
-/// server has recorded may fill it, and nothing is written before that is known.
+/// With `unfilled`, only a store the server recorded may refill the folder.
 async fn object_store(
     db: &Db,
     settings: &ObjectStoreSettings,
@@ -199,9 +191,7 @@ async fn object_store(
 }
 
 impl Blobs {
-    /// Takes the disk store from its folder's marker and the object store from the
-    /// configuration, and detaches every store the configuration no longer names. The folder
-    /// is changed only once nothing refuses the start.
+    /// The folder is changed only once nothing refuses the start.
     pub async fn open(
         db: &Db,
         root: &Path,
@@ -374,8 +364,7 @@ impl Blobs {
         }
     }
 
-    /// Copies a store's copy into a file of its own in the disk store's `tmp`, kept only if it
-    /// hashes to the blob's name, within the deadlines a copy between stores has.
+    /// Kept only if the spooled bytes hash to the blob's name.
     async fn spool(
         &self,
         store: &Store,
@@ -417,8 +406,7 @@ impl Blobs {
         store::within(limit, spooled).await.map_err(Failed::Io)
     }
 
-    /// Whether the store answers in time that it holds bytes under the blob's name, failing
-    /// as a read of them would but reading none.
+    /// Fails as a read would, but reads no bytes.
     async fn answers_for(
         &self,
         store: &Store,
@@ -453,8 +441,7 @@ impl Blobs {
         }
     }
 
-    /// Whether the store has bytes of the blob, recorded or not, and whether any of them hash to
-    /// it, asked of the store itself.
+    /// Whether the store holds any bytes of the blob, and whether any are intact.
     async fn holding(&self, store: &Store, hash: &Hash) -> (bool, bool) {
         let asked = async {
             match store {
@@ -532,8 +519,7 @@ impl Blobs {
             .await
     }
 
-    /// Deletes a blob's bytes, the disk's file or one object, from a store on a task that
-    /// outlasts the wait for it.
+    /// Runs on a task that outlasts the wait for it.
     async fn delete(
         &self,
         store: &Store,
@@ -790,8 +776,7 @@ impl App {
         Duration::from_millis(self.settings.live().get(BLOB_READ_IDLE_TIMEOUT_MS))
     }
 
-    /// Places the bytes on the disk. Nothing serves them until a record names them. A refusal
-    /// is answered only once the staged file is gone, wherever the failure dropped it.
+    /// A refusal is answered only once the staged file is gone.
     async fn place_upload(&self, mut intake: Intake) -> Result<Placed> {
         let Some(staged) = intake.staged.take() else {
             return Err(Refusal::internal("an upload finished twice"));
@@ -829,6 +814,13 @@ impl App {
             );
             return Err(unavailable());
         }
+        let (queued, at) = (hash.clone(), self.clock.stamp());
+        let disk_id = self.blobs.disk.id().to_string();
+        self.db
+            .write(Write::own(), move |tx| {
+                rows::queue_deletion(tx, &queued, &disk_id, "", &at)
+            })
+            .await?;
         let (target, placed, faults) = (self.blobs.disk.clone(), hash.clone(), self.faults.clone());
         let mut staged = staged;
         self.blobs
@@ -859,8 +851,7 @@ impl App {
         })
     }
 
-    /// Unlocks placed bytes once the write that records them has ended, and replicates them if
-    /// it committed.
+    /// Call only once the record's write has ended.
     fn release_upload(&self, placed: Placed, committed: bool) {
         let Placed { recording, held } = placed;
         drop(held);
@@ -906,8 +897,7 @@ impl App {
         .await
     }
 
-    /// Carries out the queued deletions of a store's bytes of a blob, each of an object no copy
-    /// records. The caller holds the blob's lock.
+    /// The caller holds the blob's lock.
     async fn finish_deletion(&self, store: &Store, hash: &Hash) -> std::result::Result<(), Failed> {
         let (blob, id) = (hash.clone(), store.id().to_string());
         let queued = self
@@ -964,17 +954,9 @@ impl App {
         })
     }
 
-    /// What each attached store physically holds of `hash`, past every blob fault, and the
-    /// files the disk store is receiving now. Only the test hooks ask.
+    /// For the test hooks: what each store holds, past every blob fault.
     pub async fn inspect_stores(&self, hash: Option<&str>) -> Result<serde_json::Value> {
-        let hash = match hash {
-            Some(text) if text.starts_with("sha256:") => Some(Hash::parse(text)?),
-            Some(_) => {
-                return Err(Refusal::validation("Provide hash as a sha256: blob name.")
-                    .with_detail("field", "hash"));
-            }
-            None => None,
-        };
+        let hash = hash.map(Hash::parse).transpose()?;
         let mut stores = Vec::new();
         for store in self.blobs.attached() {
             let (holds, intact) = match &hash {
@@ -1006,9 +988,7 @@ impl App {
             .await
     }
 
-    /// A window of a blob's bytes, from the first store that holds a copy and begins to
-    /// answer in time. A blob with no recorded copy is an unknown one; a copy in a detached
-    /// store, or in a store that does not answer, is a store that failed.
+    /// A copy only in a detached or silent store is a store that failed, not an unknown blob.
     pub async fn bytes_of(&self, found: &Found, first: u64, length: u64) -> Result<ByteStream> {
         if !found.recorded {
             return Err(not_found());
@@ -1035,8 +1015,7 @@ impl App {
         Err(unavailable())
     }
 
-    /// Answers as `bytes_of` would, from the copy record and a store that says it holds a
-    /// copy, without reading the bytes.
+    /// Answers as `bytes_of` would, without reading the bytes.
     pub async fn check_bytes(&self, found: &Found) -> Result<()> {
         if !found.recorded {
             return Err(not_found());
@@ -1063,8 +1042,7 @@ impl App {
         Err(unavailable())
     }
 
-    /// A blob's bytes as a file for the server's own reading, from the first attached store
-    /// that holds a copy and answers: `None` when no attached store holds one.
+    /// `None` when no attached store holds a copy.
     pub async fn open_held(&self, hash: &Hash) -> Result<Option<(Opened, Blob)>> {
         let looked = hash.clone();
         let found = self
@@ -1117,8 +1095,7 @@ impl App {
         Err(unavailable())
     }
 
-    /// The object store's own link while it holds a copy, or the instance's. A store that
-    /// holds a copy and makes no link in time, its credentials included, is a store that failed.
+    /// The object store's own link while it holds a copy, else the instance's.
     pub async fn mint_link(&self, caller: &Caller, hash: &Hash, ttl: u64) -> Result<Link> {
         let found = self.find_blob(caller, hash).await?;
         if let Some(s3) = &self.blobs.s3

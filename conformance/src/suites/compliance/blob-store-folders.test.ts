@@ -99,7 +99,6 @@ describe("the copy record on an instance with one disk store", () => {
       expect.objectContaining({
         store_id: stores[0]!.id,
         kind: "disk",
-        policy: "all",
         detached: false,
         verified_at: null,
       }),

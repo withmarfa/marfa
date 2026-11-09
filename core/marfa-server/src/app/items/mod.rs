@@ -314,6 +314,31 @@ fn not_found() -> Refusal {
     Refusal::new(Code::ItemNotFound, "Item not found")
 }
 
+/// The row `id` names when it is of `type_id` and the caller may read that type.
+pub(crate) fn readable_of(
+    tx: &Transaction<'_>,
+    caller: &Caller,
+    id: &str,
+    type_id: &str,
+) -> Result<Item> {
+    rows::by_id(tx, id)?
+        .filter(|row| {
+            row.type_id == type_id && row.state != "trashed" && caller.may_read_type(type_id)
+        })
+        .ok_or_else(not_found)
+}
+
+/// Rows of one type and state, newest first, after the position a page ended at.
+pub(crate) fn newest_of(
+    tx: &Transaction<'_>,
+    type_id: &str,
+    state: &str,
+    after: Option<(&str, &str)>,
+    limit: i64,
+) -> Result<Vec<Item>> {
+    rows::newest_of(tx, type_id, state, after, limit)
+}
+
 fn link_in<'a>(field: &str, properties: &'a Map<String, Value>) -> Option<&'a str> {
     properties
         .get(field)

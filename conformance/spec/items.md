@@ -2312,7 +2312,7 @@ If `query.types`, `defaults.type` or a `first_placement` key names a well-formed
 
 ### `items/folder-setting-invalid`
 
-If a folder setting names a malformed or `system.*` type identifier, a `filter` the listing grammar refuses, a `beneath` or edge target that is not an item id, an edge type in `defaults.edges` nothing registered or `in-folder`, more than 100 edge types or 100 targets for one, an empty or non-string `include` or `ignore` pattern, a `first_placement` directory that is absolute or drive-absolute or carries a backslash or NUL, a `removal_threshold` or `addition_threshold` with negative `files` or a `fraction` outside 0 to 1, a `full_pass_interval_seconds` that is not a whole number from 60 to 86400, a `query.state` other than `active` or `archived`, or a `query.tier` other than `library`, `feed` or `all`, or an `outside_query` other than `send` or `hold`, then the server MUST answer `400 validation_error`.
+If a folder setting names a malformed or `system.*` type identifier, a `filter` the listing grammar refuses, a `beneath` or edge target that is not an item id, an edge type in `defaults.edges` nothing registered or `in-folder`, more than 100 edge types or 100 targets for one, an empty or non-string `include` or `ignore` pattern, a `first_placement` directory that is absolute or drive-absolute or carries a backslash or NUL, a `removal_threshold` or `addition_threshold` with `files` other than a whole number from 0 to 9007199254740991 or a `fraction` outside 0 to 1, a `full_pass_interval_seconds` that is not a whole number from 60 to 86400, a `query.state` other than `active` or `archived`, or a `query.tier` other than `library`, `feed` or `all`, or an `outside_query` other than `send` or `hold`, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/folders.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`, `› caps defaults.edges at 100 edge types and 100 targets for each`.
 
@@ -2331,6 +2331,54 @@ If a `first_placement` directory holds a `..` name, wherever it climbs back, or 
 **Reason:** a device treats a placement with a `..` name as outside the folder and writes no file there (`folders/placement-outside`), and a folder on disk cannot follow a `backref` condition (`folders/search-refuse-unsupported`), so a folder made with either would be stuck on every device.
 
 **Tests:** `compliance/folders.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`, `› takes the settings a device can follow, on a create and on a change`.
+
+### `items/folder-setting-default-type`
+
+If the settings a `POST /folders` or `PATCH /folders/{id}` would leave hold a `defaults.type` that the types in `query.types` do not hold, then the server MUST answer `400 validation_error`, naming `defaults.type` in `details.errors[0].path`, before it writes anything.
+
+**Reason:** a file made at that type would fall outside the query of its own folder, and a device refuses to follow such a folder. A query naming no type, or `*`, holds every type but `system.*`, and a change is judged on the complete settings it leaves, not on the settings it names.
+
+**Tests:** `compliance/folders.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`, `› refuses a change that leaves a default type outside the query, whichever setting it changes`.
+
+### `items/folder-setting-default-tier`
+
+If the settings a `POST /folders` or `PATCH /folders/{id}` would leave hold a `defaults.tier` that `query.tier` does not hold, then the server MUST answer `400 validation_error`, naming `defaults.tier` in `details.errors[0].path`, before it writes anything.
+
+**Reason:** a file made at that tier would fall outside the query of its own folder, and a device refuses to follow such a folder (`device/folder-write-defaults`). A query naming no tier holds `library`, and one naming `all` holds both.
+
+**Tests:** `compliance/folders.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`, `› takes a default tier the query holds, and the feed beside a query of both tiers`.
+
+### `items/folder-setting-pattern`
+
+If an `include` or `ignore` line is not a gitignore pattern a device reads, such as one that opens a `{` alternation it never closes or holds a character range written backwards, then the server MUST answer `400 validation_error`, naming `include` or `ignore` in `details.errors[0].path`, before it writes anything.
+
+**Reason:** a device refuses to follow a folder whose list it cannot read, so a folder made with such a line would be stuck on every device.
+
+**Tests:** `compliance/folders.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`.
+
+### `items/folder-setting-pattern-text`
+
+If the `include` and `ignore` lines of the settings a `POST /folders` or `PATCH /folders/{id}` would leave hold more than 6144 characters together, then the server MUST answer `400 validation_error`, naming `include` or `ignore` in `details.errors[0].path`, before it writes anything.
+
+**Reason:** a device compiles both lists each time it starts, and a bound on their text keeps that work small on the smallest machine that follows a folder. A change is judged on the complete lists it leaves, not on the list it names.
+
+**Tests:** `compliance/folders.test.ts › refuses include and ignore lines that hold more than 6144 characters together, on a create and on a change`.
+
+### `items/folder-setting-pattern-size`
+
+If an `include` or an `ignore` list compiles to more than 1 MiB for a device to match with, then the server MUST answer `400 validation_error`, naming `include` or `ignore` in `details.errors[0].path`, before it writes anything.
+
+**Reason:** a few hundred lines of wildcards can need far more memory and time to compile than their text suggests, and a folder whose list a device cannot afford to compile would be stuck on every device. The server judges the lists before it queues the write, so a slow or refused list holds up no other write.
+
+**Tests:** `compliance/folders.test.ts › refuses a list that compiles past the bound with its list named, on a create and on a change`.
+
+### `items/folder-query-every-type`
+
+When `POST /folders` or `PATCH /folders/{id}` names `*` in `query.types`, the server MUST store the query as sent.
+
+**Reason:** `*` is every type but `system.*` (`folders/search-default-types`), which a device follows, though a view's `query.types` lists no `*`.
+
+**Tests:** `compliance/folders.test.ts › takes the star in a folder's query types and reads it back`.
 
 ## Links and tombstones
 

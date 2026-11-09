@@ -720,7 +720,7 @@ When a database statement fails for an item that a `POST /items/bulk-actions` jo
 
 ## Codes
 
-Every code the server answers over HTTP is a row of the table below, which is written from the server's own code table and so cannot differ from it. The codes of a tool error on the MCP endpoint, such as `confirmation_stale` and `file_not_fetched`, are in `mcp.md`, not in this table.
+Every code the server answers over HTTP is a row of the table below, and a server answers no code the table does not hold. The codes of a tool error on the MCP endpoint, such as `confirmation_stale` and `file_not_fetched`, are in `mcp.md`, not in this table.
 
 <!-- errors-table:start -->
 
