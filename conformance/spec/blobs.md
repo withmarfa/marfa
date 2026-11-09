@@ -294,7 +294,7 @@ When the server answers `GET /blobs/{hash}` or a `GET` of the link the instance 
 
 ### `blobs/range-unread`
 
-If a read of a blob carries a `Range` the server does not read, a suffix range, several ranges, another unit, a malformed range or a bound past the safe integer, then the server MUST answer `200` with the whole blob and no `Content-Range`.
+If a read of a blob carries a `Range` the server does not read, a suffix range, several ranges, another unit, a malformed range or a bound that does not fit an unsigned 64-bit integer, then the server MUST answer `200` with the whole blob and no `Content-Range`.
 
 **Tests:** `correctness/blob-correctness.test.ts › serves the whole blob for a Range it does not read`, `compliance/blob-served.test.ts › applies the range rules to an instance link`.
 
@@ -308,29 +308,19 @@ When a credential that may read a blob sends `HEAD /blobs/{hash}` with a `Range`
 
 A hash is `sha256:` and the 64 lowercase hexadecimal characters of a digest. The hash operations are the four reads, and the link the instance serves.
 
-### `blobs/hash-bare`
-
-When a credential names a blob by the 64 lowercase hexadecimal characters of its hash with no `sha256:` on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/copies`, the server MUST answer as it does for the same hash with the prefix.
-
-**Tests:** `correctness/blob-correctness.test.ts › takes a bare 64-character hash on every hash operation and refuses any other malformed one`.
-
-### `blobs/hash-bare-link`
-
-When a request to the instance's link names the blob by the 64 lowercase hexadecimal characters of its hash with no `sha256:`, the server MUST serve the bytes as it does for the hash with the prefix.
-
-**Tests:** `compliance/blob-served.test.ts › serves an instance link under a bare hash and refuses a malformed hash or a stray key on it`.
-
 ### `blobs/hash-malformed`
 
-If a credential names a blob on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/copies` by anything but a hash with its `sha256:` or its bare 64 lowercase hexadecimal characters, a hash in capitals, another prefix and a hash of 63 or 65 characters among them, then the server MUST answer `400 validation_error`.
+If a credential names a blob on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/copies` by anything but `sha256:` and the 64 lowercase hexadecimal characters of a digest, the bare 64 characters, a hash in capitals, another prefix and a hash of 63 or 65 characters among them, then the server MUST answer `400 validation_error`.
 
-**Tests:** `correctness/blob-correctness.test.ts › takes a bare 64-character hash on every hash operation and refuses any other malformed one`, `› refuses a malformed hash and an empty upload`, `› answers 404 for a link to an unknown hash and 400 for a malformed one`, `compliance/blob-stores.test.ts › answers 404 for the copies of an unknown hash and 400 for a malformed one`.
+**Reason:** a blob has one name, the one every answer gives it, so a hash without its prefix is not a second name for it.
+
+**Tests:** `correctness/blob-correctness.test.ts › refuses a hash without its prefix and every other malformed one on every hash operation`, `› refuses a malformed hash and an empty upload`, `› answers 404 for a link to an unknown hash and 400 for a malformed one`, `compliance/blob-stores.test.ts › answers 404 for the copies of an unknown hash and 400 for a malformed one`.
 
 ### `blobs/hash-malformed-link`
 
-If a request to the instance's link names a blob by a malformed hash, then the server MUST answer `400 validation_error`.
+If a request to the instance's link names a blob by a malformed hash, the bare 64 characters without `sha256:` among them, then the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/blob-served.test.ts › serves an instance link under a bare hash and refuses a malformed hash or a stray key on it`.
+**Tests:** `compliance/blob-served.test.ts › refuses an instance link under a bare or malformed hash, or with a stray key on it`.
 
 ### `blobs/hash-unknown`
 
@@ -344,7 +334,7 @@ If a caller authorized by `blobs.manage` or direct owner or local authority, or 
 
 If a request to `POST /blobs`, `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url`, `GET /blobs/{hash}/copies` or the instance's link carries a query key the operation does not declare and that does not start with an underscore, then the server MUST answer `400 validation_error`.
 
-**Tests:** `correctness/blob-correctness.test.ts › refuses a query key a blob operation does not declare and ignores one that starts with an underscore`, `compliance/blob-served.test.ts › serves an instance link under a bare hash and refuses a malformed hash or a stray key on it`, `compliance/declared-refusals.test.ts › is refused 400 and named on every published door, the event stream included`.
+**Tests:** `correctness/blob-correctness.test.ts › refuses a query key a blob operation does not declare and ignores one that starts with an underscore`, `compliance/blob-served.test.ts › refuses an instance link under a bare or malformed hash, or with a stray key on it`, `compliance/declared-refusals.test.ts › is refused 400 and named on every published door, the event stream included`.
 
 ### `blobs/query-key-named`
 
@@ -352,7 +342,7 @@ When the server refuses a query key on `POST /blobs`, `GET /blobs/{hash}`, `GET 
 
 **Reason:** a `HEAD` answer has no body to carry the names.
 
-**Tests:** `correctness/blob-correctness.test.ts › refuses a query key a blob operation does not declare and ignores one that starts with an underscore`, `compliance/blob-served.test.ts › serves an instance link under a bare hash and refuses a malformed hash or a stray key on it`.
+**Tests:** `correctness/blob-correctness.test.ts › refuses a query key a blob operation does not declare and ignores one that starts with an underscore`, `compliance/blob-served.test.ts › refuses an instance link under a bare or malformed hash, or with a stray key on it`.
 
 ### `blobs/query-key-stores-nothing`
 
@@ -364,7 +354,7 @@ If the server refuses an upload for a query key, then the server MUST store none
 
 When a request to a blob operation carries a query key that starts with an underscore, the server MUST answer as it does without the key.
 
-**Tests:** `correctness/blob-correctness.test.ts › refuses a query key a blob operation does not declare and ignores one that starts with an underscore`, `compliance/blob-served.test.ts › serves an instance link under a bare hash and refuses a malformed hash or a stray key on it`.
+**Tests:** `correctness/blob-correctness.test.ts › refuses a query key a blob operation does not declare and ignores one that starts with an underscore`, `compliance/blob-served.test.ts › refuses an instance link under a bare or malformed hash, or with a stray key on it`.
 
 ## Links
 

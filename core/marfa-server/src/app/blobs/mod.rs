@@ -933,14 +933,7 @@ impl App {
     /// What each attached store physically holds of `hash`, past every blob fault, and the
     /// files the disk store is receiving now. Only the test hooks ask.
     pub async fn inspect_stores(&self, hash: Option<&str>) -> Result<serde_json::Value> {
-        let hash = match hash {
-            Some(text) if text.starts_with("sha256:") => Some(Hash::parse(text)?),
-            Some(_) => {
-                return Err(Refusal::validation("Provide hash as a sha256: blob name.")
-                    .with_detail("field", "hash"));
-            }
-            None => None,
-        };
+        let hash = hash.map(Hash::parse).transpose()?;
         let mut stores = Vec::new();
         for store in self.blobs.attached() {
             let (holds, intact) = match &hash {

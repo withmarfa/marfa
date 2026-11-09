@@ -693,10 +693,9 @@ CREATE TABLE IF NOT EXISTS blob_pending_deletions (
     PRIMARY KEY (hash, store_id, object)
 ) STRICT, WITHOUT ROWID;
 
--- The digest omits the `sha256:` prefix used by `blobs.hash`.
 CREATE TABLE IF NOT EXISTS owner_picture (
     id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
-    sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
+    hash TEXT NOT NULL CHECK (length(hash) = 71),
     mime_type TEXT NOT NULL CHECK (mime_type IN ('image/png', 'image/jpeg', 'image/webp')),
     updated_at TEXT NOT NULL
 ) STRICT;
