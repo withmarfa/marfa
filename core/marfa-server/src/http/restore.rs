@@ -41,6 +41,7 @@ pub async fn restore(State(app): State<Arc<App>>, caller: Caller, request: Reque
     loop {
         match tokio::time::timeout(idle, body.frame()).await {
             Err(_) => {
+                receiving.abandon().await;
                 return Err(Refusal::new(
                     Code::RequestTimeout,
                     "The body stopped arriving; the restore was ended and nothing was written.",
@@ -48,7 +49,10 @@ pub async fn restore(State(app): State<Arc<App>>, caller: Caller, request: Reque
                 .into());
             }
             Ok(None) => break,
-            Ok(Some(Err(_))) => return Err(Stopped::ClientClosed),
+            Ok(Some(Err(_))) => {
+                receiving.abandon().await;
+                return Err(Stopped::ClientClosed);
+            }
             Ok(Some(Ok(frame))) => {
                 if let Ok(data) = frame.into_data() {
                     receiving.push(data).await?;

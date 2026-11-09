@@ -746,6 +746,13 @@ export interface RestoreArchiveResponse {
   sources_added: number;
   sources_skipped: number;
   sources_skipped_reasons: Record<string, number>;
+  settings_added: number;
+  settings_skipped: number;
+  connector_states_added: number;
+  connector_states_skipped: number;
+  connector_agreements_added: number;
+  connector_agreements_skipped: number;
+  set_up_again: string;
 }
 
 export interface PerfResult {

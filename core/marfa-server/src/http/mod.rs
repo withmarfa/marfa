@@ -133,7 +133,6 @@ fn count_doors(app: Arc<App>) -> Routes {
     Doors::new()
         .route("/items/stats", get(listing::stats))
         .route("/export", get(export::export))
-        .route("/restore", post(restore::restore))
         .admitting(app, Admission::Counted)
 }
 
@@ -188,6 +187,7 @@ fn item_doors(app: Arc<App>) -> Routes {
 
 fn blob_doors() -> Routes {
     Doors::new()
+        .route("/restore", post(restore::restore))
         .route("/blobs", post(blobs::upload))
         .route("/blobs/stores", get(blobs::stores))
         .route("/blobs/orphans", get(blobs::orphans))

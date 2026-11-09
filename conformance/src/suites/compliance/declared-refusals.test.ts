@@ -475,12 +475,12 @@ describe("a core edge type", () => {
           blobs: {},
         }),
       },
-      lineFile("items", ""),
-      lineFile("edges", ""),
       lineFile(
         "instance",
         `${JSON.stringify({ edge_type: { id: "about", label: "About" } })}\n`,
       ),
+      lineFile("items", ""),
+      lineFile("edges", ""),
     ]);
     const restored = await getOwnerClient().restoreArchive(archive);
     expect(restored.status).toBe(409);

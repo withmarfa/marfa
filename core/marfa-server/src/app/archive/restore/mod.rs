@@ -67,6 +67,12 @@ impl Receiving {
         }
     }
 
+    /// Gives up on the body, and answers once its spool is gone.
+    pub async fn abandon(mut self) {
+        self.parts = None;
+        let _ = (&mut self.reading).await;
+    }
+
     /// Ends the body and answers what was read.
     pub async fn finish(mut self) -> Result<Received> {
         self.parts = None;
@@ -134,7 +140,7 @@ impl App {
         let spool = self.restore_spool();
         let (parts, mut arriving) = mpsc::channel::<Bytes>(QUEUED);
         let reading = tokio::task::spawn_blocking(move || {
-            let mut intake = Intake::new(spool, committed);
+            let mut intake = Intake::new(spool, committed)?;
             while let Some(part) = arriving.blocking_recv() {
                 intake.push(&part)?;
             }
@@ -316,7 +322,7 @@ impl App {
                         let staged = (settings_added > 0)
                             .then(|| stored::stage(tx, &settings))
                             .transpose()?;
-                        faults.hold_blocking(HOLD_RESTORE_COMMIT);
+                        faults.hold_writing(HOLD_RESTORE_COMMIT);
                         Ok((answer, staged))
                     })
                 })

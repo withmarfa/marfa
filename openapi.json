@@ -8684,7 +8684,7 @@
         ],
         "description": "The instance configuration: its display name, enforcement levers and live settings, with the instance's ID."
       },
-      "InvalidPropertiesOrInvalidSchemaOrValidationErrorRefusal": {
+      "InheritanceViolationOrInvalidPropertiesOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -8693,8 +8693,10 @@
               "code": {
                 "type": "string",
                 "enum": [
+                  "inheritance_violation",
                   "invalid_properties",
                   "invalid_schema",
+                  "property_shadows_field",
                   "validation_error"
                 ],
                 "description": "A machine-readable code for the error. Use it in your logic."
@@ -62369,11 +62371,11 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: the body isn't a valid archive, lacks one of its four files (`details.entries`), repeats an entry, is at another version, has an invalid row, or has a file over 64 MiB.\n- `invalid_properties`: a `core` or `system` item breaks its type or its schedule can't unfold, or `strict_mode` refuses a property.\n- `invalid_schema`: an archived type is invalid or has an unknown key.",
+            "description": "- `validation_error`: the body isn't a valid archive, lacks one of its four files (`details.entries`), repeats an entry, is at another version, has an invalid row, or has a file over 64 MiB.\n- `invalid_properties`: a `core` or `system` item breaks its type or its schedule can't unfold, or `strict_mode` refuses a property.\n- `invalid_schema`: an archived type is invalid or has an unknown key.\n- `inheritance_violation`: an archived type reshapes an inherited field.\n- `property_shadows_field`: an archived type has a field named like one every item has.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InvalidPropertiesOrInvalidSchemaOrValidationErrorRefusal"
+                  "$ref": "#/components/schemas/InheritanceViolationOrInvalidPropertiesOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -62540,6 +62542,36 @@
               },
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "422": {
+            "description": "`compatible_with_violation`: an archived type's `compatible_with` names a type neither the archive nor this instance holds, or one the type doesn't satisfy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompatibleWithViolationRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"

@@ -192,13 +192,19 @@ impl Rows {
             .with_detail("entry", file.name()));
         }
         if let Some(pointer) = marfa_rules::json_text::ill_formed_at(text) {
-            return Err(invalid(format!(
-                "Line {row} of {} holds text at {pointer} with a surrogate escape that has no partner.",
+            let named = named_by(file, text);
+            let refusal = invalid(format!(
+                "{} on line {row} of {} holds text at {pointer} with a surrogate escape that has no partner.",
+                named.as_ref().map_or_else(|| "A line".to_string(), |(kind, id)| format!("{kind} {id}")),
                 file.name()
             ))
             .with_detail("entry", file.name())
             .with_detail("row", row)
-            .with_detail("pointer", pointer));
+            .with_detail("pointer", pointer);
+            return Err(match named {
+                Some((kind, id)) => refusal.with_detail(&format!("{}_id", kind.to_ascii_lowercase()), id),
+                None => refusal,
+            });
         }
         let line: Value = serde_json::from_slice(text).map_err(|_| {
             invalid(format!("Line {row} of {} is not JSON.", file.name()))
@@ -394,6 +400,68 @@ impl Rows {
     }
 }
 
+/// The line with each unpaired surrogate escape read as U+FFFD, so the row it holds can be named.
+fn mended(text: &[u8]) -> Vec<u8> {
+    let surrogate = |at: usize| -> Option<u16> {
+        let hex = text.get(at + 2..at + 6)?;
+        let code = u16::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok()?;
+        (text.get(at..at + 2) == Some(b"\\u") && (0xD800..=0xDFFF).contains(&code)).then_some(code)
+    };
+    let mut out = Vec::with_capacity(text.len());
+    let (mut at, mut in_string) = (0, false);
+    while at < text.len() {
+        let byte = text[at];
+        if !in_string {
+            in_string = byte == b'"';
+            out.push(byte);
+            at += 1;
+            continue;
+        }
+        match byte {
+            b'"' => {
+                in_string = false;
+                out.push(byte);
+                at += 1;
+            }
+            b'\\' => match surrogate(at) {
+                Some(high) if (0xD800..0xDC00).contains(&high)
+                    && surrogate(at + 6).is_some_and(|low| low >= 0xDC00) =>
+                {
+                    out.extend_from_slice(&text[at..at + 12]);
+                    at += 12;
+                }
+                Some(_) => {
+                    out.extend_from_slice(b"\\ufffd");
+                    at += 6;
+                }
+                None => {
+                    out.extend_from_slice(&text[at..(at + 2).min(text.len())]);
+                    at += 2;
+                }
+            },
+            _ => {
+                out.push(byte);
+                at += 1;
+            }
+        }
+    }
+    out
+}
+
+/// What row a line holds, by kind and id, where its text reads once mended.
+fn named_by(file: LineFile, text: &[u8]) -> Option<(&'static str, String)> {
+    let line: Value = serde_json::from_slice(&mended(text)).ok()?;
+    let named = |pointer: &str| line.pointer(pointer).and_then(Value::as_str).map(str::to_string);
+    match file {
+        LineFile::Items => Some(("Item", named("/item/id")?)),
+        LineFile::Edges => Some(("Edge", named("/edge/id")?)),
+        LineFile::Instance => named("/type/id")
+            .or_else(|| named("/edge_type/id"))
+            .or_else(|| named("/type_icon/type_id"))
+            .map(|id| ("Type", id)),
+    }
+}
+
 /// Splits decompressed bytes into lines and checks each as it completes.
 struct Splitter {
     file: LineFile,
@@ -495,8 +563,14 @@ fn not_gzip(file: LineFile) -> Refusal {
 }
 
 impl Intake {
-    pub fn new(spool: Spool, committed: Arc<Catalog>) -> Intake {
-        Intake {
+    /// Opens the three line spools at once, so the body is spooled from its first part.
+    pub fn new(spool: Spool, committed: Arc<Catalog>) -> Result<Intake> {
+        let spools = [
+            Some(spool.scratch()?),
+            Some(spool.scratch()?),
+            Some(spool.scratch()?),
+        ];
+        Ok(Intake {
             spool,
             tar: Reader::default(),
             entry: Entry::None,
@@ -518,9 +592,9 @@ impl Intake {
                 edges: 0,
                 instance: 0,
             }),
-            spools: [None, None, None],
+            spools,
             carried: Vec::new(),
-        }
+        })
     }
 
     /// Whether any byte has arrived.
@@ -577,9 +651,10 @@ impl Intake {
             if file == LineFile::Items {
                 rows.begin_rows()?;
             }
-            let mut scratch = self.spool.scratch()?;
+            let scratch = self.spools[file.slot()]
+                .as_mut()
+                .ok_or_else(|| Refusal::internal("a restore's spool was lost"))?;
             let spool = BufWriter::new(scratch.file().try_clone().map_err(spooled)?);
-            self.spools[file.slot()] = Some(scratch);
             self.entry = Entry::Lines {
                 decoder: Box::new(GzDecoder::new(Splitter {
                     file,
@@ -598,7 +673,7 @@ impl Intake {
                 .and_then(|manifest| manifest.blobs.get(rest))
                 .map(|(mime, _)| mime.clone());
             match (Hash::parse(rest).ok(), listed) {
-                (Some(hash), Some(mime_type)) if self.stage == ENTRIES.len() => {
+                (Some(hash), Some(mime_type)) => {
                     self.entry = Entry::Blob {
                         name: name.clone(),
                         hash: Some(hash),

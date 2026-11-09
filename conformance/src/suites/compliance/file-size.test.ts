@@ -242,14 +242,14 @@ describe("a file item carries the size of the bytes it names", () => {
           ),
         }),
       },
+      lineFile("instance", ""),
       lineFile(
         "items",
         `${line(lentId, lent, true)}\n${line(unlentId, unlent, false)}\n`,
       ),
+      lineFile("edges", ""),
       { name: `blobs/${sha256(lent)}`, body: lent },
       { name: `blobs/${sha256(unlent)}`, body: unlent },
-      lineFile("edges", ""),
-      lineFile("instance", ""),
     ]);
     const restored = await getOwnerClient().restoreArchive(archive);
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);

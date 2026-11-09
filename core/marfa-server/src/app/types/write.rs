@@ -515,6 +515,14 @@ pub fn plan_restored(catalog: &Catalog, archived: &[Archived]) -> Result<Restori
         skipped: 0,
         conflicts: Vec::new(),
     };
+    for definition in &raw {
+        let id = text_of(definition, "id").unwrap_or_default();
+        if let Some(parent) = text_of(definition, "parent")
+            && let Some(fault) = parent_chain_fault(&registry, id, parent, 0)
+        {
+            return Err(Refusal::validation(fault));
+        }
+    }
     for (line, definition) in archived.iter().zip(&raw) {
         let schema = validate_type(&Value::Object(definition.clone()), &registry)
             .map_err(schema_refusal)?;

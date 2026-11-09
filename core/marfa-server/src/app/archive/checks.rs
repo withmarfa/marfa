@@ -149,13 +149,38 @@ fn is_type_id(text: &str) -> bool {
     marfa_rules::grammar::type_id(text).unwrap_or(false)
 }
 
-fn is_writer(value: &Value) -> bool {
-    match value {
-        Value::Null => true,
-        Value::Object(writer) => ["kind", "id", "name"]
-            .iter()
-            .all(|key| writer.get(*key).is_some_and(Value::is_string)),
-        _ => false,
+const WRITER_KINDS: [&str; 4] = ["browser", "app", "key", "local"];
+
+fn printable(text: &str) -> bool {
+    let count = text.chars().count();
+    (1..=200).contains(&count) && !text.chars().any(crate::app::sources::hidden)
+}
+
+/// Where a writer is not `null` or a writer as a version names one, the field that is wrong.
+fn writer_fault(value: &Value) -> Option<&'static str> {
+    let writer = match value {
+        Value::Null => return None,
+        Value::Object(writer) => writer,
+        _ => return Some(""),
+    };
+    let text = |key: &str| writer.get(key).and_then(Value::as_str);
+    if !text("kind").is_some_and(|kind| WRITER_KINDS.contains(&kind)) {
+        return Some("kind");
+    }
+    if !text("id").is_some_and(printable) {
+        return Some("id");
+    }
+    if !text("name").is_some_and(|name| printable(name) && name.trim() == name) {
+        return Some("name");
+    }
+    None
+}
+
+fn writer_field(field: &str, fault: &str) -> String {
+    if fault.is_empty() {
+        field.to_string()
+    } else {
+        format!("{field}.{fault}")
     }
 }
 
@@ -265,8 +290,8 @@ pub fn item(catalog: &Catalog, line: &Value, row: usize) -> Result<(), Box<Refus
         }
     };
     for field in ["writer", "trashed_by"] {
-        if line.get(field).is_some_and(|value| !is_writer(value)) {
-            return Err(at.invalid(field, "a writer or null"));
+        if let Some(fault) = line.get(field).and_then(writer_fault) {
+            return Err(at.invalid(&writer_field(field, fault), "a writer or null"));
         }
     }
     if line
@@ -366,6 +391,9 @@ fn history(
             if !snapshot.get(name).is_some_and(is_instant) {
                 return Err(at.invalid(&field(name), "an instant"));
             }
+        }
+        if let Some(fault) = snapshot.get("writer").and_then(writer_fault) {
+            return Err(at.invalid(&writer_field(&field("writer"), fault), "a writer or null"));
         }
         if !snapshot
             .get("source_id")

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import { tar, listEntries } from "../../utils/archive.js";
+import { editLineFile } from "../../utils/archive.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -173,16 +173,13 @@ describe("compatible type archives", () => {
           baseUrl: destination.apiUrl,
           apiKey: destination.workingKey,
         });
-        const broken = tar(
-          listEntries(archive).map((entry) => {
-            if (entry.name !== "types.ndjson") return entry;
-            const lines = entry.body
-              .toString()
+        const broken = editLineFile(archive, "instance", (text) => {
+            const lines = text
               .trim()
               .split("\n")
               .map((line) => {
                 const row = JSON.parse(line) as {
-                  type: {
+                  type?: {
                     id: string;
                     compatible_with: unknown;
                     fields: Record<string, unknown>;
@@ -193,6 +190,7 @@ describe("compatible type archives", () => {
                     required?: string[];
                   };
                 };
+                if (row.type === undefined) return line;
                 if (row.type.id === first) {
                   if (fault === "missing target")
                     row.type.compatible_with = ["user.absent_target"];
@@ -225,15 +223,23 @@ describe("compatible type archives", () => {
                 }
                 return JSON.stringify(row);
               });
-            return { name: entry.name, body: lines.join("\n") + "\n" };
-          }),
-        );
+            return lines.join("\n") + "\n";
+          });
         const refused = await owner.restoreArchive(broken);
-        expect(refused.status, JSON.stringify(refused.error)).toBe(400);
+        // The status and code `POST /types` answers the same definition with.
+        expect(refused.status, JSON.stringify(refused.error)).toBe(
+          fault === "missing target" || fault === "incompatible field"
+            ? 422
+            : 400,
+        );
         expect(refused.error?.error.code).toBe(
           fault === "missing parent" || fault === "parent cycle"
             ? "validation_error"
-            : "invalid_schema",
+            : fault === "missing target" || fault === "incompatible field"
+              ? "compatible_with_violation"
+              : fault === "inherited shape"
+                ? "inheritance_violation"
+                : "invalid_schema",
         );
         for (const type of allTypes)
           expect((await worker.getType(type)).status).toBe(404);
@@ -330,21 +336,10 @@ describe("compatible type archives", () => {
           apiKey: destination.workingKey,
         });
         const bytes = reversed
-          ? tar(
-              listEntries(archive).map((entry) =>
-                entry.name === "types.ndjson"
-                  ? {
-                      name: entry.name,
-                      body:
-                        entry.body
-                          .toString()
-                          .trim()
-                          .split("\n")
-                          .reverse()
-                          .join("\n") + "\n",
-                    }
-                  : entry,
-              ),
+          ? editLineFile(
+              archive,
+              "instance",
+              (text) => text.trim().split("\n").reverse().join("\n") + "\n",
             )
           : archive;
         const restored = await owner.restoreArchive(bytes);

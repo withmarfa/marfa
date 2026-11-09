@@ -4,6 +4,7 @@ import { MarfaClient } from "../../client/api.js";
 import {
   tar,
   listEntries,
+  editLineFile,
   itemsArchive,
   blobHash,
 } from "../../utils/archive.js";
@@ -123,22 +124,19 @@ function carrying(bytes?: Uint8Array): Carried {
     [{ data: blob, mime_type: "application/octet-stream" }],
     [schema],
   );
-  const entries = listEntries(base).map((entry) => ({
-    name: entry.name,
-    body:
-      entry.name === "edges.ndjson"
-        ? `${JSON.stringify({
-            edge: {
-              id: edgeId,
-              source_id: a,
-              target_id: b,
-              edge_type: edgeType,
-            },
-          })}\n`
-        : entry.name === "types.ndjson"
-          ? `${JSON.stringify({ type: schema })}\n${JSON.stringify({ edge_type: edgeTypeOf(edgeType) })}\n`
-          : entry.body,
-  }));
+  const archive = editLineFile(
+    editLineFile(
+      base,
+      "edges",
+      () =>
+        `${JSON.stringify({
+          edge: { id: edgeId, source_id: a, target_id: b, edge_type: edgeType },
+        })}\n`,
+    ),
+    "instance",
+    () =>
+      `${JSON.stringify({ type: schema })}\n${JSON.stringify({ edge_type: edgeTypeOf(edgeType) })}\n`,
+  );
   return {
     a,
     b,
@@ -148,7 +146,7 @@ function carrying(bytes?: Uint8Array): Carried {
     edgeType,
     bytes: blob,
     hash,
-    archive: tar(entries),
+    archive,
   };
 }
 
@@ -303,6 +301,9 @@ describe("a restore that does not finish", () => {
       await server.clearFault();
 
       await expectNothingOf(rows, since);
+      // Bytes it placed stay unrecorded, so nothing serves them, and the next
+      // copy cleanup removes them.
+      await runJob(operator, "blob-integrity");
       expect(await diskHolds(server.controlSocket, rows.hash)).toBe(false);
       expect(await spooled()).toEqual([]);
 
@@ -417,7 +418,9 @@ describe("a restore that does not commit and removes the bytes it placed", () =>
     const refused = await ownerClient().restoreArchive(both);
     expect(refused.status, JSON.stringify(refused.error)).toBe(500);
 
-    // The witness that bytes are taken back: the restore's own were.
+    // The witness that bytes are taken back: the restore's own are, by the
+    // next copy cleanup, which leaves those a committed row names.
+    await runJob(operator, "blob-integrity");
     expect(await diskHolds(server.controlSocket, rows.hash)).toBe(false);
     expect(await diskHolds(server.controlSocket, keptHash)).toBe(true);
     // Placing the bytes again ended the loss, so the store reads them now.

@@ -620,6 +620,16 @@ impl Faults {
         }
     }
 
+    /// Holds a write that has an open transaction without beating, so writes queued behind it
+    /// meet the busy budget as they would behind a long write.
+    pub fn hold_writing(&self, point: &Point) {
+        if let Some((gate, _waiting)) = self.selected(point.name, None) {
+            while !*gate.borrow() {
+                std::thread::sleep(BEAT);
+            }
+        }
+    }
+
     pub fn hold_blocking(&self, point: &Point) {
         if let Some((mut gate, _waiting)) = self.selected(point.name, None) {
             let _ = tokio::runtime::Handle::current()
