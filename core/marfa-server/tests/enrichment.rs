@@ -151,6 +151,31 @@ impl Instance {
         ended.result.unwrap()
     }
 
+    fn database(&self, flags: OpenFlags) -> Connection {
+        Connection::open_with_flags(self.dir.path().join("marfa.db"), flags).unwrap()
+    }
+
+    fn execute(&self, sql: &str, id: &str) {
+        let db = self.database(OpenFlags::SQLITE_OPEN_READ_WRITE);
+        db.execute(sql, [id]).unwrap();
+    }
+
+    fn next_run(&self) -> String {
+        let sql = "SELECT next_run_at FROM housekeeping_jobs WHERE name = 'enrichment-sweep'";
+        let db = self.database(OpenFlags::SQLITE_OPEN_READ_ONLY);
+        db.query_row(sql, [], |row| row.get(0)).unwrap()
+    }
+
+    fn blob_path(&self, hash: &str) -> std::path::PathBuf {
+        let hex = hash.strip_prefix("sha256:").unwrap();
+        self.dir.path().join("blobs").join(&hex[0..4]).join(hex)
+    }
+
+    async fn hash_of(&self, id: &str) -> String {
+        let item = self.item(id).await;
+        item["properties"]["blob_ref"].as_str().unwrap().to_string()
+    }
+
     fn count(&self, sql: &str, id: &str) -> i64 {
         let file = self.dir.path().join("marfa.db");
         let db = Connection::open_with_flags(file, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
@@ -317,6 +342,149 @@ async fn does_not_use_up_a_files_attempts_while_its_bytes_cannot_be_opened() {
         one.item(&id).await["properties"]["extracted_text"],
         "the dingo ledger"
     );
+}
+
+async fn reads_a_file_added_after_files_whose_bytes_cannot_be_opened() {
+    let one = Instance::start(&[]).await;
+    for number in 0..3 {
+        let id = one
+            .file(
+                format!("a ledger kept elsewhere, number {number}").as_bytes(),
+                "text/plain",
+                json!({}),
+            )
+            .await;
+        let stored = one.blob_path(&one.hash_of(&id).await);
+        std::fs::rename(&stored, one.dir.path().join(format!("away-{number}"))).unwrap();
+    }
+    let healthy = one.file(b"the tapir ledger", "text/plain", json!({})).await;
+    assert_eq!(one.sweep().await, counts(1, 0, 0));
+    assert_eq!(
+        one.item(&healthy).await["properties"]["extracted_text"],
+        "the tapir ledger"
+    );
+}
+
+async fn reads_files_held_elsewhere_while_an_object_store_fails() {
+    let s3 = fake_s3::FakeS3::start().await;
+    let named = s3.settings("marfa", "blobs");
+    let named: Vec<(&str, &str)> = named
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.as_str()))
+        .collect();
+    let one = Instance::start(&named).await;
+    let mut far = Vec::new();
+    for number in 0..3 {
+        let bytes = format!("a ledger kept far away, number {number}");
+        far.push(one.file(bytes.as_bytes(), "text/plain", json!({})).await);
+    }
+    let ended = housekeeping::run_now(&one.app, "blob-replicate")
+        .await
+        .unwrap();
+    assert_eq!(ended.outcome, "ok", "{:?}", ended.error);
+    for id in &far {
+        std::fs::remove_file(one.blob_path(&one.hash_of(id).await)).unwrap();
+    }
+    let ended = housekeeping::run_now(&one.app, "blob-integrity")
+        .await
+        .unwrap();
+    assert_eq!(ended.outcome, "ok", "{:?}", ended.error);
+    let near = one.file(b"the okapi ledger", "text/plain", json!({})).await;
+    s3.set_mode(fake_s3::Mode::AllNotFound);
+    assert_eq!(one.sweep().await, counts(1, 0, 0));
+    assert_eq!(
+        one.item(&near).await["properties"]["extracted_text"],
+        "the okapi ledger"
+    );
+    let waiting = "SELECT count(*) FROM enrichment_files f JOIN items i ON i.seq = f.item_seq \
+                   WHERE i.id = ?1 AND f.state = 'waiting' AND f.attempts = 0";
+    for id in &far {
+        assert_eq!(one.count(waiting, id), 1);
+    }
+    s3.set_mode(fake_s3::Mode::Normal);
+    assert_eq!(one.sweep().await, counts(3, 0, 0));
+}
+
+async fn reads_a_file_again_when_its_type_is_corrected_after_its_attempts_ran_out() {
+    let one = Instance::start(&[]).await;
+    let docx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    let id = one
+        .file(b"plain words under a wrong type", docx, json!({}))
+        .await;
+    for _ in 0..3 {
+        assert_eq!(one.sweep().await, counts(0, 0, 1));
+    }
+    assert_eq!(one.sweep().await, counts(0, 0, 0));
+    one.change(&id, json!({ "mime_type": "text/plain" }), &[])
+        .await;
+    assert_eq!(one.sweep().await, counts(1, 0, 0));
+    assert_eq!(
+        one.item(&id).await["properties"]["extracted_text"],
+        "plain words under a wrong type"
+    );
+}
+
+async fn leaves_a_file_with_no_copy_until_its_bytes_change() {
+    let one = Instance::start(&[]).await;
+    let id = one.file(b"the lost ledger", "text/plain", json!({})).await;
+    let hash = one.hash_of(&id).await;
+    one.execute("DELETE FROM blob_copies WHERE hash = ?1", &hash);
+    assert_eq!(one.sweep().await, counts(0, 1, 0));
+    assert_eq!(one.sweep().await, counts(0, 0, 0));
+    let left = "SELECT count(*) FROM enrichment_files f JOIN items i ON i.seq = f.item_seq \
+                WHERE i.id = ?1 AND f.state = 'skipped' AND f.reason = 'missing'";
+    assert_eq!(one.count(left, &id), 1);
+    let other = one.upload(b"the found ledger").await;
+    one.change(&id, json!({ "blob_ref": other }), &[]).await;
+    assert_eq!(one.sweep().await, counts(1, 0, 0));
+    assert_eq!(
+        one.item(&id).await["properties"]["extracted_text"],
+        "the found ledger"
+    );
+}
+
+async fn does_not_run_again_at_once_for_files_it_handed_back() {
+    let batch = [("MARFA_ENRICHMENT_BATCH_SIZE", "2")];
+    let one = Instance::start(&batch).await;
+    for number in 0..3 {
+        let bytes = format!("a ledger kept elsewhere, number {number}");
+        let id = one.file(bytes.as_bytes(), "text/plain", json!({})).await;
+        let stored = one.blob_path(&one.hash_of(&id).await);
+        std::fs::rename(&stored, one.dir.path().join(format!("away-{number}"))).unwrap();
+    }
+    let ended = housekeeping::run_now(&one.app, SWEEP).await.unwrap();
+    assert_eq!(ended.result.unwrap(), counts(0, 0, 0));
+    assert!(
+        one.next_run() > ended.finished_at,
+        "{} is not after {}",
+        one.next_run(),
+        ended.finished_at
+    );
+
+    // The witness: files that were read leave more behind, and the run comes again at once.
+    let more = Instance::start(&batch).await;
+    for number in 0..3 {
+        let bytes = format!("a ledger kept here, number {number}");
+        more.file(bytes.as_bytes(), "text/plain", json!({})).await;
+    }
+    let ended = housekeeping::run_now(&more.app, SWEEP).await.unwrap();
+    assert_eq!(ended.result.unwrap(), counts(2, 0, 0));
+    assert!(more.next_run() <= ended.finished_at);
+
+    // Files with no copy are left, not handed back, so a second run takes the rest and stops.
+    let lost = Instance::start(&batch).await;
+    for number in 0..3 {
+        let bytes = format!("a ledger with no copy, number {number}");
+        let id = lost.file(bytes.as_bytes(), "text/plain", json!({})).await;
+        let hash = lost.hash_of(&id).await;
+        lost.execute("DELETE FROM blob_copies WHERE hash = ?1", &hash);
+    }
+    let ended = housekeeping::run_now(&lost.app, SWEEP).await.unwrap();
+    assert_eq!(ended.result.unwrap(), counts(0, 2, 0));
+    assert!(lost.next_run() <= ended.finished_at);
+    let ended = housekeeping::run_now(&lost.app, SWEEP).await.unwrap();
+    assert_eq!(ended.result.unwrap(), counts(0, 1, 0));
+    assert!(lost.next_run() > ended.finished_at);
 }
 
 #[cfg(feature = "native")]
@@ -548,6 +716,25 @@ fn main() {
         trial(
             "does_not_use_up_a_files_attempts_while_its_bytes_cannot_be_opened",
             || Box::pin(does_not_use_up_a_files_attempts_while_its_bytes_cannot_be_opened()),
+        ),
+        trial(
+            "reads_a_file_added_after_files_whose_bytes_cannot_be_opened",
+            || Box::pin(reads_a_file_added_after_files_whose_bytes_cannot_be_opened()),
+        ),
+        trial(
+            "reads_files_held_elsewhere_while_an_object_store_fails",
+            || Box::pin(reads_files_held_elsewhere_while_an_object_store_fails()),
+        ),
+        trial(
+            "reads_a_file_again_when_its_type_is_corrected_after_its_attempts_ran_out",
+            || Box::pin(reads_a_file_again_when_its_type_is_corrected_after_its_attempts_ran_out()),
+        ),
+        trial("leaves_a_file_with_no_copy_until_its_bytes_change", || {
+            Box::pin(leaves_a_file_with_no_copy_until_its_bytes_change())
+        }),
+        trial(
+            "does_not_run_again_at_once_for_files_it_handed_back",
+            || Box::pin(does_not_run_again_at_once_for_files_it_handed_back()),
         ),
         trial("leaves_a_disabled_sweep_with_its_files_waiting", || {
             Box::pin(leaves_a_disabled_sweep_with_its_files_waiting())

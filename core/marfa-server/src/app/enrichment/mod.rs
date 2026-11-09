@@ -1,5 +1,6 @@
 mod queue;
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -91,7 +92,7 @@ enum Fate {
     Retry,
     /// No reader could start or confine itself. The file was not tried.
     Untried,
-    /// The store did not give the bytes. The file was not tried, and the run pauses.
+    /// The store did not give the bytes. The file was not tried.
     Unreached,
 }
 
@@ -253,6 +254,22 @@ async fn begin(app: &Arc<App>, seq: i64, hash: &Hash) -> Result<Begun> {
     .await
 }
 
+fn record(
+    tx: &rusqlite::Transaction<'_>,
+    fate: Fate,
+    seq: i64,
+    hash: &Hash,
+    signatures: &Signatures,
+    at: &str,
+) -> Result<()> {
+    match fate {
+        Fate::Read => queue::read(tx, seq, hash.as_str(), at),
+        Fate::Skip(why) => queue::skip(tx, seq, hash.as_str(), why, signatures.of(why), at),
+        Fate::Retry => queue::defer(tx, seq, hash.as_str(), at),
+        Fate::Untried | Fate::Unreached => queue::refund(tx, seq, hash.as_str(), at),
+    }
+}
+
 /// Recheck the item and settle the attempt in the same transaction.
 async fn store(
     app: &Arc<App>,
@@ -283,14 +300,7 @@ async fn store(
         if written == Written::Changed {
             return Ok(Count::None);
         }
-        match fate {
-            Fate::Read => queue::read(tx, seq, hash.as_str(), &unit.at)?,
-            Fate::Skip(why) => {
-                queue::skip(tx, seq, hash.as_str(), why, signatures.of(why), &unit.at)?;
-            }
-            Fate::Retry => queue::failed(tx, seq, hash.as_str(), &unit.at)?,
-            Fate::Untried | Fate::Unreached => queue::refund(tx, seq, hash.as_str(), &unit.at)?,
-        }
+        record(tx, fate, seq, &hash, &signatures, &unit.at)?;
         Ok(if written == Written::Landed {
             Count::Extracted
         } else {
@@ -304,18 +314,47 @@ async fn store(
 async fn settle(app: &Arc<App>, plan: &Plan, seq: i64, hash: &Hash, fate: Fate) -> Result<Count> {
     let (hash, signatures) = (hash.clone(), plan.signatures.clone());
     app.write(&Caller::Server, ACTION, move |unit| {
-        let tx = unit.tx();
-        match fate {
-            Fate::Read => queue::read(tx, seq, hash.as_str(), &unit.at)?,
-            Fate::Skip(why) => {
-                queue::skip(tx, seq, hash.as_str(), why, signatures.of(why), &unit.at)?;
-            }
-            Fate::Retry => queue::failed(tx, seq, hash.as_str(), &unit.at)?,
-            Fate::Untried | Fate::Unreached => queue::refund(tx, seq, hash.as_str(), &unit.at)?,
-        }
+        record(unit.tx(), fate, seq, &hash, &signatures, &unit.at)?;
         Ok(fate.count())
     })
     .await
+}
+
+/// The object stores that failed during a run. A remote store that failed is not asked again
+/// in the run; a disk that cannot open one file may open the next.
+#[derive(Default)]
+struct Outage {
+    stores: HashSet<String>,
+}
+
+impl Outage {
+    /// Whether every copy of the file is in a store that failed.
+    async fn holds(&self, app: &Arc<App>, hash: &Hash) -> bool {
+        if self.stores.is_empty() {
+            return false;
+        }
+        let Ok(copies) = app.blob_copies(&Caller::Server, hash).await else {
+            return false;
+        };
+        let mut live = copies.iter().filter(|copy| !copy.detached).peekable();
+        live.peek().is_some() && live.all(|copy| self.stores.contains(&copy.store_id))
+    }
+
+    async fn note(&mut self, app: &Arc<App>, hash: &Hash) {
+        if let Ok(copies) = app.blob_copies(&Caller::Server, hash).await {
+            let remote = copies
+                .into_iter()
+                .filter(|copy| !copy.detached && copy.kind != "disk");
+            self.stores.extend(remote.map(|copy| copy.store_id));
+        }
+    }
+}
+
+/// What one file came to.
+enum Step {
+    Counted(Count),
+    /// Not tried or not readable now, and handed back with its attempt: the sweep gains nothing.
+    Refunded,
 }
 
 /// The reading itself, on a thread of its own: the file is read in a process of its own too.
@@ -333,26 +372,44 @@ async fn read_blocking(
     .map_err(blocked)
 }
 
-/// One file's count, or `None` to pause the run. An `Err` is the server's own fault and ends it.
-async fn one(app: &Arc<App>, plan: &Plan, seq: i64, stored: &str) -> Result<Option<Count>> {
+/// What one file came to. An `Err` is the server's own fault and ends the run.
+async fn one(
+    app: &Arc<App>,
+    plan: &Plan,
+    outage: &mut Outage,
+    seq: i64,
+    stored: &str,
+) -> Result<Step> {
+    let counted = |count: Result<Count>| count.map(Step::Counted);
     let Ok(hash) = Hash::parse(stored) else {
         let hash = stored.to_string();
         app.write(&Caller::Server, ACTION, move |unit| {
             queue::drop_row(unit.tx(), seq, &hash).map(|()| Count::None)
         })
         .await?;
-        return Ok(Some(Count::None));
+        return Ok(Step::Counted(Count::None));
     };
+    if outage.holds(app, &hash).await {
+        let held = hash.clone();
+        app.write(&Caller::Server, ACTION, move |unit| {
+            queue::defer(unit.tx(), seq, held.as_str(), &unit.at)
+        })
+        .await?;
+        return Ok(Step::Refunded);
+    }
     let Begun::Reading(offered) = begin(app, seq, &hash).await? else {
-        return Ok(Some(Count::None));
+        return Ok(Step::Counted(Count::None));
     };
-    let held = app.open_held(&hash).await;
-    let (file, blob): (Opened, Blob) = match held {
+    let (file, blob): (Opened, Blob) = match app.open_held(&hash).await {
         Ok(Some(found)) => found,
-        Ok(None) => return settle(app, plan, seq, &hash, Fate::Untried).await.map(Some),
+        Ok(None) => {
+            let fate = Fate::Skip(Why::Missing);
+            return counted(settle(app, plan, seq, &hash, fate).await);
+        }
         Err(_) => {
+            outage.note(app, &hash).await;
             settle(app, plan, seq, &hash, Fate::Unreached).await?;
-            return Ok(None);
+            return Ok(Step::Refunded);
         }
     };
     let mime = offered
@@ -361,7 +418,7 @@ async fn one(app: &Arc<App>, plan: &Plan, seq: i64, stored: &str) -> Result<Opti
         .unwrap_or_else(|| blob.mime_type.clone());
     if marfa_enrichment::loads_whole_file(&mime) && blob.size_bytes > plan.max_blob_bytes {
         let fate = Fate::Skip(Why::OverLimit(Cap::Blob(plan.max_blob_bytes)));
-        return settle(app, plan, seq, &hash, fate).await.map(Some);
+        return counted(settle(app, plan, seq, &hash, fate).await);
     }
     let read = read_blocking(file, mime.clone(), plan.options.clone()).await?;
     if let Err(Unread::ReaderUnavailable(reason)) = &read {
@@ -371,9 +428,13 @@ async fn one(app: &Arc<App>, plan: &Plan, seq: i64, stored: &str) -> Result<Opti
         )));
     }
     let judged = judge(read, &mime, plan);
-    store(app, plan, seq, &hash, offered.id, judged)
-        .await
-        .map(Some)
+    let refunded = matches!(judged.fate, Fate::Untried | Fate::Unreached);
+    let count = store(app, plan, seq, &hash, offered.id, judged).await?;
+    Ok(if refunded {
+        Step::Refunded
+    } else {
+        Step::Counted(count)
+    })
 }
 
 pub async fn sweep(app: Arc<App>, run: Run) -> Result<Report> {
@@ -384,17 +445,18 @@ pub async fn sweep(app: Arc<App>, run: Run) -> Result<Report> {
     }
     let plan = Plan::of(&live);
     let (files, more) = pick(&app, &plan).await?;
-    let mut again = more;
+    let (mut outage, mut progressed) = (Outage::default(), false);
+    let mut again = false;
     for (seq, hash) in files {
         if !run.go_on().await || !app.settings.live().get(ENRICHMENT_ENABLED) {
             again = true;
             break;
         }
-        let Some(count) = one(&app, &plan, seq, &hash).await? else {
-            again = false;
-            break;
-        };
-        tally.add(count);
+        if let Step::Counted(count) = one(&app, &plan, &mut outage, seq, &hash).await? {
+            tally.add(count);
+            progressed = true;
+        }
+        again = more && progressed;
     }
     Ok(Report {
         result: tally.result(),
@@ -727,7 +789,6 @@ mod tests {
             dimensions: None,
             duration: None,
             text_refused: None,
-            sandbox: marfa_enrichment::Sandbox::Full,
         }
     }
 

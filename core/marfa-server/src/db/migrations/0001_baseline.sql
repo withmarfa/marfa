@@ -805,7 +805,7 @@ CREATE TABLE IF NOT EXISTS enrichment_files (
     hash TEXT NOT NULL,
     state TEXT NOT NULL DEFAULT 'waiting' CHECK (state IN ('waiting', 'read', 'skipped')),
     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
-    reason TEXT CHECK (reason IN ('unsupported', 'encrypted', 'over_limit', 'ocr')),
+    reason TEXT CHECK (reason IN ('unsupported', 'encrypted', 'over_limit', 'ocr', 'missing')),
     signature TEXT NOT NULL DEFAULT '',
     -- The limit that stopped an over-limit file, and what it was then.
     capped_by TEXT CHECK (capped_by IN ('blob', 'inflated', 'memory', 'fixed')),
@@ -836,7 +836,8 @@ BEGIN
 END;
 
 -- An existing reference alone does not queue changed file properties. A skipped file keeps its
--- refusal and is read once more. The type of file picks the reader, so a changed one counts.
+-- refusal and is read once more. The type of file picks the reader, so a changed one counts, and
+-- a waiting file that failed under the old type gets its attempts back.
 CREATE TRIGGER IF NOT EXISTS enrichment_files_changed AFTER UPDATE OF type, properties ON items
 WHEN NEW.properties ->> '$.blob_ref' IS NOT NULL AND (
     NEW.type IS NOT OLD.type
@@ -856,7 +857,10 @@ BEGIN
         signature = CASE enrichment_files.state WHEN 'read' THEN '' ELSE enrichment_files.signature END,
         refill = CASE enrichment_files.state WHEN 'skipped' THEN 1 ELSE 0 END,
         updated_at = excluded.updated_at
-    WHERE enrichment_files.state IN ('read', 'skipped');
+    WHERE enrichment_files.state IN ('read', 'skipped')
+       OR (enrichment_files.state = 'waiting' AND enrichment_files.attempts > 0
+           AND (NEW.type IS NOT OLD.type
+                OR NEW.properties ->> '$.mime_type' IS NOT OLD.properties ->> '$.mime_type'));
     UPDATE housekeeping_jobs
     SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds')
     WHERE name = 'enrichment-sweep'
