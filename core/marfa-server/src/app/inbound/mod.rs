@@ -32,6 +32,10 @@ pub(crate) fn bind(tx: &Transaction<'_>, source: &str, connector_id: &str) -> Re
     store::bind(tx, source, connector_id)
 }
 
+pub(crate) fn kept_for(tx: &Transaction<'_>, source: &str) -> Result<bool> {
+    store::kept_for(tx, source)
+}
+
 fn endpoint_not_found() -> Refusal {
     Refusal::new(Code::EndpointNotFound, "Endpoint not found")
 }
