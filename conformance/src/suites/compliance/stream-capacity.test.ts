@@ -42,22 +42,29 @@ async function refusedStream(
   return { response: stream.response, body };
 }
 
-/**
- * Open a stream once the server has seen the previous viewer's connection
- * close, since the slot frees then and not when the client lets go.
- */
+// A client disconnect reaches the server asynchronously.
 async function admittedStream(): Promise<
   Awaited<ReturnType<typeof openEventStream>>
 > {
-  for (let attempt = 0; attempt < 100; attempt++) {
+  const deadline = Date.now() + 10_000;
+  for (;;) {
     const stream = await openEventStream(server!.apiUrl, server!.workingKey, {
       connectTimeoutMs: 30_000,
     });
     if (stream.response.status === 200) return stream;
+    const status = stream.response.status;
+    const code = stream.response.headers.get("X-Error-Code");
     await stream.close();
+    if (status !== 503 || code !== "stream_capacity_exhausted") {
+      throw new Error(
+        `a viewer was refused with ${status} ${code ?? "and no error code"}, not by the cap`,
+      );
+    }
+    if (Date.now() >= deadline) {
+      throw new Error("the server never admitted a viewer after the last left");
+    }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error("the server never admitted a viewer after the last left");
 }
 
 describe("GET /events on an instance that caps its live viewers", () => {
