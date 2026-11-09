@@ -3,6 +3,7 @@
 //! says so.
 
 mod fake_s3;
+mod support;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -15,6 +16,9 @@ use axum::http::{Method, Request, StatusCode, header};
 use marfa_server::app::App;
 use marfa_server::db::Write;
 use marfa_server::http::{control, public};
+use marfa_server::settings::registry::{
+    BLOB_CLEANUP_GRACE_MS, BLOB_CLEANUP_INTERVAL_MS, BLOB_MIN_COPIES,
+};
 use marfa_server::settings::{Accepted, Environment, Settings};
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
@@ -23,6 +27,7 @@ use tempfile::TempDir;
 use tower::ServiceExt;
 
 use fake_s3::{FakeS3, Mode};
+use support::commit_unpublished;
 
 struct Instance {
     dir: TempDir,
@@ -433,6 +438,32 @@ async fn a_blob_held_only_by_a_detached_store_answers_503_and_an_unknown_one_404
     let unknown = moved.fetch(&hash_of(b"never stored")).await;
     assert_eq!(unknown.status, StatusCode::NOT_FOUND);
     assert_eq!(unknown.code(), "blob_not_found");
+}
+
+#[tokio::test]
+async fn the_orphan_job_keeps_what_settings_committed_before_they_are_live_keep() {
+    let mut purged = Vec::new();
+    for (key, value) in [
+        ("blob_cleanup_grace_ms", "86400000"),
+        ("blob_cleanup_interval_ms", "0"),
+    ] {
+        let instance = Instance::start(&[("MARFA_BLOB_CLEANUP_GRACE_MS", "0")]).await;
+        let orphan = instance.stored(b"nothing names this").await;
+        let first = instance.run("blob-orphans").await;
+        assert_eq!(first["purged"], 0, "{first}");
+
+        commit_unpublished(&instance.app, key, value).await;
+        let live = instance.app.settings.live();
+        assert_eq!(live.get(BLOB_CLEANUP_GRACE_MS), 0);
+        assert_eq!(live.get(BLOB_CLEANUP_INTERVAL_MS), 86_400_000);
+        let second = instance.run("blob-orphans").await;
+        purged.push((key, second["purged"].clone(), instance.file(&orphan).is_file()));
+    }
+    let kept = [
+        ("blob_cleanup_grace_ms", json!(0), true),
+        ("blob_cleanup_interval_ms", json!(0), true),
+    ];
+    assert_eq!(purged, kept);
 }
 
 #[tokio::test]
@@ -953,6 +984,26 @@ async fn an_object_store_that_stops_answering_as_itself_mid_run_has_nothing_more
     let result = instance.run("blob-integrity").await;
     assert_eq!(result["struck"], 0, "{result}");
     assert_eq!(instance.copies(&kept).await.len(), 2);
+}
+
+#[tokio::test]
+async fn the_drop_door_holds_to_a_minimum_committed_before_it_is_live() {
+    let s3 = FakeS3::start().await;
+    let env = s3.settings(BUCKET, "blobs");
+    let instance = Instance::start(&pairs(&env)).await;
+    let hash = instance.stored(b"two copies, and a minimum of two").await;
+    let run = instance.run("blob-replicate").await;
+    assert_eq!(run["copied"], 1, "{run}");
+    let disk = instance.disk().await;
+
+    commit_unpublished(&instance.app, "blob_min_copies", "2").await;
+    assert_eq!(instance.app.settings.live().get(BLOB_MIN_COPIES), 1);
+    let door = format!("/blobs/{hash}/copies/{disk}");
+    let dropped = instance.call(Method::DELETE, &door, None).await;
+    assert_eq!(dropped.status, StatusCode::CONFLICT, "{}", dropped.body);
+    assert_eq!(dropped.code(), "copies_below_minimum");
+    assert_eq!(instance.copies(&hash).await.len(), 2);
+    assert!(instance.file(&hash).is_file());
 }
 
 #[tokio::test]

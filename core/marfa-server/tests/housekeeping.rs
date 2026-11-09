@@ -8,8 +8,14 @@ use marfa_server::app::stored::{self, Change};
 use marfa_server::app::{App, housekeeping, webhooks};
 use marfa_server::db::Write;
 use marfa_server::http::{control, public};
+use marfa_server::settings::registry::{
+    AUDIT_RETENTION_DAYS, EVENT_LOG_RETENTION_HOURS, TRASH_RETENTION_DAYS, VERSION_MAX_VERSIONS,
+};
 use marfa_server::settings::{Environment, Settings};
 use rusqlite::{Connection, OpenFlags};
+use support::commit_unpublished;
+
+mod support;
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use tower::ServiceExt;
@@ -54,7 +60,7 @@ impl Instance {
         let body = json!({
             "label": "writer",
             "source": "writer",
-            "permissions": ["schema.write", "items.purge"],
+            "permissions": ["schema.write", "items.purge", "webhooks.manage"],
             "type_permissions": { "*": "write" },
             "edge_permissions": { "*": "write" },
             "metadata_permissions": { "types": "write" },
@@ -78,7 +84,7 @@ impl Instance {
         if let Some(key) = key {
             request = request.header("idempotency-key", key);
         }
-        let doors = if ["/items", "/types", "/edges"]
+        let doors = if ["/items", "/types", "/edges", "/webhooks"]
             .iter()
             .any(|door| path.starts_with(door))
         {
@@ -261,6 +267,105 @@ async fn trash_purge_reads_the_retention_inside_its_write() {
     let ended = run.await.unwrap().unwrap();
     assert_eq!(ended.outcome, "ok");
     assert_eq!(instance.state(&id), "trashed");
+}
+
+#[tokio::test]
+async fn trash_purge_keeps_what_a_retention_committed_before_it_is_live_keeps() {
+    let instance = Instance::start(&[("MARFA_TRASH_RETENTION_DAYS", "2")]).await;
+    let id = instance.note().await;
+    let path = format!("/items/{id}");
+    instance.ok(Method::DELETE, &path, Value::Null).await;
+    instance.forward(3 * DAY);
+
+    commit_unpublished(&instance.app, "trash_retention_days", "10").await;
+    assert_eq!(instance.app.settings.live().get(TRASH_RETENTION_DAYS), 2);
+    assert_eq!(instance.run("trash-purge").await["deleted"], 0);
+    assert_eq!(instance.state(&id), "trashed");
+}
+
+#[tokio::test]
+async fn thinning_keeps_what_a_policy_committed_before_it_is_live_keeps() {
+    let instance = Instance::start(&[("MARFA_VERSION_MAX_VERSIONS", "1")]).await;
+    let id = instance.note().await;
+    let path = format!("/items/{id}");
+    for (version, body) in [(1, "two"), (2, "three"), (3, "four")] {
+        let edit = json!({ "version": version, "properties": { "body": body } });
+        instance.ok(Method::PATCH, &path, edit).await;
+    }
+
+    commit_unpublished(&instance.app, "version_max_versions", "500").await;
+    assert_eq!(instance.app.settings.live().get(VERSION_MAX_VERSIONS), 1);
+    let result = instance.run("version-thinning").await;
+    assert_eq!(result, json!({ "pruned": 0, "items": 0 }));
+    assert_eq!(instance.count("SELECT count(*) FROM item_versions"), 3);
+}
+
+#[tokio::test]
+async fn log_cleanups_keep_what_a_retention_committed_before_it_is_live_keeps() {
+    let retentions = [
+        ("MARFA_AUDIT_RETENTION_DAYS", "2"),
+        ("MARFA_EVENT_LOG_RETENTION_HOURS", "2"),
+    ];
+    let instance = Instance::start(&retentions).await;
+    let body = json!({ "type": "core.note", "properties": { "body": "keyed" } });
+    let (status, _) = instance
+        .send(Method::POST, "/items", body, Some("the-key"))
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let audits = instance.count("SELECT count(*) FROM audit_log");
+    let events = instance.count("SELECT count(*) FROM event_log");
+    instance.forward(3 * DAY);
+    instance.note().await;
+
+    commit_unpublished(&instance.app, "audit_retention_days", "0").await;
+    commit_unpublished(&instance.app, "event_log_retention_hours", "0").await;
+    let live = instance.app.settings.live();
+    assert_eq!(live.get(AUDIT_RETENTION_DAYS), 2);
+    assert_eq!(live.get(EVENT_LOG_RETENTION_HOURS), 2);
+    let results = (
+        instance.run("event-log-cleanup").await,
+        instance.run("audit-cleanup").await,
+    );
+    let kept = (
+        json!({ "deleted": 0, "purged_records": 0 }),
+        json!({ "deleted": 0, "deliveries": 0 }),
+    );
+    assert_eq!(results, kept);
+    assert!(instance.count("SELECT count(*) FROM audit_log") > audits);
+    assert!(instance.count("SELECT count(*) FROM event_log") > events);
+    assert_eq!(
+        instance.count("SELECT count(*) FROM idempotency_records"),
+        1
+    );
+}
+
+#[tokio::test]
+async fn redelivery_follows_a_retention_committed_before_it_is_live() {
+    let settings = [
+        ("MARFA_AUDIT_RETENTION_DAYS", "2"),
+        ("MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES", "true"),
+    ];
+    let instance = Instance::start(&settings).await;
+    let body = json!({ "url": "http://127.0.0.1:9/hook", "events": ["edge.deleted"] });
+    let made = instance.ok(Method::POST, "/webhooks", body).await;
+    let webhook = made["id"].as_str().unwrap().to_string();
+    let at = instance.app.clock.stamp();
+    instance
+        .sql(format!(
+            "INSERT INTO webhook_deliveries (id, webhook_id, event_id, event_type, type, source, \
+             payload, status, status_code, attempt, cycle_attempt, due_at, created_at, \
+             updated_at) VALUES ('dead', '{webhook}', 1, 'edge.deleted', 'core.note', 'writer', \
+             '{{}}', 'dead_letter', 400, 1, 1, 0, '{at}', '{at}')"
+        ))
+        .await;
+    instance.forward(3 * DAY);
+
+    commit_unpublished(&instance.app, "audit_retention_days", "0").await;
+    assert_eq!(instance.app.settings.live().get(AUDIT_RETENTION_DAYS), 2);
+    let path = format!("/webhooks/{webhook}/deliveries/dead/redeliver");
+    let (status, answer) = instance.send(Method::POST, &path, json!({}), None).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{answer}");
+    assert_eq!(answer["status"], "pending");
 }
 
 #[tokio::test]
