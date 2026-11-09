@@ -56,7 +56,7 @@ describe("the instance lines of an archive", () => {
     const set = await operator.patchConfig({ audit_retention_days: 31 });
     expect(set.status, JSON.stringify(set.error)).toBe(200);
     const moved = await owner.patchConfig({
-      addresses: ["https://marfa.example"],
+      addresses: [new URL(server.apiUrl).origin, "https://marfa.example"],
     });
     expect(moved.status, JSON.stringify(moved.error)).toBe(200);
 
