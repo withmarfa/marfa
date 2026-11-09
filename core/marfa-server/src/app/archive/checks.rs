@@ -6,7 +6,6 @@ use serde_json::{Map, Value, json};
 
 use crate::app::catalog::Catalog;
 use crate::app::edges::write::judge_restored_ends;
-use crate::app::items::bulk::BULK_REQUEST_BYTES;
 use crate::app::items::write::ruled;
 use crate::app::refusal::{Code, Refusal};
 
@@ -184,11 +183,11 @@ fn size_of(properties: &Value) -> usize {
     serde_json::to_string(properties).map_or(usize::MAX, |text| text.len())
 }
 
-fn oversized(at: &At<'_>, field: &str, properties: &Value) -> Option<Box<Refused>> {
+fn oversized(at: &At<'_>, cap: usize, field: &str, properties: &Value) -> Option<Box<Refused>> {
     let bytes = size_of(properties);
-    (bytes > BULK_REQUEST_BYTES).then(|| {
+    (bytes > cap).then(|| {
         let message = format!(
-            "{} {} on line {} of the archive: {field} is {bytes} bytes, more than the {BULK_REQUEST_BYTES} a \
+            "{} {} on line {} of the archive: {field} is {bytes} bytes, more than the {cap} a \
              write takes.",
             capitalized(at.kind.word()),
             at.id.unwrap_or("with no id"),
@@ -196,7 +195,7 @@ fn oversized(at: &At<'_>, field: &str, properties: &Value) -> Option<Box<Refused
         );
         at.refused(
             Some(field),
-            Refusal::new(Code::RequestTooLarge, message).with_detail("limit_bytes", BULK_REQUEST_BYTES),
+            Refusal::new(Code::RequestTooLarge, message).with_detail("limit_bytes", cap),
         )
     })
 }
@@ -208,8 +207,9 @@ fn state_held(type_id: &str, state: &str) -> bool {
     STATES.contains(&state) && !(system && state == "trashed") && !(!system && state == "revoked")
 }
 
-/// Judges an `items.ndjson.gz` line, the `row`th, as a restore into an instance holding `catalog`.
-pub fn item(catalog: &Catalog, line: &Value, row: usize) -> Result<(), Box<Refused>> {
+/// Judges an `items.ndjson.gz` line, the `row`th, as a restore into an instance holding `catalog`,
+/// whose bulk operations take bodies of `cap` bytes.
+pub fn item(catalog: &Catalog, cap: usize, line: &Value, row: usize) -> Result<(), Box<Refused>> {
     let unnamed = At {
         kind: Kind::Item,
         id: None,
@@ -302,7 +302,7 @@ pub fn item(catalog: &Catalog, line: &Value, row: usize) -> Result<(), Box<Refus
     history(&at, line.get("versions"), id, version)?;
     if let Some(refused) = item
         .get("properties")
-        .and_then(|properties| oversized(&at, "properties", properties))
+        .and_then(|properties| oversized(&at, cap, "properties", properties))
     {
         return Err(refused);
     }
@@ -310,7 +310,7 @@ pub fn item(catalog: &Catalog, line: &Value, row: usize) -> Result<(), Box<Refus
         for (index, snapshot) in versions.iter().enumerate() {
             if let Some(refused) = snapshot
                 .get("properties")
-                .and_then(|held| oversized(&at, &format!("versions.{index}.properties"), held))
+                .and_then(|held| oversized(&at, cap, &format!("versions.{index}.properties"), held))
             {
                 return Err(refused);
             }
@@ -416,9 +416,10 @@ pub struct End<'a> {
 }
 
 /// Judges an `edges.ndjson.gz` line, the `row`th, whose ends `ends` finds, as a restore into an
-/// instance holding `catalog`.
+/// instance holding `catalog`, whose bulk operations take bodies of `cap` bytes.
 pub fn edge<'a>(
     catalog: &Catalog,
+    cap: usize,
     line: &Value,
     row: usize,
     ends: impl Fn(&str) -> Option<End<'a>>,
@@ -461,7 +462,7 @@ pub fn edge<'a>(
     }
     if let Some(refused) = edge
         .get("properties")
-        .and_then(|properties| oversized(&at, "properties", properties))
+        .and_then(|properties| oversized(&at, cap, "properties", properties))
     {
         return Err(refused);
     }
@@ -497,6 +498,8 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    const CAP: usize = 16 * 1024 * 1024;
 
     fn line(item: Value) -> Value {
         json!({ "item": item, "metadata": { "tags": [], "extensions": {} } })
@@ -562,22 +565,25 @@ mod tests {
     #[test]
     fn a_row_its_type_takes_passes() {
         let catalog = Catalog::shipped();
-        assert!(item(&catalog, &line(note(json!({}))), 1).is_ok());
+        assert!(item(&catalog, CAP, &line(note(json!({}))), 1).is_ok());
         let history = json!({ "versions": [snapshot(1), snapshot(2)] });
         let mut held = line(note(json!({})));
         held.as_object_mut()
             .unwrap()
             .extend(history.as_object().unwrap().clone());
-        assert!(item(&catalog, &held, 1).is_ok());
+        assert!(item(&catalog, CAP, &held, 1).is_ok());
     }
 
     #[test]
     fn a_row_in_a_state_its_lifecycle_cannot_produce_is_refused() {
         let catalog = Catalog::shipped();
         let revoked = line(note(json!({ "state": "revoked" })));
-        assert_eq!(field(item(&catalog, &revoked, 1)).as_deref(), Some("state"));
+        assert_eq!(
+            field(item(&catalog, CAP, &revoked, 1)).as_deref(),
+            Some("state")
+        );
         let trashed = line(note(json!({ "state": "trashed" })));
-        assert!(item(&catalog, &trashed, 1).is_ok());
+        assert!(item(&catalog, CAP, &trashed, 1).is_ok());
     }
 
     #[test]
@@ -586,7 +592,7 @@ mod tests {
         for versions in [json!([snapshot(3)]), json!([snapshot(1), snapshot(1)])] {
             let mut held = line(note(json!({})));
             held["versions"] = versions;
-            let refused = field(item(&catalog, &held, 1)).unwrap();
+            let refused = field(item(&catalog, CAP, &held, 1)).unwrap();
             assert!(refused.ends_with(".version"), "{refused}");
         }
     }
@@ -594,17 +600,29 @@ mod tests {
     #[test]
     fn properties_past_the_bulk_cap_are_refused_and_at_it_pass() {
         let catalog = Catalog::shipped();
-        let at = BULK_REQUEST_BYTES - r#"{"t":""}"#.len();
+        let at = CAP - r#"{"t":""}"#.len();
         let fits = line(
             json!({ "id": "01a1bdba-8640-72ba-b7d6-9e27d94e7540", "type": "user.thing", "properties": { "t": "a".repeat(at) } }),
         );
-        assert!(item(&catalog, &fits, 1).is_ok());
+        assert!(item(&catalog, CAP, &fits, 1).is_ok());
         let over = line(
             json!({ "id": "01a1bdba-8640-72ba-b7d6-9e27d94e7540", "type": "user.thing", "properties": { "t": "a".repeat(at + 1) } }),
         );
-        let refused = item(&catalog, &over, 1).unwrap_err();
+        let refused = item(&catalog, CAP, &over, 1).unwrap_err();
         assert_eq!(refused.refusal.code, Code::RequestTooLarge);
         assert_eq!(refused.field.as_deref(), Some("properties"));
+    }
+
+    #[test]
+    fn the_cap_is_the_one_the_instance_sets() {
+        let catalog = Catalog::shipped();
+        let row = line(
+            json!({ "id": "01a1bdba-8640-72ba-b7d6-9e27d94e7540", "type": "user.thing", "properties": { "t": "a".repeat(100) } }),
+        );
+        let size = r#"{"t":""}"#.len() + 100;
+        assert!(item(&catalog, size, &row, 1).is_ok());
+        let refused = item(&catalog, size - 1, &row, 1).unwrap_err();
+        assert_eq!(refused.refusal.code, Code::RequestTooLarge);
     }
 
     #[test]
@@ -613,9 +631,9 @@ mod tests {
         let orphan = line(
             json!({ "id": "01a1bdba-8640-72ba-b7d6-9e27d94e7540", "type": "user.gone", "properties": { "n": 1 } }),
         );
-        assert!(item(&catalog, &orphan, 1).is_ok());
+        assert!(item(&catalog, CAP, &orphan, 1).is_ok());
         let wrong = line(note(json!({ "properties": { "title": 7 } })));
-        let refused = item(&catalog, &wrong, 1).unwrap_err();
+        let refused = item(&catalog, CAP, &wrong, 1).unwrap_err();
         assert_eq!(refused.refusal.code, Code::InvalidProperties);
         assert_eq!(refused.field.as_deref(), Some("properties.title"));
     }
@@ -641,25 +659,25 @@ mod tests {
                 target,
             )
         };
-        assert!(edge(&catalog, &edge_line("about", "b"), 1, ends).is_ok());
+        assert!(edge(&catalog, CAP, &edge_line("about", "b"), 1, ends).is_ok());
         for id in [
             json!("e"),
             json!(7),
             json!("01A1BDBA-8640-72BA-B7D6-9E27D94E7541"),
         ] {
-            let refused = edge(&catalog, &edge_with(id, "about", "b"), 1, ends).unwrap_err();
+            let refused = edge(&catalog, CAP, &edge_with(id, "about", "b"), 1, ends).unwrap_err();
             assert_eq!(refused.field.as_deref(), Some("id"));
             assert!(refused.skip.is_none());
         }
-        assert!(edge(&catalog, &edge_line("user.gone", "b"), 1, ends).is_ok());
-        let bad = edge(&catalog, &edge_line("Not An Id", "b"), 1, ends).unwrap_err();
+        assert!(edge(&catalog, CAP, &edge_line("user.gone", "b"), 1, ends).is_ok());
+        let bad = edge(&catalog, CAP, &edge_line("Not An Id", "b"), 1, ends).unwrap_err();
         assert_eq!(bad.field.as_deref(), Some("edge_type"));
-        let missing = edge(&catalog, &edge_line("about", "missing"), 1, ends).unwrap_err();
+        let missing = edge(&catalog, CAP, &edge_line("about", "missing"), 1, ends).unwrap_err();
         assert_eq!(
             missing.refusal.details.unwrap()["reason"],
             "endpoint_missing"
         );
-        let looped = edge(&catalog, &edge_line("about", "a"), 1, ends).unwrap_err();
+        let looped = edge(&catalog, CAP, &edge_line("about", "a"), 1, ends).unwrap_err();
         assert_eq!(looped.refusal.code, Code::EdgeCycle);
     }
 }

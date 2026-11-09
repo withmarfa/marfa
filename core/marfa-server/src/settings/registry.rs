@@ -282,6 +282,7 @@ const COUNT_OR_NONE: Rule = Rule::Whole {
 
 registry! {
     MAX_REQUEST_BYTES: u64 = "max_request_bytes", BYTES, "1048576", "The largest request body the server accepts, in bytes.";
+    MAX_BULK_REQUEST_BYTES: u64 = "max_bulk_request_bytes", BYTES, "16777216", "The largest body the bulk operations accept, in bytes. A restore refuses a row larger than this.";
     DISK_RESERVE_BYTES: u64 = "disk_reserve_bytes", BYTES_OR_NONE, "134217728", "Free disk space on the blob volume that an upload must leave, and below which health reports the disk as degraded, in bytes.";
     UPLOAD_IDLE_TIMEOUT_MS: u64 = "upload_idle_timeout_ms", UP_TO_A_DAY, "60000", "How long a blob upload may go without receiving a byte, in milliseconds, before the server ends it.";
     BLOB_READ_IDLE_TIMEOUT_MS: u64 = "blob_read_idle_timeout_ms", UP_TO_A_DAY, "30000", "How long a blob download may make no progress, in milliseconds, before the server closes it.";

@@ -43,6 +43,7 @@ macro_rules! point_list {
         FAIL_SESSION_USE = Fail "session-use" Nth;
         FAIL_BLOB_WRITE = Fail "blob-write" Nth;
         FAIL_BLOB_READ = Fail "blob-read" Nth;
+        FAIL_BLOB_READ_SHORT = Fail "blob-read-short" Nth;
         FAIL_BLOB_DELETE = Fail "blob-delete" Nth;
         HOLD_BLOB_HAS = Hold "blob-has" None;
         HOLD_BLOB_READ = Hold "blob-read" Nth;

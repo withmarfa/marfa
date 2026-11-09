@@ -141,9 +141,10 @@ impl App {
             .read(move |tx| catalog::current(&cache, tx, Snapshot::Committed))
             .await?;
         let spool = self.restore_spool();
+        let cap = self.bulk_cap();
         let (parts, mut arriving) = mpsc::channel::<Bytes>(QUEUED);
         let reading = tokio::task::spawn_blocking(move || {
-            let mut intake = Intake::new(spool, committed)?;
+            let mut intake = Intake::new(spool, committed, cap)?;
             while let Some(part) = arriving.blocking_recv() {
                 intake.push(&part)?;
             }
@@ -182,6 +183,7 @@ impl App {
             let cache = app.catalog_handle();
             let faults = app.faults.clone();
             let settings = app.clone();
+            let cap = app.bulk_cap();
             let written = app
                 .write(&caller, "restore_archive", move |unit| {
                     let began = std::time::Instant::now();
@@ -250,7 +252,7 @@ impl App {
                         let (mut imported, mut duplicates) = (0usize, 0usize);
                         for (row, line) in lines(&spools[1])?.enumerate() {
                             let line = line?;
-                            checks::item(&catalog, &line, row + 1).map_err(|refused| refused.refusal)?;
+                            checks::item(&catalog, cap, &line, row + 1).map_err(|refused| refused.refusal)?;
                             match restored::restore(unit, &catalog, &line, &held)? {
                                 Restored::Written => imported += 1,
                                 Restored::Duplicate => duplicates += 1,
@@ -264,7 +266,7 @@ impl App {
                         let mut edges = Counted::default();
                         for (row, line) in lines(&spools[2])?.enumerate() {
                             let line = line?;
-                            if let Err(refused) = checks::edge(&catalog, &line, row + 1, |_| None)
+                            if let Err(refused) = checks::edge(&catalog, cap, &line, row + 1, |_| None)
                                 && refused.skip.is_none()
                             {
                                 return Err(refused.refusal);

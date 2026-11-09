@@ -154,6 +154,7 @@ impl LineFile {
 /// What the line checks carry from one line to the next and from file to file.
 struct Rows {
     committed: Arc<Catalog>,
+    cap: usize,
     catalog: Option<Catalog>,
     registrations: Registrations,
     icon_types: HashSet<String>,
@@ -387,7 +388,7 @@ impl Rows {
         let Some(catalog) = &self.catalog else {
             return Ok(());
         };
-        checks::item(catalog, line, row).map_err(|refused| refused.refusal)?;
+        checks::item(catalog, self.cap, line, row).map_err(|refused| refused.refusal)?;
         let item = &line["item"];
         let id = item.get("id").and_then(Value::as_str);
         if let Some(Value::Array(versions)) = line.get("versions") {
@@ -428,7 +429,7 @@ impl Rows {
                 type_id: names.get(*index as usize)?.as_str(),
             })
         };
-        match checks::edge(catalog, line, row, ends) {
+        match checks::edge(catalog, self.cap, line, row, ends) {
             Ok(()) => Ok(()),
             Err(refused) if refused.skip.is_some() => Ok(()),
             Err(refused) => Err(refused.refusal),
@@ -605,7 +606,7 @@ fn not_gzip(file: LineFile) -> Refusal {
 
 impl Intake {
     /// Opens the three line spools at once, so the body is spooled from its first part.
-    pub fn new(spool: Spool, committed: Arc<Catalog>) -> Result<Intake> {
+    pub fn new(spool: Spool, committed: Arc<Catalog>, cap: usize) -> Result<Intake> {
         let spools = [
             Some(spool.scratch()?),
             Some(spool.scratch()?),
@@ -622,6 +623,7 @@ impl Intake {
             manifest: None,
             rows: Some(Rows {
                 committed,
+                cap,
                 catalog: None,
                 registrations: Registrations::default(),
                 icon_types: HashSet::new(),
