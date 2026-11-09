@@ -88,6 +88,65 @@ fn named_for_deletion(bucket: &str, body: &[u8]) -> Vec<(String, String)> {
         .collect()
 }
 
+/// The prefix of a `ListObjectsV2` request, percent-decoded.
+fn listed_prefix(query: &str) -> Option<String> {
+    let pairs: Vec<(&str, &str)> = query
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .collect();
+    pairs
+        .iter()
+        .find(|(name, value)| *name == "list-type" && *value == "2")?;
+    let raw = pairs
+        .iter()
+        .find(|(name, _)| *name == "prefix")
+        .map_or("", |(_, value)| *value);
+    let mut decoded = Vec::new();
+    let mut bytes = raw.bytes();
+    while let Some(byte) = bytes.next() {
+        match byte {
+            b'%' => {
+                let hex: String = bytes.by_ref().take(2).map(char::from).collect();
+                decoded.push(u8::from_str_radix(&hex, 16).ok()?);
+            }
+            b'+' => decoded.push(b' '),
+            byte => decoded.push(byte),
+        }
+    }
+    String::from_utf8(decoded).ok()
+}
+
+/// Every object of `bucket` under `prefix`, in one page.
+fn listing(objects: &HashMap<String, Object>, bucket: &str, prefix: &str) -> Response {
+    let under = format!("{bucket}/{prefix}");
+    let mut keys: Vec<(&String, &Object)> = objects
+        .iter()
+        .filter(|(key, _)| key.starts_with(&under))
+        .collect();
+    keys.sort_by(|a, b| a.0.cmp(b.0));
+    let contents: String = keys
+        .iter()
+        .map(|(key, object)| {
+            format!(
+                "<Contents><Key>{}</Key><LastModified>2026-11-02T10:00:00.000Z</LastModified>\
+                 <ETag>\"e\"</ETag><Size>{}</Size><StorageClass>STANDARD</StorageClass></Contents>",
+                &key[bucket.len() + 1..],
+                object.bytes.len()
+            )
+        })
+        .collect();
+    Response::builder()
+        .header(header::CONTENT_TYPE, "application/xml")
+        .body(Body::from(format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult><Name>{}</Name>\
+             <Prefix>{prefix}</Prefix><KeyCount>{}</KeyCount><MaxKeys>1000</MaxKeys>\
+             <IsTruncated>false</IsTruncated>{contents}</ListBucketResult>",
+            bucket.trim_start_matches('/'),
+            keys.len()
+        )))
+        .unwrap()
+}
+
 fn deletion_answer(named: &[(String, String)]) -> Response {
     let deleted: String = named
         .iter()
@@ -141,6 +200,11 @@ async fn answer(State(held): State<Arc<Mutex<Held>>>, request: Request) -> Respo
             .status(StatusCode::FORBIDDEN)
             .body(Body::from("<Error><Code>AccessDenied</Code></Error>"))
             .unwrap();
+    }
+    if method == Method::GET
+        && let Some(prefix) = listed_prefix(request.uri().query().unwrap_or(""))
+    {
+        return listing(&held.lock().unwrap().objects, &key, &prefix);
     }
     match method {
         Method::PUT => {

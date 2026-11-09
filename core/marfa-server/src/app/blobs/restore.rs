@@ -8,7 +8,7 @@ use futures_util::StreamExt;
 use super::disk::{Disk, Staged};
 use super::store::{self, Answer, Failed, Held, Store};
 use super::{App, Blob, Hash, REPLICATE, Scratch, joined, room, rows, unavailable, unwritable};
-use crate::app::faults::{Faults, HOLD_BLOB_HAS};
+use crate::app::faults::{Faults, HOLD_BLOB_HAS, Lie};
 use crate::app::refusal::Result;
 use crate::db::Write;
 use crate::settings::registry::DISK_RESERVE_BYTES;
@@ -77,6 +77,15 @@ pub struct Copy {
     blob: Blob,
     store_id: String,
     object: String,
+}
+
+/// Where a blob the archive names and does not carry was found.
+enum Absent {
+    /// An attached store holds the instance's recorded copy whole.
+    Held,
+    /// The object store holds it under its name, checked against the name.
+    Found(Copy),
+    Missing,
 }
 
 /// What a restore's blobs came to before its write: the copies to record, the blobs it found
@@ -179,10 +188,7 @@ impl App {
                 .await?
                 .iter()
                 .any(|copy| copy.store_id == disk_id);
-            let whole = matches!(
-                self.blobs.answer_of(&disk, &hash, "").await,
-                Ok(Answer::Holds(size)) if size == sealed.size
-            );
+            let whole = self.disk_holds_whole(&hash).await;
             let blob = Blob {
                 hash,
                 mime_type,
@@ -235,8 +241,9 @@ impl App {
         let mut missing = Vec::new();
         for named in absent {
             match self.find_absent(&named).await? {
-                Some(copy) => copies.push(copy),
-                None => missing.push(named.hash.as_str().to_string()),
+                Absent::Held => {}
+                Absent::Found(copy) => copies.push(copy),
+                Absent::Missing => missing.push(named.hash.as_str().to_string()),
             }
         }
         Ok(Placed {
@@ -267,8 +274,20 @@ impl App {
             })
     }
 
+    /// Whether the disk's file for `hash` reads through to that hash.
+    async fn disk_holds_whole(&self, hash: &Hash) -> bool {
+        let damaged = match self.faults.lie(hash.as_str()) {
+            Some(Lie::Lost | Lie::Unreadable) => return false,
+            Some(Lie::Damaged) => true,
+            None => false,
+        };
+        let (disk, looked) = (self.blobs.disk.clone(), hash.clone());
+        let read = tokio::task::spawn_blocking(move || disk.rehash(&looked, damaged)).await;
+        matches!(read, Ok(Ok(Some((_, found)))) if &found == hash)
+    }
+
     /// A store that fails or stays silent, where none answers whole, refuses the restore.
-    async fn find_absent(&self, named: &Named) -> Result<Option<Copy>> {
+    async fn find_absent(&self, named: &Named) -> Result<Absent> {
         let looked = named.hash.clone();
         let (record, holders) = self
             .db
@@ -281,7 +300,7 @@ impl App {
                     continue;
                 };
                 match self.blobs.answer_of(&store, &blob.hash, &copy.object).await {
-                    Ok(Answer::Holds(size)) if size == blob.size_bytes => return Ok(None),
+                    Ok(Answer::Holds(size)) if size == blob.size_bytes => return Ok(Absent::Held),
                     Ok(_) => {}
                     Err(failure) => {
                         tracing::warn!(
@@ -298,48 +317,65 @@ impl App {
             return Err(unavailable());
         }
         let Some(s3) = self.blobs.s3.clone() else {
-            return Ok(None);
+            return Ok(Absent::Missing);
         };
         let check = self.blobs.check();
         let hash = named.hash.clone();
         let faults = self.faults.clone();
-        let found = async {
+        let listed = async {
             faults.hold(HOLD_BLOB_HAS, None).await;
-            let objects = s3.objects_of(&hash).await?;
-            for (object, size) in objects {
+            let mut whole = Vec::new();
+            for (object, size) in s3.objects_of(&hash).await? {
                 let named = object
                     .strip_prefix(hash.hex())
                     .and_then(|rest| rest.strip_prefix('/'))
                     .is_some_and(|write| {
                         !write.is_empty() && write.bytes().all(|byte| byte.is_ascii_hexdigit())
                     });
-                if !named {
-                    continue;
+                if named
+                    && matches!(s3.answer_for(&object).await?, Answer::Holds(held) if held == size)
+                {
+                    whole.push((object, size));
                 }
-                if !matches!(s3.answer_for(&object).await?, Answer::Holds(held) if held == size) {
-                    continue;
-                }
-                let mut bytes = store::idle_limited(s3.read(&object, 0, size).await?, check);
+            }
+            Ok::<_, io::Error>(whole)
+        };
+        let silent = || io::Error::new(io::ErrorKind::TimedOut, "no answer in time");
+        let listed = tokio::time::timeout(check, listed)
+            .await
+            .unwrap_or_else(|_| Err(silent()));
+        let mut found = None;
+        let candidates = listed.map_err(|error| {
+            tracing::warn!(%error, "The object store did not answer for a restored blob");
+            unavailable()
+        })?;
+        for (object, size) in candidates {
+            // The read may take as long as its bytes keep arriving; only its start is timed.
+            let checked = async {
+                let opened = tokio::time::timeout(check, s3.read(&object, 0, size))
+                    .await
+                    .unwrap_or_else(|_| Err(silent()))?;
+                let mut bytes = store::idle_limited(opened, check);
                 let mut hasher = store::Hasher::default();
                 while let Some(chunk) = bytes.next().await {
                     hasher.update(&chunk?);
                 }
-                if hasher.matches(&hash, size).is_ok() {
-                    return Ok::<_, io::Error>(Some((object, size)));
+                Ok::<_, io::Error>(hasher.matches(&hash, size).is_ok())
+            };
+            match checked.await {
+                Ok(true) => {
+                    found = Some((object, size));
+                    break;
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    tracing::warn!(%error, "The object store did not answer for a restored blob");
+                    return Err(unavailable());
                 }
             }
-            Ok(None)
-        };
-        let found = match tokio::time::timeout(check, found).await {
-            Ok(Ok(found)) => found,
-            Ok(Err(error)) => {
-                tracing::warn!(%error, "The object store did not answer for a restored blob");
-                return Err(unavailable());
-            }
-            Err(_) => return Err(unavailable()),
-        };
+        }
         let Some((object, size)) = found else {
-            return Ok(None);
+            return Ok(Absent::Missing);
         };
         let blob = match record {
             Some(blob) => blob,
@@ -352,7 +388,7 @@ impl App {
                 size_bytes: size,
             },
         };
-        Ok(Some(Copy {
+        Ok(Absent::Found(Copy {
             blob,
             store_id: s3.id().to_string(),
             object,
