@@ -634,9 +634,10 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // The ACL reading both the command line and the Rust server's private
   // socket use has macOS-only code, so a Mac builds and tests it too.
   [/^core\/marfa-acl\//, RUST],
-  // The server's own use of it has a macOS-only test.
+  // The server's own use of it has a macOS-only test, and its process figures
+  // read the resident size through a macOS-only call.
   [
-    /^core\/marfa-server\/src\/control_socket\.rs$/,
+    /^core\/marfa-server\/src\/(control_socket|app\/metrics)\.rs$/,
     ["core-checks", "core-checks-linux", "rust-contract"],
   ],
   // The settings are what the Dockerfile's environment names.

@@ -104,6 +104,9 @@ function serverName(name: string): string {
 
 /** Names in the docs that look like settings and are not the server's. */
 const NOT_SERVER_SETTINGS: Record<string, string> = {
+  MARFA_MAX_CONNECTIONS: "the Rust server's cap on open connections",
+  MARFA_MAX_CONNECTIONS_PER_ADDRESS:
+    "the Rust server's cap on open connections for one caller address",
   UNSUPPORTED_MEDIA_TYPE:
     "the sign-in library's error code for a registration not sent as JSON",
   MARFA_FOLDER_REGISTRY: "the device's folder registry, read by the CLI",
