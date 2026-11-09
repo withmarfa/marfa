@@ -1,6 +1,4 @@
-//! What keeps a native server running on this machine, whichever service
-//! manager the machine has, and how this command talks to the server through
-//! its private socket.
+//! The service manager of a native server, and the calls to its private socket.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -157,9 +155,8 @@ impl Service<'_> {
         }
     }
 
-    /// Writes the service and loads it. With `restart`, the running server
-    /// is replaced, because it reads its settings only when it starts, and
-    /// that happens whatever the process ID query says.
+    /// With `restart` the server is replaced whatever the process ID query says,
+    /// since it reads its settings only at start.
     pub fn on(
         &self,
         autostart: bool,
@@ -399,9 +396,7 @@ pub fn tail_of_file(path: &Path, lines: usize) -> String {
     all[all.len().saturating_sub(lines)..].join("\n")
 }
 
-/// The call to the server's socket. As the server's account, it carries
-/// nothing of the caller's: root's environment, with its variables and search
-/// path, is not the account's to read or to run from.
+/// As the server's account, the call carries nothing of root's environment or search path.
 fn socket_command(
     program: &Path,
     dir: &Path,
@@ -517,8 +512,6 @@ mod socket_tests {
         )
         .unwrap();
         std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
-        // Becoming oneself needs no privilege, and the environment is cleared
-        // all the same.
         // SAFETY: `getuid` and `getgid` cannot fail.
         let me = Identity {
             uid: unsafe { libc::getuid() },

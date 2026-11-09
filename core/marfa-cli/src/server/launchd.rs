@@ -1,8 +1,5 @@
-//! The server as a launchd agent on a Mac. A native install's agent runs
-//! `marfa server run`; a Docker install's runs `marfa server start`, which
-//! brings the Docker engine up first. `MARFA_AUTOSTART_ROOT` names a
-//! directory in place of the home directory, with the `launchctl` to run in
-//! its `bin`, as for `folders autostart`.
+//! The server as a launchd agent on a Mac. `MARFA_AUTOSTART_ROOT` stands in for the
+//! home directory, with the `launchctl` to run in its `bin`, as for `folders autostart`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

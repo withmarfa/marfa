@@ -58,8 +58,7 @@ impl<'a> Layout<'a> {
     }
 }
 
-/// What the server is started with: everything the settings file holds, and
-/// then this folder's paths and the port, which the settings file cannot set.
+/// The settings file cannot set the folder's paths or the port.
 pub fn environment(dir: &Path, port: u16, settings: &EnvFile) -> Vec<(String, String)> {
     let layout = Layout::new(dir);
     let path = |path: PathBuf| path.to_string_lossy().into_owned();
@@ -78,9 +77,7 @@ pub fn environment(dir: &Path, port: u16, settings: &EnvFile) -> Vec<(String, St
     environment
 }
 
-/// A fingerprint of everything a server reads when it starts: the release,
-/// the port, the listen host, the data paths and the settings file exactly as
-/// it is. It is a hash, so the `.env` that keeps it never holds a secret.
+/// A hash of everything a server reads at start, so `.env` never holds a secret.
 pub fn applied(dir: &Path, port: u16, release: &str, settings_text: &str) -> String {
     let mut hash = Sha256::new();
     let mut field = |text: &str| {
@@ -97,8 +94,6 @@ pub fn applied(dir: &Path, port: u16, release: &str, settings_text: &str) -> Str
     hex::encode(hash.finalize())
 }
 
-/// A settings file that sets what the install folder decides is refused,
-/// naming each setting.
 pub fn refuse_folder_settings(settings: &EnvFile, file: &Path) -> Result<(), CliError> {
     let set: Vec<&str> = names::FOLDER_DECIDED
         .into_iter()
@@ -115,11 +110,8 @@ pub fn refuse_folder_settings(settings: &EnvFile, file: &Path) -> Result<(), Cli
     )))
 }
 
-/// The path a service names for `marfa`. A binary in a Homebrew Cellar moves
-/// at every upgrade, and the prefix's `bin/marfa` follows it, so that is the
-/// path whenever the real path of the running binary is in a Cellar. The
-/// prefix is read from the path. Any other binary is named by the path it was
-/// run by.
+/// A binary in a Homebrew Cellar moves at every upgrade, so a service names the
+/// prefix's `bin/marfa`, which follows it.
 pub fn stable_binary(real: &Path, invoked: PathBuf) -> PathBuf {
     let parts: Vec<Component> = real.components().collect();
     let cellar = parts

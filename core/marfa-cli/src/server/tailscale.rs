@@ -135,10 +135,8 @@ pub fn served(status: &str, https_port: u16) -> Option<String> {
         })
 }
 
-/// Refuses when the port already serves something other than `target`, or
-/// than `previous`, which this install served before and may replace. Whether
-/// it does is read before anything is changed, so a refusal leaves nothing
-/// behind. `true` means `target` is served already.
+/// Refuses when the port serves anything but `target` or `previous`, before changing
+/// anything. `true` means `target` is served already.
 pub fn check_free(https_port: u16, target: &str, previous: Option<&str>) -> Result<bool, CliError> {
     let status = run(&["serve", "status", "--json"])?;
     match served(&status, https_port) {
