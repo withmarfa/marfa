@@ -18,32 +18,39 @@ const rows: {
   created_at: string;
   updated_at: string;
 }[] = [];
-const spellings = [
-  "2026",
-  "2026-01",
-  "2026-01-01",
-  "2026-01-01T00:00",
+// An RFC 3339 date-time spelled every way the rule allows.
+const dateTimes = [
   "2026-01-01T00:00:00Z",
-  "2026-01-01T01:00:00+0100",
+  "2026-01-01t00:00:00z",
+  "2026-01-01T01:00:00+01:00",
   "2025-12-31T23:00:00-01:00",
   "2026-01-01T00:00:00.500999Z",
-  "2026-01-01T00:00:00.5",
-  "2025-12-31T24:00:00.0000Z",
-  "2026-01-01T00:00+2359",
-  "0000",
-  "0099-02",
-  "2000-02-29",
+  "2026-01-01T00:00:00.5Z",
+  "2026-01-01T00:00:00+23:59",
+  "0000-01-01T00:00:00Z",
+  "2000-02-29T00:00:00Z",
   "9999-12-31T23:59:59.9999Z",
 ];
+// A bound or a filter literal also takes a date alone.
+const dates = ["2026-01-01", "0000-01-01", "0099-02-01", "2000-02-29"];
+const spellings = [...dateTimes, ...dates];
 const invalid = [
   "bad",
+  "2026",
+  "2026-01",
   "2026-02-29",
   "1900-02-29",
+  "2026-01-01T00:00",
+  "2026-01-01T00:00Z",
+  "2026-01-01T00:00:00",
+  "2026-01-01T00:00:00.5",
   "2026-01-01T00:00:60Z",
-  "2026-01-01T24:00:00.0001Z",
-  "2026-01-01T00:00+2400",
-  "0000-01-01T00:00+00:01",
-  "9999-12-31T24:00Z",
+  "2026-01-01T24:00:00Z",
+  "2025-12-31T24:00:00.0000Z",
+  "2026-01-01T01:00:00+0100",
+  "2026-01-01T00:00:00+24:00",
+  "0000-01-01T00:00:00+00:01",
+  "9999-12-31T23:59:59-00:01",
 ];
 function value<T>(result: Outcome<T>): T {
   expect(result.ok, JSON.stringify(result)).toBe(true);
@@ -207,7 +214,7 @@ it.each(["listing", "search"] as const)(
 );
 
 it("compares an unsent projection canonically and keeps its queued request", async () => {
-  const spelling = "2026-01-01T01:00:00.500+0100";
+  const spelling = "2026-01-01T01:00:00.500+01:00";
   const queued = value(
     await device.create({
       type: "core.note",
@@ -230,7 +237,7 @@ it("compares an unsent projection canonically and keeps its queued request", asy
 });
 
 it("projects every accepted spelling to the server's exact instant", async () => {
-  for (const spelling of spellings) {
+  for (const spelling of dateTimes) {
     const served = await client.createItem({
       type: "core.note",
       source: ctx.source,

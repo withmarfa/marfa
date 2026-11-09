@@ -38,7 +38,7 @@ pub struct Page {
 pub struct Unhandled(pub Arc<Fault>);
 
 pub fn json_answer(status: StatusCode, value: &impl Serialize) -> Response {
-    match marfa_rules::js::to_vec(value) {
+    match marfa_rules::number::to_vec(value) {
         Ok(bytes) => {
             let mut response = Response::new(Body::from(bytes));
             *response.status_mut() = status;
@@ -81,7 +81,7 @@ fn envelope(refusal: &Refusal) -> Value {
 }
 
 pub fn refusal_body(refusal: &Refusal) -> Vec<u8> {
-    marfa_rules::js::to_vec(&envelope(refusal)).unwrap_or_default()
+    marfa_rules::number::to_vec(&envelope(refusal)).unwrap_or_default()
 }
 
 pub fn refusal_answer(refusal: &Refusal) -> Response {

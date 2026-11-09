@@ -305,17 +305,17 @@
       "description": "passes over a field whose first line is only a control character",
       "type": "user.plain",
       "properties": {
-        "title": "\u0085\nhidden",
+        "title": "\u0001\nhidden",
         "name": "Fallback name"
       },
       "name": "Fallback name",
       "preview": null
     },
     {
-      "description": "trims a byte order mark as whitespace",
+      "description": "passes over a first line that is only the next-line character, which is whitespace",
       "type": "user.plain",
       "properties": {
-        "title": "\ufeff\nReal name"
+        "title": "\u0085\nReal name"
       },
       "name": "Real name",
       "preview": null

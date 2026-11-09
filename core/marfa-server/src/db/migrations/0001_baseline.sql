@@ -431,6 +431,18 @@ CREATE TABLE IF NOT EXISTS webhooks (
 CREATE INDEX IF NOT EXISTS webhooks_key ON webhooks (key_id) WHERE key_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS webhooks_grant ON webhooks (grant_id) WHERE grant_id IS NOT NULL;
 
+-- Moves whenever its maker makes or deletes a webhook, so a confirmation can
+-- tell the maker's webhooks changed and no one else's can move it.
+CREATE TABLE IF NOT EXISTS webhook_turns (
+    key_id TEXT REFERENCES api_keys (id) ON DELETE CASCADE,
+    grant_id TEXT REFERENCES auth_oauth_consent (grant_id) ON DELETE CASCADE,
+    turns INTEGER NOT NULL,
+    CHECK ((key_id IS NULL) <> (grant_id IS NULL))
+) STRICT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS webhook_turns_key ON webhook_turns (key_id) WHERE key_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS webhook_turns_grant ON webhook_turns (grant_id) WHERE grant_id IS NOT NULL;
+
 -- Payloads outlive log expiry; cycle_attempt restarts on redelivery.
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
     seq INTEGER PRIMARY KEY,

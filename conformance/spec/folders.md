@@ -1334,7 +1334,7 @@ When a document version line is a quoted integer or decimal spelling of a positi
 
 ### `folders/time-normalization`
 
-When a document names `occurred_at`, a device MUST interpret its date or date-and-time by the server's time rules, including UTC for a value without an offset.
+When a document names `occurred_at`, a device MUST read a date alone as its midnight in UTC and any other value as an RFC 3339 date-time (`items/occurred-at-form`).
 
 **Tests:** `device/folders-frontmatter.test.ts › sets a new item's own time, from a date or from a date and time`, `cli/folder.test.ts › sets an item's own time from a file's occurred_at line, and writes it back as typed`.
 

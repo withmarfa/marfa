@@ -177,7 +177,7 @@ struct SnapshotHead<'a> {
 }
 
 pub(crate) fn with_properties(head: &impl Serialize, properties: &str) -> Result<String> {
-    let printed = marfa_rules::js::to_vec(head)
+    let printed = marfa_rules::number::to_vec(head)
         .ok()
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .ok_or_else(|| Refusal::internal("an item did not print"))?;
@@ -412,7 +412,7 @@ fn metadata_text(
     shown: impl Fn(&str) -> bool,
 ) -> Result<String> {
     let tags = rows::tags(tx, item.seq)?;
-    let head = marfa_rules::js::to_vec(&json!({ "item_id": item.id, "tags": tags }))
+    let head = marfa_rules::number::to_vec(&json!({ "item_id": item.id, "tags": tags }))
         .ok()
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .ok_or_else(|| Refusal::internal("metadata did not print"))?;
