@@ -2235,7 +2235,7 @@ fn a_restart_that_failed_is_tried_again_by_running_install_again() {
     let (code, _, stderr) = rig.native(&proxy);
     assert_ne!(code, 0, "{stderr}");
     assert_eq!(rig.service_pid("marfa"), pid, "the failed restart ran");
-    // Whatever the server now runs, no run may take it for what it was.
+    // A failed restart leaves no record of what the server runs.
     assert!(
         !rig.file(".env").contains("MARFA_APPLIED="),
         "{}",

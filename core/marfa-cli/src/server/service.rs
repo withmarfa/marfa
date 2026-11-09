@@ -166,8 +166,8 @@ impl Service<'_> {
         let running = restart && self.running();
         let before = if running { self.process_id() } else { None };
         let (changed, linger) = self.write_and_load(autostart, binary, server)?;
-        // A changed definition was restarted as it loaded, and a stopped
-        // service was started then on systemd.
+        // Loading a changed definition restarted the service, and on systemd
+        // loading also started a stopped one.
         if restart && !changed {
             if running {
                 self.restart()?;
