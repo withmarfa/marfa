@@ -134,6 +134,8 @@ pub struct Backup {
     pub limit: std::time::Duration,
     /// Each file its rows name that the registry held in its snapshot.
     pub files: Vec<String>,
+    /// The files its manifest lists under `bucket_blobs`.
+    pub in_bucket: Vec<String>,
 }
 
 /// What a backup's snapshot gave beside its lines.
@@ -225,7 +227,12 @@ impl App {
         let (prepared, snapshot) = self
             .prepare_archive(&Caller::Server, ask, false, Some(bucket.to_string()))
             .await?;
-        let Some(Snapshot { changes, files, .. }) = snapshot else {
+        let Some(Snapshot {
+            changes,
+            files,
+            in_bucket,
+        }) = snapshot
+        else {
             return Err(Refusal::internal("a backup's snapshot was not kept"));
         };
         let created_at = prepared.created_at;
@@ -247,6 +254,7 @@ impl App {
             changes,
             limit,
             files,
+            in_bucket,
         })
     }
 
@@ -324,10 +332,8 @@ impl App {
             "missing_blobs".into(),
             Value::Object(missing.into_iter().collect()),
         );
-        let snapshot = selected.backup.map(|mut snapshot| {
-            let in_bucket = std::mem::take(&mut snapshot.in_bucket);
-            manifest.insert("bucket_blobs".into(), in_bucket.into());
-            snapshot
+        let snapshot = selected.backup.inspect(|snapshot| {
+            manifest.insert("bucket_blobs".into(), snapshot.in_bucket.clone().into());
         });
         reading(self, caller, |_| Ok(())).await?;
         let prepared = Prepared {

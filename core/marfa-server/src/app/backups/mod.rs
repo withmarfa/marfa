@@ -19,13 +19,13 @@ use super::archive::Backup;
 use super::blobs::Hash;
 use super::blobs::s3::S3;
 use super::clock::Stamp;
-use super::faults::HOLD_BACKUP_PUT;
+use super::faults::{HOLD_BACKUP_PUT, HOLD_BACKUP_READ};
 use super::housekeeping::{self, Report, Run};
 use super::refusal::{Code, Refusal, Result};
 use crate::db::Write;
 use crate::settings::registry::BACKUP_INTERVAL_MS;
 
-pub use names::{doomed, instance_of, name_of, parse};
+pub use names::{doomed, instance_of, name_of, parse, past_retention};
 
 /// The folder under the object store's prefix that holds a folder of backups per instance.
 pub const FOLDER: &str = "backups";
@@ -136,8 +136,15 @@ fn begin(tx: &Transaction<'_>, store: &str, name: &str) -> Result<i64> {
     Ok(tx.last_insert_rowid())
 }
 
-/// Holds `hashes` from backup `seq` on, refusing when one is already gone from the registry.
-fn open(tx: &Transaction<'_>, store: &str, seq: i64, hashes: &[String]) -> Result<()> {
+/// Holds `hashes` from backup `seq` on, refusing when one left the registry, or left `store`
+/// where the backup's snapshot found it, since that snapshot.
+fn open(
+    tx: &Transaction<'_>,
+    store: &str,
+    seq: i64,
+    hashes: &[String],
+    in_bucket: &HashSet<String>,
+) -> Result<()> {
     for hash in hashes {
         if !super::blobs::registered(tx, hash)? {
             return Err(Refusal::new(
@@ -145,6 +152,16 @@ fn open(tx: &Transaction<'_>, store: &str, seq: i64, hashes: &[String]) -> Resul
                 format!(
                     "The file {hash} the backup names was purged while the backup was read; \
                      the next run takes it again."
+                ),
+            ));
+        }
+        if in_bucket.contains(hash) && super::blobs::held_in(tx, store, [hash.clone()])?.is_empty()
+        {
+            return Err(Refusal::new(
+                Code::Conflict,
+                format!(
+                    "The object store's copy of the file {hash} the backup names was dropped \
+                     while the backup was read; the next run takes the file again."
                 ),
             ));
         }
@@ -186,7 +203,15 @@ fn plan(open_now: &HashSet<String>, files: Vec<String>) -> (Vec<String>, Vec<Str
 const HOLD_PAGE: usize = 5_000;
 
 /// Records the backup `name` about to be put and holds each file it names, a page per write.
-async fn hold(app: &Arc<App>, store: &str, name: &str, files: Vec<String>) -> Result<()> {
+/// A file open now stays held by a recorded backup throughout; each other file is checked
+/// against the snapshot in the write that holds it.
+async fn hold(
+    app: &Arc<App>,
+    store: &str,
+    name: &str,
+    files: Vec<String>,
+    in_bucket: Vec<String>,
+) -> Result<()> {
     let looked = store.to_string();
     let (mut opening, closing) = app
         .db
@@ -197,69 +222,76 @@ async fn hold(app: &Arc<App>, store: &str, name: &str, files: Vec<String>) -> Re
         .db
         .write(Write::own(), move |tx| begin(tx, &held, &recorded))
         .await?;
-    while !opening.is_empty() {
-        let page = opening.split_off(opening.len().saturating_sub(HOLD_PAGE));
-        let held = store.to_string();
-        app.db
-            .write(Write::own(), move |tx| open(tx, &held, seq, &page))
-            .await?;
-    }
+    // Closing first leaves an interrupted attempt open on only the files it names.
     for page in closing.chunks(HOLD_PAGE) {
         let (held, page) = (store.to_string(), page.to_vec());
         app.db
             .write(Write::own(), move |tx| close(tx, &held, seq, &page))
             .await?;
     }
+    let in_bucket: Arc<HashSet<String>> = Arc::new(in_bucket.into_iter().collect());
+    while !opening.is_empty() {
+        let page = opening.split_off(opening.len().saturating_sub(HOLD_PAGE));
+        let (held, in_bucket) = (store.to_string(), in_bucket.clone());
+        app.db
+            .write(Write::own(), move |tx| {
+                open(tx, &held, seq, &page, &in_bucket)
+            })
+            .await?;
+    }
     Ok(())
 }
 
-/// Forgets the backups of `store` not in `kept`, and each of its holds no backup left covers.
-fn release(tx: &Transaction<'_>, store: &str, kept: &HashSet<String>) -> Result<()> {
-    let recorded: Vec<(i64, String)> = tx
-        .prepare_cached("SELECT seq, name FROM backups WHERE store_id = ?1")?
-        .query_map([store], |row| Ok((row.get(0)?, row.get(1)?)))?
+/// Confirms each backup of `store` the listing names, and forgets one only once thinning
+/// deleted it, or once the listing omits it, a later one is recorded and it is past retention.
+fn reconcile(
+    tx: &Transaction<'_>,
+    store: &str,
+    listed: &HashSet<String>,
+    deleted: &HashSet<String>,
+    now: Stamp,
+) -> Result<()> {
+    let recorded: Vec<(i64, String, bool)> = tx
+        .prepare_cached("SELECT seq, name, confirmed FROM backups WHERE store_id = ?1")?
+        .query_map([store], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
         .collect::<rusqlite::Result<_>>()?;
+    let newest = recorded.iter().map(|(seq, _, _)| *seq).max();
+    let mut confirm = tx.prepare_cached("UPDATE backups SET confirmed = 1 WHERE seq = ?1")?;
     let mut forget = tx.prepare_cached("DELETE FROM backups WHERE seq = ?1")?;
-    for (seq, name) in recorded {
-        if !kept.contains(&name) {
+    for (seq, name, confirmed) in recorded {
+        if deleted.contains(&name) {
             forget.execute([seq])?;
+        } else if listed.contains(&name) {
+            if !confirmed {
+                confirm.execute([seq])?;
+            }
+        } else if Some(seq) != newest {
+            match parse(&name) {
+                Some(taken) if past_retention(taken, now) => {
+                    forget.execute([seq])?;
+                }
+                Some(_) => {}
+                None => tracing::error!(
+                    backup = %name,
+                    "A recorded backup's name does not read, so the files it names stay held"
+                ),
+            }
         }
     }
     drop_uncovered(tx, store)
 }
 
-/// Deletes each ended hold of `store` that no backup it records covers.
+/// Deletes each hold of `store` that no backup it records covers. An open hold is covered by
+/// any backup from its first on, so it is compared with the newest alone rather than probed.
 fn drop_uncovered(tx: &Transaction<'_>, store: &str) -> Result<()> {
     tx.prepare_cached(
-        "DELETE FROM backup_files WHERE store_id = ?1 AND last_seq IS NOT NULL \
-         AND NOT EXISTS (SELECT 1 FROM backups b WHERE b.store_id = backup_files.store_id \
-         AND b.seq >= backup_files.first_seq \
-         AND (backup_files.last_seq IS NULL OR b.seq <= backup_files.last_seq))",
+        "DELETE FROM backup_files WHERE store_id = ?1 AND CASE WHEN last_seq IS NULL \
+         THEN first_seq > (SELECT coalesce(max(seq), 0) FROM backups WHERE store_id = ?1) \
+         ELSE NOT EXISTS (SELECT 1 FROM backups b WHERE b.store_id = ?1 \
+         AND b.seq BETWEEN backup_files.first_seq AND backup_files.last_seq) END",
     )?
     .execute([store])?;
     Ok(())
-}
-
-/// The backups of `store` begun and not yet seen in it.
-fn unconfirmed(tx: &Transaction<'_>, store: &str) -> Result<Vec<(i64, String)>> {
-    Ok(tx
-        .prepare_cached("SELECT seq, name FROM backups WHERE store_id = ?1 AND confirmed = 0")?
-        .query_map([store], |row| Ok((row.get(0)?, row.get(1)?)))?
-        .collect::<rusqlite::Result<_>>()?)
-}
-
-/// Confirms each unconfirmed backup of `store` that `listed` names and forgets the rest.
-fn settle(tx: &Transaction<'_>, store: &str, listed: &HashSet<String>) -> Result<()> {
-    let mut confirm = tx.prepare_cached("UPDATE backups SET confirmed = 1 WHERE seq = ?1")?;
-    let mut forget = tx.prepare_cached("DELETE FROM backups WHERE seq = ?1")?;
-    for (seq, name) in unconfirmed(tx, store)? {
-        if listed.contains(&name) {
-            confirm.execute([seq])?;
-        } else {
-            forget.execute([seq])?;
-        }
-    }
-    drop_uncovered(tx, store)
 }
 
 /// Settles earlier attempts by the store's listing, refusing to go on while it does not answer.
@@ -268,7 +300,11 @@ async fn settle_attempts(app: &Arc<App>, bucket: &Arc<S3>) -> Result<()> {
     let looked = store.clone();
     let pending = app
         .db
-        .read(move |tx| Ok(!unconfirmed(tx, &looked)?.is_empty()))
+        .read(move |tx| {
+            Ok(tx
+                .prepare_cached("SELECT 1 FROM backups WHERE store_id = ?1 AND confirmed = 0")?
+                .exists([&looked])?)
+        })
         .await?;
     if !pending {
         return Ok(());
@@ -280,8 +316,11 @@ async fn settle_attempts(app: &Arc<App>, bucket: &Arc<S3>) -> Result<()> {
         .into_iter()
         .map(|(name, _)| name)
         .collect();
+    let now = app.clock.instant();
     app.db
-        .write(Write::own(), move |tx| settle(tx, &store, &listed))
+        .write(Write::own(), move |tx| {
+            reconcile(tx, &store, &listed, &HashSet::new(), now)
+        })
         .await
 }
 
@@ -572,7 +611,7 @@ async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
                     record_put(tx, &store, changes, &recorded, taken)
                 })
                 .await?;
-            let (removed, unremoved) = thin(app, &bucket, taken, &name).await;
+            let (removed, unremoved) = thin(app, &bucket, taken).await;
             Ok(Outcome::Put {
                 instance: app.instance_id.clone(),
                 name,
@@ -616,11 +655,16 @@ async fn put(app: &Arc<App>, bucket: &Arc<S3>) -> Result<(Stamp, String, u64, i6
     settle_attempts(app, bucket).await?;
     let began = std::time::Instant::now();
     let mut backup = app.backup_archive(bucket.id(), app.blobs.check()).await?;
+    app.faults.hold(HOLD_BACKUP_READ, None).await;
     let read_ms = began.elapsed().as_millis() as u64;
     let (taken, changes, limit) = (backup.created_at, backup.changes, backup.limit);
     let name = name_of(taken);
     let key = key_of(&app.instance_id, &name);
-    hold(app, bucket.id(), &name, std::mem::take(&mut backup.files)).await?;
+    let (files, in_bucket) = (
+        std::mem::take(&mut backup.files),
+        std::mem::take(&mut backup.in_bucket),
+    );
+    hold(app, bucket.id(), &name, files, in_bucket).await?;
     let bytes = put_stream(app, backup);
     let size = bucket
         .put_whole(&key, "application/x-tar", bytes, limit)
@@ -637,7 +681,7 @@ async fn put(app: &Arc<App>, bucket: &Arc<S3>) -> Result<(Stamp, String, u64, i6
 }
 
 /// Only names it listed in its own folder and could read as a backup are deleted.
-async fn thin(app: &Arc<App>, bucket: &Arc<S3>, taken: Stamp, put: &str) -> (usize, usize) {
+async fn thin(app: &Arc<App>, bucket: &Arc<S3>, taken: Stamp) -> (usize, usize) {
     let own = format!("{FOLDER}/{}", app.instance_id);
     let listed = match super::blobs::store::within(LIST_DEADLINE, bucket.list_in(&own)).await {
         Ok(listed) => listed,
@@ -647,14 +691,13 @@ async fn thin(app: &Arc<App>, bucket: &Arc<S3>, taken: Stamp, put: &str) -> (usi
         }
     };
     let names: Vec<String> = listed.into_iter().map(|(name, _)| name).collect();
-    let mut kept: HashSet<String> = names.iter().cloned().collect();
-    kept.insert(put.to_string());
+    let mut deleted = HashSet::new();
     let (mut removed, mut unremoved) = (0, 0);
     for name in doomed(&names, taken) {
         let key = key_of(&app.instance_id, &name);
         match super::blobs::store::within(LIST_DEADLINE, bucket.delete(&key)).await {
             Ok(()) => {
-                kept.remove(&name);
+                deleted.insert(name);
                 removed += 1;
             }
             Err(error) => {
@@ -664,9 +707,12 @@ async fn thin(app: &Arc<App>, bucket: &Arc<S3>, taken: Stamp, put: &str) -> (usi
         }
     }
     let store = bucket.id().to_string();
+    let listed: HashSet<String> = names.into_iter().collect();
     if let Err(error) = app
         .db
-        .write(Write::own(), move |tx| release(tx, &store, &kept))
+        .write(Write::own(), move |tx| {
+            reconcile(tx, &store, &listed, &deleted, taken)
+        })
         .await
     {
         tracing::warn!(%error, "The files of deleted backups are held until the next backup");
@@ -682,28 +728,65 @@ mod tests {
     use crate::db::migrate::MIGRATIONS;
 
     const BUCKET: &str = "bucket";
+    const HOUR_MS: i64 = 3_600_000;
+    const DAY_MS: i64 = 24 * HOUR_MS;
+
+    fn database() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        conn
+    }
 
     fn hash(letter: char) -> Hash {
         Hash::parse(&format!("sha256:{}", letter.to_string().repeat(64))).unwrap()
     }
 
+    fn numbered(index: usize) -> Hash {
+        Hash::parse(&format!("sha256:{index:064x}")).unwrap()
+    }
+
+    /// `hours` after the first backup.
+    fn at(hours: i64) -> Stamp {
+        Stamp::read("2026-11-01T00:00:00.000Z")
+            .unwrap()
+            .plus_ms(hours * HOUR_MS)
+            .unwrap()
+    }
+
+    fn named(hours: i64) -> String {
+        name_of(at(hours))
+    }
+
+    /// Registers each blob with a copy in `BUCKET`.
     fn registered(tx: &Transaction<'_>, hashes: &[&Hash]) {
+        tx.execute(
+            "INSERT OR IGNORE INTO stores (id, kind, locator, attached_at) \
+             VALUES (?1, 's3', 'bucket', '2026-11-01T00:00:00.000Z')",
+            [BUCKET],
+        )
+        .unwrap();
         for hash in hashes {
             tx.execute(
                 "INSERT INTO blobs (hash, mime_type, size_bytes, recorded_at) \
-                 VALUES (?1, 'text/plain', 1, '2026-11-09T00:00:00.000Z')",
+                 VALUES (?1, 'text/plain', 1, '2026-11-01T00:00:00.000Z')",
                 [hash.as_str()],
+            )
+            .unwrap();
+            tx.execute(
+                "INSERT INTO blob_copies (hash, store_id, object, recorded_at) \
+                 VALUES (?1, ?2, ?1, '2026-11-01T00:00:00.000Z')",
+                params![hash.as_str(), BUCKET],
             )
             .unwrap();
         }
     }
 
-    /// What `hold` writes, in one transaction.
-    fn hold(tx: &Transaction<'_>, store: &str, name: &str, files: &[String]) -> Result<()> {
-        let (opening, closing) = plan(&open_files(tx, store)?, files.to_vec());
-        let seq = begin(tx, store, name)?;
-        open(tx, store, seq, &opening)?;
-        close(tx, store, seq, &closing)
+    fn drop_copy(tx: &Transaction<'_>, hash: &Hash) {
+        tx.execute(
+            "DELETE FROM blob_copies WHERE hash = ?1 AND store_id = ?2",
+            params![hash.as_str(), BUCKET],
+        )
+        .unwrap();
     }
 
     fn files(hashes: &[&Hash]) -> Vec<String> {
@@ -713,8 +796,43 @@ mod tests {
             .collect()
     }
 
-    fn kept(names: &[&str]) -> HashSet<String> {
-        names.iter().map(|name| name.to_string()).collect()
+    /// Records backup `name`, closes the files it does not name, and opens those it does,
+    /// stopping before the opens when `interrupted`.
+    fn attempt(
+        tx: &Transaction<'_>,
+        store: &str,
+        name: &str,
+        named: &[String],
+        in_bucket: &[String],
+        interrupted: bool,
+    ) -> Result<()> {
+        let (opening, closing) = plan(&open_files(tx, store)?, named.to_vec());
+        let seq = begin(tx, store, name)?;
+        close(tx, store, seq, &closing)?;
+        if interrupted {
+            return Ok(());
+        }
+        open(
+            tx,
+            store,
+            seq,
+            &opening,
+            &in_bucket.iter().cloned().collect(),
+        )
+    }
+
+    /// What `hold` writes, the copies of the snapshot being those in `BUCKET` now.
+    fn hold(tx: &Transaction<'_>, store: &str, name: &str, named: &[String]) -> Result<()> {
+        let in_bucket = super::super::blobs::held_in(tx, store, named.iter().cloned())?;
+        attempt(tx, store, name, named, &in_bucket, false)
+    }
+
+    fn names(listed: &[&str]) -> HashSet<String> {
+        listed.iter().map(|name| name.to_string()).collect()
+    }
+
+    fn settled(tx: &Transaction<'_>, listed: &[&str], deleted: &[&str], now: Stamp) {
+        reconcile(tx, BUCKET, &names(listed), &names(deleted), now).unwrap();
     }
 
     fn held_of(tx: &Transaction<'_>, hashes: &[&Hash]) -> Vec<char> {
@@ -732,153 +850,262 @@ mod tests {
         letters
     }
 
+    fn count(tx: &Transaction<'_>, sql: &str) -> i64 {
+        tx.query_row(sql, [], |row| row.get(0)).unwrap()
+    }
+
     #[test]
-    fn a_file_is_held_while_a_kept_backup_named_it_and_let_go_once_none_does() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+    fn a_file_is_held_while_a_kept_backup_named_it_and_let_go_once_thinning_deletes_it() {
+        let mut conn = database();
         let tx = conn.transaction().unwrap();
         let (a, b, c) = (hash('a'), hash('b'), hash('c'));
         registered(&tx, &[&a, &b, &c]);
+        let (first, second, third) = (named(0), named(1), named(2));
 
-        hold(&tx, BUCKET, "1.tar", &files(&[&a, &b])).unwrap();
-        hold(&tx, BUCKET, "2.tar", &files(&[&b])).unwrap();
-        release(&tx, BUCKET, &kept(&["1.tar", "2.tar"])).unwrap();
+        hold(&tx, BUCKET, &first, &files(&[&a, &b])).unwrap();
+        hold(&tx, BUCKET, &second, &files(&[&b])).unwrap();
+        settled(&tx, &[&first, &second], &[], at(2));
         assert_eq!(held_of(&tx, &[&a, &b, &c]), ['a', 'b']);
 
-        hold(&tx, BUCKET, "3.tar", &files(&[&b])).unwrap();
-        release(&tx, BUCKET, &kept(&["2.tar", "3.tar"])).unwrap();
+        hold(&tx, BUCKET, &third, &files(&[&b])).unwrap();
+        settled(&tx, &[&first, &second, &third], &[&first], at(3));
         assert_eq!(held_of(&tx, &[&a, &b, &c]), ['b']);
-        let rows: i64 = tx
-            .query_row("SELECT COUNT(*) FROM backup_files", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(rows, 1);
+        assert_eq!(count(&tx, "SELECT COUNT(*) FROM backup_files"), 1);
     }
 
     #[test]
     fn a_file_named_again_after_a_gap_is_held_by_the_backup_before_the_gap() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        let mut conn = database();
         let tx = conn.transaction().unwrap();
         let a = hash('a');
         registered(&tx, &[&a]);
+        let backups: Vec<String> = (0..4).map(named).collect();
 
-        hold(&tx, BUCKET, "1.tar", &files(&[&a])).unwrap();
-        hold(&tx, BUCKET, "2.tar", &[]).unwrap();
-        hold(&tx, BUCKET, "3.tar", &files(&[&a])).unwrap();
-        hold(&tx, BUCKET, "4.tar", &[]).unwrap();
-        release(&tx, BUCKET, &kept(&["1.tar", "4.tar"])).unwrap();
+        hold(&tx, BUCKET, &backups[0], &files(&[&a])).unwrap();
+        hold(&tx, BUCKET, &backups[1], &[]).unwrap();
+        hold(&tx, BUCKET, &backups[2], &files(&[&a])).unwrap();
+        hold(&tx, BUCKET, &backups[3], &[]).unwrap();
+        settled(
+            &tx,
+            &[&backups[0], &backups[3]],
+            &[&backups[1], &backups[2]],
+            at(4),
+        );
         assert_eq!(held_of(&tx, &[&a]), ['a']);
-        release(&tx, BUCKET, &kept(&["4.tar"])).unwrap();
+        settled(&tx, &[&backups[3]], &[&backups[0]], at(4));
         assert!(held_of(&tx, &[&a]).is_empty());
     }
 
     #[test]
     fn a_name_a_kept_backup_has_is_not_taken_again_and_its_holds_stay() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        let mut conn = database();
         let tx = conn.transaction().unwrap();
         let a = hash('a');
         registered(&tx, &[&a]);
 
-        hold(&tx, BUCKET, "1.tar", &files(&[&a])).unwrap();
-        hold(&tx, BUCKET, "2.tar", &[]).unwrap();
-        let refused = hold(&tx, BUCKET, "1.tar", &[]).unwrap_err();
+        hold(&tx, BUCKET, &named(0), &files(&[&a])).unwrap();
+        hold(&tx, BUCKET, &named(1), &[]).unwrap();
+        let refused = hold(&tx, BUCKET, &named(0), &[]).unwrap_err();
         assert_eq!(refused.code, Code::Conflict);
         assert_eq!(held_of(&tx, &[&a]), ['a']);
     }
 
     #[test]
-    fn failed_attempts_settled_by_the_listing_leave_one_attempt_and_only_its_holds() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+    fn an_attempt_listings_omit_keeps_its_holds_until_one_names_it() {
+        let mut conn = database();
         let tx = conn.transaction().unwrap();
-        let named: Vec<Hash> = (0..1_000)
-            .map(|index| Hash::parse(&format!("sha256:{index:064x}")).unwrap())
-            .collect();
-        registered(&tx, &named.iter().collect::<Vec<_>>());
-        hold(&tx, BUCKET, "kept.tar", &[]).unwrap();
+        let a = hash('a');
+        registered(&tx, &[&a]);
+        let (late, next) = (named(0), named(1));
 
-        for (index, hash) in named.iter().enumerate() {
-            settle(&tx, BUCKET, &kept(&["kept.tar"])).unwrap();
-            hold(&tx, BUCKET, &format!("{index}.tar"), &files(&[hash])).unwrap();
+        hold(&tx, BUCKET, &late, &files(&[&a])).unwrap();
+        settled(&tx, &[], &[], at(1));
+        hold(&tx, BUCKET, &next, &[]).unwrap();
+        record_put(&tx, BUCKET, 0, &next, at(1)).unwrap();
+        settled(&tx, &[&next], &[], at(1));
+        assert_eq!(held_of(&tx, &[&a]), ['a']);
+
+        settled(&tx, &[&late, &next], &[], at(2));
+        assert_eq!(
+            count(&tx, "SELECT COUNT(*) FROM backups WHERE confirmed = 0"),
+            0
+        );
+        assert_eq!(held_of(&tx, &[&a]), ['a']);
+    }
+
+    #[test]
+    fn a_kept_backup_one_listing_omits_keeps_its_holds_until_it_is_deleted() {
+        let mut conn = database();
+        let tx = conn.transaction().unwrap();
+        let a = hash('a');
+        registered(&tx, &[&a]);
+        let (first, second) = (named(0), named(1));
+
+        hold(&tx, BUCKET, &first, &files(&[&a])).unwrap();
+        record_put(&tx, BUCKET, 0, &first, at(0)).unwrap();
+        hold(&tx, BUCKET, &second, &[]).unwrap();
+        settled(&tx, &[&second], &[], at(1));
+        assert_eq!(held_of(&tx, &[&a]), ['a']);
+
+        settled(&tx, &[&second], &[&first], at(1));
+        assert!(held_of(&tx, &[&a]).is_empty());
+    }
+
+    #[test]
+    fn a_backup_listings_omit_is_forgotten_once_past_retention_unless_it_is_the_newest() {
+        let mut conn = database();
+        let tx = conn.transaction().unwrap();
+        let a = hash('a');
+        registered(&tx, &[&a]);
+        let (lost, next) = (named(0), named(1));
+        let retained = at(0).plus_ms(31 * DAY_MS).unwrap();
+
+        hold(&tx, BUCKET, &lost, &files(&[&a])).unwrap();
+        settled(&tx, &[], &[], retained.plus_ms(DAY_MS).unwrap());
+        assert_eq!(held_of(&tx, &[&a]), ['a']);
+
+        hold(&tx, BUCKET, &next, &[]).unwrap();
+        settled(&tx, &[], &[], retained.plus_ms(-1).unwrap());
+        assert_eq!(held_of(&tx, &[&a]), ['a']);
+        settled(&tx, &[], &[], retained);
+        assert!(held_of(&tx, &[&a]).is_empty());
+        assert_eq!(count(&tx, "SELECT COUNT(*) FROM backups"), 1);
+        assert_eq!(count(&tx, "SELECT COUNT(*) FROM backup_files"), 0);
+    }
+
+    #[test]
+    fn a_recorded_name_that_does_not_read_keeps_its_holds() {
+        let mut conn = database();
+        let tx = conn.transaction().unwrap();
+        let a = hash('a');
+        registered(&tx, &[&a]);
+
+        hold(&tx, BUCKET, "stray.tar", &files(&[&a])).unwrap();
+        hold(&tx, BUCKET, &named(0), &[]).unwrap();
+        settled(&tx, &[], &[], at(0).plus_ms(400 * DAY_MS).unwrap());
+        assert_eq!(held_of(&tx, &[&a]), ['a']);
+    }
+
+    #[test]
+    fn interrupted_attempts_hold_rows_bounded_by_retention_and_clear_them_once_forgotten() {
+        let mut conn = database();
+        let tx = conn.transaction().unwrap();
+        let hashes: Vec<Hash> = (0..1_000).map(numbered).collect();
+        registered(&tx, &hashes.iter().collect::<Vec<_>>());
+
+        for (hour, hash) in hashes.iter().enumerate() {
+            let hour = hour as i64;
+            settled(&tx, &[], &[], at(hour));
+            let file = files(&[hash]);
+            attempt(&tx, BUCKET, &named(hour), &file, &file, hour % 2 == 1).unwrap();
         }
-        let recorded: i64 = tx
-            .query_row("SELECT COUNT(*) FROM backups", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(recorded, 2);
-        let still = held(&tx, BUCKET, &named).unwrap();
-        assert_eq!(still.len(), 1);
-        assert!(still.contains(&named[999]));
+        let recorded = count(&tx, "SELECT COUNT(*) FROM backups");
+        let rows = count(&tx, "SELECT COUNT(*) FROM backup_files");
+        let open = count(
+            &tx,
+            "SELECT COUNT(*) FROM backup_files WHERE last_seq IS NULL",
+        );
+        assert_eq!(recorded, 31 * 24, "{recorded}");
+        assert_eq!(rows, 31 * 24 / 2, "{rows}");
+        assert_eq!(open, 0, "{open}");
+        assert!(
+            held(&tx, BUCKET, &hashes[998..])
+                .unwrap()
+                .contains(&hashes[998])
+        );
+        assert!(held(&tx, BUCKET, &hashes[..256]).unwrap().is_empty());
 
-        settle(&tx, BUCKET, &kept(&["kept.tar", "999.tar"])).unwrap();
-        hold(&tx, BUCKET, "next.tar", &[]).unwrap();
-        assert!(held(&tx, BUCKET, &named).unwrap().contains(&named[999]));
+        let last = named(2_000);
+        hold(&tx, BUCKET, &last, &[]).unwrap();
+        settled(&tx, &[&last], &[], at(2_000));
+        assert_eq!(count(&tx, "SELECT COUNT(*) FROM backups"), 1);
+        assert_eq!(count(&tx, "SELECT COUNT(*) FROM backup_files"), 0);
     }
 
     #[test]
     fn a_backup_never_put_holds_nothing_and_another_bucket_keeps_its_holds_after_a_thinning() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        let mut conn = database();
         let tx = conn.transaction().unwrap();
         let (a, b) = (hash('a'), hash('b'));
         registered(&tx, &[&a, &b]);
+        let (earlier, first, second) = (named(0), named(1), named(2));
 
-        hold(&tx, "earlier bucket", "0.tar", &files(&[&a])).unwrap();
-        hold(&tx, BUCKET, "1.tar", &files(&[&a])).unwrap();
-        hold(&tx, BUCKET, "2.tar", &files(&[&b])).unwrap();
+        hold(&tx, "earlier bucket", &earlier, &files(&[&a])).unwrap();
+        hold(&tx, BUCKET, &first, &files(&[&a])).unwrap();
+        hold(&tx, BUCKET, &second, &files(&[&b])).unwrap();
         assert_eq!(held_of(&tx, &[&a, &b]), ['a', 'b']);
 
-        release(&tx, BUCKET, &kept(&["2.tar"])).unwrap();
+        settled(&tx, &[&second], &[&first], at(3));
         assert_eq!(held_of(&tx, &[&a, &b]), ['b']);
         assert_eq!(held_in(&tx, "earlier bucket", &[&a, &b]), ['a']);
-        let names: Vec<String> = tx
+        let recorded: Vec<String> = tx
             .prepare("SELECT store_id || '/' || name FROM backups ORDER BY seq")
             .unwrap()
             .query_map([], |row| row.get(0))
             .unwrap()
             .map(|row| row.unwrap())
             .collect();
-        assert_eq!(names, ["earlier bucket/0.tar", "bucket/2.tar"]);
-        let rows: i64 = tx
-            .query_row("SELECT COUNT(*) FROM backup_files", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(rows, 2);
+        assert_eq!(
+            recorded,
+            [
+                format!("earlier bucket/{earlier}"),
+                format!("bucket/{second}")
+            ]
+        );
+        assert_eq!(count(&tx, "SELECT COUNT(*) FROM backup_files"), 2);
     }
 
     #[test]
     fn a_file_held_in_one_bucket_stays_held_across_another_buckets_thinning() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        let mut conn = database();
         let tx = conn.transaction().unwrap();
         let x = hash('a');
         registered(&tx, &[&x]);
+        let (a1, b1, a2) = (named(0), named(1), named(2));
 
-        hold(&tx, "bucket A", "a1.tar", &files(&[&x])).unwrap();
-        release(&tx, "bucket A", &kept(&["a1.tar"])).unwrap();
-        hold(&tx, "bucket B", "b1.tar", &[]).unwrap();
-        release(&tx, "bucket B", &kept(&["b1.tar"])).unwrap();
-        hold(&tx, "bucket A", "a2.tar", &[]).unwrap();
-        release(&tx, "bucket A", &kept(&["a1.tar", "a2.tar"])).unwrap();
+        hold(&tx, "bucket A", &a1, &files(&[&x])).unwrap();
+        reconcile(&tx, "bucket A", &names(&[&a1]), &names(&[]), at(0)).unwrap();
+        hold(&tx, "bucket B", &b1, &[]).unwrap();
+        reconcile(&tx, "bucket B", &names(&[&b1]), &names(&[]), at(1)).unwrap();
+        hold(&tx, "bucket A", &a2, &[]).unwrap();
+        reconcile(&tx, "bucket A", &names(&[&a1, &a2]), &names(&[]), at(2)).unwrap();
 
         assert_eq!(held_in(&tx, "bucket A", &[&x]), ['a']);
     }
 
     #[test]
     fn a_backup_is_refused_when_a_file_its_snapshot_held_was_purged_before_the_hold() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        let mut conn = database();
         let tx = conn.transaction().unwrap();
         let (a, b) = (hash('a'), hash('b'));
         registered(&tx, &[&a]);
 
-        hold(&tx, BUCKET, "1.tar", &files(&[&a])).unwrap();
+        hold(&tx, BUCKET, &named(0), &files(&[&a])).unwrap();
         tx.execute("DELETE FROM blobs WHERE hash = ?1", [a.as_str()])
             .unwrap();
         // Held since the first backup, so a second one naming it is not refused.
-        hold(&tx, BUCKET, "2.tar", &files(&[&a])).unwrap();
+        hold(&tx, BUCKET, &named(1), &files(&[&a])).unwrap();
 
-        let refused = hold(&tx, BUCKET, "3.tar", &files(&[&a, &b])).unwrap_err();
+        let refused = hold(&tx, BUCKET, &named(2), &files(&[&a, &b])).unwrap_err();
         assert_eq!(refused.code, Code::Conflict);
         assert!(refused.message.contains(b.as_str()), "{}", refused.message);
+    }
+
+    #[test]
+    fn a_backup_is_refused_when_a_copy_its_snapshot_found_in_the_bucket_was_dropped_before_the_hold()
+     {
+        let mut conn = database();
+        let tx = conn.transaction().unwrap();
+        let (a, b) = (hash('a'), hash('b'));
+        registered(&tx, &[&a, &b]);
+        let snapshot = files(&[&a, &b]);
+
+        drop_copy(&tx, &b);
+        let refused = attempt(&tx, BUCKET, &named(0), &snapshot, &snapshot, false).unwrap_err();
+        assert_eq!(refused.code, Code::Conflict);
+        assert!(refused.message.contains(b.as_str()), "{}", refused.message);
+
+        attempt(&tx, BUCKET, &named(1), &snapshot, &files(&[&a]), false).unwrap();
+        assert_eq!(held_of(&tx, &[&a, &b]), ['a', 'b']);
     }
 }

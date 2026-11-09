@@ -58,6 +58,11 @@ struct Held {
     /// The next marker read says so on the sender and waits for the receiver.
     marker_held: Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>,
     landed: usize,
+    /// The next write under this prefix is answered as refused and kept in `late` until landed.
+    late_next: Option<String>,
+    late: Vec<(String, Object)>,
+    /// The next this many listings leave out every object whose key starts with the prefix.
+    omitted: Option<(String, u32)>,
     uploads: HashMap<String, Upload>,
     next_upload: u64,
 }
@@ -198,6 +203,11 @@ fn listed_prefix(query: &str) -> Option<String> {
         .iter()
         .find(|(name, _)| *name == "prefix")
         .map_or("", |(_, value)| *value);
+    percent_decoded(raw, true)
+}
+
+/// `raw` with its percent escapes decoded, and `+` read as a space in a query.
+fn percent_decoded(raw: &str, in_query: bool) -> Option<String> {
     let mut decoded = Vec::new();
     let mut bytes = raw.bytes();
     while let Some(byte) = bytes.next() {
@@ -206,19 +216,30 @@ fn listed_prefix(query: &str) -> Option<String> {
                 let hex: String = bytes.by_ref().take(2).map(char::from).collect();
                 decoded.push(u8::from_str_radix(&hex, 16).ok()?);
             }
-            b'+' => decoded.push(b' '),
+            b'+' if in_query => decoded.push(b' '),
             byte => decoded.push(byte),
         }
     }
     String::from_utf8(decoded).ok()
 }
 
-/// Every object of `bucket` under `prefix`, in one page.
-fn listing(objects: &HashMap<String, Object>, bucket: &str, prefix: &str) -> Response {
+/// Every object of `bucket` under `prefix`, in one page, but for those `omitted` leaves out.
+fn listing(held: &mut Held, bucket: &str, prefix: &str) -> Response {
     let under = format!("{bucket}/{prefix}");
-    let mut keys: Vec<(&String, &Object)> = objects
+    let left_out = match held.omitted.take() {
+        Some((left_out, times)) => {
+            if times > 1 {
+                held.omitted = Some((left_out.clone(), times - 1));
+            }
+            Some(left_out)
+        }
+        None => None,
+    };
+    let mut keys: Vec<(&String, &Object)> = held
+        .objects
         .iter()
         .filter(|(key, _)| key.starts_with(&under))
+        .filter(|(key, _)| left_out.as_ref().is_none_or(|out| !key.starts_with(out)))
         .collect();
     keys.sort_by(|a, b| a.0.cmp(b.0));
     let contents: String = keys
@@ -258,7 +279,8 @@ fn deletion_answer(named: &[(String, String)]) -> Response {
 }
 
 async fn answer(State(held): State<Arc<Mutex<Held>>>, request: Request) -> Response {
-    let key = request.uri().path().to_string();
+    let path = request.uri().path();
+    let key = percent_decoded(path, false).unwrap_or_else(|| path.to_string());
     let pause = key
         .ends_with("/.marfa-store")
         .then(|| held.lock().unwrap().marker_held.take())
@@ -305,6 +327,31 @@ async fn answer(State(held): State<Arc<Mutex<Held>>>, request: Request) -> Respo
     if mode == Mode::AllNotFound {
         return not_found();
     }
+    let late = method == Method::PUT && {
+        let mut held = held.lock().unwrap();
+        let armed = held
+            .late_next
+            .as_ref()
+            .is_some_and(|prefix| key.starts_with(prefix));
+        if armed {
+            held.late_next = None;
+        }
+        armed
+    };
+    if late {
+        let body = axum::body::to_bytes(request.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let object = Object {
+            bytes: body.to_vec(),
+            metadata: metadata_of(&headers),
+        };
+        held.lock().unwrap().late.push((key, object));
+        return Response::builder()
+            .status(StatusCode::FORBIDDEN)
+            .body(Body::from("<Error><Code>AccessDenied</Code></Error>"))
+            .unwrap();
+    }
     if refused && method == Method::PUT {
         return Response::builder()
             .status(StatusCode::FORBIDDEN)
@@ -314,7 +361,7 @@ async fn answer(State(held): State<Arc<Mutex<Held>>>, request: Request) -> Respo
     if method == Method::GET
         && let Some(prefix) = listed_prefix(request.uri().query().unwrap_or(""))
     {
-        return listing(&held.lock().unwrap().objects, &key, &prefix);
+        return listing(&mut held.lock().unwrap(), &key, &prefix);
     }
     match method {
         Method::PUT => {
@@ -514,6 +561,36 @@ impl FakeS3 {
     /// Refuses with `403` every write of an object whose key starts with `prefix`.
     pub fn refuse_writes(&self, prefix: &str) {
         self.held.lock().unwrap().refused.push(prefix.to_string());
+    }
+
+    /// Takes every write again after `refuse_writes`.
+    pub fn allow_writes(&self) {
+        self.held.lock().unwrap().refused.clear();
+    }
+
+    /// Answers the next write under `prefix` as refused and keeps it, as a put the server gave
+    /// up on that the store has yet to commit; `land_late_writes` commits it.
+    pub fn late_write(&self, prefix: &str) {
+        self.held.lock().unwrap().late_next = Some(prefix.to_string());
+    }
+
+    /// Commits every write `late_write` kept.
+    pub fn land_late_writes(&self) {
+        let held = &mut *self.held.lock().unwrap();
+        for (key, object) in held.late.drain(..) {
+            held.objects.insert(key, object);
+        }
+    }
+
+    /// The keys of the writes `late_write` kept and has not committed.
+    pub fn late_keys(&self) -> Vec<String> {
+        let held = self.held.lock().unwrap();
+        held.late.iter().map(|(key, _)| key.clone()).collect()
+    }
+
+    /// Leaves every object whose key starts with `prefix` out of the next `times` listings.
+    pub fn omit_from_listings(&self, prefix: &str, times: u32) {
+        self.held.lock().unwrap().omitted = Some((prefix.to_string(), times));
     }
 
     /// How many requests of `method` reached the object at `key`.
