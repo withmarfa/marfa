@@ -155,11 +155,11 @@ pub async fn confirmed(
     let (named_from, named_to, named_properties) =
         (from.to_string(), to.to_string(), properties.clone());
     let guard: types::Guard<'static> = Box::new(move |unit, taking| {
-        let now_ms = unit.at_ms;
+        let now_ms = unit.instant.ms();
         if parsed.expires_at_ms <= now_ms {
             return Ok(false);
         }
-        confirm::sweep(unit.tx(), now_ms)?;
+        confirm::sweep(unit.tx(), unit.instant)?;
         if confirm::spent(unit.tx(), &parsed.signature)?.is_some() {
             return Ok(false);
         }

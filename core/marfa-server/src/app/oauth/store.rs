@@ -1,6 +1,5 @@
 //! Rows only: a caller reads a row and judges it inside the write that acts on the judgment.
 
-use chrono::{DateTime, SecondsFormat, Utc};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde_json::Value;
 
@@ -8,19 +7,8 @@ use super::client::{AuthMethod, GrantType, Registration, ResponseType};
 use super::redirect::{AppKind, web_origins};
 use super::scope::ScopeSet;
 use crate::app::access::printable;
-use crate::app::refusal::{Refusal, Result};
-
-pub fn ms_of(at: &str) -> Result<i64> {
-    DateTime::parse_from_rfc3339(at)
-        .map(|at| at.timestamp_millis())
-        .map_err(|_| Refusal::internal("an instant did not read"))
-}
-
-pub fn stamp_of(ms: i64) -> String {
-    DateTime::<Utc>::from_timestamp_millis(ms)
-        .unwrap_or_default()
-        .to_rfc3339_opts(SecondsFormat::Millis, true)
-}
+use crate::app::clock::Stamp;
+use crate::app::refusal::Result;
 
 fn json_list(text: &str) -> rusqlite::Result<Vec<String>> {
     serde_json::from_str::<Vec<Value>>(text)
@@ -61,7 +49,7 @@ fn list_text(list: &[String]) -> String {
 pub struct Client {
     pub id: String,
     pub registration: Registration,
-    pub created_at: i64,
+    pub created_at: Stamp,
 }
 
 impl Client {
@@ -127,7 +115,12 @@ pub fn client(tx: &Connection, id: &str) -> Result<Option<Client>> {
 }
 
 /// Replaces any copy already there, which keeps its first date and when it was last offered.
-pub fn put_client(tx: &Connection, id: &str, registration: &Registration, now: i64) -> Result<()> {
+pub fn put_client(
+    tx: &Connection,
+    id: &str,
+    registration: &Registration,
+    now: Stamp,
+) -> Result<()> {
     let words = |list: Vec<&'static str>| Value::from(list).to_string();
     tx.execute(
         "INSERT INTO auth_oauth_client (client_id, auth_method, application_type, redirect_uris, \
@@ -184,7 +177,7 @@ pub fn set_client_scopes(tx: &Connection, id: &str, scopes: &ScopeSet) -> Result
     Ok(())
 }
 
-pub fn note_offered(tx: &Connection, id: &str, now: i64) -> Result<()> {
+pub fn note_offered(tx: &Connection, id: &str, now: Stamp) -> Result<()> {
     tx.execute(
         "UPDATE auth_oauth_client SET offered_at = ?2 WHERE client_id = ?1",
         params![id, now],
@@ -192,7 +185,7 @@ pub fn note_offered(tx: &Connection, id: &str, now: i64) -> Result<()> {
     Ok(())
 }
 
-pub fn document_fresh_until(tx: &Connection, id: &str) -> Result<Option<i64>> {
+pub fn document_fresh_until(tx: &Connection, id: &str) -> Result<Option<Stamp>> {
     Ok(tx
         .query_row(
             "SELECT fresh_until FROM auth_oauth_client_document WHERE client_id = ?1",
@@ -202,7 +195,7 @@ pub fn document_fresh_until(tx: &Connection, id: &str) -> Result<Option<i64>> {
         .optional()?)
 }
 
-pub fn note_document(tx: &Connection, id: &str, now: i64, fresh_until: i64) -> Result<()> {
+pub fn note_document(tx: &Connection, id: &str, now: Stamp, fresh_until: Stamp) -> Result<()> {
     tx.execute(
         "INSERT INTO auth_oauth_client_document (client_id, fetched_at, fresh_until) \
          VALUES (?1, ?2, ?3) ON CONFLICT (client_id) DO UPDATE SET \
@@ -218,10 +211,10 @@ pub struct Consent {
     pub user_id: String,
     pub grant_id: String,
     pub scopes: ScopeSet,
-    pub created_at: i64,
-    pub updated_at: i64,
-    pub last_used_at: Option<i64>,
-    pub withdrawn_at: Option<i64>,
+    pub created_at: Stamp,
+    pub updated_at: Stamp,
+    pub last_used_at: Option<Stamp>,
+    pub withdrawn_at: Option<Stamp>,
 }
 
 impl Consent {
@@ -334,7 +327,7 @@ pub fn renew_consent(
     client_id: &str,
     user_id: &str,
     scopes: &ScopeSet,
-    now: i64,
+    now: Stamp,
 ) -> Result<()> {
     tx.execute(
         "UPDATE auth_oauth_consent SET scopes = ?3, updated_at = ?4, withdrawn_at = NULL, \
@@ -422,7 +415,7 @@ pub fn origin_approved(tx: &Connection, origin: &str) -> Result<bool> {
     )?)
 }
 
-pub fn withdraw_consent(tx: &Connection, client_id: &str, user_id: &str, now: i64) -> Result<()> {
+pub fn withdraw_consent(tx: &Connection, client_id: &str, user_id: &str, now: Stamp) -> Result<()> {
     tx.execute(
         "UPDATE auth_oauth_consent SET withdrawn_at = ?3, updated_at = ?3 \
          WHERE client_id = ?1 AND user_id = ?2",
@@ -443,7 +436,12 @@ pub fn remove_consent(tx: &Connection, client_id: &str, user_id: &str) -> Result
     Ok(())
 }
 
-pub fn note_consent_used(tx: &Connection, client_id: &str, user_id: &str, now: i64) -> Result<()> {
+pub fn note_consent_used(
+    tx: &Connection,
+    client_id: &str,
+    user_id: &str,
+    now: Stamp,
+) -> Result<()> {
     tx.execute(
         "UPDATE auth_oauth_consent SET last_used_at = ?3 \
          WHERE client_id = ?1 AND user_id = ?2 AND withdrawn_at IS NULL",
@@ -463,8 +461,8 @@ pub struct Code {
     pub scopes: ScopeSet,
     pub challenge: String,
     pub resources: Vec<String>,
-    pub expires_at: i64,
-    pub spent_at: Option<i64>,
+    pub expires_at: Stamp,
+    pub spent_at: Option<Stamp>,
     pub chain_id: Option<String>,
 }
 
@@ -514,7 +512,7 @@ pub fn code(tx: &Connection, digest: &str) -> Result<Option<Code>> {
         .optional()?)
 }
 
-pub fn spend_code(tx: &Connection, digest: &str, now: i64) -> Result<()> {
+pub fn spend_code(tx: &Connection, digest: &str, now: Stamp) -> Result<()> {
     tx.execute(
         "UPDATE auth_oauth_code SET spent_at = ?2 WHERE digest = ?1",
         params![digest, now],
@@ -568,8 +566,8 @@ pub struct DeviceCode {
     pub status: DeviceStatus,
     pub user_id: Option<String>,
     pub interval_seconds: i64,
-    pub last_polled_at: Option<i64>,
-    pub expires_at: i64,
+    pub last_polled_at: Option<Stamp>,
+    pub expires_at: Stamp,
 }
 
 fn device_code_of(row: &Row<'_>) -> rusqlite::Result<DeviceCode> {
@@ -642,7 +640,7 @@ pub fn decide_device_code(
     Ok(())
 }
 
-pub fn note_device_poll(tx: &Connection, digest: &str, now: i64) -> Result<()> {
+pub fn note_device_poll(tx: &Connection, digest: &str, now: Stamp) -> Result<()> {
     tx.execute(
         "UPDATE auth_oauth_device_code SET last_polled_at = ?2 WHERE device_code = ?1",
         params![digest, now],
@@ -675,8 +673,8 @@ pub struct AccessToken {
     pub chain_id: String,
     pub scopes: ScopeSet,
     pub audience: Option<String>,
-    pub created_at: i64,
-    pub expires_at: i64,
+    pub created_at: Stamp,
+    pub expires_at: Stamp,
 }
 
 pub fn insert_access_token(tx: &Connection, token: &AccessToken) -> Result<()> {
@@ -746,10 +744,10 @@ pub struct RefreshToken {
     pub chain_id: String,
     pub scopes: ScopeSet,
     pub audience: Option<String>,
-    pub created_at: i64,
-    pub expires_at: i64,
-    pub rotated_at: Option<i64>,
-    pub ended_at: Option<i64>,
+    pub created_at: Stamp,
+    pub expires_at: Stamp,
+    pub rotated_at: Option<Stamp>,
+    pub ended_at: Option<Stamp>,
 }
 
 pub fn insert_refresh_token(tx: &Connection, token: &RefreshToken) -> Result<()> {
@@ -795,7 +793,7 @@ pub fn refresh_token_by_digest(tx: &Connection, digest: &str) -> Result<Option<R
         .optional()?)
 }
 
-pub fn rotate_refresh_token(tx: &Connection, id: &str, now: i64) -> Result<()> {
+pub fn rotate_refresh_token(tx: &Connection, id: &str, now: Stamp) -> Result<()> {
     tx.execute(
         "UPDATE auth_oauth_refresh_token SET rotated_at = ?2 WHERE id = ?1",
         params![id, now],
@@ -803,7 +801,7 @@ pub fn rotate_refresh_token(tx: &Connection, id: &str, now: i64) -> Result<()> {
     Ok(())
 }
 
-pub fn end_chain(tx: &Connection, chain_id: &str, now: i64) -> Result<()> {
+pub fn end_chain(tx: &Connection, chain_id: &str, now: Stamp) -> Result<()> {
     tx.execute(
         "DELETE FROM auth_oauth_access_token WHERE chain_id = ?1",
         [chain_id],
@@ -854,7 +852,7 @@ pub fn end_grant_credentials(
     tx: &Connection,
     client_id: &str,
     user_id: &str,
-    now: i64,
+    now: Stamp,
 ) -> Result<()> {
     tx.execute(
         "DELETE FROM auth_oauth_access_token WHERE client_id = ?1 AND user_id = ?2",

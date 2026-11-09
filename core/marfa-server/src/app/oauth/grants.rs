@@ -8,11 +8,12 @@ use super::grant;
 use super::redirect::web_origins;
 use super::revoke::GRANT_REVOKED;
 use super::scope::{ScopeSet, first_uncovered};
-use super::store::{self, Client, Consent, ms_of, stamp_of};
+use super::store::{self, Client, Consent};
 use super::sweep::MS_PER_DAY;
 use crate::app::access::{Caller, Permission};
 use crate::app::auth::names;
 use crate::app::catalog::Catalog;
+use crate::app::clock::Stamp;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::unit::Unit;
 use crate::app::{App, instance, keys};
@@ -42,15 +43,15 @@ pub(crate) fn all_of_owner(tx: &Transaction<'_>) -> Result<Vec<Consent>> {
 }
 
 pub(crate) fn granted_at(consent: &Consent) -> String {
-    stamp_of(consent.updated_at)
+    consent.updated_at.text()
 }
 
-pub(crate) fn boundary(consent: &Consent, inactivity_days: u64) -> Option<String> {
-    let days = i64::try_from(inactivity_days)
-        .ok()
-        .filter(|days| *days > 0)?;
+pub(crate) fn boundary(consent: &Consent, inactivity_days: u64) -> Result<Option<String>> {
+    let Some(days) = i64::try_from(inactivity_days).ok().filter(|days| *days > 0) else {
+        return Ok(None);
+    };
     let from = consent.last_used_at.unwrap_or(consent.updated_at);
-    Some(stamp_of(from + days * MS_PER_DAY))
+    Ok(Some(from.plus_ms(days.saturating_mul(MS_PER_DAY))?.text()))
 }
 
 pub(crate) fn sign_in_name(tx: &Connection, consent: &Consent) -> Result<String> {
@@ -112,7 +113,7 @@ fn listed(tx: &Connection, consent: &Consent) -> Result<Value> {
         "scopes": consent.scopes.literals(),
         "status": "active",
         "granted_at": granted_at(consent),
-        "last_used_at": consent.last_used_at.map(stamp_of),
+        "last_used_at": consent.last_used_at,
     }))
 }
 
@@ -156,7 +157,7 @@ fn end_chains_beyond(
     tx: &Connection,
     consent: &Consent,
     scopes: &ScopeSet,
-    now: i64,
+    now: Stamp,
 ) -> Result<()> {
     let tokens = store::usable_tokens(tx, &consent.client_id, &consent.user_id)?;
     for (chain, held) in &tokens {
@@ -194,7 +195,7 @@ pub async fn narrow(
         if same(&consent.scopes, &asked.scopes) {
             return Ok(consent.scopes);
         }
-        end_chains_beyond(tx, &consent, &asked.scopes, ms_of(&unit.at)?)?;
+        end_chains_beyond(tx, &consent, &asked.scopes, unit.instant)?;
         store::end_outstanding_codes(tx, &consent.client_id, &consent.user_id)?;
         grant::narrow(unit, &cache, &consent, &asked.scopes)?;
         unit.audit(

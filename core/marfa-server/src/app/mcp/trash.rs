@@ -88,11 +88,11 @@ pub async fn confirmed(
     let token = token.to_string();
     let cache = app.catalog_handle();
     app.write(caller, "items.trash", move |unit| {
-        let now_ms = unit.at_ms;
+        let now_ms = unit.instant.ms();
         if parsed.expires_at_ms <= now_ms {
             return Ok(Confirmed::Stale);
         }
-        confirm::sweep(unit.tx(), now_ms)?;
+        confirm::sweep(unit.tx(), unit.instant)?;
         let named = confirm::ids_digest(&ids);
         if let Some(spent) = confirm::spent(unit.tx(), &parsed.signature)? {
             return Ok(

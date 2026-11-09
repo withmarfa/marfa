@@ -20,7 +20,7 @@ pub(super) fn without_login(prompt: Option<&str>) -> Option<String> {
     (!rest.is_empty()).then(|| rest.join(" "))
 }
 
-/// The ID covers a sign-in within the same second as the request; the time covers
+/// The ID covers a sign-in within the same millisecond as the request; the time covers
 /// a link opened in a browser that signed in earlier.
 pub(super) fn signed_in_since(app: &App, query: &str, session: Option<&Session>) -> bool {
     let now = app.clock.now_ms() / MS_PER_SECOND;
@@ -30,7 +30,7 @@ pub(super) fn signed_in_since(app: &App, query: &str, session: Option<&Session>)
     let after = link.get(LOGIN_AFTER).and_then(|at| at.parse::<i64>().ok());
     match (session, after, link.get(LOGIN_FROM)) {
         (Some(session), Some(after), Some(from)) => {
-            from != session.id && session.created_at >= after
+            from != session.id && session.created_at.ms() >= after
         }
         _ => false,
     }
@@ -42,9 +42,10 @@ pub(super) fn signed_request(
     prompt: Option<&str>,
     session: Option<&Session>,
 ) -> Result<String> {
-    let now = app.clock.now_ms() / MS_PER_SECOND;
+    let now_ms = app.clock.now_ms();
+    let now = now_ms / MS_PER_SECOND;
     params.push((PROMPT.to_string(), prompt.unwrap_or(LOGIN).to_string()));
-    params.push((LOGIN_AFTER.to_string(), now.to_string()));
+    params.push((LOGIN_AFTER.to_string(), now_ms.to_string()));
     params.push((
         LOGIN_FROM.to_string(),
         session.map_or_else(String::new, |session| session.id.clone()),

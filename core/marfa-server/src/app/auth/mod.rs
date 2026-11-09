@@ -12,7 +12,6 @@ pub mod sign_ins;
 
 use std::net::IpAddr;
 
-use chrono::{DateTime, SecondsFormat, Utc};
 use rusqlite::Transaction;
 use serde_json::Value;
 
@@ -90,24 +89,6 @@ pub fn form_origins(app: &App) -> Vec<String> {
     let mut origins = own_origins(app);
     origins.extend(configured_origins(app));
     origins
-}
-
-pub fn seconds_of(at: &str) -> Result<i64> {
-    DateTime::parse_from_rfc3339(at)
-        .map(|at| at.timestamp())
-        .map_err(|_| Refusal::internal("an instant did not read"))
-}
-
-pub fn millis_of(at: &str) -> Result<i64> {
-    DateTime::parse_from_rfc3339(at)
-        .map(|at| at.timestamp_millis())
-        .map_err(|_| Refusal::internal("an instant did not read"))
-}
-
-fn stamp_of(seconds: i64) -> String {
-    DateTime::<Utc>::from_timestamp(seconds, 0)
-        .unwrap_or_default()
-        .to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
 struct Note<'a> {
