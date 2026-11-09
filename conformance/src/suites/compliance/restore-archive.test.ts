@@ -14,6 +14,8 @@
  */
 
 import { randomBytes } from "node:crypto";
+import { request as httpRequest } from "node:http";
+import { connect } from "node:net";
 import { gzipSync } from "node:zlib";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { v7 as uuidv7 } from "uuid";
@@ -1441,15 +1443,48 @@ describe("a restore refused while its body is still arriving", () => {
       { name: "padding.bin", body: new Uint8Array(size) },
     ]);
 
-  it("reads the rest of a large body and answers the refusal, to the owner and to a working key", async () => {
-    const body = refusedEarly(64 * 1024 * 1024);
-    const send = (authorization: Record<string, string>) =>
-      fetch(`${apiUrl}/restore`, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-tar", ...authorization },
-        body,
+  /**
+   * Sends `body` the way `marfa restore` does, after `Expect: 100-continue`:
+   * it is sent only once the server says `100 Continue`, and not at all if
+   * the server answers first.
+   */
+  const sendAfterContinue = (
+    authorization: string,
+    body: Uint8Array,
+  ): Promise<{ status: number; sent: boolean; text: string }> =>
+    new Promise((resolve, reject) => {
+      const url = new URL(`${apiUrl}/restore`);
+      let sent = false;
+      const request = httpRequest(
+        url,
+        {
+          method: "POST",
+          headers: {
+            Authorization: authorization,
+            "Content-Type": "application/x-tar",
+            "Content-Length": String(body.length),
+            Expect: "100-continue",
+          },
+        },
+        (response) => {
+          let text = "";
+          response.setEncoding("utf8");
+          response.on("data", (chunk: string) => (text += chunk));
+          response.on("end", () =>
+            resolve({ status: response.statusCode ?? 0, sent, text }),
+          );
+        },
+      );
+      request.on("error", reject);
+      request.on("continue", () => {
+        sent = true;
+        request.end(body);
       });
+      request.flushHeaders();
+    });
 
+  it("reads the rest of a large body and answers the refusal, to the owner, and answers a working key before the body", async () => {
+    const body = refusedEarly(64 * 1024 * 1024);
     const keyResp = await client.createKey({
       label: "restore-refused-early",
       source: `${ctx.source}-refused-early`,
@@ -1458,18 +1493,61 @@ describe("a restore refused while its body is still arriving", () => {
     expect(keyResp.ok).toBe(true);
     trackKey(ctx, keyResp.data.id);
     for (let attempt = 0; attempt < 3; attempt++) {
-      const forbidden = await send({
-        Authorization: `Bearer ${keyResp.data.key}`,
-      });
+      const forbidden = await sendAfterContinue(
+        `Bearer ${keyResp.data.key}`,
+        body,
+      );
       expect(forbidden.status).toBe(403);
       expect(
-        ((await forbidden.json()) as { error: { code: string } }).error.code,
+        (JSON.parse(forbidden.text) as { error: { code: string } }).error.code,
       ).toBe("forbidden");
+      expect(forbidden.sent).toBe(false);
 
       const refused = await owner.restoreArchive(body);
       expect(refused.status, JSON.stringify(refused.error)).toBe(400);
       expect(refused.error?.error.message).toContain("version 99");
     }
+  });
+
+  it("answers a caller with no credential at once and closes the connection while it keeps sending", async () => {
+    const url = new URL(apiUrl);
+    const started = Date.now();
+    const answer = await new Promise<{ head: string; at: number }>(
+      (resolve, reject) => {
+        const socket = connect(Number(url.port || 80), url.hostname);
+        let head = "";
+        const sender = setInterval(() => {
+          socket.write(Buffer.alloc(64 * 1024), () => {});
+        }, 50);
+        const stop = () => {
+          clearInterval(sender);
+          clearTimeout(giveUp);
+          socket.destroy();
+        };
+        const giveUp = setTimeout(() => {
+          stop();
+          reject(new Error(`no answer in 5 s; the server read on: ${head}`));
+        }, 5000);
+        socket.on("error", () => {});
+        socket.on("connect", () => {
+          socket.write(
+            `POST /restore HTTP/1.1\r\nHost: ${url.host}\r\n` +
+              `Content-Type: application/x-tar\r\n` +
+              `Content-Length: ${64 * 1024 * 1024 * 1024}\r\n\r\n`,
+          );
+        });
+        socket.on("data", (chunk) => {
+          head += chunk.toString("latin1");
+          if (head.includes("\r\n\r\n")) {
+            stop();
+            resolve({ head, at: Date.now() - started });
+          }
+        });
+      },
+    );
+    expect(answer.head).toMatch(/^HTTP\/1\.1 401 /);
+    expect(answer.head.toLowerCase()).toContain("connection: close");
+    expect(answer.at).toBeLessThan(3000);
   });
 });
 

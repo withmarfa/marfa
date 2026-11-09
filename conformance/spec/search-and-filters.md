@@ -2318,7 +2318,7 @@ When `POST /restore` answers `marfa restore` with `set_up_again`, the CLI MUST p
 
 ### `search-and-filters/restore-blobs-missing`
 
-When `POST /restore` succeeds, the server MUST answer in `blobs_missing` the hash of each blob that the archive's manifest names in `blobs` or `missing_blobs`, that no entry of the archive carries bytes hashing to, that no attached store of the instance holds a recorded copy of whole, and that the object store does not hold under its name (`search-and-filters/restore-blob-from-store`).
+When `POST /restore` succeeds, the server MUST answer in `blobs_missing` the hash of each blob that the archive's manifest names in `blobs` or `missing_blobs`, that no entry of the archive carries bytes hashing to, that no attached store of the instance holds a recorded copy of at its recorded size, and that the object store does not hold under its name (`search-and-filters/restore-blob-from-store`).
 
 **Reason:** an archive that lacks a file says so on the restore rather than restoring as though it were complete. Uploading the bytes again through `POST /blobs` restores the file.
 
@@ -2864,11 +2864,19 @@ If no byte of the body of `POST /restore` arrives for `MARFA_UPLOAD_IDLE_TIMEOUT
 
 ### `search-and-filters/restore-refused-read`
 
-When the server refuses `POST /restore` while the body is still arriving, the server MUST read the rest of the body, until it ends or no byte arrives for `MARFA_UPLOAD_IDLE_TIMEOUT_MS`, before it answers.
+When the server refuses `POST /restore` after it has started to read the body, the server MUST read the rest of the body, until it ends or no byte arrives for `MARFA_UPLOAD_IDLE_TIMEOUT_MS`, before it answers.
 
 **Reason:** a client that is still sending reads no answer until its body is sent, so a server that stopped reading would leave it with a broken connection in place of the refusal.
 
-**Tests:** `compliance/restore-archive.test.ts › reads the rest of a large body and answers the refusal, to the owner and to a working key`.
+**Tests:** `compliance/restore-archive.test.ts › reads the rest of a large body and answers the refusal, to the owner, and answers a working key before the body`.
+
+### `search-and-filters/restore-refused-early`
+
+When the server refuses `POST /restore` before it has started to read the body, the server MUST answer at once with `Connection: close`.
+
+**Reason:** a caller that is not the direct owner has proved nothing, so the server spends no time reading what it sends. A client that sent `Expect: 100-continue`, as `marfa restore` does, has sent no body and hears the refusal.
+
+**Tests:** `compliance/restore-archive.test.ts › answers a caller with no credential at once and closes the connection while it keeps sending`, `› reads the rest of a large body and answers the refusal, to the owner, and answers a working key before the body`.
 
 ### `search-and-filters/restore-idle-unwritten`
 
@@ -3004,7 +3012,7 @@ If a write fails while the server restores an archive, then the server MUST leav
 
 ### `search-and-filters/restore-failed-blobs`
 
-If a write fails while the server restores an archive, then the server MUST remove the blob bytes the restore placed that no row names on the next `blob-integrity` run.
+If a write fails while the server restores an archive, then the server MUST queue for deletion the blob bytes the restore placed that no row names, so that `blob-integrity` and `blob-orphans` runs remove them.
 
 **Reason:** the bytes are placed before the transaction opens and stay unrecorded and queued for deletion, so nothing serves them, and clean-up removes only what no record names.
 

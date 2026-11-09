@@ -6,10 +6,11 @@ use std::time::Duration;
 use axum::body::{Body, HttpBody};
 use axum::extract::{Request, State};
 use axum::http::request::Parts;
-use axum::http::{HeaderMap, Method, StatusCode, header};
+use axum::http::{HeaderValue, Method, StatusCode, header};
+use axum::response::Response;
 use http_body_util::BodyExt;
 
-use super::answer::{Answer, Stopped, json_answer};
+use super::answer::{Answer, Stopped, json_answer, refusal_answer};
 use super::query;
 use crate::app::App;
 use crate::app::access::Caller;
@@ -29,12 +30,6 @@ struct Read {
     ended: bool,
 }
 
-fn expects_continue(headers: &HeaderMap) -> bool {
-    headers
-        .get(header::EXPECT)
-        .is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"100-continue"))
-}
-
 /// Reads and drops the rest of a refused body, so a client still sending reaches the answer.
 async fn linger(body: &mut Body, idle: Duration) {
     while !body.is_end_stream() {
@@ -43,6 +38,15 @@ async fn linger(body: &mut Body, idle: Duration) {
             _ => return,
         }
     }
+}
+
+/// A refusal made before the body is read is answered at once, and the connection ends with it.
+fn closing(refusal: &Refusal) -> Response {
+    let mut response = refusal_answer(refusal);
+    response
+        .headers_mut()
+        .insert(header::CONNECTION, HeaderValue::from_static("close"));
+    response
 }
 
 pub async fn restore(
@@ -54,12 +58,14 @@ pub async fn restore(
     let idle = app.upload_idle();
     let mut read = Read::default();
     let answer = receive(&app, caller, &parts, &mut body, idle, &mut read).await;
-    // A client that asked to hear first has sent nothing yet, and sends nothing once refused.
-    let unsent = !read.begun && expects_continue(&parts.headers);
-    if matches!(answer, Err(Stopped::Refused(_))) && !read.ended && !unsent {
-        linger(&mut body, idle).await;
+    match answer {
+        Err(Stopped::Refused(refusal)) if !read.ended && read.begun => {
+            linger(&mut body, idle).await;
+            Err(Stopped::Refused(refusal))
+        }
+        Err(Stopped::Refused(refusal)) if !read.ended => Ok(closing(&refusal)),
+        answer => answer,
     }
-    answer
 }
 
 async fn receive(
