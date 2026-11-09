@@ -549,6 +549,93 @@ async fn reads_a_file_again_when_its_store_is_attached_again() {
     );
 }
 
+async fn waits_to_be_held(one: &Instance) {
+    while one.app.faults.list()[0].waiting < 1 {
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+    }
+}
+
+async fn sweep_while_held(
+    one: &Instance,
+    point: &str,
+    arg: Option<&str>,
+) -> tokio::task::JoinHandle<Value> {
+    one.app.faults.set(point, arg).unwrap();
+    let app = one.app.clone();
+    let sweep = tokio::spawn(async move {
+        let ended = housekeeping::run_now(&app, SWEEP).await.unwrap();
+        assert_eq!(ended.outcome, "ok", "{:?}", ended.error);
+        ended.result.unwrap()
+    });
+    waits_to_be_held(one).await;
+    sweep
+}
+
+async fn gives_a_file_with_no_copy_its_attempt_back() {
+    let one = Instance::start(&[("MARFA_ENRICHMENT_MAX_ATTEMPTS", "1")]).await;
+    let id = one.file(b"the lost ledger", "text/plain", json!({})).await;
+    let hash = one.hash_of(&id).await;
+    one.execute("DELETE FROM blob_copies WHERE hash = ?1", &hash);
+    assert_eq!(one.sweep().await, counts(0, 1, 0));
+    assert_eq!(one.upload(b"the lost ledger").await, hash);
+    assert_eq!(one.sweep().await, counts(1, 0, 0));
+}
+
+async fn leaves_a_file_waiting_when_its_copy_returns_as_it_is_settled() {
+    let one = Instance::start(&[]).await;
+    let id = one.file(b"the lost ledger", "text/plain", json!({})).await;
+    let hash = one.hash_of(&id).await;
+    one.execute("DELETE FROM blob_copies WHERE hash = ?1", &hash);
+    let sweep = sweep_while_held(&one, "hold:write", Some("item.enrich@3")).await;
+    assert_eq!(one.upload(b"the lost ledger").await, hash);
+    one.app.faults.clear(None);
+    assert_eq!(sweep.await.unwrap(), counts(0, 0, 0));
+    assert_eq!(one.sweep().await, counts(1, 0, 0));
+    assert_eq!(
+        one.item(&id).await["properties"]["extracted_text"],
+        "the lost ledger"
+    );
+}
+
+async fn drops_a_refusal_of_a_file_whose_type_was_corrected_during_the_read() {
+    let one = Instance::start(&[]).await;
+    let id = one
+        .file(
+            b"words typed wrongly",
+            "application/octet-stream",
+            json!({}),
+        )
+        .await;
+    let sweep = sweep_while_held(&one, "hold:blob-read", None).await;
+    one.change(&id, json!({ "mime_type": "text/plain" }), &[])
+        .await;
+    one.app.faults.clear(None);
+    assert_eq!(sweep.await.unwrap(), counts(0, 0, 0));
+    assert_eq!(one.sweep().await, counts(1, 0, 0));
+    assert_eq!(
+        one.item(&id).await["properties"]["extracted_text"],
+        "words typed wrongly"
+    );
+}
+
+async fn writes_nothing_from_a_reading_made_under_another_type() {
+    let one = Instance::start(&[]).await;
+    let id = one
+        .file(b"<p>marked up words</p>", "text/plain", json!({}))
+        .await;
+    let sweep = sweep_while_held(&one, "hold:blob-read", None).await;
+    one.change(&id, json!({ "mime_type": "text/html" }), &[])
+        .await;
+    one.app.faults.clear(None);
+    assert_eq!(sweep.await.unwrap(), counts(0, 0, 0));
+    assert!(one.item(&id).await["properties"]["extracted_text"].is_null());
+    assert_eq!(one.sweep().await, counts(1, 0, 0));
+    assert_eq!(
+        one.item(&id).await["properties"]["extracted_text"],
+        "marked up words"
+    );
+}
+
 async fn does_not_run_again_at_once_for_files_it_handed_back() {
     let batch = [("MARFA_ENRICHMENT_BATCH_SIZE", "2")];
     let one = Instance::start(&batch).await;
@@ -856,6 +943,21 @@ fn main() {
         trial(
             "reads_a_file_again_when_its_store_is_attached_again",
             || Box::pin(reads_a_file_again_when_its_store_is_attached_again()),
+        ),
+        trial("gives_a_file_with_no_copy_its_attempt_back", || {
+            Box::pin(gives_a_file_with_no_copy_its_attempt_back())
+        }),
+        trial(
+            "leaves_a_file_waiting_when_its_copy_returns_as_it_is_settled",
+            || Box::pin(leaves_a_file_waiting_when_its_copy_returns_as_it_is_settled()),
+        ),
+        trial(
+            "drops_a_refusal_of_a_file_whose_type_was_corrected_during_the_read",
+            || Box::pin(drops_a_refusal_of_a_file_whose_type_was_corrected_during_the_read()),
+        ),
+        trial(
+            "writes_nothing_from_a_reading_made_under_another_type",
+            || Box::pin(writes_nothing_from_a_reading_made_under_another_type()),
         ),
         trial("leaves_a_disabled_sweep_with_its_files_waiting", || {
             Box::pin(leaves_a_disabled_sweep_with_its_files_waiting())

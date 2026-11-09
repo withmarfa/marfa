@@ -14,9 +14,11 @@ const WIDTH: &str = "width";
 const HEIGHT: &str = "height";
 const DURATION: &str = "duration";
 
-#[derive(Debug)]
+/// What a reading is made from, so that its result is kept only while the item still names it.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Offered {
     pub id: String,
+    pub type_id: String,
     /// The item's own `mime_type`, when it holds one.
     pub mime_type: Option<String>,
 }
@@ -68,8 +70,34 @@ pub fn offer(tx: &Transaction<'_>, catalog: &Catalog, seq: i64, hash: &Hash) -> 
         .map(str::to_string);
     Ok(Offer::Reading(Offered {
         id: item.id,
+        type_id: item.type_id,
         mime_type,
     }))
+}
+
+/// Whether a reading's inputs still stand on the state the transaction holds.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Standing {
+    /// The item offers the same reading, or needs none.
+    Same,
+    /// The item's type or `mime_type` is not what the reading used.
+    Moved,
+    /// The item no longer qualifies, or is in the bin.
+    Out,
+}
+
+pub fn standing(
+    tx: &Transaction<'_>,
+    catalog: &Catalog,
+    seq: i64,
+    hash: &Hash,
+    read: &Offered,
+) -> Result<Standing> {
+    Ok(match offer(tx, catalog, seq, hash)? {
+        Offer::Reading(now) if now != *read => Standing::Moved,
+        Offer::Reading(_) | Offer::Complete => Standing::Same,
+        Offer::Dropped | Offer::Binned => Standing::Out,
+    })
 }
 
 /// What a reading found, for the item that named the bytes.

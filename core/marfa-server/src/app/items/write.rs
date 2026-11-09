@@ -298,7 +298,9 @@ pub fn apply(
     })
 }
 
-pub(crate) use enrichment::{Enriched, Offer, Offered, Written, apply_enrichment, offer};
+pub(crate) use enrichment::{
+    Enriched, Offer, Offered, Standing, Written, apply_enrichment, offer, standing,
+};
 
 /// A change the server makes to an item it keeps for itself. No door that
 /// takes a caller's item may lead here.

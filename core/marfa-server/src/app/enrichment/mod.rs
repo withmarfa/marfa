@@ -15,7 +15,9 @@ use super::access::Caller;
 use super::blobs::{Blob, CopyRecord, Hash, Opened};
 use super::catalog::{self, Snapshot};
 use super::housekeeping::{Report, Run};
-use super::items::write::{Enriched, Offer, Offered, Written, apply_enrichment, offer};
+use super::items::write::{
+    Enriched, Offer, Offered, Standing, Written, apply_enrichment, offer, standing,
+};
 use super::refusal::{Code, Refusal, Result};
 use crate::settings::registry::{
     ENRICHMENT_BATCH_SIZE, ENRICHMENT_ENABLED, ENRICHMENT_ITEM_TIMEOUT_MS, ENRICHMENT_MAX_ATTEMPTS,
@@ -271,23 +273,27 @@ fn record(
 ) -> Result<()> {
     match fate {
         Fate::Read => queue::read(tx, seq, hash.as_str(), at),
+        Fate::Skip(Why::Missing) => {
+            queue::skip(tx, seq, hash.as_str(), Why::Missing, "", at)?;
+            queue::refund(tx, seq, hash.as_str(), at)
+        }
         Fate::Skip(why) => queue::skip(tx, seq, hash.as_str(), why, signatures.of(why), at),
         Fate::Retry => queue::defer(tx, seq, hash.as_str(), at),
         Fate::Untried | Fate::Unreached => queue::refund(tx, seq, hash.as_str(), at),
     }
 }
 
-/// Recheck the item and settle the attempt in the same transaction.
+/// Settles a reading in the transaction that checks its inputs still stand.
 async fn store(
     app: &Arc<App>,
     plan: &Plan,
     seq: i64,
     hash: &Hash,
-    id: String,
+    offered: &Offered,
     judged: Judged,
 ) -> Result<Count> {
     let cache = app.catalog_handle();
-    let (hash, signatures) = (hash.clone(), plan.signatures.clone());
+    let (hash, signatures, offered) = (hash.clone(), plan.signatures.clone(), offered.clone());
     let Judged {
         text,
         size,
@@ -296,8 +302,13 @@ async fn store(
     } = judged;
     app.write(&Caller::Server, ACTION, move |unit| {
         let tx = unit.tx();
+        let catalog = catalog::current(&cache, tx, Snapshot::Pending)?;
+        if standing(tx, &catalog, seq, &hash, &offered)? == Standing::Moved {
+            queue::refund(tx, seq, hash.as_str(), &unit.at)?;
+            return Ok(Count::None);
+        }
         let enriched = Enriched {
-            id,
+            id: offered.id,
             hash: hash.clone(),
             text,
             size,
@@ -318,10 +329,26 @@ async fn store(
 }
 
 /// A reading that did not happen is settled the way a refusal of the same kind is.
-async fn settle(app: &Arc<App>, plan: &Plan, seq: i64, hash: &Hash, fate: Fate) -> Result<Count> {
-    let (hash, signatures) = (hash.clone(), plan.signatures.clone());
+async fn settle(
+    app: &Arc<App>,
+    plan: &Plan,
+    seq: i64,
+    hash: &Hash,
+    offered: &Offered,
+    fate: Fate,
+) -> Result<Count> {
+    let cache = app.catalog_handle();
+    let (hash, signatures, offered) = (hash.clone(), plan.signatures.clone(), offered.clone());
     app.write(&Caller::Server, ACTION, move |unit| {
-        record(unit.tx(), fate, seq, &hash, &signatures, &unit.at)?;
+        let tx = unit.tx();
+        let catalog = catalog::current(&cache, tx, Snapshot::Pending)?;
+        let stands = standing(tx, &catalog, seq, &hash, &offered)? == Standing::Same;
+        let restored = fate == Fate::Skip(Why::Missing) && App::copy_recorded(tx, &hash)?;
+        if !stands || restored {
+            queue::refund(tx, seq, hash.as_str(), &unit.at)?;
+            return Ok(Count::None);
+        }
+        record(tx, fate, seq, &hash, &signatures, &unit.at)?;
         Ok(fate.count())
     })
     .await
@@ -330,8 +357,7 @@ async fn settle(app: &Arc<App>, plan: &Plan, seq: i64, hash: &Hash, fate: Fate) 
 /// Failed opens in a row after which an object store counts as down for the rest of a run.
 const STORE_MISSES: u32 = 2;
 
-/// What a run learned about the object stores. A remote store is asked no more once it is down;
-/// a disk that cannot open one file may open the next.
+/// What a run learned about the object stores: a remote store is asked no more once it is down.
 #[derive(Default)]
 struct Outage {
     down: HashSet<String>,
@@ -368,8 +394,7 @@ impl Outage {
         }
     }
 
-    /// A store counts as down when it fails to open files one after another; one file that will
-    /// not open, or a shortage of room here, says nothing of the stores.
+    /// One file that will not open, or a shortage of room here, says nothing of the stores.
     async fn failed(&mut self, app: &Arc<App>, seq: i64, hash: &Hash, refusal: &Refusal) {
         self.stranded.push((seq, hash.clone()));
         if refusal.code != Code::BlobStoreUnavailable {
@@ -457,11 +482,11 @@ async fn one(
         Ok(Some(found)) => found,
         Ok(None) => {
             let fate = Fate::Skip(Why::Missing);
-            return counted(settle(app, plan, seq, &hash, fate).await);
+            return counted(settle(app, plan, seq, &hash, &offered, fate).await);
         }
         Err(refusal) => {
             outage.failed(app, seq, &hash, &refusal).await;
-            settle(app, plan, seq, &hash, Fate::Unreached).await?;
+            settle(app, plan, seq, &hash, &offered, Fate::Unreached).await?;
             return Ok(Step::Refunded);
         }
     };
@@ -472,18 +497,18 @@ async fn one(
         .unwrap_or_else(|| blob.mime_type.clone());
     if marfa_enrichment::loads_whole_file(&mime) && blob.size_bytes > plan.max_blob_bytes {
         let fate = Fate::Skip(Why::OverLimit(Cap::Blob(plan.max_blob_bytes)));
-        return counted(settle(app, plan, seq, &hash, fate).await);
+        return counted(settle(app, plan, seq, &hash, &offered, fate).await);
     }
     let read = read_blocking(file, mime.clone(), plan.options.clone()).await?;
     if let Err(Unread::ReaderUnavailable(reason)) = &read {
-        settle(app, plan, seq, &hash, Fate::Untried).await?;
+        settle(app, plan, seq, &hash, &offered, Fate::Untried).await?;
         return Err(Refusal::internal(&format!(
             "no file reader could start: {reason}"
         )));
     }
     let judged = judge(read, &mime, plan);
     let refunded = matches!(judged.fate, Fate::Untried | Fate::Unreached);
-    let count = store(app, plan, seq, &hash, offered.id, judged).await?;
+    let count = store(app, plan, seq, &hash, &offered, judged).await?;
     Ok(if refunded {
         Step::Refunded
     } else {
@@ -585,6 +610,13 @@ mod tests {
         serde_json::from_str::<Value>(&found).unwrap()["item"]["properties"].clone()
     }
 
+    async fn began(app: &Arc<App>, seq: i64, hash: &Hash) -> Offered {
+        match begin(app, seq, hash).await.unwrap() {
+            Begun::Reading(offered) => offered,
+            Begun::Nothing => panic!("the file was not offered"),
+        }
+    }
+
     fn read_text(text: &str) -> Judged {
         Judged {
             text: Some(text.to_string()),
@@ -619,16 +651,9 @@ mod tests {
         )
         .await
         .unwrap();
-        let counted = store(
-            &app,
-            &plan,
-            seq,
-            &hash,
-            offered.id,
-            read_text("first bytes"),
-        )
-        .await
-        .unwrap();
+        let counted = store(&app, &plan, seq, &hash, &offered, read_text("first bytes"))
+            .await
+            .unwrap();
         assert_eq!(counted, Count::None);
         assert!(properties(&app, &id).await.get("extracted_text").is_none());
     }
@@ -662,7 +687,7 @@ mod tests {
             &plan,
             seq,
             &hash,
-            offered.id,
+            &offered,
             read_text("the file's own words"),
         )
         .await
@@ -727,16 +752,9 @@ mod tests {
         )
         .await
         .unwrap();
-        let counted = store(
-            &app,
-            &plan,
-            seq,
-            &hash,
-            offered.id,
-            read_text("binned bytes"),
-        )
-        .await
-        .unwrap();
+        let counted = store(&app, &plan, seq, &hash, &offered, read_text("binned bytes"))
+            .await
+            .unwrap();
         assert_eq!(counted, Count::None);
         assert!(pick(&app, &plan).await.unwrap().0.is_empty());
     }
@@ -759,11 +777,13 @@ mod tests {
         let plan = Plan::of(&app);
         let (_, hash) = file(&app, b"a file past a limit").await;
         let (files, _) = pick(&app, &plan).await.unwrap();
+        let offered = began(&app, files[0].0, &hash).await;
         settle(
             &app,
             &plan,
             files[0].0,
             &hash,
+            &offered,
             Fate::Skip(Why::OverLimit(cap)),
         )
         .await
@@ -824,9 +844,17 @@ mod tests {
         let plan = Plan::of(&app);
         let (_, hash) = file(&app, b"locked").await;
         let (files, _) = pick(&app, &plan).await.unwrap();
-        settle(&app, &plan, files[0].0, &hash, Fate::Skip(Why::Encrypted))
-            .await
-            .unwrap();
+        let offered = began(&app, files[0].0, &hash).await;
+        settle(
+            &app,
+            &plan,
+            files[0].0,
+            &hash,
+            &offered,
+            Fate::Skip(Why::Encrypted),
+        )
+        .await
+        .unwrap();
         let mut changed = Plan::of(&app);
         changed.signatures.native.push('+');
         changed.signatures.blob += 1;
