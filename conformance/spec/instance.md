@@ -1663,7 +1663,7 @@ When a write sets `sign_in_address` and does not name `addresses`, the server MU
 
 If a key, even one holding `config.manage`, sends `PUT /config` or `PATCH /config` that would change `sign_in_address` or `cors_origins`, then the server MUST answer `403 forbidden` and store none of the write.
 
-**Reason:** these two settings decide where sign-in cookies are valid and which web pages may call the API, so only a person at the instance, through an owner browser session or the private local process, may change them.
+**Reason:** these two settings decide where sign-in cookies are valid and which web pages may call the API, so only a person at the instance, through the private local process, may change them.
 
 **Tests:** `compliance/instance-addresses.test.ts › is refused to a key, which holds config.manage but not direct authority`.
 
@@ -1677,7 +1677,7 @@ If a key sends `PUT /config` or `PATCH /config` that names `sign_in_address` or 
 
 ### `instance/sign-in-address-unconfirmed`
 
-If an owner browser session or the private local process moves the sign-in address of a claimed instance, the first sign-in address stored included, without `confirm_sign_in_address_change` set to `true`, then the server MUST answer `409 sign_in_address_change_unconfirmed` with the consequences of the change in `details.consequences`, and store none of the write.
+If the private local process moves the sign-in address of a claimed instance, the first sign-in address stored included, without `confirm_sign_in_address_change` set to `true`, then the server MUST answer `409 sign_in_address_change_unconfirmed` with the consequences of the change in `details.consequences`, and store none of the write.
 
 **Reason:** the change signs everyone out and can strand passkeys and apps, so the person is told what it will do before it does it.
 
@@ -1685,7 +1685,7 @@ If an owner browser session or the private local process moves the sign-in addre
 
 ### `instance/sign-in-address-confirmed`
 
-When an owner browser session or the private local process sends `confirm_sign_in_address_change` set to `true` with a new sign-in address, the server MUST store the address.
+When the private local process sends `confirm_sign_in_address_change` set to `true` with a new sign-in address, the server MUST store the address.
 
 **Tests:** `compliance/instance-addresses.test.ts › is not moved, and the answer names the consequences, until a write confirms it`.
 
