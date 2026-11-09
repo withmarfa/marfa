@@ -868,6 +868,37 @@ BEGIN
            OR next_run_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds'));
 END;
 
+CREATE INDEX IF NOT EXISTS enrichment_files_missing ON enrichment_files (hash) WHERE reason = 'missing';
+
+-- A file left for want of a copy waits again, with its attempts as they were, once a copy is
+-- recorded or the store holding one is attached again.
+CREATE TRIGGER IF NOT EXISTS enrichment_files_copy_recorded AFTER INSERT ON blob_copies
+WHEN EXISTS (SELECT 1 FROM enrichment_files WHERE hash = NEW.hash AND reason = 'missing')
+BEGIN
+    UPDATE enrichment_files
+    SET state = 'waiting', reason = NULL, refill = 0, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE hash = NEW.hash AND reason = 'missing';
+    UPDATE housekeeping_jobs
+    SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds')
+    WHERE name = 'enrichment-sweep'
+      AND (running_since IS NOT NULL
+           OR next_run_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds'));
+END;
+
+CREATE TRIGGER IF NOT EXISTS enrichment_files_store_attached AFTER UPDATE OF detached_at ON stores
+WHEN OLD.detached_at IS NOT NULL AND NEW.detached_at IS NULL
+BEGIN
+    UPDATE enrichment_files
+    SET state = 'waiting', reason = NULL, refill = 0, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE reason = 'missing'
+      AND hash IN (SELECT hash FROM blob_copies WHERE store_id = NEW.id);
+    UPDATE housekeeping_jobs
+    SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds')
+    WHERE name = 'enrichment-sweep'
+      AND (running_since IS NOT NULL
+           OR next_run_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds'));
+END;
+
 CREATE TRIGGER IF NOT EXISTS enrichment_files_unreferenced AFTER DELETE ON blob_references
 WHEN OLD.kind = 'item'
 BEGIN

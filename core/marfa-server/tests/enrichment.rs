@@ -443,6 +443,40 @@ async fn leaves_a_file_with_no_copy_until_its_bytes_change() {
     );
 }
 
+async fn reads_a_file_again_when_its_bytes_are_uploaded_again() {
+    let one = Instance::start(&[]).await;
+    let id = one.file(b"the lost ledger", "text/plain", json!({})).await;
+    let hash = one.hash_of(&id).await;
+    one.execute("DELETE FROM blob_copies WHERE hash = ?1", &hash);
+    assert_eq!(one.sweep().await, counts(0, 1, 0));
+    assert_eq!(one.upload(b"the lost ledger").await, hash);
+    assert_eq!(one.sweep().await, counts(1, 0, 0));
+    assert_eq!(
+        one.item(&id).await["properties"]["extracted_text"],
+        "the lost ledger"
+    );
+}
+
+async fn reads_a_file_again_when_its_store_is_attached_again() {
+    let one = Instance::start(&[]).await;
+    let id = one.file(b"the away ledger", "text/plain", json!({})).await;
+    let db = || one.database(OpenFlags::SQLITE_OPEN_READ_WRITE);
+    db().execute(
+        "UPDATE stores SET detached_at = '2026-01-01T00:00:00.000Z'",
+        [],
+    )
+    .unwrap();
+    assert_eq!(one.sweep().await, counts(0, 1, 0));
+    assert_eq!(one.sweep().await, counts(0, 0, 0));
+    db().execute("UPDATE stores SET detached_at = NULL", [])
+        .unwrap();
+    assert_eq!(one.sweep().await, counts(1, 0, 0));
+    assert_eq!(
+        one.item(&id).await["properties"]["extracted_text"],
+        "the away ledger"
+    );
+}
+
 async fn does_not_run_again_at_once_for_files_it_handed_back() {
     let batch = [("MARFA_ENRICHMENT_BATCH_SIZE", "2")];
     let one = Instance::start(&batch).await;
@@ -735,6 +769,14 @@ fn main() {
         trial(
             "does_not_run_again_at_once_for_files_it_handed_back",
             || Box::pin(does_not_run_again_at_once_for_files_it_handed_back()),
+        ),
+        trial(
+            "reads_a_file_again_when_its_bytes_are_uploaded_again",
+            || Box::pin(reads_a_file_again_when_its_bytes_are_uploaded_again()),
+        ),
+        trial(
+            "reads_a_file_again_when_its_store_is_attached_again",
+            || Box::pin(reads_a_file_again_when_its_store_is_attached_again()),
         ),
         trial("leaves_a_disabled_sweep_with_its_files_waiting", || {
             Box::pin(leaves_a_disabled_sweep_with_its_files_waiting())
