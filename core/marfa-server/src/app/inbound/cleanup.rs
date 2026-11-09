@@ -30,12 +30,13 @@ fn chosen(expired: Vec<store::Expired>) -> Vec<i64> {
 }
 
 pub async fn delivery_cleanup(app: Arc<App>, _run: Run) -> Result<Report> {
-    let handled_before = cutoff(&app, INBOUND_HANDLED_RETENTION_DAYS, DAY_MS);
-    let pending_before = cutoff(&app, INBOUND_PENDING_RETENTION_DAYS, DAY_MS);
     let faults = app.faults.clone();
+    let live = app.clone();
     let (deleted, remaining) = app
         .db
         .write(Write::own(), move |tx| {
+            let handled_before = cutoff(tx, &live, INBOUND_HANDLED_RETENTION_DAYS, DAY_MS)?;
+            let pending_before = cutoff(tx, &live, INBOUND_PENDING_RETENTION_DAYS, DAY_MS)?;
             let expired = store::expired(
                 tx,
                 handled_before.as_deref(),

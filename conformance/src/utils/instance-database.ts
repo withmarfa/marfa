@@ -24,3 +24,24 @@ export function withInstanceDatabase<T>(
     db.close();
   }
 }
+
+/**
+ * Writes or removes one row of the settings table as a hand edit would,
+ * bounds unchecked, so a fixture can leave a stored setting that does not read.
+ */
+export function storeSettingRow(
+  sqlitePath: string,
+  key: string,
+  value: string | null,
+): void {
+  withInstanceDatabase(sqlitePath, (db) => {
+    if (value === null) {
+      db.prepare("DELETE FROM settings WHERE key = ?").run(key);
+    } else {
+      db.prepare(
+        "INSERT INTO settings (key, value) VALUES (?, ?) " +
+          "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+      ).run(key, value);
+    }
+  });
+}

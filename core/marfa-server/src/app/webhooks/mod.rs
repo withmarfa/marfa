@@ -407,8 +407,7 @@ pub async fn redeliver(
     delivery_id: String,
 ) -> Result<Value> {
     caller.webhook_reach()?;
-    let cutoff = housekeeping::cutoff(app, AUDIT_RETENTION_DAYS, DAY_MS);
-    let clock = app.clock.clone();
+    let (live, clock) = (app.clone(), app.clock.clone());
     app.write(caller, "webhook.delivery.redeliver", move |unit| {
         let reach = unit.caller.webhook_reach()?;
         let tx = unit.tx();
@@ -433,7 +432,8 @@ pub async fn redeliver(
                 "Only a delivery Marfa gave up on, with status dead_letter, can be redelivered.",
             ));
         }
-        if cutoff.as_deref().is_some_and(|cutoff| delivery.created_at.as_str() < cutoff) {
+        let cutoff = housekeeping::cutoff(tx, &live, AUDIT_RETENTION_DAYS, DAY_MS)?;
+        if cutoff.is_some_and(|cutoff| delivery.created_at < cutoff) {
             return Err(redelivery_refused(
                 "delivery_expired",
                 "The delivery is older than the instance's audit retention, so it can't be redelivered.",
