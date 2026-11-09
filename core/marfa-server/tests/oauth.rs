@@ -1314,10 +1314,8 @@ async fn a_grant_in_use_is_not_idle() {
     assert_eq!(cleaned(&instance.app).await.retired, 0);
 }
 
-#[tokio::test]
-async fn the_sweeps_keep_what_a_retention_committed_before_it_is_live_keeps() {
+async fn idle_revoked_and_unused() -> Instance {
     let instance = Instance::signed_in().await;
-    let app = &instance.app;
     let idle = instance.register(OFFLINE_NOTES).await;
     instance.tokens(&idle, OFFLINE_NOTES).await;
     let revoked = instance.register(OFFLINE_NOTES).await;
@@ -1326,77 +1324,70 @@ async fn the_sweeps_keep_what_a_retention_committed_before_it_is_live_keeps() {
         .revoke(&revoked, text_at(&issued, "refresh_token"))
         .await;
     instance.register(NOTES).await;
-    app.clock.advance(366 * DAY_MS).unwrap();
+    instance.app.clock.advance(366 * DAY_MS).unwrap();
+    instance
+}
 
-    let mut taken = Vec::new();
-    for (job, write, key) in [
-        (
-            "grant-inactivity-retirement",
-            "auth.grant.retired",
-            "grant_inactivity_days",
-        ),
-        (
-            "revoked-grant-purge",
-            "auth.grants.purged",
-            "revoked_grant_retention_days",
-        ),
+const STANDING: &str = "SELECT count(*) FROM auth_oauth_consent WHERE withdrawn_at IS NULL";
+const WITHDRAWN: &str = "SELECT count(*) FROM auth_oauth_consent WHERE withdrawn_at IS NOT NULL";
+const CLIENTS: &str = "SELECT count(*) FROM auth_oauth_client";
+
+#[tokio::test]
+async fn the_cleanup_keeps_what_a_retention_committed_before_it_is_live_keeps() {
+    let instance = idle_revoked_and_unused().await;
+    let app = &instance.app;
+    app.faults
+        .set("hold:write", Some("auth.grant.retired"))
+        .unwrap();
+    let running = app.clone();
+    let run = tokio::spawn(async move { cleaned(&running).await });
+    for (key, next) in [
+        ("grant_inactivity_days", Some("auth.grants.purged")),
+        ("revoked_grant_retention_days", Some("auth.clients.purged")),
+        ("dcr_client_retention_days", None),
     ] {
-        app.faults.set("hold:write", Some(write)).unwrap();
-        let running = app.clone();
-        let run = tokio::spawn(async move { swept(&running, job).await });
         instance.when_held().await;
         commit_unpublished(app, key, "0").await;
         app.faults.clear(Some("hold:write"));
-        taken.push(run.await.unwrap());
+        if let Some(next) = next {
+            app.faults.set("hold:write", Some(next)).unwrap();
+        }
     }
-    commit_unpublished(app, "dcr_client_retention_days", "0").await;
+    assert_eq!(run.await.unwrap().retired, 0);
     let live = app.settings.live();
     assert_eq!(live.get(GRANT_INACTIVITY_DAYS), 365);
     assert_eq!(live.get(REVOKED_GRANT_RETENTION_DAYS), 90);
     assert_eq!(live.get(DCR_CLIENT_RETENTION_DAYS), 1);
-    taken.push(swept(app, "dcr-client-cleanup").await);
-    assert_eq!(taken, [0, 0, 0]);
-    let standing = "SELECT count(*) FROM auth_oauth_consent WHERE withdrawn_at IS NULL";
-    assert_eq!(instance.count(standing).await, 1);
-    let withdrawn = "SELECT count(*) FROM auth_oauth_consent WHERE withdrawn_at IS NOT NULL";
-    assert_eq!(instance.count(withdrawn).await, 1);
-    let clients = "SELECT count(*) FROM auth_oauth_client";
-    assert_eq!(instance.count(clients).await, 3);
+    assert_eq!(instance.count(STANDING).await, 1);
+    assert_eq!(instance.count(WITHDRAWN).await, 1);
+    assert_eq!(instance.count(CLIENTS).await, 3);
 }
 
 #[tokio::test]
-async fn a_retention_that_does_not_read_ends_each_sweep_in_error_and_deletes_nothing() {
-    let instance = Instance::signed_in().await;
+async fn a_retention_that_does_not_read_ends_the_cleanup_in_error_and_deletes_nothing_it_decides() {
+    let instance = idle_revoked_and_unused().await;
     let app = &instance.app;
-    let idle = instance.register(OFFLINE_NOTES).await;
-    instance.tokens(&idle, OFFLINE_NOTES).await;
-    let revoked = instance.register(OFFLINE_NOTES).await;
-    let issued = instance.tokens(&revoked, OFFLINE_NOTES).await;
-    instance
-        .revoke(&revoked, text_at(&issued, "refresh_token"))
-        .await;
-    instance.register(NOTES).await;
-    app.clock.advance(366 * DAY_MS).unwrap();
-    let rows = [
-        "SELECT count(*) FROM auth_oauth_consent WHERE withdrawn_at IS NULL",
-        "SELECT count(*) FROM auth_oauth_consent WHERE withdrawn_at IS NOT NULL",
-        "SELECT count(*) FROM auth_oauth_client",
-    ];
+    let rows = [STANDING, WITHDRAWN, CLIENTS];
     let mut before = Vec::new();
     for sql in rows {
         before.push(instance.count(sql).await);
     }
 
-    let sweeps = [
-        ("grant-inactivity-retirement", "grant_inactivity_days"),
-        ("revoked-grant-purge", "revoked_grant_retention_days"),
-        ("dcr-client-cleanup", "dcr_client_retention_days"),
+    let keys = [
+        "grant_inactivity_days",
+        "revoked_grant_retention_days",
+        "dcr_client_retention_days",
     ];
-    for (job, key) in sweeps {
+    for key in keys {
         commit_unpublished(app, key, "soon").await;
-        let ended = housekeeping::run_now(app, job).await.unwrap();
-        assert_eq!(ended.outcome, "error", "{job}");
-        assert!(ended.error.unwrap().contains(key), "{job}");
+    }
+    let ended = housekeeping::run_now(app, "credential-cleanup")
+        .await
+        .unwrap();
+    assert_eq!(ended.outcome, "error");
+    let error = ended.error.unwrap();
+    for key in keys {
+        assert!(error.contains(key), "{key}: {error}");
     }
     let mut kept = Vec::new();
     for sql in rows {
@@ -1404,12 +1395,14 @@ async fn a_retention_that_does_not_read_ends_each_sweep_in_error_and_deletes_not
     }
     assert_eq!(kept, before);
 
-    let mut taken = Vec::new();
-    for (job, key) in sweeps {
+    for key in keys {
         remove_unpublished(app, key).await;
-        taken.push(swept(app, job).await);
     }
-    assert!(taken.iter().all(|count| *count > 0), "{taken:?}");
+    assert_eq!(cleaned(app).await.retired, 1);
+    assert_eq!(instance.count(STANDING).await, 0);
+    let purged = "SELECT count(*) FROM audit_log WHERE action = 'auth.grants.purged'";
+    assert_eq!(instance.count(purged).await, 1);
+    assert_eq!(instance.count(CLIENTS).await, 1);
 }
 
 #[tokio::test]
@@ -2692,8 +2685,7 @@ async fn registrations_from_one_address_stop_at_their_limit() {
 async fn an_expired_device_code_answers_its_poll_then_goes() {
     let instance = Instance::signed_in().await;
     let app = &instance.app;
-    app.settings
-        .apply_stored(&[("dcr_client_retention_days".to_string(), "0".to_string())]);
+    commit_unpublished(app, "dcr_client_retention_days", "0").await;
     let client = instance.register_device(NOTES).await;
     let device_code = instance.device_requested(&client, NOTES).await;
     let left_alone = instance.device_requested(&client, NOTES).await;
