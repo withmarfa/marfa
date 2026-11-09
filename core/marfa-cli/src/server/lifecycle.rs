@@ -103,11 +103,12 @@ fn upgrade_native(
             started.say_unconfirmed(state.port);
         }
         dotenv.set("MARFA_RELEASE", &target)?;
-        folder.keep_applied(
-            dotenv,
-            &folder.applied(state.port, &target)?,
-            files::kept_for(state.manager).dotenv,
-        )?;
+        let kept = files::kept_for(state.manager).dotenv;
+        if started.confirmed() {
+            folder.keep_applied(dotenv, &folder.applied(state.port, &target)?, kept)?;
+        } else {
+            folder.forget_applied(dotenv, kept)?;
+        }
     }
     let update = database_update(&service.log_tail(200));
     let copy_note = update.as_ref().map(|update| {

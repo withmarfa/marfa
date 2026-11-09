@@ -544,7 +544,9 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
                 if !out.json {
                     started.say_unconfirmed(port);
                 }
-                folder.keep_applied(&mut dotenv, &applied, kept.dotenv)?;
+                if started.confirmed() {
+                    folder.keep_applied(&mut dotenv, &applied, kept.dotenv)?;
+                }
             }
         }
         _ => {

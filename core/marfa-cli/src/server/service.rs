@@ -118,6 +118,10 @@ pub enum When {
 }
 
 impl Started {
+    pub fn confirmed(&self) -> bool {
+        self.unconfirmed.is_none()
+    }
+
     /// Says plainly what the restart left unconfirmed.
     pub fn say_unconfirmed(&self, port: u16) {
         if let Some(when) = self.unconfirmed {
@@ -126,7 +130,7 @@ impl Started {
                 When::After => "after",
             };
             eprintln!(
-                "The service manager gave no process ID {when} the restart, so this run cannot show that the process was replaced. It confirms only that the server answers on port {port}."
+                "The service manager gave no process ID {when} the restart, so this run cannot show that the process was replaced. It confirms only that the server answers on port {port}, and the next `marfa server install` restarts it again."
             );
         }
     }

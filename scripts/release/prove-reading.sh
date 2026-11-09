@@ -97,10 +97,10 @@ printf 'the quokka ledger, page one' > "$sentence"
 
 (
   cd "$state"
-  exec env -i HOME="$state" PATH="$PATH" PORT=0 MARFA_LISTEN_HOST=127.0.0.1 \
-    SQLITE_PATH="$state/marfa.db" BLOB_PATH="$state/blobs" \
+  exec env -i HOME="$state" PATH="$PATH" MARFA_PORT=0 MARFA_LISTEN_HOST=127.0.0.1 \
+    MARFA_DATABASE_PATH="$state/marfa.db" MARFA_BLOB_PATH="$state/blobs" \
     MARFA_CONTROL_SOCKET="$control/marfa.sock" \
-    API_KEY_SALT="$(openssl rand -hex 32)" MARFA_AUTH_SECRET="$(openssl rand -hex 32)" \
+    MARFA_KEY_SALT="$(openssl rand -hex 32)" MARFA_AUTH_SECRET="$(openssl rand -hex 32)" \
     "$server"
 ) > "$state/log" 2>&1 &
 pid=$!
