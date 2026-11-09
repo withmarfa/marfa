@@ -2,7 +2,7 @@
 
 use crate::catalog::STATUS_GROUPS;
 use crate::error::{Result, RuleError};
-use crate::js;
+use crate::number;
 
 mod model;
 
@@ -73,7 +73,7 @@ impl Literal {
     pub fn text(&self) -> String {
         match self {
             Literal::Text(text) => text.clone(),
-            Literal::Number(number) => js::number(*number),
+            Literal::Number(number) => number::text(*number),
             Literal::Bool(flag) => flag.to_string(),
             Literal::Null => "null".into(),
         }
@@ -188,7 +188,7 @@ pub fn system_literal(column: &str, compare: Compare, value: &Literal) -> Result
     let Literal::Text(text) = value else {
         return Err(crate::time::invalid(column, "expected a timestamp"));
     };
-    Ok(Literal::Text(crate::time::normalize(text, column)?))
+    Ok(Literal::Text(crate::time::normalize_bound(text, column)?))
 }
 
 pub(crate) fn refused(message: impl Into<String>) -> RuleError {
@@ -219,7 +219,8 @@ fn edge_ref(word: &str) -> Option<(bool, &str)> {
         (true, word.strip_prefix("backref[")?)
     };
     let edge_type = rest.strip_suffix(']')?;
-    if edge_type.is_empty() || edge_type.contains(']') || edge_type.chars().any(js::is_space) {
+    if edge_type.is_empty() || edge_type.contains(']') || edge_type.chars().any(char::is_whitespace)
+    {
         return None;
     }
     Some((backref, edge_type))
@@ -227,14 +228,6 @@ fn edge_ref(word: &str) -> Option<(bool, &str)> {
 
 fn tokenize(input: &str) -> Result<Vec<Token>> {
     let chars: Vec<char> = input.chars().collect();
-    let at: Vec<usize> = chars
-        .iter()
-        .scan(0, |units, ch| {
-            let here = *units;
-            *units += ch.len_utf16();
-            Some(here)
-        })
-        .collect();
     let raw = |from: usize, to: usize| chars[from..to].iter().collect::<String>();
     let mut tokens = Vec::new();
     let mut i = 0;
@@ -261,14 +254,14 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
             if i >= chars.len() {
                 return Err(refused(format!(
                     "Unterminated string starting at position {}",
-                    at[start]
+                    start
                 )));
             }
             i += 1;
             tokens.push(Token {
                 kind: TokenKind::Text(value),
                 raw: raw(start, i),
-                pos: at[start],
+                pos: start,
             });
             continue;
         }
@@ -296,27 +289,27 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
                 .ok_or_else(|| {
                     refused(format!(
                         "Number out of range \"{text}\" at position {}",
-                        at[start]
+                        start
                     ))
                 })?;
             tokens.push(Token {
                 kind: TokenKind::Number(number),
                 raw: text,
-                pos: at[start],
+                pos: start,
             });
             continue;
         }
         if ch == 'e' || ch == 'b' {
             let end = chars[i..]
                 .iter()
-                .position(|c| js::is_space(*c))
+                .position(|c| c.is_whitespace())
                 .map_or(chars.len(), |offset| i + offset);
             let word = raw(i, end);
             if edge_ref(&word).is_some() {
                 tokens.push(Token {
                     kind: TokenKind::Identifier(word.clone()),
                     raw: word,
-                    pos: at[i],
+                    pos: i,
                 });
                 i = end;
                 continue;
@@ -340,13 +333,13 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
             tokens.push(Token {
                 kind,
                 raw: word,
-                pos: at[start],
+                pos: start,
             });
             continue;
         }
         return Err(refused(format!(
             "Unexpected character '{ch}' at position {}",
-            at[i]
+            i
         )));
     }
     Ok(tokens)
@@ -573,11 +566,10 @@ fn expect<'a>(tokens: &'a [Token], pos: usize, context: &str) -> Result<&'a Toke
 }
 
 pub fn parse(input: &str) -> Result<Expression> {
-    // Blank means whitespace as `js::is_space` reads it: U+FEFF counts, U+0085 does not.
-    if input.chars().all(js::is_space) {
+    if input.chars().all(char::is_whitespace) {
         return Err(refused("Filter expression cannot be empty"));
     }
-    let length = input.encode_utf16().count();
+    let length = input.chars().count();
     if length > MAX_INPUT_LENGTH {
         return Err(refused(format!(
             "Filter expression too long ({length} characters). Maximum is {MAX_INPUT_LENGTH}"
@@ -786,33 +778,33 @@ mod tests {
     }
 
     #[test]
-    fn counts_the_length_in_utf16_units() {
+    fn counts_the_length_in_characters() {
         let emoji = |count: usize| format!("id eq \"{}\"", "\u{1F426}".repeat(count));
-        assert_eq!(emoji(1020).encode_utf16().count(), 2048);
-        assert!(parse(&emoji(1020)).is_ok());
-        assert_eq!(emoji(1021).chars().count(), 1029);
-        assert!(code(&emoji(1021)).is_some());
+        assert_eq!(emoji(2040).chars().count(), 2048);
+        assert!(parse(&emoji(2040)).is_ok());
+        assert_eq!(emoji(2041).chars().count(), 2049);
+        assert!(code(&emoji(2041)).is_some());
     }
 
     #[test]
-    fn ends_an_edge_reference_where_javascript_space_ends_it() {
-        let parsed = parse("edge[a\u{85}b] exists").unwrap();
+    fn ends_an_edge_reference_at_unicode_whitespace() {
+        let parsed = parse("edge[a\u{feff}b] exists").unwrap();
         assert!(matches!(
             &parsed.conditions[0].term,
-            Term::Edge { edge_type, .. } if edge_type == "a\u{85}b"
+            Term::Edge { edge_type, .. } if edge_type == "a\u{feff}b"
         ));
-        assert!(code("edge[a\u{feff}b] exists").is_some());
+        assert!(code("edge[a\u{85}b] exists").is_some());
     }
 
     #[test]
-    fn names_a_position_in_utf16_units() {
+    fn names_a_position_in_characters() {
         assert_eq!(
             message("id eq \"\u{1F426}\" OR x eq 1"),
-            "Unknown field \"x\" at position 14. Valid system fields: state, type, source, occurred_at, created_at, updated_at, tier, version, id, source_id. Use \"properties.<field>\" for custom fields, \"tags\" for tag filtering, \"status_group\" for a status group, or \"part\" for the parts of other items."
+            "Unknown field \"x\" at position 13. Valid system fields: state, type, source, occurred_at, created_at, updated_at, tier, version, id, source_id. Use \"properties.<field>\" for custom fields, \"tags\" for tag filtering, \"status_group\" for a status group, or \"part\" for the parts of other items."
         );
         assert_eq!(
             message("id eq \"\u{1F426}\" \u{e9}"),
-            "Unexpected character '\u{e9}' at position 11"
+            "Unexpected character '\u{e9}' at position 10"
         );
     }
 

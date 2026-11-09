@@ -6,8 +6,6 @@ import {
 } from "../../utils/fresh-server.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
 
-// Folder receipts are judged separately until every target serves folders.
-
 let server: FreshServer;
 
 beforeAll(async () => {

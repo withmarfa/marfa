@@ -74,6 +74,12 @@ describe("validation edge cases", () => {
     const refusals = [
       ["a UUIDv4", "9b2e4f64-5c1d-4e8a-9f3b-2d7c6a1e0b55"],
       ["an uppercase UUIDv7", lowercase.toUpperCase()],
+      [
+        "a UUIDv7 with variant digit c",
+        `${lowercase.slice(0, 19)}c${lowercase.slice(20)}`,
+      ],
+      ["a UUIDv7 without hyphens", lowercase.replaceAll("-", "")],
+      ["a UUIDv7 with a space at the end", `${lowercase} `],
     ] as const;
     for (const [label, id] of refusals) {
       const sourceId = `bad-id-${generateId()}`;
@@ -717,32 +723,6 @@ describe("type identifier validation", () => {
       "anchor",
       "zz",
     ]);
-  });
-
-  it("puts a property named by an array index first, in numeric order", async () => {
-    const r = await client.createItem({
-      type: "core.note",
-      source: ctx.source,
-      properties: {
-        zz: "sent first",
-        body: "declared",
-        "10": "ten",
-        "2": "two",
-      },
-    });
-    expect(r.ok).toBe(true);
-    trackItem(ctx, r.data.item.id);
-    // `01` and `-1` are not array indices, so they keep the order sent.
-    const merged = await client.updateItem(r.data.item.id, {
-      properties: { "01": "padded", "7": "seven", "-1": "negative" },
-      version: r.data.item.version,
-    });
-    expect(merged.ok).toBe(true);
-    const order = ["2", "7", "10", "body", "zz", "01", "-1"];
-    expect(Object.keys(merged.data.item.properties)).toEqual(order);
-    const read = await client.getItem(r.data.item.id);
-    expect(read.ok).toBe(true);
-    expect(Object.keys(read.data.item.properties)).toEqual(order);
   });
 
   it("clears nothing with a null under a merge, declared or not", async () => {

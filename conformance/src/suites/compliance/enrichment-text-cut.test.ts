@@ -52,22 +52,22 @@ async function textFile(text: string): Promise<string> {
 }
 
 describe("the enrichment sweep", () => {
-  it("cuts extracted text at the limit without cutting a character in two", async () => {
-    // A character outside the Basic Multilingual Plane takes two UTF-16 units,
-    // and the limit falls between them for the first file and after them for
-    // the second, which is the witness that the pair is kept where it fits.
-    const split = await textFile(`${"x".repeat(LIMIT - 1)}😀 and the rest`);
-    const whole = await textFile(`${"x".repeat(LIMIT - 2)}😀 and the rest`);
+  it("cuts extracted text at a number of characters, counting an emoji once", async () => {
+    // The emoji is the last character the limit allows for the first file and
+    // the first it cuts for the second; counted in UTF-16 units, it would be
+    // cut from both.
+    const kept = await textFile(`${"x".repeat(LIMIT - 1)}😀 and the rest`);
+    const cut = await textFile(`${"x".repeat(LIMIT)}😀 and the rest`);
 
     const run = await operator.runHousekeeping("enrichment-sweep");
     expect(run.status).toBe(200);
     expect(run.data.outcome).toBe("ok");
 
-    const cut = await client.getItem(split);
-    expect(cut.data.item.properties.extracted_text).toBe("x".repeat(LIMIT - 1));
-    const kept = await client.getItem(whole);
-    expect(kept.data.item.properties.extracted_text).toBe(
-      `${"x".repeat(LIMIT - 2)}😀`,
+    const first = await client.getItem(kept);
+    expect(first.data.item.properties.extracted_text).toBe(
+      `${"x".repeat(LIMIT - 1)}😀`,
     );
+    const second = await client.getItem(cut);
+    expect(second.data.item.properties.extracted_text).toBe("x".repeat(LIMIT));
   });
 });

@@ -40,15 +40,15 @@ If the `to` of `GET /occurrences` is not after its `from`, then the server MUST 
 
 ### `occurrences/window-instants`
 
-The server MUST read each bound of a window as the instant it names, spelled in UTC, with an offset, as a date-time with no zone, which is read as UTC, or as a date with no time, which is its midnight in UTC, and answer the window in UTC, whatever time zone the server's host is set to.
+The server MUST read each bound of a window as the instant it names, spelled as an RFC 3339 date-time in UTC or with an offset, or as a date with no time, which is its midnight in UTC, and answer the window in UTC, whatever time zone the server's host is set to.
 
-**Tests:** `compliance/occurrences.test.ts › reads each bound of the window in any ISO 8601 spelling and answers the window in UTC`, `compliance/occurrences-window-bounds.test.ts › reads a zone-less bound as UTC under a host zone that is not UTC`.
+**Tests:** `compliance/occurrences.test.ts › reads each bound of the window in any RFC 3339 spelling and answers the window in UTC`, `compliance/occurrences-window-bounds.test.ts › reads a date bound as midnight in UTC under a host zone that is not UTC`.
 
 ### `occurrences/window-unreadable`
 
-If a bound of the window is not a timestamp, being a string not in ISO 8601 form or a date that does not exist, such as 30 February, then the server MUST answer `400 validation_error` naming the bound in `details.field`.
+If a bound of the window is neither an RFC 3339 date-time with a zone nor a date with no time, such as a date-time with no zone or no seconds, any other string, or a date that does not exist, such as 30 February, then the server MUST answer `400 validation_error` naming the bound in `details.field`.
 
-**Tests:** `compliance/occurrences.test.ts › refuses a bound that is no timestamp, naming which`, `compliance/occurrences-window-bounds.test.ts › refuses an impossible date and a string that is not ISO 8601, naming the bound`.
+**Tests:** `compliance/occurrences.test.ts › refuses a bound that is no timestamp, naming which`, `compliance/occurrences-window-bounds.test.ts › refuses an impossible date, a date-time with no zone or no seconds, and a string that is not RFC 3339, naming the bound`.
 
 ### `occurrences/no-credential`
 

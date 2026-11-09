@@ -752,15 +752,15 @@
       "code": "validation_error"
     },
     {
-      "description": "a byte order mark, which JavaScript trims",
+      "description": "a byte order mark, which is not whitespace",
       "text": "﻿",
-      "message": "Filter expression cannot be empty",
+      "message": "Unexpected character '﻿' at position 0",
       "code": "validation_error"
     },
     {
-      "description": "a next-line character, which JavaScript does not trim",
+      "description": "a next-line character, which is whitespace",
       "text": "",
-      "message": "Unexpected character '' at position 0",
+      "message": "Filter expression cannot be empty",
       "code": "validation_error"
     },
     {
@@ -896,9 +896,9 @@
       "code": "validation_error"
     },
     {
-      "description": "a character outside the grammar after an emoji, at its UTF-16 position",
+      "description": "a character outside the grammar after an emoji, at its position counted in characters",
       "text": "properties.x eq \"🎉\" @",
-      "message": "Unexpected character '@' at position 21",
+      "message": "Unexpected character '@' at position 20",
       "code": "validation_error"
     },
     {

@@ -160,7 +160,7 @@ enum Proof {
 fn passkey_or_password(body: &Map<String, Value>) -> Result<Proof, Refusal> {
     match (body.get("password"), body.get("passkey")) {
         (Some(Value::String(password)), None) => {
-            let length = password.encode_utf16().count();
+            let length = password.chars().count();
             if (1..=CONFIRM_PASSWORD_CHARS).contains(&length) {
                 Ok(Proof::Password(password.clone()))
             } else {

@@ -12,7 +12,10 @@ use tower::ServiceExt;
 
 use super::doors::Doors;
 use super::root::DOCUMENT;
-use super::{control, control_doors, count_doors, item_doors, overview_doors, public_doors};
+use super::{
+    control, control_doors, count_doors, folder_setting_doors, item_doors, overview_doors,
+    public_doors,
+};
 use crate::app::App;
 use crate::settings::{Environment, Settings};
 
@@ -187,20 +190,14 @@ const NOT_YET_SERVED: &[&str] = &[
     "GET /connectors/{id}/deliveries/{delivery_id}/body",
     "GET /connectors/{id}/endpoints",
     "GET /export",
-    "GET /folders",
-    "GET /folders/{id}/status",
     "GET /items/bulk-actions/jobs/{id}",
     "GET /metrics",
-    "PATCH /folders/{id}",
     "POST /connectors/{id}/deliveries/handled",
     "POST /connectors/{id}/endpoints",
-    "POST /folders",
-    "POST /folders/{id}/revoke",
     "POST /items/bulk-actions",
     "POST /items/bulk-actions/jobs/{id}/cancel",
     "POST /restore",
     "POST /types/{id}/move",
-    "PUT /folders/{id}/status",
 ];
 
 const METHODS: [&str; 8] = [
@@ -217,6 +214,10 @@ const OPEN: &[&str] = &["GET /", "GET /health", "POST /owner"];
 /// Doors on the shared router that the socket serves and refuses local authority, each with why.
 /// The doors behind a type map are not listed: `content` finds them.
 const REFUSES_LOCAL: &[(&str, &str)] = &[
+    (
+        "PUT /folders/{id}/status",
+        "a report is kept under the sign-in that sent it",
+    ),
     (
         "GET /keys/current",
         "describes the key that sent the request",
@@ -325,6 +326,7 @@ async fn served() -> Served {
             routes(item_doors(app.clone())),
             routes(overview_doors(app.clone())),
             routes(count_doors(app.clone())),
+            routes(folder_setting_doors(app.clone())),
         ]
         .into_iter()
         .flatten()

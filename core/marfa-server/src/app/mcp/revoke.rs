@@ -32,10 +32,6 @@ fn subject_of(id: &str, key: &Key) -> String {
     confirm::subject_digest(&[id.to_string()], &digest_of(key))
 }
 
-pub fn is_expired(app: &App, token: &str) -> bool {
-    confirm::parse(token).is_some_and(|parsed| parsed.expires_at_ms <= app.clock.now_ms())
-}
-
 /// The key as the caller may revoke it.
 pub async fn preview(app: &App, caller: &Caller, id: &str) -> Result<Key> {
     keys::list(app, caller)

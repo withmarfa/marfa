@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, HashSet};
 use marfa_rules::catalog::{EdgeType, End, Lineage, lineage_of};
 use marfa_rules::edges::{self, OnDelete, Proposed, Refused};
 use marfa_rules::error::Code as RuleCode;
-use marfa_rules::{js, validation};
+use marfa_rules::{number, validation};
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
@@ -492,7 +492,7 @@ impl<'c> Writing<'_, '_, 'c> {
                 source_id: &source.id,
                 target_id: &create.target_id,
                 edge_type: &create.edge_type,
-                properties: &js::canonical(&create.properties),
+                properties: &number::object(&create.properties),
                 at: &self.unit.at,
             },
         )?;
@@ -619,7 +619,7 @@ impl<'c> Writing<'_, '_, 'c> {
             &Landed {
                 source_id: &stands.id,
                 target_id: &target_id,
-                properties: &js::canonical(&properties),
+                properties: &number::object(&properties),
                 at: &self.unit.at,
             },
         )?;
@@ -735,10 +735,8 @@ fn judge_folder(properties: &Map<String, Value>) -> Result<()> {
     }
     let path = format!("properties.{FOLDER_PATH}");
     let text = properties.get(FOLDER_PATH).and_then(Value::as_str);
-    let Some(text) = text.filter(|text| {
-        let units = text.encode_utf16().count();
-        (1..=MAX_FOLDER_PATH).contains(&units)
-    }) else {
+    let Some(text) = text.filter(|text| (1..=MAX_FOLDER_PATH).contains(&text.chars().count()))
+    else {
         return Err(at_path(
             &path,
             format!(

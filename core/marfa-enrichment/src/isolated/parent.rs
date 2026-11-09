@@ -31,9 +31,9 @@ const STDERR_REPORTED: usize = 512;
 /// Room in a child's answer for everything but the text.
 const ANSWER_OVERHEAD: usize = 2 * wire::MAX_REASON_BYTES + 4096;
 
-/// The most bytes one UTF-16 code unit of text takes in the JSON a child writes: six,
+/// The most bytes one character of text takes in the JSON a child writes: six,
 /// as a `\uXXXX` escape.
-const JSON_BYTES_PER_UNIT: usize = 6;
+const JSON_BYTES_PER_CHAR: usize = 6;
 
 /// The longest MIME type taken. A real one is far shorter.
 const MAX_MIME_BYTES: usize = 1024;
@@ -74,7 +74,7 @@ pub(super) fn read(
     )?;
     let cap = options
         .max_text_chars
-        .saturating_mul(JSON_BYTES_PER_UNIT)
+        .saturating_mul(JSON_BYTES_PER_CHAR)
         .saturating_add(ANSWER_OVERHEAD);
     let mut said = Said::new(cap);
     let end = watched.run(&mut said, options.max_memory_bytes, deadline);
