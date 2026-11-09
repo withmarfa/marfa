@@ -204,9 +204,7 @@ impl Stamp {
     }
 }
 
-/// SQL that holds only where `column` is a time in the stored form, so that comparing it as text
-/// compares instants. A clean-up keyed on a time adds it, so a time that does not read is never past.
-/// SQLite's own reading lets an hour of 24 through.
+/// Holds only for a time in the stored form; `strftime` alone would also pass an hour of 24.
 pub fn readable(column: &str) -> String {
     format!(
         "(strftime('%Y-%m-%dT%H:%M:%fZ', {column}) = {column} AND substr({column}, 12, 2) < '24')"
