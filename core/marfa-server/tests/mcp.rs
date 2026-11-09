@@ -2395,6 +2395,47 @@ async fn a_make_confirmation_is_stale_after_a_webhook_was_made_and_deleted_since
 }
 
 #[tokio::test]
+async fn a_make_confirmation_refused_at_the_cap_stays_unspent() {
+    let instance = Instance::start(&[]).await;
+    let token = instance.hooker().await;
+    for place in 0..100 {
+        let body = json!({ "url": format!("{RECEIVER}{place}"), "events": ["item.created"] });
+        let made = instance
+            .call(&token, Method::POST, "/webhooks", Some(body))
+            .await;
+        assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    }
+    let args =
+        json!({ "action": "make", "url": format!("{RECEIVER}over"), "events": ["item.created"] });
+    let shown = instance.hook(&token, args.clone()).await;
+    let mut sent = args.clone();
+    sent["confirm"] = shown.payload()["confirm"].clone();
+
+    let refused = instance.hook(&token, sent.clone()).await;
+    assert_eq!(refused.code(), "conflict", "{}", refused.value);
+    assert_eq!(refused.value["error"]["details"]["reason"], "webhook_cap");
+    assert_eq!(instance.hooks(&token).await.len(), 100);
+
+    // A spent token would now answer `confirmation_stale`.
+    let again = instance.hook(&token, sent).await;
+    assert_eq!(again.code(), "conflict", "{}", again.value);
+    assert_eq!(again.value["error"]["details"]["reason"], "webhook_cap");
+
+    // The witness: with a place free, a fresh confirmation makes the webhook.
+    let first = instance.hooks(&token).await[0]["id"].clone();
+    let gone = instance
+        .hook(&token, json!({ "action": "delete", "id": first }))
+        .await;
+    assert!(!gone.failed, "{}", gone.value);
+    let shown = instance.hook(&token, args.clone()).await;
+    let mut sent = args;
+    sent["confirm"] = shown.payload()["confirm"].clone();
+    let done = instance.hook(&token, sent).await;
+    assert!(!done.failed, "{}", done.value);
+    assert_eq!(instance.hooks(&token).await.len(), 100);
+}
+
+#[tokio::test]
 async fn a_change_is_confirmed_against_the_webhook_it_would_leave() {
     let instance = Instance::start(&[]).await;
     let token = instance.hooker().await;
