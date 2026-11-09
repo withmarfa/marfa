@@ -1,10 +1,11 @@
 use std::time::Duration;
 
+use super::super::backups;
 use super::super::blobs::upkeep;
 use super::super::{enrichment, items, oauth};
 use super::{Job, cleanups, heartbeat};
 use crate::settings::registry::{
-    AUDIT_CLEANUP_INTERVAL_MS, AUTH_SESSION_CLEANUP_INTERVAL_MS, BLOB_CLEANUP_INTERVAL_MS,
+    AUDIT_CLEANUP_INTERVAL_MS, BACKUP_INTERVAL_MS, AUTH_SESSION_CLEANUP_INTERVAL_MS, BLOB_CLEANUP_INTERVAL_MS,
     BLOB_INTEGRITY_INTERVAL_MS, BLOB_REPLICATE_INTERVAL_MS, DCR_CLIENT_CLEANUP_INTERVAL_MS,
     ENRICHMENT_INTERVAL_MS, EVENT_LOG_CLEANUP_INTERVAL_MS, FEED_EXPIRY_INTERVAL_MS,
     HEARTBEAT_INTERVAL_MS, RATE_LIMIT_CLEANUP_INTERVAL_MS, REVOKED_KEY_REAP_INTERVAL_MS,
@@ -129,4 +130,8 @@ pub(super) const JOBS: &[Job] = &[
         HOUR,
         |app, run| Box::pin(upkeep::integrity(app, run)),
     ),
+    Job::new("backup", BACKUP_INTERVAL_MS, 60_000, HOUR, |app, run| {
+        Box::pin(backups::job(app, run))
+    })
+    .switched_by(backups::scheduled),
 ];

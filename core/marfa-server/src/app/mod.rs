@@ -5,6 +5,7 @@ pub mod addresses;
 pub mod archive;
 pub mod audit;
 pub mod auth;
+pub mod backups;
 pub mod blobs;
 pub mod catalog;
 pub mod clock;
@@ -72,6 +73,7 @@ pub struct App {
     pub key_limit: Limiter,
     pub passwords: Passwords,
     pub housekeeping: Housekeeping,
+    pub backups: backups::Backups,
     pub webhooks: webhooks::Webhooks,
     pub blobs: Blobs,
     pub mcp: mcp::Mcp,
@@ -149,6 +151,7 @@ impl App {
             key_limit: Limiter::default(),
             passwords: Passwords::default(),
             housekeeping: Housekeeping::default(),
+            backups: backups::Backups::default(),
             webhooks: webhooks::Webhooks::default(),
             blobs,
             mcp,

@@ -10,8 +10,8 @@ pub mod range;
 pub mod references;
 pub mod restore;
 mod rows;
-mod s3;
-mod store;
+pub mod s3;
+pub mod store;
 pub mod upkeep;
 
 use std::fs::File;
@@ -47,7 +47,7 @@ pub use disk::{MARKER, Scratch};
 pub use hash::Hash;
 pub use restore::stored_size;
 use rows::Held;
-pub use rows::{CopyRecord, Lender, OrphanRecord, StoreRecord};
+pub use rows::{CopyRecord, Lender, OrphanRecord, StoreRecord, held_in};
 use s3::{Marker, S3};
 pub use store::ByteStream;
 use store::{Answer, CHECK_DEADLINE, Failed, Gate, Store};
@@ -269,6 +269,11 @@ impl Blobs {
     }
 
     /// The attached stores, the disk first.
+    /// The object store, where one is configured.
+    pub fn s3(&self) -> Option<Arc<S3>> {
+        self.s3.clone()
+    }
+
     fn attached(&self) -> Vec<Store> {
         std::iter::once(Store::Disk(self.disk.clone()))
             .chain(self.s3.iter().map(|s3| Store::S3(s3.clone())))

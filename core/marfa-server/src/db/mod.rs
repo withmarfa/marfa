@@ -105,6 +105,21 @@ impl Db {
             .map_err(|refusal| self.with_budget(refusal))
     }
 
+    /// As `read`, behind other work: for a long read that no request waits on.
+    pub async fn read_background<T, F>(&self, job: F) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Transaction<'_>) -> Result<T> + Send + 'static,
+    {
+        if self.faults.refusing(REFUSE_READ) {
+            return Err(io_refusal());
+        }
+        self.readers
+            .read_background(job)
+            .await
+            .map_err(|refusal| self.with_budget(refusal))
+    }
+
     /// Commits on `Ok` and rolls back on `Err` or a panic.
     pub async fn write<T, F>(&self, write: Write, job: F) -> Result<T>
     where

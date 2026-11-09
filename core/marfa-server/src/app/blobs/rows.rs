@@ -433,6 +433,23 @@ pub fn recorded_object_store(tx: &Transaction<'_>, id: &str) -> Result<bool> {
 }
 
 /// The copies the copy record names in attached stores.
+/// The hashes `store_id` holds a recorded copy of, among `hashes`.
+pub fn held_in(
+    tx: &Transaction<'_>,
+    store_id: &str,
+    hashes: impl IntoIterator<Item = String>,
+) -> Result<Vec<String>> {
+    let mut statement =
+        tx.prepare_cached("SELECT 1 FROM blob_copies WHERE hash = ?1 AND store_id = ?2")?;
+    let mut held = Vec::new();
+    for hash in hashes {
+        if statement.exists(rusqlite::params![hash, store_id])? {
+            held.push(hash);
+        }
+    }
+    Ok(held)
+}
+
 pub fn holders(tx: &Transaction<'_>, hash: &Hash) -> Result<Vec<Held>> {
     let mut statement = tx.prepare_cached(
         "SELECT c.store_id, s.kind, c.object FROM blob_copies c JOIN stores s ON s.id = c.store_id \

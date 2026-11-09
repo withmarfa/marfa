@@ -80,6 +80,37 @@ impl Pool {
             .unwrap_or_else(|_| Err(Refusal::internal("a read job panicked")))
     }
 
+    /// As `read`, on a thread of its own that asks the system to run it behind other work.
+    pub async fn read_background<T, F>(&self, job: F) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Transaction<'_>) -> Result<T> + Send + 'static,
+    {
+        let closed = |_| Refusal::internal("the read pool has closed");
+        let permit = self.permits.clone().acquire_owned().await.map_err(closed)?;
+        let idle = self.idle.clone();
+        let (answer, answered) = tokio::sync::oneshot::channel();
+        std::thread::Builder::new()
+            .name("marfa-background-read".into())
+            .spawn(move || {
+                lower_priority();
+                let _permit = permit;
+                let read = (|| {
+                    let mut lease = Lease::take(idle)?;
+                    let conn = lease
+                        .conn
+                        .as_mut()
+                        .ok_or_else(|| Refusal::internal("a lease held no connection"))?;
+                    job(&conn.transaction()?)
+                })();
+                let _ = answer.send(read);
+            })
+            .map_err(|error| Refusal::internal(&format!("a background read did not start: {error}")))?;
+        answered
+            .await
+            .unwrap_or_else(|_| Err(Refusal::internal("a background read panicked")))
+    }
+
     pub async fn close(&self) {
         let all = self.permits.acquire_many(self.size);
         let _ = tokio::time::timeout(CLOSE_WAIT, all).await;
@@ -88,5 +119,20 @@ impl Pool {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clear();
+    }
+}
+
+/// Best effort: a thread that cannot lower itself runs at the usual priority.
+fn lower_priority() {
+    #[cfg(target_os = "linux")]
+    // SAFETY: `setpriority` reads only its arguments; a thread id names this thread alone.
+    unsafe {
+        let thread = libc::syscall(libc::SYS_gettid) as libc::id_t;
+        libc::setpriority(libc::PRIO_PROCESS, thread, 10);
+    }
+    #[cfg(target_os = "macos")]
+    // SAFETY: as above; `PRIO_DARWIN_THREAD` with 0 names the calling thread.
+    unsafe {
+        libc::setpriority(libc::PRIO_DARWIN_THREAD, 0, libc::PRIO_DARWIN_BG);
     }
 }

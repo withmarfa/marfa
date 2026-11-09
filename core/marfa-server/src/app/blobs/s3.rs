@@ -316,6 +316,117 @@ impl S3 {
         }
     }
 
+    /// Puts `bytes` as the object at `key`, which appears whole or not at all: one put for a
+    /// body of up to a part, and above that a multipart upload, which no listing or read sees
+    /// before it completes and which is aborted on failure. Answers the bytes put.
+    pub async fn put_whole(
+        &self,
+        key: &str,
+        content_type: &str,
+        mut bytes: BoxStream<'static, io::Result<Bytes>>,
+    ) -> io::Result<u64> {
+        let location = self.path_of(key);
+        let mut attributes = Attributes::new();
+        attributes.insert(Attribute::ContentType, content_type.to_string().into());
+        attributes.insert(
+            Attribute::Metadata(WRITER.into()),
+            self.id.clone().into(),
+        );
+        let mut first: Vec<Bytes> = Vec::new();
+        let mut held = 0usize;
+        let mut ended = false;
+        while held <= PART {
+            match bytes.next().await {
+                Some(chunk) => {
+                    let chunk = chunk?;
+                    held += chunk.len();
+                    first.push(chunk);
+                }
+                None => {
+                    ended = true;
+                    break;
+                }
+            }
+        }
+        if ended {
+            let options = PutOptions {
+                attributes,
+                ..PutOptions::default()
+            };
+            self.client
+                .put_opts(&location, PutPayload::from_iter(first), options)
+                .await
+                .map_err(failed)?;
+            return Ok(held as u64);
+        }
+        let options = PutMultipartOptions {
+            attributes,
+            ..PutMultipartOptions::default()
+        };
+        let upload = self
+            .client
+            .put_multipart_opts(&location, options)
+            .await
+            .map_err(failed)?;
+        let mut parts = WriteMultipart::new_with_chunk_size(upload, PART);
+        let mut total = 0u64;
+        let sent = async {
+            let mut pending = futures_util::stream::iter(first.into_iter().map(Ok)).chain(bytes);
+            while let Some(chunk) = pending.next().await {
+                let chunk = chunk?;
+                total += chunk.len() as u64;
+                parts
+                    .wait_for_capacity(PARTS_IN_FLIGHT)
+                    .await
+                    .map_err(failed)?;
+                parts.put(chunk);
+            }
+            Ok::<(), io::Error>(())
+        }
+        .await;
+        match sent {
+            Ok(()) => parts.finish().await.map(|_| total).map_err(failed),
+            Err(error) => {
+                let _ = parts.abort().await;
+                Err(error)
+            }
+        }
+    }
+
+    /// The objects directly under `folder`, by name within it, with their sizes.
+    pub async fn list_in(&self, folder: &str) -> io::Result<Vec<(String, u64)>> {
+        let under = self.path_of(folder);
+        let listed = self
+            .client
+            .list_with_delimiter(Some(&under))
+            .await
+            .map_err(failed)?;
+        Ok(listed
+            .objects
+            .into_iter()
+            .filter_map(|meta| {
+                let mut parts = meta.location.prefix_match(&under)?;
+                let name = parts.next()?.as_ref().to_string();
+                parts.next().is_none().then_some((name, meta.size))
+            })
+            .collect())
+    }
+
+    /// The whole object at `key` and its size, or `None` where the store holds none.
+    pub async fn get_whole(
+        &self,
+        key: &str,
+    ) -> io::Result<Option<(u64, BoxStream<'static, io::Result<Bytes>>)>> {
+        match self.client.get(&self.path_of(key)).await {
+            Ok(found) => {
+                let size = found.meta.size;
+                Ok(Some((size, found.into_stream().map_err(failed).boxed())))
+            }
+            Err(error) if is_missing(&error) => Ok(None),
+            Err(error) => Err(failed(error)),
+        }
+    }
+
     pub async fn delete(&self, key: &str) -> io::Result<()> {
         match self.client.delete(&self.path_of(key)).await {
             Ok(()) => Ok(()),
