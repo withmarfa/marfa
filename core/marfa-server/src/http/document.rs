@@ -258,6 +258,15 @@ const REFUSES_LOCAL: &[(&str, &str)] = &[
         "POST /connectors/{id}/agreements/lookup",
         "the connector's own key alone",
     ),
+    ("POST /webhooks", "a subscription belongs to its maker"),
+    (
+        "PATCH /webhooks/{id}",
+        "a subscription belongs to its maker",
+    ),
+    (
+        "DELETE /webhooks/{id}",
+        "a subscription belongs to its maker",
+    ),
 ];
 
 fn published() -> BTreeSet<String> {
