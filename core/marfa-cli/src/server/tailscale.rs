@@ -1,7 +1,6 @@
 //! Tailscale Serve, which gives a machine on a tailnet an `https` address.
 
 use std::ffi::OsStr;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -11,9 +10,15 @@ use crate::error::CliError;
 
 const MAC_APP: &str = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
 
+/// A file this user may run, as a shell judges it.
 fn is_program(path: &Path) -> bool {
-    std::fs::metadata(path)
-        .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(text) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY: `text` is a valid NUL-terminated string that outlives the call.
+    let runnable = unsafe { libc::access(text.as_ptr(), libc::X_OK) } == 0;
+    runnable && std::fs::metadata(path).is_ok_and(|meta| meta.is_file())
 }
 
 fn on_path(name: &OsStr, path: Option<&OsStr>) -> Option<PathBuf> {
@@ -23,8 +28,9 @@ fn on_path(name: &OsStr, path: Option<&OsStr>) -> Option<PathBuf> {
         .find(|candidate| is_program(candidate))
 }
 
-/// The program as a shell finds it: `MARFA_TAILSCALE` by path or on the `PATH`, else
-/// `tailscale` on the `PATH`, then the Mac app. The caller runs exactly this path.
+/// The program as a shell finds it, except that an empty `PATH` entry is skipped:
+/// `MARFA_TAILSCALE` by path or on the `PATH`, else `tailscale` on the `PATH`, then
+/// the Mac app. The caller runs exactly this path.
 fn resolve(named: Option<&OsStr>, path: Option<&OsStr>, app: &Path) -> Option<PathBuf> {
     match named {
         Some(name) if name.as_encoded_bytes().contains(&b'/') => {
@@ -177,6 +183,8 @@ pub fn unserve(https_port: u16, target: &str, trace: bool) -> Result<bool, CliEr
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::PermissionsExt;
+
     use super::*;
 
     const STATUS: &str = r#"{"TCP":{"443":{"HTTPS":true}},"Web":{"host.example.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:8600"}}}}}"#;
