@@ -1176,6 +1176,9 @@ const PRIVATE_SOCKET_TABLE: Record<string, () => string[]> = {
   "owner passkeys list": () => [],
   "owner passkeys rename": () => [ID, "--name", "Studio"],
   "owner passkeys remove": () => [ID],
+  "backups list": () => [],
+  "backups run": () => [],
+  "backups restore": () => [ID, `${WHEN}.tar`],
 };
 
 const stdinFor: Record<string, string> = {
@@ -1472,6 +1475,45 @@ describe("every command holds the server to the contract", () => {
       "items trash purge": `POST /items/summaries/${ID}/purge?version=1`,
       "items trash empty": "POST /trash/empty",
     };
+    try {
+      for (const [command, path] of Object.entries(paths)) {
+        for (const contract of [BUILT_FOR, String(builtFor + 1), null]) {
+          socket.contract = contract;
+          socket.asked = [];
+          socket.answer = {};
+          const outcome = await marfa([
+            "--json",
+            "--socket",
+            socket.path,
+            ...command.split(" "),
+            ...PRIVATE_SOCKET_TABLE[command]!(),
+          ]);
+          expect(socket.asked, command).toEqual([path]);
+          if (contract === BUILT_FOR)
+            expect(outcome.code, command + outcome.stderr).toBe(0);
+          else {
+            expect(outcome.code).toBe(1);
+            expect(codeOf(outcome.stderr)).toBe("contract_mismatch");
+          }
+        }
+      }
+    } finally {
+      await socket.stop();
+    }
+  });
+
+  it("holds every backup command to the contract through its private socket", async () => {
+    const socket = await PrivateSocket.start();
+    const paths: Record<string, string> = {
+      "backups list": "GET /backups",
+      "backups run": "POST /backups",
+      "backups restore": `POST /backups/${ID}/${WHEN}.tar/restore`,
+    };
+    expect(Object.keys(paths).sort()).toEqual(
+      Object.keys(PRIVATE_SOCKET_TABLE)
+        .filter((command) => command.startsWith("backups "))
+        .sort(),
+    );
     try {
       for (const [command, path] of Object.entries(paths)) {
         for (const contract of [BUILT_FOR, String(builtFor + 1), null]) {
