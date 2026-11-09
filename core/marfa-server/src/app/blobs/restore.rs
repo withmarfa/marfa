@@ -188,7 +188,7 @@ impl App {
                 .await?
                 .iter()
                 .any(|copy| copy.store_id == disk_id);
-            let whole = self.disk_holds_whole(&hash).await;
+            let whole = recorded && self.disk_holds_whole(&hash).await;
             let blob = Blob {
                 hash,
                 mime_type,
