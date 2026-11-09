@@ -535,11 +535,15 @@ pub async fn list_agreements(
 }
 
 /// What an archive carries of connectors: each source's state document and every agreement.
-pub fn archived(
-    tx: &rusqlite::Transaction<'_>,
-) -> super::refusal::Result<(
-    Vec<(String, serde_json::Map<String, serde_json::Value>)>,
-    Vec<(String, store::Agreement)>,
-)> {
-    Ok((store::documents(tx)?, store::every_agreement(tx)?))
+#[derive(Default)]
+pub struct Archived {
+    pub states: Vec<(String, serde_json::Map<String, serde_json::Value>)>,
+    pub agreements: Vec<(String, store::Agreement)>,
+}
+
+pub fn archived(tx: &rusqlite::Transaction<'_>) -> super::refusal::Result<Archived> {
+    Ok(Archived {
+        states: store::documents(tx)?,
+        agreements: store::every_agreement(tx)?,
+    })
 }

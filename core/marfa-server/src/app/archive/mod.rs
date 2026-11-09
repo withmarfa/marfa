@@ -28,7 +28,6 @@ use crate::db::io_refusal;
 use crate::settings::registry::{self, ADDRESSES, SIGN_IN_ADDRESS};
 use spool::{Lines, Spooled};
 
-
 pub const FORMAT: &str = "marfa-archive-v0";
 pub const VERSION: u64 = 0;
 const PAGE: i64 = 500;
@@ -90,7 +89,10 @@ fn reads_row(read: &Reader<'_, '_>, row: &Archived) -> bool {
     let caller = &read.caller;
     caller.may_read_type(&row.type_id)
         && caller.lists(&read.catalog.rules, &row.type_id, &row.source)
-        && row.namespaces.iter().all(|name| caller.may_read_extension(name))
+        && row
+            .namespaces
+            .iter()
+            .all(|name| caller.may_read_extension(name))
         && row
             .snapshot_types
             .iter()
@@ -98,7 +100,7 @@ fn reads_row(read: &Reader<'_, '_>, row: &Archived) -> bool {
             .all(|type_id| caller.may_read_type(type_id))
 }
 
-fn unrestorable(refused: checks::Refused) -> Refusal {
+fn unrestorable(refused: &checks::Refused) -> Refusal {
     Refusal::new(
         Code::ExportRowsUnrestorable,
         format!(
@@ -206,12 +208,15 @@ fn select(
     let caller = &read.caller;
     let catalog = &read.catalog;
     let manages_connectors = caller.holds(Permission::ConnectorsManage);
-    let (states, agreements) = if manages_connectors {
+    let connectors::Archived { states, agreements } = if manages_connectors {
         connectors::archived(read.tx)?
     } else {
-        (Vec::new(), Vec::new())
+        connectors::Archived::default()
     };
-    let agreed: HashSet<&str> = agreements.iter().map(|(_, held)| held.item_id.as_str()).collect();
+    let agreed: HashSet<&str> = agreements
+        .iter()
+        .map(|(_, held)| held.item_id.as_str())
+        .collect();
     let mut carried_ids: HashSet<String> = HashSet::new();
     let mut carried_sources: BTreeSet<String> = BTreeSet::new();
     let mut digests: BTreeSet<String> = BTreeSet::new();
@@ -231,7 +236,8 @@ fn select(
         let rows = items::archived(read.tx, caller, catalog, &read.read_only, &seqs, true)?;
         for row in rows {
             let line = line_value(&row.line)?;
-            checks::item(catalog, &line, items.lines as usize + 1).map_err(unrestorable)?;
+            checks::item(catalog, &line, items.lines as usize + 1)
+                .map_err(|refused| unrestorable(&refused))?;
             items
                 .push(&row.line, |need| {
                     need.rows.insert((row.type_id.clone(), row.source.clone()));
@@ -255,8 +261,14 @@ fn select(
         let Some(last) = page.last() else {
             break;
         };
-        after = last.0.seq();
-        for (edge, source, target, lending) in page {
+        after = last.edge.seq();
+        for edges::Ended {
+            edge,
+            source,
+            target,
+            lending,
+        } in page
+        {
             let both = selected.binary_search(&source.seq).is_ok()
                 && selected.binary_search(&target.seq).is_ok();
             if !both || !caller.may_read_edge(&edge.edge_type, &source.type_id) {
@@ -281,7 +293,8 @@ fn select(
                     None
                 }
             };
-            checks::edge(catalog, &line, edges.lines as usize + 1, ends).map_err(unrestorable)?;
+            checks::edge(catalog, &line, edges.lines as usize + 1, ends)
+                .map_err(|refused| unrestorable(&refused))?;
             edges
                 .push(&text, |need| {
                     need.0
@@ -324,7 +337,10 @@ fn select(
     let mut types = Vec::new();
     let mut icons = Vec::new();
     for id in catalog.types.ids() {
-        if let Some(provenance) = catalog.provenance.get(id).filter(|held| held.origin == "user")
+        if let Some(provenance) = catalog
+            .provenance
+            .get(id)
+            .filter(|held| held.origin == "user")
             && let Some(definition) = catalog.types.get(id)
         {
             types.push(print(&json!({
@@ -333,7 +349,9 @@ fn select(
             }))?);
         }
         if let Some(icon) = catalog.types.icon_of(id) {
-            icons.push(print(&json!({ "type_icon": { "type_id": id, "icon": icon } }))?);
+            icons.push(print(
+                &json!({ "type_icon": { "type_id": id, "icon": icon } }),
+            )?);
         }
     }
     count("type_count", &mut instance, types)?;
@@ -347,9 +365,13 @@ fn select(
     let direct = matches!(caller, Caller::Owner(_) | Caller::Local(_));
     let named = sources::named(read.tx)?
         .into_iter()
-        .filter(|(source, _, _)| direct || carried_sources.contains(source))
-        .map(|(source, name, mark)| {
-            print(&json!({ "source": { "source": source, "name": name, "mark": mark } }))
+        .filter(|named| direct || carried_sources.contains(&named.source))
+        .map(|named| {
+            print(&json!({ "source": {
+                "source": named.source,
+                "name": named.name,
+                "mark": named.mark,
+            } }))
         })
         .collect::<Result<_>>()?;
     count("source_count", &mut instance, named)?;
@@ -365,7 +387,9 @@ fn select(
             let value = entry.row_json(&text).map_err(|error| {
                 Refusal::internal(&format!("the stored setting {key} does not read: {error}"))
             })?;
-            settings.push(print(&json!({ "setting": { "key": key, "value": value } }))?);
+            settings.push(print(
+                &json!({ "setting": { "key": key, "value": value } }),
+            )?);
         }
     }
     count("setting_count", &mut instance, settings)?;

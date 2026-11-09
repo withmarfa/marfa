@@ -41,8 +41,8 @@ use crate::settings::registry::{
     BLOB_MIN_COPIES, BLOB_READ_IDLE_TIMEOUT_MS, DISK_RESERVE_BYTES, UPLOAD_IDLE_TIMEOUT_MS,
 };
 use crate::settings::start::ObjectStoreSettings;
-pub use disk::{MARKER, Scratch};
 use disk::{Disk, Staged};
+pub use disk::{MARKER, Scratch};
 pub use hash::Hash;
 use rows::Held;
 pub use rows::{CopyRecord, Lender, OrphanRecord, StoreRecord};

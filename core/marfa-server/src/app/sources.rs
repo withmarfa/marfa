@@ -225,6 +225,27 @@ pub async fn update(app: &App, caller: &Caller, code: String, change: Change) ->
     .await
 }
 
+/// A source's name and mark, where either is set.
+pub(crate) struct Named {
+    pub source: String,
+    pub name: Option<String>,
+    pub mark: Option<String>,
+}
+
+/// Every source with a name or a mark set, by code.
+pub(crate) fn named(tx: &Transaction<'_>) -> Result<Vec<Named>> {
+    let mut statement =
+        tx.prepare_cached("SELECT source, name, mark FROM source_names ORDER BY source")?;
+    let rows = statement.query_map([], |row| {
+        Ok(Named {
+            source: row.get(0)?,
+            name: row.get(1)?,
+            mark: row.get(2)?,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,12 +307,4 @@ mod tests {
             assert_eq!(refusal.code, Code::InvalidSchema, "{bad}");
         }
     }
-}
-
-/// Every source with a name or a mark set, by code.
-pub(crate) fn named(tx: &Transaction<'_>) -> Result<Vec<(String, Option<String>, Option<String>)>> {
-    let mut statement =
-        tx.prepare_cached("SELECT source, name, mark FROM source_names ORDER BY source")?;
-    let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
-    Ok(rows.collect::<rusqlite::Result<_>>()?)
 }

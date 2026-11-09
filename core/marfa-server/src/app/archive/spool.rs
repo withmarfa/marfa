@@ -117,7 +117,9 @@ impl<N> Spooled<N> {
 
 /// Reads up to `CHUNK` bytes, but none past `end`, from where the file stands at `at`. It blocks.
 pub fn read_chunk(file: &mut File, at: u64, end: u64) -> io::Result<Vec<u8>> {
-    let want = usize::try_from(end.saturating_sub(at)).unwrap_or(CHUNK).min(CHUNK);
+    let want = usize::try_from(end.saturating_sub(at))
+        .unwrap_or(CHUNK)
+        .min(CHUNK);
     let mut buffer = vec![0; want];
     let mut filled = 0;
     while filled < want {
@@ -147,13 +149,19 @@ mod tests {
         let mut lines: Lines<Vec<usize>> = Lines::new(scratch(dir.path())).unwrap();
         let long = "x".repeat(400 * 1024);
         for at in 0..7 {
-            lines.push(&format!("{at}{long}"), |need| need.push(at)).unwrap();
+            lines
+                .push(&format!("{at}{long}"), |need| need.push(at))
+                .unwrap();
         }
         let spooled = lines.finish().unwrap();
         assert_eq!(spooled.lines, 7);
         assert!(spooled.segments.len() >= 2);
         assert_eq!(spooled.segments.last().unwrap().0, spooled.size);
-        let needs: Vec<usize> = spooled.segments.iter().flat_map(|(_, n)| n.clone()).collect();
+        let needs: Vec<usize> = spooled
+            .segments
+            .iter()
+            .flat_map(|(_, n)| n.clone())
+            .collect();
         assert_eq!(needs, (0..7).collect::<Vec<_>>());
         let mut file = spooled.open().unwrap();
         let mut at = 0;

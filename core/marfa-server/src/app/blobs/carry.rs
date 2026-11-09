@@ -82,7 +82,10 @@ impl App {
             }
         }
         if !silent.is_empty() {
-            tracing::warn!(stores = silent.len(), "A store did not answer for a blob an export carries");
+            tracing::warn!(
+                stores = silent.len(),
+                "A store did not answer for a blob an export carries"
+            );
         }
         Ok(answers)
     }
@@ -103,7 +106,11 @@ impl App {
                 }
                 Ok(_) => {}
                 Err(failure) => {
-                    tracing::warn!(store = store.kind(), ?failure, "A store did not answer for a copy");
+                    tracing::warn!(
+                        store = store.kind(),
+                        ?failure,
+                        "A store did not answer for a copy"
+                    );
                     failed.push(store.id().to_string());
                 }
             }
@@ -133,7 +140,11 @@ impl App {
                 Ok(Answer::Holds(size)) if size == blob.size_bytes => {}
                 Ok(_) => continue,
                 Err(failure) => {
-                    tracing::warn!(store = store.kind(), ?failure, "A store did not answer for a copy");
+                    tracing::warn!(
+                        store = store.kind(),
+                        ?failure,
+                        "A store did not answer for a copy"
+                    );
                     continue;
                 }
             }
@@ -150,7 +161,11 @@ impl App {
                     });
                 }
                 Err(failure) => {
-                    tracing::warn!(store = store.kind(), ?failure, "A store did not open a copy");
+                    tracing::warn!(
+                        store = store.kind(),
+                        ?failure,
+                        "A store did not open a copy"
+                    );
                 }
             }
         }

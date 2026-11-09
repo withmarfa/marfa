@@ -72,7 +72,10 @@ mod tests {
         let size = 9 * 1024 * 1024 * 1024u64;
         let block = header("blobs/x", size, 0).unwrap();
         assert_eq!(block[124], 0x80);
-        assert_eq!(u64::from_be_bytes(block[128..136].try_into().unwrap()), size);
+        assert_eq!(
+            u64::from_be_bytes(block[128..136].try_into().unwrap()),
+            size
+        );
     }
 
     #[test]

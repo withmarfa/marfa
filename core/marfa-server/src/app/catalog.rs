@@ -87,6 +87,23 @@ impl Catalog {
         self.edge_kinds.values()
     }
 
+    /// The catalog of an instance that registers nothing beside what the build ships.
+    #[cfg(test)]
+    pub fn shipped() -> Catalog {
+        let rows: Vec<Obj> = builtin::shipped_types()
+            .map(<[Obj]>::to_vec)
+            .unwrap_or_default();
+        Catalog {
+            generation: 0,
+            rules: rules_of(&rows),
+            types: Registry::new(rows),
+            provenance: HashMap::new(),
+            unreadable: Vec::new(),
+            edge_types: Vec::new(),
+            edge_kinds: edge_kinds_of(&[]).unwrap_or_default(),
+        }
+    }
+
     pub fn with_hosts_types(&self) -> Vec<&str> {
         self.edge_kinds
             .values()

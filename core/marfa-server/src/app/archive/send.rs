@@ -18,8 +18,8 @@ use super::tar;
 use super::{EdgeNeed, ItemNeed, Prepared};
 use crate::app::App;
 use crate::app::access::Caller;
-use crate::app::blobs::carry::{self, Carried};
 use crate::app::blobs::Hash;
+use crate::app::blobs::carry::{self, Carried};
 use crate::app::items::{Reader, reading};
 
 /// How many bytes of a blob pass between asking whether the credential still reads it.
@@ -82,7 +82,8 @@ impl Out<'_> {
     }
 
     async fn header(&self, name: &str, size: u64) -> Result<(), Stop> {
-        let block = tar::header(name, size, self.mtime).ok_or_else(|| failed("a tar name did not fit"))?;
+        let block =
+            tar::header(name, size, self.mtime).ok_or_else(|| failed("a tar name did not fit"))?;
         self.emit(Bytes::copy_from_slice(&block)).await
     }
 
@@ -101,7 +102,9 @@ impl Out<'_> {
     {
         match reading(self.app, self.caller, check).await {
             Ok(true) => Ok(()),
-            Ok(false) => Err(failed("the export's credential no longer reads what it sends")),
+            Ok(false) => Err(failed(
+                "the export's credential no longer reads what it sends",
+            )),
             Err(refusal) => Err(failed(&format!(
                 "the export's credential ended: {}",
                 refusal.message
@@ -113,9 +116,12 @@ impl Out<'_> {
         self.holds(|_| Ok(true)).await?;
         self.header("manifest.json", prepared.manifest.len() as u64)
             .await?;
-        self.emit(Bytes::copy_from_slice(&prepared.manifest)).await?;
+        self.emit(Bytes::copy_from_slice(&prepared.manifest))
+            .await?;
         self.pad(prepared.manifest.len() as u64).await?;
-        self.lines("instance.ndjson.gz", &prepared.instance, |_| Box::new(|_| true))
+        self.lines("instance.ndjson.gz", &prepared.instance, |_| {
+            Box::new(|_| true)
+        })
         .await?;
         self.lines("items.ndjson.gz", &prepared.items, items_need)
             .await?;
@@ -207,8 +213,14 @@ fn items_need(need: &ItemNeed) -> Box<dyn Fn(&Reader<'_, '_>) -> bool + Send> {
         let caller = &read.caller;
         need.rows.iter().all(|(type_id, source)| {
             caller.may_read_type(type_id) && caller.lists(&read.catalog.rules, type_id, source)
-        }) && need.namespaces.iter().all(|name| caller.may_read_extension(name))
-            && need.types.iter().all(|type_id| caller.may_read_type(type_id))
+        }) && need
+            .namespaces
+            .iter()
+            .all(|name| caller.may_read_extension(name))
+            && need
+                .types
+                .iter()
+                .all(|type_id| caller.may_read_type(type_id))
     })
 }
 

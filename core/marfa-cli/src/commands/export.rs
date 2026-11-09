@@ -519,20 +519,14 @@ mod tests {
         assert_eq!(error.exit(), crate::error::Exit::Refused);
         assert_eq!(std::fs::read(&path).unwrap(), whole);
         assert_eq!(std::fs::read(&incomplete).unwrap(), lacking);
-        assert_eq!(
-            names_in(&dir),
-            ["nightly.tar", "nightly.tar.incomplete"]
-        );
+        assert_eq!(names_in(&dir), ["nightly.tar", "nightly.tar.incomplete"]);
 
         // The witness: a whole archive replaces the path and leaves no
         // partial file; the earlier incomplete archive is not its to remove.
         let newer = archive(r#"{"version":0,"blobs":{"sha256:bb":{}},"missing_blobs":{}}"#);
         assert_eq!(written(&path, &newer).unwrap(), newer.len() as u64);
         assert_eq!(std::fs::read(&path).unwrap(), newer);
-        assert_eq!(
-            names_in(&dir),
-            ["nightly.tar", "nightly.tar.incomplete"]
-        );
+        assert_eq!(names_in(&dir), ["nightly.tar", "nightly.tar.incomplete"]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

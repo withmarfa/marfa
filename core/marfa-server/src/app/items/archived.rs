@@ -85,8 +85,9 @@ fn one(
     let namespaces: BTreeSet<String> = extensions.iter().map(|(name, _)| name.clone()).collect();
     let properties = parsed(&row.properties)?;
     let mut digests = references::digests(&properties);
-    let mut file_refs: BTreeSet<String> =
-        file_ref(catalog, &row.type_id, &properties).into_iter().collect();
+    let mut file_refs: BTreeSet<String> = file_ref(catalog, &row.type_id, &properties)
+        .into_iter()
+        .collect();
     let mark_type = row
         .mark
         .as_ref()

@@ -163,16 +163,22 @@ pub(crate) fn judge_restored_ends(
     if let Some(held) = &held
         && !lineage_admits(held, &kind.source_type_constraints)
     {
-        return Err(constraint(edges::refused_end(kind, End::Source, source_type)));
+        return Err(constraint(edges::refused_end(
+            kind,
+            End::Source,
+            source_type,
+        )));
     }
     if let Some(target) = lineage(target_type)
         && !lineage_admits(&target, &kind.target_type_constraints)
     {
-        return Err(constraint(edges::refused_end(kind, End::Target, target_type)));
+        return Err(constraint(edges::refused_end(
+            kind,
+            End::Target,
+            target_type,
+        )));
     }
-    if kind.flat
-        && held.is_some_and(|held| lineage_admits(&held, &kind.target_type_constraints))
-    {
+    if kind.flat && held.is_some_and(|held| lineage_admits(&held, &kind.target_type_constraints)) {
         let mut nesting = edges::refused_nesting(&kind.id, source_id, source_type);
         nesting.message = format!(
             "Edge \"{}\" does not nest collections; use \"parent-of\" for hierarchy",

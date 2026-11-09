@@ -4,7 +4,12 @@ use crate::app::items::Reader;
 use crate::app::refusal::Result;
 
 /// The rows an export of `ask` selects after `after`, in `seq` order, as the caller reads them.
-pub(crate) fn selected(read: &Reader<'_, '_>, ask: &Ask, after: i64, limit: i64) -> Result<Vec<i64>> {
+pub(crate) fn selected(
+    read: &Reader<'_, '_>,
+    ask: &Ask,
+    after: i64,
+    limit: i64,
+) -> Result<Vec<i64>> {
     let reach = Reach::of(read)?;
     judge(read, ask)?;
     let mut sql = Sql::new("SELECT i.seq FROM items i WHERE ");

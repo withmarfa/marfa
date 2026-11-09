@@ -9274,43 +9274,6 @@
         ],
         "description": "An error response."
       },
-      "BlobStoreUnavailableOrExportUnrestorableOrWriteContentionRefusal": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "type": "string",
-                "enum": [
-                  "blob_store_unavailable",
-                  "export_unrestorable",
-                  "write_contention"
-                ],
-                "description": "A machine-readable code for the error. Use it in your logic."
-              },
-              "message": {
-                "type": "string",
-                "description": "A description of the error for a person to read. It can change, so don't match on it."
-              },
-              "details": {
-                "type": "object",
-                "additionalProperties": {},
-                "description": "More about the error, such as the field it concerns. Each code defines its own details."
-              }
-            },
-            "required": [
-              "code",
-              "message"
-            ],
-            "description": "What went wrong."
-          }
-        },
-        "required": [
-          "error"
-        ],
-        "description": "An error response."
-      },
       "AppGrantList": {
         "type": "object",
         "properties": {
@@ -61751,10 +61714,10 @@
                 "ndjson",
                 "archive"
               ],
-              "description": "`ndjson` for lines of JSON, or `archive` for a `.tar.gz` file that `POST /restore` reads. Defaults to `ndjson`. An archive's `manifest.json` lists under `missing_blobs` each blob it doesn't hold, including a file's blob your credential can't read."
+              "description": "`ndjson` for lines of JSON, or `archive` for a tar file that `POST /restore` reads. Defaults to `ndjson`. An archive's `manifest.json` lists under `missing_blobs` each blob it doesn't hold, including a file's blob your credential can't read."
             },
             "required": false,
-            "description": "`ndjson` for lines of JSON, or `archive` for a `.tar.gz` file that `POST /restore` reads. Defaults to `ndjson`. An archive's `manifest.json` lists under `missing_blobs` each blob it doesn't hold, including a file's blob your credential can't read.",
+            "description": "`ndjson` for lines of JSON, or `archive` for a tar file that `POST /restore` reads. Defaults to `ndjson`. An archive's `manifest.json` lists under `missing_blobs` each blob it doesn't hold, including a file's blob your credential can't read.",
             "name": "format",
             "in": "query"
           },
@@ -61775,14 +61738,14 @@
         ],
         "responses": {
           "200": {
-            "description": "With `format=ndjson`, one JSON object per line: `item` and `metadata` for each item, then `edge` for each edge between them whose type you can read. With `format=archive`, a `.tar.gz` of the items, history, edges, type registrations and blobs you can read. If the export fails partway or your credential ends or narrows below it, the connection ends early and an archive won't unpack.",
+            "description": "With `format=ndjson`, one JSON object per line: `item` and `metadata` for each item, then `edge` for each edge between them whose type you can read. With `format=archive`, a tar of the manifest, then compressed line files of your instance's registrations and settings, the items with their history, and the edges you can read, then the blobs. If the export fails partway or your credential ends or narrows below it, the connection ends early and an archive won't unpack.",
             "content": {
               "application/x-ndjson": {
                 "schema": {
                   "type": "string"
                 }
               },
-              "application/gzip": {
+              "application/x-tar": {
                 "schema": {
                   "type": "string",
                   "format": "binary"
@@ -61898,7 +61861,7 @@
             }
           },
           "409": {
-            "description": "- `export_rows_unrestorable`: with `format=archive`, Marfa read the selection twice, and both times a restore would refuse or skip the same row, which was unchanged between the reads, so no archive was sent. `details.row` names the row by `kind`, `id`, `type` and `field`, with the `code` a restore refuses it with or the reason it skips it. Correct the row or its type, then export again.",
+            "description": "- `export_rows_unrestorable`: with `format=archive`, a restore would refuse or skip a row this instance holds, so no archive was sent. `details.row` names the row by `kind`, `id`, `type` and `field`, with the `code` a restore refuses it with or the reason it skips it. Correct the row or its type, then export again.",
             "content": {
               "application/json": {
                 "schema": {
@@ -61991,11 +61954,11 @@
             }
           },
           "503": {
-            "description": "- `blob_store_unavailable`: a blob store failed, or didn't answer in time, while Marfa checked a blob's copy. Try again later.\n- `write_contention`: the database was busy. Nothing changed. Try the request again.\n- `export_unrestorable`: with `format=archive`, writes changed a row that a restore would refuse, or its type, between two reads. No archive was sent. Retry the export.",
+            "description": "- `blob_store_unavailable`: a blob store failed, or didn't answer in time, while Marfa checked a blob's copy. Try again later.\n- `write_contention`: the database was busy. Nothing changed. Try the request again.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BlobStoreUnavailableOrExportUnrestorableOrWriteContentionRefusal"
+                  "$ref": "#/components/schemas/BlobStoreUnavailableOrWriteContentionRefusal"
                 }
               }
             },
@@ -62068,9 +62031,9 @@
         ],
         "requestBody": {
           "required": true,
-          "description": "The archive file, as `GET /export?format=archive` returned it, with its `manifest.json`, `items.ndjson`, `edges.ndjson` and `types.ndjson`. Only the build that wrote an archive is sure to read it.",
+          "description": "The archive file, as `GET /export?format=archive` returned it, with its `manifest.json`, `instance.ndjson.gz`, `items.ndjson.gz` and `edges.ndjson.gz`. Only the build that wrote an archive is sure to read it.",
           "content": {
-            "application/gzip": {
+            "application/x-tar": {
               "schema": {
                 "type": "string",
                 "format": "binary"

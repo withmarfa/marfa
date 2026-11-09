@@ -420,8 +420,8 @@ pub fn documents(tx: &Transaction<'_>) -> Result<Vec<(String, Map<String, Value>
 
 /// Every agreement, by source and item.
 pub fn every_agreement(tx: &Transaction<'_>) -> Result<Vec<(String, Agreement)>> {
-    let mut statement = tx
-        .prepare_cached("SELECT * FROM connector_agreements ORDER BY source, item_id")?;
+    let mut statement =
+        tx.prepare_cached("SELECT * FROM connector_agreements ORDER BY source, item_id")?;
     let rows = statement.query_map([], |row| Ok((row.get("source")?, agreement(row)?)))?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }

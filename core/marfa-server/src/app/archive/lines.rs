@@ -14,11 +14,11 @@ use super::{Body, EDGE_PAGE, reads_row};
 const PAGE: i64 = 100;
 use crate::app::App;
 use crate::app::access::Caller;
+use crate::app::edges;
 use crate::app::faults::{FAIL_EXPORT_READ, HOLD_EXPORT_PAGE};
 use crate::app::items::{self, reading};
 use crate::app::query::{self, Ask};
 use crate::app::refusal::Result;
-use crate::app::edges;
 use crate::db::io_refusal;
 
 /// One page: its lines, where the next begins, and whether the credential now reads all of it.
@@ -46,7 +46,14 @@ async fn item_page(
         let admitted = admitted.unwrap_or_else(|| read.caller.clone());
         let selecting = read.as_caller(admitted.clone());
         let seqs = query::selected(&selecting, &ask, after, PAGE)?;
-        let rows = items::archived(read.tx, &admitted, &read.catalog, &read.read_only, &seqs, false)?;
+        let rows = items::archived(
+            read.tx,
+            &admitted,
+            &read.catalog,
+            &read.read_only,
+            &seqs,
+            false,
+        )?;
         let whole = rows.iter().all(|row| reads_row(read, row));
         let mut text = String::new();
         for row in &rows {
@@ -76,10 +83,16 @@ async fn edge_page(
     reading(app, admitted, move |read| {
         let admitted = selecting;
         let page = edges::with_ends(read.tx, after, EDGE_PAGE)?;
-        let next = page.last().map(|(edge, ..)| edge.seq());
+        let next = page.last().map(|ended| ended.edge.seq());
         let mut text = String::new();
         let mut whole = true;
-        for (edge, source, target, _) in page {
+        for edges::Ended {
+            edge,
+            source,
+            target,
+            ..
+        } in page
+        {
             let carried = exported.binary_search(&source.seq).is_ok()
                 && exported.binary_search(&target.seq).is_ok();
             if !carried || !admitted.may_read_edge(&edge.edge_type, &source.type_id) {
