@@ -1,9 +1,4 @@
-//! The private control socket's path: the folders above it, who holds it, and
-//! what is left there.
-//!
-//! Only the server's own account may reach the socket. Every folder above it
-//! is held to that before anything is made there, and the socket is bound
-//! under a name of its own and made private before it appears at its path.
+//! Protects the control socket from access or replacement by other accounts.
 
 use std::ffi::OsString;
 use std::fs::{File, Metadata, OpenOptions, TryLockError};
@@ -130,9 +125,7 @@ fn refused_folder(folder: &Path, why: &str) -> Failure {
     ))
 }
 
-/// Makes each missing folder above the socket private, and refuses one that
-/// another account could change, or the socket's own folder if another
-/// account could reach into it.
+/// Ancestors must prevent replacement; the socket's folder must also prevent access.
 fn prepare_folders(path: &Path, me: u32) -> Result<(), Failure> {
     let Some(holder) = path.parent() else {
         return Ok(());
@@ -171,8 +164,6 @@ fn prepare_folders(path: &Path, me: u32) -> Result<(), Failure> {
     Ok(())
 }
 
-/// Above the socket's own folder, only an ACL that lets another account
-/// replace what a folder holds is a way in.
 fn refuse_writable_acl(folder: &Path, me: u32) -> Result<(), Failure> {
     match marfa_acl::others_may_write(folder, me) {
         Ok(false) => Ok(()),
@@ -686,8 +677,7 @@ mod tests {
         UnixStream::connect(&path).unwrap();
     }
 
-    /// A folder `name` in `root` with mode 0755 and `grant` for another
-    /// account, or `None` when this file system keeps no ACLs.
+    /// Returns `None` if the test ACL cannot be set.
     fn granted(root: &Path, name: &str, grant: Grant) -> Option<PathBuf> {
         let folder = root.join(name);
         std::fs::create_dir(&folder).unwrap();

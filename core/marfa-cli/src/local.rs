@@ -57,8 +57,6 @@ fn verify(path: &Path) -> Result<(), CliError> {
         current.push(component);
         let metadata = std::fs::symlink_metadata(&current)?;
         let private = current == path || Some(current.as_path()) == path.parent();
-        // Above the socket's folder, only an ACL that lets another account
-        // replace what a folder holds is a way in, as the server judges it.
         let acl = if private {
             marfa_acl::grants_by_acl(&current)
         } else {

@@ -22,10 +22,7 @@ mod darwin {
     const ACL_EXTENDED_ALLOW: c_int = 1;
     const ID_TYPE_UID: c_int = 0;
 
-    /// The rights that change a file or what a folder holds, from `sys/acl.h`:
-    /// write data or add a file, delete, append data or add a subdirectory,
-    /// delete a child, write attributes, write extended attributes, write
-    /// security and change owner.
+    // Darwin's mutation rights, as defined by `sys/acl.h`.
     pub const WRITE_RIGHTS: u64 =
         (1 << 2) | (1 << 4) | (1 << 5) | (1 << 6) | (1 << 8) | (1 << 10) | (1 << 12) | (1 << 13);
 
@@ -78,8 +75,7 @@ mod darwin {
             }
         }
 
-        /// Whether any allow entry passes `counts`, given the entry and its rights.
-        /// Deny entries only take rights away, so they never count.
+        /// Deny entries never count as grants.
         pub fn any_allow(
             &self,
             counts: impl Fn(acl_entry_t, u64) -> bool,
@@ -107,8 +103,7 @@ mod darwin {
         }
     }
 
-    /// Whether the entry names the user `uid`. A group, or a name that cannot
-    /// be resolved, is someone else.
+    /// Groups and unresolved names are not trusted as the user `uid`.
     pub fn names_user(entry: acl_entry_t, uid: u32) -> bool {
         // SAFETY: an extended entry's qualifier is a 16-byte UUID.
         let qualifier = unsafe { acl_get_qualifier(entry) };
@@ -133,9 +128,7 @@ pub fn grants_by_acl(path: &Path) -> std::io::Result<bool> {
     }
 }
 
-/// Whether the path's ACL lets an account other than `own` write to it, which
-/// for a folder means replacing what it holds. An inheritable entry counts as
-/// well, since it gives the same to what is made inside.
+/// Counts other accounts' mutation rights, including inherit-only entries.
 #[cfg(target_os = "macos")]
 pub fn others_may_write(path: &Path, own: u32) -> std::io::Result<bool> {
     match darwin::Acl::of_link(&c_path(path)?)? {
@@ -144,8 +137,7 @@ pub fn others_may_write(path: &Path, own: u32) -> std::io::Result<bool> {
     }
 }
 
-/// [`others_may_write`] for an open file, which its mode bits do not show on
-/// macOS.
+/// [`others_may_write`] for an open file; macOS mode bits omit ACL grants.
 #[cfg(target_os = "macos")]
 pub fn others_may_write_file(file: &impl std::os::fd::AsRawFd, own: u32) -> std::io::Result<bool> {
     match darwin::Acl::of_fd(file.as_raw_fd())? {
@@ -159,8 +151,7 @@ fn writes_for_others(entry: darwin::acl_entry_t, rights: u64, own: u32) -> bool 
     rights & darwin::WRITE_RIGHTS != 0 && !darwin::names_user(entry, own)
 }
 
-/// Whether the path's ACL names another user or group, or it has a default
-/// ACL, whatever the mask.
+/// Counts named users, named groups and default ACLs, regardless of the mask.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn grants_by_acl(path: &Path) -> std::io::Result<bool> {
     if read_xattr(path, c"system.posix_acl_default")?.is_some_and(|value| value.len() > 4) {
@@ -170,9 +161,7 @@ pub fn grants_by_acl(path: &Path) -> std::io::Result<bool> {
         .is_some_and(|value| posix::names_others(&value)))
 }
 
-/// Whether the path's ACL lets an account other than `own` write to it, which
-/// for a folder means replacing what it holds, or its default ACL would give
-/// such write on what is made inside.
+/// Counts other accounts' effective write grants, including default ACLs.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn others_may_write(path: &Path, own: u32) -> std::io::Result<bool> {
     let access = read_xattr(path, c"system.posix_acl_access")?;
@@ -237,8 +226,7 @@ mod posix {
         id: u32,
     }
 
-    // The kernel format has a four-byte header and eight-byte entries: tag,
-    // permissions and id, little-endian.
+    // Linux stores a 4-byte header, then 8-byte little-endian tag/permissions/id entries.
     fn entries(value: &[u8]) -> impl Iterator<Item = Entry> + '_ {
         value
             .get(4..)
@@ -257,8 +245,7 @@ mod posix {
         entries(value).any(|entry| entry.tag == NAMED_USER || entry.tag == NAMED_GROUP)
     }
 
-    /// In an access ACL the owning group and others show in the mode bits,
-    /// which the caller judges; in a default ACL they reach what is made inside.
+    // Callers check access ACL group/other mode bits; default ACLs need a separate check.
     pub fn lets_others_write(value: &[u8], own: u32, default: bool) -> bool {
         let mask = entries(value)
             .find(|entry| entry.tag == MASK)
@@ -311,8 +298,7 @@ pub mod testing {
         InheritWrite,
     }
 
-    /// Sets `grant` for another account on `folder`, which the caller owns.
-    /// False when its file system keeps no ACLs, so the caller skips.
+    /// Sets `grant` on an owned folder; failure to set the ACL fails the test.
     #[cfg(target_os = "macos")]
     pub fn let_another_account(folder: &Path, grant: Grant) -> bool {
         let entry = match grant {
@@ -330,8 +316,7 @@ pub mod testing {
         true
     }
 
-    /// The access ACL's mask keeps the folder's group bits for a read, so a
-    /// folder's mode changes only where write needs it to.
+    /// Returns false if ACLs cannot be set; read grants preserve group mode bits.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn let_another_account(folder: &Path, grant: Grant) -> bool {
         use crate::posix::{GROUP_OBJ, MASK, NAMED_USER, OTHER, USER_OBJ};

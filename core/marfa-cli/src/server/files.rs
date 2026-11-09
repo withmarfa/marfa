@@ -371,12 +371,7 @@ fn admit(
     Ok(())
 }
 
-/// Checks that nobody but `trusted` and root can swap `dir` for a link: every
-/// folder from `/` down to it that exists belongs to one of them and is not
-/// writable by group or others, by its mode, apart from root's sticky folders
-/// such as `/tmp`, or by its access control list, which the server judges the
-/// same way above its private socket's folder. Every later write goes by path, and `O_NOFOLLOW` guards only its
-/// last part. The path is expected to be real already; a link in it is refused.
+// Path-based writes rely on every ancestor; `O_NOFOLLOW` protects only the final component.
 fn check_parents(dir: &Path, trusted: u32) -> Result<(), CliError> {
     let absolute = std::path::absolute(dir)?;
     let mut current = PathBuf::new();
