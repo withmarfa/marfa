@@ -1,7 +1,8 @@
 /**
  * A release's version is the tag's, and each version is the one before it plus
- * 0.0.1. The one exception is 0.0.70, the first Rust release, which follows
- * the last TypeScript release (0.0.66) across a gap. These tests run the
+ * 0.0.1, starting at 0.0.70, the first Rust release, which follows the last
+ * TypeScript release (0.0.66) across a gap; nothing below it is released from
+ * this workflow. These tests run the
  * workflow's own step against a stand-in `git` and `gh`.
  */
 import {
@@ -132,15 +133,23 @@ describe("the version a tag names", () => {
   });
 
   it("accepts the next version after the last release", () => {
-    const run = tagged("0.0.67", { tags: [66, 67], released: [66] });
+    const run = tagged("0.0.71", { tags: [66, 70, 71], released: [66, 70] });
     expect(run.status, run.said).toBe(0);
-    expect(run.output).toBe("version=0.0.67\n");
+    expect(run.output).toBe("version=0.0.71\n");
   });
 
-  it("accepts 0.0.1 when nothing is released yet", () => {
-    const run = tagged("0.0.1", { tags: [1], released: [] });
-    expect(run.status, run.said).toBe(0);
-  });
+  it.each([1, 67, 68, 69])(
+    "refuses 0.0.%i, which is below the first Rust release",
+    (version) => {
+      const run = tagged(`0.0.${String(version)}`, {
+        tags: [66, version],
+        released: [66],
+      });
+      expect(run.status).toBe(1);
+      expect(run.output).toBe("");
+      expect(run.said).toContain("below 0.0.70, the first Rust release");
+    },
+  );
 
   it("accepts 0.0.70 after 0.0.66, the one gap a release may leave", () => {
     const run = tagged("0.0.70", { tags: [65, 66, 70], released: [65, 66] });
@@ -150,7 +159,7 @@ describe("the version a tag names", () => {
   });
 
   it("refuses any other gap, including the one after 0.0.70", () => {
-    for (const version of [68, 69, 71, 72]) {
+    for (const version of [71, 72]) {
       const run = tagged(`0.0.${String(version)}`, {
         tags: [66, version],
         released: [66],
@@ -163,11 +172,6 @@ describe("the version a tag names", () => {
     expect(after.said).toContain("the next version is 0.0.71");
   });
 
-  it("accepts 0.0.71 after 0.0.70", () => {
-    const run = tagged("0.0.71", { tags: [66, 70, 71], released: [66, 70] });
-    expect(run.status, run.said).toBe(0);
-  });
-
   it("refuses 0.0.70 when 0.0.66 was tagged but never released", () => {
     const run = tagged("0.0.70", { tags: [65, 66, 70], released: [65] });
     expect(run.status).toBe(1);
@@ -175,28 +179,31 @@ describe("the version a tag names", () => {
   });
 
   it("refuses a tag made below a version that is already released", () => {
-    const run = tagged("0.0.67", { tags: [66, 67, 70], released: [66, 70] });
+    const run = tagged("0.0.71", {
+      tags: [66, 70, 71, 72],
+      released: [66, 70, 72],
+    });
     expect(run.status).toBe(1);
-    expect(run.said).toContain("0.0.70 is already released");
+    expect(run.said).toContain("0.0.72 is already released");
   });
 
   it("waits for a higher tag that is only a draft, as two tags pushed together do", () => {
-    const run = tagged("0.0.67", {
-      tags: [66, 67, 68],
-      released: [66],
-      drafts: [68],
+    const run = tagged("0.0.71", {
+      tags: [66, 70, 71, 72],
+      released: [66, 70],
+      drafts: [72],
     });
     expect(run.status, run.said).toBe(0);
   });
 
   it("refuses a commit that does not come after the previous release", () => {
-    const run = tagged("0.0.67", {
-      tags: [66, 67],
-      released: [66],
+    const run = tagged("0.0.71", {
+      tags: [66, 70, 71],
+      released: [66, 70],
       relation: "behind",
     });
     expect(run.status).toBe(1);
-    expect(run.said).toContain("is behind of v0.0.66");
+    expect(run.said).toContain("is behind of v0.0.70");
   });
 
   it.each(["v0.1.0", "v1.0.0", "v0.0.70-rc1", "v0.0", "vlatest", "v0.0.070"])(
@@ -220,6 +227,7 @@ describe("the version a tag names", () => {
       { dispatch: "0.0.69" },
     );
     expect(refused.status).toBe(1);
+    expect(refused.said).toContain("below 0.0.70");
     const shell = release(
       { tags: [66], released: [66] },
       { dispatch: "0.0.67; echo hacked" },

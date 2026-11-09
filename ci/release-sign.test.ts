@@ -62,7 +62,7 @@ function runSign(env: Record<string, string>, binary: string) {
   });
 }
 
-const PROGRAMS = ["marfa", "marfa-server", "marfa-enrichment-read"];
+const PROGRAMS = ["marfa", "marfa-server"];
 
 describe("the release signs the programs in a job of its own", () => {
   const { sign, collect } = jobs();
@@ -119,7 +119,7 @@ describe("the release signs the programs in a job of its own", () => {
     expect(step?.["continue-on-error"]).toBeUndefined();
   });
 
-  it("signs both programs and the file reader, packs only the programs, and builds nothing for Intel Macs", () => {
+  it("signs both programs, packs only them, and builds nothing for Intel Macs", () => {
     const step = sign.steps.find((candidate) =>
       (candidate.run ?? "").includes("sign-binary.sh"),
     );
@@ -134,22 +134,20 @@ describe("the release signs the programs in a job of its own", () => {
     expect(JSON.stringify(jobs())).not.toContain("darwin-x86_64");
   });
 
-  it("proves the sandbox survives signing, and runs the signed programs from the archive", () => {
+  it("reads a file with the signed server unpacked from the archive, and signs and carries no separate reader", () => {
     const steps = sign.steps;
-    const signing = index(steps, /sign-binary\.sh/);
-    const read = steps.findIndex((step) =>
-      step.name?.startsWith("Read a picture with the signed reader"),
-    );
-    expect(read).toBeGreaterThan(signing);
-    const reading = steps[read]?.run ?? "";
-    expect(reading).toContain("core/marfa-enrichment/fixtures/sentence.png");
-    expect(reading).toContain("env -i ");
-    expect(reading).toContain("sandbox: Full");
-    expect(reading).toContain("Marfa reads this sentence upright.");
-    const pack = steps.find((step) =>
+    const pack = steps.findIndex((step) =>
       (step.run ?? "").includes("pack-programs.sh"),
     );
-    expect(pack?.run).toContain("check-archive.sh");
+    const packing = steps[pack]?.run ?? "";
+    expect(packing).toContain("check-archive.sh");
+    const reading = packing.indexOf("prove-reading.sh");
+    expect(reading).toBeGreaterThan(packing.indexOf("check-archive.sh"));
+    expect(packing).toContain(
+      'prove-reading.sh "$RUNNER_TEMP/artifacts/marfa-$VERSION-darwin-arm64.tar.gz"',
+    );
+    expect(packing).toContain("core/marfa-enrichment/fixtures");
+    expect(JSON.stringify(jobs())).not.toContain("marfa-enrichment-read");
   });
 
   it("gives the signing step every secret it reads, from the repository's secrets", () => {

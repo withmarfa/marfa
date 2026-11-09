@@ -8,8 +8,8 @@ name: Release
 # npm packages `@withmarfa/core` and `@withmarfa/client`; and the server image
 # `ghcr.io/withmarfa/marfa-server` for linux/amd64 and linux/arm64, made from
 # the Linux archives' own programs. The macOS programs are signed with the
-# maintainer's Developer ID and notarized, and the signed file reader is made
-# to read a picture under the full sandbox; the Linux programs are static, so
+# maintainer's Developer ID and notarized, and the signed server is made to
+# read a text file, a PDF and a picture; the Linux programs are static, so
 # they run on any distribution, and each runs on its own architecture before a
 # release is made. There is no Intel Mac build. A release is not published
 # unless every archive and the image built and ran, and the install proof held:
@@ -30,8 +30,9 @@ name: Release
 # The version is the tag's, and nowhere else: `scripts/release/stamp-version.sh`
 # writes it into every manifest in this checkout, which is why no manifest in
 # the repository holds one (`ci/version-fields.test.ts`). Each version is the
-# one before it plus 0.0.1, except 0.0.70, the first Rust release, which may
-# follow any released version below it; the last TypeScript release is 0.0.66.
+# one before it plus 0.0.1, from 0.0.70, the first Rust release, which may
+# follow any released version below it; the last TypeScript release is 0.0.66,
+# and this workflow releases nothing below 0.0.70.
 #
 # The TypeScript server's emergency path: a fix to it is released from a branch
 # made at `v0.0.66`, whose own `release.yml` builds and publishes it, because
@@ -166,8 +167,13 @@ jobs:
             echo "::error::$version is not 0.0.N; every version steps by 0.0.1."
             exit 1
           fi
-          # The one version that may leave a gap: the first Rust release.
+          # The first Rust release, the one version that may leave a gap; main
+          # releases nothing below it.
           first_rust=70
+          if [ "$patch" -lt "$first_rust" ]; then
+            echo "::error::$version is below 0.0.$first_rust, the first Rust release; this workflow releases only the Rust server."
+            exit 1
+          fi
           # Whether a version has a public release: "true", "false", or the
           # step fails, so a lookup that errs is never read as either.
           released() {
@@ -328,9 +334,7 @@ jobs:
           bash scripts/release/hold-tarball.sh "$RUNNER_TEMP/artifacts/withmarfa-client-$VERSION.tgz" \
             dist/index.js dist/index.d.ts
 
-      # Each program is asked its version before it goes to be signed. The
-      # file reader is built here for the sandbox check after signing and is
-      # never released.
+      # Each program is asked its version before it goes to be signed.
       - name: Build the programs
         run: |
           target=aarch64-apple-darwin
@@ -343,14 +347,14 @@ jobs:
               exit 1
             fi
           done
-          cp "$out/marfa" "$out/marfa-server" "$out/marfa-enrichment-read" "$out/NOTICES.txt" "$RUNNER_TEMP/artifacts/"
+          cp "$out/marfa" "$out/marfa-server" "$out/NOTICES.txt" "$RUNNER_TEMP/artifacts/"
 
       # The programs go to the sign job unsigned, beside the two packages.
       - name: Hold the build to the programs and the two packages
         working-directory: ${{ runner.temp }}/artifacts
         run: |
           bash "$GITHUB_WORKSPACE/scripts/release/hold-artifacts.sh" \
-            NOTICES.txt marfa marfa-enrichment-read marfa-server \
+            NOTICES.txt marfa marfa-server \
             "withmarfa-client-$VERSION.tgz" "withmarfa-core-$VERSION.tgz"
 
       - uses: actions/upload-artifact@v7
@@ -365,9 +369,10 @@ jobs:
   # dry run signs and notarizes too, so a change here is proved before a tag
   # depends on it.
   #
-  # After notarizing, the signed file reader reads a picture and must report
-  # the full sandbox, which proves the sandbox survives signing, and the signed
-  # programs are asked their version from the archive a person unpacks.
+  # After notarizing, the programs are asked their version from the archive a
+  # person unpacks, and the server unpacked from it reads a text file, a PDF
+  # and a picture (`prove-reading.sh`). The server does not report how far its
+  # reader was sandboxed, so the sandbox itself is not proved here.
   sign:
     name: Sign the programs
     needs: [version, programs-macos]
@@ -394,31 +399,11 @@ jobs:
           APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          for program in marfa marfa-server marfa-enrichment-read; do
+          for program in marfa marfa-server; do
             # An artifact keeps no file modes.
             chmod +x "$RUNNER_TEMP/build/$program"
             bash scripts/release/sign-binary.sh "$RUNNER_TEMP/build/$program"
           done
-
-      # The reader runs with nothing in its environment, as the build's own
-      # check runs it, and reports its sandbox on standard error.
-      - name: Read a picture with the signed reader under the full sandbox
-        run: |
-          picture="$GITHUB_WORKSPACE/core/marfa-enrichment/fixtures/sentence.png"
-          if ! said=$(env -i "$RUNNER_TEMP/build/marfa-enrichment-read" read "$picture" 2>&1); then
-            echo "::error::The signed reader could not read the picture:"
-            echo "$said"
-            exit 1
-          fi
-          echo "$said"
-          if ! grep -qx "sandbox: Full" <<< "$said"; then
-            echo "::error::The signed reader did not report the full sandbox."
-            exit 1
-          fi
-          if ! grep -q "Marfa reads this sentence upright." <<< "$said"; then
-            echo "::error::The signed reader read the picture but did not find its sentence."
-            exit 1
-          fi
 
       - name: Pack the programs and run them from the archive
         run: |
@@ -426,6 +411,8 @@ jobs:
           cp "$RUNNER_TEMP/build/marfa" "$RUNNER_TEMP/build/marfa-server" "$RUNNER_TEMP/build/NOTICES.txt" "$RUNNER_TEMP/pack/"
           bash scripts/release/pack-programs.sh "$RUNNER_TEMP/pack" "$RUNNER_TEMP/artifacts/marfa-$VERSION-darwin-arm64.tar.gz"
           bash scripts/release/check-archive.sh "$RUNNER_TEMP/artifacts/marfa-$VERSION-darwin-arm64.tar.gz" "$VERSION" --boot
+          bash scripts/release/prove-reading.sh "$RUNNER_TEMP/artifacts/marfa-$VERSION-darwin-arm64.tar.gz" \
+            core/marfa-enrichment/fixtures
           cp "$RUNNER_TEMP/build/withmarfa-client-$VERSION.tgz" "$RUNNER_TEMP/build/withmarfa-core-$VERSION.tgz" "$RUNNER_TEMP/artifacts/"
 
       # Exactly the three the collect job reads, by name: an upload that only
