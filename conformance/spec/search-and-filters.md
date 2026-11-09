@@ -1088,7 +1088,7 @@ When a page of `GET /items` holds the last row, the server MUST answer `next_cur
 
 If a request to an operation that answers `next_cursor` sends a `cursor` that another operation or another ordering issued, then the server MUST answer `400 validation_error` with `details.field` `cursor`.
 
-**Reason:** a cursor names a place in the order of the listing that issued it, so in any other listing it would answer a page that is not the next page, with nothing to say so. The server signs each cursor for its listing, so it can tell.
+**Reason:** a cursor names a place in the order of the operation that issued it, so at any other operation, or under another ordering, it would answer a page that is not the next page, with nothing to say so. The server signs each cursor for its operation and ordering, so it can tell.
 
 **Tests:** `correctness/pagination.test.ts › refuses a cursor issued by another listing or ordering`, `compliance/cursor-other-listing.test.ts › is refused at every listing but the one that issued it, naming cursor`.
 

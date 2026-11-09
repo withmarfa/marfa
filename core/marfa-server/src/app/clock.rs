@@ -170,7 +170,7 @@ impl Stamp {
         Stamp::parsed(stored).ok_or_else(|| Refusal::internal("a stored time did not read"))
     }
 
-    /// For a caller that reports a time that does not read itself.
+    /// For a caller that reports an unreadable time itself.
     pub fn parsed(stored: &str) -> Option<Stamp> {
         time::instant(stored, "")
             .ok()
