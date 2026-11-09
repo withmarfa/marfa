@@ -631,6 +631,11 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^core\/marfa-server\/src\/control_socket\.rs$/,
     ["core-checks", "core-checks-linux", "rust-contract"],
   ],
+  // A background read lowers its thread's priority each system's own way.
+  [
+    /^core\/marfa-server\/src\/db\/reader\.rs$/,
+    ["core-checks", "core-checks-linux", "rust-contract"],
+  ],
   // The settings are what the Dockerfile's environment names.
   [
     /^core\/marfa-server\/src\/settings\//,
