@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { MarfaClient } from "../../client/api.js";
 import { controlRequest } from "../../utils/control-request.js";
+import { DAY_MS, movedClock, runJob } from "../../utils/moved-clock.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -502,5 +503,63 @@ describe("PATCH /auth/grants/{id}", () => {
         Date.parse(app.last_used_at ?? app.created_at) + 365 * 86_400_000,
       ).toISOString(),
     );
+  });
+});
+
+describe("the keys an app minted, when its grant ends another way", () => {
+  /** A key the app mints that may mint, and the key that key mints. */
+  async function keysOf(
+    access: string,
+    label: string,
+  ): Promise<[{ key: string }, { key: string }]> {
+    const key = await mintedBy(access, label, {
+      permissions: ["keys.mint"],
+      type_permissions: { "core.note": "read" },
+    });
+    return [key, await mintedBy(key.key, `${label}-child`)];
+  }
+
+  it("leaves the keys an app minted working when the app revokes its refresh token", async () => {
+    const scope = `${SCOPE} offline_access`;
+    const app = await registerApp(server, scope);
+    const issued = await connect(server, origin, cookie, app, scope);
+    const [key, descendant] = await keysOf(
+      issued.access_token!,
+      "refresh-survivor",
+    );
+
+    const revoked = await fetch(`${server.apiUrl}/auth/oauth2/revoke`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        token: issued.refresh_token!,
+        token_type_hint: "refresh_token",
+        client_id: app.clientId,
+      }),
+    });
+    expect(revoked.status).toBe(200);
+    // The witness: the revocation ended the app.
+    expect(await itemsStatus(server, issued.access_token!)).toBe(401);
+    expect(await itemsStatus(server, key.key)).toBe(200);
+    expect(await itemsStatus(server, descendant.key)).toBe(200);
+  });
+
+  // Moves the clock past every grant's window, so it runs last.
+  it("leaves the keys an idle app minted working when the inactivity retirement retires its grant", async () => {
+    const { clientId, access } = await approved();
+    const [key, descendant] = await keysOf(access, "idle-survivor");
+
+    await movedClock(server).advance(366 * DAY_MS);
+    expect((await runJob(server, "grant-inactivity-retirement")).outcome).toBe(
+      "ok",
+    );
+    // The witness: the retirement ended the app.
+    const listed = (await (await grants(server.managementKey)).json()) as {
+      data: Grant[];
+    };
+    expect(listed.data.map((g) => g.client_id)).not.toContain(clientId);
+    expect(await itemsStatus(server, key.key)).toBe(200);
+    expect(await itemsStatus(server, descendant.key)).toBe(200);
+    cookie = await signIn(server, origin);
   });
 });

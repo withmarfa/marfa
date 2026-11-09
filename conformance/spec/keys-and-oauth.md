@@ -2121,6 +2121,22 @@ When a grant is revoked without `revoke_keys`, the server MUST leave every key t
 
 **Tests:** `compliance/auth-grants.test.ts › ends the app's tokens and the person's consent, and leaves the keys it minted working`.
 
+### `keys-and-oauth/refresh-revoke-keeps-keys`
+
+When an app revokes its refresh token at `POST /auth/oauth2/revoke`, the server MUST leave every key the app minted, and every key those keys minted, working.
+
+**Reason:** An app that disconnects itself says nothing about the keys it handed out, and those keys may serve someone else by now.
+
+**Tests:** `compliance/auth-grants.test.ts › leaves the keys an app minted working when the app revokes its refresh token`.
+
+### `keys-and-oauth/grant-retire-keeps-keys`
+
+When the inactivity retirement retires a grant, the server MUST leave every key the app minted, and every key those keys minted, working.
+
+**Reason:** The retirement measures the app's own use, and a key the app minted is used on its own account, so the app going quiet says nothing about the key.
+
+**Tests:** `compliance/auth-grants.test.ts › leaves the keys an idle app minted working when the inactivity retirement retires its grant`.
+
 ### `keys-and-oauth/grant-revoke-keys`
 
 When a grant is revoked with `revoke_keys=1`, the server MUST revoke in the same write every key the app minted and every key those keys minted, whatever the caller's reach.
