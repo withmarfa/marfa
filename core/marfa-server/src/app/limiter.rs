@@ -13,6 +13,7 @@ const PRUNE_EVERY_MS: i64 = 1_000;
 pub const REQUESTS: &str = "requests";
 pub const KEY_OPERATIONS: &str = "key-operations";
 pub const FILE_FETCHES: &str = "file-fetches";
+pub const INBOUND_DELIVERIES: &str = "inbound-deliveries";
 
 #[derive(Clone, Debug)]
 pub struct Lane {
