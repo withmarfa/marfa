@@ -44,7 +44,7 @@ let keysMinted = 0;
 
 beforeAll(async () => {
   server = await bootFreshServer("recent-sign-in-consent", {
-    TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+    MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
   });
   origin = await issuerOrigin(server);
   management = new MarfaClient({

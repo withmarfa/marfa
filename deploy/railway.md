@@ -12,7 +12,7 @@ You need a Railway account with permission to deploy services and volumes in you
 4. Wait for the server deployment to pass its `/health` check, then claim the instance below.
 5. Note the release that is running. Run `curl https://<your-address>/`; the JSON answer names it as `version`. (A browser shows the page instead.) You need it to [update the server](#update-the-server) or go back to this build.
 
-The template generates separate random values for `API_KEY_SALT` and `MARFA_AUTH_SECRET` for each deployment, so you don't generate secrets yourself. Railway documents this under [template variable functions](https://docs.railway.com/templates/create#template-variable-functions).
+The template generates separate random values for `MARFA_KEY_SALT` and `MARFA_AUTH_SECRET` for each deployment, so you don't generate secrets yourself. Railway documents this under [template variable functions](https://docs.railway.com/templates/create#template-variable-functions).
 
 Keep the server at **one replica**, with **Serverless disabled**. The instance uses one SQLite database, and its background work needs to keep running.
 
@@ -46,7 +46,7 @@ The browser handoff carries a single-use ticket in the URL fragment. Do not put 
 
 The `/data` volume holds the SQLite database, the files and the private control socket. It persists through service restarts and redeployments. The template also enables daily Railway volume backups, retained for six days. They cover the volume within the same project and environment. Wiping the volume deletes its snapshots; see [Railway volume backups](https://docs.railway.com/volumes/backups).
 
-Preserve **`API_KEY_SALT` and `MARFA_AUTH_SECRET`** across restarts, redeployments and restores. Keep a secure recovery copy outside the project. These values are not stored in the data volume: changing the salt invalidates existing API keys and app tokens, and changing the authentication secret ends existing browser sessions. If you seal Railway variables, save their recovery copies first, because [sealed values cannot be retrieved](https://docs.railway.com/variables#sealed-variables).
+Preserve **`MARFA_KEY_SALT` and `MARFA_AUTH_SECRET`** across restarts, redeployments and restores. Keep a secure recovery copy outside the project. These values are not stored in the data volume: changing the salt invalidates existing API keys and app tokens, and changing the authentication secret ends existing browser sessions. If you seal Railway variables, save their recovery copies first, because [sealed values cannot be retrieved](https://docs.railway.com/variables#sealed-variables).
 
 ## Restore a volume backup
 
@@ -54,7 +54,7 @@ Restoring a Railway volume backup rolls the database and the files back to the b
 
 1. Restore the backup as [Railway volume backups](https://docs.railway.com/volumes/backups) describes. Railway stages the restore, mounts a new volume at the same location as the original, and keeps the previous volume, unmounted.
 2. Review the staged changes and select **Deploy**. Railway's [staged changes documentation](https://docs.railway.com/deployments/staged-changes) says that it deploys all of them at once.
-3. Keep the same image version and the same `API_KEY_SALT` and `MARFA_AUTH_SECRET`, then read `GET /health`.
+3. Keep the same image version and the same `MARFA_KEY_SALT` and `MARFA_AUTH_SECRET`, then read `GET /health`.
 
 Keep the previous volume until you are sure you don't need it.
 
@@ -107,19 +107,19 @@ These settings describe the saved template and its container defaults. [Settings
 | --------------------------- | ----------------------------------------------------------------------------- |
 | Server source               | Docker image `ghcr.io/withmarfa/marfa-server:<version>`, a pinned release tag |
 | Volume mount                | `/data`                                                                       |
-| `SQLITE_PATH`               | `/data/marfa.db` (set by the image)                                           |
-| `BLOB_PATH`                 | `/data/blobs` (set by the image)                                              |
+| `MARFA_DATABASE_PATH`       | `/data/marfa.db` (set by the image)                                           |
+| `MARFA_BLOB_PATH`           | `/data/blobs` (set by the image)                                              |
 | Control socket              | `/data/control/marfa.sock` (`MARFA_CONTROL_SOCKET`, set by the image)         |
 | Runtime UID                 | `RAILWAY_RUN_UID=0`                                                           |
 | Shutdown allowance          | `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=30`                                      |
-| Client address header       | `TRUSTED_PROXY_HEADER=x-real-ip`                                              |
+| Client address header       | `MARFA_TRUSTED_PROXY_HEADER=x-real-ip`                                        |
 | Volume backup schedule      | Daily                                                                         |
 | HTTP port and domain target | `8600`                                                                        |
 | Health check                | `/health`                                                                     |
 | Replicas                    | `1`                                                                           |
 | Serverless                  | Disabled                                                                      |
 | Image auto updates          | Off                                                                           |
-| `API_KEY_SALT`              | `${{secret(64, "abcdef0123456789")}}`                                         |
+| `MARFA_KEY_SALT`            | `${{secret(64, "abcdef0123456789")}}`                                         |
 | `MARFA_AUTH_SECRET`         | `${{secret(64, "abcdef0123456789")}}`                                         |
 
 The image names its own build: `GET /` answers the release as `version`. Each tag is published for `linux/amd64` and `linux/arm64`, and a published version tag is never moved. The package is public, so Railway pulls it without registry credentials.

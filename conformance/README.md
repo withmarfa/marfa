@@ -177,7 +177,7 @@ data, log and env file. The default is `.marfa-state` in the working directory.
 | `restart [--signal TERM\|INT\|KILL] [--env K=V ...]`             | Stops the target with the signal, prints how it ended as `previous exit {"code":..,"signal":..,"ms":..}`, and boots it again on the same data. The URL may change.                                                                                                                                                                                        |
 | `down`                                                           | Stops the target and removes its data.                                                                                                                                                                                                                                                                                                                    |
 | `status`                                                         | Exits 0 when the target is running, and prints its URL.                                                                                                                                                                                                                                                                                                   |
-| `refused [--node-env <name>] [--env K=V ...]`                    | Boots with settings the target must refuse, as the `NODE_ENV` named when `--node-env` is given, and waits for it to end. Exits 0 when it ended; its exit record and log are in the state directory.                                                                                                                                                       |
+| `refused [--env K=V ...]`                                        | Boots with settings the target must refuse and waits for it to end. Exits 0 when it ended; its exit record and log are in the state directory.                                                                                                                                                                                                            |
 | `clock advance <ms>`                                             | Moves the target's clock forward. A negative or fractional step is refused and the exit status is 1.                                                                                                                                                                                                                                                      |
 | `clock pause` / `clock resume`                                   | Pauses system-time drift or resumes it, retaining explicit advances. Prints `now` and `offset_ms` as JSON.                                                                                                                                                                                                                                                |
 | `fault set <name>[=<arg>]`, `fault clear [<name>]`, `fault list` | Sets or clears a named fault. `list` prints `{"faults":[{"name":..,"arg":..,"waiting":..,"fired":..}]}`, where `waiting` counts the callers held at a `hold` fault and `fired` the times a `fail` fault has acted, a `resolve` fault has answered or a `release` fault has released its hold. A `release` fault that has acted adds `held_when_answered`. |
@@ -225,20 +225,21 @@ account.
 
 ### Settings
 
-`--env K=V` names a setting for one boot. Any setting in the table of
-[`spec/instance.md`](spec/instance.md) may be passed, and a value outside its
-rule is refused as that chapter says. The adapter sets these itself, and a
-value passed for one replaces its own:
+`--env K=V` names a setting for one boot. Any start-only setting in the second
+table of [`spec/instance.md`](spec/instance.md) may be passed by its name, and
+any stored setting by its seed name (`MARFA_` and its key in capitals). A value
+outside a rule is refused as that chapter says. The adapter sets these itself,
+and a value passed for one replaces its own:
 
 - The port, the paths of the database, the disk store and the private socket
   (`MARFA_CONTROL_SOCKET` names its path, and then its folder is the caller's),
-  `MARFA_LISTEN_HOST` and `MARFA_AUTH_SECRET`. By default `MARFA_AUTH_BASE_URL`
-  is unset so the server derives it from its assigned loopback port.
+  `MARFA_LISTEN_HOST` and `MARFA_AUTH_SECRET`. By default `MARFA_SIGN_IN_ADDRESS`
+  is unset, so the sign-in address is the server's own on its assigned loopback
+  port.
 - Enrichment, OCR and the request limiter off, a blob cleanup grace of 0, and
   webhook delivery to private addresses allowed, so the fixtures can use a
   receiver on the loopback address.
-- `MARFA_TEST_HOOKS` true, except for a boot told to run as `production`
-  (`--node-env production`), which would be refused for it.
+- `MARFA_TEST_HOOKS` true.
 
 ### Stopping a server nobody stopped
 
@@ -442,7 +443,7 @@ it acted, and a fault that never acted is not mistaken for a pass. A fault
 that has acted does not act again until it is set again. The statement points (`audit`, `inbound-receipt`, `inbound-cleanup`, `export-read`, `housekeeping:<job>` and `job-row`) count only a statement that failed: a run that reaches the point and runs no statement, such as a job with nothing to do, leaves `fired` at 0 and the fault waiting for a reach that can fail.
 
 `<n>` is a decimal integer from 1 through 1000000, without leading zeros.
-`<ms>` is a whole number from 1 through 2147483647. An action argument
+`<ms>` is a whole number from 1 through 86400000, a day. `<check>` takes the same range as `<n>`. An action argument
 starts with a lowercase ASCII letter and contains only lowercase ASCII
 letters, digits, underscores, periods, or hyphens. The target validates this
 syntax; an action that no write records never fires.
@@ -494,7 +495,7 @@ it.
 | `fail:folder-status-report[=<n>]`  | In `PUT /folders/{id}/status`, after the report is stored and before the transaction commits.                                                                                                                    | The request fails with `SQLITE_IOERR` and its transaction rolls back, so the folder keeps its earlier report.                                                                                                                                                   |
 | `refuse:read`                      | Every read of the database, until the fault is cleared.                                                                                                                                                          | The read fails with `SQLITE_IOERR`.                                                                                                                                                                                                                             |
 | `refuse:write`                     | Every write, before it takes the write lock, until the fault is cleared.                                                                                                                                         | The write fails with `SQLITE_IOERR`.                                                                                                                                                                                                                            |
-| `refuse:write-lock`                | Every write, until the fault is cleared.                                                                                                                                                                         | The write waits for the lock as if another connection held it. When its busy budget (`SQLITE_BUSY_BUDGET_MS`) is spent it is refused with `503 write_contention`; clearing the fault lets a write that still waits through.                                     |
+| `refuse:write-lock`                | Every write, until the fault is cleared.                                                                                                                                                                         | The write waits for the lock as if another connection held it. When its write wait (`MARFA_WRITE_WAIT_MS`) is spent it is refused with `503 write_contention`; clearing the fault lets a write that still waits through.                                        |
 | `refuse:blob-store`                | Each check of the disk store that `GET /health` makes.                                                                                                                                                           | The store does not answer, and `blob_storage` reports `down`.                                                                                                                                                                                                   |
 
 `<write>` stands for `<n>`, `<action>` or `<action>@<n>`. A target that
@@ -525,8 +526,8 @@ name), without a `lose:blob` or `damage:blob` fault changing the answer. It alwa
 
 The clock, fault and blob-store routes (`/_control/test/clock`, `/_control/test/faults`
 and `/_control/test/blob-stores`) exist only on the private control socket, and only when `MARFA_TEST_HOOKS` is
-`true`. They are never on the HTTP listener, and the server refuses to start with
-the setting under `NODE_ENV=production`, which the released image sets. It logs
+`true`. They are never on the HTTP listener, and a Rust server built without the
+`test-hooks` feature, as a release is, refuses to start with the setting. It logs
 a warning at boot when the hooks are on. `spec/instance.md`, "Test hooks", holds
 these rules.
 
@@ -696,7 +697,7 @@ keys go through the private socket as they do for the TypeScript server. The
 Rust server (`core/marfa-server/`) is the program this exists for.
 
 ```sh
-cargo build --release -p marfa-server --manifest-path ../core/Cargo.toml
+cargo build --release -p marfa-server --features test-hooks --manifest-path ../core/Cargo.toml
 
 export MARFA_SERVER_BIN="$PWD/../core/target/release/marfa-server"
 pnpm marfa:up --state /tmp/marfa
@@ -706,7 +707,9 @@ pnpm exec vitest run --project correctness
 pnpm marfa:down --state /tmp/marfa
 ```
 
-Setting `MARFA_SERVER_BIN` also stops `vitest.config.ts` leaving out the files
+The build needs the `test-hooks` feature: the fixtures turn the test hooks on,
+and a server built without it refuses to start with them on. Setting
+`MARFA_SERVER_BIN` also stops `vitest.config.ts` leaving out the files
 listed in `src/utils/rust-judged.ts` (see below). Do not set it together with
 `MARFA_SERVER_BUILT`. The backup fixtures boot the server through the
 container's entrypoint, which starts the Node server, so they do not run
@@ -714,6 +717,17 @@ against another program. The object-store half of the blob chapters needs an
 object store beside the server: run `pnpm garage:up --state /tmp/garage` and
 source `/tmp/garage/garage.env` before `pnpm marfa:up`, as the Rust contract
 shards in CI do.
+
+`MARFA_SERVER_RELEASE_BIN` names the same server built without the
+`test-hooks` feature, the program a release ships. Only
+`src/suites/compliance/hook-free-server.test.ts` reads it: it starts that
+program itself, as a person starts it, to judge the rules that hold only
+where no hook is built (the refusal of `MARFA_TEST_HOOKS`, no clock or fault
+route, and the generated secrets). Build it with
+`cargo build --release -p marfa-server --manifest-path ../core/Cargo.toml`.
+The Rust contract job builds both and gives each shard the path. The file is
+left out of a run without `MARFA_SERVER_BIN`, and fails at once, saying so,
+when `MARFA_SERVER_RELEASE_BIN` is unset.
 
 ### Read a run
 

@@ -28,6 +28,7 @@ export enum ErrorCode {
   TRASH_PLAN_CHANGED = "trash_plan_changed",
   REACH_CHANGED = "reach_changed",
   INSTANCE_CHANGED = "instance_changed",
+  SIGN_IN_ADDRESS_CHANGE_UNCONFIRMED = "sign_in_address_change_unconfirmed",
   /**
    * The write was based on a version with no snapshot it may be merged
    * against: none is held (never issued, or thinned away), or the one held
@@ -458,6 +459,11 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
     status: 409,
     summary:
       "A request names another instance in `X-Marfa-Instance-Id`. Nothing is written. Rebuild the working copy from the instance at this address.",
+  },
+  [ErrorCode.SIGN_IN_ADDRESS_CHANGE_UNCONFIRMED]: {
+    status: 409,
+    summary:
+      "A write moves the sign-in address without `confirm_sign_in_address_change`. Nothing is changed; `details.consequences` names what the move would do.",
   },
   [ErrorCode.ANCESTOR_UNAVAILABLE]: {
     status: 409,

@@ -275,6 +275,9 @@ jobs:
         run: |
           cargo fmt --all --check
           cargo clippy --locked --workspace --all-targets --no-deps -- -D warnings
+          # The tests above compile the server with its test hooks. A release
+          # build leaves them out, so the server is linted without them too.
+          cargo clippy --locked -p marfa-server --no-deps -- -D warnings
           scripts/login-keychain-unchanged.sh cargo nextest run --locked --workspace
           # The next run writes its report over this one's.
           scripts/report-flaky.py target/nextest/ci/junit.xml
@@ -340,6 +343,7 @@ jobs:
         run: |
           cargo fmt --all --check
           cargo clippy --locked --workspace --all-targets --no-deps -- -D warnings
+          cargo clippy --locked -p marfa-server --no-deps -- -D warnings
           cargo nextest run --locked --workspace
           # The next run writes its report over this one's.
           scripts/report-flaky.py target/nextest/ci/junit.xml
@@ -1075,6 +1079,8 @@ jobs:
             ${{ runner.temp }}/marfa-native/archives
           key: ${{ steps.key.outputs.key }}
       - name: Build the Rust server
+        env:
+          MARFA_SERVER_FEATURES: test-hooks
         run: core/marfa-enrichment/native/release.sh "$TARGET" --server
       # Every shard downloads it, and a re-run of one shard does too, so it
       # is kept as long as the shards' reports. It is an input, not a
@@ -1083,6 +1089,16 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: rust-contract-server
+          path: ${{ runner.temp }}/marfa-native/out/${{ env.TARGET }}/marfa-server
+          if-no-files-found: error
+          retention-days: 3
+      # Release-only fixtures need a separate binary without test hooks.
+      - name: Build the Rust server without test hooks
+        run: core/marfa-enrichment/native/release.sh "$TARGET" --server
+      - name: Keep the server without test hooks
+        uses: actions/upload-artifact@v7
+        with:
+          name: rust-contract-release-server
           path: ${{ runner.temp }}/marfa-native/out/${{ env.TARGET }}/marfa-server
           if-no-files-found: error
           retention-days: 3
@@ -1258,6 +1274,14 @@ jobs:
         run: |
           chmod +x "$RUNNER_TEMP/rust-contract-server/marfa-server"
           echo "MARFA_SERVER_BIN=$RUNNER_TEMP/rust-contract-server/marfa-server" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v8
+        with:
+          name: rust-contract-release-server
+          path: ${{ runner.temp }}/rust-contract-release-server
+      - name: Name the server a release ships
+        run: |
+          chmod +x "$RUNNER_TEMP/rust-contract-release-server/marfa-server"
+          echo "MARFA_SERVER_RELEASE_BIN=$RUNNER_TEMP/rust-contract-release-server/marfa-server" >> "$GITHUB_ENV"
 
       # The CLI and device fixtures drive the `marfa` binary, and the device
       # fixtures the Node module, as in `Conformance shard`. The keys leave

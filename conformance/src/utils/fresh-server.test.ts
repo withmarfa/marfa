@@ -118,7 +118,9 @@ describe("fixture listener ownership", () => {
   });
 
   it("restarts on an assigned port and on a retained port after keep-alive requests", async () => {
-    const server = await bootFreshServer("restart-listener", { PORT: "0" });
+    const server = await bootFreshServer("restart-listener", {
+      MARFA_PORT: "0",
+    });
     try {
       const root = await (await fetch(`${server.apiUrl}/`)).json();
       await server.restart();
@@ -126,7 +128,7 @@ describe("fixture listener ownership", () => {
         instance_id: root.instance_id,
       });
       const url = server.apiUrl;
-      await server.restart({ env: { PORT: new URL(url).port } });
+      await server.restart({ env: { MARFA_PORT: new URL(url).port } });
       expect(server.apiUrl).toBe(url);
       expect(await (await fetch(`${url}/`)).json()).toMatchObject({
         instance_id: root.instance_id,

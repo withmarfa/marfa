@@ -113,15 +113,15 @@ describe("restoring a copy of the data directory taken while the instance was wr
   // The witness that the salt is part of what a restore needs: the same
   // image, started with another salt, holds the key and refuses it.
   it(
-    "refuses a key it holds when started with a different API_KEY_SALT",
+    "refuses a key it holds when started with a different MARFA_KEY_SALT",
     async () => {
       const image = await imageOf(original);
-      process.env.API_KEY_SALT = "another-salt-".padEnd(40, "x");
+      process.env.MARFA_KEY_SALT = "another-salt-".padEnd(40, "x");
       let restored: { client: MarfaClient; apiUrl: string };
       try {
         restored = await bootRestored(image);
       } finally {
-        delete process.env.API_KEY_SALT;
+        delete process.env.MARFA_KEY_SALT;
       }
 
       const refused = await restored.client.listItems({ limit: 1 });

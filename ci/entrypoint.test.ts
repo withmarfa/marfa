@@ -163,8 +163,8 @@ function start(options: {
   const child = spawn("/bin/sh", [ENTRYPOINT], {
     env: {
       PATH: `${bin}:/usr/bin:/bin`,
-      SQLITE_PATH: join(dir, "data/marfa.db"),
-      BLOB_PATH: join(dir, "data/blobs"),
+      MARFA_DATABASE_PATH: join(dir, "data/marfa.db"),
+      MARFA_BLOB_PATH: join(dir, "data/blobs"),
       ...(options.bucket ? { S3_BUCKET: "a-bucket" } : {}),
       ...options.env,
     },

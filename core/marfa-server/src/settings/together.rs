@@ -3,12 +3,11 @@
 //! through `/config` and the listing read the same list.
 
 use super::registry::{
-    self, ADDRESSES, ENTRIES, ERROR_REPORTING_ENABLED, HEARTBEAT_ENABLED, SIGN_IN_ADDRESS, Seeds,
-    Snapshot, VERSION_DAILY_SNAPSHOT_DAYS, VERSION_RECENT_DAYS, VERSION_WEEKLY_SNAPSHOT_DAYS,
-    Value,
+    self, ADDRESSES, ERROR_REPORTING_ENABLED, HEARTBEAT_ENABLED, Snapshot,
+    VERSION_DAILY_SNAPSHOT_DAYS, VERSION_RECENT_DAYS, VERSION_WEEKLY_SNAPSHOT_DAYS, Value,
 };
-use super::rule;
 use super::start::Fixed;
+use crate::app::addresses::Address;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Breach {
@@ -20,6 +19,8 @@ pub struct Judged<'a> {
     pub after: &'a Snapshot,
     pub touched: &'a [&'a str],
     pub start: &'a Fixed,
+    /// None until the system chooses the port for an unstored sign-in address.
+    pub sign_in: Option<Address>,
 }
 
 impl Judged<'_> {
@@ -64,11 +65,17 @@ pub fn rules_of(key: &str) -> impl Iterator<Item = &'static Together> + '_ {
     TOGETHER.iter().filter(move |rule| rule.keys.contains(&key))
 }
 
-pub fn judge(after: &Snapshot, touched: &[&str], start: &Fixed) -> Vec<Breach> {
+pub fn judge(
+    after: &Snapshot,
+    touched: &[&str],
+    start: &Fixed,
+    sign_in: Option<Address>,
+) -> Vec<Breach> {
     let judged = Judged {
         after,
         touched,
         start,
+        sign_in,
     };
     TOGETHER
         .iter()
@@ -79,21 +86,27 @@ pub fn judge(after: &Snapshot, touched: &[&str], start: &Fixed) -> Vec<Breach> {
 
 /// A write through `/config` is refused, so a seed is the only way a setting can start
 /// outside a rule.
-pub fn seed_lines(seeds: &Seeds, start: &Fixed) -> Vec<String> {
-    let after = Snapshot::resolve(seeds, &[], 0);
+#[cfg(feature = "test-hooks")]
+pub fn seed_lines(seeds: &registry::Seeds, start: &Fixed) -> Vec<String> {
+    use std::sync::Arc;
+
+    use crate::app::addresses::Addresses;
+
+    let after = Arc::new(Snapshot::resolve(seeds, &[], 0));
     let touched: Vec<&str> = seeds.keys().copied().collect();
-    judge(&after, &touched, start)
+    let known = start.port != 0 || after.get(registry::SIGN_IN_ADDRESS).is_some();
+    let sign_in = known.then(|| Addresses::of(start, after.clone(), None).sign_in());
+    judge(&after, &touched, start, sign_in)
         .into_iter()
         .filter_map(|breach| {
             let entry = registry::entry(breach.path)?;
-            let words = ENTRIES
+            let words = registry::ENTRIES
                 .iter()
-                .filter_map(|other| Some((other.key, other.test_name?)))
-                .fold(breach.message, |words, (key, name)| {
-                    words.replace(key, name)
+                .fold(breach.message, |words, other| {
+                    words.replace(other.key, &other.seed_name())
                 });
             let got = after.value(entry).to_json().to_string();
-            Some(rule::line(entry.test_name?, &words, &got))
+            Some(super::rule::line(&entry.seed_name(), &words, &got))
         })
         .collect()
 }
@@ -140,11 +153,12 @@ fn reporting_needs_a_receiver(judged: &Judged) -> Vec<Breach> {
 }
 
 fn sign_in_is_an_address(judged: &Judged) -> Vec<Breach> {
-    let after = judged.after;
-    let Some(Value::Address(Some(sign_in))) = after.stored(SIGN_IN_ADDRESS.entry) else {
+    let Some(sign_in) = &judged.sign_in else {
         return Vec::new();
     };
-    if after.get(ADDRESSES).contains(sign_in) {
+    let listed = judged.after.get(ADDRESSES);
+    // No list stored means the sign-in address stands alone, which is whole.
+    if listed.is_empty() || listed.contains(sign_in) {
         return Vec::new();
     }
     if judged.names("sign_in_address") {
