@@ -19,7 +19,7 @@ pub struct Page {
 }
 
 /// The title with its whitespace trimmed and each run of it collapsed to one space.
-fn shown(title: Option<&str>) -> String {
+pub(super) fn shown(title: Option<&str>) -> String {
     let words: Vec<&str> = title.unwrap_or_default().split_whitespace().collect();
     if words.is_empty() {
         UNTITLED.to_string()

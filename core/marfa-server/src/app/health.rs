@@ -109,6 +109,23 @@ impl Report {
         .unwrap_or(Status::Ok)
     }
 
+    /// Each component that is not ok, with its status word and the reason it gave.
+    pub fn failing(&self) -> Vec<(&'static str, &'static str, String)> {
+        [
+            ("database", &self.database),
+            ("database_write", &self.database_write),
+            ("disk", &self.disk),
+            ("blob_storage", &self.blob_storage),
+        ]
+        .into_iter()
+        .filter(|(_, component)| component.status != Status::Ok)
+        .map(|(name, component)| {
+            let reason = component.error.clone().unwrap_or_default();
+            (name, component.status.word(), reason)
+        })
+        .collect()
+    }
+
     pub fn to_json(&self, with_errors: bool) -> Value {
         json!({
             "status": self.overall().word(),
