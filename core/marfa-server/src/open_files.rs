@@ -4,8 +4,8 @@
 /// connections being turned away.
 pub const RESERVE: u64 = 256;
 
-/// `OPEN_MAX` in `<sys/syslimits.h>`, which macOS holds a soft limit to when its own per-process
-/// figure cannot be read.
+/// `OPEN_MAX` in `<sys/syslimits.h>`, the soft limit macOS's `setrlimit(2)` names in place of
+/// `RLIM_INFINITY`; used when `kern.maxfilesperproc` cannot be read.
 #[cfg(target_os = "macos")]
 const OPEN_MAX: libc::rlim_t = 10_240;
 

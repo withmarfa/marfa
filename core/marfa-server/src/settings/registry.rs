@@ -329,7 +329,7 @@ registry! {
     TRASH_PURGE_INTERVAL_MS: u64 = "trash_purge_interval_ms", INTERVAL, "86400000", "How often the `trash-purge` job runs, in milliseconds.";
     VERSION_THINNING_INTERVAL_MS: u64 = "version_thinning_interval_ms", INTERVAL, "3600000", "How often the `version-thinning` job runs, in milliseconds.";
     INBOUND_MAX_BYTES: u64 = "inbound_max_bytes", BYTES, "26214400", "The largest inbound webhook delivery the server stores, in bytes.";
-    RATE_LIMIT_INBOUND_REQUESTS: u64 = "rate_limit_inbound_requests", COUNT, "600", "How many deliveries one inbound endpoint accepts in each rate-limit window.";
+    RATE_LIMIT_INBOUND_REQUESTS: u64 = "rate_limit_inbound_requests", COUNT, "600", "How many requests one inbound endpoint's address takes in each rate-limit window, whatever each is answered.";
     INBOUND_IN_FLIGHT_BYTES: u64 = "inbound_in_flight_bytes", BYTES, "104857600", "The most bytes of inbound webhook deliveries the server holds in memory at once. One source holds at most half.";
     INBOUND_READ_TIMEOUT_MS: u64 = "inbound_read_timeout_ms", Rule::Whole { min: 1, max: 300_000 }, "30000", "How long an inbound webhook delivery's body has to arrive whole, in milliseconds.";
     INBOUND_BACKLOG_DELIVERIES: u64 = "inbound_backlog_deliveries", COUNT, "10000", "The unhandled deliveries one registration may hold before the server refuses more for it.";

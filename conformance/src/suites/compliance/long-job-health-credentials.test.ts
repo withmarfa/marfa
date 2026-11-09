@@ -47,7 +47,7 @@ describe("GET /health while the credential clean-up runs", () => {
   it("is answered between two grants of the retirement of inactive grants", async () => {
     const job = "credential-cleanup";
     const action = "auth.grant.retired";
-    // One sign-in for every grant: the owner's address may make ten
+    // One sign-in serves every grant: the owner's address may make ten
     // password attempts in fifteen minutes.
     const origin = await issuerOrigin(server);
     const cookie = await signIn(server, origin);
