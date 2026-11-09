@@ -328,43 +328,98 @@ pub async fn move_type(
             .await?;
         return Ok((200, kept));
     }
-    let answered = app
+    let queued = app
         .write(caller, "items.bulk_action", move |unit| {
-            let tx = unit.tx();
-            let catalog = catalog::current(&cache, tx, Snapshot::Pending)?;
-            judge(&unit.caller, &catalog, &from, &asked.to)?;
-            let plan = plan(tx, &unit.caller, &from, &asked.to)?;
-            if plan.blocked() {
-                return Err(plan.refusal(&from));
-            }
-            let ids = query::of_exact_type(tx, &unit.caller, &catalog, &from)?;
-            let selected = items::selected(tx, &ids)?;
-            if let Some(claim) = &claim {
-                claim.note(Need::Reach);
-                for name in [&from, &asked.to] {
-                    claim.note(Need::Type {
-                        name: name.clone(),
-                        write: true,
-                    });
-                }
-            }
-            let queued = Queued {
-                action: Action::TypeMove {
-                    from,
-                    to: asked.to,
-                    properties: asked.properties,
-                },
-                fanout: false,
-            };
-            let body = jobs::enqueue(unit, &queued, &selected)?;
-            if let Some(claim) = &claim {
-                idempotency::complete(unit, claim, 202, body.as_bytes())?;
-            }
-            Ok(body)
+            queue(unit, &cache, from, asked, claim.as_ref(), None)
         })
         .await?;
+    let body = queued.ok_or_else(|| Refusal::internal("a move without a guard did not start"))?;
     app.jobs.wake();
-    Ok((202, answered))
+    Ok((202, body))
+}
+
+/// What a move would take, as the write commits it.
+pub(crate) struct Taking<'a> {
+    pub ids: &'a [String],
+    pub settings: &'a Value,
+}
+
+/// Decides, on the state the write commits, whether the move may start.
+pub(crate) type Guard<'a> = Box<dyn FnOnce(&Unit<'_, '_>, &Taking<'_>) -> Result<bool> + Send + 'a>;
+
+/// Starts the move as a job if `guard` accepts what it would take; `None` when it does not.
+pub(crate) async fn start_guarded(
+    app: &App,
+    caller: &Caller,
+    from: String,
+    asked: Move,
+    guard: Guard<'static>,
+) -> Result<Option<String>> {
+    let cache = app.catalog_handle();
+    let queued = app
+        .write(caller, "items.bulk_action", move |unit| {
+            queue(unit, &cache, from, asked, None, Some(guard))
+        })
+        .await?;
+    if queued.is_some() {
+        app.jobs.wake();
+    }
+    Ok(queued)
+}
+
+fn queue(
+    unit: &Unit<'_, '_>,
+    cache: &ArcSwap<Catalog>,
+    from: String,
+    asked: Move,
+    claim: Option<&Claim>,
+    guard: Option<Guard<'_>>,
+) -> Result<Option<String>> {
+    let tx = unit.tx();
+    let catalog = catalog::current(cache, tx, Snapshot::Pending)?;
+    judge(&unit.caller, &catalog, &from, &asked.to)?;
+    let plan = plan(tx, &unit.caller, &from, &asked.to)?;
+    let blocked = plan.blocked();
+    if blocked && guard.is_none() {
+        return Err(plan.refusal(&from));
+    }
+    let ids = query::of_exact_type(tx, &unit.caller, &catalog, &from)?;
+    if let Some(guard) = guard {
+        let settings = plan.settings();
+        let taking = Taking {
+            ids: &ids,
+            settings: &settings,
+        };
+        if !guard(unit, &taking)? {
+            return Ok(None);
+        }
+        if blocked {
+            return Err(plan.refusal(&from));
+        }
+    }
+    let selected = items::selected(tx, &ids)?;
+    if let Some(claim) = claim {
+        claim.note(Need::Reach);
+        for name in [&from, &asked.to] {
+            claim.note(Need::Type {
+                name: name.clone(),
+                write: true,
+            });
+        }
+    }
+    let queued = Queued {
+        action: Action::TypeMove {
+            from,
+            to: asked.to,
+            properties: asked.properties,
+        },
+        fanout: false,
+    };
+    let body = jobs::enqueue(unit, &queued, &selected)?;
+    if let Some(claim) = claim {
+        idempotency::complete(unit, claim, 202, body.as_bytes())?;
+    }
+    Ok(Some(body))
 }
 
 /// What a finished move leaves of its type, and the settings it rewrites once none remains.
