@@ -13,6 +13,12 @@ path = "src/lib.rs"
 name = "marfa-server"
 path = "src/main.rs"
 
+[features]
+# Test hooks: the fault registry, the clock offset and the control socket's test routes.
+test-hooks = []
+# Reads PDFs and the text in pictures, with the libraries a release build links in (see `core/marfa-enrichment/README.md`).
+native = ["marfa-enrichment/native"]
+
 [dependencies]
 arc-swap = "1"
 argon2 = "0.6"
@@ -65,6 +71,7 @@ uuid.workspace = true
 webauthn-rs = { version = "0.6.2", default-features = false, features = ["conditional-ui", "danger-allow-state-serialisation"] }
 
 [dev-dependencies]
+marfa-server = { path = ".", features = ["test-hooks"] }
 marfa-acl = { workspace = true, features = ["testing"] }
 libtest-mimic = "0.8"
 opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "logs", "testing"] }
@@ -73,10 +80,6 @@ proptest = "1"
 rcgen = "0.14"
 tempfile = "3"
 tokio = { version = "1", features = ["io-util"] }
-
-[features]
-# Reads PDFs and the text in pictures, with the libraries a release build links in (see `core/marfa-enrichment/README.md`).
-native = ["marfa-enrichment/native"]
 
 # The reader starts the program it runs in, so this test serves the reader first.
 [[test]]

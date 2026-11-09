@@ -44,11 +44,11 @@ impl Instance {
         let blobs = dir.path().join("blobs");
         let socket = dir.path().join("s.sock");
         let mut pairs = vec![
-            ("SQLITE_PATH", database.to_str().unwrap()),
-            ("BLOB_PATH", blobs.to_str().unwrap()),
+            ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
+            ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
             ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
             ("MARFA_TEST_HOOKS", "true"),
-            ("RATE_LIMIT_ENABLED", "false"),
+            ("MARFA_RATE_LIMIT_ENABLED", "false"),
         ];
         pairs.extend(
             more.iter()

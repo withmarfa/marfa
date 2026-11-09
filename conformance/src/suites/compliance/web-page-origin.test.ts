@@ -43,7 +43,7 @@ const shown = (origin: string): string => origin.replace(/^https:\/\//, "");
 
 beforeAll(async () => {
   server = await bootFreshServer("web-page-origin", {
-    CORS_ORIGINS: CONFIGURED,
+    MARFA_CORS_ORIGINS: CONFIGURED,
   });
   issuer = await issuerOrigin(server);
   cookie = await signIn(server, issuer);

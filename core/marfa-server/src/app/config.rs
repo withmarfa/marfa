@@ -16,7 +16,6 @@ use super::consequences::{self, Consequence};
 use super::refusal::{Code, Refusal, Result};
 use super::sources;
 use super::{App, instance, stored};
-use crate::settings::Snapshot;
 use crate::settings::registry::{ADDRESSES, CORS_ORIGINS, ENTRIES, Entry, SIGN_IN_ADDRESS};
 use crate::settings::together::{self, Breach};
 
@@ -365,7 +364,7 @@ impl Plan {
     }
 
     /// Refuses a change that breaks a rule across settings.
-    fn judge(&self, app: &App) -> Result<Snapshot> {
+    fn judge(&self, app: &App) -> Result<()> {
         self.refuse_unread_rows(app)?;
         judge_together(app, &pairs(&self.after), &self.touched)
     }
@@ -443,15 +442,12 @@ pub fn standing(tx: &Transaction<'_>, own: Option<&Levers>) -> Result<Standing> 
 }
 
 /// Refuses settings `stored` that break a rule across settings naming one of `touched`.
-pub fn judge_together(
-    app: &App,
-    stored: &[(String, String)],
-    touched: &[&str],
-) -> Result<Snapshot> {
-    let after = app.settings.candidate(stored);
-    let breaches = together::judge(&after, touched, &app.settings.start);
+pub fn judge_together(app: &App, stored: &[(String, String)], touched: &[&str]) -> Result<()> {
+    let after = Arc::new(app.settings.candidate(stored));
+    let sign_in = app.addresses_in(after.clone()).sign_in();
+    let breaches = together::judge(&after, touched, &app.settings.start, Some(sign_in));
     if breaches.is_empty() {
-        return Ok(after);
+        return Ok(());
     }
     Err(
         Refusal::validation("The settings cannot be used together").with_detail(

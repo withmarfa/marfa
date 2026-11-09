@@ -430,7 +430,7 @@ If `marfa_create` is asked to fetch a file while the server is fetching four fil
 
 ### `mcp/file-rate-limited`
 
-Where rate limiting is on, if one credential's tool calls ask to fetch more than 30 files within `RATE_LIMIT_WINDOW_MS`, then the server MUST answer each further request in that window with a tool error with code `file_not_fetched`, reason `rate_limited` and `retry_after_seconds`, without connecting to the address.
+Where rate limiting is on, if one credential's tool calls ask to fetch more than 30 files within `rate_limit_window_ms`, then the server MUST answer each further request in that window with a tool error with code `file_not_fetched`, reason `rate_limited` and `retry_after_seconds`, without connecting to the address.
 
 **Tests:** `compliance/mcp-scripted.test.ts › refuses a credential's 31st fetch in a window with reason rate_limited, and not another credential's`.
 

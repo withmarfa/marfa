@@ -79,7 +79,7 @@ impl Db {
             readers: reader::Pool::new(opened.readers),
             writer,
             faults,
-            budget: options.busy_budget,
+            budget: options.write_wait,
         })
     }
 
@@ -140,7 +140,7 @@ impl Db {
             .map_err(|refusal| self.with_budget(refusal))
     }
 
-    /// Waits as for a lock another connection holds, until it is let go or the busy budget is spent.
+    /// Waits as for a lock another connection holds, until it is let go or the write wait is spent.
     async fn wait_out_lock(&self) -> bool {
         if !self.faults.refusing(REFUSE_WRITE_LOCK) {
             return true;
@@ -161,7 +161,7 @@ impl Db {
         self.writer.commits()
     }
 
-    /// Beaten by a job that writes longer than the busy budget, so writes queued behind it wait.
+    /// Beaten by a job that writes longer than the write wait, so writes queued behind it wait.
     pub fn pulse(&self) -> Pulse {
         self.writer.pulse()
     }

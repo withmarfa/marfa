@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import { controlRequest } from "../../utils/control-request.js";
 import {
@@ -109,40 +108,6 @@ describe("the test hooks", () => {
       }
     },
     2 * FRESH_SERVER_TIMEOUT_MS,
-  );
-
-  it(
-    "refuses to start in production with MARFA_TEST_HOOKS true, naming the setting",
-    async () => {
-      const strong = () => randomBytes(32).toString("hex");
-      const production = {
-        API_KEY_SALT: strong(),
-        MARFA_AUTH_SECRET: strong(),
-        MARFA_AUTH_BASE_URL: "https://marfa.example",
-        MARFA_TEST_HOOKS: "true",
-      };
-      const refused = await bootRefused("test-hooks-production", {
-        nodeEnv: "production",
-        extraEnv: production,
-      });
-      try {
-        expect(refused).toMatchObject({ code: 1, signal: null });
-        expect(listened(refused)).toBe(false);
-        const lines = settingLines(refused);
-        expect(lines).toHaveLength(1);
-        expect(lines[0]).toMatch(
-          /^MARFA_TEST_HOOKS must not be true in production/,
-        );
-        expect(refused.after).toEqual({
-          db: "absent",
-          wal: "absent",
-          shm: "absent",
-        });
-      } finally {
-        await refused.stop();
-      }
-    },
-    FRESH_SERVER_TIMEOUT_MS,
   );
 
   it(

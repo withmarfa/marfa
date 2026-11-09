@@ -12,6 +12,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use super::confine::LimitKind;
+use crate::Sandbox;
 
 const MARK: &[u8] = b"MARFA-ENRICHMENT-FAULT:";
 
@@ -28,6 +29,18 @@ fn parse(bytes: &[u8]) -> Option<(&str, &str)> {
     let line = rest.split(|byte| *byte == b'\n').next()?;
     let line = std::str::from_utf8(line).ok()?;
     Some(line.split_once(' ').unwrap_or((line, "")))
+}
+
+/// What a child's parent sets to make confinement fail.
+pub(super) const UNCONFINED: &str = "MARFA_FAULT_UNCONFINED";
+
+/// The state a child reports: `Off` when its parent asked for confinement to fail.
+pub(super) fn weaken(state: Sandbox) -> Sandbox {
+    if std::env::var_os(UNCONFINED).is_some() {
+        Sandbox::Off
+    } else {
+        state
+    }
 }
 
 /// The start of the file, where a fault is named.

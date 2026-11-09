@@ -266,7 +266,7 @@ describe("a store is its folder", () => {
     // Another folder, which holds no marker: a fresh store with no copies
     // claimed, and the first one stays listed, detached.
     const other = join(server!.stateDir, "other-blobs");
-    await server!.restart({ env: { BLOB_PATH: other } });
+    await server!.restart({ env: { MARFA_BLOB_PATH: other } });
     ({ operator, working } = clientsFor(server!));
     const after = (await operator.listBlobStores()).data.data;
     expect(after).toHaveLength(2);
@@ -467,7 +467,7 @@ describe("a store whose folder is missing at start", () => {
         const refused = await bootRefused("blob-folder-missing", {
           prepare: (_database, state) =>
             cpSync(image, state, { recursive: true }),
-          extraEnv: { ...DISK_ONLY, BLOB_PATH: folder },
+          extraEnv: { ...DISK_ONLY, MARFA_BLOB_PATH: folder },
         });
         refusals.push(refused);
         return refused;

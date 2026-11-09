@@ -445,7 +445,7 @@ describe("an archive whose blob the instance holds", () => {
 });
 
 describe("a writer while a restore writes", () => {
-  it("waits for the restore, and is answered 503 write_contention naming the busy budget once it has waited that long", async () => {
+  it("waits for the restore, and is answered 503 write_contention naming the write wait once it has waited that long", async () => {
     const rows = carrying();
     await server.setFault("hold:restore:before-commit");
     const restoring = ownerClient().restoreArchive(rows.archive);

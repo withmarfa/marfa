@@ -21,7 +21,7 @@ The file must be a regular file open for reading only. The child reads it by pos
 
 `read` blocks until the child answers, so an async caller runs it on a blocking thread. Several threads can call it at once. A program that forgets `serve_child_if_asked` panics at its first `read`, and nothing is started or read.
 
-`Reading::sandbox` says how far the child was shut off from the system (`Full`, `Partial`, or `Off`). The reading is good in every state, so a caller that needs `Full` checks it.
+A child that cannot shut itself off from the system reads nothing: `read` answers `ReaderUnavailable` before the file is parsed.
 
 ## What it reads
 
@@ -59,7 +59,7 @@ A file the reader cannot take apart is `Refusal::Malformed`, and so is one that 
 
 1. The parent starts the program with an empty environment, the working directory `/`, and a process group of its own. The file is the child's stdin, and the limits and the request are on the command line, so the child sets the limits before it reads a byte.
 2. The child closes every inherited descriptor above 2, turns on Landlock or `sandbox_init`, starts a watchdog, loads the seccomp filter on Linux, and states in a first frame on stdout which sandbox holds.
-3. The child reads the file only after that frame, with `pread` and the length from the request, so it asks the file for nothing else. The parent keeps what the frame said. Nothing the child writes later can change `Reading::sandbox`.
+3. The child reads the file only after that frame, with `pread` and the length from the request, so it asks the file for nothing else. Nothing the child writes later can change what the parent believed of it.
 4. The child answers with one JSON document and ends. The parent checks the answer against what was asked.
 5. The parent runs one `poll` loop on the calling thread. It kills the child's whole group at the deadline, when the child's memory passes the limit, and when stdout passes the largest answer `max_text_chars` allows. It always reaps the child.
 
@@ -70,7 +70,7 @@ A file the reader cannot take apart is `Refusal::Malformed`, and so is one that 
 | Network, processes, signals | The seccomp allow-list in `src/isolated/calls.rs` refuses them. | `sandbox_init` refuses them. |
 | Crash | No core file. | No core file and no crash report: the signals the reporter watches end the child with `128` plus the signal. |
 
-`Sandbox::Full` needs the filter and files held: on Linux the seccomp filter plus Landlock, or the filter alone when there is no data folder; on macOS `sandbox_init`. `Partial` is Linux only, with one of the two missing. `Off` means only the limits stand between the reader and the machine. Rosetta is one such case, since its calls are not x86_64 calls and the filter cannot run there.
+A child reads the file only when it states `Sandbox::Full`: on Linux the seccomp filter plus Landlock, or the filter alone when there is no data folder; on macOS `sandbox_init`. A child that states anything else ends without reading, and the parent kills one that goes on, so `read` answers `ReaderUnavailable`. Rosetta cannot run the filter, so an x86_64 program under it reads nothing.
 
 ## Refusals
 
@@ -83,7 +83,7 @@ A file the reader cannot take apart is `Refusal::Malformed`, and so is one that 
 | `TimedOut` | The child ended at the deadline. |
 | `Crashed` | The child ended by a signal, or gave an answer that cannot be believed. |
 | `OcrUnavailable` | A language or model that does not load. The setting is at fault, not the file. |
-| `ReaderUnavailable` | No child could start, or the file given is not a regular file open for reading only. The file was not tried. |
+| `ReaderUnavailable` | No child could start, a child could not confine itself, or the file given is not a regular file open for reading only. The file was not tried. |
 
 A picture whose text is refused still gives a `Reading`, with its size in `Reading::dimensions` and the refusal in `Reading::text_refused`.
 
@@ -149,7 +149,7 @@ To change PDFium's build steps, add a patch named `native/patches/pdfium-*.patch
 - a reader that has been taken over (write a file, open a file, connect, send on UDP, fork);
 - the memory limit against a dense 64 million pixel page.
 
-`native/verify.sh <target> --vm` runs the matrix for `x86_64-unknown-linux-musl` on a real kernel in QEMU, when no x86_64 machine is at hand. An x86_64 program run under Rosetta on an Apple silicon Mac reports `Sandbox::Off` and fails the cases that depend on the sandbox. `native/fuzz.sh <target> <seconds>` mutates the same files, reads them, and keeps each file that harms a reader.
+`native/verify.sh <target> --vm` runs the matrix for `x86_64-unknown-linux-musl` on a real kernel in QEMU, when no x86_64 machine is at hand. An x86_64 program run under Rosetta on an Apple silicon Mac cannot hold the sandbox and reads nothing, so `verify.sh` refuses an emulated run. `native/fuzz.sh <target> <seconds>` mutates the same files, reads them, and keeps each file that harms a reader.
 
 ## Test
 
@@ -162,7 +162,7 @@ cargo nextest run -p marfa-enrichment --features fault-injection
 
 `tests/isolation.rs` is a program of its own that calls `serve_child_if_asked` first, so every test starts the real child and can count this process's children, descriptors, and threads. `tests/forgotten.rs` is a program that does not call it.
 
-The `fault-injection` feature makes a child misbehave on marked bytes. `src/isolated/fault.rs` lists the faults, among them each call the sandbox must refuse and each thing a taken-over child could say. On Linux these tests need a kernel with seccomp and require `Sandbox::Full`. `build.rs` stops a release build that has the feature, unless `MARFA_ENRICHMENT_ALLOW_FAULTS` is set for a build that exists to prove the child.
+The `fault-injection` feature makes a child misbehave on marked bytes. `src/isolated/fault.rs` lists the faults, among them each call the sandbox must refuse and each thing a taken-over child could say. On Linux these tests need a kernel with seccomp. `build.rs` stops a release build that has the feature, unless `MARFA_ENRICHMENT_ALLOW_FAULTS` is set for a build that exists to prove the child.
 
 `fixtures/` holds the files the tests read, among them a short sound and video of each format. `sample.ogv` is `sample.ogg` behind the first header of a Theora stream, since no encoder for Theora was at hand: it shows that a video stream the reader does not read does not stop the sound beside it from being measured. Four generated pictures (a sentence in three languages, an upright sentence as a CMYK JPEG, an EXIF-rotated JPEG, and a two-page TIFF), a binary workbook, and a password-protected PDF from PDFium's own test files are ones nothing else here can write. No test covers `.xlsb`.
 

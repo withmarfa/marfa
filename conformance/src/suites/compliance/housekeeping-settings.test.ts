@@ -18,8 +18,8 @@ afterAll(stopFreshServers, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 /** Counted in days, 0 through 36500. */
 const DAYS = [
-  "AUDIT_RETENTION_DAYS",
-  "TRASH_RETENTION_DAYS",
+  "MARFA_AUDIT_RETENTION_DAYS",
+  "MARFA_TRASH_RETENTION_DAYS",
   "MARFA_INBOUND_HANDLED_RETENTION_DAYS",
   "MARFA_INBOUND_PENDING_RETENTION_DAYS",
   "MARFA_REVOKED_GRANT_RETENTION_DAYS",
@@ -27,19 +27,16 @@ const DAYS = [
   "MARFA_DCR_CLIENT_RETENTION_DAYS",
 ] as const;
 const HOURS = "MARFA_EVENT_LOG_RETENTION_HOURS";
-const MS = "MARFA_BULK_ACTION_JOB_RETENTION_MS";
 
 const MAX_DAYS = 36_500;
 const MAX_HOURS = 876_000;
-const MAX_MS = 3_153_600_000_000;
 
-const ALL = [...DAYS, HOURS, MS];
+const ALL = [...DAYS, HOURS];
 
 /** The largest value each setting accepts. */
 const WIDEST: Record<string, string> = {
   ...Object.fromEntries(DAYS.map((name) => [name, String(MAX_DAYS)])),
   [HOURS]: String(MAX_HOURS),
-  [MS]: String(MAX_MS),
 };
 
 /** Each setting's way outside its range: past the largest value, below 0,
@@ -54,18 +51,17 @@ const OUTSIDE = (max: number): string[] => [
 const RANGE: Record<string, string> = {
   ...Object.fromEntries(DAYS.map((name) => [name, "from 0 to 36500"])),
   [HOURS]: "from 0 to 876000",
-  [MS]: "from 0 to 3153600000000",
 };
 
 /** The largest value of each setting, to put one step past. */
 const LARGEST = (name: string): number =>
-  name === HOURS ? MAX_HOURS : name === MS ? MAX_MS : MAX_DAYS;
+  name === HOURS ? MAX_HOURS : MAX_DAYS;
 
 /**
- * Four boots, each with every one of the nine settings outside its range at
+ * Four boots, each with every one of the eight settings outside its range at
  * once, the way outside rotating from one boot to the next so that each
  * setting is refused for each way. A refusal names every setting that is
- * outside its rule, so one boot answers for all nine.
+ * outside its rule, so one boot answers for all eight.
  */
 const refusals = new Map<string, string[]>();
 
@@ -112,10 +108,6 @@ describe("a retention setting outside its range", () => {
   it("refuses MARFA_EVENT_LOG_RETENTION_HOURS outside 0 through 876000, and names the setting", () => {
     expectRefused([HOURS]);
   });
-
-  it("refuses MARFA_BULK_ACTION_JOB_RETENTION_MS outside 0 through 3153600000000, and names the setting", () => {
-    expectRefused([MS]);
-  });
 });
 
 describe("a retention setting inside its range", () => {
@@ -153,7 +145,6 @@ describe("a retention setting inside its range", () => {
           "revoked-grant-purge",
           "grant-inactivity-retirement",
           "dcr-client-cleanup",
-          "bulk-action-gc",
         ];
         // Listed, so each can be run.
         const listed = await jobs(server);

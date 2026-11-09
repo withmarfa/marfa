@@ -31,8 +31,8 @@ if [ "${1:-}" = control-only ]; then
   exec node --import ./dist/instrumentation.js dist/index.js
 fi
 
-: "${SQLITE_PATH:=/data/marfa.db}"
-: "${BLOB_PATH:=/data/blobs}"
+: "${MARFA_DATABASE_PATH:=/data/marfa.db}"
+: "${MARFA_BLOB_PATH:=/data/blobs}"
 # The sidecar's file needs a word where the server takes a default: path
 # style with an endpoint, which is every S3-compatible store, and virtual
 # hosting without one, which is AWS; the region the server assumes when
@@ -63,7 +63,7 @@ case /$prefix/ in
     ;;
 esac
 S3_PREFIX=$prefix
-export SQLITE_PATH BLOB_PATH S3_FORCE_PATH_STYLE S3_REGION S3_PREFIX
+export MARFA_DATABASE_PATH MARFA_BLOB_PATH S3_FORCE_PATH_STYLE S3_REGION S3_PREFIX
 
 # The words the server reads as a flag, in any case and with any space
 # around them, and empty for unset.
@@ -77,7 +77,7 @@ case $replace_newer in
     ;;
 esac
 
-mkdir -p "$(dirname "$SQLITE_PATH")" "$BLOB_PATH"
+mkdir -p "$(dirname "$MARFA_DATABASE_PATH")" "$MARFA_BLOB_PATH"
 
 # The status the server stops with when it refuses a database:
 # `REFUSED_DATABASE_EXIT_CODE` in
@@ -124,11 +124,11 @@ if [ -z "${S3_BUCKET:-}" ]; then
   supervise /bin/sh "$0" run-server || code=$?
 else
   had_database=false
-  if [ -e "$SQLITE_PATH" ]; then had_database=true; fi
+  if [ -e "$MARFA_DATABASE_PATH" ]; then had_database=true; fi
   # `-if-db-not-exists` leaves a database already on the volume alone;
   # `-if-replica-exists` makes a prefix holding no replica yet, the first boot
   # of a new instance, a fresh start rather than a failure.
-  litestream restore -config /etc/litestream.yml -if-db-not-exists -if-replica-exists "$SQLITE_PATH"
+  litestream restore -config /etc/litestream.yml -if-db-not-exists -if-replica-exists "$MARFA_DATABASE_PATH"
 
   # A database the restore wrote is the replica's newest state. One that was
   # already here may be older. The check reads the volume and lists the
@@ -153,22 +153,22 @@ else
   # replicated by an earlier image holds, to be of this replica. The file
   # holds one value a line, so the endpoint and bucket are written as the
   # server reads them, without the space around them.
-  record="$(dirname "$SQLITE_PATH")/.$(basename "$SQLITE_PATH")-litestream"
-  replica_marker="$SQLITE_PATH-replica"
+  record="$(dirname "$MARFA_DATABASE_PATH")/.$(basename "$MARFA_DATABASE_PATH")-litestream"
+  replica_marker="$MARFA_DATABASE_PATH-replica"
   endpoint=$(trimmed "${S3_ENDPOINT:-}")
   bucket=$(trimmed "$S3_BUCKET")
   forget_record=false
   if [ "$had_database" = false ]; then
     forget_record=true
   elif [ "$replace_newer" = true ]; then
-    echo "MARFA_REPLACE_NEWER_REPLICA is set, so the database at $SQLITE_PATH is replicated to $S3_PREFIX/db without checking that it is not older than the replica there: it becomes the replica's newest state. Unset MARFA_REPLACE_NEWER_REPLICA once this start has replicated." >&2
+    echo "MARFA_REPLACE_NEWER_REPLICA is set, so the database at $MARFA_DATABASE_PATH is replicated to $S3_PREFIX/db without checking that it is not older than the replica there: it becomes the replica's newest state. Unset MARFA_REPLACE_NEWER_REPLICA once this start has replicated." >&2
     forget_record=true
   else
-    if ! replica=$(litestream ltx -config /etc/litestream.yml -level all -json "$SQLITE_PATH"); then
-      echo "Could not list the replica at $S3_PREFIX/db in the bucket $S3_BUCKET, so this start cannot check that the database at $SQLITE_PATH is not older than it. Replication has not started, and the bucket is unchanged. Start again once the bucket can be reached. To start without the check, start once with MARFA_REPLACE_NEWER_REPLICA=true: a database older than the replica then becomes its newest state." >&2
+    if ! replica=$(litestream ltx -config /etc/litestream.yml -level all -json "$MARFA_DATABASE_PATH"); then
+      echo "Could not list the replica at $S3_PREFIX/db in the bucket $S3_BUCKET, so this start cannot check that the database at $MARFA_DATABASE_PATH is not older than it. Replication has not started, and the bucket is unchanged. Start again once the bucket can be reached. To start without the check, start once with MARFA_REPLACE_NEWER_REPLICA=true: a database older than the replica then becomes its newest state." >&2
       exit 1
     fi
-    if ! verdict=$(printf '%s' "$replica" | node dist/replica-check.js "$SQLITE_PATH" "$bucket" "$S3_PREFIX" "$endpoint"); then
+    if ! verdict=$(printf '%s' "$replica" | node dist/replica-check.js "$MARFA_DATABASE_PATH" "$bucket" "$S3_PREFIX" "$endpoint"); then
       exit 1
     fi
     if [ "$verdict" = empty ]; then forget_record=true; fi
@@ -190,7 +190,7 @@ else
 fi
 
 if [ -e "$MARFA_RUN_DIR/refused-database" ]; then
-  echo "This server will not start on the database at $SQLITE_PATH, and the message above says why and what to do. This container stays up, unhealthy, so that nothing restarts it into the same refusal; stop it to remove it." >&2
+  echo "This server will not start on the database at $MARFA_DATABASE_PATH, and the message above says why and what to do. This container stays up, unhealthy, so that nothing restarts it into the same refusal; stop it to remove it." >&2
   trap 'kill "$napping" 2>/dev/null || true; exit 0' TERM INT
   while :; do
     sleep 3600 &

@@ -100,6 +100,37 @@ describe("the server's exception reports", () => {
   );
 
   it(
+    "are still sent, with traces and logs, when OTEL_SDK_DISABLED is any value but true, 1 included",
+    async () => {
+      await faultAndStop(
+        await boot((receiver) => ({
+          OTEL_SDK_DISABLED: "1",
+          OTEL_EXPORTER_OTLP_ENDPOINT: receiver.OTEL_EXPORTER_OTLP_ENDPOINT!,
+        })),
+      );
+      expect(sinks!.sentExceptions()).toHaveLength(1);
+      expect(sinks!.traces.length).toBeGreaterThan(0);
+      expect(sinks!.logRecords.length).toBeGreaterThan(0);
+    },
+    BUDGET,
+  );
+
+  it(
+    "still post an error notification when OTEL_SDK_DISABLED is true in any case",
+    async () => {
+      await faultAndStop(
+        await boot((receiver) => ({
+          OTEL_SDK_DISABLED: "TRUE",
+          MARFA_ERROR_WEBHOOK_URL: receiver.MARFA_ERROR_WEBHOOK_URL!,
+        })),
+      );
+      expect(sinks!.sentExceptions()).toEqual([]);
+      expect(sinks!.notifications.length).toBeGreaterThan(0);
+    },
+    BUDGET,
+  );
+
+  it(
     "are all that a host the token may not travel to stops: traces and logs still go",
     async () => {
       // The unusable host is the local receiver's own address with a user

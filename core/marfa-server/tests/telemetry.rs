@@ -121,11 +121,11 @@ impl Instance {
         let blobs = dir.path().join("blobs");
         let socket = dir.path().join("s.sock");
         let mut all = vec![
-            ("SQLITE_PATH", database.to_str().unwrap()),
-            ("BLOB_PATH", blobs.to_str().unwrap()),
+            ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
+            ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
             ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
             ("MARFA_TEST_HOOKS", "true"),
-            ("RATE_LIMIT_ENABLED", "false"),
+            ("MARFA_RATE_LIMIT_ENABLED", "false"),
         ];
         all.extend_from_slice(pairs);
         let environment = Environment::from_pairs(&all);
@@ -181,7 +181,10 @@ fn settings(host: &str, other: &[(&'static str, String)]) -> Vec<(String, String
     let mut pairs = vec![
         ("MARFA_POSTHOG_HOST".to_string(), host.to_string()),
         ("MARFA_POSTHOG_PROJECT_TOKEN".to_string(), "phc_test".into()),
-        ("ERROR_WEBHOOK_URL".to_string(), format!("{host}/errors")),
+        (
+            "MARFA_ERROR_WEBHOOK_URL".to_string(),
+            format!("{host}/errors"),
+        ),
         ("OTEL_EXPORTER_OTLP_ENDPOINT".to_string(), host.to_string()),
         ("MARFA_OTEL_SAMPLE_RATIO".to_string(), "0".to_string()),
     ];

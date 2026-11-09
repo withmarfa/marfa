@@ -130,14 +130,6 @@ const UNPUBLISHED: &[(&str, &str)] = &[
         "single-use browser handoff exchange",
     ),
     (
-        "GET /config/settings",
-        "every setting with where its value comes from",
-    ),
-    (
-        "POST /config/address-check",
-        "checks a public address before it is saved",
-    ),
-    (
         "HEAD /blobs/{hash}",
         "the headers of the published read, without its bytes",
     ),
@@ -188,17 +180,12 @@ const UNPUBLISHED: &[(&str, &str)] = &[
 /// served fails the test, so the list only shrinks.
 const NOT_YET_SERVED: &[&str] = &[
     "DELETE /connectors/{id}/endpoints/{endpoint_id}",
-    "GET /attention",
     "GET /connectors/{id}/deliveries",
     "GET /connectors/{id}/deliveries/{delivery_id}/body",
     "GET /connectors/{id}/endpoints",
-    "GET /items/bulk-actions/jobs/{id}",
     "GET /metrics",
     "POST /connectors/{id}/deliveries/handled",
     "POST /connectors/{id}/endpoints",
-    "POST /items/bulk-actions",
-    "POST /items/bulk-actions/jobs/{id}/cancel",
-    "POST /types/{id}/move",
 ];
 
 const METHODS: [&str; 8] = [
@@ -244,8 +231,8 @@ async fn served() -> Served {
     let blobs = dir.path().join("blobs");
     let socket = dir.path().join("s.sock");
     let settings = Settings::read(Environment::from_pairs(&[
-        ("SQLITE_PATH", database.to_str().unwrap()),
-        ("BLOB_PATH", blobs.to_str().unwrap()),
+        ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
+        ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
         ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
         ("MARFA_TEST_HOOKS", "true"),
     ]))

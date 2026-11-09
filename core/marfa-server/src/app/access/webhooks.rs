@@ -1,8 +1,6 @@
 use rusqlite::Transaction;
 
-use super::{Caller, Permission, standing_key, unauthorized};
-use crate::app::keys;
-use crate::app::oauth;
+use super::{Caller, Permission, standing_holder, unauthorized};
 use crate::app::refusal::Result;
 
 /// App subscriptions belong to the grant, not an individual token.
@@ -36,12 +34,6 @@ impl Caller {
 
 /// Requires a live maker that still holds `webhooks.manage`.
 pub fn standing_maker(tx: &Transaction<'_>, maker: &Maker, at: &str) -> Result<Option<Caller>> {
-    let caller = match maker {
-        Maker::Key(id) => match keys::live_by_id(tx, id, at)? {
-            Some(key) => Some(Caller::Key(Box::new(standing_key(tx, key)?))),
-            None => None,
-        },
-        Maker::Grant(grant_id) => oauth::grant_caller(tx, grant_id)?,
-    };
+    let caller = standing_holder(tx, maker, at)?;
     Ok(caller.filter(|caller| caller.holds(Permission::WebhooksManage)))
 }

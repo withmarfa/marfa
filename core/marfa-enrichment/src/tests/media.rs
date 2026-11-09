@@ -9,8 +9,7 @@ const FIXTURES: &[Stated] = &[
     ("sample.flac", "audio/flac", 1.5, None),
     ("sample.ogg", "audio/ogg", 1.5, None),
     ("sample.opus", "audio/opus", 1.5065, None),
-    // An Ogg video: its length comes from the Vorbis track, and the picture of a
-    // Theora track is not read, so there is no size.
+    // The Theora picture is not read, so an Ogg video has a length and no size.
     ("sample.ogv", "video/ogg", 1.5, None),
     // An AAC track counts the encoder's padding in its length.
     ("sample.m4a", "audio/mp4", 1.564, None),
@@ -29,8 +28,7 @@ fn near(seconds: Option<f64>, expected: f64, name: &str) {
     );
 }
 
-/// A reading that failed, and not by a parser that panicked: a panic is caught and
-/// reported as `Malformed` too, so it is told apart here.
+/// A failed reading that is not a caught parser panic, which is `Malformed` too.
 fn assert_clean(result: Result<Reading, Refusal>, what: &str) {
     match result {
         Ok(reading) => assert!(reading.text.is_empty(), "{what}: text from a sound"),
@@ -384,8 +382,7 @@ fn live_cluster(millis: u32, blocks: i16, open: bool) -> Vec<u8> {
     }
 }
 
-/// A recording of `seconds` made of clusters that state no size, as a browser
-/// writes while it is still recording, and no duration.
+/// A live recording: clusters that state no size, and no duration.
 fn live_recording(seconds: u32, blocks: i16) -> Vec<u8> {
     let clusters: Vec<u8> = (0..seconds)
         .flat_map(|second| live_cluster(second * 1000, blocks, true))
@@ -431,8 +428,7 @@ fn clusters_of_a_stated_size_over_the_limit_are_measured_from_the_last_one() {
 
 #[test]
 fn a_cut_off_walk_that_finds_no_last_cluster_states_no_length() {
-    // One cluster that never ends, with millions of blocks: the only cluster is both
-    // the first and the last, and no walk of it reaches its end.
+    // One cluster of millions of blocks: it is both first and last, and no walk reaches its end.
     let empty = [0xA3, 0x80];
     let blocks: Vec<u8> = std::iter::repeat_n(empty, 2_000_000).flatten().collect();
     for opening in [
