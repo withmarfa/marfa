@@ -42,6 +42,136 @@ A command that ends in a fault also sends one exception to PostHog's error track
 
 ";
 
+/// What an owner does with an instance, and the command that does it. The
+/// instance has no console, so each of these is a command; a test holds every
+/// command named here to the command tree.
+const OWNER_TASKS: &[(&str, &[&str])] = &[
+    ("See what needs attention", &["attention"]),
+    ("Check the instance's health", &["status"]),
+    ("Read the instance's metrics", &["metrics"]),
+    ("See what a key can read", &["overview"]),
+    ("Read the instance's name and enforcement", &["config get"]),
+    ("Change a setting", &["config update", "config replace"]),
+    (
+        "List every setting with its default and rule",
+        &["config settings"],
+    ),
+    (
+        "Check what changing the addresses would do",
+        &["config check-address"],
+    ),
+    (
+        "Make, list, change and revoke a key",
+        &["keys create", "keys list", "keys update", "keys revoke"],
+    ),
+    (
+        "List the browsers, apps and keys that can sign in",
+        &["sign-ins list"],
+    ),
+    ("Rename a sign-in", &["sign-ins rename"]),
+    ("End one sign-in", &["sign-ins end"]),
+    ("End every sign-in of a kind at once", &["sign-ins end-all"]),
+    (
+        "List, narrow and disconnect a connected app",
+        &["apps list", "apps narrow", "apps disconnect"],
+    ),
+    (
+        "Read and change the owner's email, name and picture, or clear the picture",
+        &["owner show", "owner update", "owner picture"],
+    ),
+    (
+        "Manage the owner's passkeys",
+        &[
+            "owner passkeys list",
+            "owner passkeys rename",
+            "owner passkeys remove",
+        ],
+    ),
+    ("Set a new owner password", &["owner recover"]),
+    (
+        "Claim a new instance",
+        &["setup status", "setup code", "setup open", "setup claim"],
+    ),
+    (
+        "Read and change the profile apps show",
+        &["profile show", "profile update"],
+    ),
+    (
+        "See connectors, their runs and their problems",
+        &["connectors list", "connectors get", "connectors runs"],
+    ),
+    ("Remove a connector", &["connectors delete"]),
+    (
+        "Manage a connector's inbound endpoints and deliveries",
+        &[
+            "connectors endpoints list",
+            "connectors endpoints create",
+            "connectors endpoints retire",
+            "connectors deliveries list",
+            "connectors deliveries body",
+            "connectors deliveries handle",
+        ],
+    ),
+    (
+        "List, make, change and revoke folders, and read their sync reports",
+        &[
+            "folders inventory",
+            "folders create",
+            "folders change",
+            "folders revoke",
+            "folders health",
+        ],
+    ),
+    (
+        "Manage webhooks and their deliveries",
+        &[
+            "webhooks create",
+            "webhooks list",
+            "webhooks get",
+            "webhooks update",
+            "webhooks delete",
+            "webhooks deliveries",
+            "webhooks redeliver",
+        ],
+    ),
+    ("Read the audit log", &["audit"]),
+    (
+        "List and run the housekeeping jobs",
+        &["housekeeping list", "housekeeping run"],
+    ),
+    (
+        "Manage blob stores and copies",
+        &[
+            "blobs stores",
+            "blobs copies",
+            "blobs delete-copy",
+            "blobs orphans",
+        ],
+    ),
+    (
+        "Empty and restore the trash",
+        &[
+            "items trash list",
+            "items trash restore",
+            "items trash purge",
+            "items trash empty",
+        ],
+    ),
+    ("Export and restore the instance", &["export", "restore"]),
+];
+
+fn owner_tasks(out: &mut String) {
+    out.push_str("## Owner tasks\n\nThe instance draws no owner console, so each task an owner has is a command. Most need `--socket`, the private socket on the server's machine, or a key that holds the permission the command names.\n\n| Task | Commands |\n| --- | --- |\n");
+    for (task, commands) in OWNER_TASKS {
+        let commands: Vec<String> = commands
+            .iter()
+            .map(|command| format!("`marfa {command}`"))
+            .collect();
+        writeln!(out, "| {} | {} |", cell(task), commands.join(", ")).unwrap();
+    }
+    out.push('\n');
+}
+
 /// The reference as the file holds it: what the root says of itself, its
 /// options and exit codes, then every visible command in the order
 /// `marfa --help` lists them, depth first.
@@ -79,6 +209,7 @@ pub fn render() -> String {
     out.push_str("## Exit codes\n\n");
     exit_codes(&mut out);
     out.push_str(TELEMETRY);
+    owner_tasks(&mut out);
 
     let inherited: Vec<Inherited> = globals
         .iter()
@@ -515,6 +646,22 @@ mod tests {
 
     fn committed() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("COMMANDS.md")
+    }
+
+    #[test]
+    fn every_owner_task_names_commands_that_exist() {
+        let mut root = Cli::command();
+        root.build();
+        for (task, commands) in OWNER_TASKS {
+            for command in *commands {
+                let mut at = &root;
+                for word in command.split(' ') {
+                    at = at.find_subcommand(word).unwrap_or_else(|| {
+                        panic!("`marfa {command}` (for \"{task}\") is not a command")
+                    });
+                }
+            }
+        }
     }
 
     #[test]
