@@ -136,8 +136,7 @@ fn begin(tx: &Transaction<'_>, store: &str, name: &str) -> Result<i64> {
     Ok(tx.last_insert_rowid())
 }
 
-/// Holds `hashes` from backup `seq` on, refusing when one left the registry, or left `store`
-/// where the backup's snapshot found it, since that snapshot.
+/// Holds `hashes` from backup `seq` on, refusing one purged or dropped from `store` since its read.
 fn open(
     tx: &Transaction<'_>,
     store: &str,
@@ -202,9 +201,7 @@ fn plan(open_now: &HashSet<String>, files: Vec<String>) -> (Vec<String>, Vec<Str
 /// How many files one write of a hold looks up and opens.
 const HOLD_PAGE: usize = 5_000;
 
-/// Records the backup `name` about to be put and holds each file it names, a page per write.
-/// A file open now stays held by a recorded backup throughout; each other file is checked
-/// against the snapshot in the write that holds it.
+/// Records backup `name` and holds its files a page per write; a file open now is held already.
 async fn hold(
     app: &Arc<App>,
     store: &str,
@@ -242,8 +239,7 @@ async fn hold(
     Ok(())
 }
 
-/// Confirms each backup of `store` the listing names, and forgets one only once thinning
-/// deleted it, or once the listing omits it, a later one is recorded and it is past retention.
+/// Confirms listed backups; forgets one thinning deleted, or unlisted, superseded and past retention.
 fn reconcile(
     tx: &Transaction<'_>,
     store: &str,
@@ -281,8 +277,7 @@ fn reconcile(
     drop_uncovered(tx, store)
 }
 
-/// Deletes each hold of `store` that no backup it records covers. An open hold is covered by
-/// any backup from its first on, so it is compared with the newest alone rather than probed.
+/// Deletes each hold of `store` no recorded backup covers; an open one needs only the newest.
 fn drop_uncovered(tx: &Transaction<'_>, store: &str) -> Result<()> {
     tx.prepare_cached(
         "DELETE FROM backup_files WHERE store_id = ?1 AND CASE WHEN last_seq IS NULL \
@@ -796,8 +791,7 @@ mod tests {
             .collect()
     }
 
-    /// Records backup `name`, closes the files it does not name, and opens those it does,
-    /// stopping before the opens when `interrupted`.
+    /// What `hold` writes against the snapshot `in_bucket`, stopping before the opens if told.
     fn attempt(
         tx: &Transaction<'_>,
         store: &str,

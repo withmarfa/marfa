@@ -568,8 +568,7 @@ impl FakeS3 {
         self.held.lock().unwrap().refused.clear();
     }
 
-    /// Answers the next write under `prefix` as refused and keeps it, as a put the server gave
-    /// up on that the store has yet to commit; `land_late_writes` commits it.
+    /// Answers the next write under `prefix` as refused but keeps it until `land_late_writes`.
     pub fn late_write(&self, prefix: &str) {
         self.held.lock().unwrap().late_next = Some(prefix.to_string());
     }
