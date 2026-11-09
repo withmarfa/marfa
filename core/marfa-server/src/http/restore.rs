@@ -15,8 +15,10 @@ use super::query;
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::refusal::{Code, Refusal};
+use crate::settings::registry::MAX_REQUEST_BYTES;
 
 const PATH: &str = "/restore";
+const EARLY_DRAIN: Duration = Duration::from_secs(2);
 
 /// A body this door reads itself, whose size no cap holds in check.
 pub fn is_restore(request: &Request) -> bool {
@@ -35,6 +37,32 @@ async fn linger(body: &mut Body, idle: Duration) {
     while !body.is_end_stream() {
         match tokio::time::timeout(idle, body.frame()).await {
             Ok(Some(Ok(_))) => {}
+            _ => return,
+        }
+    }
+}
+
+/// Before a refusal made ahead of the body, reads and drops what a client already sending has
+/// in flight: at most one request's worth, for at most `EARLY_DRAIN`. A client that asked to
+/// wait for `100 Continue` has sent nothing, and reading would invite it to send.
+async fn drain_early(app: &App, parts: &Parts, body: &mut Body) {
+    let waits = parts
+        .headers
+        .get(header::EXPECT)
+        .is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"100-continue"));
+    if waits {
+        return;
+    }
+    let most = app.settings.live().get(MAX_REQUEST_BYTES);
+    let until = tokio::time::Instant::now() + EARLY_DRAIN;
+    let mut taken: u64 = 0;
+    while !body.is_end_stream() && taken <= most {
+        match tokio::time::timeout_at(until, body.frame()).await {
+            Ok(Some(Ok(frame))) => {
+                if let Ok(data) = frame.into_data() {
+                    taken = taken.saturating_add(data.len() as u64);
+                }
+            }
             _ => return,
         }
     }
@@ -63,7 +91,10 @@ pub async fn restore(
             linger(&mut body, idle).await;
             Err(Stopped::Refused(refusal))
         }
-        Err(Stopped::Refused(refusal)) if !read.ended => Ok(closing(&refusal)),
+        Err(Stopped::Refused(refusal)) if !read.ended => {
+            drain_early(&app, &parts, &mut body).await;
+            Ok(closing(&refusal))
+        }
         answer => answer,
     }
 }
