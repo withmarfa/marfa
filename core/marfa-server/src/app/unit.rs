@@ -12,6 +12,7 @@ use super::clock::Stamp;
 use super::connectors::{ReadOnly, Registry, read_only};
 use super::events::{self, Event};
 use super::provenance::{self, Origin};
+use super::query::Secret;
 use super::refusal::Result;
 use crate::db::Write;
 
@@ -26,6 +27,8 @@ pub struct Unit<'t, 'c> {
     pub instant: Stamp,
     origin: Origin,
     read_only: Arc<ArcSwap<Registry>>,
+    /// What a listing this write answers signs its cursor with.
+    pub cursors: Secret,
     /// A job's chunk records one entry for its rows, as an atomic page does.
     summarised: bool,
 }
@@ -50,6 +53,7 @@ impl<'c> Unit<'_, 'c> {
             instant: self.instant,
             origin: self.origin.clone(),
             read_only: self.read_only.clone(),
+            cursors: self.cursors.clone(),
             summarised: self.summarised,
         }
     }
@@ -152,6 +156,7 @@ impl App {
         let clock = self.clock.clone();
         let origin = provenance::current();
         let read_only = self.read_only_handle();
+        let cursors = self.cursor_secret.clone();
         let write = if matches!(caller, Caller::Server) {
             Write::server(action)
         } else {
@@ -171,6 +176,7 @@ impl App {
                     instant,
                     origin,
                     read_only,
+                    cursors,
                     summarised: false,
                 })
             })

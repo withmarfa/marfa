@@ -859,6 +859,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             &self.read_only,
             self.caller(),
             &self.catalog,
+            &self.unit.cursors,
         )?;
         self.answer_with(status, shown, item, also)
     }

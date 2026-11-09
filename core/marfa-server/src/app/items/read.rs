@@ -11,7 +11,6 @@ use serde_json::{Value, json};
 use crate::app::clock::Stamp;
 use crate::app::housekeeping::DAY_MS;
 use super::plan::{self, Act, Asked, Gate};
-use super::rows::Position;
 use super::{
     Item, Keys, check_keys, extensions_text, metadata_for, name_of, not_found, rows, summary_of,
     with_blocks,
@@ -23,7 +22,8 @@ use crate::app::catalog::{self, Catalog, Snapshot};
 use crate::app::connectors::{ReadOnly, read_only};
 use crate::app::edges::{self, Reach};
 use crate::app::faults::{Faults, HOLD_READ_HYDRATION, HOLD_READ_SNAPSHOT};
-use crate::app::refusal::{Refusal, Result};
+use crate::app::query::{Secret, bad_cursor};
+use crate::app::refusal::Result;
 use crate::settings::registry::TRASH_RETENTION_DAYS;
 
 const TITLES_PER_NAME: i64 = 20;
@@ -37,6 +37,8 @@ pub(crate) struct Reader<'a, 'c> {
     pub caller: Caller,
     pub catalog: Arc<Catalog>,
     pub read_only: ReadOnly,
+    /// What every listing signs its cursor with.
+    pub cursors: Secret,
     faults: &'a Faults,
     /// The read answers a request that presented a reach, which it found current.
     certified: bool,
@@ -83,6 +85,7 @@ where
     let marked = app.read_only_handle();
     let clock = app.clock.clone();
     let faults = app.faults.clone();
+    let cursors = app.cursor_secret.clone();
     app.db
         .read(move |tx| {
             let at = clock.stamp();
@@ -100,6 +103,7 @@ where
                 caller,
                 catalog,
                 read_only,
+                cursors,
                 faults: &faults,
                 certified: demand.is_some(),
             })
@@ -146,7 +150,11 @@ impl Reader<'_, '_> {
         let more = page.len() as i64 > limit;
         page.truncate(limit as usize);
         let next = match page.last().filter(|_| more) {
-            Some(snapshot) => Value::from(cursor_of(snapshot.version)).to_string(),
+            Some(snapshot) => Value::from(
+                self.cursors
+                    .issue(VERSIONS, &Value::from(snapshot.version))?,
+            )
+            .to_string(),
             None => "null".to_string(),
         };
         let data: Vec<String> = page
@@ -160,19 +168,15 @@ impl Reader<'_, '_> {
     }
 }
 
-fn cursor_of(version: i64) -> String {
-    hex::encode(format!("versions\0{version}"))
-}
+/// One item's history continues on another's, as both order by version alone.
+const VERSIONS: &str = "versions";
 
-fn version_at(cursor: &str) -> Result<i64> {
-    let refused = || Refusal::validation("The cursor does not belong to this listing.");
-    let text = hex::decode(cursor)
-        .ok()
-        .and_then(|bytes| String::from_utf8(bytes).ok())
-        .ok_or_else(refused)?;
-    text.strip_prefix("versions\0")
-        .and_then(|version| version.parse().ok())
-        .ok_or_else(refused)
+fn version_at(cursors: &Secret, cursor: &str) -> Result<i64> {
+    cursors
+        .open(VERSIONS, cursor)?
+        .as_i64()
+        .filter(|version| *version >= 0)
+        .ok_or_else(bad_cursor)
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -230,6 +234,7 @@ pub async fn detail(app: &App, caller: &Caller, id: String, include: Detail) -> 
             read.tx,
             &read.caller,
             &read.catalog,
+            &read.cursors,
             &row.id,
             Reach::Outbound,
         )?;
@@ -239,6 +244,7 @@ pub async fn detail(app: &App, caller: &Caller, id: String, include: Detail) -> 
                 read.tx,
                 &read.caller,
                 &read.catalog,
+                &read.cursors,
                 &row.id,
                 Reach::Inbound,
             )?;
@@ -280,7 +286,7 @@ pub async fn history(
     reading(app, caller, move |read| {
         let row = read.row(&id)?;
         let after = match cursor.as_deref() {
-            Some(cursor) => version_at(cursor)?,
+            Some(cursor) => version_at(&read.cursors, cursor)?,
             None => 0,
         };
         read.history_page(&row, after, limit)
@@ -326,7 +332,7 @@ pub async fn bulk_get(
         let mut metadata = Vec::new();
         for row in &visible {
             let mut text = if include.edges {
-                row.hydrated(read.tx, &read.read_only, &read.caller, &read.catalog)?
+                row.hydrated(read.tx, &read.read_only, &read.caller, &read.catalog, &read.cursors)?
             } else {
                 row.answered(&read.read_only, &read.caller)?
             };
@@ -370,7 +376,7 @@ pub(crate) fn listed_rows(
         .iter()
         .map(|row| {
             let mut text = if include.edges {
-                row.hydrated(read.tx, &read.read_only, &read.caller, &read.catalog)?
+                row.hydrated(read.tx, &read.read_only, &read.caller, &read.catalog, &read.cursors)?
             } else {
                 row.answered(&read.read_only, &read.caller)?
             };
@@ -614,24 +620,6 @@ pub struct Listing {
     pub cursor: Option<String>,
 }
 
-pub(crate) fn position_cursor(scope: &str, position: &Position) -> String {
-    hex::encode(format!("{scope}\0{}\0{}", position.0, position.1))
-}
-
-pub(crate) fn position_at(cursor: &str, scope: &str) -> Result<Position> {
-    let refused = || Refusal::validation("The cursor does not belong to this listing.");
-    let text = hex::decode(cursor)
-        .ok()
-        .and_then(|bytes| String::from_utf8(bytes).ok())
-        .ok_or_else(refused)?;
-    let (at, id) = text
-        .strip_prefix(scope)
-        .and_then(|rest| rest.strip_prefix('\0'))
-        .and_then(|rest| rest.split_once('\0'))
-        .ok_or_else(refused)?;
-    Ok((at.to_string(), id.to_string()))
-}
-
 fn batch_size(limit: i64, passes_over: bool) -> i64 {
     if passes_over { WALK_BATCH } else { limit + 1 }
 }
@@ -644,7 +632,7 @@ impl Reader<'_, '_> {
         let mut after = listing
             .cursor
             .as_deref()
-            .map(|cursor| position_at(cursor, &scope))
+            .map(|cursor| self.cursors.open_at(&scope, cursor))
             .transpose()?;
         let batch_size = batch_size(
             listing.limit,
@@ -684,10 +672,10 @@ impl Reader<'_, '_> {
         }
         let more = page.len() as i64 > listing.limit;
         page.truncate(listing.limit as usize);
-        let next = page
-            .last()
-            .filter(|_| more)
-            .map(|row| position_cursor(&scope, &(row.created_at.clone(), row.id.clone())));
+        let next = match page.last().filter(|_| more) {
+            Some(row) => Some(self.cursors.issue_at(&scope, &row.created_at, &row.id)?),
+            None => None,
+        };
         Ok((page, next))
     }
 }
@@ -814,7 +802,7 @@ pub async fn lookup(
                 continue;
             }
             data.push(if edges {
-                row.hydrated(read.tx, &read.read_only, &read.caller, &read.catalog)?
+                row.hydrated(read.tx, &read.read_only, &read.caller, &read.catalog, &read.cursors)?
             } else {
                 row.answered(&read.read_only, &read.caller)?
             });

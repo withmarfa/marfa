@@ -10,11 +10,14 @@ use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::catalog::Catalog;
 use crate::app::items::{self, Reader, reading};
+use crate::app::query::Secret;
 use crate::app::refusal::{Code, Refusal, Result};
 
 const BLOCK_CAP: i64 = 50;
 const BY_CREATION: &str = "edges";
 const BY_CHANGE: &str = "edges-changed";
+const OUTBOUND: &str = "item-edges";
+const INBOUND: &str = "item-backrefs";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reach {
@@ -44,12 +47,11 @@ fn readable(tx: &Transaction<'_>, caller: &Caller, edge: &Edge) -> Result<bool> 
 }
 
 fn page_of(
-    tx: &Transaction<'_>,
-    caller: &Caller,
-    catalog: &Catalog,
+    read: &Reader<'_, '_>,
     asked: &Page<'_>,
     scope: &str,
 ) -> Result<(Vec<String>, Option<String>)> {
+    let (tx, caller, catalog) = (read.tx, &read.caller, &read.catalog);
     let wider = Page {
         limit: asked.limit + 1,
         ..*asked
@@ -59,14 +61,17 @@ fn page_of(
     })?;
     let more = found.len() as i64 > asked.limit;
     found.truncate(asked.limit as usize);
-    let cursor = found.last().filter(|_| more).map(|edge| {
-        let at = if asked.by_change {
-            &edge.updated_at
-        } else {
-            &edge.created_at
-        };
-        items::position_cursor(scope, &(at.clone(), edge.id.clone()))
-    });
+    let cursor = match found.last().filter(|_| more) {
+        Some(edge) => {
+            let at = if asked.by_change {
+                &edge.updated_at
+            } else {
+                &edge.created_at
+            };
+            Some(read.cursors.issue_at(scope, at, &edge.id)?)
+        }
+        None => None,
+    };
     let mut printed = Vec::with_capacity(found.len());
     for edge in &found {
         if readable(tx, caller, edge)? {
@@ -104,12 +109,10 @@ pub async fn list(app: &App, caller: &Caller, listing: Listing) -> Result<String
         let after: Option<Position> = listing
             .cursor
             .as_deref()
-            .map(|cursor| items::position_at(cursor, scope))
+            .map(|cursor| read.cursors.open_at(scope, cursor))
             .transpose()?;
         let (data, cursor) = page_of(
-            read.tx,
-            &read.caller,
-            &read.catalog,
+            read,
             &Page {
                 from: None,
                 to: None,
@@ -125,6 +128,13 @@ pub async fn list(app: &App, caller: &Caller, listing: Listing) -> Result<String
         Ok(page_text(&data, cursor))
     })
     .await
+}
+
+fn scope_of(reach: Reach) -> &'static str {
+    match reach {
+        Reach::Outbound => OUTBOUND,
+        Reach::Inbound => INBOUND,
+    }
 }
 
 fn ends(reach: Reach, id: &str) -> (Option<&str>, Option<&str>) {
@@ -150,13 +160,11 @@ pub async fn of_item(
         let after: Option<Position> = listing
             .cursor
             .as_deref()
-            .map(|cursor| items::position_at(cursor, BY_CREATION))
+            .map(|cursor| read.cursors.open_at(scope_of(reach), cursor))
             .transpose()?;
         let (from, to) = ends(reach, &row.id);
         let (data, cursor) = page_of(
-            read.tx,
-            &read.caller,
-            &read.catalog,
+            read,
             &Page {
                 from,
                 to,
@@ -167,7 +175,7 @@ pub async fn of_item(
                 by_change: false,
                 limit: listing.limit,
             },
-            BY_CREATION,
+            scope_of(reach),
         )?;
         Ok(page_text(&data, cursor))
     })
@@ -184,6 +192,7 @@ pub(crate) fn hydrate(
     tx: &Transaction<'_>,
     caller: &Caller,
     catalog: &Catalog,
+    secret: &Secret,
     id: &str,
     reach: Reach,
 ) -> Result<Blocks> {
@@ -207,9 +216,10 @@ pub(crate) fn hydrate(
         })?;
         let more = found.len() as i64 > BLOCK_CAP;
         found.truncate(BLOCK_CAP as usize);
-        let cursor = found.last().filter(|_| more).map(|edge| {
-            items::position_cursor(BY_CREATION, &(edge.created_at.clone(), edge.id.clone()))
-        });
+        let cursor = match found.last().filter(|_| more) {
+            Some(edge) => Some(secret.issue_at(scope_of(reach), &edge.created_at, &edge.id)?),
+            None => None,
+        };
         let mut data = Vec::with_capacity(found.len());
         for edge in &found {
             if readable(tx, caller, edge)? {

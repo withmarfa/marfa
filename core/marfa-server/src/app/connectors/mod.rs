@@ -8,7 +8,6 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use rusqlite::Transaction;
-use rusqlite::types::Value as Stored;
 use serde_json::{Map, Value, json};
 
 use crate::app::clock::Stamp;
@@ -17,7 +16,7 @@ use super::access::Caller;
 use super::faults::HOLD_CONNECTOR_WRITE;
 use super::housekeeping;
 use super::items;
-use super::query::{Position, bad_cursor};
+use super::query::bad_cursor;
 use super::refusal::{Code, Refusal, Result};
 use super::stored;
 use crate::settings::registry::CONNECTOR_HOLD_MS;
@@ -284,14 +283,7 @@ pub struct Window {
 impl Window {
     pub fn open(app: &App, scope: String, limit: i64, cursor: Option<&str>) -> Result<Window> {
         let after = cursor
-            .map(|cursor| {
-                let payload = app.cursor_secret.open(&scope, cursor)?;
-                let position = Position::from_payload(&payload, 1)?;
-                match position.keys.as_slice() {
-                    [Stored::Text(key)] => Ok((key.clone(), position.id)),
-                    _ => Err(bad_cursor()),
-                }
-            })
+            .map(|cursor| app.cursor_secret.open_at(&scope, cursor))
             .transpose()?;
         Ok(Window {
             scope,
@@ -306,11 +298,7 @@ impl Window {
         key: &str,
         id: &str,
     ) -> Result<String> {
-        let position = Position {
-            keys: vec![Stored::Text(key.to_string())],
-            id: id.to_string(),
-        };
-        secret.issue(&self.scope, &position.payload())
+        secret.issue_at(&self.scope, key, id)
     }
 }
 

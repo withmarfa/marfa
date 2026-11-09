@@ -371,7 +371,7 @@ pub async fn deliveries(
                 .open(&scope, cursor)?
                 .get("before")
                 .and_then(Value::as_i64)
-                .ok_or_else(|| invalid("cursor", "cursor is not one this list gave."))?,
+                .ok_or_else(super::query::bad_cursor)?,
         ),
         None => None,
     };

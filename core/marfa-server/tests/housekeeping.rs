@@ -167,7 +167,7 @@ impl Instance {
             "INSERT INTO webhook_deliveries (id, webhook_id, event_id, event_type, type, source, \
              payload, status, status_code, attempt, cycle_attempt, due_at, created_at, \
              updated_at) VALUES ('dead', '{webhook}', 1, 'edge.deleted', 'core.note', 'writer', \
-             '{{}}', 'dead_letter', 400, 1, 1, 0, '{at}', '{at}')"
+             '{{}}', 'dead_letter', 400, 1, 1, '{at}', '{at}', '{at}')"
         ))
         .await;
         webhook

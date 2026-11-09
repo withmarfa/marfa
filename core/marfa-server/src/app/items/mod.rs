@@ -29,7 +29,7 @@ pub use read::{
     extension, extensions, history, lookup, metadata, summaries, tag_counts, titles, trash_preview,
 };
 pub(crate) use read::{
-    Reader, listed, listed_rows, position_at, position_cursor, readable_tags, reading,
+    Reader, listed, listed_rows, readable_tags, reading,
     reading_under,
 };
 pub(crate) use write::settle_late_part;
@@ -239,8 +239,9 @@ impl Item {
         read_only: &ReadOnly,
         caller: &Caller,
         catalog: &Catalog,
+        cursors: &crate::app::query::Secret,
     ) -> Result<String> {
-        let blocks = edges::hydrate(tx, caller, catalog, &self.id, Reach::Outbound)?;
+        let blocks = edges::hydrate(tx, caller, catalog, cursors, &self.id, Reach::Outbound)?;
         Ok(with_blocks(self.answered(read_only, caller)?, &blocks.text))
     }
 
