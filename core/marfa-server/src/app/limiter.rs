@@ -1,12 +1,10 @@
 //! The one rate limiter, in memory: fixed windows, each opened by its first attempt.
 
-use std::collections::HashMap;
-use std::sync::{Mutex, PoisonError};
+use std::collections::{BTreeSet, HashMap};
+use std::sync::{Arc, Mutex, PoisonError};
 
-/// Most keys held at once. A key the table has no room for is counted in one window its
-/// family shares, so the table stays bounded and no key goes uncounted.
-const MAX_WINDOWS: usize = 100_000;
-const PRUNE_ABOVE: usize = 1_024;
+/// Most windows a family holds beside its pinned ones; the families together bound the table.
+const ROOM: usize = 8_192;
 const PRUNE_EVERY_MS: i64 = 1_000;
 
 /// The families of lanes a credential is counted in.
@@ -21,6 +19,7 @@ pub struct Lane {
     pub key: String,
     pub limit: u64,
     pub window_ms: i64,
+    pub pinned: bool,
 }
 
 impl Lane {
@@ -30,6 +29,15 @@ impl Lane {
             key,
             limit,
             window_ms,
+            pinned: false,
+        }
+    }
+
+    /// Never dropped to make room, so only for keys there are few of: the owner's and the instance's.
+    pub fn pinned(family: &'static str, key: String, limit: u64, window_ms: i64) -> Lane {
+        Lane {
+            pinned: true,
+            ..Lane::new(family, key, limit, window_ms)
         }
     }
 
@@ -58,60 +66,101 @@ struct Window {
     ends_ms: i64,
 }
 
+/// `keys` and `by_end` share each key's one allocation.
 #[derive(Debug, Default)]
 struct Family {
-    keys: HashMap<String, Window>,
-    overflow: Option<Window>,
+    pinned: HashMap<String, Window>,
+    keys: HashMap<Arc<str>, Window>,
+    by_end: BTreeSet<(i64, Arc<str>)>,
+}
+
+impl Family {
+    fn live(&self, key: &str, now_ms: i64) -> Option<Window> {
+        self.pinned
+            .get(key)
+            .or_else(|| self.keys.get(key))
+            .copied()
+            .filter(|window| window.ends_ms > now_ms)
+    }
+
+    fn unhold(&mut self, key: &str) -> Option<Arc<str>> {
+        let (key, window) = self.keys.remove_entry(key)?;
+        self.by_end.remove(&(window.ends_ms, Arc::clone(&key)));
+        Some(key)
+    }
+
+    /// A key once pinned stays pinned while its window lasts.
+    fn record(&mut self, lane: &Lane, window: Window) {
+        if let Some(held) = self.pinned.get_mut(&lane.key) {
+            *held = window;
+            return;
+        }
+        let held = self.unhold(&lane.key);
+        if lane.pinned {
+            self.pinned.insert(lane.key.clone(), window);
+            return;
+        }
+        if held.is_none() && self.keys.len() >= ROOM {
+            if let Some((_, soonest)) = self.by_end.pop_first() {
+                self.keys.remove(&soonest);
+            }
+        }
+        let key = held.unwrap_or_else(|| Arc::from(lane.key.as_str()));
+        self.by_end.insert((window.ends_ms, Arc::clone(&key)));
+        self.keys.insert(key, window);
+    }
+
+    fn prune(&mut self, now_ms: i64) {
+        self.pinned.retain(|_, window| window.ends_ms > now_ms);
+        while self
+            .by_end
+            .first()
+            .is_some_and(|(ends_ms, _)| *ends_ms <= now_ms)
+        {
+            if let Some((_, key)) = self.by_end.pop_first() {
+                self.keys.remove(&key);
+            }
+        }
+    }
+
+    fn forget(&mut self, matches: impl Fn(&str) -> bool) {
+        self.pinned.retain(|key, _| !matches(key));
+        let Family { keys, by_end, .. } = self;
+        keys.retain(|key, window| {
+            let drop = matches(key);
+            if drop {
+                by_end.remove(&(window.ends_ms, Arc::clone(key)));
+            }
+            !drop
+        });
+    }
 }
 
 #[derive(Debug, Default)]
 struct Windows {
     families: HashMap<&'static str, Family>,
-    held: usize,
     pruned_ms: i64,
 }
 
 impl Windows {
-    fn full(&self) -> bool {
-        self.held >= MAX_WINDOWS
-    }
-
     fn live(&self, lane: &Lane, now_ms: i64) -> Option<Window> {
-        let family = self.families.get(lane.family)?;
-        match family.keys.get(&lane.key) {
-            Some(window) => Some(*window),
-            None if self.full() => family.overflow,
-            None => None,
-        }
-        .filter(|window| window.ends_ms > now_ms)
+        self.families.get(lane.family)?.live(&lane.key, now_ms)
     }
 
     fn record(&mut self, lane: &Lane, window: Window) {
-        let full = self.full();
-        let family = self.families.entry(lane.family).or_default();
-        if let Some(held) = family.keys.get_mut(&lane.key) {
-            *held = window;
-        } else if full {
-            family.overflow = Some(window);
-        } else {
-            family.keys.insert(lane.key.clone(), window);
-            self.held += 1;
-        }
-    }
-
-    fn count(&mut self) {
-        self.held = self.families.values().map(|family| family.keys.len()).sum();
+        self.families
+            .entry(lane.family)
+            .or_default()
+            .record(lane, window);
     }
 
     fn prune(&mut self, now_ms: i64) {
-        if self.held <= PRUNE_ABOVE || now_ms.saturating_sub(self.pruned_ms) < PRUNE_EVERY_MS {
+        if now_ms.saturating_sub(self.pruned_ms) < PRUNE_EVERY_MS {
             return;
         }
         for family in self.families.values_mut() {
-            family.keys.retain(|_, window| window.ends_ms > now_ms);
-            family.overflow = family.overflow.filter(|window| window.ends_ms > now_ms);
+            family.prune(now_ms);
         }
-        self.count();
         self.pruned_ms = now_ms;
     }
 }
@@ -157,9 +206,8 @@ impl Limiter {
     pub fn forget(&self, family: &'static str, matches: impl Fn(&str) -> bool) {
         let mut windows = self.windows.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(held) = windows.families.get_mut(family) {
-            held.keys.retain(|key, _| !matches(key));
+            held.forget(matches);
         }
-        windows.count();
     }
 }
 
@@ -248,44 +296,112 @@ mod tests {
         assert!(limiter.admit(1, &[lane("f", "b|1", 1)]).is_some());
     }
 
-    #[test]
-    fn ended_windows_go_once_the_table_grows() {
-        let limiter = Limiter::default();
-        for n in 0..(PRUNE_ABOVE + 10) {
-            assert_eq!(limiter.admit(0, &[lane("a", &n.to_string(), 1)]), None);
-        }
-        assert_eq!(limiter.admit(MINUTE, &[lane("a", "late", 1)]), None);
+    fn held(limiter: &Limiter, family: &'static str) -> (usize, usize) {
         let windows = limiter.windows.lock().unwrap();
-        assert_eq!(windows.held, 1);
+        windows.families.get(family).map_or((0, 0), |family| {
+            assert_eq!(family.keys.len(), family.by_end.len());
+            (family.keys.len(), family.pinned.len())
+        })
     }
 
     #[test]
-    fn a_full_table_counts_the_keys_it_holds_and_every_other_key_in_one_window() {
+    fn ended_windows_go_within_a_second_of_ending() {
         let limiter = Limiter::default();
-        {
-            let mut windows = limiter.windows.lock().unwrap();
-            let live = Window {
-                count: 0,
-                ends_ms: MINUTE,
-            };
-            let family = windows.families.entry("a").or_default();
-            for n in 0..MAX_WINDOWS {
-                family.keys.insert(n.to_string(), live);
-            }
-            windows.held = MAX_WINDOWS;
+        for n in 0..10 {
+            assert_eq!(limiter.admit(0, &[lane("a", &n.to_string(), 1)]), None);
         }
-        let known = [lane("a", "7", 1)];
-        assert_eq!(limiter.admit(1, &known), None);
-        assert!(limiter.admit(2, &known).is_some());
-        let stranger = [lane("a", "stranger", 1)];
-        assert_eq!(limiter.admit(3, &stranger), None);
-        assert_eq!(limiter.admit(4, &stranger), Some(MINUTE - 1));
+        let pinned = [Lane::pinned("a", "owner".into(), 1, MINUTE)];
+        assert_eq!(limiter.admit(0, &pinned), None);
+        assert_eq!(limiter.admit(MINUTE - 1, &[lane("b", "x", 1)]), None);
+        assert_eq!(limiter.admit(MINUTE + 998, &[lane("b", "y", 1)]), None);
+        assert_eq!(held(&limiter, "a"), (10, 1));
+        assert_eq!(limiter.admit(MINUTE + 999, &[lane("b", "z", 1)]), None);
+        assert_eq!(held(&limiter, "a"), (0, 0));
+    }
+
+    #[test]
+    fn a_full_family_drops_the_window_that_ends_soonest() {
+        let limiter = Limiter::default();
+        for n in 0..ROOM {
+            let at = i64::try_from(n).unwrap();
+            assert_eq!(limiter.admit(at, &[lane("a", &n.to_string(), 1)]), None);
+        }
+        let at = i64::try_from(ROOM).unwrap();
+        assert_eq!(limiter.admit(at, &[lane("a", "new", 1)]), None);
+        assert_eq!(held(&limiter, "a"), (ROOM, 0));
+        assert!(limiter.admit(at, &[lane("a", "1", 1)]).is_some());
+        assert_eq!(limiter.admit(at, &[lane("a", "0", 1)]), None);
+    }
+
+    #[test]
+    fn a_pinned_window_outlasts_a_full_family_and_takes_none_of_its_room() {
+        let limiter = Limiter::default();
+        let owner = [Lane::pinned("a", "owner".into(), 1, MINUTE)];
+        assert_eq!(limiter.admit(0, &owner), None);
+        for n in 0..(2 * ROOM) {
+            assert_eq!(limiter.admit(1, &[lane("a", &n.to_string(), 1)]), None);
+        }
+        assert_eq!(held(&limiter, "a"), (ROOM, 1));
+        assert!(limiter.admit(2, &owner).is_some());
+    }
+
+    #[test]
+    fn a_held_window_moves_to_the_pinned_ones_and_keeps_its_count() {
+        let limiter = Limiter::default();
+        assert_eq!(limiter.admit(0, &[lane("a", "owner", 2)]), None);
+        let pinned = [Lane::pinned("a", "owner".into(), 2, MINUTE)];
+        assert_eq!(limiter.admit(1, &pinned), None);
+        assert_eq!(held(&limiter, "a"), (0, 1));
+        assert!(limiter.admit(2, &[lane("a", "owner", 2)]).is_some());
+        assert_eq!(held(&limiter, "a"), (0, 1));
+    }
+
+    #[test]
+    fn a_window_reopened_after_it_ends_is_ordered_by_its_new_end() {
+        let limiter = Limiter::default();
+        assert_eq!(limiter.admit(0, &[lane("a", "old", 1)]), None);
+        assert_eq!(limiter.admit(10, &[lane("a", "x", 1)]), None);
+        assert_eq!(limiter.admit(MINUTE - 500, &[lane("b", "y", 1)]), None);
+        assert_eq!(limiter.admit(MINUTE + 5, &[lane("a", "old", 1)]), None);
+        assert_eq!(held(&limiter, "a"), (2, 0));
+        let windows = limiter.windows.lock().unwrap();
+        let order: Vec<_> = windows.families["a"]
+            .by_end
+            .iter()
+            .map(|(ends_ms, key)| (*ends_ms, key.as_ref()))
+            .collect();
+        assert_eq!(order, [(MINUTE + 10, "x"), (2 * MINUTE + 5, "old")]);
+    }
+
+    #[test]
+    fn forgetting_reaches_pinned_windows_and_the_order() {
+        let limiter = Limiter::default();
         assert_eq!(
-            limiter.admit(4, &[lane("a", "another", 1)]),
-            Some(MINUTE - 1)
+            limiter.admit(0, &[Lane::pinned("f", "a|1".into(), 1, MINUTE)]),
+            None
         );
-        assert_eq!(limiter.admit(4, &[lane("b", "another", 1)]), None);
-        assert_eq!(limiter.windows.lock().unwrap().held, MAX_WINDOWS);
-        assert_eq!(limiter.admit(MINUTE + 3, &stranger), None);
+        assert_eq!(limiter.admit(0, &[lane("f", "a|2", 1)]), None);
+        limiter.forget("f", |key| key.starts_with("a|"));
+        assert_eq!(held(&limiter, "f"), (0, 0));
+    }
+
+    fn fill(limiter: &Limiter, family: &'static str, keys: usize) {
+        for n in 0..keys {
+            assert_eq!(limiter.admit(0, &[lane(family, &n.to_string(), 1)]), None);
+        }
+    }
+
+    #[test]
+    fn a_full_family_still_counts_every_new_key_in_a_window_of_its_own() {
+        for family in [REQUESTS, INBOUND_DELIVERIES] {
+            let limiter = Limiter::default();
+            fill(&limiter, family, ROOM);
+            let now = 1;
+            for key in ["new-1", "new-2", "new-3"] {
+                let fresh = [lane(family, key, 1)];
+                assert_eq!(limiter.admit(now, &fresh), None, "{family} {key}");
+                assert!(limiter.admit(now, &fresh).is_some(), "{family} {key}");
+            }
+        }
     }
 }

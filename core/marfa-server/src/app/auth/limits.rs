@@ -48,13 +48,18 @@ pub(super) fn account_key(email: &str) -> String {
         .collect()
 }
 
-/// Once there is an owner, only the owner's email has account lanes of its own and every other
-/// email shares one. Before, each email counts on its own, so what it spent carries into the claim.
+/// Once there is an owner, only the owner's email has account lanes of its own, every other
+/// email shares one, and both account windows are pinned. Before, each email counts on its own,
+/// so what it spent carries into the claim.
 pub fn password_lanes(email: &str, owner: Option<&str>, address: Option<IpAddr>) -> [Lane; 3] {
     let account = account_key(email);
     let account = match owner.map(account_key) {
         Some(owner) if owner != account => OTHER_EMAILS.to_string(),
         _ => account,
+    };
+    let account_lane = match owner {
+        Some(_) => Lane::pinned,
+        None => Lane::new,
     };
     [
         Lane::new(ADDRESS, bucket(address), 30, 15 * MINUTE_MS),
@@ -64,7 +69,7 @@ pub fn password_lanes(email: &str, owner: Option<&str>, address: Option<IpAddr>)
             10,
             15 * MINUTE_MS,
         ),
-        Lane::new(ACCOUNT, account, 100, 60 * MINUTE_MS),
+        account_lane(ACCOUNT, account, 100, 60 * MINUTE_MS),
     ]
 }
 
@@ -80,14 +85,14 @@ pub fn setup_code_lanes(address: Option<IpAddr>) -> [Lane; 1] {
 pub fn device_lookup_lanes(address: Option<IpAddr>) -> [Lane; 2] {
     [
         Lane::new(DEVICE_ADDRESS, bucket(address), 10, 15 * MINUTE_MS),
-        Lane::new(DEVICE_INSTANCE, ALL.to_string(), 100, 15 * MINUTE_MS),
+        Lane::pinned(DEVICE_INSTANCE, ALL.to_string(), 100, 15 * MINUTE_MS),
     ]
 }
 
 pub fn device_owner_lanes(user_id: &str, instance_limit: Option<i64>) -> [Lane; 2] {
     [
-        Lane::new(DEVICE_OWNER, user_id.to_string(), 10, 15 * MINUTE_MS),
-        Lane::new(
+        Lane::pinned(DEVICE_OWNER, user_id.to_string(), 10, 15 * MINUTE_MS),
+        Lane::pinned(
             DEVICE_OWNER_INSTANCE,
             ALL.to_string(),
             instance_limit
@@ -101,7 +106,7 @@ pub fn device_owner_lanes(user_id: &str, instance_limit: Option<i64>) -> [Lane; 
 pub fn document_lanes(address: Option<IpAddr>) -> [Lane; 2] {
     [
         Lane::new(DOCUMENT_ADDRESS, bucket(address), 10, MINUTE_MS),
-        Lane::new(DOCUMENT_INSTANCE, ALL.to_string(), 30, MINUTE_MS),
+        Lane::pinned(DOCUMENT_INSTANCE, ALL.to_string(), 30, MINUTE_MS),
     ]
 }
 
@@ -230,25 +235,103 @@ mod tests {
         assert_eq!(attempt(&limiter, 1, &other), None);
     }
 
-    #[test]
-    fn a_full_table_still_bounds_attempts_at_the_owner_from_fresh_addresses() {
-        let limiter = Limiter::default();
-        let v6 = |n: u32| -> Option<IpAddr> {
-            format!("2001:db8:{:x}:{:x}::1", n >> 16, n & 0xffff)
-                .parse()
-                .ok()
-        };
-        for n in 0..60_000 {
-            let lanes = password_lanes(&format!("{n}@example.test"), OWNER, v6(n));
-            attempt(&limiter, 0, &lanes);
+    fn v6(n: u32) -> Option<IpAddr> {
+        format!("2001:db8:{:x}:{:x}::1", n >> 16, n & 0xffff)
+            .parse()
+            .ok()
+    }
+
+    /// Spends every address lane of 50,000 /64s past its limit.
+    fn fill_address_families(limiter: &Limiter, now: i64) {
+        for n in 0..50_000 {
+            let address = v6(n);
+            let password = password_lanes(&format!("{n}@example.test"), OWNER, address);
+            let passkey = passkey_challenge_lanes(address);
+            for _ in 0..31 {
+                attempt(limiter, now, &password);
+                attempt(limiter, now, &passkey);
+            }
+            for lanes in [
+                setup_code_lanes(address),
+                register_lanes(address),
+                device_code_lanes(address),
+            ] {
+                attempt(limiter, now, &lanes);
+            }
+            attempt(limiter, now, &device_lookup_lanes(address));
+            attempt(limiter, now, &document_lanes(address));
         }
+    }
+
+    #[test]
+    fn with_the_address_families_full_the_owner_still_signs_in_from_a_new_address() {
+        let limiter = Limiter::default();
+        fill_address_families(&limiter, 0);
+        let owner = password_lanes("a@example.test", OWNER, v6(60_000));
+        assert_eq!(attempt(&limiter, 1, &owner), None);
+        let passkey = passkey_challenge_lanes(v6(60_001));
+        assert_eq!(attempt(&limiter, 1, &passkey), None);
+    }
+
+    #[test]
+    fn with_the_address_families_full_the_owners_account_lane_still_bounds_attempts() {
+        let limiter = Limiter::default();
+        fill_address_families(&limiter, 0);
         let admitted = (60_000..61_000)
             .filter(|n| {
                 let lanes = password_lanes("a@example.test", OWNER, v6(*n));
                 attempt(&limiter, 1, &lanes).is_none()
             })
             .count();
-        assert!(admitted <= 30, "{admitted} attempts admitted");
+        assert_eq!(admitted, 100);
+    }
+
+    #[test]
+    fn full_sign_in_families_leave_credential_and_inbound_windows_alone() {
+        use crate::app::limiter::{INBOUND_DELIVERIES, REQUESTS};
+        let limiter = Limiter::default();
+        let spent = [
+            Lane::credential(REQUESTS, "key-1", 1, 60_000),
+            Lane::credential(INBOUND_DELIVERIES, "endpoint-1", 1, 60_000),
+        ];
+        for lane in &spent {
+            assert_eq!(attempt(&limiter, 0, std::slice::from_ref(lane)), None);
+        }
+        fill_address_families(&limiter, 0);
+        for lane in &spent {
+            assert!(attempt(&limiter, 1, std::slice::from_ref(lane)).is_some());
+        }
+        for family in [REQUESTS, INBOUND_DELIVERIES] {
+            for key in ["new-1", "new-2"] {
+                let fresh = [Lane::credential(family, key, 1, 60_000)];
+                assert_eq!(attempt(&limiter, 1, &fresh), None);
+            }
+        }
+    }
+
+    #[test]
+    fn only_the_owners_and_the_instances_windows_are_pinned() {
+        let address = "203.0.113.1".parse().ok();
+        let pinned = |lanes: &[Lane]| lanes.iter().map(|lane| lane.pinned).collect::<Vec<_>>();
+        assert_eq!(
+            pinned(&password_lanes("b@example.test", OWNER, address)),
+            [false, false, true]
+        );
+        assert_eq!(
+            pinned(&password_lanes("a@example.test", None, address)),
+            [false, false, false]
+        );
+        assert_eq!(pinned(&device_lookup_lanes(address)), [false, true]);
+        assert_eq!(pinned(&device_owner_lanes("user", None)), [true, true]);
+        assert_eq!(pinned(&document_lanes(address)), [false, true]);
+        for lanes in [
+            setup_code_lanes(address),
+            register_lanes(address),
+            passkey_challenge_lanes(address),
+            device_code_lanes(address),
+        ] {
+            assert_eq!(pinned(&lanes), [false]);
+        }
     }
 
     #[test]

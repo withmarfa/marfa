@@ -1123,7 +1123,7 @@ If a signed-in app mints a key naming any extension namespace, then the server M
 
 ## The rate limiter
 
-One limiter, held in the server's memory, counts every limit in this chapter. Every count starts afresh when the server starts. The limits on a credential's requests are off for a run, so their rules are asserted against a server booted with the limiter on.
+One limiter, held in the server's memory, counts every limit in this chapter. Every count starts afresh when the server starts. The limiter holds a bounded number of windows for each kind of limit. When one kind is full, it drops that kind's window that ends soonest, and the key that window counted starts afresh. It always keeps the owner's account windows and the instance-wide windows. The limits on a credential's requests are off for a run, so their rules are asserted against a server booted with the limiter on.
 
 ### `keys-and-oauth/keys-rate-cap`
 
