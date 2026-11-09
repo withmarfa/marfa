@@ -25,7 +25,36 @@ fn program() -> Option<PathBuf> {
     })
 }
 
+/// Whether a process list (`ps -Axo comm=`) holds the Mac app.
+fn lists_the_app(processes: &str) -> bool {
+    processes.lines().any(|line| line.trim() == MAC_APP)
+}
+
+/// On a Mac the command line is the app's own program, and started while the
+/// app is closed it brings up Tailscale's network extension switched off.
+fn require_the_app_running() -> Result<(), CliError> {
+    if !cfg!(target_os = "macos")
+        || std::env::var_os("MARFA_TAILSCALE").is_some()
+        || !std::path::Path::new(MAC_APP).is_file()
+    {
+        return Ok(());
+    }
+    let listed = Command::new("/bin/ps")
+        .args(["-Axo", "comm="])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| CliError::Install(format!("cannot list processes: {error}")))?;
+    if lists_the_app(&String::from_utf8_lossy(&listed.stdout)) {
+        Ok(())
+    } else {
+        Err(CliError::Install(
+            "the Tailscale app is not running. Open Tailscale and make sure it is connected, then run this again. This command does not start Tailscale itself, because its command line would start it switched off".into(),
+        ))
+    }
+}
+
 fn run(args: &[&str]) -> Result<String, CliError> {
+    require_the_app_running()?;
     let program = program().ok_or_else(|| {
         CliError::Install(
             "Tailscale is not installed, or its command line is not on the PATH. Install it from tailscale.com and sign in, then run this again".into(),
@@ -138,6 +167,15 @@ mod tests {
     use super::*;
 
     const STATUS: &str = r#"{"TCP":{"443":{"HTTPS":true}},"Web":{"host.example.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:8600"}}}}}"#;
+
+    #[test]
+    fn only_the_app_itself_counts_as_running() {
+        assert!(lists_the_app(&format!("/usr/sbin/cfprefsd\n  {MAC_APP}\n")));
+        assert!(!lists_the_app(
+            "/usr/sbin/cfprefsd\n/Applications/Tailscale.app/Contents/PlugIns/IPNExtension.appex/Contents/MacOS/IPNExtension\n"
+        ));
+        assert!(!lists_the_app(""));
+    }
 
     #[test]
     fn what_a_port_serves_is_read_from_the_status() {
