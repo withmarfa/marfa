@@ -379,7 +379,7 @@ fn due_rows() -> String {
     )
 }
 
-/// One due delivery per idle subscription; a maker passes its share only while no other maker has one due.
+/// One due delivery per idle subscription; a maker alone may pass its `share`, up to `beyond_share` rows in all.
 pub fn due(
     tx: &Transaction<'_>,
     now_ms: i64,
@@ -387,6 +387,7 @@ pub fn due(
     holding: &[String],
     share: usize,
     limit: usize,
+    beyond_share: usize,
 ) -> Result<Vec<Due>> {
     let busy =
         serde_json::to_string(busy).map_err(|_| Refusal::internal("a list did not print"))?;
@@ -402,49 +403,39 @@ pub fn due(
          WHERE webhook_id NOT IN (SELECT webhook_id FROM webhook_deliveries \
          WHERE seq IN (SELECT value FROM json_each(?2)))) WHERE turn = 1), \
          shared AS (SELECT seq, due_at, maker, place, ?4 - (SELECT COUNT(*) FROM json_each(?3) \
-         WHERE value = heads.maker) AS room FROM heads) \
-         SELECT seq, maker FROM shared, span WHERE place <= room \
-         OR (lo = maker AND hi = maker) \
-         ORDER BY place > room, due_at, seq LIMIT ?5",
+         WHERE value = heads.maker) AS room FROM heads), \
+         picked AS (SELECT seq, due_at, maker, place > room AS past FROM shared, span \
+         WHERE place <= room OR (lo = maker AND hi = maker)), \
+         ranked AS (SELECT seq, maker, past, ROW_NUMBER() OVER (ORDER BY past, due_at, seq) AS n \
+         FROM picked) \
+         SELECT seq, maker FROM ranked \
+         WHERE NOT past OR n <= ?6 ORDER BY n LIMIT ?5",
         due_rows()
     ))?;
     let share = i64::try_from(share).unwrap_or(i64::MAX);
     let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-    let rows = statement.query_map(params![now_ms, busy, holding, share, limit], |row| {
-        Ok(Due {
-            seq: row.get(0)?,
-            maker: row.get(1)?,
-        })
-    })?;
+    let beyond_share = i64::try_from(beyond_share).unwrap_or(i64::MAX);
+    let rows = statement.query_map(
+        params![now_ms, busy, holding, share, limit, beyond_share],
+        |row| {
+            Ok(Due {
+                seq: row.get(0)?,
+                maker: row.get(1)?,
+            })
+        },
+    )?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
-/// When the next pending delivery is due, leaving out those being attempted and, while another
-/// maker has a delivery due at `now_ms`, the `full` makers' own.
-pub fn next_due(
-    tx: &Transaction<'_>,
-    now_ms: i64,
-    busy: &[i64],
-    full: &[String],
-) -> Result<Option<i64>> {
+/// When the next delivery not yet due falls due, leaving out the subscriptions being attempted.
+pub fn next_due(tx: &Transaction<'_>, now_ms: i64, busy: &[i64]) -> Result<Option<i64>> {
     let busy =
         serde_json::to_string(busy).map_err(|_| Refusal::internal("a list did not print"))?;
-    let full =
-        serde_json::to_string(full).map_err(|_| Refusal::internal("a list did not print"))?;
     Ok(tx.query_row(
-        &format!(
-            "WITH due AS ({}), \
-             span AS (SELECT MIN(maker) AS lo, MAX(maker) AS hi FROM due) \
-             SELECT MIN(d.due_at) FROM webhook_deliveries d \
-             JOIN ({MAKER}) m ON m.id = d.webhook_id, span \
-             WHERE d.status = 'pending' \
-             AND d.webhook_id NOT IN (SELECT webhook_id FROM webhook_deliveries \
-             WHERE seq IN (SELECT value FROM json_each(?2))) \
-             AND (m.maker NOT IN (SELECT value FROM json_each(?3)) \
-             OR lo IS NULL OR (lo = m.maker AND hi = m.maker))",
-            due_rows()
-        ),
-        params![now_ms, busy, full],
+        "SELECT MIN(due_at) FROM webhook_deliveries WHERE status = 'pending' AND due_at > ?1 \
+         AND webhook_id NOT IN (SELECT webhook_id FROM webhook_deliveries \
+         WHERE seq IN (SELECT value FROM json_each(?2)))",
+        params![now_ms, busy],
         |row| row.get(0),
     )?)
 }
@@ -463,73 +454,90 @@ fn due_takes_one_turn_per_subscription_and_shares_attempts_between_makers() {
     )
     .unwrap();
     let seqs = |found: Vec<Due>| found.into_iter().map(|due| due.seq).collect::<Vec<_>>();
-    assert_eq!(seqs(due(&tx, 1, &[], &[], 8, 10).unwrap()), vec![1, 3, 5]);
-    assert_eq!(seqs(due(&tx, 1, &[], &[], 8, 1).unwrap()), vec![1]);
-    assert_eq!(seqs(due(&tx, 1, &[1], &[], 8, 10).unwrap()), vec![3, 5]);
-    assert_eq!(seqs(due(&tx, 1, &[], &[], 1, 10).unwrap()), vec![1, 5]);
-    let held = ["key:k1".to_string()];
-    assert_eq!(seqs(due(&tx, 1, &[], &held, 1, 10).unwrap()), vec![5]);
-    assert_eq!(seqs(due(&tx, 1, &[], &held, 2, 10).unwrap()), vec![1, 5]);
     assert_eq!(
-        seqs(due(&tx, 0, &[], &[], 1, 10).unwrap()),
+        seqs(due(&tx, 1, &[], &[], 8, 10, 10).unwrap()),
+        vec![1, 3, 5]
+    );
+    assert_eq!(seqs(due(&tx, 1, &[], &[], 8, 1, 10).unwrap()), vec![1]);
+    assert_eq!(seqs(due(&tx, 1, &[1], &[], 8, 10, 10).unwrap()), vec![3, 5]);
+    assert_eq!(seqs(due(&tx, 1, &[], &[], 1, 10, 10).unwrap()), vec![1, 5]);
+    let held = ["key:k1".to_string()];
+    assert_eq!(seqs(due(&tx, 1, &[], &held, 1, 10, 10).unwrap()), vec![5]);
+    assert_eq!(
+        seqs(due(&tx, 1, &[], &held, 2, 10, 10).unwrap()),
+        vec![1, 5]
+    );
+    assert_eq!(
+        seqs(due(&tx, 0, &[], &[], 1, 10, 10).unwrap()),
         vec![1, 3],
         "a maker no other maker waits behind may pass its share"
     );
     assert_eq!(
-        seqs(due(&tx, 1, &[1, 3], &held, 1, 10).unwrap()),
+        seqs(due(&tx, 1, &[1, 3], &held, 1, 10, 10).unwrap()),
         vec![5],
         "the busy subscriptions of another maker keep the share"
     );
-    assert_eq!(next_due(&tx, 1, &[1, 3], &[]).unwrap(), Some(1));
-    assert_eq!(next_due(&tx, 1, &[1, 3], &held).unwrap(), Some(1));
+    assert_eq!(next_due(&tx, 1, &[1, 3]).unwrap(), Some(5));
     assert_eq!(
-        next_due(&tx, 1, &[1, 3, 5], &held).unwrap(),
+        next_due(&tx, 1, &[1, 3, 4]).unwrap(),
         None,
-        "a full maker's own deliveries wait while another maker has one due"
+        "a delivery already due waits for an attempt to end, and a busy subscription for its own"
     );
 }
 
 #[test]
-fn due_lets_a_maker_nobody_waits_behind_pass_its_share_for_one_two_and_many_makers() {
+fn due_lets_a_maker_nobody_waits_behind_pass_its_share_within_the_room_beyond_it() {
     let held = ["key:k1".to_string(), "key:k1".to_string()];
-    let ask = |inserts: &str| {
+    let ask = |inserts: &str, beyond_share: usize| {
         let mut db = rusqlite::Connection::open_in_memory().unwrap();
         let tx = db.transaction().unwrap();
         tx.execute_batch(&format!(
             "CREATE TABLE webhooks (id TEXT, key_id TEXT, grant_id TEXT);
              CREATE TABLE webhook_deliveries (seq INTEGER, webhook_id TEXT, status TEXT, due_at INTEGER);
              INSERT INTO webhooks VALUES ('a', 'k1', NULL), ('b', 'k1', NULL), ('c', NULL, 'g1'),
-             ('d', 'k2', NULL);
+             ('d', 'k2', NULL), ('e', 'k1', NULL);
              {inserts}"
         ))
         .unwrap();
-        let started: Vec<i64> = due(&tx, 10, &[], &held, 2, 10)
+        let started: Vec<i64> = due(&tx, 10, &[], &held, 2, 10, beyond_share)
             .unwrap()
             .into_iter()
             .map(|due| due.seq)
             .collect();
-        let next = next_due(&tx, 10, &started, &["key:k1".to_string()]).unwrap();
+        let next = next_due(&tx, 10, &started).unwrap();
         (started, next)
     };
+    let alone = "INSERT INTO webhook_deliveries VALUES (1, 'a', 'pending', 0),
+         (2, 'b', 'pending', 0), (3, 'e', 'pending', 0), (4, 'd', 'pending', 50);";
     assert_eq!(
-        ask(
-            "INSERT INTO webhook_deliveries VALUES (1, 'a', 'pending', 0), (3, 'b', 'pending', 50);"
-        ),
-        (vec![1], Some(50)),
+        ask(alone, 10),
+        (vec![1, 2, 3], Some(50)),
         "one maker passes its share, and its later delivery keeps a timer"
     );
     assert_eq!(
-        ask(
-            "INSERT INTO webhook_deliveries VALUES (1, 'a', 'pending', 0), (2, 'b', 'pending', 0),
-             (3, 'c', 'pending', 0), (4, 'a', 'pending', 50);"
-        ),
-        (vec![3], None),
-        "another maker with a delivery due keeps a full maker to its share, and from a timer"
+        ask(alone, 2),
+        (vec![1, 2], Some(50)),
+        "a maker alone starts past its share only within the room beyond it"
+    );
+    assert_eq!(
+        ask(alone, 0),
+        (vec![], Some(50)),
+        "a maker alone starts nothing past its share when there is no room beyond it"
     );
     assert_eq!(
         ask(
             "INSERT INTO webhook_deliveries VALUES (1, 'a', 'pending', 0), (2, 'b', 'pending', 0),
-             (3, 'c', 'pending', 50), (4, 'd', 'pending', 0), (5, 'd', 'pending', 0);"
+             (3, 'c', 'pending', 0), (4, 'a', 'pending', 50);",
+            10,
+        ),
+        (vec![3], Some(50)),
+        "another maker with a delivery due keeps a full maker to its share"
+    );
+    assert_eq!(
+        ask(
+            "INSERT INTO webhook_deliveries VALUES (1, 'a', 'pending', 0), (2, 'b', 'pending', 0),
+             (3, 'c', 'pending', 50), (4, 'd', 'pending', 0), (5, 'd', 'pending', 0);",
+            10,
         ),
         (vec![4], Some(50)),
         "of three makers, the one within its share passes and the full one waits"
@@ -537,7 +545,8 @@ fn due_lets_a_maker_nobody_waits_behind_pass_its_share_for_one_two_and_many_make
     assert_eq!(
         ask(
             "INSERT INTO webhook_deliveries VALUES (1, 'a', 'pending', 0), (2, 'b', 'success', 0),
-             (3, 'c', 'pending', 50);"
+             (3, 'c', 'pending', 50);",
+            10,
         ),
         (vec![1], Some(50)),
         "a settled delivery is not one due"
