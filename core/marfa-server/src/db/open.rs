@@ -4,14 +4,14 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use rusqlite::{Connection, ErrorCode, OpenFlags};
+use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension};
 
 use super::migrate::{self, Migration, Standing};
 use super::volume;
 use crate::app::faults::{Faults, Volume};
 use crate::failure::Failure;
 use crate::settings::DatabasePath;
-use crate::settings::registry::DISK_RESERVE_BYTES;
+use crate::settings::registry::{DISK_RESERVE_BYTES, Seeds, Snapshot};
 
 const HEADER: &[u8; 16] = b"SQLite format 3\0";
 /// What the log is cut back to once a checkpoint has moved it into the file.
@@ -151,18 +151,48 @@ fn sibling(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// The reserve the file stores, or the one the server was started with.
-fn reserve_of(conn: &Connection, options: &Options) -> u64 {
-    let stored: Option<String> = conn
+/// The reserve the file stores, read by the settings' own rule, or the one the server was
+/// started with where it stores none. A stored reserve that does not read refuses the start.
+fn reserve_of(conn: &Connection, options: &Options, label: &str) -> Result<u64, Failure> {
+    let key = DISK_RESERVE_BYTES.entry.key;
+    let unread = |error: rusqlite::Error| {
+        Failure::start(format!(
+            "{label} was not upgraded, because its stored settings could not be read: {error}. \
+             Nothing was changed."
+        ))
+    };
+    let has_settings: bool = conn
         .query_row(
-            "SELECT value FROM settings WHERE key = ?1",
-            [DISK_RESERVE_BYTES.entry.key],
+            "SELECT EXISTS (SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'settings')",
+            [],
             |row| row.get(0),
         )
-        .ok();
-    stored
-        .and_then(|text| text.trim().parse::<u64>().ok())
-        .unwrap_or(options.reserve)
+        .map_err(unread)?;
+    if !has_settings {
+        return Ok(options.reserve);
+    }
+    let stored: Option<String> = conn
+        .query_row("SELECT value FROM settings WHERE key = ?1", [key], |row| {
+            row.get(0)
+        })
+        .optional()
+        .map_err(unread)?;
+    let rows: Vec<(String, String)> = stored
+        .into_iter()
+        .map(|text| (key.to_string(), text))
+        .collect();
+    let resolved = Snapshot::resolve(&Seeds::new(), &rows, 0);
+    if resolved.unreadable().contains(&key) {
+        return Err(Failure::start(format!(
+            "{label} was not upgraded, because its stored setting {key} does not read as {}. \
+             Correct that row, then start again. Nothing was changed.",
+            DISK_RESERVE_BYTES.entry.words().to_lowercase()
+        )));
+    }
+    Ok(match resolved.stored(DISK_RESERVE_BYTES.entry) {
+        Some(_) => resolved.get(DISK_RESERVE_BYTES),
+        None => options.reserve,
+    })
 }
 
 /// Writes the file as it stands to `<file>.before-upgrade`, in place of the last such copy,
@@ -191,7 +221,7 @@ fn copy_before_upgrade(
     };
     let needed =
         pages("page_count")?.saturating_sub(pages("freelist_count")?) * pages("page_size")?;
-    let reserve = reserve_of(conn, options);
+    let reserve = reserve_of(conn, options, label)?;
     let folder = path.parent().unwrap_or(Path::new("."));
     let free = match faults.free(Volume::Database) {
         Some(set) => set,

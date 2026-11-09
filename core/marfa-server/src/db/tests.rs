@@ -40,6 +40,19 @@ const THREE: &[Migration] = &[
         sql: "CREATE INDEX notes_pinned ON notes (pinned);",
     },
 ];
+const SETTINGS_BASE: Migration = Migration {
+    version: 1,
+    sql: "CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL) STRICT;
+          CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT, WITHOUT ROWID;",
+};
+const SETTINGS_ONE: &[Migration] = &[SETTINGS_BASE];
+const SETTINGS_TWO: &[Migration] = &[
+    SETTINGS_BASE,
+    Migration {
+        version: 2,
+        sql: "ALTER TABLE notes ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;",
+    },
+];
 const INDEXED: &[Migration] = &[Migration {
     version: 1,
     sql: "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL) STRICT;
@@ -497,6 +510,62 @@ async fn an_upgrade_with_no_room_for_its_copy_is_refused_and_changes_nothing() {
     witness.set("free:database", Some("1073741824")).unwrap();
     opened(&place.file, TWO, witness).close().await;
     assert_eq!(version_of(&place.file), 2);
+}
+
+async fn with_stored_reserve(file: &Path, reserve: &'static str) {
+    let db = opened(file, SETTINGS_ONE, Arc::default());
+    db.write(WRITE, move |tx| {
+        add(tx, 1)?;
+        tx.execute(
+            "INSERT INTO settings (key, value) VALUES ('disk_reserve_bytes', ?1)",
+            [reserve],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    db.close().await;
+}
+
+#[tokio::test]
+async fn an_upgrade_keeps_the_disk_reserve_the_file_stores() {
+    let place = folder();
+    with_stored_reserve(&place.file, "1000000").await;
+    let faults = Arc::new(Faults::default());
+    faults.set("free:database", Some("900000")).unwrap();
+    let failure = match Db::open(&options(&place.file, SETTINGS_TWO), faults) {
+        Ok(_) => panic!("the upgrade was not refused"),
+        Err(failure) => failure,
+    };
+    assert!(
+        failure.message.contains("disk reserve of 1000000 bytes"),
+        "{}",
+        failure.message
+    );
+}
+
+#[tokio::test]
+async fn an_upgrade_is_refused_when_the_stored_disk_reserve_does_not_read() {
+    let place = folder();
+    with_stored_reserve(&place.file, "plenty").await;
+    let before = std::fs::read(&place.file).unwrap();
+    let names = names_beside(&place.file);
+
+    let faults = Arc::new(Faults::default());
+    faults.set("free:database", Some("1073741824")).unwrap();
+    let failure = match Db::open(&options(&place.file, SETTINGS_TWO), faults) {
+        Ok(_) => panic!("the upgrade was not refused"),
+        Err(failure) => failure,
+    };
+    assert_eq!(failure.status, 1);
+    assert!(
+        failure.message.contains("disk_reserve_bytes"),
+        "{}",
+        failure.message
+    );
+    assert_eq!(std::fs::read(&place.file).unwrap(), before);
+    assert_eq!(names_beside(&place.file), names);
+    assert_eq!(version_of(&place.file), 1);
 }
 
 #[tokio::test]
