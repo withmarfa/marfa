@@ -22,6 +22,7 @@ const ALWAYS_LISTED = [
   "enrichment-sweep",
   "event-log-cleanup",
   "feed-expiry",
+  "inbound-delivery-cleanup",
   "trash-purge",
   "version-thinning",
 ];
