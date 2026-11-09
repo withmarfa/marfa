@@ -15,6 +15,7 @@ import {
   QUIET_SCHEDULE,
   quiet,
   runJob,
+  settle,
   writerOf,
 } from "../../utils/moved-clock.js";
 import type { SseEvent } from "../../utils/sse.js";
@@ -335,13 +336,15 @@ describe("a bin holding more than one run of trash-purge removes", () => {
   it(
     "empties it without waiting the job's interval for each batch, and audits every run",
     async () => {
-      // The interval is out of reach, so every run after the one this case
-      // asks for is one the server scheduled for itself.
-      const server = await bootFreshServer(
-        "retention-trash-backlog",
-        QUIET_SCHEDULE,
-      );
+      // The interval is out of reach and the scheduler polls, so every run
+      // after the one this case asks for is one the server scheduled for
+      // itself.
+      const server = await bootFreshServer("retention-trash-backlog", {
+        ...QUIET_SCHEDULE,
+        MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: "1000",
+      });
       await quiet(server, ["trash-purge"]);
+      await settle(server, ["trash-purge"]);
       const writer = writerOf(server);
       const config = (await writer.getConfig()).data as Record<string, unknown>;
       const set = await writer.updateConfig({

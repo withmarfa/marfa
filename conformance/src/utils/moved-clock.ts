@@ -82,6 +82,35 @@ export async function quiet(
   }
 }
 
+/**
+ * For a fixture that boots with the scheduler polling: waits until each job's
+ * next run is out of reach. A run asked for ahead of schedule leaves the
+ * schedule where it was (the job's first run is some seconds after boot), so
+ * the scheduler still makes that first run itself, and only after it is the
+ * next run an interval away. Without this wait the first run can land between
+ * the fixture's setup and its own run.
+ */
+export async function settle(
+  server: FreshServer,
+  names: readonly string[],
+): Promise<void> {
+  const deadline = Date.now() + 60_000;
+  for (;;) {
+    const listed = await jobs(server);
+    const due = names.filter(
+      (name) =>
+        Date.parse(listed[name]?.next_run_at ?? "") < Date.now() + DAY_MS,
+    );
+    if (due.length === 0) return;
+    if (Date.now() > deadline) {
+      throw new Error(
+        `${due.join(", ")} still due within a day after a minute`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+}
+
 /** The housekeeping listing, by job name. */
 export async function jobs(
   server: FreshServer,
