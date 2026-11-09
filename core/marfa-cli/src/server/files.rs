@@ -65,7 +65,7 @@ pub const DOTENV_HEADER: &str = "\
 
 pub const SETTINGS_HEADER: &str = "\
 # The server's settings: https://docs.marfa.so/run/settings
-# API_KEY_SALT and MARFA_AUTH_SECRET are made once and never change. Keep a
+# MARFA_KEY_SALT and MARFA_AUTH_SECRET are made once and never change. Keep a
 # copy of this file outside this folder: neither secret is stored in the data,
 # and a server started on the data without them refuses every key.";
 

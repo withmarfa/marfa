@@ -42,7 +42,7 @@ describe("the test hooks and what is released", () => {
       .map((pair) => pair.split("=")[0] ?? "")
       .filter((name) => name !== "");
     // The witness: it reads the names the Dockerfile does set.
-    expect(set).toContain("SQLITE_PATH");
+    expect(set).toContain("MARFA_DATABASE_PATH");
     expect(set.filter((name) => name.startsWith("MARFA_TEST_"))).toEqual([]);
     expect(dockerfile).not.toContain("MARFA_TEST_HOOKS");
 
