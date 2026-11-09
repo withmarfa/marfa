@@ -906,7 +906,7 @@ BEGIN
            OR next_run_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+5 seconds'));
 END;
 
--- Requeue files after their type changes or a fillable field is cleared.
+-- Requeue files after their type, `mime_type` or `blob_ref` changes, or a fillable field is cleared.
 CREATE TRIGGER IF NOT EXISTS enrichment_files_changed AFTER UPDATE OF type, properties ON items
 WHEN NEW.properties ->> '$.blob_ref' IS NOT NULL AND (
     NEW.type IS NOT OLD.type
