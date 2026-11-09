@@ -1,4 +1,4 @@
-import { connect, type Socket } from "node:net";
+import { connect, createServer, type Socket } from "node:net";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   bootFreshServer,
@@ -33,9 +33,9 @@ interface Answered {
 const ASK = "GET /health HTTP/1.1\r\nHost: connection-caps\r\n\r\n";
 
 /** Opens a connection, asks `GET /health` on it, and reads the whole answer. */
-function ask(port: number, host = "127.0.0.1"): Promise<Answered> {
+function ask(port: number, from?: string): Promise<Answered> {
   return new Promise((resolve, reject) => {
-    const socket = connect({ host, port });
+    const socket = connect({ host: "127.0.0.1", port, localAddress: from });
     let received = Buffer.alloc(0);
     const settle = (): void => {
       const split = received.indexOf("\r\n\r\n");
@@ -70,17 +70,13 @@ function portOf(server: FreshServer): number {
 }
 
 /** Holds `count` connections the server has answered, once it can. */
-async function holding(
-  port: number,
-  count: number,
-  host?: string,
-): Promise<Socket[]> {
+async function holding(port: number, count: number): Promise<Socket[]> {
   return waitFor(
     `${String(count)} connections held`,
     async () => {
       const held: Answered[] = [];
       for (let made = 0; made < count; made++) {
-        const answered = await ask(port, host).catch(() => undefined);
+        const answered = await ask(port).catch(() => undefined);
         if (answered === undefined || answered.status !== 200) {
           answered?.socket.destroy();
           for (const earlier of held) earlier.socket.destroy();
@@ -102,11 +98,11 @@ function expectTurnedAway(answer: Answered): void {
   expect(JSON.parse(answer.body).error.code).toBe("too_many_connections");
 }
 
-async function servedAgain(port: number, host?: string): Promise<void> {
+async function servedAgain(port: number): Promise<void> {
   const answered = await waitFor(
     "a new connection served",
     async () => {
-      const answer = await ask(port, host).catch(() => undefined);
+      const answer = await ask(port).catch(() => undefined);
       if (answer?.status === 200) return answer;
       answer?.socket.destroy();
       return undefined;
@@ -115,6 +111,20 @@ async function servedAgain(port: number, host?: string): Promise<void> {
     200,
   );
   answered.socket.destroy();
+}
+
+/**
+ * A second address of this machine that can reach the server, or none. Linux
+ * answers on all of 127.0.0.0/8; a Mac answers on 127.0.0.1 alone.
+ */
+async function secondLoopback(): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    const probe = createServer();
+    probe.once("error", () => resolve(undefined));
+    probe.listen({ host: "127.0.0.2", port: 0 }, () =>
+      probe.close(() => resolve("127.0.0.2")),
+    );
+  });
 }
 
 describe("the public listener's open connections", () => {
@@ -144,10 +154,7 @@ describe("the public listener's open connections", () => {
   it(
     "turns an address away past its share and serves the same address again once one closes",
     async () => {
-      // The listener binds both families, so a second address exists on every
-      // machine: the IPv6 loopback beside the IPv4 one.
       const server = await bootFreshServer("connection-caps-address", {
-        MARFA_LISTEN_HOST: "::",
         MARFA_MAX_CONNECTIONS: "100",
         MARFA_MAX_CONNECTIONS_PER_ADDRESS: "2",
       });
@@ -159,9 +166,12 @@ describe("the public listener's open connections", () => {
         over.socket.destroy();
 
         // The witness: another address is served while this one is held.
-        const other = await ask(port, "::1");
-        expect(other.status).toBe(200);
-        other.socket.destroy();
+        const second = await secondLoopback();
+        if (second !== undefined) {
+          const other = await ask(port, second);
+          expect(other.status).toBe(200);
+          other.socket.destroy();
+        }
 
         held.pop()!.destroy();
         await servedAgain(port);

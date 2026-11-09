@@ -40,8 +40,8 @@ async function freshKey(on: FreshServer, label: string): Promise<MarfaClient> {
     apiKey: on.workingKey,
   });
   const minted = await minter.createKey({
-    label: `credential-rate-limit-${label}`,
-    source: `credential-rate-limit-${label}`,
+    label: `rate-cap-${label}`,
+    source: `rate-cap-${label}`,
   });
   expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
   return new MarfaClient({ baseUrl: on.apiUrl, apiKey: minted.data.key });
