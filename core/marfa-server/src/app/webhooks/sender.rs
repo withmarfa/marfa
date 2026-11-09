@@ -23,7 +23,7 @@ use crate::telemetry::{Fault, Finished};
 const AT_ONCE: usize = 64;
 /// Attempts in flight at once for the subscriptions of one maker.
 const MAKER_SHARE: usize = 8;
-/// Slots kept free of attempts past a maker's share, so a maker with a delivery due later starts at once.
+/// Slots kept free of attempts past a maker's share, for a maker whose delivery falls due later.
 const HEADROOM: usize = MAKER_SHARE;
 const METHOD: &str = "WEBHOOKS";
 const PATH: &str = "schedule";

@@ -379,9 +379,7 @@ fn due_rows() -> String {
     )
 }
 
-/// One due delivery per idle subscription. While another maker has a delivery due, a maker
-/// starts nothing past its `share`. Alone, it may pass its share, but only within the first
-/// `beyond_share` of the rows returned.
+/// One due delivery per idle subscription; a maker alone may pass its `share`, up to `beyond_share` rows in all.
 pub fn due(
     tx: &Transaction<'_>,
     now_ms: i64,
@@ -429,8 +427,7 @@ pub fn due(
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
-/// When the next delivery still in the future falls due, leaving out the subscriptions
-/// being attempted. A delivery already due that cannot start waits for an attempt to end.
+/// When the next delivery not yet due falls due, leaving out the subscriptions being attempted.
 pub fn next_due(tx: &Transaction<'_>, now_ms: i64, busy: &[i64]) -> Result<Option<i64>> {
     let busy =
         serde_json::to_string(busy).map_err(|_| Refusal::internal("a list did not print"))?;
