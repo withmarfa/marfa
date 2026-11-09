@@ -507,7 +507,12 @@ async fn a_held_source_needs_keys_manage() {
             Some(json!({ "name": "feed" })),
         )
         .await;
-    assert_eq!(registered.status, StatusCode::CREATED, "{}", registered.body);
+    assert_eq!(
+        registered.status,
+        StatusCode::CREATED,
+        "{}",
+        registered.body
+    );
     let path = format!("/keys/{connector}");
     let revoked = instance.local(Method::DELETE, &path, None).await;
     assert!(revoked.status.is_success(), "{}", revoked.body);
@@ -537,6 +542,8 @@ async fn a_held_source_needs_keys_manage() {
     let path = format!("/keys/{}", succeeded.body["id"].as_str().unwrap());
     let revoked = instance.local(Method::DELETE, &path, None).await;
     assert!(revoked.status.is_success(), "{}", revoked.body);
-    let local = instance.local(Method::POST, "/keys", Some(bare("feed"))).await;
+    let local = instance
+        .local(Method::POST, "/keys", Some(bare("feed")))
+        .await;
     assert_eq!(local.status, StatusCode::CREATED, "{}", local.body);
 }
