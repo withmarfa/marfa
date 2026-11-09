@@ -107,8 +107,18 @@ fn entry_of(mut sent: Map<String, Value>, create_only: bool) -> Result<Entry> {
 }
 
 fn asked_of(body: &ReadBody) -> Result<Asked> {
-    let mut sent = only_declared(body.object(Bag::Entries("items"))?, &PAGE_FIELDS)?;
-    body.refuse_inexact_numbers(Bag::Entries("items"))?;
+    asked_from(body.object(Bag::Entries("items"))?, || {
+        body.refuse_inexact_numbers(Bag::Entries("items"))
+    })
+}
+
+/// `exact` judges the digits of the numbers as sent, which a parsed page no longer holds.
+pub(super) fn asked_from(
+    sent: Map<String, Value>,
+    exact: impl FnOnce() -> Result<()>,
+) -> Result<Asked> {
+    let mut sent = only_declared(sent, &PAGE_FIELDS)?;
+    exact()?;
     let mode = match text_of(&sent, "mode")?.as_deref() {
         None | Some("upsert") => "upsert",
         Some("create_only") => "create_only",
@@ -116,7 +126,7 @@ fn asked_of(body: &ReadBody) -> Result<Asked> {
     };
     let atomic = flag_of(&sent, "atomic")?.unwrap_or(true);
     let retype = flag_of(&sent, "retype")?.unwrap_or(false);
-    flag_of(&sent, "enable_fanout")?;
+    let fanout = flag_of(&sent, "enable_fanout")?.unwrap_or(false);
     let items = match sent.remove("items") {
         None => return Err(missing_field("items")),
         Some(Value::Array(items)) => items,
@@ -150,6 +160,7 @@ fn asked_of(body: &ReadBody) -> Result<Asked> {
         mode,
         atomic,
         retype,
+        fanout,
     })
 }
 

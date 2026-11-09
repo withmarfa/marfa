@@ -128,6 +128,23 @@ pub fn json_length(value: &Value) -> usize {
     text_of(value).encode_utf16().count()
 }
 
+/// The leading entries whose JSON text fits `room`, and how many were left out.
+pub fn fit_list(entries: Vec<Value>, room: usize) -> (Vec<Value>, usize) {
+    let total = entries.len();
+    let mut used = 2;
+    let mut kept = Vec::new();
+    for entry in entries {
+        let width = json_length(&entry) + 1;
+        if used + width > room {
+            break;
+        }
+        used += width;
+        kept.push(entry);
+    }
+    let left_out = total - kept.len();
+    (kept, left_out)
+}
+
 fn json_width(point: char) -> usize {
     match point {
         '"' | '\\' | '\u{8}' | '\u{c}' | '\n' | '\r' | '\t' => 2,
@@ -284,6 +301,17 @@ mod tests {
         let rest = cut_text("a\"b\nc", 3, 100);
         assert_eq!(rest.text, "\nc");
         assert_eq!(rest.next_offset, None);
+    }
+
+    #[test]
+    fn a_list_keeps_the_entries_that_fit_and_counts_the_rest() {
+        let entries: Vec<Value> = (0..5).map(|n| json!({ "n": n })).collect();
+        let (kept, left_out) = fit_list(entries.clone(), 1_000);
+        assert_eq!((kept.len(), left_out), (5, 0));
+        let (kept, left_out) = fit_list(entries, 20);
+        assert_eq!(kept.len() + left_out, 5);
+        assert!(left_out > 0 && !kept.is_empty());
+        assert!(json_length(&Value::Array(kept)) <= 20);
     }
 
     #[test]

@@ -132,6 +132,15 @@ pub fn live_by_id(tx: &Transaction<'_>, id: &str, at: &str) -> Result<Option<Key
         .optional()?)
 }
 
+/// A key's label for as long as its row is kept, revoked or not.
+pub fn label(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {
+    Ok(tx
+        .query_row("SELECT label FROM api_keys WHERE id = ?1", [id], |row| {
+            row.get(0)
+        })
+        .optional()?)
+}
+
 /// A key not revoked, whether or not its life has ended.
 pub fn unrevoked_by_id(tx: &Transaction<'_>, id: &str) -> Result<Option<Key>> {
     Ok(tx
@@ -157,7 +166,7 @@ fn unknown(tx: &Transaction<'_>, caller: &Caller, id: &str) -> Result<Refusal> {
     Ok(Refusal::new(Code::ApiKeyNotFound, message))
 }
 
-fn reached(tx: &Transaction<'_>, caller: &Caller, id: &str, at: &str) -> Result<Key> {
+pub(crate) fn reached(tx: &Transaction<'_>, caller: &Caller, id: &str, at: &str) -> Result<Key> {
     match live_by_id(tx, id, at)? {
         Some(key) if caller.reaches(&key) => Ok(key),
         _ => Err(unknown(tx, caller, id)?),
@@ -373,7 +382,7 @@ pub async fn update(app: &App, caller: &Caller, id: String, request: Update) -> 
     .await
 }
 
-fn end(unit: &Unit<'_, '_>, id: &str) -> Result<()> {
+pub(crate) fn end(unit: &Unit<'_, '_>, id: &str) -> Result<()> {
     unit.tx().execute(
         "UPDATE api_keys SET revoked_at = ?2 WHERE id = ?1",
         [id, &unit.at],

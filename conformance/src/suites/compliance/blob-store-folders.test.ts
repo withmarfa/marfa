@@ -345,6 +345,29 @@ describe("a store is its folder", () => {
   });
 });
 
+describe("a blob held only by detached stores", () => {
+  it("answers GET and HEAD 503 for a blob whose every copy is in a detached store", async () => {
+    // The tests above leave the second blob recorded only in the first
+    // store, which the server no longer names.
+    const rows = await copies(hashes.second);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((row) => row.detached)).toBe(true);
+
+    // The witness: a blob the attached store holds is served.
+    const held = await working.uploadBlob(
+      bytesOf("held by the attached store", 100),
+      "text/plain",
+    );
+    expect(held.status, JSON.stringify(held.error)).toBe(201);
+    expect((await operator.downloadBlob(held.data.hash)).status).toBe(200);
+
+    const download = await operator.downloadBlob(hashes.second);
+    expect(download.status).toBe(503);
+    expect(download.error?.error.code).toBe("blob_store_unavailable");
+    expect((await operator.headBlob(hashes.second)).status).toBe(503);
+  });
+});
+
 describe("a store whose folder is away", () => {
   const away = () => `${blobFolder(server!)}.away`;
 

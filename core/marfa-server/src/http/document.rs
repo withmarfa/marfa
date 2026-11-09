@@ -41,6 +41,30 @@ const UNPUBLISHED: &[(&str, &str)] = &[
     ),
     ("GET /mcp", "answers 405: the endpoint opens no stream"),
     ("DELETE /mcp", "answers 405: the endpoint holds no session"),
+    (
+        "POST /mcp/schema",
+        "the Model Context Protocol endpoint of the schema tools, which its own protocol describes",
+    ),
+    (
+        "GET /mcp/schema",
+        "answers 405: the endpoint opens no stream",
+    ),
+    (
+        "DELETE /mcp/schema",
+        "answers 405: the endpoint holds no session",
+    ),
+    (
+        "POST /mcp/admin",
+        "the Model Context Protocol endpoint of the admin tools, which its own protocol describes",
+    ),
+    (
+        "GET /mcp/admin",
+        "answers 405: the endpoint opens no stream",
+    ),
+    (
+        "DELETE /mcp/admin",
+        "answers 405: the endpoint holds no session",
+    ),
     ("GET /auth/sign-in", "the sign-in page"),
     ("POST /auth/sign-in", "its form post"),
     (
@@ -148,16 +172,17 @@ const UNPUBLISHED: &[(&str, &str)] = &[
         "DELETE /_control/test/faults",
         "the private control socket, with test hooks on",
     ),
+    (
+        "GET /_control/test/blob-stores",
+        "the private control socket, with test hooks on",
+    ),
 ];
 
 /// Published operations the router does not serve yet. An entry that becomes
 /// served fails the test, so the list only shrinks.
 const NOT_YET_SERVED: &[&str] = &[
-    "DELETE /blobs/{hash}/copies/{store}",
     "DELETE /connectors/{id}/endpoints/{endpoint_id}",
-    "DELETE /webhooks/{id}",
     "GET /attention",
-    "GET /blobs/orphans",
     "GET /connectors/{id}/deliveries",
     "GET /connectors/{id}/deliveries/{delivery_id}/body",
     "GET /connectors/{id}/endpoints",
@@ -166,12 +191,7 @@ const NOT_YET_SERVED: &[&str] = &[
     "GET /folders/{id}/status",
     "GET /items/bulk-actions/jobs/{id}",
     "GET /metrics",
-    "GET /occurrences",
-    "GET /webhooks",
-    "GET /webhooks/{id}",
-    "GET /webhooks/{id}/deliveries",
     "PATCH /folders/{id}",
-    "PATCH /webhooks/{id}",
     "POST /connectors/{id}/deliveries/handled",
     "POST /connectors/{id}/endpoints",
     "POST /folders",
@@ -180,8 +200,6 @@ const NOT_YET_SERVED: &[&str] = &[
     "POST /items/bulk-actions/jobs/{id}/cancel",
     "POST /restore",
     "POST /types/{id}/move",
-    "POST /webhooks",
-    "POST /webhooks/{id}/deliveries/{delivery_id}/redeliver",
     "PUT /folders/{id}/status",
 ];
 

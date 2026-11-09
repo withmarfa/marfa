@@ -1089,7 +1089,7 @@ export interface paths {
         };
         /**
          * List webhooks
-         * @description Returns webhooks and their makers, with secrets redacted. The private local command sees every subscription; keys and apps see only their own.
+         * @description Returns webhooks and their makers, with secrets redacted. The local command sees every subscription; keys and apps see only their own.
          */
         get: operations["listWebhooks"];
         put?: never;
@@ -1113,7 +1113,7 @@ export interface paths {
         };
         /**
          * Get a webhook
-         * @description Returns a webhook and its maker, with its secret redacted. The private local command can read any subscription; keys and apps can read only their own.
+         * @description Returns a webhook and its maker, with its secret redacted. The local command can read any subscription; keys and apps can read only their own.
          */
         get: operations["getWebhook"];
         put?: never;
@@ -1141,7 +1141,7 @@ export interface paths {
         };
         /**
          * List webhook deliveries
-         * @description Returns delivery metadata without event payloads, newest first. The private local command can inspect any subscription; keys and apps can inspect only their own.
+         * @description Returns delivery metadata without event payloads, newest first. The local command can inspect any subscription; keys and apps can inspect only their own.
          */
         get: operations["listWebhookDeliveries"];
         put?: never;
@@ -1163,7 +1163,7 @@ export interface paths {
         put?: never;
         /**
          * Redeliver a webhook delivery
-         * @description Redelivers a failed delivery, queuing it again at the current URL. The private local command can retry any subscription; keys and apps can retry only their own.
+         * @description Redelivers a failed delivery, queuing it again at the current URL. The local command can retry any subscription; keys and apps can retry only their own.
          */
         post: operations["redeliverWebhookDelivery"];
         delete?: never;
@@ -4473,7 +4473,7 @@ export interface components {
             /** @description An excerpt of at most 32 words from the text that matches best, as escaped HTML with each matched word in `<mark>` tags and `...` where the text is cut. Absent if there is none. */
             snippet_html?: string;
         };
-        /** @description The occurrences in a time window, with what reading them cost and any rules Marfa couldn't apply. */
+        /** @description The occurrences in a time window, with any rules Marfa couldn't apply. */
         OccurrencePage: {
             /** @description The occurrences that overlap the window, by start time. */
             data: components["schemas"]["Occurrence"][];
@@ -4486,23 +4486,11 @@ export interface components {
                 /** @description The end of the window, in UTC. */
                 to: string;
             };
-            /** @description What this read cost, and the limits that would stop it. */
+            /** @description How many rules Marfa couldn't apply or finish. */
             scan: {
-                /** @description How many event items this request read. It grows with the size of the calendar more than with the window. */
-                events_read: number;
-                /** @description How many occurrences `data` holds. */
-                occurrences: number;
-                /** @description The most occurrences a window may hold; a window with more is refused. Compare it with `occurrences` to see a calendar approaching it. */
-                max_occurrences: number;
                 /** @description How many failures Marfa found in the recurrence rules this request read, as entries of `series_errors`, including any the list leaves out. It covers only the event types read, so `0` says nothing of the rest. */
                 series_errors: number;
-                /** @description The most entries `series_errors` holds. Past it, the list stops and `series_errors_truncated` is `true`; the read still succeeds. */
-                max_series_errors: number;
-                /** @description How many rule iterations this request spent on expansions that returned no occurrence, such as a rule that ended before the window. A rule that fails before it iterates adds nothing here. */
-                unproductive_iterations: number;
-                /** @description The most `unproductive_iterations` a request spends before it stops expanding. Iterations that return occurrences don't count, so a busy calendar doesn't reach it. */
-                max_unproductive_iterations: number;
-                /** @description How many series didn't finish expanding: stopped by their own bound, and listed in `series_errors`, or never reached once `max_unproductive_iterations` was spent. Above `0`, `expansion_incomplete` is `true`. */
+                /** @description How many series didn't finish expanding: stopped by their own bound, and listed in `series_errors`, or never reached once the series that produced nothing had used up the request's share of work. Above `0`, `expansion_incomplete` is `true`. */
                 series_unexpanded: number;
             };
             /** @description One entry per failure found in a recurrence rule, such as a line Marfa can't read or a timezone that doesn't resolve. One event can have several entries and still appear in `data`. Absent when there were none. */
@@ -4512,7 +4500,7 @@ export interface components {
                 /** @description What is wrong with its rule, for a person to read. */
                 message: string;
             }[];
-            /** @description `true` when `series_errors` stops at `scan.max_series_errors` entries and leaves failures out. `scan.series_errors` has the total. Absent otherwise. */
+            /** @description `true` when `series_errors` stops at 500 entries and leaves failures out. `scan.series_errors` has the total. Absent otherwise. */
             series_errors_truncated?: boolean;
             /** @description `true` when a series didn't finish expanding, so `data` may be missing occurrences; `scan.series_unexpanded` counts them. If a series has too many in the window, narrow the window; else narrow by `type` or fix the rules. Absent otherwise. */
             expansion_incomplete?: boolean;
@@ -6121,8 +6109,8 @@ export interface components {
             url: string;
             /** @description The events Marfa sends, such as `item.created`. */
             events: string[];
-            /** @description The type, with its subtypes, or the pattern whose item events Marfa sends. Absent when Marfa sends item events of every type. Edge events aren't filtered. */
-            type_filter?: string | null;
+            /** @description The type, with its subtypes, or the pattern whose item events Marfa sends. `null` when Marfa sends item events of every type. Edge events aren't filtered. */
+            type_filter: string | null;
             /** @description The key Marfa signs each delivery with. Only `POST /webhooks` returns it whole; other responses show `****` and its last four characters. */
             secret: string;
             /** @description `true` if Marfa sends events to the webhook. */
@@ -10029,7 +10017,7 @@ export interface operations {
                 from: string;
                 /** @description Window end, ISO 8601, read as `from` is. The window can span at most 400 days. An event with no length is in the window if it starts at or after `from` and before this time. */
                 to: string;
-                /** @description Only return events of this type, or of the event types a wildcard matches. */
+                /** @description Only return events of this type, or of the event types a wildcard matches. Names one type. */
                 type?: string;
             };
             header?: never;
@@ -10055,7 +10043,7 @@ export interface operations {
             /**
              * @description - `missing_required_field`: `from` or `to` is missing.
              *     - `unknown_type`: `type` isn't registered.
-             *     - `validation_error`: a time is unreadable, `to` isn't after `from`, the window is over 400 days, `type` is malformed, or the window holds more than 5,000 occurrences. Then `details` has `max_occurrences` and `found`, and `expansion_incomplete` if a series also stopped expanding.
+             *     - `validation_error`: a time is unreadable, `to` isn't after `from`, the window is over 400 days, `type` is malformed, or the window holds more than 5,000 occurrences. Then `details` has `max_occurrences`, or `max_days` for the window.
              */
             400: {
                 headers: {
@@ -19848,7 +19836,7 @@ export interface operations {
                     "application/json": components["schemas"]["WebhookNotFoundRefusal"];
                 };
             };
-            /** @description - `conflict`: Marfa can't send it again. `details.reason` is the first that applies: `webhook_inactive`; `credential_unavailable`, the registering key or app is gone or lacks `webhooks.manage`; `delivery_not_failed`; `delivery_expired`, past audit retention; or `delivery_not_retained`, its event is no longer held. */
+            /** @description - `conflict`: Marfa can't send it again. `details.reason` is the first that applies: `webhook_inactive`; `credential_unavailable`, the registering key or app is gone or lacks `webhooks.manage`; `delivery_not_failed`; or `delivery_expired`, past audit retention. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

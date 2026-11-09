@@ -64,6 +64,28 @@ pub const DECLARED: &[Declared] = &[
     ),
     plain("BLOB_PATH", "Where the server keeps files."),
     plain(
+        "S3_BUCKET",
+        "The bucket of an object store kept beside the disk.",
+    ),
+    plain("S3_REGION", "The region of the object store."),
+    secret("S3_ENDPOINT", "Where the object store is."),
+    plain(
+        "S3_ACCESS_KEY_ID",
+        "The key the object store is reached with.",
+    ),
+    secret(
+        "S3_SECRET_ACCESS_KEY",
+        "The secret the object store is reached with.",
+    ),
+    plain(
+        "S3_FORCE_PATH_STYLE",
+        "Whether the object store is addressed by path rather than by host.",
+    ),
+    plain(
+        "S3_PREFIX",
+        "The folder in the bucket the server keeps files under.",
+    ),
+    plain(
         "MARFA_CONTROL_SOCKET",
         "Where the private socket for the person running the server is.",
     ),
@@ -82,6 +104,10 @@ pub const DECLARED: &[Declared] = &[
         "How long a notice of a server error may take to send, in milliseconds.",
     ),
     secret("MARFA_HEARTBEAT_URL", "Where the heartbeat is sent."),
+    plain(
+        "MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES",
+        "Lets outbound webhooks reach loopback, private and other addresses that are not public.",
+    ),
     plain("MARFA_POSTHOG_HOST", "Where exception reports are sent."),
     secret(
         "MARFA_POSTHOG_PROJECT_TOKEN",

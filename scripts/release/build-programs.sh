@@ -112,7 +112,9 @@ case "$TARGET" in
   aarch64-apple-darwin)
     [ "$(uname -s)-$(uname -m)" = Darwin-arm64 ] || die "$TARGET builds on a Mac with Apple silicon"
     echo "programs: the file reader and the prefix (native/release.sh)"
-    "$NATIVE/release.sh" "$TARGET"
+    # PDFium's build steps write to the runner's files when they see these, and lose
+    # depot_tools from PATH.
+    env -u GITHUB_ENV -u GITHUB_PATH "$NATIVE/release.sh" "$TARGET"
     build_and_check
     for program in "${PROGRAMS[@]}"; do
       say_version "$program" env -i "$OUT/$program"

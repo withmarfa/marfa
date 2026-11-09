@@ -885,6 +885,14 @@ When private local authority sends `GET /webhooks`, `GET /webhooks/{id}` or `GET
 
 **Tests:** `compliance/webhooks-owner.test.ts › reads every maker through local authority while ordinary keys stay isolated`.
 
+### `events/webhook-not-a-session`
+
+If the owner's browser session sends a request to any `/webhooks` door, then the server MUST answer `401 unauthorized`.
+
+**Reason:** a subscription belongs to the key or app that registered it, and a browser's session is neither. Its sign-in proves the owner is present now, which says nothing about whether the maker may still read what a redelivery would send. The private local socket keeps the owner's direct reads and redelivery.
+
+**Tests:** `compliance/webhooks-owner.test.ts › refuses an owner's browser session on every webhook door with 401`.
+
 ### `events/webhook-maker`
 
 When the server lists or gets a subscription, the server MUST include its maker's `kind` (`key` or `app`), `id` (key ID or OAuth client ID) and current `name`, with `null` for a name no longer available.
@@ -893,7 +901,7 @@ When the server lists or gets a subscription, the server MUST include its maker'
 
 ### `events/webhook-direct-retry`
 
-When private local authority requests redelivery, the server MUST apply the same live subscription, maker, retention and retained-frame checks as a request by the subscription's maker.
+When private local authority requests redelivery, the server MUST apply the same live subscription, maker and retention checks as a request by the subscription's maker.
 
 **Reason:** direct authority can request another attempt, but cannot restore the maker's revoked access or send content the maker can no longer read.
 
@@ -901,7 +909,7 @@ When private local authority requests redelivery, the server MUST apply the same
 
 ### `events/webhook-direct-mutations`
 
-When local authority sends a subscription create, update or delete without the maker's credential, the server MUST refuse it with `401 unauthorized`.
+When private local authority sends a subscription create, update or delete, the server MUST refuse it with `401 unauthorized`.
 
 **Tests:** `compliance/webhooks-owner.test.ts › reads every maker through local authority while ordinary keys stay isolated`.
 
@@ -1317,7 +1325,7 @@ If `GET /webhooks/{id}/deliveries` names a `limit` that is not a whole number of
 
 ## Retries
 
-A delivery is attempted again when its receiver does not take it. A caller with `instance.maintain`, or local authority, can run `webhook-poll` at once (`housekeeping/run-now`), which attempts every delivery whose wait has ended.
+A delivery is attempted again when its receiver does not take it. The server attempts a pending delivery when its wait ends, with no job to run.
 
 ### `events/retry-5xx`
 
@@ -1373,11 +1381,13 @@ When a receiver answers every attempt with a retryable failure, the server MUST 
 
 **Tests:** `compliance/webhook-retries.test.ts › makes eight attempts with the seven waits of the schedule, then records dead_letter`.
 
-### `events/retry-poll-run`
+### `events/retry-when-due`
 
-When a caller authorized by `instance.maintain` or local authority runs `webhook-poll`, the server MUST attempt each pending delivery whose wait has ended.
+When a pending delivery's wait ends, the server MUST attempt it without a request or a job run.
 
-**Tests:** `compliance/webhook-delivery.test.ts › leaves a delivery pending after a 500 and retries it with the same ids`, `› waits for the Retry-After a receiver names, and never less than the ordinary wait`.
+**Reason:** a receiver that comes back is sent what it missed at the time the schedule names, not at the next run of a job.
+
+**Tests:** `compliance/webhook-delivery.test.ts › leaves a delivery pending after a 500 and retries it with the same ids`, `› waits for the Retry-After a receiver names, and never less than the ordinary wait`, `compliance/webhook-retries.test.ts › makes eight attempts with the seven waits of the schedule, then records dead_letter`.
 
 ### `events/retry-restart-once`
 
@@ -1449,11 +1459,11 @@ If a redelivery names a delivery of a subscription that is not active, then the 
 
 ### `events/redeliver-conflict-reason`
 
-When the server answers a redelivery `409 conflict`, the server MUST carry in `details.reason` the first of these that holds: `webhook_inactive` if the subscription is not active, `credential_unavailable` if the credential that registered the subscription no longer holds `webhooks.manage` or is no longer live, `delivery_not_failed` if the delivery is not `dead_letter`, `delivery_expired` if the delivery is older than the instance's audit retention, or `delivery_not_retained` if the server no longer holds the event in a form it can send.
+When the server answers a redelivery `409 conflict`, the server MUST carry in `details.reason` the first of these that holds: `webhook_inactive` if the subscription is not active, `credential_unavailable` if the credential that registered the subscription no longer holds `webhooks.manage` or is no longer live, `delivery_not_failed` if the delivery is not `dead_letter`, or `delivery_expired` if the delivery is older than the instance's audit retention.
 
-**Reason:** the five refusals need different remedies, and a caller who is told only that the request collides cannot tell a switch to turn on from a delivery that cannot be sent again.
+**Reason:** the four refusals need different remedies, and a caller who is told only that the request collides cannot tell a switch to turn on from a delivery that cannot be sent again. A `dead_letter` delivery keeps the event it was queued with, so no fifth refusal is needed for an event the log has since let go.
 
-**Tests:** `compliance/webhooks.test.ts › redelivers a retained failed row to the current address with stable identity`, `compliance/webhook-delivery.test.ts › refuses to redeliver a delivery that is pending, delivered or canceled with 409 conflict, where a failed one is accepted`, `compliance/webhook-history.test.ts › refuses to redeliver a dead_letter delivery older than the audit retention`, `compliance/webhooks-owner.test.ts › names a maker that no longer holds webhooks.manage as the reason the owner's redelivery is refused`.
+**Tests:** `compliance/webhooks.test.ts › redelivers a retained failed row to the current address with stable identity`, `compliance/webhook-delivery.test.ts › refuses to redeliver a delivery that is pending, delivered or canceled with 409 conflict, where a failed one is accepted`, `compliance/webhook-history.test.ts › refuses to redeliver a dead_letter delivery older than the audit retention`, `compliance/webhooks-owner.test.ts › names a maker that no longer holds webhooks.manage as the reason a local redelivery is refused`.
 
 ### `events/redeliver-missing`
 
@@ -1529,7 +1539,7 @@ These rules hold where the instance does not allow private addresses, which is t
 
 ### `events/address-private`
 
-Where the instance does not allow private addresses, if `POST /webhooks` names a `url` whose host is an address that is not public, such as loopback, private, link-local, unique-local, carrier-grade NAT, unspecified or multicast, then the server MUST answer `400 validation_error`.
+Where the instance does not allow private addresses, if `POST /webhooks` names a `url` whose host is an address that is not public, including loopback, private, link-local, unique-local, carrier-grade NAT, unspecified, multicast, documentation, benchmarking, discard-only, dummy, segment-routing, local-use translation, 6to4 or Teredo addresses, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/webhook-addresses.test.ts › refuses a subscription naming a loopback, private or link-local address`, `› refuses a subscription naming a unique-local, carrier-grade NAT, unspecified or multicast address`.
 
@@ -1551,23 +1561,23 @@ Where the instance does not allow private addresses, if the server answers `400 
 
 ### `events/address-name-unresolved`
 
-Where the instance does not allow private addresses, if `POST /webhooks` names a `url` whose host is a name that does not resolve, whose lookup does not finish within the registration limit of 3 seconds, or whose lookup the server does not make because it is already making two for registrations, then the server MUST answer `201`.
+Where the instance does not allow private addresses, if `POST /webhooks` names a `url` whose host is a name that does not resolve, or whose lookup cannot start or finish within the registration limit of 3 seconds, then the server MUST answer `201`.
 
-**Reason:** the receiver may not exist yet, and a lookup that fails or stalls at registration says nothing about the one that delivery makes. A lookup cannot be cancelled and holds a thread the server shares, so the number running at once is bounded, and the check at each attempt (`events/address-name-unsent`) still has the final say. The attempt records `The receiver could not be reached.` if it still fails.
+**Reason:** the receiver may not exist yet, and a lookup that fails or stalls at registration says nothing about the one that delivery makes. A fixed limit of four concurrent webhook name lookups includes timed-out lookups until their blocking threads finish, because those threads share a pool with storage and file reading. This deliberately restores a concurrency bound independently of how many times an attempt resolves its name. The check at each attempt (`events/address-name-unsent`) still has the final say, and the attempt records `The receiver could not be reached.` if it still fails.
 
 **Tests:** `compliance/webhook-addresses.test.ts › accepts a name that does not resolve, which delivery looks up again`.
 
 ### `events/address-ipv6-global`
 
-Where the instance does not allow private addresses, the server MUST treat an IPv6 address as public only if it lies in `2000::/3`, after an IPv4 address written as IPv6 has been read as the IPv4 address it carries.
+Where the instance does not allow private addresses, the server MUST treat a native IPv6 address as public only if it lies in `2000::/3` and its most specific entry in the IANA IPv6 Special-Purpose Address Registry, if any, marks it globally reachable.
 
-**Reason:** `2000::/3` is the block assigned to hosts on the internet. Any other block is reserved, local or a translation prefix, so a rule that named the blocks to refuse would accept whatever it did not name.
+**Reason:** the global unicast allocation contains special-purpose ranges, including both documentation blocks (`2001:db8::/32` and `3fff::/20`) and benchmarking (`2001:2::/48`). The `2001::/23` protocol allocation has globally reachable exceptions. 6to4 (`2002::/16`) and Teredo (`2001::/32`) are refused outright because an embedded IPv4 check alone does not establish the tunnel's route. The local-use NAT64 allocation (`64:ff9b:1::/48`) is not globally reachable regardless of its embedded address.
 
-**Tests:** `compliance/webhook-addresses.test.ts › refuses an IPv6 address outside 2000::/3 and the documentation block, and accepts a global one`.
+**Tests:** `compliance/webhook-addresses.test.ts › refuses non-global IPv6 and accepts global addresses and public IPv4 translations`, `› refuses special-purpose IPv6 %s at registration`, `› refuses special-purpose IPv6 at every delivery`.
 
 ### `events/address-mapped`
 
-Where the instance does not allow private addresses, the server MUST judge an IPv4 address written as IPv6 as the IPv4 address it carries.
+Where the instance does not allow private addresses, the server MUST judge an IPv4 address written in IPv4-compatible, IPv4-mapped or well-known NAT64 (`64:ff9b::/96`) form as the IPv4 address it carries.
 
 **Tests:** `compliance/webhook-addresses.test.ts › refuses a subscription naming a loopback, private or link-local address`.
 
@@ -1615,6 +1625,12 @@ Where the instance does not allow private addresses, the server MUST connect to 
 
 ## When delivery starts
 
+### `events/webhook-position-created`
+
+When the server creates its database, the server MUST establish the webhook scheduling position at zero before any event can commit.
+
+**Tests:** `compliance/webhook-schedule-gap.test.ts › starts scheduling after a fresh control-only instance writes its first event`.
+
 ### `events/webhook-starts-after-creation`
 
 When a subscription is registered, the server MUST NOT deliver an event written before it.
@@ -1625,11 +1641,11 @@ When a subscription is registered, the server MUST NOT deliver an event written 
 
 ### `events/schedule-fails-visibly`
 
-If the log's position for scheduling webhooks is ahead of the log, missing on a log that holds events, behind the oldest event the log retains, or crosses a missing retained event, then the server MUST end each run of `webhook-schedule` with `last_outcome` `error`.
+If the log's position for scheduling webhooks is ahead of the log, missing, behind the oldest event the log retains, or crosses a missing retained event, then the server MUST report an unhandled fault and queue no delivery for any event past the position.
 
-**Reason:** a gap the scheduler cannot account for would otherwise skip events that fan out without saying so.
+**Reason:** a gap the server cannot account for would otherwise skip events that fan out without saying so. A report of an unhandled fault is its log line `Unhandled error`, its error webhook notification and its exception in error tracking, as `errors/client-closed-request` describes for a request. Once the position can be accounted for, the server queues what lies past it.
 
-**Tests:** `compliance/webhook-schedule-gap.test.ts › ends a webhook-schedule run with error when its log position cannot be accounted for`.
+**Tests:** `compliance/webhook-schedule-gap.test.ts › reports a place the log cannot account for as an unhandled fault, and queues nothing past it`.
 
 ### `events/webhook-bulk-backlog`
 
@@ -1638,6 +1654,16 @@ When an ordinary write follows a bulk write of 50,000 items with fan-out disable
 **Reason:** events that do not fan out must not consume successive scheduling runs before an event that does fan out can be reached; their payloads are not inspected by webhook scheduling because they cannot create deliveries.
 
 **Tests:** `compliance/webhook-bulk-backlog.test.ts › delivers the next fan-out within ordinary latency after 50,000 bulk rows`.
+
+## Real conditions
+
+### `events/receiver-isolation`
+
+While other subscriptions have receivers that do not answer, the server MUST start a healthy subscription's due delivery without waiting for those attempts to finish.
+
+**Reason:** one attempt per subscription allows each subscription a turn without sharing a slow receiver's wait.
+
+**Tests:** `compliance/webhook-delivery.test.ts › delivers promptly while eight other subscriptions never answer`.
 
 ## The audit log
 

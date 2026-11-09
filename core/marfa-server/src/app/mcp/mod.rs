@@ -2,6 +2,7 @@
 
 pub mod confirm;
 pub mod fetch;
+pub mod revoke;
 pub mod trash;
 
 use std::sync::Arc;

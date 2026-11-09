@@ -79,6 +79,45 @@ pub struct Fixed {
     pub heartbeat_url: Option<String>,
     /// Judged by the presence of the settings that name it, not by reachability.
     pub error_receiver: bool,
+    /// Never stored: a key that may change the configuration must not reach the owner's network.
+    pub webhook_private_addresses: bool,
+    pub object_store: Option<ObjectStoreSettings>,
+}
+
+/// Never logged: the endpoint and the secret can hold credentials.
+pub struct ObjectStoreSettings {
+    pub bucket: String,
+    pub region: String,
+    pub endpoint: Option<String>,
+    pub access_key_id: Option<String>,
+    pub secret_access_key: Option<String>,
+    pub path_style: bool,
+    pub prefix: String,
+}
+
+impl ObjectStoreSettings {
+    pub fn locator(&self) -> String {
+        format!("s3://{}/{}", self.bucket, self.prefix)
+    }
+}
+
+const PREFIX_RULE: &str = "must be /-joined segments of letters, digits, `.`, `_` and `-`, \
+                           none of them `.` or `..`";
+
+fn prefix(text: &str) -> Result<String, String> {
+    let trimmed = text.trim_matches('/');
+    let fits = !trimmed.is_empty()
+        && trimmed.split('/').all(|segment| {
+            !matches!(segment, "" | "." | "..")
+                && segment
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+        });
+    if fits {
+        Ok(trimmed.to_string())
+    } else {
+        Err(PREFIX_RULE.to_string())
+    }
 }
 
 pub struct Start {
@@ -148,6 +187,42 @@ impl Reader<'_> {
         }
     }
 
+    fn object_store(&mut self) -> Option<ObjectStoreSettings> {
+        let bucket = self.environment.get("S3_BUCKET")?.to_string();
+        let endpoint = self.url_kept_private("S3_ENDPOINT").filter(|text| {
+            // The object store's errors, which are logged, carry the whole endpoint.
+            let bare = Url::parse(text)
+                .is_ok_and(|url| url.username().is_empty() && url.password().is_none());
+            if !bare {
+                self.refuse(
+                    "S3_ENDPOINT must not carry a user name or password; set \
+                     S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY instead"
+                        .to_string(),
+                );
+            }
+            bare
+        });
+        let path_style = match endpoint {
+            Some(_) => self
+                .take("S3_FORCE_PATH_STYLE", rule::boolean)
+                .unwrap_or(true),
+            None => true,
+        };
+        let text = |name: &str| self.environment.get(name).map(str::to_string);
+        let (region, access_key_id) = (text("S3_REGION"), text("S3_ACCESS_KEY_ID"));
+        Some(ObjectStoreSettings {
+            bucket,
+            region: region.unwrap_or_else(|| "us-east-1".to_string()),
+            endpoint,
+            access_key_id,
+            secret_access_key: self.secret("S3_SECRET_ACCESS_KEY", 1),
+            path_style,
+            prefix: self
+                .take("S3_PREFIX", prefix)
+                .unwrap_or_else(|| "blobs".to_string()),
+        })
+    }
+
     fn url_kept_private(&mut self, name: &str) -> Option<String> {
         let text = self.environment.get(name)?;
         let usable = Url::parse(text).is_ok_and(|url| matches!(url.scheme(), "http" | "https"));
@@ -199,6 +274,7 @@ impl Fixed {
         let trust = reader.trust();
         let control_only = reader.flag("MARFA_CONTROL_ONLY");
         let test_hooks = reader.flag("MARFA_TEST_HOOKS");
+        let webhook_private_addresses = reader.flag("MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES");
         let clock_offset_ms = reader
             .whole("MARFA_TEST_CLOCK_OFFSET_MS", 0, MAX_CLOCK_OFFSET_MS)
             .unwrap_or(0);
@@ -217,6 +293,7 @@ impl Fixed {
         };
 
         let heartbeat_url = reader.url_kept_private("MARFA_HEARTBEAT_URL");
+        let object_store = reader.object_store();
         let database =
             DatabasePath::read(environment.get("SQLITE_PATH").unwrap_or("./data/marfa.db"));
         let control_socket = environment
@@ -241,6 +318,8 @@ impl Fixed {
             error_receiver: environment.get("ERROR_WEBHOOK_URL").is_some()
                 || (environment.get("MARFA_POSTHOG_HOST").is_some()
                     && environment.get("MARFA_POSTHOG_PROJECT_TOKEN").is_some()),
+            webhook_private_addresses,
+            object_store,
         };
         (!failed).then_some((fixed, given))
     }

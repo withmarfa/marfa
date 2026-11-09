@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
-use rusqlite::Connection;
+use rusqlite::{Connection, Transaction};
 
 use super::grants;
 use super::scope::to_grants;
 use super::store::{self, AccessToken, Consent, ms_of};
 use crate::app::App;
 use crate::app::access::{Caller, OwnLevers, Standing};
+use crate::app::config;
 use crate::app::keys::{Key, digest_of, queue_use};
 use crate::app::refusal::Result;
 
@@ -58,6 +59,47 @@ fn caller_of(tx: &Connection, token: AccessToken, now: i64) -> Result<Option<(Ca
         },
         consent,
     )))
+}
+
+/// What a standing grant reaches, for work its tokens started and that outlives any one of them.
+pub fn grant_caller(tx: &Transaction<'_>, grant_id: &str) -> Result<Option<Caller>> {
+    let Some(consent) = store::consent_by_grant(tx, grant_id)?.filter(Consent::stands) else {
+        return Ok(None);
+    };
+    let Some(client) = store::client(tx, &consent.client_id)? else {
+        return Ok(None);
+    };
+    let key = Key {
+        label: client.name(),
+        source: grants::source_of(&consent.client_id, &consent.user_id),
+        default_tier: DEFAULT_TIER.to_string(),
+        oauth_client_id: Some(consent.client_id.clone()),
+        grants: to_grants(&consent.scopes),
+        levers: OwnLevers::Unset,
+        standing: config::standing(tx, None)?,
+        created_at: store::stamp_of(consent.created_at),
+        expires_at: None,
+        last_used_at: None,
+        id: consent.grant_id.clone(),
+    };
+    let grant = Granted {
+        client_id: consent.client_id,
+        user_id: consent.user_id,
+        grant_id: consent.grant_id,
+    };
+    Ok(Some(Caller::App {
+        key: Box::new(key),
+        grant: Box::new(grant),
+    }))
+}
+
+/// The OAuth client a grant was made to, and its name while the client is kept.
+pub fn grant_client(tx: &Connection, grant_id: &str) -> Result<Option<(String, Option<String>)>> {
+    let Some(consent) = store::consent_by_grant(tx, grant_id)? else {
+        return Ok(None);
+    };
+    let name = store::client(tx, &consent.client_id)?.map(|client| client.name());
+    Ok(Some((consent.client_id, name)))
 }
 
 pub fn live_by_id(tx: &Connection, id: &str, at: &str) -> Result<Option<Caller>> {

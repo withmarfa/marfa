@@ -2,6 +2,7 @@
 //! what a later stream sends without reading a row that may have changed since.
 
 mod expiry;
+pub mod fanout;
 mod frame;
 mod page;
 mod stream;
@@ -17,7 +18,7 @@ use super::query::judge_type;
 use super::refusal::{Refusal, Result};
 
 pub use expiry::expire;
-pub use frame::Filter;
+pub use frame::{Filter, Head, Judge, Judged, Kind};
 pub use stream::{Hangup, Opening, PING, Viewer, Viewers, open};
 
 /// Judge each entry's syntax and access before proceeding to the next.
@@ -47,17 +48,24 @@ pub struct Event<'a> {
     pub payload: String,
 }
 
-pub(super) fn append(tx: &Transaction<'_>, at: &str, event: &Event<'_>) -> Result<()> {
+/// Fan-out controls webhooks only; streams still read every event.
+pub(super) fn append(
+    tx: &Transaction<'_>,
+    at: &str,
+    fanout: bool,
+    event: &Event<'_>,
+) -> Result<()> {
     tx.execute(
-        "INSERT INTO event_log (event_type, item_id, type, source, at, payload) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO event_log (event_type, item_id, type, source, at, payload, fanout) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
             event.event_type,
             event.item_id,
             event.type_id,
             event.source,
             at,
-            event.payload
+            event.payload,
+            fanout
         ],
     )?;
     Ok(())
