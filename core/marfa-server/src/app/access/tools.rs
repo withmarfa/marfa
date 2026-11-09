@@ -25,4 +25,8 @@ impl Caller {
     pub fn may_use_key_door(&self) -> bool {
         self.manages_keys() || self.holds(Permission::KeysMint)
     }
+
+    pub fn may_manage_webhooks(&self) -> bool {
+        self.holds(Permission::WebhooksManage)
+    }
 }
