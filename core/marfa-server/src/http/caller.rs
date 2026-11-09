@@ -129,7 +129,7 @@ async fn read_credential(parts: &Parts, app: &Arc<App>) -> Result<Option<Caller>
     Ok(caller)
 }
 
-/// The form's door checks its origin; a presented credential takes precedence over the cookie.
+/// The form's door checks its origin. A request that presents a credential is no browser's.
 pub async fn browser_owner(parts: &Parts, app: &Arc<App>) -> Result<Option<Caller>> {
     if !matches!(presented(&parts.headers), Presented::Nothing) {
         return Ok(None);

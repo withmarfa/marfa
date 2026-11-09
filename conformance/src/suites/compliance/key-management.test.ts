@@ -582,7 +582,7 @@ describe("key management", () => {
     const { key } = await createClientWithoutPermissions(
       `km-standing-${ctx.runId}`,
     );
-    // These doors require management grants or direct authority. Invalid
+    // These doors require management grants or local authority. Invalid
     // requests distinguish that gate from later request validation.
     const doors: [string, string][] = [
       ["GET", "/metrics"],
