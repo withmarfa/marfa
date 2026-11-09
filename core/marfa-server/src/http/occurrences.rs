@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use axum::extract::State;
 use axum::http::{StatusCode, Uri};
-use marfa_rules::query::{declared_type, type_entries};
+use marfa_rules::query::{list_entry, type_entries};
 use marfa_rules::time;
 
 use super::answer::{Answer, text_answer};
@@ -37,9 +37,7 @@ fn type_of(params: &Params) -> Result<Option<String>> {
     let [only] = entries.as_slice() else {
         return Err(invalid_field("type", "type names one type."));
     };
-    Ok(declared_type(Some(only))
-        .map_err(refused)?
-        .map(str::to_string))
+    Ok(Some(list_entry(only).map_err(refused)?.to_string()))
 }
 
 fn window_of(params: &Params) -> Result<Window> {
