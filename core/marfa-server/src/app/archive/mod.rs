@@ -1,5 +1,4 @@
-//! Exports: NDJSON lines read a page at a time, and the archive a restore reads, selected in
-//! one snapshot and checked with the restore's checks before its first byte.
+//! Exports: NDJSON lines, and the archive a restore reads, selected in one snapshot.
 
 pub mod checks;
 mod lines;
@@ -39,8 +38,7 @@ const PAGE: i64 = 500;
 const EDGE_PAGE: i64 = 1000;
 const QUEUED: usize = 4;
 
-/// An export's body. It ends cleanly only once the sending task has said it finished, so a task
-/// that stopped, failed or panicked ends the body with an error.
+/// An export's body. It ends cleanly only once the sender has said it finished.
 pub struct Body {
     chunks: mpsc::Receiver<Bytes>,
     finished: Option<oneshot::Receiver<()>>,
@@ -119,8 +117,6 @@ impl InstanceNeed {
 #[derive(Clone, Debug, Default)]
 struct EdgeNeed(BTreeSet<(String, String)>);
 
-/// An archive ready to send: its manifest, its spooled line files, and the blobs it carries
-/// with the store each was found whole in.
 struct Prepared {
     created_at: Stamp,
     manifest: Vec<u8>,
@@ -130,8 +126,6 @@ struct Prepared {
     blobs: Vec<(Carried, String)>,
 }
 
-/// An archive a backup writes: its body, when it was taken, and the change count its snapshot
-/// holds.
 pub struct Backup {
     pub body: Body,
     pub created_at: Stamp,
@@ -191,7 +185,6 @@ fn unrestorable(refused: &checks::Refused) -> Refusal {
 }
 
 impl App {
-    /// Selects, checks and spools the archive, then hands its bytes to a task that sends them.
     /// Every refusal comes before the first byte.
     pub async fn export_archive(
         self: &Arc<App>,
@@ -209,9 +202,7 @@ impl App {
         Ok((body, created))
     }
 
-    /// The archive a backup puts: every row, the bin included, and the instance lines, with no
-    /// file, read behind other work. Its manifest names the files `bucket` held a copy of, and
-    /// `check` is how long the bucket is given to answer.
+    /// Builds a row-only backup from one snapshot.
     pub async fn backup_archive(
         self: &Arc<App>,
         bucket: &str,
@@ -336,8 +327,7 @@ impl App {
     }
 }
 
-/// Reads the whole selection in the one snapshot `read` holds, checking each row as a restore
-/// would and writing the line files.
+/// Reads the whole selection in one snapshot, checking each row as a restore would.
 fn select(
     read: &Reader<'_, '_>,
     ask: &Ask,

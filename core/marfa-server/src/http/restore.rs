@@ -33,9 +33,7 @@ struct Read {
     ended: bool,
 }
 
-/// Before a refusal made ahead of the body, reads and drops what a client already sending has
-/// in flight: at most one request's worth, for at most `EARLY_DRAIN`. A client that asked to
-/// wait for `100 Continue` has sent nothing, and reading would invite it to send.
+/// A client that asked to wait for `100 Continue` has sent nothing, and reading would invite it to send.
 async fn drain_early(app: &App, parts: &Parts, body: &mut Body) {
     let waits = parts
         .headers

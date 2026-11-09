@@ -1,5 +1,4 @@
-//! A backup's name is the instant it was taken, as the archive's `created_at` writes it, and
-//! `.tar`. Which backups thinning keeps follows from the names alone.
+//! A backup's name is the instant it was taken, as `created_at` writes it, and `.tar`.
 
 use std::collections::HashSet;
 
@@ -25,9 +24,7 @@ pub fn parse(name: &str) -> Option<Stamp> {
     Stamp::parsed(name.strip_suffix(SUFFIX)?)
 }
 
-/// The listed names to delete: every backup of the last day is kept, then the newest of each
-/// day for thirty days, and the newest backup always. A name that does not read as a backup is
-/// never named.
+/// Keeps every backup of the last day, the newest of each day for thirty days, and the newest always.
 pub fn doomed(listed: &[String], now: Stamp) -> Vec<String> {
     let now = now.at();
     let mut backups: Vec<(chrono::DateTime<chrono::Utc>, &String)> = listed

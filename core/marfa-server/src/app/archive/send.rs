@@ -1,5 +1,4 @@
-//! Sends a prepared archive, asking before each part whether the credential still reads it.
-//! Only a whole archive finishes its body; any other end is an error.
+//! Sends a prepared archive; only a whole archive finishes its body, any other end is an error.
 
 use std::fs::File;
 use std::io;

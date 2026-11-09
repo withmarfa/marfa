@@ -1,5 +1,4 @@
-//! `POST /restore`: the body read and checked as it arrives, blob bytes placed unrecorded, then
-//! one write that records everything or nothing.
+//! `POST /restore`: reads and checks the body as it arrives, then one write records everything or nothing.
 
 pub mod intake;
 mod untar;
@@ -131,8 +130,7 @@ fn lines(scratch: &Scratch) -> Result<impl Iterator<Item = Result<Value>>> {
 }
 
 impl App {
-    /// Opens a restore's body: refuses a declared size the volume has no room for, then starts
-    /// the thread that reads the parts as they come.
+    /// Refuses a declared size the volume has no room for.
     pub async fn begin_restore(&self, declared: Option<u64>) -> Result<Receiving> {
         self.restore_room(declared.unwrap_or(0)).await?;
         let cache = self.catalog_handle();
@@ -156,8 +154,7 @@ impl App {
         })
     }
 
-    /// Places the archive's blobs, then writes it in one transaction, judged on what that
-    /// transaction holds. Writes no row, record or event unless it commits whole.
+    /// Writes nothing unless it commits whole.
     pub async fn restore(
         self: &Arc<App>,
         caller: &Caller,
