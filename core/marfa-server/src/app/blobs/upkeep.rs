@@ -490,7 +490,7 @@ pub async fn integrity(app: Arc<App>, run: Run) -> Result<Report> {
     })))
 }
 
-/// None while the sweep is off. Read from `tx`, since the live settings lag a committed change.
+/// Empty while the sweep is off. Read from `tx`, since the live settings lag a committed change.
 fn purgeable(tx: &rusqlite::Transaction<'_>, app: &App) -> Result<Vec<Hash>> {
     let seeds = app.settings.seeds();
     if stored::setting(tx, &seeds, BLOB_CLEANUP_INTERVAL_MS)? == 0 {

@@ -157,6 +157,22 @@ impl Instance {
             .unwrap();
     }
 
+    /// A webhook with one delivery `dead`, given up on now; answers the webhook's ID.
+    async fn dead_delivery(&self) -> String {
+        let body = json!({ "url": "http://127.0.0.1:9/hook", "events": ["edge.deleted"] });
+        let made = self.ok(Method::POST, "/webhooks", body).await;
+        let webhook = made["id"].as_str().unwrap().to_string();
+        let at = self.app.clock.stamp();
+        self.sql(format!(
+            "INSERT INTO webhook_deliveries (id, webhook_id, event_id, event_type, type, source, \
+             payload, status, status_code, attempt, cycle_attempt, due_at, created_at, \
+             updated_at) VALUES ('dead', '{webhook}', 1, 'edge.deleted', 'core.note', 'writer', \
+             '{{}}', 'dead_letter', 400, 1, 1, 0, '{at}', '{at}')"
+        ))
+        .await;
+        webhook
+    }
+
     fn forward(&self, ms: u64) {
         self.app.clock.advance(ms).unwrap();
     }
@@ -277,9 +293,18 @@ async fn trash_purge_keeps_what_a_retention_committed_before_it_is_live_keeps() 
     instance.ok(Method::DELETE, &path, Value::Null).await;
     instance.forward(3 * DAY);
 
+    let faults = &instance.app.faults;
+    faults
+        .set("hold:write", Some("items.trash_purged"))
+        .unwrap();
+    let app = instance.app.clone();
+    let run = tokio::spawn(async move { housekeeping::run_now(&app, "trash-purge").await });
+    instance.when_held().await;
     commit_unpublished(&instance.app, "trash_retention_days", "10").await;
     assert_eq!(instance.app.settings.live().get(TRASH_RETENTION_DAYS), 2);
-    assert_eq!(instance.run("trash-purge").await["deleted"], 0);
+    faults.clear(Some("hold:write"));
+
+    assert_eq!(run.await.unwrap().unwrap().outcome, "ok");
     assert_eq!(instance.state(&id), "trashed");
 }
 
@@ -305,8 +330,10 @@ async fn log_cleanups_keep_what_a_retention_committed_before_it_is_live_keeps() 
     let retentions = [
         ("MARFA_AUDIT_RETENTION_DAYS", "2"),
         ("MARFA_EVENT_LOG_RETENTION_HOURS", "2"),
+        ("MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES", "true"),
     ];
     let instance = Instance::start(&retentions).await;
+    instance.dead_delivery().await;
     let body = json!({ "type": "core.note", "properties": { "body": "keyed" } });
     let (status, _) = instance
         .send(Method::POST, "/items", body, Some("the-key"))
@@ -337,6 +364,7 @@ async fn log_cleanups_keep_what_a_retention_committed_before_it_is_live_keeps() 
         instance.count("SELECT count(*) FROM idempotency_records"),
         1
     );
+    assert_eq!(instance.count("SELECT count(*) FROM webhook_deliveries"), 1);
 }
 
 #[tokio::test]
@@ -346,18 +374,7 @@ async fn redelivery_follows_a_retention_committed_before_it_is_live() {
         ("MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES", "true"),
     ];
     let instance = Instance::start(&settings).await;
-    let body = json!({ "url": "http://127.0.0.1:9/hook", "events": ["edge.deleted"] });
-    let made = instance.ok(Method::POST, "/webhooks", body).await;
-    let webhook = made["id"].as_str().unwrap().to_string();
-    let at = instance.app.clock.stamp();
-    instance
-        .sql(format!(
-            "INSERT INTO webhook_deliveries (id, webhook_id, event_id, event_type, type, source, \
-             payload, status, status_code, attempt, cycle_attempt, due_at, created_at, \
-             updated_at) VALUES ('dead', '{webhook}', 1, 'edge.deleted', 'core.note', 'writer', \
-             '{{}}', 'dead_letter', 400, 1, 1, 0, '{at}', '{at}')"
-        ))
-        .await;
+    let webhook = instance.dead_delivery().await;
     instance.forward(3 * DAY);
 
     commit_unpublished(&instance.app, "audit_retention_days", "0").await;
