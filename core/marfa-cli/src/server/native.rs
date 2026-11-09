@@ -4,6 +4,8 @@
 use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
 
+use sha2::{Digest, Sha256};
+
 use crate::error::CliError;
 use crate::server::envfile::EnvFile;
 use crate::server::names;
@@ -74,6 +76,25 @@ pub fn environment(dir: &Path, port: u16, settings: &EnvFile) -> Vec<(String, St
         (names::CONTROL_SOCKET.to_string(), path(layout.socket())),
     ]);
     environment
+}
+
+/// A fingerprint of everything a server reads when it starts: the release,
+/// the port, the listen host, the data paths and the settings file exactly as
+/// it is. It is a hash, so the `.env` that keeps it never holds a secret.
+pub fn applied(dir: &Path, port: u16, release: &str, settings_text: &str) -> String {
+    let mut hash = Sha256::new();
+    let mut field = |text: &str| {
+        hash.update(text.len().to_le_bytes());
+        hash.update(text.as_bytes());
+    };
+    field(release);
+    for (name, value) in environment(dir, port, &EnvFile::default()) {
+        let (name, value) = (name.as_str(), value.as_str());
+        field(name);
+        field(value);
+    }
+    field(settings_text);
+    hex::encode(hash.finalize())
 }
 
 /// A settings file that sets what the install folder decides is refused,

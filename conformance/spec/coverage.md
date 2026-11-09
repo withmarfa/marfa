@@ -63,10 +63,10 @@ Fixture paths are under `src/suites/`.
 
 ## Folder sync reports
 
-| Operation                  | Status  | Fixture                            | Notes                                                                                   |
-| -------------------------- | ------- | ---------------------------------- | --------------------------------------------------------------------------------------- |
-| `PUT /folders/{id}/status` | covered | `compliance/folder-status.test.ts` | Own sign-in, read reach, strict privacy, monotonic sequences, and receipt preservation. |
-| `GET /folders/{id}/status` | covered | `compliance/folder-status.test.ts` | Current and historical copies, receipt ages, and bounded current totals.                |
+| Operation                  | Status  | Fixture                                                                        | Notes                                                                                   |
+| -------------------------- | ------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| `PUT /folders/{id}/status` | covered | `compliance/folder-status.test.ts`, `compliance/folder-status-archive.test.ts` | Own sign-in, read reach, strict privacy, monotonic sequences, and receipt preservation. |
+| `GET /folders/{id}/status` | covered | `compliance/folder-status.test.ts`                                             | Current and historical copies, receipt ages, and bounded current totals.                |
 
 ## Edges
 
@@ -217,7 +217,7 @@ Fixture paths are under `src/suites/`.
 
 | Operation                   | Status  | Fixture                            | Notes                                                                                                              |
 | --------------------------- | ------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `GET /folders`              | covered | `compliance/folder-status.test.ts` | Active summaries, bounded pages, and owner or private local authority.                                             |
+| `GET /folders`              | covered | `compliance/folder-status.test.ts` | Active summaries, bounded pages, and the private local command alone.                                              |
 | `POST /folders`             | covered | `compliance/folders.test.ts`       | Write on `system.folder` in the type map; each setting checked and named when refused.                             |
 | `PATCH /folders/{id}`       | covered | `compliance/folders.test.ts`       | Needs the version read; a stale change merges or answers `409 version_conflict`; a revoked folder does not change. |
 | `POST /folders/{id}/revoke` | covered | `compliance/folders.test.ts`       | Terminal: a second revoke answers `400 invalid_transition`.                                                        |

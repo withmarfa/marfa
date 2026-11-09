@@ -53,7 +53,7 @@ fn settings(dir: &Path, more: &[(&str, &str)]) -> Accepted {
         ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
         ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
         ("MARFA_TEST_HOOKS", "true"),
-        ("RATE_LIMIT_ENABLED", "false"),
+        ("MARFA_RATE_LIMIT_ENABLED", "false"),
     ];
     pairs.extend_from_slice(more);
     Settings::read(Environment::from_pairs(&pairs)).unwrap()

@@ -338,8 +338,11 @@ impl Folder {
 
     /// A settings file of the folder, read without following a link.
     fn read(&self, name: &str) -> Result<Option<EnvFile>, CliError> {
+        Ok(self.read_text(name)?.map(|text| EnvFile::parse(&text)))
+    }
+
+    fn read_text(&self, name: &str) -> Result<Option<String>, CliError> {
         match files::read_regular(&self.path(name)) {
-            Ok(text) => Ok(text.map(|text| EnvFile::parse(&text))),
             Err(CliError::Io(error)) if error.kind() == std::io::ErrorKind::PermissionDenied => {
                 Err(CliError::Usage(format!(
                     "this account cannot read {}: an install made by root belongs to root and the {} account, so run the command with sudo",
@@ -347,8 +350,35 @@ impl Folder {
                     account::NAME
                 )))
             }
-            Err(error) => Err(error),
+            read => read,
         }
+    }
+
+    /// What a native server started now reads, as `MARFA_APPLIED` keeps it.
+    fn applied(&self, port: u16, release: &str) -> Result<String, CliError> {
+        let settings = self.read_text(files::SETTINGS)?.unwrap_or_default();
+        Ok(native::applied(&self.dir, port, release, &settings))
+    }
+
+    /// Keeps what the server now running was started with, once a start or
+    /// restart is confirmed. Written to `.env` as it stands on disk.
+    fn keep_applied(
+        &self,
+        dotenv: &mut EnvFile,
+        applied: &str,
+        kept: files::Perms,
+    ) -> Result<(), CliError> {
+        dotenv.set("MARFA_APPLIED", applied)?;
+        files::write_if_changed(&self.path(files::DOTENV), &dotenv.render(), kept)?;
+        Ok(())
+    }
+
+    /// Forgets what the server was started with before a restart that may
+    /// not be confirmed, so that the next install restarts it again.
+    fn forget_applied(&self, dotenv: &mut EnvFile, kept: files::Perms) -> Result<(), CliError> {
+        dotenv.remove("MARFA_APPLIED");
+        files::write_if_changed(&self.path(files::DOTENV), &dotenv.render(), kept)?;
+        Ok(())
     }
 
     /// The install in this folder, or `None` for a folder with none.

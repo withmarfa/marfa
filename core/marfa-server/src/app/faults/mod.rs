@@ -13,6 +13,7 @@ macro_rules! point_list {
         HOLD_STREAM_HEAD = Hold "stream-head" None;
         HOLD_STREAM_REPLAY = Hold "stream-replay" None;
         HOLD_STREAM_DRAIN = Hold "stream-drain" None;
+        HOLD_FOLDER_STATUS_READ = Hold "folder-status-read" None;
         HOLD_WEBHOOK_RESPONSE = Hold "webhook:response" None;
         HOLD_WEBHOOK_SCHEDULE = Hold "webhook-schedule" None;
         HOLD_WEBHOOK_SCHEDULE_QUEUED = Hold "webhook-schedule:queued" None;
@@ -39,6 +40,7 @@ macro_rules! point_list {
         HOLD_BLOB_DELETE = Hold "blob-delete" None;
         HOLD_BLOB_PURGE = Hold "blob-orphans:purge" None;
         FAIL_HEALTH_WRITE = Fail "health-write" Nth;
+        FAIL_FOLDER_STATUS_REPORT = Fail "folder-status-report" Nth;
         REFUSE_READ = Refuse "read" None;
         REFUSE_WRITE = Refuse "write" None;
         REFUSE_WRITE_LOCK = Refuse "write-lock" None;

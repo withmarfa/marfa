@@ -132,6 +132,16 @@ pub fn live_by_id(tx: &Transaction<'_>, id: &str, at: &str) -> Result<Option<Key
         .optional()?)
 }
 
+/// Whether the key is neither revoked nor expired at `at`.
+pub fn stands(tx: &Transaction<'_>, id: &str, at: &str) -> Result<bool> {
+    Ok(tx.query_row(
+        "SELECT EXISTS (SELECT 1 FROM api_keys k WHERE k.id = ?2 AND k.revoked_at IS NULL \
+         AND (k.expires_at IS NULL OR k.expires_at > ?1))",
+        [at, id],
+        |row| row.get(0),
+    )?)
+}
+
 /// A key's label for as long as its row is kept, revoked or not.
 pub fn label(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {
     Ok(tx
