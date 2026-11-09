@@ -90,8 +90,11 @@ pub fn searched_field_names() -> Result<Vec<String>, RuleError> {
     list("searched_field_names")
 }
 
+/// Asked of every row an export checks, so it reads the parsed list, which is sorted by id.
 pub fn ships(id: &str) -> Result<bool, RuleError> {
-    Ok(catalog()?.types.iter().any(|shipped| shipped.id == id))
+    Ok(shipped_types()?
+        .binary_search_by(|shipped| shipped.get("id").and_then(Value::as_str).cmp(&Some(id)))
+        .is_ok())
 }
 
 pub fn shipped_types() -> Result<&'static [Map<String, Value>], RuleError> {
