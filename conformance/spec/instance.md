@@ -652,7 +652,7 @@ If a component's probe has given no answer within two seconds, then the server M
 
 **Reason:** a refusal is known and a silence is not.
 
-**Tests:** `compliance/health.test.ts › answers the write component degraded and the status 200 when the probe has given no answer within two seconds, and ok once the lock is released`.
+**Tests:** `compliance/health.test.ts › answers the write component degraded and the status 200 when the probe has given no answer within two seconds, and ok once the lock is released`, `compliance/health.test.ts › answers the disk and blob storage components degraded within two seconds when the filesystem does not answer, while other requests are served, and ok once it does`.
 
 ### `instance/health-disk-down`
 

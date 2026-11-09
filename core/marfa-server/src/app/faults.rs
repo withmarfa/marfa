@@ -105,6 +105,7 @@ points! {
     HOLD_BLOB_DELETE = Hold "blob-delete" None;
     HOLD_BLOB_PURGE = Hold "blob-orphans:purge" None;
     FAIL_HEALTH_WRITE = Fail "health-write" Nth;
+    HOLD_DISK_PROBE = Hold "disk-probe" None;
     FAIL_FOLDER_STATUS_REPORT = Fail "folder-status-report" Nth;
     REFUSE_READ = Refuse "read" None;
     REFUSE_WRITE = Refuse "write" None;
