@@ -37,6 +37,13 @@ impl Ancestry {
     }
 }
 
+/// What a type inherits, and the types that inherit from it.
+pub(super) struct Lineage<'a> {
+    pub ancestry: Ancestry,
+    pub tables: Vec<(String, String, Obj)>,
+    pub descendants: Vec<&'a Obj>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Registry {
     types: HashMap<String, Obj>,
@@ -137,6 +144,17 @@ impl Registry {
             .collect();
         children.sort_unstable();
         children
+    }
+
+    /// Walks above and below `definition` once, as it would stand in this registry.
+    pub(super) fn lineage(&self, definition: &Obj) -> Lineage<'_> {
+        let id = text(definition, "id");
+        let parent = text(definition, "parent").filter(|p| !p.is_empty() && Some(*p) != id);
+        Lineage {
+            ancestry: parent.map(|p| self.ancestry(p)).unwrap_or_default(),
+            tables: parent.map(|p| self.inherited_tables(p)).unwrap_or_default(),
+            descendants: id.map(|id| self.descendants(id)).unwrap_or_default(),
+        }
     }
 
     pub fn descendants(&self, id: &str) -> Vec<&Obj> {

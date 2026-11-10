@@ -328,6 +328,20 @@ If a type would give a field another `type`, `format`, `items_type`, `items_fiel
 
 **Tests:** `compliance/type-inheritance.test.ts › rejects a child type that changes an inherited field shape (inheritance_violation)`, `› rejects a parent gaining a field whose shape differs from one its child declares`, `› lets a child tighten an inherited field to required, and refuses one that loosens it`, `› refuses a replacement of a child that changes an inherited field's shape`, `compliance/thumbnails.test.ts › refuses a parent gaining a thumbnail under a name its child declares as text, and takes one its child declares as a thumbnail`, `compliance/status-groups.test.ts › refuses the inherited status field redeclared as another kind`, `compliance/field-rules.test.ts › refuses a child that changes the members of an inherited list`.
 
+### `types/child-shape-reparented`
+
+If a replacement of a type would give it a parent above which a type below it declares a field of the name of one a type above that parent gives, in a shape `types/child-shape` or `types/child-range-refused` refuses, then the server MUST answer `400 inheritance_violation` naming the type's `parent`.
+
+**Reason:** attaching a type under an ancestor is judged against every type below it, as adding a field to it is (`types/child-shape`), so a type below never holds a field in a shape its chain does not take.
+
+**Tests:** `compliance/type-inheritance.test.ts › refuses a replacement that gives a type a parent above which a subtype declares an inherited field in another shape`.
+
+### `types/child-shape-reparented-unchanged`
+
+When the server refuses a replacement under `types/child-shape-reparented`, the server MUST NOT change the type.
+
+**Tests:** `compliance/type-inheritance.test.ts › changes nothing when it refuses a replacement for the parent it would give a type`.
+
 ### `types/child-range`
 
 The server MUST let a subtype add a `minimum` or a `maximum` to an inherited `number` or `integer` field that has none, and narrow an inherited range by raising its `minimum` or lowering its `maximum`.

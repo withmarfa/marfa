@@ -348,6 +348,88 @@ describe("type inheritance rule", () => {
     expect(same.ok, JSON.stringify(same.error)).toBe(true);
   });
 
+  async function chainBelowAParent(leafFields: Record<string, unknown>) {
+    const top = `user.inherit-top-${ctx.runId}-${leafCounter++}`;
+    const middle = `${top}-middle`;
+    const leaf = `${middle}.leaf`;
+    const made = await client.registerType({
+      id: top,
+      fields: {
+        count: { type: "integer" },
+        kind: { type: "string", required: true },
+      },
+    });
+    expect(made.ok, JSON.stringify(made.error)).toBe(true);
+    const detached = {
+      id: middle,
+      label: "Middle",
+      fields: { title: { type: "string" } },
+    };
+    expect((await client.registerType(detached)).ok).toBe(true);
+    const below = await client.registerType({
+      id: leaf,
+      parent: middle,
+      fields: leafFields,
+    });
+    expect(below.ok, JSON.stringify(below.error)).toBe(true);
+    return {
+      top,
+      middle,
+      leaf,
+      detached,
+      attached: { ...detached, version: 2, parent: top },
+    };
+  }
+  let leafCounter = 0;
+
+  it("refuses a replacement that gives a type a parent above which a subtype declares an inherited field in another shape", async () => {
+    const other = await chainBelowAParent({
+      count: { type: "string" },
+      kind: { type: "string", required: true },
+    });
+    const refusedShape = await client.replaceType(other.middle, other.attached);
+    expect(
+      refusedShape.status,
+      "a type took a parent whose field its subtype declares as another type",
+    ).toBe(400);
+    expect(refusedShape.error?.error.code).toBe("inheritance_violation");
+    const shape = refusedShape.error?.error.details?.errors as
+      Array<{ field: string }> | undefined;
+    expect(shape?.map((error) => error.field)).toEqual(["parent"]);
+
+    const loose = await chainBelowAParent({
+      count: { type: "integer" },
+      kind: { type: "string" },
+    });
+    const refusedLoose = await client.replaceType(loose.middle, loose.attached);
+    expect(
+      refusedLoose.status,
+      "a type took a parent whose required field its subtype declares optional",
+    ).toBe(400);
+    expect(refusedLoose.error?.error.code).toBe("inheritance_violation");
+
+    const alike = await chainBelowAParent({
+      count: { type: "integer" },
+      kind: { type: "string", required: true },
+    });
+    const taken = await client.replaceType(alike.middle, alike.attached);
+    expect(taken.status, JSON.stringify(taken.error)).toBe(200);
+  });
+
+  it("changes nothing when it refuses a replacement for the parent it would give a type", async () => {
+    const { middle, attached } = await chainBelowAParent({
+      count: { type: "string" },
+    });
+    const res = await client.replaceType(middle, attached);
+    expect(res.status).toBe(400);
+    const held = (await client.getType(middle)).data;
+    expect(
+      held,
+      "a refused replacement gave the type a parent",
+    ).not.toHaveProperty("parent");
+    expect(held.label, "a refused replacement changed the type").toBe("Middle");
+  });
+
   it("a child reads back with the parent's fields merged beside its own", async () => {
     const parentId = `user.inherit-merge-parent-${ctx.runId}`;
     const childId = `${parentId}.child`;

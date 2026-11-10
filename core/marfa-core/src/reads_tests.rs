@@ -626,6 +626,45 @@ fn a_declared_table_may_not_change_one_a_type_above_it_declares() {
 }
 
 #[test]
+fn a_declared_type_may_not_give_an_inherited_field_another_shape_than_a_type_above_it() {
+    let core = Core::open_in_memory(None).unwrap();
+    let top = json!({"id": "app.acme.top", "fields": {"count": {"type": "integer"}}});
+    let middle = json!({"id": "app.acme.middle", "parent": "app.acme.top", "fields": {}});
+    let leaf = |fields: serde_json::Value| json!({"id": "app.acme.leaf", "parent": "app.acme.middle", "fields": fields});
+    for set in [
+        [
+            top.clone(),
+            middle.clone(),
+            leaf(json!({"count": {"type": "string"}})),
+        ],
+        [
+            leaf(json!({"count": {"type": "string"}})),
+            middle.clone(),
+            top.clone(),
+        ],
+    ] {
+        let refused = core.declare_types(&set).unwrap_err();
+        assert!(
+            matches!(&refused, CoreError::Invalid(message)
+                if message.contains("app.acme.leaf") && message.contains("count")),
+            "{refused:?}"
+        );
+    }
+    let shipped = core
+        .declare_types(&[json!({"id": "app.acme.note", "parent": "core.note",
+            "fields": {"title": {"type": "integer"}}})])
+        .unwrap_err();
+    assert!(
+        matches!(&shipped, CoreError::Invalid(message) if message.contains("title")),
+        "{shipped:?}"
+    );
+    assert!(core.declared_types().unwrap().is_empty());
+    core.declare_types(&[top, middle, leaf(json!({"count": {"type": "integer"}}))])
+        .unwrap();
+    assert_eq!(core.declared_types().unwrap().len(), 3);
+}
+
+#[test]
 fn a_declared_table_key_nothing_reads_is_refused() {
     let core = Core::open_in_memory(None).unwrap();
     let refused = core

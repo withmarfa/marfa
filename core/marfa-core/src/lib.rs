@@ -733,7 +733,9 @@ impl Core {
     /// `app.*` one it holds in another definition, where the key may.
     /// On a copy that holds a server's catalog the set waits for the next
     /// hydration. A set that names one id twice, or a `status` field with no
-    /// words anywhere in its chain, or a table a server would refuse, is refused `Invalid`.
+    /// words anywhere in its chain, or a table a server would refuse, or a
+    /// field a type gives another shape than a type above it does, is refused
+    /// `Invalid`.
     pub fn declare_types(&self, types: &[Value]) -> Result<()> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
@@ -769,6 +771,19 @@ impl Core {
                 "{id} declares tables that do not hold: {}: {}",
                 issue.field,
                 issue.message()
+            )));
+        }
+        if let Some((id, conflict)) = marfa_rules::schema::declared_shape_conflicts(types)
+            .into_iter()
+            .next()
+        {
+            return Err(CoreError::Invalid(format!(
+                "{id} declares {}.{} as {}, where {} gives it {}",
+                conflict.field,
+                conflict.attribute,
+                conflict.declared,
+                conflict.owner,
+                conflict.inherited
             )));
         }
         // The same set again writes nothing, so a declaration at each launch

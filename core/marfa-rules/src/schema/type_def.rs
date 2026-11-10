@@ -4,9 +4,7 @@ use std::collections::HashSet;
 
 use serde_json::{Map, Value, json};
 
-use super::compat::{
-    describe_compatibility_conflict, describe_shape_conflict, inherited_shape_conflicts,
-};
+use super::compat::{ShapeConflict, describe_compatibility_conflict, inherited_shape_conflicts};
 use super::field::{Shape, label_issue, normalize_field, validate_field_shape};
 use super::registry::Ancestry;
 use super::tables::judge_tables;
@@ -194,7 +192,9 @@ pub fn validate_type(input: &Value, registry: &Registry) -> Result<Obj, Vec<Issu
         .get("parent")
         .and_then(Value::as_str)
         .filter(|p| !p.is_empty());
-    let ancestry = parent.map(|p| registry.ancestry(p)).unwrap_or_default();
+    let lineage = registry.lineage(obj);
+    let ancestry = &lineage.ancestry;
+    let descendants = &lineage.descendants;
     if let Some(fields) = fields {
         for (name, definition) in fields {
             let inherits_status = ancestry
@@ -219,7 +219,7 @@ pub fn validate_type(input: &Value, registry: &Registry) -> Result<Obj, Vec<Issu
                 ))
             })
             .collect();
-        for conflict in inherited_shape_conflicts(own.iter().map(|(n, d)| (*n, d)), &ancestry) {
+        for conflict in inherited_shape_conflicts(own.iter().map(|(n, d)| (*n, d)), ancestry) {
             errors.push(
                 Issue::new(
                     format!("fields.{}.{}", conflict.field, conflict.attribute),
@@ -231,21 +231,26 @@ pub fn validate_type(input: &Value, registry: &Registry) -> Result<Obj, Vec<Issu
             );
         }
     }
-    let descendants: Vec<&Obj> = id.map(|id| registry.descendants(id)).unwrap_or_default();
     if let Some(fields) = fields {
-        validate_status_fields(id, fields, &ancestry, &descendants, registry, &mut errors);
-        validate_descendant_shapes(fields, &required_names, &descendants, &mut errors);
+        validate_status_fields(id, fields, ancestry, descendants, registry, &mut errors);
+        validate_descendant_shapes(
+            obj,
+            &stored_fields(fields, &required_names, ancestry),
+            registry,
+            descendants,
+            &mut errors,
+        );
         validate_descendant_links(
             id,
             fields,
             &required_names,
-            &ancestry,
-            &descendants,
+            ancestry,
+            descendants,
             registry,
             &mut errors,
         );
     }
-    let tables = judge_tables(obj, registry, &|held| {
+    let tables = judge_tables(obj, &lineage, &|held| {
         registry.contains(held) || id == Some(held)
     })
     .unwrap_or_else(|issues| {
@@ -258,9 +263,9 @@ pub fn validate_type(input: &Value, registry: &Registry) -> Result<Obj, Vec<Issu
         .chain(ancestry.names())
         .collect();
     if let Some(fields) = fields {
-        validate_thumbnails(fields, &ancestry, &descendants, &mut errors);
+        validate_thumbnails(fields, ancestry, descendants, &mut errors);
     }
-    validate_descendant_members(id, &visible, &descendants, registry, &mut errors);
+    validate_descendant_members(id, &visible, descendants, registry, &mut errors);
     for name in &required_names {
         if !visible.contains(name.as_str()) {
             errors.push(Issue::new(
@@ -272,9 +277,9 @@ pub fn validate_type(input: &Value, registry: &Registry) -> Result<Obj, Vec<Issu
         }
     }
     validate_roles(obj, &mut errors);
-    let thumbnails = thumbnail_names(fields, &ancestry);
+    let thumbnails = thumbnail_names(fields, ancestry);
     validate_display_hints(obj, &visible, &thumbnails, &mut errors);
-    validate_link_field(obj, fields, &required_names, &ancestry, &mut errors);
+    validate_link_field(obj, fields, &required_names, ancestry, &mut errors);
     validate_version_policy(obj, &mut errors);
     validate_merge_policy(obj, &visible, &mut errors);
     validate_retention_policy(obj, &mut errors);
@@ -282,7 +287,7 @@ pub fn validate_type(input: &Value, registry: &Registry) -> Result<Obj, Vec<Issu
         obj,
         fields,
         &required_names,
-        &ancestry,
+        ancestry,
         registry,
         &mut errors,
     );
@@ -293,22 +298,85 @@ pub fn validate_type(input: &Value, registry: &Registry) -> Result<Obj, Vec<Issu
         obj,
         fields,
         &required_names,
-        &ancestry,
+        ancestry,
         parent,
         tables,
     ))
 }
 
-fn stored_form(
-    obj: &Obj,
-    fields: Option<&Obj>,
-    required_names: &[String],
-    ancestry: &Ancestry,
-    parent: Option<&str>,
-    tables: Obj,
-) -> Obj {
+/// Each declared type's field shapes, judged against the types above it as a registration judges them.
+pub fn declared_shape_conflicts(types: &[Value]) -> Vec<(String, ShapeConflict)> {
+    let mut held = Registry::new(
+        builtin::shipped_types()
+            .map(<[Obj]>::to_vec)
+            .unwrap_or_default(),
+    );
+    let mut waiting: Vec<(&str, &Obj)> = types
+        .iter()
+        .filter_map(Value::as_object)
+        .filter_map(|row| Some((text(row, "id")?, row)))
+        .collect();
+    let mut declared: Vec<(String, Option<String>, Obj)> = Vec::new();
+    while !waiting.is_empty() {
+        let (ready, later): (Vec<_>, Vec<_>) = waiting.iter().copied().partition(|(_, row)| {
+            text(row, "parent").is_none_or(|parent| !waiting.iter().any(|(id, _)| *id == parent))
+        });
+        let (ready, later) = if ready.is_empty() {
+            (later, ready)
+        } else {
+            (ready, later)
+        };
+        for (id, row) in ready {
+            let parent = text(row, "parent").map(str::to_string);
+            let ancestry = parent
+                .as_deref()
+                .map(|parent| held.ancestry(parent))
+                .unwrap_or_default();
+            let fields = stored_fields(
+                as_obj(row.get("fields")).unwrap_or(&Obj::new()),
+                &required_names(row),
+                &ancestry,
+            );
+            let mut stored = Obj::new();
+            stored.insert("id".into(), json!(id));
+            if let Some(parent) = &parent {
+                stored.insert("parent".into(), json!(parent));
+            }
+            stored.insert("fields".into(), Value::Object(fields.clone()));
+            held = held.with(stored);
+            declared.push((id.to_string(), parent, fields));
+        }
+        waiting = later;
+    }
+    let order = |id: &str| {
+        types
+            .iter()
+            .position(|row| row.get("id").and_then(Value::as_str) == Some(id))
+    };
+    declared.sort_by_key(|(id, _, _)| order(id));
+    declared
+        .into_iter()
+        .flat_map(|(id, parent, fields)| {
+            let ancestry = parent
+                .as_deref()
+                .map(|parent| held.ancestry(parent))
+                .unwrap_or_default();
+            let own: Vec<(&str, &Obj)> = fields
+                .iter()
+                .filter_map(|(name, definition)| Some((name.as_str(), definition.as_object()?)))
+                .collect();
+            inherited_shape_conflicts(own, &ancestry)
+                .into_iter()
+                .map(|conflict| (id.clone(), conflict))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// Each field as stored, with a required name an ancestor gives restated in the type.
+fn stored_fields(fields: &Obj, required_names: &[String], ancestry: &Ancestry) -> Obj {
     let mut normalized = Map::new();
-    for (name, definition) in fields.into_iter().flatten() {
+    for (name, definition) in fields {
         let raw = definition
             .as_object()
             .cloned()
@@ -331,6 +399,18 @@ fn stored_form(
             normalized.insert(name.clone(), Value::Object(restated));
         }
     }
+    normalized
+}
+
+fn stored_form(
+    obj: &Obj,
+    fields: Option<&Obj>,
+    required_names: &[String],
+    ancestry: &Ancestry,
+    parent: Option<&str>,
+    tables: Obj,
+) -> Obj {
+    let normalized = stored_fields(fields.unwrap_or(&Obj::new()), required_names, ancestry);
     let mut schema = Map::new();
     schema.insert("id".into(), obj.get("id").cloned().unwrap_or(Value::Null));
     if let Some(label) = obj.get("label").filter(|l| l.is_string()) {
@@ -842,34 +922,67 @@ fn validate_compatible_with(
     }
 }
 
+/// A field `obj` declares is always judged below it; an inherited one only where `obj` brings the conflict.
 fn validate_descendant_shapes(
-    fields: &Obj,
-    required_names: &[String],
+    obj: &Obj,
+    stored: &Obj,
+    registry: &Registry,
     descendants: &[&Obj],
     errors: &mut Vec<Issue>,
 ) {
-    for (name, raw) in fields {
-        let Some(raw) = raw.as_object() else { continue };
-        let own = normalize_field(raw, Some(required_names.contains(name)));
-        for child in descendants {
-            let Some(declared) = as_obj(child.get("fields"))
-                .and_then(|f| f.get(name))
-                .and_then(Value::as_object)
-            else {
+    if descendants.is_empty() {
+        return;
+    }
+    let mut row = Obj::new();
+    for key in ["id", "parent"] {
+        if let Some(value) = obj.get(key) {
+            row.insert(key.into(), value.clone());
+        }
+    }
+    row.insert("fields".into(), Value::Object(stored.clone()));
+    let after = registry.with(row);
+    for child in descendants {
+        let (Some(parent), Some(declared)) = (text(child, "parent"), as_obj(child.get("fields")))
+        else {
+            continue;
+        };
+        let child_id = text(child, "id").unwrap_or_default();
+        let own: Vec<(&str, &Obj)> = declared
+            .iter()
+            .filter_map(|(name, definition)| Some((name.as_str(), definition.as_object()?)))
+            .collect();
+        let before = inherited_shape_conflicts(own.iter().copied(), &registry.ancestry(parent));
+        for conflict in inherited_shape_conflicts(own.iter().copied(), &after.ancestry(parent)) {
+            let name = &conflict.field;
+            let issue = if stored.contains_key(name) {
+                Issue::new(
+                    format!("fields.{name}.{}", conflict.attribute),
+                    format!("the shape \"{child_id}\" already declares \"{name}\" with"),
+                    format!(
+                        "{} here, {} in \"{child_id}\"",
+                        conflict.inherited, conflict.declared
+                    ),
+                    format!(
+                        "Give \"{name}\" the shape \"{child_id}\" declares, rename it here, or change \"{child_id}\" first."
+                    ),
+                )
+            } else if before.contains(&conflict) {
                 continue;
+            } else {
+                Issue::new(
+                    "parent",
+                    format!(
+                        "a parent whose chain gives \"{name}\" {}, as \"{child_id}\" declares it",
+                        conflict.declared
+                    ),
+                    format!(
+                        "a parent under \"{}\", which gives \"{name}\" {}",
+                        conflict.owner, conflict.inherited
+                    ),
+                    format!("Rename \"{name}\" on \"{child_id}\", or change it there first."),
+                )
             };
-            let child_id = text(child, "id").unwrap_or_default();
-            if let Some(conflict) = describe_shape_conflict(declared, &own) {
-                errors.push(
-                    Issue::new(
-                        format!("fields.{name}.{}", conflict.attribute),
-                        format!("the shape \"{child_id}\" already declares \"{name}\" with"),
-                        format!("{} here, {} in \"{child_id}\"", conflict.expected, conflict.actual),
-                        format!("Give \"{name}\" the shape \"{child_id}\" declares, rename it here, or change \"{child_id}\" first."),
-                    )
-                    .coded("inheritance_violation"),
-                );
-            }
+            errors.push(issue.coded("inheritance_violation"));
         }
     }
 }
@@ -1243,6 +1356,101 @@ mod tests {
             }}),
         );
         assert!(kept.is_empty(), "{kept:?}");
+    }
+
+    #[test]
+    fn a_type_may_not_take_a_parent_above_which_a_subtype_declares_an_inherited_field_otherwise() {
+        let held = Registry::new(
+            [
+                json!({"id": "user.top", "version": 0, "fields": {
+                    "count": {"type": "integer"},
+                    "kind": {"type": "string", "required": true}}}),
+                json!({"id": "user.middle", "version": 0, "fields": {"title": {"type": "string"}}}),
+                json!({"id": "user.middle.leaf", "parent": "user.middle", "version": 0,
+                       "fields": {"count": {"type": "string"}, "kind": {"type": "string"}}}),
+            ]
+            .map(|row| row.as_object().cloned().unwrap_or_default()),
+        );
+        let attached = json!({"id": "user.middle", "parent": "user.top", "fields": {
+            "title": {"type": "string"}}});
+        let found: Vec<_> = validate_type(&attached, &held)
+            .err()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|issue| (issue.field, issue.code))
+            .collect();
+        assert_eq!(
+            found,
+            vec![
+                ("parent".to_string(), Some("inheritance_violation")),
+                ("parent".to_string(), Some("inheritance_violation")),
+            ]
+        );
+        let detached = json!({"id": "user.middle", "fields": {"title": {"type": "string"}}});
+        assert!(validate_type(&detached, &held).is_ok());
+    }
+
+    #[test]
+    fn a_replacement_is_not_refused_for_a_conflict_below_it_that_it_does_not_bring() {
+        let row = |value: Value| value.as_object().cloned().unwrap_or_default();
+        let held = Registry::new([
+            row(json!({"id": "user.top", "version": 0, "fields": {"count": {"type": "integer"}}})),
+            row(json!({"id": "user.top.middle", "parent": "user.top", "version": 0, "fields": {}})),
+            row(
+                json!({"id": "user.top.middle.leaf", "parent": "user.top.middle", "version": 0,
+                       "fields": {"count": {"type": "string"}}}),
+            ),
+        ]);
+        let relabelled = json!({"id": "user.top.middle", "parent": "user.top", "label": "Middle",
+                                "fields": {}});
+        let kept = validate_type(&relabelled, &held);
+        assert!(kept.is_ok(), "{:?}", kept.err());
+        let declared = json!({"id": "user.top.middle", "parent": "user.top",
+                              "fields": {"count": {"type": "integer"}}});
+        let found: Vec<_> = validate_type(&declared, &held)
+            .err()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|issue| issue.field)
+            .collect();
+        assert_eq!(found, ["fields.count.type"]);
+    }
+
+    #[test]
+    fn a_declared_set_is_judged_down_every_chain_in_any_order() {
+        let found = |set: Vec<Value>| -> Vec<(String, String)> {
+            declared_shape_conflicts(&set)
+                .into_iter()
+                .map(|(id, conflict)| (id, format!("{}.{}", conflict.field, conflict.attribute)))
+                .collect()
+        };
+        let top = json!({"id": "app.t.top", "fields": {"n": {"type": "integer"}}});
+        let middle = json!({"id": "app.t.middle", "parent": "app.t.top", "required": ["n"],
+                            "fields": {}});
+        let leaf = |field: Value| {
+            json!({"id": "app.t.leaf", "parent": "app.t.middle",
+                                         "fields": {"n": field}})
+        };
+        let loose = found(vec![
+            leaf(json!({"type": "integer"})),
+            middle.clone(),
+            top.clone(),
+        ]);
+        assert_eq!(
+            loose,
+            [("app.t.leaf".to_string(), "n.required".to_string())]
+        );
+        let kept = found(vec![
+            leaf(json!({"type": "integer", "required": true})),
+            middle,
+            top,
+        ]);
+        assert!(kept.is_empty(), "{kept:?}");
+        let around = found(vec![
+            json!({"id": "app.t.a", "parent": "app.t.b", "fields": {"n": {"type": "string"}}}),
+            json!({"id": "app.t.b", "parent": "app.t.a", "fields": {"n": {"type": "integer"}}}),
+        ]);
+        assert!(!around.is_empty());
     }
 
     #[test]
