@@ -504,10 +504,11 @@ describe("rows in an archive", () => {
     const summary = (await ok(restoredInto.listTables(made.busy))).data.find(
       (table) => table.name === "lines",
     )!;
+    expect(summary.last_batch).not.toBeNull();
     const undone = await restoredInto.undoBatch(
       made.busy,
       "lines",
-      summary.last_batch,
+      summary.last_batch!,
     );
     expect(undone.status).toBe(404);
     expect(undone.error?.error.code).toBe("batch_not_found");
