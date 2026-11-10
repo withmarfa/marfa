@@ -265,7 +265,9 @@ export class MarfaClient {
     filter?: string,
   ): Promise<ApiResponse<RowTotals>> {
     const tail =
-      filter === undefined ? "" : `?${new URLSearchParams({ filter }).toString()}`;
+      filter === undefined
+        ? ""
+        : `?${new URLSearchParams({ filter }).toString()}`;
     return this.request<RowTotals>(
       `/items/${itemId}/tables/${table}/totals${tail}`,
     );

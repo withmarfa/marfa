@@ -1,15 +1,14 @@
 /**
  * The rows of the contract's catalogues, read from where the server keeps
  * them: the shipped type and edge type definitions in `@withmarfa/types`, the
- * permission list in `@withmarfa/shared`, and the event names in the server's
- * webhook vocabulary and in the stream's frame schema in `openapi.json`,
- * the document both servers are held to. Like the repository's other
+ * permission list in `@withmarfa/shared`, and the event names in the webhook
+ * vocabulary and the stream's frame schema in `openapi.json`, the document
+ * both servers are held to. Like the repository's other
  * generators, this reads the server by path; nothing under `src/suites/` may.
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { PERMISSIONS } from "../../packages/shared/src/scopes.js";
-import { WEBHOOK_EVENTS } from "../../packages/server/src/routes/webhooks.js";
 import {
   ALL_EDGE_TYPES,
   ALL_SYSTEM_TYPES,
@@ -95,32 +94,66 @@ interface FrameSchema {
   properties?: { event_type?: { enum?: string[]; const?: string } };
 }
 
+interface OpenApi {
+  paths: Record<
+    string,
+    Record<
+      string,
+      {
+        requestBody?: {
+          content?: Record<
+            string,
+            {
+              schema?: {
+                properties?: { events?: { items?: { enum?: string[] } } };
+              };
+            }
+          >;
+        };
+      }
+    >
+  >;
+  components: {
+    schemas: Record<string, FrameSchema & { oneOf?: { $ref: string }[] }>;
+  };
+}
+
+function openApi(): OpenApi {
+  return JSON.parse(readFileSync(OPENAPI, "utf8")) as OpenApi;
+}
+
+/** The events a webhook may name, as `POST /webhooks` documents them, in order. */
+export function webhookEvents(): string[] {
+  const events =
+    openApi().paths["/webhooks"]?.["post"]?.requestBody?.content?.[
+      "application/json"
+    ]?.schema?.properties?.events?.items?.enum ?? [];
+  if (events.length === 0) {
+    throw new Error("openapi.json names no event POST /webhooks takes");
+  }
+  return events;
+}
+
 /** Every `event:` a stream sends, from the frame schema `GET /events` documents. */
 export function eventTypeRows(): EventTypeRow[] {
-  const document = JSON.parse(readFileSync(OPENAPI, "utf8")) as {
-    components: {
-      schemas: Record<string, FrameSchema & { oneOf?: { $ref: string }[] }>;
-    };
-  };
+  const document = openApi();
+  const events = webhookEvents();
   const { schemas } = document.components;
   const frames = schemas["EventStreamFrame"]?.oneOf ?? [];
   const names = frames.flatMap(({ $ref }) => {
     const event = schemas[$ref.split("/").pop() ?? ""]?.properties?.event_type;
     return event?.enum ?? (event?.const === undefined ? [] : [event.const]);
   });
-  const webhook: ReadonlySet<string> = new Set(WEBHOOK_EVENTS);
+  const webhook: ReadonlySet<string> = new Set(events);
   const missing = [...webhook].filter((name) => !names.includes(name));
   if (names.length === 0 || missing.length > 0) {
     throw new Error(
       `the stream's frame schema in openapi.json does not name ${JSON.stringify(missing.length > 0 ? missing : "any event")}`,
     );
   }
-  // The events a webhook may name come first, in the server's order, then the
+  // The events a webhook may name come first, in the document's order, then the
   // frames only a stream sends, in the schema's.
-  const ordered = [
-    ...WEBHOOK_EVENTS,
-    ...names.filter((name) => !webhook.has(name)),
-  ];
+  const ordered = [...events, ...names.filter((name) => !webhook.has(name))];
   return ordered.map((name) => ({ name, webhook: webhook.has(name) }));
 }
 

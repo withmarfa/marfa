@@ -48,7 +48,11 @@ async function spendingItem(): Promise<{ type: string; item: string }> {
   return { type, item: item.data.item.id };
 }
 
-async function put(item: string, rows: Record<string, unknown>[], ids?: string[]) {
+async function put(
+  item: string,
+  rows: Record<string, unknown>[],
+  ids?: string[],
+) {
   const operations: RowOperation[] = rows.map((values, n) => ({
     op: "put",
     ...(ids ? { id: ids[n] } : {}),
@@ -65,10 +69,27 @@ describe("reading rows", () => {
     const before = await client.listTables(item);
     expect(before.status, JSON.stringify(before.error)).toBe(200);
     expect(before.data.data).toEqual([
-      { name: "empty", label: "Empty", row_count: 0, bytes: 0, last_batch: null, changed_at: null },
-      { name: "spend", label: "Spending", row_count: 0, bytes: 0, last_batch: null, changed_at: null },
+      {
+        name: "empty",
+        label: "Empty",
+        row_count: 0,
+        bytes: 0,
+        last_batch: null,
+        changed_at: null,
+      },
+      {
+        name: "spend",
+        label: "Spending",
+        row_count: 0,
+        bytes: 0,
+        last_batch: null,
+        changed_at: null,
+      },
     ]);
-    const written = await put(item, [{ amount: 1 }, { amount: 2, memo: "two" }]);
+    const written = await put(item, [
+      { amount: 1 },
+      { amount: 2, memo: "two" },
+    ]);
     const after = (await client.listTables(item)).data.data;
     const spend = after.find((t) => t.name === "spend");
     expect(spend).toMatchObject({ row_count: 2, last_batch: written.batch });
@@ -100,10 +121,18 @@ describe("reading rows", () => {
     const other = await spendingItem();
     await put(other.item, [{ amount: 1 }]);
     for (const res of [
-      await client.listRows(other.item, "spend", { cursor: first.data.next_cursor! }),
+      await client.listRows(other.item, "spend", {
+        cursor: first.data.next_cursor!,
+      }),
       await client.listRows(item, "empty", { cursor: first.data.next_cursor! }),
-      await client.listRows(item, "spend", { cursor: first.data.next_cursor!, filter: "values.amount gt 3" }),
-      await client.listRows(item, "spend", { cursor: first.data.next_cursor!, sort: "updated_at" }),
+      await client.listRows(item, "spend", {
+        cursor: first.data.next_cursor!,
+        filter: "values.amount gt 3",
+      }),
+      await client.listRows(item, "spend", {
+        cursor: first.data.next_cursor!,
+        sort: "updated_at",
+      }),
       await client.listRows(item, "spend", { cursor: "not-a-cursor" }),
     ]) {
       expect(res.status).toBe(400);
@@ -115,7 +144,9 @@ describe("reading rows", () => {
       expect(res.status, String(limit)).toBe(400);
       expect(res.error?.error.details).toMatchObject({ field: "limit" });
     }
-    expect((await client.listRows(item, "spend", { limit: 1000 })).data.data).toHaveLength(25);
+    expect(
+      (await client.listRows(item, "spend", { limit: 1000 })).data.data,
+    ).toHaveLength(25);
   });
 
   it("filters rows on columns with the item filter grammar", async () => {
@@ -131,16 +162,34 @@ describe("reading rows", () => {
       expect(res.status, `${filter}: ${JSON.stringify(res.error)}`).toBe(200);
       return res.data.data.map((r) => r.id);
     };
-    expect(await select("values.amount gt 10")).toEqual([ids[1], ids[2]].sort());
-    expect(await select("values.amount lte 50 AND values.memo exists")).toEqual([ids[0], ids[1]].sort());
+    expect(await select("values.amount gt 10")).toEqual(
+      [ids[1], ids[2]].sort(),
+    );
+    expect(await select("values.amount lte 50 AND values.memo exists")).toEqual(
+      [ids[0], ids[1]].sort(),
+    );
     expect(await select('values.memo contains "coffee"')).toEqual([ids[0]]);
     expect(await select("values.memo not_exists")).toEqual([ids[2]]);
-    expect(await select(`id eq "${ids[1]}" OR values.amount eq 500`)).toEqual([ids[1], ids[2]].sort());
-    expect(await select('updated_at gte "2000-01-01T00:00:00Z"')).toHaveLength(3);
-    const totals = await client.rowTotals(item, "spend", "values.amount lt 100");
+    expect(await select(`id eq "${ids[1]}" OR values.amount eq 500`)).toEqual(
+      [ids[1], ids[2]].sort(),
+    );
+    expect(await select('updated_at gte "2000-01-01T00:00:00Z"')).toHaveLength(
+      3,
+    );
+    const totals = await client.rowTotals(
+      item,
+      "spend",
+      "values.amount lt 100",
+    );
     expect(totals.data.row_count).toBe(2);
 
-    for (const filter of ["values.colour eq 1", "properties.amount eq 1", "state eq \"active\"", "values.amount eq", "tags exists"]) {
+    for (const filter of [
+      "values.colour eq 1",
+      "properties.amount eq 1",
+      'state eq "active"',
+      "values.amount eq",
+      "tags exists",
+    ]) {
       for (const res of [
         await client.listRows(item, "spend", { filter }),
         await client.rowTotals(item, "spend", filter),
@@ -154,24 +203,43 @@ describe("reading rows", () => {
 
   it("sorts rows on a column, rows without it last", async () => {
     const { item } = await spendingItem();
-    const written = await put(item, [{ amount: 2 }, { memo: "none" }, { amount: 10 }, { amount: 2 }]);
+    const written = await put(item, [
+      { amount: 2 },
+      { memo: "none" },
+      { amount: 10 },
+      { amount: 2 },
+    ]);
     const [two, none, ten, twoAgain] = written.results.map((r) => r.id);
     const order = async (direction: "asc" | "desc") =>
-      (await client.listRows(item, "spend", { sort: "values.amount", direction })).data.data.map((r) => r.id);
+      (
+        await client.listRows(item, "spend", {
+          sort: "values.amount",
+          direction,
+        })
+      ).data.data.map((r) => r.id);
     const ties = [two!, twoAgain!].sort();
     expect(await order("asc")).toEqual([...ties, ten, none]);
     expect(await order("desc")).toEqual([ten, ...ties, none]);
     const paged: string[] = [];
     let cursor: string | undefined;
     do {
-      const res = await client.listRows(item, "spend", { sort: "values.amount", direction: "desc", limit: 1, cursor });
+      const res = await client.listRows(item, "spend", {
+        sort: "values.amount",
+        direction: "desc",
+        limit: 1,
+        cursor,
+      });
       paged.push(...res.data.data.map((r) => r.id));
       cursor = res.data.next_cursor ?? undefined;
     } while (cursor);
     expect(paged).toEqual([ten, ...ties, none]);
-    const byId = (await client.listRows(item, "spend", { sort: "id", direction: "desc" })).data.data.map((r) => r.id);
+    const byId = (
+      await client.listRows(item, "spend", { sort: "id", direction: "desc" })
+    ).data.data.map((r) => r.id);
     expect(byId).toEqual([two, none, ten, twoAgain].sort().reverse());
-    const refused = await client.listRows(item, "spend", { sort: "values.colour" });
+    const refused = await client.listRows(item, "spend", {
+      sort: "values.colour",
+    });
     expect(refused.status).toBe(400);
     expect(refused.error?.error.details).toMatchObject({ field: "sort" });
   });
@@ -198,8 +266,21 @@ describe("reading rows", () => {
   it("totals each column that adds up, over the rows a filter selects", async () => {
     const { item } = await spendingItem();
     await put(item, [
-      { amount: 1.5, mean: 2, units: 3, memo: "a", at: "2026-01-01T10:00:00+02:00", on: "2026-01-02" },
-      { amount: 2.5, mean: 4, units: 7, at: "2026-01-01T09:00:00Z", on: "2026-03-01" },
+      {
+        amount: 1.5,
+        mean: 2,
+        units: 3,
+        memo: "a",
+        at: "2026-01-01T10:00:00+02:00",
+        on: "2026-01-02",
+      },
+      {
+        amount: 2.5,
+        mean: 4,
+        units: 7,
+        at: "2026-01-01T09:00:00Z",
+        on: "2026-03-01",
+      },
       { amount: 10, memo: "c" },
     ]);
     const all = await client.rowTotals(item, "spend");

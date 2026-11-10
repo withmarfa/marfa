@@ -628,6 +628,90 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/items/{id}/tables/{table}/rows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List table rows
+         * @description Returns a page of a table's rows, by `id` unless you name a sort. A row without the sorted column comes last, and ties go by `id`.
+         */
+        get: operations["listTableRows"];
+        put?: never;
+        /**
+         * Write table rows
+         * @description Applies a batch of up to 1000 row operations to one table of an item, all of them or none. A batch that changes rows moves the item's `last_activity_at` and sends one `rows.changed` event.
+         */
+        post: operations["writeTableRows"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/items/{id}/tables/{table}/rows/{row}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a table row
+         * @description Returns one row of an item's table.
+         */
+        get: operations["getTableRow"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/items/{id}/tables": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List an item's tables
+         * @description Returns each table the item's type declares, with how many rows the item holds in it and when one last changed.
+         */
+        get: operations["listItemTables"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/items/{id}/tables/{table}/totals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get table totals
+         * @description Returns the total of each column that names `adds_up`, over the rows `filter` selects, or every row.
+         */
+        get: operations["getTableTotals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/edges": {
         parameters: {
             query?: never;
@@ -2495,6 +2579,11 @@ export interface components {
             created_at: string;
             /** @description When the item was last written, in UTC. A tag or extension write moves it too. */
             updated_at: string;
+            /**
+             * @description When the item or one of its rows last changed, in UTC. A row change moves it and leaves `updated_at` and `version` alone.
+             * @example 2026-10-03T09:30:00.000Z
+             */
+            last_activity_at: string;
             /** @description When the item went to the trash, in UTC, or when a `system.*` item was revoked. A later write to the item leaves it as it is, and a restore clears it. `null` for an item outside the trash, and for one an archive restored to the trash without a time. */
             trashed_at: string | null;
             /** @description Always `true` where present: the item went to the trash with another item, through a cascading edge such as `parent-of`. Present while it stays in the trash. Absent on an item trashed on its own. */
@@ -6297,29 +6386,14 @@ export interface components {
             /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
             next_cursor: string | null;
         };
-        /** @description A delivery is one event Marfa sends, or tries to send, to a webhook's URL. */
+        /** @description What a webhook delivery adds to the event it carries. */
         WebhookDelivery: {
-            /** @description Unique identifier for the delivery. Marfa sends it as `delivery_id`, the same on every attempt. */
-            id: string;
-            /**
-             * @description `pending`: waiting to be sent or retried. `success`: the receiver answered with a `2xx` status. `dead_letter`: Marfa gave up, and you can redeliver it. `canceled`: Marfa settled it unsent, and `error` says why.
-             * @enum {string}
-             */
-            status: "pending" | "success" | "dead_letter" | "canceled";
-            /** @description The ID of the webhook the delivery belongs to. */
-            webhook_id: string;
-            /** @description The event delivered, such as `item.created`. */
-            event_type: string;
-            /** @description The HTTP status the receiver answered on the latest recorded attempt, or `null` if that attempt got no answer or no attempt has run. */
-            status_code: number | null;
-            /** @description How many attempts have recorded an outcome, across every redelivery. A send whose outcome was lost, such as during a restart, isn't counted, so the receiver may have seen more. */
-            attempt: number;
-            /** @description `true` if `status` is `success`. */
-            succeeded: boolean;
-            /** @description Why the latest attempt failed, or why Marfa settled the delivery unsent. `null` after a success or before the first attempt. */
-            error: string | null;
-            /** @description When Marfa queued the delivery, in UTC. */
-            created_at: string;
+            /** @description The event's ID in the log, the same as its `id:` on `GET /events`. */
+            event_id: string;
+            /** @description The ID of the delivery, the same on every attempt. Use it to recognize a repeat. */
+            delivery_id: string;
+            /** @description When Marfa sent this attempt, in UTC. */
+            delivered_at: string;
         };
         /** @description One page of audit log entries. */
         AuditEntryPage: {
@@ -6594,7 +6668,7 @@ export interface components {
             event_type: "reach_changed";
         };
         /** @description One frame of `GET /events`. Its `event_type` is also its `event:`. */
-        EventStreamFrame: components["schemas"]["StreamCursorFrame"] | components["schemas"]["ItemEventFrame"] | components["schemas"]["EdgeEventFrame"] | components["schemas"]["StreamLiveFrame"] | components["schemas"]["StreamIncompleteFrame"] | components["schemas"]["CatchupTooOldFrame"] | components["schemas"]["CursorAheadFrame"] | components["schemas"]["ReachChangedFrame"];
+        EventStreamFrame: components["schemas"]["StreamCursorFrame"] | components["schemas"]["ItemEventFrame"] | components["schemas"]["RowsChangedFrame"] | components["schemas"]["EdgeEventFrame"] | components["schemas"]["StreamLiveFrame"] | components["schemas"]["StreamIncompleteFrame"] | components["schemas"]["CatchupTooOldFrame"] | components["schemas"]["CursorAheadFrame"] | components["schemas"]["ReachChangedFrame"];
         /** @description The body of a webhook delivery of an item event. */
         WebhookItemEvent: components["schemas"]["ItemEventFrame"] & {
             /** @description The event's ID in the log, the same as its `id:` on `GET /events`. */
@@ -6605,16 +6679,9 @@ export interface components {
             delivered_at: string;
         };
         /** @description The body of a webhook delivery of an edge event. */
-        WebhookEdgeEvent: components["schemas"]["EdgeEventFrame"] & {
-            /** @description The event's ID in the log, the same as its `id:` on `GET /events`. */
-            event_id: string;
-            /** @description The ID of the delivery, the same on every attempt. Use it to recognize a repeat. */
-            delivery_id: string;
-            /** @description When Marfa sent this attempt, in UTC. */
-            delivered_at: string;
-        };
+        WebhookEdgeEvent: components["schemas"]["EdgeEventFrame"] & components["schemas"]["WebhookDelivery"];
         /** @description The body of a webhook delivery: the event, with its ID and the delivery's. */
-        WebhookEvent: components["schemas"]["WebhookItemEvent"] | components["schemas"]["WebhookEdgeEvent"];
+        WebhookEvent: components["schemas"]["WebhookItemEvent"] | components["schemas"]["WebhookRowsEvent"] | components["schemas"]["WebhookEdgeEvent"];
         /** @description An error response. */
         BackupNotFoundRefusal: {
             /** @description What went wrong. */
@@ -6815,6 +6882,210 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** @description A row of an item's table. A row is never an item: it has no version, tags or edges. */
+        TableRow: {
+            /**
+             * @description Unique identifier for the row, a UUIDv7.
+             * @example 019a5b1e-7c41-7d2e-9f3a-5b8c2d4e6f70
+             */
+            id: string;
+            /** @description The row's values, keyed by column. A column with no value is left out. */
+            values: {
+                [key: string]: unknown;
+            };
+            /**
+             * @description When the row last changed, in UTC.
+             * @example 2026-10-03T09:30:00.000Z
+             */
+            updated_at: string;
+            /** @description Present when a column of type `item` names an item you can't read: those columns, left out of `values`. */
+            withheld?: string[];
+        };
+        /** @description A page of a table's rows. */
+        TableRowPage: {
+            /** @description The rows on this page. */
+            data: components["schemas"]["TableRow"][];
+            /** @description Pass this as `cursor` to get the next page, or `null` when there are no more. */
+            next_cursor: string | null;
+        };
+        /** @description A table an item's type declares, with what the item holds in it. */
+        TableSummary: {
+            /**
+             * @description The table's name.
+             * @example lines
+             */
+            name: string;
+            /**
+             * @description The table's label, or one made from its name.
+             * @example Lines
+             */
+            label: string;
+            /** @description How many rows the item holds in the table. */
+            row_count: number;
+            /** @description The size of the rows' values as JSON, in bytes. */
+            bytes: number;
+            /** @description The ID of the last batch that changed a row of the table, or `null` if none has. */
+            last_batch: string | null;
+            /** @description When a row of the table last changed, in UTC, or `null` if none has. */
+            changed_at: string | null;
+        };
+        /** @description The tables an item's type declares, by name. */
+        TableSummaryPage: {
+            /** @description Each table, by name. */
+            data: components["schemas"]["TableSummary"][];
+            /** @description Always `null`: Marfa returns every table in one page. */
+            next_cursor: null;
+        };
+        /** @description One change to a row: `put` creates or replaces a whole row, `patch` sets the columns it names, and `delete` removes a row. */
+        RowOperation: {
+            /**
+             * @description `put` writes the whole row, `patch` sets only the columns in `values`, and `delete` removes the row.
+             * @enum {string}
+             */
+            op: "put" | "patch" | "delete";
+            /**
+             * @description The ID of the row, a UUIDv7 in lowercase. Required for `patch` and `delete`. Leave it out of a `put` for Marfa to create one.
+             * @example 019a5b1e-7c41-7d2e-9f3a-5b8c2d4e6f70
+             */
+            id?: string;
+            /** @description The values, keyed by column, at most 65536 bytes as JSON. On a `patch`, `null` clears a column. A `delete` takes none. */
+            values?: {
+                [key: string]: unknown;
+            };
+        };
+        /** @description What a batch of row changes did. */
+        RowBatchResult: {
+            /**
+             * @description The ID of the batch, or `null` when it changed no row.
+             * @example 019a5b1e-8b22-7c4d-9e5f-6a7b8c9d0e1f
+             */
+            batch: string | null;
+            /**
+             * @description The item's `last_activity_at` after the batch, in UTC.
+             * @example 2026-10-03T09:30:00.000Z
+             */
+            last_activity_at: string;
+            /** @description One entry per operation, in the order you sent them. */
+            results: {
+                /** @description The ID of the row. */
+                id: string;
+                /**
+                 * @description `created`, `replaced`, `patched` or `deleted` for a change, `unchanged` when the row already held the values, `absent` for a delete of a row that wasn't there.
+                 * @enum {string}
+                 */
+                outcome: "created" | "replaced" | "patched" | "unchanged" | "deleted" | "absent";
+            }[];
+        };
+        /** @description The totals of a table's columns that add up, over the rows a filter selects. */
+        RowTotals: {
+            /** @description How many rows the filter selects. */
+            row_count: number;
+            /** @description For each column that names `adds_up`, an object with that way as its one key: `sum` and `count` are `0` over no values, and `average`, `min` and `max` are `null`. */
+            totals: {
+                [key: string]: {
+                    [key: string]: number | string | null;
+                };
+            };
+        };
+        /** @description A rows event: one batch of changes to one table of an item. You receive it only if you can read the item's type and, except that a copy stream never receives it, your source filter shows the item. */
+        RowsChangedFrame: {
+            /**
+             * @description The event, which is also the frame's `event:`.
+             * @enum {string}
+             */
+            event_type: "rows.changed";
+            /** @description The item whose rows changed. */
+            item: {
+                /** @description The ID of the item. */
+                id: string;
+                /** @description The item's type. */
+                type: string;
+                /** @description The item's source. */
+                source: string;
+            };
+            /** @description The name of the table. */
+            table: string;
+            /** @description The ID of the batch. */
+            batch: string;
+            /** @description The item's `last_activity_at` after the batch, in UTC. */
+            last_activity_at: string;
+            /**
+             * @description Present, as `false`, when the batch's values were too large to carry: each entry of `rows` then holds only its `id`, and `deleted` for a removed row.
+             * @enum {boolean}
+             */
+            values_included?: false;
+            /** @description Each row the batch changed, as the batch left it, or with `deleted` `true` for a removed row. */
+            rows: {
+                /** @description The ID of the row. */
+                id: string;
+                /** @description The row's values after the batch. */
+                values?: {
+                    [key: string]: unknown;
+                };
+                /** @description When the row changed, in UTC. */
+                updated_at?: string;
+                /**
+                 * @description Present, as `true`, when the batch removed the row.
+                 * @enum {boolean}
+                 */
+                deleted?: true;
+                /** @description Present when a column of type `item` names an item you can't read: those columns, left out of `values`. */
+                withheld?: string[];
+            }[];
+        };
+        /** @description The body of a webhook delivery of a rows event. */
+        WebhookRowsEvent: components["schemas"]["RowsChangedFrame"] & components["schemas"]["WebhookDelivery"];
+        /** @description An error response. */
+        ItemNotFoundOrRowNotFoundOrTableNotFoundRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "item_not_found" | "row_not_found" | "table_not_found";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description An error response. */
+        ItemNotFoundOrTableNotFoundRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "item_not_found" | "table_not_found";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description An error response. */
+        TypeInUseRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "type_in_use";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
     };
     responses: never;
     parameters: never;
@@ -6854,7 +7125,7 @@ export interface operations {
                 filter?: string;
                 /** @description An item ID. Only return that item and the items under it by `parent-of` edges, at any depth, walking only through items you can read. Needs read on `parent-of` edges. */
                 beneath?: string;
-                /** @description Field to sort by: `created_at`, `updated_at`, `occurred_at` or `properties.<field>`. Properties sort by stored value: an enum sorts alphabetically. Defaults to `created_at`, or for `state=trashed` alone the trash time, which you can't name here. */
+                /** @description Field to sort by: `created_at`, `updated_at`, `occurred_at`, `last_activity_at` or `properties.<field>`. Properties sort by stored value: an enum sorts alphabetically. Defaults to `created_at`, or the trash time for `state=trashed` alone. */
                 sort?: string;
                 /** @description Sort direction. Defaults to `desc`. */
                 direction?: "asc" | "desc";
@@ -7728,11 +7999,12 @@ export interface operations {
                 };
             };
             /**
-             * @description - `version_conflict`: stale exact precondition, colliding change, or stale edges-only write. `current` is the item now.
+             * @description - `version_conflict`: a stale or colliding write. `current` is the item now.
              *     - `ancestor_unavailable`: no readable snapshot of `version`.
              *     - `source_id_conflict`: another item under the source holds `source_id`.
              *     - `link_taken`: another item of the type holds the link.
              *     - `type_mismatch`: `type` differs without `retype: true`.
+             *     - `type_move_blocked`: rows hold a table the new type lacks.
              */
             409: {
                 headers: {
@@ -7743,7 +8015,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ItemVersionConflict"] | components["schemas"]["ItemStaleVersion"] | components["schemas"]["ItemAncestorUnavailable"] | components["schemas"]["LinkTakenOrSourceIdConflictOrTypeMismatchRefusal"] | components["schemas"]["InstanceChangedRefusal"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
+                    "application/json": components["schemas"]["ItemVersionConflict"] | components["schemas"]["ItemStaleVersion"] | components["schemas"]["ItemAncestorUnavailable"] | components["schemas"]["LinkTakenOrSourceIdConflictOrTypeMismatchRefusal"] | components["schemas"]["InstanceChangedRefusal"] | components["schemas"]["TypeMoveBlockedRefusal"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
             /** @description `request_too_large`: the request body is larger than this instance accepts. */
@@ -12794,6 +13066,737 @@ export interface operations {
             };
         };
     };
+    listTableRows: {
+        parameters: {
+            query?: {
+                /** @description The maximum number of results to return. */
+                limit?: number;
+                /** @description The `next_cursor` from the previous page. Leave it out to get the first page. */
+                cursor?: string;
+                /** @description Only return rows that match this expression, in the item filter grammar, where `values.<column>` names a column and `id` and `updated_at` are the row's own. */
+                filter?: string;
+                /** @description What to sort by: `id`, `updated_at` or `values.<column>`. Defaults to `id`. */
+                sort?: string;
+                /** @description The order of the sort: `asc` or `desc`. */
+                direction?: "asc" | "desc";
+            };
+            header?: never;
+            path: {
+                /** @description The ID of the item. */
+                id: string;
+                /** @description The name of the table. */
+                table: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Returns the rows on this page. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "id": "019a5b1e-7c41-7d2e-9f3a-5b8c2d4e6f70",
+                     *           "values": {
+                     *             "amount": 12.5,
+                     *             "memo": "Coffee"
+                     *           },
+                     *           "updated_at": "2026-10-03T09:30:00.000Z"
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
+                    "application/json": components["schemas"]["TableRowPage"];
+                };
+            };
+            /**
+             * @description - `invalid_id`: the ID is not a valid item ID.
+             *     - `validation_error`: a query parameter is unknown or out of range, `filter` or `sort` names a column the table doesn't declare, or `cursor` came from another listing.
+             */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description - `type_not_permitted`: your credential reaches no type. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
+                };
+            };
+            /**
+             * @description - `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read.
+             *     - `table_not_found`: the item's type declares no table of this name.
+             */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemNotFoundOrTableNotFoundRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+        };
+    };
+    writeTableRows: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The ID of the item. */
+                id: string;
+                /** @description The name of the table. */
+                table: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "operations": [
+                 *         {
+                 *           "op": "put",
+                 *           "values": {
+                 *             "amount": 12.5,
+                 *             "memo": "Coffee"
+                 *           }
+                 *         },
+                 *         {
+                 *           "op": "patch",
+                 *           "id": "019a5b1e-7c41-7d2e-9f3a-5b8c2d4e6f70",
+                 *           "values": {
+                 *             "memo": null
+                 *           }
+                 *         },
+                 *         {
+                 *           "op": "delete",
+                 *           "id": "019a5b1e-7c41-7d2e-9f3a-5b8c2d4e6f71"
+                 *         }
+                 *       ]
+                 *     }
+                 */
+                "application/json": {
+                    /** @description The operations, applied in order. A later operation on a row sees what an earlier one left. */
+                    operations: components["schemas"]["RowOperation"][];
+                };
+            };
+        };
+        responses: {
+            /** @description Returns the batch's ID and each operation's outcome, in order. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "batch": "019a5b1e-8b22-7c4d-9e5f-6a7b8c9d0e1f",
+                     *       "last_activity_at": "2026-10-03T09:30:00.000Z",
+                     *       "results": [
+                     *         {
+                     *           "id": "019a5b1e-7c41-7d2e-9f3a-5b8c2d4e6f72",
+                     *           "outcome": "created"
+                     *         },
+                     *         {
+                     *           "id": "019a5b1e-7c41-7d2e-9f3a-5b8c2d4e6f70",
+                     *           "outcome": "patched"
+                     *         },
+                     *         {
+                     *           "id": "019a5b1e-7c41-7d2e-9f3a-5b8c2d4e6f71",
+                     *           "outcome": "absent"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["RowBatchResult"];
+                };
+            };
+            /**
+             * @description - `invalid_id`: the ID is not a valid item ID.
+             *     - `validation_error`: an operation is malformed, names a column the table doesn't declare, breaks a column's rule or names an item you can't read, or the batch holds no operations or more than 1000. `details.operation` names the operation.
+             */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description - `type_not_permitted`: you can't write the item's type, or your credential reaches no type. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
+                };
+            };
+            /**
+             * @description - `item_not_found`: no item has this ID, the item is in the trash (`details.trashed` is `true` if you can read its type), or its type is one you can't read.
+             *     - `row_not_found`: a `patch` names a row the table doesn't hold. `details.operation` names it.
+             *     - `table_not_found`: the item's type declares no table of this name.
+             */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemNotFoundOrRowNotFoundOrTableNotFoundRefusal"];
+                };
+            };
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
+            413: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
+    getTableRow: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The ID of the item. */
+                id: string;
+                /** @description The name of the table. */
+                table: string;
+                /** @description The ID of the row. */
+                row: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Returns the row. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "019a5b1e-7c41-7d2e-9f3a-5b8c2d4e6f70",
+                     *       "values": {
+                     *         "amount": 12.5,
+                     *         "memo": "Coffee"
+                     *       },
+                     *       "updated_at": "2026-10-03T09:30:00.000Z"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["TableRow"];
+                };
+            };
+            /**
+             * @description - `invalid_id`: the ID is not a valid item ID.
+             *     - `validation_error`: a query parameter is unknown or out of range.
+             */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description - `type_not_permitted`: your credential reaches no type. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
+                };
+            };
+            /**
+             * @description - `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read.
+             *     - `table_not_found`: the item's type declares no table of this name.
+             *     - `row_not_found`: the table holds no row with this ID.
+             */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemNotFoundOrRowNotFoundOrTableNotFoundRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+        };
+    };
+    listItemTables: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The ID of the item. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Returns the tables, by name. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "name": "lines",
+                     *           "label": "Lines",
+                     *           "row_count": 1,
+                     *           "bytes": 31,
+                     *           "last_batch": "019a5b1e-8b22-7c4d-9e5f-6a7b8c9d0e1f",
+                     *           "changed_at": "2026-10-03T09:30:00.000Z"
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
+                    "application/json": components["schemas"]["TableSummaryPage"];
+                };
+            };
+            /**
+             * @description - `invalid_id`: the ID is not a valid item ID.
+             *     - `validation_error`: a query parameter is unknown or out of range.
+             */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description - `type_not_permitted`: your credential reaches no type. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
+                };
+            };
+            /** @description - `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read. */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemNotFoundRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+        };
+    };
+    getTableTotals: {
+        parameters: {
+            query?: {
+                /** @description Only return rows that match this expression, in the item filter grammar, where `values.<column>` names a column and `id` and `updated_at` are the row's own. */
+                filter?: string;
+            };
+            header?: never;
+            path: {
+                /** @description The ID of the item. */
+                id: string;
+                /** @description The name of the table. */
+                table: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Returns how many rows the filter selects and each column's total. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "row_count": 2,
+                     *       "totals": {
+                     *         "amount": {
+                     *           "sum": 20.5
+                     *         },
+                     *         "memo": {
+                     *           "count": 1
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["RowTotals"];
+                };
+            };
+            /**
+             * @description - `invalid_id`: the ID is not a valid item ID.
+             *     - `validation_error`: a query parameter is unknown, or `filter` is malformed or names a column the table doesn't declare.
+             */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description - `type_not_permitted`: your credential reaches no type. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
+                };
+            };
+            /**
+             * @description - `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read.
+             *     - `table_not_found`: the item's type declares no table of this name.
+             */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemNotFoundOrTableNotFoundRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+        };
+    };
     listEdges: {
         parameters: {
             query?: {
@@ -14164,7 +15167,7 @@ export interface operations {
                 cursor?: string;
                 /** @description A filter expression, as on `GET /items`. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, matches by relationship and needs read on that edge type. */
                 filter?: string;
-                /** @description How to order the results: `relevance` (the default), `created_at`, `updated_at`, `occurred_at` or `properties.<field>`, such as `properties.due_at`. Items without a value for a property come last. */
+                /** @description How to order the results: `relevance` (the default), `created_at`, `updated_at`, `occurred_at`, `last_activity_at` or `properties.<field>`, such as `properties.due_at`. Items without a value for a property come last. */
                 sort?: string;
                 /** @description Sort direction. Defaults to `desc`: best match first under `relevance`, newest or largest first otherwise. Under `relevance`, `asc` puts the worst match first. */
                 direction?: "asc" | "desc";
@@ -14685,7 +15688,10 @@ export interface operations {
     };
     replaceType: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description `true` to keep the rows and values of tables and columns the replacement removes or retypes, instead of refusing it. */
+                force?: boolean;
+            };
             header?: {
                 /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
                 "X-Marfa-Instance-Id"?: string;
@@ -14771,7 +15777,10 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotFoundRefusal"];
                 };
             };
-            /** @description `link_taken`: the replacement names a `link_field` in which two items of the type, in any state, hold the same value. */
+            /**
+             * @description - `link_taken`: the replacement names a `link_field` in which two items of the type, in any state, hold the same value.
+             *     - `type_in_use`: rows hold a table or column the replacement removes, or a column whose `type` it changes, and `force` isn't `true`. `details.tables` names each.
+             */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14780,7 +15789,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["LinkTakenRefusal"] | components["schemas"]["InstanceChangedRefusal"];
+                    "application/json": components["schemas"]["LinkTakenRefusal"] | components["schemas"]["TypeInUseRefusal"] | components["schemas"]["InstanceChangedRefusal"];
                 };
             };
             /** @description `request_too_large`: the request body is larger than this instance accepts. */
@@ -14941,7 +15950,7 @@ export interface operations {
             };
             /**
              * @description - `type_has_subtypes`: other types name this one as their `parent` (`details.subtype_ids` lists them). Delete them, or give them another parent with `PUT /types/{id}`.
-             *     - `type_in_use`: an item of the type exists, in any state, or a folder, view or webhook names it, and `force` isn't `true`. `details` counts the items and lists the settings. Move them with `POST /types/{id}/move`.
+             *     - `type_in_use`: an item of the type exists, in any state, or a folder, view, webhook or column names it, and `force` isn't `true`. `details` lists them. Move them with `POST /types/{id}/move`.
              */
             409: {
                 headers: {
@@ -15134,7 +16143,10 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotFoundRefusal"];
                 };
             };
-            /** @description `type_move_blocked`: a folder, view or webhook names the type in a way the move can't rewrite. `details.settings` lists each, with its `reason`. Change them, then move. */
+            /**
+             * @description - `type_move_blocked`: a folder, view or webhook names the type in a way the move can't rewrite. `details.settings` lists each, with its `reason`. Change them, then move.
+             *     - `type_move_blocked`: an item holds rows in a table the target type doesn't declare. `details.tables` lists them.
+             */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17308,7 +18320,7 @@ export interface operations {
                     /** @description The URL Marfa posts events to: `http` or `https`, with no user name or password. Unless the instance allows private addresses, it must reach a public address: Marfa refuses a URL whose host resolves to a private one, and checks again at each delivery. */
                     url: string;
                     /** @description The events to send. Name each one: there's no wildcard. */
-                    events: ("item.created" | "item.updated" | "item.deleted" | "item.restored" | "item.purged" | "item.state_changed" | "metadata.changed" | "edge.created" | "edge.updated" | "edge.deleted")[];
+                    events: ("item.created" | "item.updated" | "item.deleted" | "item.restored" | "item.purged" | "item.state_changed" | "metadata.changed" | "rows.changed" | "edge.created" | "edge.updated" | "edge.deleted")[];
                     /** @description Send item events only for this type and its subtypes, such as `core.media`, or for every type a pattern such as `app.*` matches. The type needn't be registered. Edge events aren't filtered. Leave it out, blank or `null` for every type. */
                     type_filter?: string | null;
                     /** @description The key Marfa signs each delivery with. Leave it out for Marfa to generate one. */
@@ -17735,7 +18747,7 @@ export interface operations {
                     /** @description The URL Marfa posts events to: `http` or `https`, with no user name or password. Unless the instance allows private addresses, it must reach a public address: Marfa refuses a URL whose host resolves to a private one, and checks again at each delivery. */
                     url?: string;
                     /** @description The events to send. Name each one: there's no wildcard. */
-                    events?: ("item.created" | "item.updated" | "item.deleted" | "item.restored" | "item.purged" | "item.state_changed" | "metadata.changed" | "edge.created" | "edge.updated" | "edge.deleted")[];
+                    events?: ("item.created" | "item.updated" | "item.deleted" | "item.restored" | "item.purged" | "item.state_changed" | "metadata.changed" | "rows.changed" | "edge.created" | "edge.updated" | "edge.deleted")[];
                     /** @description Send item events only for this type and its subtypes, such as `core.media`, or for every type a pattern such as `app.*` matches. The type needn't be registered. Edge events aren't filtered. Blank or `null` removes it. */
                     type_filter?: string | null;
                     /** @description `false` stops sending events and cancels pending deliveries. `true` starts again. */
@@ -28918,7 +29930,7 @@ export interface operations {
                 /** @description `t=<unix seconds>,v1=<hex>`, where `v1` is the HMAC-SHA256 of `<t>.<raw body>` under the webhook's `secret`. Check it, and that `t` is recent, before you trust the body. */
                 "X-Marfa-Signature": string;
                 /** @description The event, the same as `event_type` in the body. */
-                "X-Marfa-Event-Type": "item.created" | "item.updated" | "item.deleted" | "item.restored" | "item.purged" | "item.state_changed" | "metadata.changed" | "edge.created" | "edge.updated" | "edge.deleted";
+                "X-Marfa-Event-Type": "item.created" | "item.updated" | "item.deleted" | "item.restored" | "item.purged" | "item.state_changed" | "metadata.changed" | "rows.changed" | "edge.created" | "edge.updated" | "edge.deleted";
             };
             path?: never;
             cookie?: never;

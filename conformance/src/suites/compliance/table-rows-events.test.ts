@@ -35,7 +35,9 @@ afterAll(async () => {
 
 let counter = 0;
 
-async function tableType(columns: Record<string, unknown> = {}): Promise<string> {
+async function tableType(
+  columns: Record<string, unknown> = {},
+): Promise<string> {
   counter += 1;
   const type = `user.rows-events-${counter}-${ctx.runId}`;
   const made = await client.registerType({
@@ -43,7 +45,11 @@ async function tableType(columns: Record<string, unknown> = {}): Promise<string>
     fields: { title: { type: "string" } },
     tables: {
       steps: {
-        columns: { count: { type: "integer" }, note: { type: "string" }, ...columns },
+        columns: {
+          count: { type: "integer" },
+          note: { type: "string" },
+          ...columns,
+        },
       },
     },
   } as never);
@@ -52,7 +58,10 @@ async function tableType(columns: Record<string, unknown> = {}): Promise<string>
 }
 
 async function itemOf(type: string): Promise<string> {
-  const made = await client.createItem({ type, properties: { title: "Steps" } } as never);
+  const made = await client.createItem({
+    type,
+    properties: { title: "Steps" },
+  } as never);
   expect(made.status, JSON.stringify(made.error)).toBe(201);
   trackItem(ctx, made.data.item.id);
   return made.data.item.id;
@@ -83,22 +92,39 @@ interface RowsFrame {
   batch: string;
   last_activity_at: string;
   values_included?: boolean;
-  rows: { id: string; values?: Record<string, unknown>; updated_at?: string; deleted?: boolean; withheld?: string[] }[];
+  rows: {
+    id: string;
+    values?: Record<string, unknown>;
+    updated_at?: string;
+    deleted?: boolean;
+    withheld?: string[];
+  }[];
 }
 
 describe("announcing rows", () => {
   it("announces one rows.changed per batch to a stream and a webhook", async () => {
     const type = await tableType();
     const item = await itemOf(type);
-    const hook = await client.createWebhook({ url: receiver.hookUrl(`rows-${counter}`), events: ["rows.changed"] });
+    const hook = await client.createWebhook({
+      url: receiver.hookUrl(`rows-${counter}`),
+      events: ["rows.changed"],
+    });
     expect(hook.status, JSON.stringify(hook.error)).toBe(201);
     trackWebhook(ctx, hook.data.id, client);
-    const stranger = await tapStream(apiUrl, await keyFor({ "core.note": "read" }));
+    const stranger = await tapStream(
+      apiUrl,
+      await keyFor({ "core.note": "read" }),
+    );
     const tap = await tapStream(apiUrl, apiKey);
     try {
-      await tap.until((seen) => seen.some((e) => e.event === "stream_live"), "the stream going live");
+      await tap.until(
+        (seen) => seen.some((e) => e.event === "stream_live"),
+        "the stream going live",
+      );
       const gone = uuidv7();
-      await client.writeRows(item, "steps", { operations: [{ op: "put", id: gone, values: { count: 1 } }] });
+      await client.writeRows(item, "steps", {
+        operations: [{ op: "put", id: gone, values: { count: 1 } }],
+      });
       const written = await client.writeRows(item, "steps", {
         operations: [
           { op: "put", values: { count: 2 } },
@@ -122,18 +148,35 @@ describe("announcing rows", () => {
         last_activity_at: written.data.last_activity_at,
       });
       expect(frame.rows).toEqual([
-        { id: written.data.results[0]!.id, values: { count: 2 }, updated_at: written.data.last_activity_at },
+        {
+          id: written.data.results[0]!.id,
+          values: { count: 2 },
+          updated_at: written.data.last_activity_at,
+        },
         { id: gone, deleted: true },
       ]);
       const delivered = await receiver.waitFor(
-        (r) => r.body.includes(written.data.batch!) && r.headers["x-marfa-event-type"] === "rows.changed",
+        (r) =>
+          r.body.includes(written.data.batch!) &&
+          r.headers["x-marfa-event-type"] === "rows.changed",
       );
-      expect(JSON.parse(delivered.body)).toMatchObject({ event_type: "rows.changed", batch: written.data.batch });
+      expect(JSON.parse(delivered.body)).toMatchObject({
+        event_type: "rows.changed",
+        batch: written.data.batch,
+      });
 
-      const note = await client.createItem({ type: "core.note", properties: { title: "witness" } } as never);
+      const note = await client.createItem({
+        type: "core.note",
+        properties: { title: "witness" },
+      } as never);
       trackItem(ctx, note.data.item.id);
       const seen = await stranger.until(
-        (got) => got.some((e) => (e.data as { item?: { id?: string } }).item?.id === note.data.item.id),
+        (got) =>
+          got.some(
+            (e) =>
+              (e.data as { item?: { id?: string } }).item?.id ===
+              note.data.item.id,
+          ),
         "the witness note on the narrow stream",
       );
       expect(seen.filter((e) => e.event === "rows.changed")).toEqual([]);
@@ -148,14 +191,28 @@ describe("announcing rows", () => {
     const id = uuidv7();
     const tap = await tapStream(apiUrl, apiKey);
     try {
-      await tap.until((seen) => seen.some((e) => e.event === "stream_live"), "the stream going live");
-      const batch = { operations: [{ op: "put", id, values: { count: 1 } }] as RowOperation[] };
+      await tap.until(
+        (seen) => seen.some((e) => e.event === "stream_live"),
+        "the stream going live",
+      );
+      const batch = {
+        operations: [{ op: "put", id, values: { count: 1 } }] as RowOperation[],
+      };
       await client.writeRows(item, "steps", batch);
       await client.writeRows(item, "steps", batch);
-      await client.writeRows(item, "steps", { operations: [{ op: "delete", id: uuidv7() }] });
-      const witness = await client.writeRows(item, "steps", { operations: [{ op: "put", values: { count: 9 } }] });
+      await client.writeRows(item, "steps", {
+        operations: [{ op: "delete", id: uuidv7() }],
+      });
+      const witness = await client.writeRows(item, "steps", {
+        operations: [{ op: "put", values: { count: 9 } }],
+      });
       const events = await tap.until(
-        (seen) => seen.some((e) => rowsFor(item)(e) && (e.data as RowsFrame).batch === witness.data.batch),
+        (seen) =>
+          seen.some(
+            (e) =>
+              rowsFor(item)(e) &&
+              (e.data as RowsFrame).batch === witness.data.batch,
+          ),
         "the witness batch",
       );
       expect(events.filter(rowsFor(item))).toHaveLength(2);
@@ -168,24 +225,42 @@ describe("announcing rows", () => {
     const item = await itemOf(await tableType());
     const tap = await tapStream(apiUrl, apiKey);
     try {
-      await tap.until((seen) => seen.some((e) => e.event === "stream_live"), "the stream going live");
+      await tap.until(
+        (seen) => seen.some((e) => e.event === "stream_live"),
+        "the stream going live",
+      );
       const operations: RowOperation[] = Array.from({ length: 5 }, () => ({
         op: "put",
         values: { note: "x".repeat(15_000) },
       }));
       const written = await client.writeRows(item, "steps", { operations });
       expect(written.status, JSON.stringify(written.error)).toBe(200);
-      const events = await tap.until((seen) => seen.some(rowsFor(item)), "the rows.changed frame");
+      const events = await tap.until(
+        (seen) => seen.some(rowsFor(item)),
+        "the rows.changed frame",
+      );
       const frame = events.find(rowsFor(item))!.data as RowsFrame;
       expect(frame.values_included).toBe(false);
-      expect(frame.rows).toEqual(written.data.results.map((r) => ({ id: r.id })));
+      expect(frame.rows).toEqual(
+        written.data.results.map((r) => ({ id: r.id })),
+      );
 
-      const small = await client.writeRows(item, "steps", { operations: [{ op: "put", values: { count: 1 } }] });
+      const small = await client.writeRows(item, "steps", {
+        operations: [{ op: "put", values: { count: 1 } }],
+      });
       const after = await tap.until(
-        (seen) => seen.some((e) => rowsFor(item)(e) && (e.data as RowsFrame).batch === small.data.batch),
+        (seen) =>
+          seen.some(
+            (e) =>
+              rowsFor(item)(e) &&
+              (e.data as RowsFrame).batch === small.data.batch,
+          ),
         "the small batch",
       );
-      const whole = after.find((e) => rowsFor(item)(e) && (e.data as RowsFrame).batch === small.data.batch)!.data as RowsFrame;
+      const whole = after.find(
+        (e) =>
+          rowsFor(item)(e) && (e.data as RowsFrame).batch === small.data.batch,
+      )!.data as RowsFrame;
       expect(whole).not.toHaveProperty("values_included");
       expect(whole.rows[0]?.values).toEqual({ count: 1 });
     } finally {
@@ -207,13 +282,29 @@ describe("announcing rows", () => {
     trackWebhook(ctx, hook.data.id, client);
     const tap = await tapStream(apiUrl, apiKey, { query: [["type", chosen]] });
     try {
-      await tap.until((seen) => seen.some((e) => e.event === "stream_live"), "the stream going live");
-      const skipped = await client.writeRows(otherItem, "steps", { operations: [{ op: "put", values: { count: 1 } }] });
-      const sent = await client.writeRows(chosenItem, "steps", { operations: [{ op: "put", values: { count: 2 } }] });
-      const events = await tap.until((seen) => seen.some(rowsFor(chosenItem)), "the chosen item's frame");
+      await tap.until(
+        (seen) => seen.some((e) => e.event === "stream_live"),
+        "the stream going live",
+      );
+      const skipped = await client.writeRows(otherItem, "steps", {
+        operations: [{ op: "put", values: { count: 1 } }],
+      });
+      const sent = await client.writeRows(chosenItem, "steps", {
+        operations: [{ op: "put", values: { count: 2 } }],
+      });
+      const events = await tap.until(
+        (seen) => seen.some(rowsFor(chosenItem)),
+        "the chosen item's frame",
+      );
       expect(events.filter(rowsFor(otherItem))).toEqual([]);
       await receiver.waitFor((r) => r.body.includes(sent.data.batch!));
-      expect(receiver.received.filter((r) => r.path.endsWith(`filtered-${counter}`) && r.body.includes(skipped.data.batch!))).toEqual([]);
+      expect(
+        receiver.received.filter(
+          (r) =>
+            r.path.endsWith(`filtered-${counter}`) &&
+            r.body.includes(skipped.data.batch!),
+        ),
+      ).toEqual([]);
     } finally {
       await tap.close();
     }
@@ -222,23 +313,46 @@ describe("announcing rows", () => {
   it("withholds an item column's id from a stream that may not read the item", async () => {
     counter += 1;
     const hiddenType = `user.rows-events-hidden-${counter}-${ctx.runId}`;
-    expect((await client.registerType({ id: hiddenType, fields: { title: { type: "string" } } } as never)).status).toBe(201);
+    expect(
+      (
+        await client.registerType({
+          id: hiddenType,
+          fields: { title: { type: "string" } },
+        } as never)
+      ).status,
+    ).toBe(201);
     const hidden = await itemOf(hiddenType);
     const type = await tableType({ about: { type: "item" } });
     const item = await itemOf(type);
     const narrow = await tapStream(apiUrl, await keyFor({ [type]: "read" }));
     const full = await tapStream(apiUrl, apiKey);
     try {
-      await narrow.until((seen) => seen.some((e) => e.event === "stream_live"), "the narrow stream going live");
-      await full.until((seen) => seen.some((e) => e.event === "stream_live"), "the full stream going live");
+      await narrow.until(
+        (seen) => seen.some((e) => e.event === "stream_live"),
+        "the narrow stream going live",
+      );
+      await full.until(
+        (seen) => seen.some((e) => e.event === "stream_live"),
+        "the full stream going live",
+      );
       const written = await client.writeRows(item, "steps", {
         operations: [{ op: "put", values: { count: 1, about: hidden } }],
       });
       expect(written.status, JSON.stringify(written.error)).toBe(200);
-      const shown = (await narrow.until((seen) => seen.some(rowsFor(item)), "the narrow frame")).find(rowsFor(item))!.data as RowsFrame;
-      expect(shown.rows[0]).toMatchObject({ values: { count: 1 }, withheld: ["about"] });
+      const shown = (
+        await narrow.until(
+          (seen) => seen.some(rowsFor(item)),
+          "the narrow frame",
+        )
+      ).find(rowsFor(item))!.data as RowsFrame;
+      expect(shown.rows[0]).toMatchObject({
+        values: { count: 1 },
+        withheld: ["about"],
+      });
       expect(shown.rows[0]?.values).not.toHaveProperty("about");
-      const whole = (await full.until((seen) => seen.some(rowsFor(item)), "the full frame")).find(rowsFor(item))!.data as RowsFrame;
+      const whole = (
+        await full.until((seen) => seen.some(rowsFor(item)), "the full frame")
+      ).find(rowsFor(item))!.data as RowsFrame;
       expect(whole.rows[0]?.values).toEqual({ count: 1, about: hidden });
       expect(whole.rows[0]).not.toHaveProperty("withheld");
       expect(JSON.stringify(whole)).not.toContain("item_types");
@@ -248,10 +362,59 @@ describe("announcing rows", () => {
     }
   });
 
+  it("sends no rows.changed on a copy stream", async () => {
+    const item = await itemOf(await tableType());
+    const copy = await tapStream(apiUrl, apiKey, {
+      query: [
+        ["edges", "all"],
+        ["copy", "1"],
+      ],
+    });
+    const plain = await tapStream(apiUrl, apiKey);
+    try {
+      await copy.until(
+        (seen) => seen.some((e) => e.event === "stream_live"),
+        "the copy stream going live",
+      );
+      await plain.until(
+        (seen) => seen.some((e) => e.event === "stream_live"),
+        "the plain stream going live",
+      );
+      await client.writeRows(item, "steps", {
+        operations: [{ op: "put", values: { count: 1 } }],
+      });
+      const note = await client.createItem({
+        type: "core.note",
+        properties: { title: "after" },
+      } as never);
+      trackItem(ctx, note.data.item.id);
+      await plain.until(
+        (seen) => seen.some(rowsFor(item)),
+        "the rows frame on the plain stream",
+      );
+      const seen = await copy.until(
+        (got) =>
+          got.some(
+            (e) =>
+              (e.data as { item?: { id?: string } }).item?.id ===
+              note.data.item.id,
+          ),
+        "the note after the batch on the copy stream",
+      );
+      expect(seen.filter((e) => e.event === "rows.changed")).toEqual([]);
+    } finally {
+      await copy.close();
+      await plain.close();
+    }
+  });
+
   it("keeps writing rows while a stream reader has stopped reading", async () => {
     const item = await itemOf(await tableType());
     const url = new URL(apiUrl);
-    const socket: Socket = connect({ host: url.hostname, port: Number(url.port || 80) });
+    const socket: Socket = connect({
+      host: url.hostname,
+      port: Number(url.port || 80),
+    });
     await new Promise<void>((resolve, reject) => {
       socket.once("connect", () => resolve());
       socket.once("error", reject);

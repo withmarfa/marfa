@@ -953,7 +953,8 @@ export interface RowBatchAnswer {
   last_activity_at: string;
   results: {
     id: string;
-    outcome: "created" | "replaced" | "patched" | "unchanged" | "deleted" | "absent";
+    outcome:
+      "created" | "replaced" | "patched" | "unchanged" | "deleted" | "absent";
   }[];
 }
 

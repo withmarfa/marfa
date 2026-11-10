@@ -103,6 +103,8 @@ const EVENT_TEXT: Readonly<Record<string, string>> = {
     "A transition moves the item it names to another state, into and out of the bin included (`items/transition-announced`, `events/job-announced`), or a key revokes a folder (`items/folder-announced`). A delete and a restore do not send it (`events/delete-no-state-change`, `events/restore-no-state-change`).",
   "metadata.changed":
     "A tag operation commits for an item, whether or not it changes the tags (`items/tag-announced`), or an extension namespace is written or deleted (`items/extension-announced`).",
+  "rows.changed":
+    "A batch changes the rows of one table of an item (`tables/rows-event`); never on a copy stream (`tables/rows-event-copy`).",
   "edge.created":
     "An edge is created (`edges/create-announced`, `events/edge-bulk-announced`, `events/edge-inline-announced`, `versions/copy-edges-announced`).",
   "edge.updated":

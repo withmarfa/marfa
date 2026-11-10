@@ -28,7 +28,8 @@ afterAll(async () => {
   await cleanup(ctx);
 });
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 let counter = 0;
 function typeId(label: string): string {
@@ -38,7 +39,9 @@ function typeId(label: string): string {
 
 const rowId = (): string => uuidv7();
 
-async function ledgerType(extra: Record<string, unknown> = {}): Promise<string> {
+async function ledgerType(
+  extra: Record<string, unknown> = {},
+): Promise<string> {
   const id = typeId("ledger");
   const made = await client.registerType({
     id,
@@ -75,8 +78,7 @@ function refusedAt(res: ApiResponse<unknown>): {
   paths: string[];
 } {
   const details = res.error?.error.details as
-    | { operation?: number; errors?: { path: string }[] }
-    | undefined;
+    { operation?: number; errors?: { path: string }[] } | undefined;
   return {
     code: res.error?.error.code,
     operation: details?.operation,
@@ -258,7 +260,12 @@ describe("writing rows", () => {
 
   it("refuses a batch with no operations", async () => {
     const item = await itemOf(await ledgerType());
-    for (const body of [{}, { operations: [] }, { operations: "put" }, { operations: [1] }]) {
+    for (const body of [
+      {},
+      { operations: [] },
+      { operations: "put" },
+      { operations: [1] },
+    ]) {
       const res = await client.writeRows(item, "lines", body);
       expect(res.status, JSON.stringify(body)).toBe(400);
       expect(res.error?.error.code).toBe("validation_error");
@@ -308,14 +315,31 @@ describe("writing rows", () => {
     const cases: [RowOperation, string][] = [
       [{ op: "put", values: { amount: "1" } }, "operations.0.values.amount"],
       [{ op: "put", values: { memo: "x" } }, "operations.0.values.amount"],
-      [{ op: "patch", id, values: { amount: null } }, "operations.0.values.amount"],
-      [{ op: "put", values: { amount: 1, colour: "red" } }, "operations.0.values.colour"],
-      [{ op: "put", values: { amount: 1, kind: "rent" } }, "operations.0.values.kind"],
-      [{ op: "put", values: { amount: 1, memo: "x".repeat(21) } }, "operations.0.values.memo"],
-      [{ op: "put", values: { amount: 1, on: "tomorrow" } }, "operations.0.values.on"],
+      [
+        { op: "patch", id, values: { amount: null } },
+        "operations.0.values.amount",
+      ],
+      [
+        { op: "put", values: { amount: 1, colour: "red" } },
+        "operations.0.values.colour",
+      ],
+      [
+        { op: "put", values: { amount: 1, kind: "rent" } },
+        "operations.0.values.kind",
+      ],
+      [
+        { op: "put", values: { amount: 1, memo: "x".repeat(21) } },
+        "operations.0.values.memo",
+      ],
+      [
+        { op: "put", values: { amount: 1, on: "tomorrow" } },
+        "operations.0.values.on",
+      ],
     ];
     for (const [operation, path] of cases) {
-      const res = await client.writeRows(item, "lines", { operations: [operation] });
+      const res = await client.writeRows(item, "lines", {
+        operations: [operation],
+      });
       expect(res.status, JSON.stringify(operation)).toBe(400);
       expect(refusedAt(res), JSON.stringify(operation)).toEqual({
         code: "validation_error",
@@ -330,7 +354,14 @@ describe("writing rows", () => {
 
   it("refuses an item column naming an item that does not exist or that the key may not read", async () => {
     const hiddenType = typeId("hidden");
-    expect((await client.registerType({ id: hiddenType, fields: { title: { type: "string" } } } as never)).status).toBe(201);
+    expect(
+      (
+        await client.registerType({
+          id: hiddenType,
+          fields: { title: { type: "string" } },
+        } as never)
+      ).status,
+    ).toBe(201);
     const hidden = await itemOf(hiddenType);
     const type = await ledgerType({ about: { type: "item" } });
     const narrow = await narrowClient({ [type]: "write" });
@@ -360,16 +391,28 @@ describe("writing rows", () => {
 
   it("refuses an item column naming an item of a type its constraints do not admit", async () => {
     const fileType = typeId("receipt");
-    expect((await client.registerType({ id: fileType, fields: { title: { type: "string" } } } as never)).status).toBe(201);
+    expect(
+      (
+        await client.registerType({
+          id: fileType,
+          fields: { title: { type: "string" } },
+        } as never)
+      ).status,
+    ).toBe(201);
     const type = await ledgerType({
       receipt: { type: "item", type_constraints: [fileType] },
     });
     const item = await itemOf(type);
     const receipt = await itemOf(fileType);
-    const other = await client.createItem({ type: "core.note", properties: { title: "Not a receipt" } } as never);
+    const other = await client.createItem({
+      type: "core.note",
+      properties: { title: "Not a receipt" },
+    } as never);
     trackItem(ctx, other.data.item.id);
     const refused = await client.writeRows(item, "lines", {
-      operations: [{ op: "put", values: { amount: 1, receipt: other.data.item.id } }],
+      operations: [
+        { op: "put", values: { amount: 1, receipt: other.data.item.id } },
+      ],
     });
     expect(refusedAt(refused)).toEqual({
       code: "validation_error",
@@ -412,13 +455,22 @@ describe("writing rows", () => {
     });
 
     const many = (count: number): RowOperation[] =>
-      Array.from({ length: count }, (_, n) => ({ op: "put", values: { text: String(n) } }));
-    const thousand = await client.writeRows(item, "notes", { operations: many(1000) });
+      Array.from({ length: count }, (_, n) => ({
+        op: "put",
+        values: { text: String(n) },
+      }));
+    const thousand = await client.writeRows(item, "notes", {
+      operations: many(1000),
+    });
     expect(thousand.status, JSON.stringify(thousand.error)).toBe(200);
-    const tooMany = await client.writeRows(item, "notes", { operations: many(1001) });
+    const tooMany = await client.writeRows(item, "notes", {
+      operations: many(1001),
+    });
     expect(tooMany.status).toBe(400);
     expect(tooMany.error?.error.code).toBe("validation_error");
-    expect(JSON.stringify(tooMany.error?.error.details)).toContain("operations");
+    expect(JSON.stringify(tooMany.error?.error.details)).toContain(
+      "operations",
+    );
     const tables = await client.listTables(item);
     expect(tables.data.data[0]?.row_count).toBe(1001);
   });
@@ -441,7 +493,9 @@ describe("writing rows", () => {
   });
 });
 
-async function narrowClient(types: Record<string, string>): Promise<MarfaClient> {
+async function narrowClient(
+  types: Record<string, string>,
+): Promise<MarfaClient> {
   counter += 1;
   const made = await client.createKey({
     label: `table-rows-narrow-${counter}`,
@@ -463,7 +517,9 @@ describe("who may read and write rows", () => {
     });
 
     const reader = await narrowClient({ [type]: "read" });
-    expect((await reader.getRow(item, "lines", id)).data.values).toEqual({ amount: 3 });
+    expect((await reader.getRow(item, "lines", id)).data.values).toEqual({
+      amount: 3,
+    });
     const refused = await reader.writeRows(item, "lines", {
       operations: [{ op: "delete", id }],
     });
@@ -477,7 +533,9 @@ describe("who may read and write rows", () => {
       await stranger.listRows(item, "lines"),
       await stranger.getRow(item, "lines", id),
       await stranger.rowTotals(item, "lines"),
-      await stranger.writeRows(item, "lines", { operations: [{ op: "delete", id }] }),
+      await stranger.writeRows(item, "lines", {
+        operations: [{ op: "delete", id }],
+      }),
     ]) {
       expect(res.status).toBe(404);
       expect(res.error?.error.code).toBe("item_not_found");
@@ -513,14 +571,26 @@ describe("who may read and write rows", () => {
       details: { trashed: true },
     });
     expect((await client.restoreItem(item)).status).toBe(200);
-    expect((await client.getRow(item, "lines", id)).data.values).toEqual({ amount: 3 });
+    expect((await client.getRow(item, "lines", id)).data.values).toEqual({
+      amount: 3,
+    });
   });
 
   it("withholds an item column's id from a key that may not read the item, and keeps the row", async () => {
     const hiddenType = typeId("private");
-    expect((await client.registerType({ id: hiddenType, fields: { title: { type: "string" } } } as never)).status).toBe(201);
+    expect(
+      (
+        await client.registerType({
+          id: hiddenType,
+          fields: { title: { type: "string" } },
+        } as never)
+      ).status,
+    ).toBe(201);
     const hidden = await itemOf(hiddenType);
-    const shownNote = await client.createItem({ type: "core.note", properties: { title: "Shown" } } as never);
+    const shownNote = await client.createItem({
+      type: "core.note",
+      properties: { title: "Shown" },
+    } as never);
     trackItem(ctx, shownNote.data.item.id);
     const type = await ledgerType({ about: { type: "item" } });
     const item = await itemOf(type);
@@ -529,10 +599,16 @@ describe("who may read and write rows", () => {
     await client.writeRows(item, "lines", {
       operations: [
         { op: "put", id: secret, values: { amount: 1, about: hidden } },
-        { op: "put", id: plain, values: { amount: 2, about: shownNote.data.item.id } },
+        {
+          op: "put",
+          id: plain,
+          values: { amount: 2, about: shownNote.data.item.id },
+        },
       ],
     });
-    expect((await client.getRow(item, "lines", secret)).data).not.toHaveProperty("withheld");
+    expect(
+      (await client.getRow(item, "lines", secret)).data,
+    ).not.toHaveProperty("withheld");
 
     const reader = await narrowClient({ [type]: "read", "core.note": "read" });
     const row = (await reader.getRow(item, "lines", secret)).data;

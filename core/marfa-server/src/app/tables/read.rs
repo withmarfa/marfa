@@ -111,7 +111,7 @@ pub async fn list(app: &App, caller: &Caller, item_id: String) -> Result<String>
                 }),
             })
             .collect();
-        printed(&json!({ "data": data }))
+        printed(&json!({ "data": data, "next_cursor": null }))
     })
     .await
 }

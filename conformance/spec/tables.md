@@ -292,7 +292,7 @@ When a `put` names no `id`, the server MUST give the row a new UUIDv7 as its `id
 
 ### `tables/rows-id-refused`
 
-If an operation names an `id` that is not a UUID, then the server MUST answer `400 validation_error` naming `operations.<index>.id`.
+If an operation names an `id` that is not a UUIDv7 in lowercase, then the server MUST answer `400 validation_error` naming `operations.<index>.id`.
 
 **Tests:** `compliance/table-rows.test.ts › refuses a row id that is not a UUID and an operation it does not know`.
 
@@ -603,6 +603,14 @@ When a stream or a webhook names a type filter, the server MUST send it only the
 When a `rows.changed` carries a row holding in a column of type `item` the id of an item of a type the receiving key may not read, the server MUST send the row without the column in `values` and with the column named in `withheld`.
 
 **Tests:** `compliance/table-rows-events.test.ts › withholds an item column's id from a stream that may not read the item`.
+
+### `tables/rows-event-copy`
+
+While a stream is a copy stream, the server MUST NOT send it `rows.changed`.
+
+**Reason:** a copy stream feeds a device's working copy, which holds no rows.
+
+**Tests:** `compliance/table-rows-events.test.ts › sends no rows.changed on a copy stream`.
 
 ## Rows and the life of an item
 
