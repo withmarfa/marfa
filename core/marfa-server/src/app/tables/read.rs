@@ -302,6 +302,15 @@ impl Key {
         }
     }
 
+    /// The kind of value a cursor's position holds, which a cursor cannot outlive a change to.
+    fn kind(&self) -> Option<String> {
+        match self {
+            Key::Id | Key::Updated => None,
+            Key::Column { kind, .. } => Some(kind.clone()),
+            Key::Order(order) => Some(order.signature()),
+        }
+    }
+
     fn expression(&self, withholding: &Withholding) -> Sql {
         match self {
             Key::Id => Sql::new("NULL"),
@@ -369,14 +378,15 @@ fn limit_of(limit: Option<i64>) -> Result<i64> {
     }
 }
 
-fn scope(item: &str, table: &str, asked: &Page) -> String {
+fn scope(item: &str, table: &str, asked: &Page, key: &Key) -> String {
     json!([
         ROWS_SCOPE,
         item,
         table,
         asked.filter,
         asked.sort.as_deref().unwrap_or("id"),
-        asked.descending
+        asked.descending,
+        key.kind()
     ])
     .to_string()
 }
@@ -498,7 +508,7 @@ fn answered_page(
         .map(|text| expression(text, &table))
         .transpose()?;
     let key = Key::of(asked.sort.as_deref(), &table)?;
-    let scope = scope(&host.id, &table.name, asked);
+    let scope = scope(&host.id, &table.name, asked, &key);
     let position = asked
         .cursor
         .as_deref()

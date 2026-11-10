@@ -19,7 +19,6 @@ pub const CLEANUP_JOB: &str = "table-row-cleanup";
 /// About 2 ms of the writer on the reference machine, so other writes wait little behind a page.
 pub(super) const CLEANUP_PAGE: i64 = 1_000;
 
-/// A purged item's rows go to `table-row-cleanup`, which removes them a page at a time.
 pub fn doom(tx: &Transaction<'_>, seq: i64, at: &str) -> Result<()> {
     if store::doom(tx, seq)? {
         housekeeping::bring_forward(tx, CLEANUP_JOB, at)?;
@@ -63,8 +62,15 @@ fn orders(catalog: &Catalog, type_id: &str) -> BTreeMap<String, Option<Order>> {
         .collect()
 }
 
-/// A table that fits in one page gets its keys at once; a larger one from `table-row-cleanup`.
-fn settle(tx: &Transaction<'_>, held: &Ordering, order: Option<&Order>, at: &str) -> Result<()> {
+/// Rewrites a table's keys now while the change has rewritten at most one page of rows in all, and
+/// leaves the rest to `table-row-cleanup`. `rewritten` is the rows rewritten so far.
+fn settle(
+    tx: &Transaction<'_>,
+    held: &Ordering,
+    order: Option<&Order>,
+    at: &str,
+    rewritten: &mut i64,
+) -> Result<()> {
     let wanted = order.map(Order::signature);
     let settled = match &held.rebuilding {
         Some(target) => *target == wanted,
@@ -73,14 +79,14 @@ fn settle(tx: &Transaction<'_>, held: &Ordering, order: Option<&Order>, at: &str
     if settled {
         return Ok(());
     }
-    if held.row_count <= CLEANUP_PAGE {
+    if *rewritten + held.row_count <= CLEANUP_PAGE {
+        *rewritten += held.row_count;
         return store::reorder_whole(tx, held.table_seq, order);
     }
     store::reorder_later(tx, held.table_seq, order)?;
     housekeeping::bring_forward(tx, CLEANUP_JOB, at)
 }
 
-/// Brings the order keys of every item of `types` to what `after` declares.
 pub fn reorder_types(
     tx: &Transaction<'_>,
     before: &Catalog,
@@ -88,6 +94,7 @@ pub fn reorder_types(
     types: &[String],
     at: &str,
 ) -> Result<()> {
+    let mut rewritten = 0;
     for type_id in types {
         let declared = orders(after, type_id);
         if orders(before, type_id) == declared {
@@ -95,13 +102,12 @@ pub fn reorder_types(
         }
         for held in store::orderings_of_type(tx, type_id)? {
             let order = declared.get(&held.table).cloned().flatten();
-            settle(tx, &held, order.as_ref(), at)?;
+            settle(tx, &held, order.as_ref(), at, &mut rewritten)?;
         }
     }
     Ok(())
 }
 
-/// Brings the order keys of item `seq`, now of `type_id`, to what `catalog` declares.
 pub fn reorder_item(
     tx: &Transaction<'_>,
     catalog: &Catalog,
@@ -110,9 +116,10 @@ pub fn reorder_item(
     at: &str,
 ) -> Result<()> {
     let declared = orders(catalog, type_id);
+    let mut rewritten = 0;
     for held in store::orderings_of_item(tx, seq)? {
         let order = declared.get(&held.table).cloned().flatten();
-        settle(tx, &held, order.as_ref(), at)?;
+        settle(tx, &held, order.as_ref(), at, &mut rewritten)?;
     }
     Ok(())
 }

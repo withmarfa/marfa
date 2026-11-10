@@ -767,4 +767,146 @@ describe("sorting by a table's order", () => {
     }
     await sorted();
   });
+
+  it("refuses a cursor answered before the sorted column changed type", async () => {
+    const columns = { at: { type: "string" }, other: { type: "string" } };
+    const { type, item, table } = await ordered(columns, "at");
+    await write(
+      item,
+      [1, 2, 3, 4, 5].map(
+        (n) =>
+          ({
+            op: "put",
+            values: { at: `2026-01-0${n}`, other: `2026-01-0${n}` },
+          }) as RowOperation,
+      ),
+    );
+    const cursors = new Map<string, string>();
+    for (const sort of ["values.at", "values.other"]) {
+      const first = await client.listRows(item, "lines", { sort, limit: 2 });
+      expect(first.data.next_cursor).toEqual(expect.any(String));
+      cursors.set(sort, first.data.next_cursor!);
+    }
+    const forced = await client.replaceType(
+      type,
+      {
+        id: type,
+        fields: { title: { type: "string" } },
+        tables: {
+          lines: {
+            ...table,
+            columns: {
+              at: { type: "datetime" },
+              other: { type: "datetime" },
+            },
+          },
+        },
+      },
+      true,
+    );
+    expect(forced.status, JSON.stringify(forced.error)).toBe(200);
+    for (const [sort, cursor] of cursors) {
+      const res = await client.listRows(item, "lines", {
+        sort,
+        limit: 2,
+        cursor,
+      });
+      expect(res.status, sort).toBe(400);
+      expect(res.error?.error.code).toBe("validation_error");
+      expect(res.error?.error.details).toMatchObject({ field: "cursor" });
+      expect(await walk(client, item, sort, "asc", 2)).toHaveLength(5);
+    }
+  });
+
+  it("rewrites the kept order of many small tables mostly in table-row-cleanup, sorting every page right meanwhile", async () => {
+    const columns = { rank: { type: "integer" }, label: { type: "string" } };
+    const { type, item: first, table } = await ordered(columns, "rank");
+    const items = [first];
+    for (let n = 1; n < 50; n++) {
+      const made = await client.createItem({
+        type,
+        properties: { title: `Ordered ${n}` },
+      } as never);
+      expect(made.status, JSON.stringify(made.error)).toBe(201);
+      trackItem(ctx, made.data.item.id);
+      items.push(made.data.item.id);
+    }
+    const rows = 30;
+    const label = (n: number) => `l${String((n * 7) % rows).padStart(3, "0")}`;
+    const held: string[][] = [];
+    for (const item of items) {
+      held.push(
+        await write(
+          item,
+          Array.from(
+            { length: rows },
+            (_, n) =>
+              ({
+                op: "put",
+                values: { rank: n, label: label(n) },
+              }) as RowOperation,
+          ),
+        ),
+      );
+    }
+    const byLabel = (ids: string[]) =>
+      [...ids].sort((a, b) =>
+        label(ids.indexOf(a)) < label(ids.indexOf(b)) ? -1 : 1,
+      );
+    const sorted = async () => {
+      for (const [at, item] of items.entries()) {
+        expect(await walk(client, item, "values.label", "asc", 7)).toEqual(
+          byLabel(held[at]!),
+        );
+        expect(await walk(client, item, "values.rank", "asc", 7)).toEqual(
+          held[at],
+        );
+      }
+    };
+
+    const changedAt = new Date().toISOString();
+    const moved = await client.replaceType(type, {
+      id: type,
+      fields: { title: { type: "string" } },
+      tables: { lines: { ...table, order: "label" } },
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    await sorted();
+
+    const management = getManagementClient();
+    const deadline = Date.now() + 60_000;
+    const runs = new Map<string, number>();
+    let asked = false;
+    for (;;) {
+      const job = (await management.listHousekeeping()).data.data.find(
+        (row) => row.name === "table-row-cleanup",
+      );
+      if (job?.last_started_at && job.last_started_at > changedAt) {
+        runs.set(
+          job.last_started_at,
+          (job.last_result as { reordered: number }).reordered,
+        );
+      }
+      if (
+        job?.last_started_at &&
+        job.last_started_at > changedAt &&
+        job.last_finished_at &&
+        job.last_finished_at >= job.last_started_at &&
+        !job.running_since
+      ) {
+        expect(job.last_outcome).toBe("ok");
+        break;
+      }
+      if (!asked && !job?.running_since) {
+        asked = (await management.runHousekeeping("table-row-cleanup")).ok;
+      } else {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      expect(Date.now()).toBeLessThan(deadline);
+    }
+    // The type write rewrites at most one page of rows itself and leaves the rest to the job.
+    const left = [...runs.values()].reduce((sum, n) => sum + n, 0);
+    expect(left).toBeGreaterThanOrEqual(items.length * rows - 1_000);
+    await sorted();
+  });
 });

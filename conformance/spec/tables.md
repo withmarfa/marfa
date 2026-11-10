@@ -638,9 +638,11 @@ If `limit` is not a whole number from 1 to 1000, then the server MUST answer `40
 
 ### `tables/rows-cursor`
 
-If a `cursor` was not answered for the same item, table, `filter`, `sort` and `direction`, then the server MUST answer `400 validation_error` naming `cursor`.
+If a `cursor` was not answered for the same item, table, `filter`, `sort`, `direction` and, when `sort` names a column, the same `type` of that column, then the server MUST answer `400 validation_error` naming `cursor`.
 
-**Tests:** `compliance/table-rows-reads.test.ts › pages a table's rows by id, continuing by a signed cursor`, `› refuses a cursor answered for the other direction`.
+**Reason:** a position read as one kind of value cannot continue a page read as another, and a page that continued from it would end the walk with rows unread.
+
+**Tests:** `compliance/table-rows-reads.test.ts › pages a table's rows by id, continuing by a signed cursor`, `› refuses a cursor answered for the other direction`, `› refuses a cursor answered before the sorted column changed type`.
 
 ### `tables/rows-filter`
 
@@ -692,7 +694,15 @@ When a type's change names another column as a table's `order`, removes its `ord
 
 **Reason:** the server rewrites the order it keeps for a large table a page at a time, in `table-row-cleanup`, and a page read meanwhile is still sorted right.
 
-**Tests:** `compliance/table-rows-reads.test.ts › sorts by a new order at once, while table-row-cleanup rewrites the kept order of a large table`.
+**Tests:** `compliance/table-rows-reads.test.ts › sorts by a new order at once, while table-row-cleanup rewrites the kept order of a large table`, `› rewrites the kept order of many small tables mostly in table-row-cleanup, sorting every page right meanwhile`.
+
+### `tables/order-change-bounded`
+
+When a change to a type moves the order the server keeps for the rows of its items' tables, the server MUST rewrite at most 1000 rows in the write of that change and leave the rest to `table-row-cleanup`.
+
+**Reason:** a type can have any number of items with any number of tables, and one write that rewrote them all would hold every other write.
+
+**Tests:** `compliance/table-rows-reads.test.ts › rewrites the kept order of many small tables mostly in table-row-cleanup, sorting every page right meanwhile`.
 
 ### `tables/rows-get`
 
