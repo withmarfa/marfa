@@ -354,7 +354,11 @@ describe("announcing rows", () => {
 
       const patched = await client.writeRows(item, "steps", {
         operations: [
-          { op: "patch", id: written.data.results[0]!.id, values: { count: 2 } },
+          {
+            op: "patch",
+            id: written.data.results[0]!.id,
+            values: { count: 2 },
+          },
         ],
       });
       expect(patched.status, JSON.stringify(patched.error)).toBe(200);

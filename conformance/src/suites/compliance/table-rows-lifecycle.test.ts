@@ -318,7 +318,12 @@ describe("rows and the life of an item", () => {
     const item = await itemOf(id);
     await put(item.id, [{ amount: 1 }]);
     await put(item.id, [{ text: "a note" }], "notes");
-    const schema = await connectMcp(apiUrl, apiKey, "2026-07-28", "/mcp/schema");
+    const schema = await connectMcp(
+      apiUrl,
+      apiKey,
+      "2026-07-28",
+      "/mcp/schema",
+    );
     try {
       const refused = toolError(
         await callTool(schema, "marfa_save_type", {
