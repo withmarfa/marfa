@@ -472,7 +472,7 @@ When a row holds in a column of type `item` the id of an item the reading key ma
 
 ## Reading rows
 
-### `tables/list`
+### `tables/item-tables-list`
 
 When a caller that may read an item sends `GET /items/{id}/tables`, the server MUST answer in `data` each table the item's type declares, by name, with its `row_count`, `bytes`, `last_batch` and `changed_at`.
 
