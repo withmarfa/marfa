@@ -524,6 +524,22 @@ When a batch changes no row, the server MUST answer `batch` `null`.
 
 **Tests:** `compliance/table-rows.test.ts › takes a put sent twice as one row, the second unchanged`, `› acknowledges a delete of a row the table does not hold`.
 
+### `tables/rows-keyed`
+
+The server MUST honor an `Idempotency-Key` on `POST /items/{id}/tables/{table}/rows` and `POST /items/{id}/tables/{table}/batches/{batch}/undo`, as `items/idempotency-replay` says.
+
+**Reason:** a device sends a batch again after an answer it lost (`queue-and-verdicts/rows-joined-again`), and a `patch` or an undo run twice would overwrite a change made between the two or undo the undo.
+
+**Tests:** `compliance/table-rows-keyed.test.ts › answers a batch sent again under its key from the record, keeping a change made between the two`, `› answers an undo sent again under its key from the record, undoing once`.
+
+### `tables/rows-keyed-reauthorized`
+
+When a credential repeats a batch or an undo under its `Idempotency-Key` and may no longer write the item's type, the server MUST answer `403 type_not_permitted`.
+
+**Reason:** a kept answer is replayed only to a credential that could make the write now (`items/replay-reauthorized`).
+
+**Tests:** `compliance/table-rows-keyed.test.ts › answers a batch sent again under its key from the record, keeping a change made between the two`.
+
 ### `tables/table-not-found`
 
 If a door under `/items/{id}/tables/{table}` names a table the item's type does not declare, then the server MUST answer `404 table_not_found`.

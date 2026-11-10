@@ -62,7 +62,7 @@ A device MUST report a write that no drain has sent, held or settled, or whose l
 
 ### `queue-and-verdicts/kinds-closed`
 
-A device MUST queue each write as exactly one of these kinds: `create_item`, `update_item`, `delete_item`, `restore_item`, `transition_item`, `create_edge`, `update_edge`, `delete_edge`, `replace_metadata`, `add_tag`, `remove_tag`, `write_extension`, `delete_extension` and `upload_blob`.
+A device MUST queue each write as exactly one of these kinds: `create_item`, `update_item`, `delete_item`, `restore_item`, `transition_item`, `create_edge`, `update_edge`, `delete_edge`, `replace_metadata`, `add_tag`, `remove_tag`, `write_extension`, `delete_extension`, `upload_blob`, `write_rows` and `undo_rows`.
 
 **Reason:** a purge is sent at once or refused, never queued (`device/purge-unqueued` and `device/purge-at-once`), and a bulk operation is the server's way of doing many things in one request, not a write a device holds.
 
@@ -232,6 +232,78 @@ If the server refuses the read that writes a page created owe, other than by an 
 
 **Tests:** `device/pages.test.ts › keeps the read of a page's writes owed where the server refuses it, and sends the rest of the queue`, `› keeps the read of an edge owed where the server refuses it, and sends the rest of the queue`.
 
+## Row writes
+
+A `write_rows` write is one batch an app made for one table of one item (`device.md`, "Writing a table on a device"). A drain sends it on the table's row door under its key, together with the writes to the same table queued straight after it, so the edits a person made offline land in few requests. The server writes all of a batch or none of it (`tables/rows-all-or-none`), so a drain answers each write of a batch on its own. The fixtures run the device in `device/table-writes-live.test.ts`.
+
+### `queue-and-verdicts/rows-door`
+
+When a drain sends a `write_rows` write, a device MUST send its operations as `POST /items/{id}/tables/{table}/rows` under the idempotency key of the first write of the batch it goes in.
+
+**Tests:** `device/table-writes-live.test.ts › sends consecutive writes to one table in one batch under the first write's key, and records each write's own results`.
+
+### `queue-and-verdicts/rows-joined`
+
+When a drain sends a `write_rows` write it has not sent before, a device MUST send in the same batch, in queue order, each `write_rows` write to the same table of the same item queued straight after it that it has not sent before and that is ready to send, while the batch holds at most 1000 operations and no more bytes than the lower of 1048576 and the server's limit.
+
+**Reason:** a write with no verdict queued between two writes is not jumped (`queue-and-verdicts/queue-sends-in-order`), and the bounds are the server's own (`tables/rows-batch-limit`, `queue-and-verdicts/request-limit-read`).
+
+**Tests:** `device/table-writes-live.test.ts › sends consecutive writes to one table in one batch under the first write's key, and records each write's own results`, `› sends no write in another write's batch past a write queued between them`.
+
+### `queue-and-verdicts/rows-joined-again`
+
+When a drain sends again a batch it sent before, a device MUST send the same writes in it, in the same order, under the same key.
+
+**Reason:** the server may have taken the batch, and only its record under the key answers the batch sent again; a `patch` applied twice would overwrite a change made between the two sends.
+
+**Tests:** `device/store-busy-live.test.ts › ends the drain store_busy when another program writes to the store at every attempt to record a batch's answer, and the next drain sends the same batch under its key, keeping a change made between`.
+
+### `queue-and-verdicts/rows-results`
+
+When the server answers a batch `200`, a device MUST record with each of its writes the `batch` and the `results` of that write's own operations, in order.
+
+**Tests:** `device/table-writes-live.test.ts › sends consecutive writes to one table in one batch under the first write's key, and records each write's own results`.
+
+### `queue-and-verdicts/rows-conflicted`
+
+When the server answers a batch `200`, a device MUST give the verdict `conflicted` to each of its writes that set a column, or deleted a row, whose value the copy last took from the server differs from the value the copy showed when the write was made.
+
+**Reason:** the later write takes a column (`tables/rows-patch`), and the value it replaced stays in the batch's change log, where an undo of the batch puts it back (`tables/undo`). A device judges this only for a table it holds whole.
+
+**Tests:** `device/table-writes-live.test.ts › records a write conflicted where it replaced a value the copy had not shown, and the value it replaced stays in the batch's change log`.
+
+### `queue-and-verdicts/rows-conflicts-named`
+
+When a device gives a `write_rows` write the verdict `conflicted`, a device MUST name in the drain and in the queue, under `conflicts`, each row and column whose value the write replaced unseen.
+
+**Tests:** `device/table-writes-live.test.ts › records a write conflicted where it replaced a value the copy had not shown, and the value it replaced stays in the batch's change log`.
+
+### `queue-and-verdicts/rows-refused-operation`
+
+If the server refuses a batch naming in `details.operation` an operation of one of its writes, then a device MUST refuse that write with the server's code, naming in its refusal's `details.operation` the operation's place in that write.
+
+**Tests:** `device/table-writes-live.test.ts › refuses only the write whose operation the server refuses, and sends the batch's other writes again in the same drain`.
+
+### `queue-and-verdicts/rows-refused-others`
+
+When the server refuses a batch naming an operation of one of its writes, a device MUST send the batch's other writes again in the same drain, in a batch of their own under a fresh key.
+
+**Reason:** the server wrote none of the batch, so one write's refusal says nothing of the others, and an edit refused only for sharing a batch would be lost.
+
+**Tests:** `device/table-writes-live.test.ts › refuses only the write whose operation the server refuses, and sends the batch's other writes again in the same drain`.
+
+### `queue-and-verdicts/rows-refused-whole`
+
+If the server refuses a batch naming no operation of it, then a device MUST settle each write of the batch as that answer settles a write sent on its own.
+
+**Tests:** `device/table-writes-live.test.ts › refuses every write of a batch the server refuses naming no operation`.
+
+### `queue-and-verdicts/undo-door`
+
+When a drain sends an `undo_rows` write, a device MUST send it as `POST /items/{id}/tables/{table}/batches/{batch}/undo` under its idempotency key, in no batch with another write.
+
+**Tests:** `device/table-writes-live.test.ts › queues an undo, sends it under its key, and takes the rows it put back from its rows.changed`.
+
 ## The version a write carries
 
 An update names the version it was made against, and a delete names the version it removes, so the server can tell whether the item has moved since (`versions.md`).
@@ -380,7 +452,7 @@ When a caller queues a write to an item whose create from this device has no ver
 
 **Reason:** the server holds no such item yet. A write sent past a blocked create is refused `item_not_found`, after which the copy forgets the item the write was queued against.
 
-**Tests:** `device/queue.test.ts › holds a write whose create has not been answered`, `› holds a write made to a refused create's item until a read finds the item its natural key names`, `device/classification.test.ts › blocks a create naming a source its key does not claim, and sends it once the key does`.
+**Tests:** `device/queue.test.ts › holds a write whose create has not been answered`, `› holds a write made to a refused create's item until a read finds the item its natural key names`, `device/classification.test.ts › blocks a create naming a source its key does not claim, and sends it once the key does`, `device/table-writes-live.test.ts › holds the table of an item it created offline whole, shows the rows written to it, and sends them once the create is accepted`.
 
 ### `queue-and-verdicts/edge-depends-on-ends`
 
@@ -674,7 +746,7 @@ A device MUST give every write it settles exactly one of the verdicts `accepted`
 
 ### `queue-and-verdicts/success-no-resolution`
 
-When the server answers a write `2xx` with a body the device reads as its operation's answer and no `conflict_resolution`, a device MUST give it the verdict `accepted`, but where `device/upload-answer-hash` or `queue-and-verdicts/trashed-ack-refused` says otherwise.
+When the server answers a write `2xx` with a body the device reads as its operation's answer and no `conflict_resolution`, a device MUST give it the verdict `accepted`, but where `device/upload-answer-hash`, `queue-and-verdicts/trashed-ack-refused` or `queue-and-verdicts/rows-conflicted` says otherwise.
 
 **Reason:** the three verdicts a success can carry are told apart by what the answer reports about resolving, never by comparing the item that came back with the item sent: every answer carries fields the server stamps.
 

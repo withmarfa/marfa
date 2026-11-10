@@ -6110,6 +6110,120 @@ While an item a device holds a table of is in the bin, a device MUST answer a re
 
 **Tests:** `device/tables-live.test.ts › answers the table of an item in the bin from the server, and from the copy once it is back`.
 
+## Writing a table on a device
+
+An app writes a table on a device as `POST /items/{id}/tables/{table}/rows` takes a batch (`tables.md`, "Writing rows"): one write is a batch of `put`, `patch` and `delete` operations for one table of one item, queued as a `write_rows` write (`queue-and-verdicts.md`, "Row writes"). A write is waiting while it has no verdict or is `blocked`. Where the device holds the table whole, it lays each waiting write over the rows it holds. The fixtures run the device in `device/table-writes-live.test.ts`.
+
+### `device/table-write-queued`
+
+When an app writes rows to a table of an item its copy holds, a device MUST queue the batch as one `write_rows` write before the call returns.
+
+**Tests:** `device/table-writes-live.test.ts › queues a write to a table it holds whole and answers it from the copy at once, with the server out of reach`.
+
+### `device/table-write-unheld-item`
+
+If an app writes rows to a table of an item its copy does not hold, then a device MUST refuse the write `not_found` with the code `item_not_found`, queueing nothing.
+
+**Reason:** the table a write names is judged against the item's type, which only an item the copy holds gives.
+
+**Tests:** `device/table-writes-live.test.ts › refuses a write it can judge from the copy as the server would, queueing nothing`.
+
+### `device/table-write-undeclared`
+
+If an app writes rows to a table that the item's type in the copy's catalog does not declare, then a device MUST refuse the write `not_found` with the code `table_not_found`, queueing nothing.
+
+**Tests:** `device/table-writes-live.test.ts › refuses a write it can judge from the copy as the server would, queueing nothing`.
+
+### `device/table-write-judged`
+
+If the server would refuse an operation of a batch under `tables/rows-operations-required`, `tables/rows-batch-limit`, `tables/rows-op-refused`, `tables/rows-id-refused`, `tables/rows-op-member-refused`, `tables/rows-values-refused`, `tables/rows-unknown-column` or `tables/rows-value-rules`, then a device MUST refuse the write `invalid`, naming the operation, queueing nothing.
+
+**Reason:** the device holds the type's columns, so a write the server cannot take is refused while the person who made it is still there.
+
+**Tests:** `device/table-writes-live.test.ts › refuses a write it can judge from the copy as the server would, queueing nothing`.
+
+### `device/table-write-withheld`
+
+If an operation of a batch names in `values` a column that the row the device holds names in `withheld`, then a device MUST refuse the write `forbidden`, naming the operation and the column, queueing nothing.
+
+**Reason:** the server refuses it (`tables/rows-withheld-write`), and the copy holds no value for the column to show.
+
+**Tests:** `device/table-writes-live.test.ts › refuses a write it can judge from the copy as the server would, queueing nothing`.
+
+### `device/table-write-shown`
+
+While a `write_rows` write is waiting, a device MUST answer a read of a table it holds whole with the rows as the write's operations leave them under `tables/rows-put-replace`, `tables/rows-patch`, `tables/rows-patch-clear`, `tables/rows-delete` and `tables/rows-in-order`.
+
+**Reason:** an app shows the person their edit at once, whether or not the server can be reached.
+
+**Tests:** `device/table-writes-live.test.ts › queues a write to a table it holds whole and answers it from the copy at once, with the server out of reach`, `› lays a waiting write back over each rows.changed it applies beneath it`.
+
+### `device/table-write-updated-at`
+
+When a device answers a row that a waiting write changed, a device MUST answer as its `updated_at` the time the latest such write was queued.
+
+**Tests:** `device/table-writes-live.test.ts › queues a write to a table it holds whole and answers it from the copy at once, with the server out of reach`.
+
+### `device/table-write-over-server`
+
+When a device takes a row from the server into a table it holds whole, from a `rows.changed` or a read of the rows one names, a device MUST lay every waiting `write_rows` write to that row back over it.
+
+**Tests:** `device/table-writes-live.test.ts › lays a waiting write back over each rows.changed it applies beneath it`.
+
+### `device/table-write-over-fill`
+
+When a fill leaves a table whole, a device MUST lay every waiting `write_rows` write to the table over its rows.
+
+**Tests:** `device/table-writes-live.test.ts › lays writes queued before it held a table over the rows once the table fills`.
+
+### `device/table-write-not-held`
+
+When an app writes rows to a table that the device does not hold whole, a device MUST queue the write without changing a row it holds.
+
+**Reason:** a table is held whole or not at all, so a read of it goes to the server (`device/table-filling-online`), which takes the write once the queue drains.
+
+**Tests:** `device/table-writes-live.test.ts › queues a write to a table it does not hold, or holds past the cap, without a copy, and reads the table from the server`.
+
+### `device/table-write-own-item`
+
+When a device holds a table of an item whose create from this device is waiting, a device MUST hold the table whole with no rows, without reading the server.
+
+**Reason:** the server holds no rows of an item it has not taken, so the rows this device writes to it are its only rows, and they show while the device is offline.
+
+**Tests:** `device/table-writes-live.test.ts › holds the table of an item it created offline whole, shows the rows written to it, and sends them once the create is accepted`.
+
+### `device/table-write-accepted-kept`
+
+When a `write_rows` write is accepted with a `batch`, a device MUST keep its operations laid over the rows it changed until the device applies the `rows.changed` naming that `batch`.
+
+**Reason:** a `rows.changed` the server sent before the batch, applied after its answer, would otherwise show the write undone until the batch's own event arrived.
+
+**Tests:** `device/table-writes-live.test.ts › keeps an accepted write over a rows.changed the server sent before it and applied after its answer`.
+
+### `device/table-write-accepted-unchanged`
+
+When a `write_rows` write is accepted, a device MUST hold each row whose operations in the batch the server answered `unchanged` or `absent` as those operations leave it.
+
+**Reason:** the server already held the row as the write leaves it, and announces no change for it (`tables/rows-put-repeat`), so nothing else would bring the row the write shows.
+
+**Tests:** `device/table-writes-live.test.ts › holds a row an accepted write left unchanged as the write left it`.
+
+### `device/table-write-refused-shown`
+
+When a `write_rows` write is refused or `dead`, a device MUST answer the rows it named as the server last gave them, with the waiting writes laid over them.
+
+**Reason:** the server wrote none of a refused batch (`tables/rows-all-or-none`), and a `dead` write that landed reaches the copy in its own `rows.changed`. The write keeps its body in the queue until a caller discards or releases it.
+
+**Tests:** `device/table-writes-live.test.ts › shows the server's row once a write is refused, and keeps the write in the queue with its body`.
+
+### `device/table-write-undo`
+
+When an app undoes a batch of a table of an item its copy holds, a device MUST queue the undo as one `undo_rows` write without changing a row it holds.
+
+**Reason:** the before-images an undo puts back are in the server's change log, which a device does not hold; the undo's `rows.changed` brings the rows it put back.
+
+**Tests:** `device/table-writes-live.test.ts › queues an undo, sends it under its key, and takes the rows it put back from its rows.changed`.
+
 ## A file's size
 
 ### `device/file-size`
