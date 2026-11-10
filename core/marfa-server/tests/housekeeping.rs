@@ -608,12 +608,15 @@ async fn every_cleanup_keeps_a_row_whose_stored_time_does_not_read_and_finishes(
     let path = format!("/keys/{key}");
     instance.ok(Method::DELETE, &path, Value::Null).await;
     instance.dead_delivery().await;
+    let ledger = ledger(&instance).await;
+    let logged = rows(&instance, &ledger, 1).await;
     let at = instance.app.clock.stamp();
     let blob = "a".repeat(64);
     // "0" sorts before any cutoff, so only reading the time keeps these rows.
     instance
         .sql(format!(
             "UPDATE items SET created_at = '0' WHERE id = '{feed}'; \
+             UPDATE row_batches SET at = '0' WHERE id = '{logged}'; \
              UPDATE items SET trashed_at = '0' WHERE id = '{binned}'; \
              UPDATE api_keys SET revoked_at = '0' WHERE id = '{key}'; \
              UPDATE webhook_deliveries SET created_at = '0' WHERE id = 'dead'; \
@@ -638,6 +641,7 @@ async fn every_cleanup_keeps_a_row_whose_stored_time_does_not_read_and_finishes(
         ("bulk-action-gc", 1),
         ("credential-cleanup", 1),
         ("blob-orphans", 1),
+        ("table-row-cleanup", 1),
     ] {
         assert_eq!(instance.kept_unread(job).await, kept, "{job}");
     }
@@ -650,11 +654,104 @@ async fn every_cleanup_keeps_a_row_whose_stored_time_does_not_read_and_finishes(
         ("idempotency_records", "created_at"),
         ("bulk_jobs", "finished_at"),
         ("blob_orphans", "reported_at"),
+        ("row_batches", "at"),
     ] {
         let kept = format!("SELECT count(*) FROM {table} WHERE {column} = '0'");
         assert_eq!(instance.count(&kept), 1, "{table}.{column}");
     }
     assert_eq!(instance.count("SELECT count(*) FROM audit_log"), 1);
+}
+
+const LEDGER: &str = "user.ledger";
+
+async fn ledger(instance: &Instance) -> String {
+    let declared = json!({
+        "id": LEDGER,
+        "fields": { "title": { "type": "string" } },
+        "tables": { "lines": { "columns": { "amount": { "type": "number" } } } },
+    });
+    let (status, _) = instance
+        .send(Method::GET, &format!("/types/{LEDGER}"), Value::Null, None)
+        .await;
+    if status == StatusCode::NOT_FOUND {
+        instance.ok(Method::POST, "/types", declared).await;
+    }
+    instance
+        .item(json!({ "type": LEDGER, "properties": { "title": "Ledger" } }))
+        .await
+}
+
+/// One batch putting `count` rows; answers the batch.
+async fn rows(instance: &Instance, item: &str, count: usize) -> String {
+    let operations: Vec<Value> = (0..count)
+        .map(|amount| json!({ "op": "put", "values": { "amount": amount } }))
+        .collect();
+    let path = format!("/items/{item}/tables/lines/rows");
+    let written = instance
+        .ok(Method::POST, &path, json!({ "operations": operations }))
+        .await;
+    written["batch"].as_str().unwrap().to_string()
+}
+
+const LOG: &str =
+    "SELECT (SELECT count(*) FROM row_batches) * 1000000 + (SELECT count(*) FROM row_changes)";
+
+#[tokio::test]
+async fn row_log_expiry_keeps_a_batch_whose_stored_time_does_not_read_and_every_one_after() {
+    let instance = Instance::start(&[("MARFA_ROW_LOG_RETENTION_DAYS", "30")]).await;
+    let item = ledger(&instance).await;
+    let first = rows(&instance, &item, 2).await;
+    rows(&instance, &item, 1).await;
+    instance.forward(31 * DAY);
+    let at = |value: &str| format!("UPDATE row_batches SET at = '{value}' WHERE id = '{first}'");
+    // "0" sorts before any cutoff, so only reading the time keeps it.
+    instance.sql(at("0")).await;
+    assert_eq!(instance.kept_unread("table-row-cleanup").await, 1);
+    assert_eq!(instance.count(LOG), 2_000_003);
+
+    // The witness: the same batch with an old time that reads is taken, and the one after it.
+    instance.sql(at("2000-01-01T00:00:00.000Z")).await;
+    let run = instance.run("table-row-cleanup").await;
+    assert_eq!(run["batches_removed"], 2, "{run}");
+    assert_eq!(instance.count(LOG), 0);
+}
+
+#[tokio::test]
+async fn row_log_cleanup_takes_changes_whose_batch_is_gone_whatever_the_retention() {
+    let instance = Instance::start(&[("MARFA_ROW_LOG_RETENTION_DAYS", "30")]).await;
+    let kept = ledger(&instance).await;
+    let purged = ledger(&instance).await;
+    let oldest = rows(&instance, &kept, 2).await;
+    let standing = rows(&instance, &kept, 1).await;
+    let later = [
+        rows(&instance, &purged, 3).await,
+        rows(&instance, &purged, 4).await,
+    ];
+    assert_eq!(instance.count(LOG), 4_000_010);
+    // Batches whose changes outlived them, the oldest of the log and two after a standing one.
+    instance
+        .sql(format!(
+            "DELETE FROM row_batches WHERE id IN ('{oldest}', '{}', '{}')",
+            later[0], later[1]
+        ))
+        .await;
+    instance.store("row_log_retention_days", "0").await;
+
+    instance.run("table-row-cleanup").await;
+    assert_eq!(instance.count(LOG), 1_000_008);
+
+    instance
+        .ok(Method::DELETE, &format!("/items/{purged}"), Value::Null)
+        .await;
+    instance
+        .ok(Method::POST, &format!("/items/{purged}/purge"), json!({}))
+        .await;
+    let run = instance.run("table-row-cleanup").await;
+    assert_eq!(run["changes_removed"], 7, "{run}");
+    assert_eq!(instance.count(LOG), 1_000_001);
+    let left = format!("SELECT count(*) FROM row_batches WHERE id = '{standing}'");
+    assert_eq!(instance.count(&left), 1);
+    assert_eq!(instance.count("SELECT count(*) FROM table_rows"), 3);
 }
 
 async fn expiring(instance: &Instance) -> &'static str {

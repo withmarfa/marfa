@@ -637,8 +637,13 @@ impl Batch<'_, '_> {
         let tx = unit.tx();
         store::close_batch(tx, batch, self.changed.len() as i64)?;
         for (id, change) in &self.changed {
-            if matches!(change, Changed::Deleted) {
-                store::log_removed(tx, batch, id)?;
+            match change {
+                Changed::Deleted => store::log_removed(tx, batch, id)?,
+                Changed::Held { refs, .. } => {
+                    if let Some(refs) = refs_text(refs) {
+                        store::log_after_refs(tx, batch, id, &refs)?;
+                    }
+                }
             }
         }
         let at = unit.at.as_str();

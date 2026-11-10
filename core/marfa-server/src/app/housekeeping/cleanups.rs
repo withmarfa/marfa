@@ -55,7 +55,7 @@ async fn expire(
 }
 
 /// Once a stage is done, what it kept is only what it could not judge.
-async fn report_kept(
+pub async fn report_kept(
     app: &Arc<App>,
     run: &Run,
     retention: Setting<u64>,

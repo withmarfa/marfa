@@ -760,7 +760,7 @@ When a caller sends `POST /items/{id}/tables/{table}/batches/{batch}/undo` and e
 
 **Reason:** a person takes back a write whole, one batch at a time, from the newest.
 
-**Tests:** `compliance/table-rows-undo.test.ts › undoes a batch, putting back rows it replaced, patched and deleted and removing rows it created`, `› undoes a batch where a later batch left a row as it was before the batch`, `› undoes a run of batches newest first, and redoes them oldest first`.
+**Tests:** `compliance/table-rows-undo.test.ts › undoes a batch, putting back rows it replaced, patched and deleted and removing rows it created`, `› undoes a batch where a later batch left a row as it was before the batch`, `› undoes a run of batches newest first, and redoes them oldest first`, `› undoes an earlier batch once a later batch that left its rows as it found them is undone`.
 
 ### `tables/undo-answer`
 
@@ -802,7 +802,7 @@ If a row the undone batch changed stands neither as the batch left it nor as it 
 
 If the server refuses an undo, then the server MUST change none of the rows of the batch it names.
 
-**Tests:** `compliance/table-rows-undo.test.ts › refuses an undo where a later batch changed a row, naming the rows, and changes nothing`, `› refuses an undo that would put back or replace a value the key may not read, and removes a created row holding one`.
+**Tests:** `compliance/table-rows-undo.test.ts › refuses an undo where a later batch changed a row, naming the rows, and changes nothing`, `› refuses an undo of a row holding a value the key may not read, and removes a created row holding one`, `› refuses an undo to a key that may not read a value a row held before or after the batch, whatever the row holds now`.
 
 ### `tables/undo-values-kept`
 
@@ -842,11 +842,11 @@ When an item has come back from the bin, the server MUST undo a batch of its tab
 
 ### `tables/undo-withheld`
 
-If an undo would change the value of a column in a row it keeps, where the row holds before or after the undo a value the server would withhold from the undoing key on a read of the row, then the server MUST answer `403 forbidden` with `details.row` naming the row and `details.column` naming the column.
+If an undo names a batch that changed a row it did not create, and the row holds now, held before the batch or held after it a value the server would withhold from the undoing key on a read of the row, then the server MUST answer `403 forbidden` with `details.row` naming the row and `details.column` naming the column, whatever else it would answer for the row.
 
-**Reason:** an undo that put the value back or replaced it would write a reference the key cannot see, which `tables/rows-withheld-write` refuses to a write.
+**Reason:** whether an undo puts a row back, finds it unchanged or refuses it as changed since turns on the values it compares, so an answer that differed would tell the key which item a withheld value names. A put back or replaced value is also a reference the key cannot see, which `tables/rows-withheld-write` refuses to a write. A row the batch created is removed or left by whether it is there alone (`tables/undo-withheld-delete`).
 
-**Tests:** `compliance/table-rows-undo.test.ts › refuses an undo that would put back or replace a value the key may not read, and removes a created row holding one`.
+**Tests:** `compliance/table-rows-undo.test.ts › refuses an undo of a row holding a value the key may not read, and removes a created row holding one`, `› refuses an undo to a key that may not read a value a row held before or after the batch, whatever the row holds now`.
 
 ### `tables/undo-withheld-delete`
 
@@ -854,7 +854,7 @@ When an undo removes a row the undone batch created, the server MUST remove it w
 
 **Reason:** removing the row leaves alone the item its value names, as `tables/rows-withheld-delete` allows a delete.
 
-**Tests:** `compliance/table-rows-undo.test.ts › refuses an undo that would put back or replace a value the key may not read, and removes a created row holding one`.
+**Tests:** `compliance/table-rows-undo.test.ts › refuses an undo of a row holding a value the key may not read, and removes a created row holding one`.
 
 ### `tables/undo-event`
 

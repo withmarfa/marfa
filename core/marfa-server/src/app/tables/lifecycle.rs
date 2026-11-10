@@ -10,7 +10,7 @@ use super::store;
 use super::tables_of;
 use crate::app::App;
 use crate::app::catalog::Catalog;
-use crate::app::housekeeping::{self, DAY_MS, Report, Run, cutoff};
+use crate::app::housekeeping::{self, DAY_MS, Report, Run, cutoff, report_kept};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::db::Write;
 use crate::settings::registry::ROW_LOG_RETENTION_DAYS;
@@ -56,40 +56,40 @@ impl Tally {
     }
 }
 
+#[derive(Clone, Copy)]
+enum Stage {
+    Purged,
+    Orphaned,
+    Expired,
+}
+
 pub async fn cleanup(app: Arc<App>, run: Run) -> Result<Report> {
     let mut tally = Tally::default();
-    loop {
-        let page = app
-            .db
-            .write(Write::own(), |tx| store::remove_page(tx, CLEANUP_PAGE))
-            .await?;
-        let Some(page) = page else {
-            break;
-        };
-        tally.add(&page);
-        if !run.go_on().await {
-            return Ok(tally.report(true));
+    for stage in [Stage::Purged, Stage::Orphaned, Stage::Expired] {
+        loop {
+            let live = app.clone();
+            let page = app
+                .db
+                .write(Write::own(), move |tx| match stage {
+                    Stage::Purged => store::remove_page(tx, CLEANUP_PAGE),
+                    Stage::Orphaned => store::orphan_page(tx, CLEANUP_PAGE),
+                    Stage::Expired => match cutoff(tx, &live, ROW_LOG_RETENTION_DAYS, DAY_MS)? {
+                        Some(before) => store::expire_page(tx, &before, CLEANUP_PAGE),
+                        None => Ok(None),
+                    },
+                })
+                .await?;
+            let Some(page) = page else {
+                break;
+            };
+            tally.add(&page);
+            if !run.go_on().await {
+                return Ok(tally.report(true));
+            }
         }
     }
-    loop {
-        let live = app.clone();
-        let page = app
-            .db
-            .write(Write::own(), move |tx| {
-                match cutoff(tx, &live, ROW_LOG_RETENTION_DAYS, DAY_MS)? {
-                    Some(before) => store::expire_page(tx, &before, CLEANUP_PAGE),
-                    None => Ok(None),
-                }
-            })
-            .await?;
-        let Some(page) = page else {
-            return Ok(tally.report(false));
-        };
-        tally.add(&page);
-        if !run.go_on().await {
-            return Ok(tally.report(true));
-        }
-    }
+    report_kept(&app, &run, ROW_LOG_RETENTION_DAYS, DAY_MS, &store::UNREAD).await?;
+    Ok(tally.report(false))
 }
 
 fn blocked(tables: Vec<String>) -> Refusal {

@@ -14167,7 +14167,7 @@ export interface operations {
             };
             /**
              * @description - `type_not_permitted`: you can't write the item's type, or your credential reaches no type.
-             *     - `forbidden`: the undo would change a column whose value names an item you can't read. `details.row` names the row and `details.column` the column.
+             *     - `forbidden`: a row the batch changed, other than one it created, names an item you can't read in a column, now, before the batch or after it. `details.row` names the row and `details.column` the column.
              */
             403: {
                 headers: {

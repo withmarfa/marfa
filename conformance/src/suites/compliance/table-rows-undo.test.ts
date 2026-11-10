@@ -260,6 +260,33 @@ describe("undoing a batch", () => {
     expect(await rows(item)).toEqual({ [r1]: { amount: 1 } });
   });
 
+  it("undoes an earlier batch once a later batch that left its rows as it found them is undone", async () => {
+    const item = await itemOf(await ledgerType());
+    const [r1, r2] = ids();
+    const earlier = await write(item, [
+      { op: "put", id: r1, values: { amount: 1 } },
+      { op: "put", id: r2, values: { amount: 2 } },
+    ]);
+    const later = await write(item, [
+      { op: "patch", id: r1, values: { amount: 5 } },
+      { op: "patch", id: r1, values: { amount: 1 } },
+    ]);
+    // The witness: while the later batch stands, it holds back the earlier one.
+    const held = await client.undoBatch(item, "lines", earlier);
+    expect(held.status).toBe(409);
+    expect(held.error?.error.details).toEqual({ rows: [r1] });
+
+    const nothing = await undo(item, later);
+    expect(nothing.batch).toBeNull();
+    expect(nothing.results).toEqual([{ id: r1, outcome: "unchanged" }]);
+    const answer = await undo(item, earlier);
+    expect(answer.results).toEqual([
+      { id: r1, outcome: "deleted" },
+      { id: r2, outcome: "deleted" },
+    ]);
+    expect(await rows(item)).toEqual({});
+  });
+
   it("puts back values in a column the type has since removed", async () => {
     const id = typeId("removed");
     await ledgerType(LEDGER, id);
@@ -422,7 +449,7 @@ describe("an undo it cannot make", () => {
     expect(await rows(item)).toEqual({});
   });
 
-  it("refuses an undo that would put back or replace a value the key may not read, and removes a created row holding one", async () => {
+  it("refuses an undo of a row holding a value the key may not read, and removes a created row holding one", async () => {
     const hiddenType = typeId("hidden");
     expect(
       (
@@ -487,15 +514,32 @@ describe("an undo it cannot make", () => {
       about: hidden,
     });
 
-    // The witness: an undo that leaves the withheld column alone goes through.
+    // A row holding a withheld value refuses an undo that leaves the column alone.
     const amounts = await write(item, [
       { op: "patch", id: r1, values: { amount: 5 } },
     ]);
-    const plain = await undo(item, amounts, "lines", narrow);
-    expect(plain.results).toEqual([{ id: r1, outcome: "replaced" }]);
+    const alone = await narrow.undoBatch(item, "lines", amounts);
+    expect(alone.status).toBe(403);
+    expect(alone.error?.error).toMatchObject({
+      code: "forbidden",
+      details: { row: r1, column: "about" },
+    });
     expect((await client.getRow(item, "lines", r1)).data.values).toEqual({
-      amount: 1,
+      amount: 5,
       about: hidden,
+    });
+
+    // The witness: an undo of a row whose values the key reads goes through.
+    const [r4] = ids();
+    await write(item, [{ op: "put", id: r4, values: { amount: 4, about: shown } }]);
+    const plain = await write(item, [
+      { op: "patch", id: r4, values: { amount: 6 } },
+    ]);
+    const undone = await undo(item, plain, "lines", narrow);
+    expect(undone.results).toEqual([{ id: r4, outcome: "replaced" }]);
+    expect((await client.getRow(item, "lines", r4)).data.values).toEqual({
+      amount: 4,
+      about: shown,
     });
 
     // A created row holding a withheld value is removed.
@@ -505,6 +549,59 @@ describe("an undo it cannot make", () => {
     const removed = await undo(item, created, "lines", narrow);
     expect(removed.results).toEqual([{ id: r3, outcome: "deleted" }]);
     expect((await client.getRow(item, "lines", r3)).status).toBe(404);
+  });
+  it("refuses an undo to a key that may not read a value a row held before or after the batch, whatever the row holds now", async () => {
+    const hiddenType = typeId("unseen");
+    expect(
+      (
+        await client.registerType({
+          id: hiddenType,
+          fields: { title: { type: "string" } },
+        } as never)
+      ).status,
+    ).toBe(201);
+    const between = await itemOf(hiddenType, "Between");
+    const since = await itemOf(hiddenType, "Since");
+    const note = await client.createItem({
+      type: "core.note",
+      properties: { title: "Shown" },
+    } as never);
+    trackItem(ctx, note.data.item.id);
+    const shown = note.data.item.id;
+    const type = await ledgerType({
+      lines: { columns: { about: { type: "item" } } },
+    });
+    const narrow = await keyClient({ [type]: "write", "core.note": "read" });
+    const [r1] = ids();
+    const answers: unknown[] = [];
+    const owners: number[] = [];
+    // The row goes shown, then hidden, then back to shown or on to another hidden item.
+    for (const now of [shown, since]) {
+      const item = await itemOf(type);
+      await write(item, [{ op: "put", id: r1, values: { about: shown } }]);
+      const batch = await write(item, [
+        { op: "patch", id: r1, values: { about: between } },
+      ]);
+      await write(item, [{ op: "patch", id: r1, values: { about: now } }]);
+      const held = await rows(item);
+      const refused = await narrow.undoBatch(item, "lines", batch);
+      answers.push({ status: refused.status, body: refused.error });
+      expect(await rows(item)).toEqual(held);
+      owners.push((await client.undoBatch(item, "lines", batch)).status);
+    }
+    expect(answers[0]).toEqual({
+      status: 403,
+      body: {
+        error: {
+          code: "forbidden",
+          message: expect.any(String),
+          details: { row: r1, column: "about" },
+        },
+      },
+    });
+    expect(answers[1]).toEqual(answers[0]);
+    // The witness: to a key that reads every value, the two rows answer apart.
+    expect(owners).toEqual([200, 409]);
   });
 });
 

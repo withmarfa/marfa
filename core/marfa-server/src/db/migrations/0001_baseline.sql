@@ -190,12 +190,16 @@ CREATE INDEX IF NOT EXISTS row_batches_table ON row_batches (table_seq, seq);
 CREATE TABLE IF NOT EXISTS row_changes (
     batch INTEGER NOT NULL,
     id TEXT NOT NULL,
+    -- A purge reaches a change by its table even once its batch is gone.
+    table_seq INTEGER NOT NULL,
     before_batch INTEGER,
     after_batch INTEGER,
     refs BLOB,
     body BLOB,
+    after_refs BLOB,
     PRIMARY KEY (batch, id)
 ) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS row_changes_table ON row_changes (table_seq);
 
 -- Tables of purged items whose rows or log `table-row-cleanup` has still to remove.
 CREATE TABLE IF NOT EXISTS table_rows_purging (

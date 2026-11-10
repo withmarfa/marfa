@@ -22,7 +22,7 @@ use super::{App, config, stored};
 use crate::db::Write;
 use crate::settings::registry::{Setting, Snapshot};
 
-pub use cleanups::drain;
+pub use cleanups::{drain, report_kept};
 use jobs::JOBS;
 
 pub const HOUR_MS: i64 = 3_600_000;

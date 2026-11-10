@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use serde_json::{Map, Value, json};
+use serde_json::json;
 
 use super::store::{self, Before, Change, Held};
 use super::{Batch, table_of};
@@ -20,7 +20,8 @@ pub(crate) fn not_found_batch() -> Refusal {
 }
 
 enum Step {
-    Unchanged,
+    /// With the mark to hand the row back to, where the undone batch still marks it.
+    Unchanged(Option<i64>),
     Remove,
     PutBack(Before),
 }
@@ -33,56 +34,57 @@ fn as_before(held: Option<&Held>, before: Option<&Before>) -> bool {
     }
 }
 
-fn changed_columns(
-    held: Option<&Held>,
-    values: &Map<String, Value>,
-    refs: &Map<String, Value>,
-) -> BTreeSet<String> {
-    let empty = Map::new();
-    let (now_values, now_refs) = held.map_or((&empty, &empty), |held| (&held.values, &held.refs));
-    [now_values, now_refs, values, refs]
-        .into_iter()
-        .flat_map(|map| map.keys())
-        .filter(|column| {
-            now_values.get(*column) != values.get(*column)
-                || now_refs.get(*column) != refs.get(*column)
-        })
-        .cloned()
-        .collect()
-}
-
 impl Batch<'_, '_> {
-    fn refuse_withheld_undo(
-        &mut self,
-        id: &str,
-        held: Option<&Held>,
-        values: &Map<String, Value>,
-        refs: &Map<String, Value>,
-    ) -> Result<()> {
+    /// Refuses before any comparison, so the answer never turns on a withheld value. A row the
+    /// batch created is removed or left by whether it is there, which compares no value.
+    fn refuse_withheld_undo(&mut self, change: &Change, held: Option<&Held>) -> Result<()> {
+        let Some(before) = &change.before else {
+            return Ok(());
+        };
         let unit = self.unit;
-        let mut withheld = self.sight.withheld(unit.tx(), &unit.caller, refs)?;
-        if let Some(held) = held {
-            withheld.extend(self.sight.withheld(unit.tx(), &unit.caller, &held.refs)?);
+        let mut withheld = BTreeSet::new();
+        for refs in [
+            Some(&before.refs),
+            Some(&change.after_refs),
+            held.map(|held| &held.refs),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            withheld.extend(self.sight.withheld(unit.tx(), &unit.caller, refs)?);
         }
-        let changed = changed_columns(held, values, refs);
-        match withheld.iter().find(|column| changed.contains(column.as_str())) {
+        match withheld.first() {
             Some(column) => Err(Refusal::new(
                 Code::Forbidden,
                 format!(
-                    "The column \"{column}\" of row {id} names an item this key may not read, so the key may not undo its change."
+                    "The column \"{column}\" of row {} holds or held an item this key may not read, so the key may not undo the batch.",
+                    change.id
                 ),
             )
-            .with_detail("row", id)
+            .with_detail("row", change.id.as_str())
             .with_detail("column", column.as_str())),
             None => Ok(()),
         }
     }
 
-    fn plan(&self, table: i64, change: Change) -> Result<Option<(String, Option<Held>, Step)>> {
+    fn plan(
+        &self,
+        table: i64,
+        change: Change,
+        held: Option<Held>,
+    ) -> Result<Option<(String, Option<Held>, Step)>> {
         let tx = self.unit.tx();
-        let held = store::row(tx, Some(table), &change.id)?;
         if as_before(held.as_ref(), change.before.as_ref()) {
-            return Ok(Some((change.id, held, Step::Unchanged)));
+            // A batch that left a row as it found it still marks it until undone.
+            let restore = match (&change.before, change.after) {
+                (Some(before), Some(mark))
+                    if store::marker(tx, table, &change.id)? == Some(mark) =>
+                {
+                    Some(before.batch)
+                }
+                _ => None,
+            };
+            return Ok(Some((change.id, held, Step::Unchanged(restore))));
         }
         let standing = match change.after {
             Some(mark) => held.is_some() && store::marker(tx, table, &change.id)? == Some(mark),
@@ -114,11 +116,17 @@ pub async fn undo(
         let mut undoing = Batch::new(unit, &catalog, &host, &table, Some(batch.clone()))?;
         let seq = undoing.table_seq.ok_or_else(not_found_batch)?;
         let undone = store::batch(unit.tx(), seq, &batch)?.ok_or_else(not_found_batch)?;
+        let mut found = Vec::new();
+        for change in store::changes(unit.tx(), undone.seq)? {
+            let held = store::row(unit.tx(), Some(seq), &change.id)?;
+            undoing.refuse_withheld_undo(&change, held.as_ref())?;
+            found.push((change, held));
+        }
         let mut steps = Vec::new();
         let mut later = Vec::new();
-        for change in store::changes(unit.tx(), undone.seq)? {
+        for (change, held) in found {
             let id = change.id.clone();
-            match undoing.plan(seq, change)? {
+            match undoing.plan(seq, change, held)? {
                 Some(step) => steps.push(step),
                 None => later.push(id),
             }
@@ -130,15 +138,15 @@ pub async fn undo(
             )
             .with_detail("rows", later));
         }
-        for (id, held, step) in &steps {
-            if let Step::PutBack(before) = step {
-                undoing.refuse_withheld_undo(id, held.as_ref(), &before.values, &before.refs)?;
-            }
-        }
         let mut results = Vec::with_capacity(steps.len());
         for (id, held, step) in steps {
             let outcome = match step {
-                Step::Unchanged => "unchanged",
+                Step::Unchanged(restore) => {
+                    if let Some(mark) = restore {
+                        store::set_marker(unit.tx(), seq, &id, mark)?;
+                    }
+                    "unchanged"
+                }
                 Step::Remove => {
                     undoing.remove_row(&id)?;
                     "deleted"
