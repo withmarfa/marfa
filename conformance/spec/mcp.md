@@ -110,7 +110,7 @@ When a tool call writes, the server MUST record on the write's audit entry the c
 
 **Reason:** a tool call reaches the API inside the server, so without this the entry would name the server's own address, or its proxy's, and could not be told from a write the credential made directly.
 
-**Tests:** `compliance/mcp-scripted.test.ts › records a tool call's write with the caller's address and marks it as made through MCP`.
+**Tests:** `compliance/mcp-scripted.test.ts › records a tool call's write with the caller's address and marks it as made through MCP`, `compliance/table-rows-mcp.test.ts › records a rows write made through MCP with the caller's key and address and via mcp`.
 
 ## Reading items
 

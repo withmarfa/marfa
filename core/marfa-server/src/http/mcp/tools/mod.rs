@@ -205,7 +205,7 @@ async fn run(
         create::NAME => create::run(app, caller, arguments, exact).await,
         update::NAME => update::run(app, caller, arguments, exact).await,
         rows::READ_NAME => rows::read(app, caller, arguments).await,
-        rows::WRITE_NAME => rows::write(app, caller, arguments, exact).await,
+        rows::WRITE_NAME => rows::write(app, caller, arguments).await,
         delete::NAME => delete::run(app, caller, arguments).await,
         bulk::NAME => bulk::run(app, caller, arguments, exact).await,
         moving::NAME => moving::run(app, caller, arguments, exact).await,

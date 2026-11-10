@@ -947,7 +947,9 @@ describe("the schema and admin endpoints", () => {
           "marfa_find",
           "marfa_get",
           "marfa_overview",
+          "marfa_read_rows",
           "marfa_update",
+          "marfa_write_rows",
         ],
       },
       {

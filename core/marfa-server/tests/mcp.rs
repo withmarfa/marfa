@@ -481,7 +481,12 @@ async fn a_credential_that_reaches_no_type_is_offered_no_tools_and_no_capability
         .await;
     assert_eq!(
         instance.names(&reader).await,
-        ["marfa_overview", "marfa_find", "marfa_get"]
+        [
+            "marfa_overview",
+            "marfa_find",
+            "marfa_get",
+            "marfa_read_rows"
+        ]
     );
     let started = instance
         .rpc(
@@ -596,8 +601,10 @@ async fn both_revisions_are_offered_the_same_tools_to_the_same_credential() {
             "marfa_overview",
             "marfa_find",
             "marfa_get",
+            "marfa_read_rows",
             "marfa_create",
             "marfa_update",
+            "marfa_write_rows",
             "marfa_delete"
         ]
     );
@@ -1393,7 +1400,12 @@ async fn the_schema_endpoint_offers_each_tool_only_to_a_credential_that_may_use_
         names.sort();
         names
     };
-    let reads = ["marfa_overview", "marfa_find", "marfa_get"];
+    let reads = [
+        "marfa_overview",
+        "marfa_find",
+        "marfa_get",
+        "marfa_read_rows",
+    ];
     let reader = instance
         .key(json!({ "type_permissions": { "core.note": "read" } }))
         .await;
@@ -1792,7 +1804,12 @@ async fn each_admin_tool_is_offered_only_to_a_credential_that_holds_its_permissi
         .await;
     assert_eq!(
         instance.names_at(ADMIN, &nobody).await,
-        ["marfa_overview", "marfa_find", "marfa_get"]
+        [
+            "marfa_overview",
+            "marfa_find",
+            "marfa_get",
+            "marfa_read_rows"
+        ]
     );
     for (name, arguments) in [
         ("marfa_health", json!({})),

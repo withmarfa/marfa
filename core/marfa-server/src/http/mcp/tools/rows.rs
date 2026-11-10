@@ -128,16 +128,10 @@ pub fn write_definition() -> Definition {
     }
 }
 
-pub async fn write(
-    app: &Arc<App>,
-    caller: &Caller,
-    arguments: Map<String, Value>,
-    exact: Result<(), Refusal>,
-) -> Outcome {
+pub async fn write(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>) -> Outcome {
     let id = text(&arguments, "id").unwrap_or_default();
     item_id(&id)?;
     let table = text(&arguments, "table").unwrap_or_default();
-    exact?;
     let operations = tables::operations(arguments.get("operations"))?;
     parsed(&tables::write(app, caller, id, table, operations).await?)
 }

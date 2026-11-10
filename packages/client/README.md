@@ -34,7 +34,7 @@ The client carries the contract version it was generated for as `CONTRACT_VERSIO
 
 ## Pages
 
-Every list and search answers `{ data, next_cursor }`. `pages` walks one to the end, following `next_cursor` until it is `null`. A page can be short, or empty, with a cursor still to follow, so the walk never stops on a short page.
+Every list and search, and a table's rows, answers `{ data, next_cursor }`. `pages` walks one to the end, following `next_cursor` until it is `null`. A page can be short, or empty, with a cursor still to follow, so the walk never stops on a short page.
 
 ## What it does not do
 
