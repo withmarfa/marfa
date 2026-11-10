@@ -40,7 +40,7 @@ When `POST /items`, `PATCH /items/{id}` or an entry of `POST /items/bulk` names 
 
 **Reason:** an app that sends an edge inside an item write gets the same answer as one that sends it to `POST /edges`, so a refusal does not depend on which door the edge came through.
 
-**Tests:** `compliance/edge-check-order.test.ts › answers an unregistered edge type in an item write before it looks for the target`.
+**Tests:** `compliance/edge-check-order.test.ts › refuses a malformed target id in an item write before it asks for write on the edge type`, `› answers an unregistered edge type in an item write before it looks for the target`.
 
 ### `edges/create`
 
