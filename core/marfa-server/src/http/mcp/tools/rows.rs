@@ -222,6 +222,17 @@ fn answer_of(
 
 /// Cuts the longest text values of one row until the answer fits.
 fn cut_row(asked: &Asked, row: &Value, next: Option<&str>, totals: Option<&Value>) -> Value {
+    let uncut = answer_of(
+        asked,
+        vec![row.clone()],
+        next,
+        totals,
+        &[],
+        next.map(|_| STOPPED_HINT),
+    );
+    if json_length(&uncut) <= ANSWER_BUDGET_CHARS {
+        return uncut;
+    }
     let id = row.get("id").and_then(Value::as_str).unwrap_or_default();
     let longest = row
         .get("values")
@@ -321,25 +332,29 @@ pub async fn read(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>
         Some(STOPPED_HINT),
     )) + first.next.as_deref().map_or(0, str::len);
     let room = ANSWER_BUDGET_CHARS.saturating_sub(frame);
-    let (mut kept, _) = fit_list(first.rows.clone(), room);
+    let (kept, _) = fit_list(first.rows.clone(), room);
+    let (mut count, mut room) = (kept.len(), room);
     for _ in 0..REREADS {
-        if kept.is_empty() {
+        if count == 0 {
             break;
         }
-        let again = read_page(app, caller, &asked, kept.len() as i64).await?;
-        let (fits, left_out) = fit_list(again.rows.clone(), room);
-        if left_out == 0 {
-            let hint = again.next.is_some().then_some(STOPPED_HINT);
-            return Ok(answer_of(
-                &asked,
-                again.rows,
-                again.next.as_deref(),
-                totals,
-                &[],
-                hint,
-            ));
+        let again = read_page(app, caller, &asked, count as i64).await?;
+        let hint = again.next.is_some().then_some(STOPPED_HINT);
+        let answer = answer_of(
+            &asked,
+            again.rows.clone(),
+            again.next.as_deref(),
+            totals,
+            &[],
+            hint,
+        );
+        let length = json_length(&answer);
+        if length <= ANSWER_BUDGET_CHARS {
+            return Ok(answer);
         }
-        kept = fits;
+        room = room.saturating_sub(length - ANSWER_BUDGET_CHARS);
+        let (fits, _) = fit_list(again.rows, room);
+        count = fits.len().min(count - 1);
     }
     let single = read_page(app, caller, &asked, 1).await?;
     let Some(row) = single.rows.first() else {

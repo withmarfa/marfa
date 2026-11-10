@@ -252,33 +252,45 @@ describe("marfa_read_rows", () => {
         memo: `${n}-`.padEnd(3000, "x"),
       })),
     );
-    const read = async (cursor?: string) => {
-      const answered = await callTool(mcp, "marfa_read_rows", {
-        id: item,
-        table: "lines",
-        limit: 60,
-        ...(cursor ? { cursor } : {}),
-      });
-      expect(answered.text.length).toBeLessThanOrEqual(BUDGET);
-      return toolResult(answered);
+    const walk = async (sort?: string) => {
+      const read = async (cursor?: string) => {
+        const answered = await callTool(mcp, "marfa_read_rows", {
+          id: item,
+          table: "lines",
+          limit: 60,
+          ...(sort ? { sort } : {}),
+          ...(cursor ? { cursor } : {}),
+        });
+        expect(answered.text.length).toBeLessThanOrEqual(BUDGET);
+        return toolResult(answered);
+      };
+      const first = await read();
+      const rows = first.rows as { id: string }[];
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.length).toBeLessThan(60);
+      expect(first.next_cursor).toEqual(expect.any(String));
+      expect(first.hint).toEqual(expect.stringContaining("size"));
+      expect(first.hint).toEqual(expect.stringContaining("next_cursor"));
+
+      const seen = rows.map((r) => r.id);
+      let cursor = first.next_cursor as string | null;
+      for (let page = 0; cursor && page < 60; page++) {
+        const next = await read(cursor);
+        seen.push(...(next.rows as { id: string }[]).map((r) => r.id));
+        cursor = next.next_cursor as string | null;
+      }
+      return seen;
     };
 
-    const first = await read();
-    const rows = first.rows as { id: string }[];
-    expect(rows.length).toBeGreaterThan(0);
-    expect(rows.length).toBeLessThan(60);
-    expect(first.next_cursor).toEqual(expect.any(String));
-    expect(first.hint).toEqual(expect.stringContaining("size"));
-    expect(first.hint).toEqual(expect.stringContaining("next_cursor"));
-
-    const seen = rows.map((r) => r.id);
-    let cursor = first.next_cursor as string | null;
-    for (let page = 0; cursor && page < 60; page++) {
-      const next = await read(cursor);
-      seen.push(...(next.rows as { id: string }[]).map((r) => r.id));
-      cursor = next.next_cursor as string | null;
-    }
-    expect(seen).toEqual([...ids].sort());
+    expect(await walk()).toEqual([...ids].sort());
+    // A cursor that carries a long sort value takes room of its own.
+    const sorted = (
+      await client.listRows(item, "lines", {
+        sort: "values.memo",
+        limit: 1000,
+      })
+    ).data.data.map((r) => r.id);
+    expect(await walk("values.memo")).toEqual(sorted);
   });
 
   it("cuts the text of a row too long to fit and reads the rest by offset", async () => {
