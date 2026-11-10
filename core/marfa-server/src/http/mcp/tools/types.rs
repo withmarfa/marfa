@@ -29,7 +29,7 @@ pub fn definition() -> Definition {
                 "fields": { "type": "object",
                     "description": "Fields by name. Required to register. To change, the fields to add or replace, and null for each to remove." },
                 "tables": { "type": "object",
-                    "description": "Tables by name, each with `columns` (a name to a `type`: string, number, integer, boolean, date, datetime, email, url, enum with `enum_values`, or item with `type_constraints`), and optional `label`, `description`, and per column `required`, `adds_up` (sum, average, min, max or count) and `searchable`. To change, a table named here replaces the one of that name, and null removes it." },
+                    "description": "Tables by name, each with `columns` (a name to a `type`: string, number, integer, boolean, date, datetime, email, url, enum with `enum_values`, or item with `type_constraints`), and optional `label`, `description`, `order` (a datetime, number, integer or string column the rows are kept in order by, so sorting by it is fast), and per column `required`, `adds_up` (sum, average, min, max or count) and `searchable`. To change, a table named here replaces the one of that name, and null removes it." },
                 "parent": { "type": "string",
                     "description": "A type to inherit fields and tables from. Only to register." },
             },

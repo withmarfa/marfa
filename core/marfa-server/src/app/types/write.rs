@@ -615,7 +615,7 @@ pub fn plan_restored(catalog: &Catalog, archived: &[Archived]) -> Result<Restori
     Ok(plan)
 }
 
-/// Registers the types a plan found new, and brings their rows' keys, links and index up to them.
+/// Registers the types a plan found new, and brings their items' keys, links, index and table orders up to them.
 pub fn write_restored(
     unit: &crate::app::unit::Unit<'_, '_>,
     cache: &arc_swap::ArcSwap<Catalog>,
