@@ -1030,6 +1030,47 @@ describe("the order PATCH /edges/{id} asks its refusals in", () => {
 });
 
 describe("the order an item write asks its inline edges in", () => {
+  it("refuses a malformed target id in an item write before it asks for write on the edge type", async () => {
+    const readOnly = await keyWith({ "core.note": "write" }, { about: "read" });
+    const source = `${ctx.source}-edge-check-order-${String(keyCount)}`;
+    const created = await readOnly.createItem(createNote({ source }));
+    expect(created.status).toBe(201);
+    const item = created.data.item.id;
+    trackItem(ctx, item);
+
+    const expectRefused = async (
+      edges: Record<string, string[]>,
+      status: number,
+      code: string,
+    ): Promise<void> => {
+      const made = await readOnly.createItem(createNote({ source, edges }));
+      expect(made.status).toBe(status);
+      expect(made.error?.error.code).toBe(code);
+      const updated = await readOnly.updateItem(item, { version: 1, edges });
+      expect(updated.status).toBe(status);
+      expect(updated.error?.error.code).toBe(code);
+      const bulk = await readOnly.bulkItems({
+        atomic: false,
+        items: [createNote({ source, edges })],
+      });
+      expect(bulk.status).toBe(200);
+      expect(bulk.data.results[0]).toMatchObject({
+        outcome: "errored",
+        error: { code },
+      });
+    };
+
+    await expectRefused({ about: [""] }, 400, "invalid_id");
+    await expectRefused({ about: ["not-an-id"] }, 400, "invalid_id");
+
+    // The witness: a well-formed target is refused for the edge type's grant.
+    await expectRefused(
+      { about: [generateId()] },
+      403,
+      "edge_permission_denied",
+    );
+  });
+
   it("answers an unregistered edge type in an item write before it looks for the target", async () => {
     const unregistered = `mock.inline-unknown.${ctx.runId}`;
     const missing = generateId();
