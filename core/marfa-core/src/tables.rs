@@ -14,6 +14,7 @@ use sha2::{Digest, Sha256};
 
 use crate::error::CoreError;
 use crate::http::Http;
+use crate::reach::Context;
 use crate::wire::RowsEvent;
 use crate::{Core, Result};
 
@@ -403,31 +404,48 @@ fn hold_row(
     let withheld = (!withheld.is_empty())
         .then(|| serde_json::to_string(withheld))
         .transpose()?;
+    let targets: Vec<String> = values
+        .values()
+        .filter_map(Value::as_str)
+        .filter(|text| marfa_rules::validation::id("value", text).is_ok())
+        .map(str::to_string)
+        .collect();
     let body = printed(&Value::Object(values))?;
     let before: Option<i64> = conn
-        .query_row(
+        .prepare_cached(
             "SELECT length(CAST(body AS BLOB)) FROM table_rows
               WHERE item_id = ?1 AND name = ?2 AND id = ?3",
-            params![item, table, id],
-            |row| row.get(0),
-        )
+        )?
+        .query_row(params![item, table, id], |row| row.get(0))
         .optional()?;
-    conn.execute(
+    conn.prepare_cached(
         "INSERT INTO table_rows (item_id, name, id, body, withheld, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)
          ON CONFLICT (item_id, name, id) DO UPDATE SET
            body = excluded.body, withheld = excluded.withheld, updated_at = excluded.updated_at",
-        params![item, table, id, body, withheld, updated_at],
-    )?;
-    conn.execute(
+    )?
+    .execute(params![item, table, id, body, withheld, updated_at])?;
+    conn.prepare_cached(
         "UPDATE item_tables SET rows = rows + ?3, bytes = bytes + ?4 WHERE item_id = ?1 AND name = ?2",
-        params![
-            item,
-            table,
-            i64::from(before.is_none()),
-            body.len() as i64 - before.unwrap_or(0)
-        ],
+    )?
+    .execute(params![
+        item,
+        table,
+        i64::from(before.is_none()),
+        body.len() as i64 - before.unwrap_or(0)
+    ])?;
+    if before.is_some() {
+        conn.prepare_cached(
+            "DELETE FROM row_refs WHERE item_id = ?1 AND name = ?2 AND row_id = ?3",
+        )?
+        .execute(params![item, table, id])?;
+    }
+    let mut named = conn.prepare_cached(
+        "INSERT OR IGNORE INTO row_refs (item_id, name, row_id, target) VALUES (?1, ?2, ?3, ?4)",
     )?;
+    for target in &targets {
+        named.execute(params![item, table, id, target])?;
+    }
     Ok(())
 }
 
@@ -475,8 +493,10 @@ fn is_refused_cursor(error: &CoreError) -> bool {
     matches!(error, CoreError::Validation { code, .. } if code == "validation_error")
 }
 
+/// The server's certified answer that the item or the table is not there to read.
 fn is_gone(error: &CoreError) -> bool {
-    matches!(error, CoreError::NotFound { .. })
+    matches!(error, CoreError::NotFound { code, .. }
+        if code == "item_not_found" || code == "table_not_found")
 }
 
 struct Owed {
@@ -486,52 +506,53 @@ struct Owed {
     cursor: Option<String>,
 }
 
-fn next_owed(conn: &Connection, tried: &HashSet<(String, String)>) -> Result<Option<Owed>> {
-    let mut query = conn.prepare(
-        "SELECT t.item_id, t.name, t.state, t.cursor FROM item_tables t JOIN items i ON i.id = t.item_id
-          WHERE t.state IN ('owed', 'filling') AND i.state <> 'trashed'
-          ORDER BY t.item_id, t.name",
-    )?;
-    let mut rows = query.query([])?;
-    while let Some(row) = rows.next()? {
-        let key: (String, String) = (row.get(0)?, row.get(1)?);
-        if !tried.contains(&key) {
-            return Ok(Some(Owed {
-                item: key.0,
-                table: key.1,
-                state: row.get(2)?,
-                cursor: row.get(3)?,
-            }));
-        }
-    }
-    Ok(None)
+fn next_owed(conn: &Connection) -> Result<Option<Owed>> {
+    Ok(conn
+        .query_row(
+            "SELECT t.item_id, t.name, t.state, t.cursor FROM item_tables t JOIN items i ON i.id = t.item_id
+              WHERE t.state IN ('owed', 'filling') AND i.state <> 'trashed'
+              ORDER BY t.item_id, t.name LIMIT 1",
+            [],
+            |row| {
+                Ok(Owed {
+                    item: row.get(0)?,
+                    table: row.get(1)?,
+                    state: row.get(2)?,
+                    cursor: row.get(3)?,
+                })
+            },
+        )
+        .optional()?)
 }
 
-/// Returns false when this pass has no table left to try.
-fn step(
-    core: &Core,
-    http: &Http,
-    tried: &mut HashSet<(String, String)>,
-    report: &mut FillReport,
-) -> Result<bool> {
+/// Each step moves one table on, or drops it, so a pass ends once no table is owed.
+fn step(core: &Core, context: &Context, report: &mut FillReport) -> Result<bool> {
     let Some(Owed {
         item,
         table,
         state,
         cursor,
-    }) = next_owed(&*core.conn()?, tried)?
+    }) = next_owed(&*core.conn()?)?
     else {
         return Ok(false);
     };
+    let http = context.http(core.http()?);
     let still = |conn: &Connection| -> Result<bool> {
+        context.same_copy(conn)?;
         Ok(state_of(conn, &item, &table)? == Some((state.clone(), cursor.clone())))
+    };
+    let gone = || -> Result<bool> {
+        let mut conn = core.conn()?;
+        let tx = conn.transaction()?;
+        if still(&tx)? {
+            drop_table(&tx, &item, &table)?;
+        }
+        tx.commit()?;
+        Ok(true)
     };
     if state == OWED {
         let listed = match http.item_tables(&item) {
-            Err(error) if is_gone(&error) => {
-                tried.insert((item, table));
-                return Ok(true);
-            }
+            Err(error) if is_gone(&error) => return gone(),
             other => other?,
         };
         let summary = listed
@@ -541,8 +562,7 @@ fn step(
             .iter()
             .find(|summary| summary.get("name").and_then(Value::as_str) == Some(table.as_str()));
         let Some(summary) = summary else {
-            tried.insert((item, table));
-            return Ok(true);
+            return gone();
         };
         let count = summary
             .get("row_count")
@@ -566,9 +586,6 @@ fn step(
             };
             empty_rows(&tx, &item, &table)?;
             set_state(&tx, &item, &table, next, None)?;
-            if next != FILLING {
-                tried.insert((item, table));
-            }
         }
         tx.commit()?;
         return Ok(true);
@@ -588,10 +605,7 @@ fn step(
             tx.commit()?;
             return Ok(true);
         }
-        Err(error) if is_gone(&error) => {
-            tried.insert((item, table));
-            return Ok(true);
-        }
+        Err(error) if is_gone(&error) => return gone(),
         other => other?,
     };
     let rows = page
@@ -613,13 +627,11 @@ fn step(
         report.rows += rows.len() as u64;
         if past_cap(&tx, &item, &table)? {
             report.online += 1;
-            tried.insert((item.clone(), table.clone()));
         } else if let Some(next) = &next {
             set_state(&tx, &item, &table, FILLING, Some(next))?;
         } else {
             set_state(&tx, &item, &table, WHOLE, None)?;
             report.whole += 1;
-            tried.insert((item.clone(), table.clone()));
         }
     }
     tx.commit()?;
@@ -627,60 +639,50 @@ fn step(
 }
 
 // The caller holds the stream, excluding events between a page's read and write.
-pub(crate) fn fill(core: &Core, stop: &AtomicBool) -> Result<FillReport> {
-    {
-        let mut conn = core.conn()?;
-        let tx = conn.transaction()?;
-        reconcile_all(&tx)?;
-        tx.commit()?;
-    }
-    let http = core.http()?;
-    let mut tried = HashSet::new();
-    let mut report = FillReport::default();
-    loop {
-        crate::catch_up::refuse_if_stopped(stop)?;
-        if !step(core, http, &mut tried, &mut report)? {
-            break;
+pub(crate) fn fill(core: &Core, context: &Context, stop: &AtomicBool) -> Result<FillReport> {
+    let filled = || -> Result<FillReport> {
+        {
+            let mut conn = core.conn()?;
+            let tx = conn.transaction()?;
+            reconcile_all(&tx)?;
+            tx.commit()?;
         }
-    }
-    report.unfilled = core
-        .conn()?
-        .query_row(
-            "SELECT COUNT(*) FROM item_tables WHERE state IN ('owed', 'filling')",
-            [],
-            |row| row.get::<_, i64>(0),
-        )?
-        .max(0) as u64;
-    Ok(report)
+        let mut report = FillReport::default();
+        loop {
+            crate::catch_up::refuse_if_stopped(stop)?;
+            if !step(core, context, &mut report)? {
+                break;
+            }
+        }
+        report.unfilled = core
+            .conn()?
+            .query_row(
+                "SELECT COUNT(*) FROM item_tables WHERE state IN ('owed', 'filling')",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?
+            .max(0) as u64;
+        Ok(report)
+    };
+    filled().map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))
 }
 
-pub(crate) fn fill_step(core: &Core, tried: &mut HashSet<(String, String)>) -> Result<bool> {
-    step(core, core.http()?, tried, &mut FillReport::default())
+pub(crate) fn fill_step(core: &Core, context: &Context) -> Result<bool> {
+    step(core, context, &mut FillReport::default())
 }
 
-/// Returns None when the event needs no row read.
-pub(crate) fn rows_to_read(
-    core: &Core,
-    event: &RowsEvent,
-) -> Result<Option<HashMap<String, Value>>> {
-    if event.values_included {
-        return Ok(None);
-    }
-    let state = state_of(&*core.conn()?, &event.item.id, &event.table)?;
-    if !matches!(state, Some((ref state, _)) if state == FILLING || state == WHOLE) {
-        return Ok(None);
-    }
-    let http = core.http()?;
-    let mut ids: Vec<&str> = event
-        .rows
-        .iter()
-        .filter(|row| !row.deleted)
-        .map(|row| row.id.as_str())
-        .collect();
+/// What the server holds of rows the device asked for by id.
+pub(crate) enum Named {
+    Rows(HashMap<String, Value>),
+    Gone,
+}
+
+fn read_named(http: &Http, item: &str, table: &str, ids: &[&str]) -> Result<Named> {
+    let mut ids = ids.to_vec();
     ids.sort_unstable();
     let mut found = HashMap::new();
     let (Some(first), Some(last)) = (ids.first(), ids.last()) else {
-        return Ok(Some(found));
+        return Ok(Named::Rows(found));
     };
     let quoted = |id: &str| serde_json::to_string(id).map_err(CoreError::from);
     let filter = format!("id gte {} AND id lte {}", quoted(first)?, quoted(last)?);
@@ -691,7 +693,10 @@ pub(crate) fn rows_to_read(
         if let Some(cursor) = &cursor {
             params.push(("cursor", cursor.as_str()));
         }
-        let page = http.table_rows(&event.item.id, &event.table, &params)?;
+        let page = match http.table_rows(item, table, &params) {
+            Err(error) if is_gone(&error) => return Ok(Named::Gone),
+            other => other?,
+        };
         for row in page
             .get("data")
             .and_then(Value::as_array)
@@ -707,15 +712,112 @@ pub(crate) fn rows_to_read(
             _ => break,
         }
     }
-    Ok(Some(found))
+    Ok(Named::Rows(found))
+}
+
+fn holds_rows(conn: &Connection, item: &str, table: &str) -> Result<bool> {
+    Ok(matches!(state_of(conn, item, table)?,
+        Some((state, _)) if state == FILLING || state == WHOLE))
+}
+
+/// Returns None when the event needs no row read.
+pub(crate) fn rows_to_read(
+    core: &Core,
+    context: &Context,
+    event: &RowsEvent,
+) -> Result<Option<Named>> {
+    if event.values_included || !holds_rows(&*core.conn()?, &event.item.id, &event.table)? {
+        return Ok(None);
+    }
+    let ids: Vec<&str> = event
+        .rows
+        .iter()
+        .filter(|row| !row.deleted)
+        .map(|row| row.id.as_str())
+        .collect();
+    read_named(
+        &context.http(core.http()?),
+        &event.item.id,
+        &event.table,
+        &ids,
+    )
+    .map(Some)
+}
+
+/// Rows the device holds that name `target`, read again from the server.
+pub(crate) struct Refresh {
+    item: String,
+    table: String,
+    ids: Vec<String>,
+    read: Named,
+}
+
+/// The server withholds a purged item's id from any key that may not read every type
+/// (`tables/rows-item-gone`), so the rows that name it are read again.
+pub(crate) fn naming(core: &Core, context: &Context, target: &str) -> Result<Vec<Refresh>> {
+    let named: Vec<(String, String, String)> = {
+        let conn = core.conn()?;
+        let mut query = conn.prepare(
+            "SELECT r.item_id, r.name, r.row_id FROM row_refs r
+               JOIN item_tables t ON t.item_id = r.item_id AND t.name = r.name
+              WHERE r.target = ?1 AND r.item_id <> ?1 AND t.state IN ('filling', 'whole')
+              ORDER BY r.item_id, r.name, r.row_id",
+        )?;
+        query
+            .query_map([target], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+            .collect::<rusqlite::Result<_>>()?
+    };
+    let mut tables: Vec<(String, String, Vec<String>)> = Vec::new();
+    for (item, table, id) in named {
+        match tables.last_mut() {
+            Some((at, name, ids)) if *at == item && *name == table => ids.push(id),
+            _ => tables.push((item, table, vec![id])),
+        }
+    }
+    if tables.is_empty() {
+        return Ok(Vec::new());
+    }
+    let http = context.http(core.http()?);
+    tables
+        .into_iter()
+        .map(|(item, table, ids)| {
+            let asked: Vec<&str> = ids.iter().map(String::as_str).collect();
+            let read = read_named(&http, &item, &table, &asked)?;
+            Ok(Refresh {
+                item,
+                table,
+                ids,
+                read,
+            })
+        })
+        .collect()
+}
+
+pub(crate) fn take_refreshed(conn: &Connection, refreshed: &[Refresh]) -> Result<()> {
+    for refresh in refreshed {
+        let (item, table) = (refresh.item.as_str(), refresh.table.as_str());
+        if !holds_rows(conn, item, table)? {
+            continue;
+        }
+        let Named::Rows(read) = &refresh.read else {
+            drop_table(conn, item, table)?;
+            continue;
+        };
+        for id in &refresh.ids {
+            match read.get(id) {
+                Some(answered) => {
+                    hold_answered(conn, item, table, answered)?;
+                }
+                None => delete_row(conn, item, table, id)?,
+            }
+        }
+        past_cap(conn, item, table)?;
+    }
+    Ok(())
 }
 
 /// Applies `rows.changed` in the transaction that moves the cursor past it.
-pub(crate) fn apply(
-    conn: &Connection,
-    event: &RowsEvent,
-    read: Option<&HashMap<String, Value>>,
-) -> Result<bool> {
+pub(crate) fn apply(conn: &Connection, event: &RowsEvent, read: Option<&Named>) -> Result<bool> {
     let item = event.item.id.as_str();
     let table = event.table.as_str();
     let Some((state, _)) = state_of(conn, item, table)? else {
@@ -731,6 +833,14 @@ pub(crate) fn apply(
         FILLING | WHOLE => {}
         _ => return Ok(false),
     }
+    let read = match read {
+        Some(Named::Gone) => {
+            drop_table(conn, item, table)?;
+            return Ok(true);
+        }
+        Some(Named::Rows(read)) => Some(read),
+        None => None,
+    };
     for row in &event.rows {
         if row.deleted {
             delete_row(conn, item, table, &row.id)?;
@@ -750,7 +860,7 @@ pub(crate) fn apply(
             continue;
         }
         let Some(read) = read else {
-            // The table filled between the read and now: read it whole again.
+            // Owed or online when the rows were read, so they were not.
             empty_rows(conn, item, table)?;
             set_state(conn, item, table, OWED, None)?;
             return Ok(true);

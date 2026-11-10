@@ -413,8 +413,12 @@ fn take(
     };
     let entering = entering_row(core, &operation, catalog, slice, kind, payload)?;
     let read_rows = match &payload.rows {
-        Some(rows) => crate::tables::rows_to_read(core, rows)?,
+        Some(rows) => crate::tables::rows_to_read(core, &operation, rows)?,
         None => None,
+    };
+    let refreshed = match &payload.item {
+        Some(item) if kind == "item.purged" => crate::tables::naming(core, &operation, &item.id)?,
+        _ => Vec::new(),
     };
     let mut conn = core.conn()?;
     let tx = conn.transaction()?;
@@ -458,6 +462,7 @@ fn take(
     if let Some(item) = &payload.item {
         crate::tables::reconcile_item(&tx, &item.id)?;
     }
+    crate::tables::take_refreshed(&tx, &refreshed)?;
     // The last id applied, never the highest seen: where an event is not
     // applied, a high-water mark would step over it forever.
     store::meta_set(&tx, store::META_EVENT_CURSOR, id)?;
@@ -552,7 +557,7 @@ pub(crate) fn catch_up(
     )
     .or_else(read_only::contained)
     .map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))?;
-    report.tables = crate::tables::fill(core, stop)?;
+    report.tables = crate::tables::fill(core, &context, stop)?;
     Ok(report)
 }
 
@@ -1410,7 +1415,6 @@ fn read_stream(
         tx.commit()?;
     }
     let mut filling = crate::tables::owes(&*core.conn()?)?;
-    let mut tried = HashSet::new();
     loop {
         if stop.load(Ordering::Relaxed) {
             return Ok(Ended::Stopped);
@@ -1434,7 +1438,7 @@ fn read_stream(
                 return Ok(Ended::Over);
             }
             Err(RecvTimeoutError::Timeout) if filling => {
-                match crate::tables::fill_step(core, &mut tried) {
+                match crate::tables::fill_step(core, context) {
                     Ok(more) => filling = more,
                     Err(error) if error.is_environmental() => {
                         report.failed_opens += 1;
@@ -1554,7 +1558,7 @@ fn read_stream(
                     None => report.skipped += 1,
                 }
                 report.cursor = id;
-                filling = filling || crate::tables::owes(&*core.conn()?)?;
+                filling = crate::tables::owes(&*core.conn()?)?;
                 unsettled += usize::from(may_owe(kind));
                 if unsettled >= SETTLE_EVERY {
                     unsettled = 0;

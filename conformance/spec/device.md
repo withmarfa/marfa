@@ -4958,7 +4958,7 @@ If the server says the copy's reach has changed, other than in the read after th
 
 **Reason:** a retype, a narrowed grant or a changed source filter cannot then leave old items readable as current.
 
-**Tests:** `device/reach-live.test.ts › expires on real %s and rebuilds without losing unsent work`, `› ends a real held stream when grants narrow, keeping unsent work`.
+**Tests:** `device/reach-live.test.ts › expires on real %s and rebuilds without losing unsent work`, `› ends a real held stream when grants narrow, keeping unsent work`, `device/tables-live.test.ts › expires its copy when its key narrows between two pages of a fill, and holds the rows withheld once it fills again`.
 
 ### `device/listed-membership`
 

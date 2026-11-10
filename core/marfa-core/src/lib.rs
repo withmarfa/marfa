@@ -1111,7 +1111,8 @@ impl Core {
         let was_held = tables::choose(&mut *self.conn()?, type_id, table)?;
         let fill = match self.try_claim_stream(Mover::CatchUp) {
             Ok(_streaming) if store::hydration_complete(&*self.conn()?)? => {
-                Some(tables::fill(self, stop)?)
+                let context = reach::Context::capture(&*self.conn()?)?;
+                Some(tables::fill(self, &context, stop)?)
             }
             _ => None,
         };
@@ -1137,8 +1138,8 @@ impl Core {
     pub fn fill_tables(&self, stop: &AtomicBool) -> Result<FillReport> {
         self.lock.refuse_unless_writer()?;
         let _streaming = self.claim_stream(Mover::CatchUp)?;
-        store::refuse_unless_hydrated(&*self.conn()?)?;
-        tables::fill(self, stop)
+        let context = reach::Context::capture(&*self.conn()?)?;
+        tables::fill(self, &context, stop)
     }
 
     /// Reads rows from the copy when held whole, marking the answer with `held`.

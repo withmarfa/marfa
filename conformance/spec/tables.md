@@ -846,7 +846,15 @@ When a catch-up has applied the events it read, when a follow has no frame waiti
 
 **Reason:** a hydration reports once its items are whole; the tables of those items fill at the catch-up or follow after it.
 
-**Tests:** `device/tables-live.test.ts › fills a table whole across pages, and answers it from the copy with the server out of reach`, `› applies each rows.changed a follow reads, rows put, patched and deleted`.
+**Tests:** `device/tables-live.test.ts › fills a table whole across pages, and answers it from the copy with the server out of reach`, `› applies each rows.changed a follow reads, rows put, patched and deleted`, `› fills a table again each time a follow sees it come back within the cap`.
+
+### `tables/device-fill-reach`
+
+When a device reads a table's size or its rows to hold them, a device MUST send the read as a conditional read under the copy's reach (`reach.md`).
+
+**Reason:** a key narrowed between two pages of a fill would otherwise leave the device holding rows as an earlier reach answered them, with references the key may no longer read; the read under the reach ends the copy instead (`device/reach-changed`).
+
+**Tests:** `device/tables-live.test.ts › expires its copy when its key narrows between two pages of a fill, and holds the rows withheld once it fills again`.
 
 ### `tables/device-fill-report`
 
@@ -886,7 +894,7 @@ When the rows a device holds of a table pass 100000, or their values pass 671088
 
 When a `rows.changed` deletes a row of a table a device holds no row of because of its size, a device MUST judge the table against the cap again, by the size the server answers for it.
 
-**Tests:** `device/tables-live.test.ts › reads a table past the cap from the server, holding none of its rows, and holds it whole once a delete brings it within`.
+**Tests:** `device/tables-live.test.ts › reads a table past the cap from the server, holding none of its rows, and holds it whole once a delete brings it within`, `› fills a table again each time a follow sees it come back within the cap`.
 
 ## Applying rows.changed
 
@@ -917,6 +925,28 @@ When the server answers a row, or sends it in `rows.changed`, naming columns in 
 **Reason:** a device never holds a value its key may not read.
 
 **Tests:** `device/tables-live.test.ts › holds a row without the value withheld from its key, and answers it withheld`.
+
+### `tables/device-named-purged`
+
+When an item is purged that a value of a row a device holds names, a device MUST read the row from the server again and hold it as the server answers it.
+
+**Reason:** once no item holds the id, the server withholds it from every key that may not read every type (`tables/rows-item-gone`), whether or not the copy held the item.
+
+**Tests:** `device/tables-live.test.ts › answers a row naming a purged item as the server does, withheld unless its key reads every type`.
+
+### `tables/device-read-gone`
+
+If the server answers `404 item_not_found` or `404 table_not_found` to a read a device makes to hold a table's rows, then a device MUST remove the rows it holds of that table.
+
+**Reason:** under the copy's reach the answer is certified, so the rows are no longer the server's to give; a later event or catalog says why.
+
+**Tests:** `device/tables-live.test.ts › carries on past a rows.changed without values whose item is purged before it reads the rows`.
+
+### `tables/device-read-gone-carries-on`
+
+When a device has removed a table's rows under `tables/device-read-gone` while it applies a `rows.changed`, a device MUST go on to apply the events after it.
+
+**Tests:** `device/tables-live.test.ts › carries on past a rows.changed without values whose item is purged before it reads the rows`.
 
 ### `tables/device-gap`
 
@@ -970,6 +1000,6 @@ If a read of a table the copy holds names a `limit`, `filter`, `sort` or `cursor
 
 While an item a device holds a table of is in the bin, a device MUST answer a read of the table from the server.
 
-**Reason:** the server answers the rows of an item in the bin as it answers the item (`tables/rows-bin-read`), and the device keeps the rows for when the item comes back.
+**Reason:** the server answers the rows of an item in the bin as it answers the item (`tables/rows-bin-read`), and the device keeps the rows it holds, or fills the table again, for when the item comes back.
 
 **Tests:** `device/tables-live.test.ts › answers the table of an item in the bin from the server, and from the copy once it is back`.
