@@ -792,8 +792,8 @@ export interface PerfResult {
  * A resource awaiting teardown, paired with the credential that created it.
  *
  * Both `DELETE /types/{id}` and `DELETE /webhooks/{id}` answer 404 to a
- * credential that cannot see the item, and 404 is the status teardown reads
- * as already gone, so an item deleted through the wrong credential reports a
+ * credential that cannot see the resource, and 404 is the status teardown reads
+ * as already gone, so a resource deleted through the wrong credential reports a
  * clean cleanup and stays.
  */
 export interface TrackedResource {

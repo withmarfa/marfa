@@ -21,7 +21,7 @@ beforeAll(async () => {
     "compliance",
     "key-management",
   ));
-  // The context tracks the file's own key first, and that item is the creator
+  // The context tracks the file's own key first, and that key is the creator
   // every mint in this file inherits from.
   ownKeyId = ctx.trackedKeys[0]!;
 });

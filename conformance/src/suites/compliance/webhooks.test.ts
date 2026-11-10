@@ -414,7 +414,7 @@ describe("outbound webhooks", () => {
     expectSignedBy(delivered, named.data.secret);
 
     // Nothing reached the URL the refused request named, which is what makes
-    // the refusal a refusal rather than an item written somewhere else.
+    // the refusal a refusal rather than a subscription written somewhere else.
     expect(
       receiver.received.filter((r) => r.path === "/hook/wildcard"),
     ).toEqual([]);
@@ -427,7 +427,7 @@ describe("outbound webhooks", () => {
 
   it("refuses a wildcard on the update door, leaving the stored events alone", async () => {
     // One vocabulary, two doors. `PATCH` rewrites the whole event list, so a
-    // door that still took `*` here would put back exactly the item the create
+    // door that still took `*` here would put back exactly the subscription the create
     // door now refuses to write, and the refusal would be a property of one
     // door rather than of the vocabulary.
     const created = await client.createWebhook({
@@ -734,7 +734,7 @@ describe("outbound webhooks", () => {
     );
 
     // Read back rather than trusting the write's own answer: a server that
-    // echoed the patch while storing the old item satisfies every assertion
+    // echoed the patch while storing the old subscription satisfies every assertion
     // above.
     const read = await client.getWebhook(created.data.id);
     expect(read.ok).toBe(true);
@@ -970,7 +970,7 @@ describe("outbound webhooks", () => {
     expect(list.error?.error.details?.required_scope).toBe("webhooks.manage");
 
     // Against a subscription that exists and belongs to another credential,
-    // so a 403 here is the permission gate rather than a miss the item-scoped
+    // so a 403 here is the permission gate rather than a miss the subscription-scoped
     // doors would answer 404 for.
     for (const refused of [
       await narrowed.getWebhook(mine.data.id),
@@ -989,7 +989,7 @@ describe("outbound webhooks", () => {
       );
     }
 
-    // The refusals left the item where it was.
+    // The refusals left the subscription where it was.
     const survived = await client.getWebhook(mine.data.id);
     expect(survived.ok).toBe(true);
     expect(survived.data.active).toBe(true);

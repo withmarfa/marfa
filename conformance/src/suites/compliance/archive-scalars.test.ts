@@ -84,7 +84,7 @@ const cases = [
   ...invalid.map((value) => ({ field: "edge.version", value })),
   ...["invalid", null, 5].map((value) => ({ field: "item.tier", value })),
 ];
-describe("archived item scalars", () => {
+describe("archived item and edge scalars", () => {
   it.each(cases)(
     "refuses invalid $field=$value before writing the archive",
     async ({ field, value }) => {

@@ -204,7 +204,7 @@ describe("edges CRUD", () => {
     // item door's. Edges have no per-version history, so there is no
     // ancestor and no field list to give; what there is has to be reachable
     // the same way, or a client branching on `error.code` has to know which
-    // door answered before it can read the item out.
+    // door answered before it can read the edge out.
     const sourceId = await makeItem();
     const targetId = await makeItem();
     const created = await client.createEdge({
@@ -312,7 +312,7 @@ describe("edges CRUD", () => {
     });
 
     // Read back rather than trusting the write's own answer. A server that
-    // returned a merged body while storing a replaced item would satisfy the
+    // returned a merged body while storing a replaced edge would satisfy the
     // assertion above and fail this one. Through the source item's outbound
     // listing, which is the read this suite's client already has for an edge.
     const read = await client.listItemEdges(sourceId, { edge_type: "about" });

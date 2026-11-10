@@ -1925,7 +1925,7 @@ If a credential without `audit.read` sends `GET /audit`, then the server MUST an
 
 If `GET /audit` names a query key the operation does not declare, then the server MUST answer `400 validation_error` with the key in `details.unknown_parameters`.
 
-**Reason:** an undeclared bound answered with the whole trail would read exactly like a time range that matched every item.
+**Reason:** an undeclared bound answered with the whole trail would read exactly like a time range that matched every entry.
 
 **Tests:** `compliance/audit.test.ts › refuses an undeclared bound rather than answering the whole trail`.
 

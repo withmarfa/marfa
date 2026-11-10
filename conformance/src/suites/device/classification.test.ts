@@ -1302,7 +1302,7 @@ describe("the ceiling, and releasing what it stopped", () => {
     const row = (await queueOf(harness)).find((it) => it.id === edit.value.id);
     expect(
       row?.verdict,
-      "the update was not refused by the server at all, so the release below is about the wrong item",
+      "the update was not refused by the server at all, so the release below is about the wrong write",
     ).toBe("refused");
     expect(
       row?.depends_on ?? [],
@@ -1963,10 +1963,10 @@ describe("withdrawing a write that can never be sent", () => {
         });
         expect(
           [first?.verdicts[0]?.verdict, first?.verdicts[0]?.reason],
-          "the write was not blocked, so the withdraw below is about some other item",
+          "the write was not blocked, so the withdraw below is about some other write",
         ).toEqual(["blocked", reason]);
         const blocked = (await queueOf(own))[0];
-        if (blocked === undefined) throw new Error("the queue lost the item");
+        if (blocked === undefined) throw new Error("the queue lost the write");
         // The witness: a blocked write is laid over the item (35), so the
         // copy shows the edit until something takes it away.
         const before = await own.device.get(HELD.id);
@@ -2020,7 +2020,7 @@ describe("withdrawing a write that can never be sent", () => {
     });
     expect(first?.verdicts[0]?.reason).toBe("ancestor_unavailable");
     const blocked = (await queueOf(harness))[0];
-    if (blocked === undefined) throw new Error("the queue lost the item");
+    if (blocked === undefined) throw new Error("the queue lost the write");
 
     // A second edit, of another property, goes out and has no answer, so
     // it is still waiting when the first is withdrawn.
@@ -2111,7 +2111,7 @@ describe("withdrawing a write that can never be sent", () => {
     });
     expect(first?.verdicts[0]?.reason).toBe("ancestor_unavailable");
     const blocked = (await queueOf(harness))[0];
-    if (blocked === undefined) throw new Error("the queue lost the item");
+    if (blocked === undefined) throw new Error("the queue lost the write");
 
     const failed = await device.withdraw(blocked.id);
     expect(

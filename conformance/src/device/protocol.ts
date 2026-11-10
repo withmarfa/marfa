@@ -376,7 +376,7 @@ export interface QueuedWrite {
   /** The write ahead of this one to the same item or edge, where one was
    *  still to be written when this one was queued. This one is held while
    *  that one has gone out without an answer or is held behind one that
-   *  has, and goes on any answer to it (`queue-and-verdicts/held-behind-ahead` and `queue-and-verdicts/answer-frees-follower`); an item
+   *  has, and goes on any answer to it (`queue-and-verdicts/held-behind-ahead` and `queue-and-verdicts/answer-frees-follower`); a write
    *  held with nothing it depends on still waiting is held by this. */
   follows: string | null;
   verdict: string | null;
@@ -441,7 +441,7 @@ export interface DrainReport {
   /** Writes the server answered this pass, whatever it answered
    *  (`queue-and-verdicts/count-answered`). */
   answered: number;
-  /** Items it did not send because a write they depend on, or the write
+  /** Writes it did not send because a write they depend on, or the write
    *  ahead of them to the same item or edge, has no answer yet
    *  (`queue-and-verdicts/count-held`). */
   held: number;
@@ -702,18 +702,18 @@ export interface DeviceUnderTest {
   update(id: string, edit: Edit): Promise<Outcome<QueuedWrite>>;
   /** Send what the queue holds. One pass. */
   drain(): Promise<Outcome<DrainReport>>;
-  /** Send a blocked or dead item again, under a fresh key. */
+  /** Send a blocked or dead write again, under a fresh key. */
   release(
     target: { id: string } | { reason: string },
   ): Promise<Outcome<number>>;
   /**
-   * Take an item that can never be sent out of the queue, and put the copy
-   * back to what the server holds. Answers whether the item was one a
+   * Take a write that can never be sent out of the queue, and put the copy
+   * back to what the server holds. Answers whether the write was one a
    * withdraw takes.
    */
   withdraw(id: string): Promise<Outcome<boolean>>;
   /**
-   * Clear the items the server has answered, and say how many went. With
+   * Clear the writes the server has answered, and say how many went. With
    * `ids`, only those named, and none for an empty list.
    */
   forget(ids?: string[]): Promise<Outcome<number>>;

@@ -20,7 +20,7 @@ import type { SseEvent } from "../../utils/sse.js";
  * create and loses the response cannot know whether the write landed, so it
  * resends — and because the id came from the client rather than the server,
  * the server can recognize its own work. Nothing is written, nothing is
- * published, and the stored item comes back with `acknowledged: true`.
+ * published, and the stored item or edge comes back with `acknowledged: true`.
  *
  * **The silent event is the half that matters.** A server that answered the
  * repeat correctly and published a second time would satisfy every assertion
@@ -318,7 +318,7 @@ describe("a repeated create is acknowledged", () => {
     expect(live.error?.error.code).toBe("ancestor_unavailable");
   });
 
-  it("answers an edge repeat with the stored item and announces nothing", async (context) => {
+  it("answers an edge repeat with the stored edge and announces nothing", async (context) => {
     const [source, target, spare] = await Promise.all([
       client.createItem({
         type: "core.note",
@@ -407,7 +407,7 @@ describe("a repeated create is acknowledged", () => {
     ).toEqual(["edge.created"]);
   });
 
-  it("answers an edge repeat naming other properties with the stored item, unchanged and unannounced", async (context) => {
+  it("answers an edge repeat naming other properties with the stored edge, unchanged and unannounced", async (context) => {
     const made = await Promise.all(
       ["source", "target", "sentinel-target"].map((label) =>
         client.createItem({
@@ -470,7 +470,7 @@ describe("a repeated create is acknowledged", () => {
     expect(outcome.repeat.data.acknowledged).toBe(true);
     expect(
       outcome.repeat.data.edge,
-      "the repeat did not return the item the first create stored",
+      "the repeat did not return the edge the first create stored",
     ).toEqual(outcome.first.data.edge);
 
     const stored = await client.getEdge(id);

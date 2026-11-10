@@ -1842,7 +1842,7 @@ When an item that `GET /export?format=archive` carries is of `core.file` or a ty
 
 The server MUST NOT name in the manifest's `missing_blobs` a hash that the instance holds no blob of and that no carried file's `blob_ref` names.
 
-**Reason:** a run of hex in a row's text, or in any other property, may be anything, such as a checksum someone noted down. Only the instance's own record, or a file's `blob_ref`, makes it a blob.
+**Reason:** a run of hex in an item's text, or in any other property, may be anything, such as a checksum someone noted down. Only the instance's own record, or a file's `blob_ref`, makes it a blob.
 
 **Tests:** `compliance/export-missing-blob.test.ts › names in a later archive's missing_blobs a file's blob that a restore answered missing`.
 
@@ -2922,7 +2922,7 @@ When local authority restores an archive that the same build wrote, the server M
 
 ### `search-and-filters/restore-item-at-cap`
 
-When an archived item's properties, those of one of its earlier versions, or an archived edge's properties are exactly as large as the largest body the bulk write operations take, the server MUST restore the item.
+When an archived item's properties, those of one of its earlier versions, or an archived edge's properties are exactly as large as the largest body the bulk write operations take, the server MUST restore the item or edge.
 
 **Tests:** `compliance/archive-limits.test.ts › takes %s of exactly the bulk write cap and refuses one byte more, 413 naming the line and the field, and writes nothing`.
 

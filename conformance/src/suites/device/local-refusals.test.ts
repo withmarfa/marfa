@@ -804,7 +804,7 @@ async function expectRefusedAsReader(
   const drained = await second.drain();
   expect(
     drained.ok,
-    "a second opener drained the queue, so it would write verdicts onto items the writer is still sending",
+    "a second opener drained the queue, so it would write verdicts onto writes the writer is still sending",
   ).toBe(false);
 
   // Reading still works, which is the whole point of it being a handle

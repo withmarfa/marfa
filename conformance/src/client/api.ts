@@ -802,7 +802,7 @@ export class MarfaClient {
   /**
    * `id` and `acknowledged` mirror `createItem`: a client that mints its own
    * edge ids keeps them, and a repeat under an id already naming this exact
-   * edge is answered with the stored item rather than a second one. An id
+   * edge is answered with the stored edge rather than a second one. An id
    * naming a *different* edge is a collision rather than a repeat and is
    * refused 409.
    */

@@ -202,7 +202,7 @@ export function trackEdgeType(ctx: TestContext, id: string): void {
  * Track an outbound webhook subscription for cleanup, with the credential that
  * registered it. Call it the moment the id is in hand: a subscription left
  * behind keeps attempting delivery. `DELETE /webhooks/{id}` answers 404 to a
- * credential that cannot see the item, which teardown reads as already gone, so
+ * credential that cannot see the subscription, which teardown reads as already gone, so
  * the registering credential is the one that has to delete it.
  */
 export function trackWebhook(
@@ -354,7 +354,7 @@ async function deleteAll(
 /**
  * Delete a phase's resources through the credential that created each one,
  * falling back to `fallback` where none was recorded. Both routes this serves
- * answer 404 to a credential that cannot see the item, and 404 is what
+ * answer 404 to a credential that cannot see the resource, and 404 is what
  * `deleteAll` treats as already gone.
  */
 async function deleteAllByOwner(

@@ -46,13 +46,13 @@ When `POST /items`, `PATCH /items/{id}` or an entry of `POST /items/bulk` names 
 
 When a key sends `POST /edges` naming a `source_id`, a `target_id` and an `edge_type`, and no rule of this chapter refuses the edge, the server MUST answer `201` with an `edge` carrying its `id`, `source_id`, `target_id`, `edge_type`, `properties`, `created_at`, `updated_at` and `version`.
 
-**Tests:** `compliance/edge-types.test.ts › registered edge type is usable in POST /edges`, `sync/identity.test.ts › keeps the id a client mints for an edge`, `sync/acknowledged.test.ts › answers an edge repeat naming other properties with the stored item, unchanged and unannounced`.
+**Tests:** `compliance/edge-types.test.ts › registered edge type is usable in POST /edges`, `sync/identity.test.ts › keeps the id a client mints for an edge`, `sync/acknowledged.test.ts › answers an edge repeat naming other properties with the stored edge, unchanged and unannounced`.
 
 ### `edges/create-version`
 
 When `POST /edges` creates an edge, the server MUST give it `version` 1.
 
-**Tests:** `correctness/edges/edges-list.test.ts › reads an edge by id with its version`, `sync/acknowledged.test.ts › answers an edge repeat naming other properties with the stored item, unchanged and unannounced`.
+**Tests:** `correctness/edges/edges-list.test.ts › reads an edge by id with its version`, `sync/acknowledged.test.ts › answers an edge repeat naming other properties with the stored edge, unchanged and unannounced`.
 
 ### `edges/create-announced`
 
@@ -134,19 +134,19 @@ When a key that may write the source's type and the edge type sends `POST /edges
 
 **Reason:** a client that lost the answer to its create sends it again, and gets the edge it made.
 
-**Tests:** `sync/acknowledged.test.ts › answers an edge repeat with the stored item and announces nothing`, `› answers an edge repeat naming other properties with the stored item, unchanged and unannounced`, `compliance/version-exact.test.ts › conditions lifecycle and edge writes on the source version without replacing other edges`.
+**Tests:** `sync/acknowledged.test.ts › answers an edge repeat with the stored edge and announces nothing`, `› answers an edge repeat naming other properties with the stored edge, unchanged and unannounced`, `compliance/version-exact.test.ts › conditions lifecycle and edge writes on the source version without replacing other edges`.
 
 ### `edges/id-repeat-unchanged`
 
 When `POST /edges` answers `acknowledged: true`, the server MUST leave the edge as it was, whatever `properties` the repeat names.
 
-**Tests:** `sync/acknowledged.test.ts › answers an edge repeat naming other properties with the stored item, unchanged and unannounced`.
+**Tests:** `sync/acknowledged.test.ts › answers an edge repeat naming other properties with the stored edge, unchanged and unannounced`.
 
 ### `edges/id-repeat-silent`
 
 When `POST /edges` answers `acknowledged: true`, the server MUST NOT announce an event for it.
 
-**Tests:** `sync/acknowledged.test.ts › answers an edge repeat with the stored item and announces nothing`, `› answers an edge repeat naming other properties with the stored item, unchanged and unannounced`.
+**Tests:** `sync/acknowledged.test.ts › answers an edge repeat with the stored edge and announces nothing`, `› answers an edge repeat naming other properties with the stored edge, unchanged and unannounced`.
 
 ### `edges/id-repeat-source-in-bin`
 
@@ -1326,7 +1326,7 @@ While an item is the source of a `with-hosts` edge whose target is out of the bi
 
 ### `edges/parts-trash-marked`
 
-When the server moves a part into the bin with its hosts, the server MUST mark the part with `trashed_by_cascade` `true` and with `trashed_with` naming the host whose trash took it, on its items and on its `item.deleted` frame.
+When the server moves a part into the bin with its hosts, the server MUST mark the part with `trashed_by_cascade` `true` and with `trashed_with` naming the host whose trash took it, on the item and on its `item.deleted` frame.
 
 **Tests:** `correctness/edges/edges-parts.test.ts › stays out while one host is out, goes with the last, and comes back with any`, `› takes a reply with the comment it answers, at every depth, and the part's own children`, `compliance/cascade-marks.test.ts › marks a part's item.deleted, item.restored and item.purged with its host, and the edge the host's purge took`.
 
@@ -1798,7 +1798,7 @@ When `DELETE /edge-types/{id}` deletes a registration that stored edges name, th
 
 While an edge's type is not registered, the server MUST return the edge from `GET /edges/{id}`, `GET /edges`, `GET /items/{id}/edges`, `GET /items/{id}/backrefs` and the `edges` of an item read.
 
-**Reason:** a forced delete keeps the edges (`edges/types-delete-force-keeps`), and an item nothing can describe is still an item a person made. An edge restored under an edge type that is not registered is read the same way (`search-and-filters/restore-edges-unregistered`).
+**Reason:** a forced delete keeps the edges (`edges/types-delete-force-keeps`), and an edge nothing can describe is still an edge a person made. An edge restored under an edge type that is not registered is read the same way (`search-and-filters/restore-edges-unregistered`).
 
 **Tests:** `compliance/restore-edges-unregistered.test.ts › keeps the edge as the archive holds it, reads it as the origin does, and restores its own export again`.
 

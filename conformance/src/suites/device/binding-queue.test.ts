@@ -240,7 +240,7 @@ describe("a withdraw while the copy changes under it", () => {
       "the first write was not blocked, or the second was answered, so nothing below is about a withdraw",
     ).toEqual(["blocked", undefined]);
     if (first === undefined || second === undefined) {
-      throw new Error("the queue lost an item");
+      throw new Error("the queue lost a write");
     }
     return { first, second, harness: own };
   }

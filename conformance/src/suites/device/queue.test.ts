@@ -82,7 +82,7 @@ function held() {
   };
 }
 
-/** An edge item as the server answers one. */
+/** An edge as the server answers one. */
 function edgeRow(
   id: string,
   source: string,
@@ -146,7 +146,7 @@ describe("the queue answers before there is anything in it", () => {
     if (!queued.ok) return;
     expect(
       queued.value,
-      "a store with no writes reported something queued, so the queue reports items nobody asked for",
+      "a store with no writes reported something queued, so the queue reports writes nobody asked for",
     ).toEqual([]);
   });
 });

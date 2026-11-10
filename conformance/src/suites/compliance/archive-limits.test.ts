@@ -13,7 +13,7 @@ import { clientsFor } from "../../utils/own-blob-server.js";
 /**
  * What a restore does with the size of an archive, on servers of the fixture's
  * own. The counts of a restore are held by no limit but the instance's; the
- * size of one item is held to what the write doors take, which is a setting
+ * size of one item or edge is held to what the write doors take, which is a setting
  * the shared server cannot change for every other file.
  */
 const SMALL_CAP = 8192;
@@ -123,7 +123,7 @@ describe("the counts an archive carries", () => {
   );
 });
 
-describe("the size of an item an archive carries", () => {
+describe("the size of an item or edge an archive carries", () => {
   type Oversized = "item" | "version" | "edge";
 
   /** Properties that are exactly `bytes` bytes of JSON. */
@@ -133,7 +133,7 @@ describe("the size of an item an archive carries", () => {
 
   const SOURCE = "archive-row-cap";
 
-  /** An item ahead, and a second item, one of whose kinds of properties is `bytes`. */
+  /** Two items and an optional edge, with the selected properties occupying `bytes` bytes. */
   function archiveOf(kind: Oversized, bytes: number) {
     const first = uuidv7();
     const second = uuidv7();

@@ -490,7 +490,7 @@ When a conditional read answers an edge, the server MUST NOT carry `listed` on i
 
 ### `reach/receipt-uncertified`
 
-When `POST /items`, `POST /edges`, `POST /folders` or `POST /views` creates an item, the server MUST answer it without `X-Marfa-Reach` and without a reach in the body.
+When `POST /items`, `POST /edges`, `POST /folders` or `POST /views` creates an item or edge, the server MUST answer it without `X-Marfa-Reach` and without a reach in the body.
 
 **Reason:** a receipt says what the write did, and not what a key's reach covers, so a device reads under its reach again before it adopts what the write left.
 
