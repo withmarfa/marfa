@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { TypeSchema } from "./schema-types.js";
+import { setAsideTables } from "../scripts/shipped-tables.js";
 import {
   DISPLAY_HINTS_KEYS,
   EDGE_PROPERTY_KEYS,
@@ -314,7 +315,11 @@ describe("unreadKeys", () => {
       const files = filesIn(dir);
       expect(files.length, dir).toBeGreaterThan(0);
       for (const { file, data } of files) {
-        expect(fieldsOf(unreadKeys(data, kind)), file).toEqual([]);
+        const read =
+          kind === "type"
+            ? setAsideTables(data as Record<string, unknown>).rest
+            : data;
+        expect(fieldsOf(unreadKeys(read, kind)), file).toEqual([]);
       }
     }
   });

@@ -282,6 +282,11 @@ export interface TypeSchema {
   compatible_with?: string[];
 }
 
+/** A shipped type with the tables it declares, by name, as the Rust validator reads them. */
+export interface ShippedTypeSchema extends TypeSchema {
+  tables?: Record<string, unknown>;
+}
+
 /**
  * Cardinality of an edge type. Enforced at edge-creation time.
  * - one-to-one: each source and each target may appear at most once.

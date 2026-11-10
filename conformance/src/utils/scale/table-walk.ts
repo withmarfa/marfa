@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readingCents, rowNumber, type Row } from "./table-data.js";
 
-export type Ordering = "id" | "updated_at" | "reading";
+export type Ordering = "id" | "updated_at" | "reading" | "bucket";
 
 export interface WalkPlan {
   /** The page size the walk asked for. */
@@ -67,7 +67,7 @@ export class WalkChecker {
     const { order } = this.plan;
     if (order === "id") return a.id < b.id;
     const key = (row: Row) =>
-      order === "reading" ? row.values.reading : row.updated_at;
+      order === "updated_at" ? row.updated_at : row.values[order];
     const x = key(a);
     const y = key(b);
     if (typeof x !== typeof y) return false;

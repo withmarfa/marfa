@@ -133,6 +133,17 @@ describe("WalkChecker", () => {
       null,
     );
     expect(reversed.problems.join("\n")).toMatch(/out of order/);
+    const byBucket = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].sort(
+      (a, b) =>
+        rowOf(a, BUCKETS).bucket - rowOf(b, BUCKETS).bucket ||
+        (idOf(a) < idOf(b) ? -1 : 1),
+    );
+    const bucketed = new WalkChecker(plan({ order: "bucket", limit: 10 }));
+    bucketed.page(
+      { data: byBucket.map((n) => rowFor(n)), next_cursor: null },
+      null,
+    );
+    expect(bucketed.problems).toEqual([]);
     const byTime = new WalkChecker(plan({ order: "updated_at" }));
     byTime.page(
       {

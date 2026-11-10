@@ -7,9 +7,11 @@ use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
 use super::events::{self, Announced};
+use super::order::Order;
 use super::store::{self, Held};
-use super::{Changed, MAX_OPERATIONS, Sight, refs_text};
+use super::{Changed, MAX_OPERATIONS, Sight, refs_text, table_of};
 use crate::app::archive::checks::RowKey;
+use crate::app::catalog::Catalog;
 use crate::app::items::{self, Host, Reader};
 use crate::app::refusal::{Refusal, Result};
 use crate::app::unit::Unit;
@@ -113,6 +115,7 @@ struct Run {
     host: Host,
     table: String,
     table_seq: i64,
+    order: Option<Order>,
     batch: String,
     /// The batch last announced, which the table's summary names.
     announced: Option<String>,
@@ -128,6 +131,7 @@ struct Run {
 /// Writes the rows of a restore's archive, line by line in the archive's order.
 pub(crate) struct Restoring<'a, 'u, 'c> {
     unit: &'a Unit<'u, 'c>,
+    catalog: &'a Catalog,
     run: Option<Run>,
     types: Types,
     pub imported: usize,
@@ -135,9 +139,10 @@ pub(crate) struct Restoring<'a, 'u, 'c> {
 }
 
 impl<'a, 'u, 'c> Restoring<'a, 'u, 'c> {
-    pub fn new(unit: &'a Unit<'u, 'c>) -> Self {
+    pub fn new(unit: &'a Unit<'u, 'c>, catalog: &'a Catalog) -> Self {
         Restoring {
             unit,
+            catalog,
             run: None,
             types: Types::default(),
             imported: 0,
@@ -160,11 +165,20 @@ impl<'a, 'u, 'c> Restoring<'a, 'u, 'c> {
             let host = items::host_of(tx, &key.item_id)?
                 .ok_or_else(|| Refusal::internal("a restored row's item is gone"))?;
             let batch = Uuid::now_v7().to_string();
-            let table_seq = store::open(tx, host.seq, &key.table, &batch, &self.unit.at)?;
+            let order = table_of(self.catalog, &host, &key.table)?.order;
+            let table_seq = store::open(
+                tx,
+                host.seq,
+                &key.table,
+                order.as_ref(),
+                &batch,
+                &self.unit.at,
+            )?;
             self.run = Some(Run {
                 host,
                 table: key.table.clone(),
                 table_seq,
+                order,
                 batch,
                 announced: None,
                 changed: Vec::new(),
@@ -206,11 +220,15 @@ impl<'a, 'u, 'c> Restoring<'a, 'u, 'c> {
         let body = Value::Object(values.clone()).to_string();
         store::insert(
             tx,
-            run.table_seq,
-            &key.id,
-            &updated_at,
-            &body,
-            refs_text(&refs).as_deref(),
+            &store::Written {
+                table: run.table_seq,
+                id: &key.id,
+                at: &updated_at,
+                batch: store::UNLOGGED,
+                body: &body,
+                refs: refs_text(&refs).as_deref(),
+                order: run.order.as_ref(),
+            },
         )?;
         run.count += 1;
         run.bytes += body.len() as i64;

@@ -76,6 +76,7 @@ describe("type registration and listing", () => {
     const shipped = [
       "core.bookmark",
       "core.collection",
+      "core.conversation",
       "core.entity",
       "core.entity.person",
       "core.entity.place",

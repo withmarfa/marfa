@@ -343,6 +343,100 @@ describe("undoing a batch", () => {
   });
 });
 
+describe("undoing a batch of a table that names an order", () => {
+  /** Row ids in the order `tables/rows-sort` states: rows without the column last, a tie by id. */
+  function sortedBy(
+    held: Record<string, unknown>,
+    column: string,
+    direction: "asc" | "desc",
+  ): string[] {
+    const value = (id: string) =>
+      (held[id] as Record<string, string | number | undefined>)[column];
+    return Object.keys(held).sort((a, b) => {
+      const [x, y] = [value(a), value(b)];
+      if (x === undefined || y === undefined) {
+        if (x !== undefined) return -1;
+        if (y !== undefined) return 1;
+      } else if (x !== y) {
+        return x < y === (direction === "asc") ? -1 : 1;
+      }
+      return a < b ? -1 : 1;
+    });
+  }
+
+  async function walked(
+    item: string,
+    column: string,
+    direction: "asc" | "desc",
+  ): Promise<string[]> {
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const res = await client.listRows(item, "lines", {
+        sort: `values.${column}`,
+        direction,
+        limit: 2,
+        cursor,
+      });
+      expect(res.status, JSON.stringify(res.error)).toBe(200);
+      seen.push(...res.data.data.map((row: TableRow) => row.id));
+      cursor = res.data.next_cursor ?? undefined;
+    } while (cursor);
+    return seen;
+  }
+
+  async function sortedRight(item: string) {
+    const held = await rows(item);
+    for (const column of ["amount", "memo"]) {
+      for (const direction of ["asc", "desc"] as const) {
+        expect(await walked(item, column, direction)).toEqual(
+          sortedBy(held, column, direction),
+        );
+      }
+    }
+  }
+
+  it("puts back and removes the rows of an ordered table in its order, also after its order names another column", async () => {
+    const ordered = (order: string) => ({
+      ...LEDGER,
+      lines: { ...LEDGER.lines, order },
+    });
+    const type = await ledgerType(ordered("amount"));
+    const item = await itemOf(type);
+    const [r1, r2, r3, r4] = ids();
+    await write(item, [
+      { op: "put", id: r1, values: { amount: 3, memo: "b" } },
+      { op: "put", id: r2, values: { amount: 1 } },
+      { op: "put", id: r3, values: { amount: 2, memo: "a" } },
+    ]);
+    const before = await rows(item);
+    const batch = await write(item, [
+      { op: "patch", id: r1, values: { amount: 0 } },
+      { op: "delete", id: r3 },
+      { op: "put", id: r4, values: { amount: 5, memo: "c" } },
+    ]);
+    const undone = await undo(item, batch);
+    expect(await rows(item)).toEqual(before);
+    expect(await walked(item, "amount", "asc")).toEqual([r2, r3, r1]);
+    await sortedRight(item);
+    const redone = await undo(item, undone.batch!);
+    expect(await walked(item, "amount", "asc")).toEqual([r1, r2, r4]);
+    await sortedRight(item);
+
+    const moved = await client.replaceType(type, {
+      id: type,
+      fields: { title: { type: "string" } },
+      tables: ordered("memo"),
+    } as never);
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    await undo(item, redone.batch!);
+    expect(await rows(item)).toEqual(before);
+    expect(await walked(item, "memo", "asc")).toEqual([r3, r1, r2]);
+    expect(await walked(item, "memo", "desc")).toEqual([r1, r3, r2]);
+    await sortedRight(item);
+  });
+});
+
 describe("an undo it cannot make", () => {
   it("refuses an undo where a later batch changed a row, naming the rows, and changes nothing", async () => {
     const item = await itemOf(await ledgerType());

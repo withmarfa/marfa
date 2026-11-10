@@ -12,12 +12,17 @@
 
 import { readFileSync, readdirSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { FieldDefinition, TypeSchema } from "../src/schema-types.js";
+import type {
+  FieldDefinition,
+  ShippedTypeSchema,
+  TypeSchema,
+} from "../src/schema-types.js";
 import {
   validateEdgeTypeSchema,
   validateTypeSchema,
 } from "../src/schema-validation.js";
 import { mergeFieldDefinition } from "../src/status.js";
+import { setAsideTables } from "./shipped-tables.js";
 
 const typesRoot = resolve(import.meta.dirname, "..");
 const coreDir = join(typesRoot, "core");
@@ -154,10 +159,11 @@ function resolveMergePolicy(schema: TypeSchema): TypeSchema["merge_policy"] {
   return out;
 }
 
-function buildFamily(raws: RawSchema[]): TypeSchema[] {
-  const built: TypeSchema[] = [];
+function buildFamily(raws: RawSchema[]): ShippedTypeSchema[] {
+  const built: ShippedTypeSchema[] = [];
   for (const raw of byAncestry(raws)) {
-    const result = validateTypeSchema(raw.data, {
+    const { rest, tables } = setAsideTables(raw.data);
+    const result = validateTypeSchema(rest, {
       resolveSchema: (id) => registry.get(id),
     });
     if (!result.success) {
@@ -166,10 +172,11 @@ function buildFamily(raws: RawSchema[]): TypeSchema[] {
       }
       continue;
     }
-    const schema: TypeSchema = {
+    const schema: ShippedTypeSchema = {
       ...result.data,
       fields: {},
     };
+    if (tables) schema.tables = tables;
     registry.set(schema.id, schema);
     schema.fields = resolveFields(result.data);
     const mergePolicy = resolveMergePolicy(result.data);
@@ -246,7 +253,7 @@ function fieldLiteral(field: FieldDefinition): string {
   return `{ ${parts.join(", ")} }`;
 }
 
-function emitSchema(schema: TypeSchema, lines: string[]): void {
+function emitSchema(schema: ShippedTypeSchema, lines: string[]): void {
   lines.push(`const ${varName(schema.id)}: TypeSchema = {`);
   lines.push(`  id: ${quote(schema.id)},`);
   if (schema.parent) lines.push(`  parent: ${quote(schema.parent)},`);
@@ -338,6 +345,19 @@ for (const schema of systemTypes) lines.push(`  ${varName(schema.id)},`);
 lines.push("];");
 lines.push("");
 
+// The tables a shipped type declares, by type, kept apart from the types
+// above, which are listed without tables. The core's catalog is written from
+// both.
+const shippedTables = Object.fromEntries(
+  [...coreTypes, ...systemTypes]
+    .filter((schema) => schema.tables)
+    .map((schema) => [schema.id, schema.tables]),
+);
+lines.push(
+  `export const SHIPPED_TABLES: Record<string, Record<string, unknown>> = ${JSON.stringify(shippedTables, null, 2)};`,
+);
+lines.push("");
+
 // The identifier set as literal types, so a consumer that keys a map or a
 // switch by type id is checked by the compiler: a plain `Record<string, …>`
 // cannot tell a live identifier from a dead one.
@@ -387,7 +407,13 @@ const PROSE_KEYS = new Set([
  * can be called `description` or `label`, so these keys are kept whatever
  * they read, and only the definitions under them lose their prose.
  */
-const NAMED_MAPS = new Set(["fields", "property_schema", "items_fields"]);
+const NAMED_MAPS = new Set([
+  "fields",
+  "property_schema",
+  "items_fields",
+  "tables",
+  "columns",
+]);
 
 function namedMap(value: unknown): unknown {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {

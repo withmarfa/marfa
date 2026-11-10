@@ -320,6 +320,40 @@ describe("a table the server refuses", () => {
     expect(made.ok, JSON.stringify(made.error)).toBe(true);
   });
 
+  it("takes an order naming a datetime, number, integer or string column, required or not", async () => {
+    for (const [order, column] of [
+      ["at", { type: "datetime", required: true }],
+      ["n", { type: "number" }],
+      ["i", { type: "integer", required: true }],
+      ["s", { type: "string" }],
+    ] as const) {
+      const id = typeId("order");
+      const made = await client.registerType(
+        declared(id, {
+          lines: {
+            order,
+            columns: { [order]: column, memo: { type: "string" } },
+          },
+        }),
+      );
+      expect(made.ok, JSON.stringify(made.error)).toBe(true);
+      expect((await client.getType(id)).data.tables?.lines.order).toBe(order);
+    }
+  });
+
+  it("refuses an order that names no column of the table, or a column of another type", async () => {
+    const columns = {
+      d: { type: "date" },
+      b: { type: "boolean" },
+      e: { type: "email" },
+      r: { type: "item" },
+      k: { type: "enum", enum_values: ["a"] },
+    };
+    for (const order of ["d", "b", "e", "r", "k", "gone", 3, ["d"]]) {
+      await refused({ lines: { order, columns } }, ["tables.lines.order"]);
+    }
+  });
+
   it("refuses an item column that names a type nothing registers, one that is not a type identifier and an empty list, and takes its own type", async () => {
     await refused(
       {
@@ -581,7 +615,7 @@ describe("a key evolves a type's tables", () => {
     ...(tables ? { tables } : {}),
   });
 
-  it("lands a table, an optional column and new labels for a key holding metadata.types:write alone", async () => {
+  it("lands a table, an optional column, an order and new labels for a key holding metadata.types:write alone", async () => {
     const id = typeId("free");
     expect(
       (
@@ -599,6 +633,7 @@ describe("a key evolves a type's tables", () => {
           a: { type: "string", label: "A", description: "The first." },
           b: { type: "number", adds_up: "sum" },
         },
+        order: "b",
       },
       audit: { columns: { at: { type: "datetime", required: true } } },
     };
@@ -607,12 +642,16 @@ describe("a key evolves a type's tables", () => {
     const read = (await client.getType(id)).data.tables;
     expect(Object.keys(read ?? {}).sort()).toEqual(["audit", "lines"]);
     expect(read?.lines.columns.b.adds_up).toBe("sum");
+    expect(read?.lines.order).toBe("b");
   });
 
-  it("refuses a column's changed kind, a required column, a removed column and a removed table to a key without schema.write, listing each", async () => {
+  it("refuses a column's changed kind, a required column, a removed column, a removed table and a changed or removed order to a key without schema.write, listing each", async () => {
     const id = typeId("schema");
     const held = {
-      lines: { columns: { a: { type: "string" }, b: { type: "string" } } },
+      lines: {
+        columns: { a: { type: "string" }, b: { type: "string" } },
+        order: "a",
+      },
       other: { columns: { z: { type: "string" } } },
     };
     expect((await client.registerType(declared(id, held))).ok).toBe(true);
@@ -631,10 +670,19 @@ describe("a key evolves a type's tables", () => {
     await tryChange(
       {
         ...held,
-        lines: { columns: { a: { type: "number" }, b: { type: "string" } } },
+        lines: {
+          columns: { a: { type: "number" }, b: { type: "string" } },
+          order: "a",
+        },
       },
       ["tables.lines.columns.a"],
     );
+    await tryChange({ ...held, lines: { ...held.lines, order: "b" } }, [
+      "tables.lines.order",
+    ]);
+    await tryChange({ ...held, lines: { columns: held.lines.columns } }, [
+      "tables.lines.order",
+    ]);
     await tryChange(
       {
         ...held,
@@ -644,12 +692,13 @@ describe("a key evolves a type's tables", () => {
             b: { type: "string" },
             c: { type: "string", required: true },
           },
+          order: "a",
         },
       },
       ["tables.lines.columns.a", "tables.lines.columns.c"],
     );
     await tryChange(
-      { ...held, lines: { columns: { a: { type: "string" } } } },
+      { ...held, lines: { columns: { a: { type: "string" } }, order: "a" } },
       ["tables.lines.columns.b"],
     );
     await tryChange({ lines: held.lines }, ["tables.other"]);
@@ -657,6 +706,7 @@ describe("a key evolves a type's tables", () => {
     expect(
       Object.keys((await client.getType(id)).data.tables ?? {}).sort(),
     ).toEqual(["lines", "other"]);
+    expect((await client.getType(id)).data.tables?.lines.order).toBe("a");
   });
 
   it("lands every change for a key holding schema.write, and a replacement without tables removes them", async () => {
@@ -816,7 +866,7 @@ describe("tables reach the other doors", () => {
             await origin.registerType(
               declared(
                 child,
-                { extra: { columns: { n: { type: "integer" } } } },
+                { extra: { columns: { n: { type: "integer" } }, order: "n" } },
                 { parent },
               ),
             )
@@ -833,6 +883,7 @@ describe("tables reach the other doors", () => {
         });
         const inherited = lines.find((l) => l.type?.id === child)?.type;
         expect(Object.keys(inherited?.tables ?? {})).toEqual(["extra"]);
+        expect(inherited?.tables?.extra).toMatchObject({ order: "n" });
 
         const owner = new MarfaClient({
           baseUrl: destination.apiUrl,
@@ -850,6 +901,7 @@ describe("tables reach the other doors", () => {
           "lines",
         ]);
         expect(read.data.tables?.lines.columns.seen.adds_up).toBe("max");
+        expect(read.data.tables?.extra.order).toBe("n");
       } finally {
         await source.stop();
         await destination.stop();

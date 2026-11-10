@@ -81,7 +81,7 @@ pub fn item_table_changes(before: &Obj, after: &Obj, keeps_own: bool) -> Vec<Str
     needs
 }
 
-/// The tables and columns only a schema writer may remove, change or require.
+/// The tables, columns and orders only a schema writer may remove, change or require.
 fn table_changes(stored: &Obj, next: &Obj) -> Vec<String> {
     let before = as_obj(stored.get("tables")).cloned().unwrap_or_default();
     let after = as_obj(next.get("tables")).cloned().unwrap_or_default();
@@ -91,6 +91,9 @@ fn table_changes(stored: &Obj, next: &Obj) -> Vec<String> {
             needs.push(format!("tables.{name}"));
             continue;
         };
+        if table.get("order").is_some() && table.get("order") != replaced.get("order") {
+            needs.push(format!("tables.{name}.order"));
+        }
         let columns = |table: &Value| as_obj(table.get("columns")).cloned().unwrap_or_default();
         needs.extend(column_changes(
             &columns(table),

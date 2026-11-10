@@ -31,9 +31,10 @@ pub use resolve::{
     read_back_free, resolve, roles_of, with_field_labels,
 };
 pub use tables::{
-    ADDS_UP, ITEM_KIND, MAX_COLUMNS_PER_TABLE, MAX_TABLES_PER_TYPE, OWN_COLUMNS, OWN_TABLE,
-    OWN_TABLE_TYPE, chain_tables, declared_tables, item_tables, judge_item_columns,
-    keeps_own_table, normalize_table, validate_columns, with_set_stored, with_table_labels,
+    ADDS_UP, ITEM_KIND, MAX_COLUMNS_PER_TABLE, MAX_TABLES_PER_TYPE, ORDER_KINDS, OWN_COLUMNS,
+    OWN_TABLE, OWN_TABLE_TYPE, chain_tables, declared_tables, item_tables, judge_item_columns,
+    keeps_own_table, normalize_table, order_of, validate_columns, with_set_stored,
+    with_table_labels,
 };
 pub use type_def::{declared_conflicts, validate_restored_type, validate_type};
 pub use unread::{unread_edge_keys, unread_keys};
