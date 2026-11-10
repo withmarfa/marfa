@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { MarfaClient } from "../../client/api.js";
+import { MarfaClient, type UpdateItemInput } from "../../client/api.js";
 import type { ApiResponse, TestContext } from "../../client/types.js";
 import {
   cleanup,
@@ -45,7 +45,7 @@ async function made(columns: Columns, type = "core.table") {
 async function change(
   who: MarfaClient,
   id: string,
-  body: Parameters<MarfaClient["updateItem"]>[1],
+  body: Omit<UpdateItemInput, "version">,
 ) {
   const held = await client.getItem(id);
   return who.updateItem(id, { ...body, version: held.data.item.version });
