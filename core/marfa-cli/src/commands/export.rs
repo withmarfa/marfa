@@ -102,7 +102,7 @@ fn run_waiting(
         let _remarks = (args.format == Some(ExportFormat::Archive)).then(|| {
             Remarks::every(FIRST_REMARK, REMARK_EVERY, |waited| {
                 eprintln!(
-                    "still preparing the archive ({}s): the server checks every row before it sends the first byte",
+                    "still preparing the archive ({}s): the server checks every item before it sends the first byte",
                     waited.as_secs()
                 );
             })

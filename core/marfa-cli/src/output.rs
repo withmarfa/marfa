@@ -68,10 +68,10 @@ pub(crate) fn note_partial(completeness: Completeness) {
     match completeness {
         Completeness::Complete => {}
         Completeness::Partial => eprintln!(
-            "(partial: a hydration is filling this copy, and rows still arriving are not shown)"
+            "(partial: a hydration is filling this copy, and items still arriving are not shown)"
         ),
         Completeness::Stale => eprintln!(
-            "(stale: the server's event log no longer reaches this copy, so rows may have changed or gone until a hydration fills it again)"
+            "(stale: the server's event log no longer reaches this copy, so items may have changed or gone until a hydration fills it again)"
         ),
     }
 }
@@ -90,7 +90,7 @@ pub fn item(item: &Item, shown: &Shown, json: bool) -> Result<(), CliError> {
     Ok(())
 }
 
-/// No verdict column: the row has not been sent, and "unanswered" here would
+/// No verdict column: the write has not been sent, and "unanswered" here would
 /// read as an answer.
 pub fn queued_one(write: &QueuedWrite, json: bool) -> Result<(), CliError> {
     let mut out = io::stdout().lock();
@@ -135,8 +135,8 @@ pub fn nothing_queued(json: bool) -> Result<(), CliError> {
 
 /// `writes` are printed against `queue`, the whole queue, so a write they
 /// depend on is read where it stands even when it is not among them. `landing`
-/// names the refused creates whose row no read has found yet, which still hold
-/// the writes that depend on them, each with the row its natural key names.
+/// names the refused creates whose item no read has found yet, which still hold
+/// the writes that depend on them, each with the item its natural key names.
 pub fn queued(
     writes: &[QueuedWrite],
     queue: &[QueuedWrite],
@@ -379,7 +379,7 @@ pub fn verdict_line(
     line
 }
 
-/// What a refusal says beyond its code: the row in the bin, the grant the key
+/// What a refusal says beyond its code: the item in the bin, the grant the key
 /// lacks, and each field the server would not take.
 fn refused(refusal: &marfa_core::Refusal) -> String {
     let mut said = String::new();
@@ -842,6 +842,12 @@ fn record_cells(record: &Value) -> Vec<String> {
             owned("source"),
         ];
     }
+    if let Some(values) = record.get("values")
+        && record.get("type").is_none()
+        && record.get("updated_at").is_some()
+    {
+        return vec![owned("id"), owned("updated_at"), values.to_string()];
+    }
     let kind = ["type", "action"]
         .iter()
         .map(|name| owned(name))
@@ -1076,6 +1082,20 @@ pub(crate) mod tests {
             "the server answered 1101 write(s); 12377 more held back until the write each follows is answered"
         );
         assert!(!said.contains("held 12377"), "{said}");
+    }
+
+    #[test]
+    fn a_page_of_table_rows_shows_each_rows_values() {
+        let text = describe(&json!({"data":[
+            {"id":"r1","values":{"amount":12.5,"memo":"Coffee"},"updated_at":"2026-10-03T09:30:00.000Z"},
+            {"id":"r2","values":{},"updated_at":"2026-10-03T09:31:00.000Z"},
+        ], "next_cursor":null}))
+        .unwrap();
+        assert!(
+            text.contains(r#"{"amount":12.5,"memo":"Coffee"}"#),
+            "{text}"
+        );
+        assert!(text.contains("r2"), "{text}");
     }
 
     #[test]
