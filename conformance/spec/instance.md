@@ -492,9 +492,9 @@ When the server takes a backup, the server MUST list under the manifest's `bucke
 
 ### `instance/backup-keeps-files`
 
-While the server has recorded a backup it put in the object store, and has neither thinned that backup nor, with a later backup recorded, found it missing from every listing of the store for more than 31 days, the server MUST NOT purge a file that backup names.
+While the server has recorded a backup it put in the object store, and has neither thinned that backup nor, while a later backup was recorded, found it missing from three or more consecutive listings of the store of which the first and the last are more than 31 days apart, the server MUST NOT purge a file that backup names.
 
-**Reason:** Backups contain no file bytes and outlive the orphan grace. The server knows a backup only by its record and the store's listings, so it takes a backup that no listing has shown for longer than retention to be gone.
+**Reason:** Backups contain no file bytes and outlive the orphan grace. The server knows a backup only by its record and the store's listings, and one listing can leave out an object the store holds. So the server takes a backup to be gone only once several listings over longer than retention have left it out, and a listing that shows it again starts the count over.
 
 **Tests:** `compliance/backup-files.test.ts › keeps a file a retained backup names once nothing else names it, across a restart, so a fresh server on the bucket restores it whole`.
 
