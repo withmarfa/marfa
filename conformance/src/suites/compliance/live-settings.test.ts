@@ -6,6 +6,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { QUIET_SCHEDULE } from "../../utils/moved-clock.js";
 
 it(
   "starts disabled work after a live choice and stops it again without restarting",
@@ -25,6 +26,7 @@ it(
       if (!address || typeof address === "string")
         throw new Error("No listener");
       server = await bootFreshServer("live-settings", {
+        ...QUIET_SCHEDULE,
         MARFA_ENRICHMENT_ENABLED: "false",
         MARFA_ENRICHMENT_INTERVAL_MS: "3600000",
         MARFA_HEARTBEAT_ENABLED: "false",

@@ -6,6 +6,7 @@ import {
   stopFreshServers,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { QUIET_SCHEDULE } from "../../utils/moved-clock.js";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
 
 /**
@@ -528,7 +529,7 @@ describe("the housekeeping object of GET /health", () => {
   let own: FreshServer | undefined;
 
   beforeAll(async () => {
-    own = await bootFreshServer("health-housekeeping");
+    own = await bootFreshServer("health-housekeeping", QUIET_SCHEDULE);
   }, FRESH_SERVER_TIMEOUT_MS);
 
   interface Housekeeping {

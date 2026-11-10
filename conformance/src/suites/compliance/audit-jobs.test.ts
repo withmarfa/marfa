@@ -7,6 +7,7 @@ import {
   stopFreshServers,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { QUIET_SCHEDULE, quiet } from "../../utils/moved-clock.js";
 
 /**
  * What the audit log keeps of work that runs as a job, and what it does not
@@ -22,7 +23,7 @@ let client: MarfaClient;
 let manager: MarfaClient;
 
 beforeAll(async () => {
-  server = await bootFreshServer("audit-jobs");
+  server = await bootFreshServer("audit-jobs", QUIET_SCHEDULE);
   client = new MarfaClient({
     baseUrl: server.apiUrl,
     apiKey: server.workingKey,
@@ -31,7 +32,8 @@ beforeAll(async () => {
     baseUrl: server.apiUrl,
     apiKey: server.managementKey,
   });
-}, FRESH_SERVER_TIMEOUT_MS);
+  await quiet(server, ["trash-purge", "event-log-cleanup", "audit-cleanup"]);
+}, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(stopFreshServers, 2 * FRESH_SERVER_TIMEOUT_MS);
 

@@ -8,6 +8,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { QUIET_SCHEDULE } from "../../utils/moved-clock.js";
 import { connect, issuerOrigin, registerApp } from "../../utils/signed-in.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
@@ -29,10 +30,9 @@ let addresses = 0;
 
 beforeAll(async () => {
   server = await bootFreshServer("version-writers", {
+    ...QUIET_SCHEDULE,
     MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
     MARFA_ENRICHMENT_ENABLED: "true",
-    // Driven through the housekeeping operation rather than the scheduler.
-    MARFA_ENRICHMENT_INTERVAL_MS: "3600000",
   });
   origin = await issuerOrigin(server);
 }, FRESH_SERVER_TIMEOUT_MS);

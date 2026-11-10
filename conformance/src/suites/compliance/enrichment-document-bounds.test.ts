@@ -22,6 +22,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { QUIET_SCHEDULE } from "../../utils/moved-clock.js";
 import {
   DOCX_MIME,
   docx,
@@ -48,12 +49,11 @@ function clients(): void {
 
 beforeAll(async () => {
   server = await bootFreshServer("document-bounds", {
+    ...QUIET_SCHEDULE,
     MARFA_ENRICHMENT_ENABLED: "true",
     MARFA_ENRICHMENT_OCR_ENABLED: "false",
     MARFA_ENRICHMENT_MAX_INFLATED_BYTES: String(MIB),
     MARFA_ENRICHMENT_MAX_MEMORY_BYTES: String(64 * MIB),
-    // Driven through the housekeeping door rather than the scheduler.
-    MARFA_ENRICHMENT_INTERVAL_MS: "3600000",
   });
   clients();
 }, 2 * FRESH_SERVER_TIMEOUT_MS);

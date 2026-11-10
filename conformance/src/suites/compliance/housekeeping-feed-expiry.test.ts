@@ -12,6 +12,7 @@ import {
   DAY_MS,
   movedClock,
   operatorOf,
+  QUIET_SCHEDULE,
   quiet,
   runJob,
   writerOf,
@@ -38,11 +39,7 @@ let clock: ReturnType<typeof movedClock>;
 let sequence = 0;
 
 beforeAll(async () => {
-  server = await bootFreshServer("housekeeping-feed-expiry", {
-    // Past reach, so only the runs a case asks for happen.
-    MARFA_FEED_EXPIRY_INTERVAL_MS: "31536000000",
-    MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS: "31536000000",
-  });
+  server = await bootFreshServer("housekeeping-feed-expiry", QUIET_SCHEDULE);
   writer = writerOf(server);
   operator = operatorOf(server);
   clock = movedClock(server);
@@ -356,9 +353,10 @@ describe("the feed-expiry job", () => {
     const archive = await writer.exportArchive({ type });
     expect(archive.status, JSON.stringify(archive.error)).toBe(200);
 
-    const target = await bootFreshServer("housekeeping-feed-expiry-restore", {
-      MARFA_FEED_EXPIRY_INTERVAL_MS: "31536000000",
-    });
+    const target = await bootFreshServer(
+      "housekeeping-feed-expiry-restore",
+      QUIET_SCHEDULE,
+    );
     const owner = new MarfaClient({
       baseUrl: target.apiUrl,
       apiKey: "",

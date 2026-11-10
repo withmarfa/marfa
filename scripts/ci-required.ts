@@ -340,10 +340,8 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [/^\.(agents|claude|codex|githooks)\//, []],
 
   // The drill runs Litestream's configuration, which the offline lane's own
-  // test reads too, and `ci/entrypoint.test.ts` runs the entrypoint. Neither
-  // is in the image.
+  // test reads too. It is not in the image.
   [/^deploy\/litestream\.yml$/, ["restore-drill", ...CONFORMANCE]],
-  [/^deploy\/entrypoint\.sh$/, ["workspace"]],
   // The Dockerfile is the image; `ci/test-hooks-release.test.ts` reads it.
   [/^deploy\/Dockerfile$/, ["workspace", "image"]],
   [/^deploy\//, []],

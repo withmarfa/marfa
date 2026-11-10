@@ -4,7 +4,12 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   stopFreshServers,
 } from "../../utils/fresh-server.js";
-import { jobs, operatorOf, runJob } from "../../utils/moved-clock.js";
+import {
+  jobs,
+  operatorOf,
+  QUIET_SCHEDULE,
+  runJob,
+} from "../../utils/moved-clock.js";
 
 /**
  * The jobs the server lists, and the one job that ends and removes the
@@ -43,7 +48,10 @@ describe("the credential clean-up", () => {
   it(
     "lists every job the server runs, and runs the credential clean-up on demand",
     async () => {
-      const server = await bootFreshServer("credential-cleanup-listing");
+      const server = await bootFreshServer(
+        "credential-cleanup-listing",
+        QUIET_SCHEDULE,
+      );
       const operator = operatorOf(server);
 
       const listed = Object.keys(await jobs(server));
@@ -74,6 +82,7 @@ describe("the credential clean-up", () => {
     "finishes the credential clean-up with the retention settings at the largest value",
     async () => {
       const server = await bootFreshServer("credential-cleanup-widest", {
+        ...QUIET_SCHEDULE,
         MARFA_REVOKED_GRANT_RETENTION_DAYS: "36500",
         MARFA_GRANT_INACTIVITY_DAYS: "36500",
         MARFA_DCR_CLIENT_RETENTION_DAYS: "36500",

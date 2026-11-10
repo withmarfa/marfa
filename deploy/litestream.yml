@@ -7,8 +7,7 @@
 # read from the names the server already reads, so the sidecar and the server
 # cannot name two buckets or two prefixes. Litestream expands `${NAME}` from
 # the environment when it reads this file, and an unset name expands to
-# nothing, so `entrypoint.sh` sets `S3_PREFIX` as the server reads it and a
-# restore by hand must set it too.
+# nothing, so a restore by hand must set `S3_PREFIX` as the server reads it.
 #
 # The blob folder is not here: the server's own `blob-replicate`
 # housekeeping job gives the object store every blob, and `deploy/README.md`

@@ -3,8 +3,8 @@ name: CodeQL
 # A pull request or a push to `main` that changes only documentation, the
 # license, agent settings, issue templates, the README's images or the deploy
 # folder starts no run. CodeQL reads GitHub Actions workflows, JavaScript,
-# TypeScript and Rust, and the deploy folder holds a Dockerfile, a shell
-# script and a Litestream configuration, none of which it analyzes. Code in the
+# TypeScript and Rust, and the deploy folder holds a Dockerfile and a
+# Litestream configuration, neither of which it analyzes. Code in the
 # other agent folders, which ESLint also reads, is analyzed. CodeQL is
 # not a required check, so a run that never starts leaves no check pending.
 # A draft pull request is analyzed once it is marked ready for review, and on

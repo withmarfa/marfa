@@ -17,21 +17,20 @@ export const DAY_MS = 24 * HOUR_MS;
 /** An interval no clock a fixture reaches gets past. */
 const NEVER_MS = "31536000000";
 
-/**
- * Every cleanup job's own interval set past reach. Moving the clock makes a
- * job whose schedule has passed due, and the scheduler would then run it
- * beside the fixture's own run, so each job is run once at the start
- * (`quiet`) and its next run is set from that.
- */
+/** The longest the scheduler may go between looks for a job that is due. */
+const POLL_CEILING_MS = "3600000";
+
+/** Keeps the scheduler from running jobs a fixture runs by hand; start such a fixture with `quiet`. */
 export const QUIET_SCHEDULE: Record<string, string> = {
+  MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: POLL_CEILING_MS,
   MARFA_AUDIT_CLEANUP_INTERVAL_MS: NEVER_MS,
   MARFA_TRASH_PURGE_INTERVAL_MS: NEVER_MS,
   MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS: NEVER_MS,
   MARFA_INBOUND_CLEANUP_INTERVAL_MS: NEVER_MS,
   MARFA_VERSION_THINNING_INTERVAL_MS: NEVER_MS,
   MARFA_FEED_EXPIRY_INTERVAL_MS: NEVER_MS,
-  MARFA_DCR_CLIENT_CLEANUP_INTERVAL_MS: NEVER_MS,
   MARFA_CREDENTIAL_CLEANUP_INTERVAL_MS: NEVER_MS,
+  MARFA_ENRICHMENT_INTERVAL_MS: NEVER_MS,
 };
 
 export const operatorOf = (server: FreshServer): MarfaClient =>
@@ -64,19 +63,38 @@ export async function runJob(
   }
 }
 
-/**
- * Runs each job once and waits until its next run is out of reach. A run
- * asked for ahead of schedule leaves the schedule where it was (the job's
- * first run is some seconds after boot), so the scheduler still makes that
- * first run itself, and only after it is the next run an interval away.
- */
+/** Past the longest first run after boot (a minute), with margin. */
+const FIRST_RUN_REACH_MS = 90_000;
+
+/** Runs each job once its first run is due, so the scheduler has no run of it left to make. */
 export async function quiet(
   server: FreshServer,
   names: readonly string[],
 ): Promise<void> {
   for (const name of names) {
-    expect((await runJob(server, name)).outcome, name).toBe("ok");
+    for (;;) {
+      expect((await runJob(server, name)).outcome, name).toBe("ok");
+      const next = Date.parse((await jobs(server))[name]?.next_run_at ?? "");
+      expect(Number.isNaN(next), `${name} has a next run`).toBe(false);
+      const left = next - (Date.now() + server.clockOffsetMs);
+      if (left > FIRST_RUN_REACH_MS) break;
+      await new Promise((resolve) => setTimeout(resolve, left + 100));
+    }
   }
+}
+
+/**
+ * For a fixture that boots with the scheduler polling: waits until each job's
+ * next run is out of reach. A run asked for ahead of schedule leaves the
+ * schedule where it was (the job's first run is some seconds after boot), so
+ * the scheduler still makes that first run itself, and only after it is the
+ * next run an interval away. Without this wait the first run can land between
+ * the fixture's setup and its own run.
+ */
+export async function settle(
+  server: FreshServer,
+  names: readonly string[],
+): Promise<void> {
   const deadline = Date.now() + 60_000;
   for (;;) {
     const listed = await jobs(server);
