@@ -117,9 +117,7 @@ CREATE TABLE IF NOT EXISTS table_choices (
   PRIMARY KEY (type, name)
 ) WITHOUT ROWID;
 
--- One for each table a choice names of an item the copy holds. `owed` holds
--- no row and waits for the server's size; `filling` sends `cursor` next;
--- `online` is past the cap and holds no row.
+-- Only `filling` and `whole` tables hold rows.
 CREATE TABLE IF NOT EXISTS item_tables (
   item_id TEXT NOT NULL,
   name TEXT NOT NULL,
@@ -132,8 +130,7 @@ CREATE TABLE IF NOT EXISTS item_tables (
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS item_tables_state ON item_tables (state);
 
--- `body` is the row's values as the server printed them; `withheld` the
--- columns the server held back from this key, as a JSON array.
+-- `withheld` names columns the server omitted for this key.
 CREATE TABLE IF NOT EXISTS table_rows (
   item_id TEXT NOT NULL,
   name TEXT NOT NULL,

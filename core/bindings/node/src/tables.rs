@@ -99,8 +99,7 @@ impl MarfaCore {
         })
     }
 
-    /// Holds the table `table` of each item whose type `typeId` names, as a
-    /// slice names a type, and fills it now unless the stream is held.
+    /// Holds matching tables and fills them when no stream operation is active.
     #[napi(
         ts_return_type = "Promise<{ type: string; table: string; was_held: boolean; fill: TableFill | null }>"
     )]
@@ -144,8 +143,7 @@ impl MarfaCore {
         }))
     }
 
-    /// A page of a table's rows as the server's door answers it, with `held`
-    /// saying whether the copy answered it.
+    /// Reads a page, with `held` indicating whether the copy answered it.
     #[napi(ts_return_type = "Promise<Record<string, unknown>>")]
     pub fn table_rows(
         &self,

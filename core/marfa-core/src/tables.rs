@@ -1,5 +1,4 @@
-//! The tables a working copy holds: which an app chose, how each fills from
-//! the server, how `rows.changed` applies, and the reads they answer.
+//! Table choices, fills, events, and reads in a working copy.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicBool;
@@ -99,7 +98,6 @@ fn names(pattern: &str, type_id: &str, catalog: &Catalog) -> bool {
     }
 }
 
-/// The tables a type declares, by name, with each one's definition.
 fn declared(conn: &Connection, type_id: &str) -> Result<Map<String, Value>> {
     match crate::catalog::item_type(conn, type_id) {
         Ok(resolved) => Ok(resolved.tables),
@@ -108,7 +106,6 @@ fn declared(conn: &Connection, type_id: &str) -> Result<Map<String, Value>> {
     }
 }
 
-/// The tables the choices name of a type.
 fn wanted(
     conn: &Connection,
     catalog: &Catalog,
@@ -196,8 +193,7 @@ pub(crate) fn drop_item(conn: &Connection, item: &str) -> Result<()> {
     Ok(())
 }
 
-/// After a gap in the stream nothing held can be trusted: every table is
-/// read again from its first page.
+// A stream gap invalidates every held row and page cursor.
 pub(crate) fn owe_again(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "DELETE FROM table_rows;
@@ -207,7 +203,6 @@ pub(crate) fn owe_again(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Holds, for `item`, the tables the choices name and no other.
 pub(crate) fn reconcile_item(conn: &Connection, item: &str) -> Result<()> {
     let chosen = choices(conn)?;
     let type_id: Option<String> = conn
@@ -241,8 +236,6 @@ fn held_names(conn: &Connection, item: &str) -> Result<Vec<String>> {
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
-/// Holds, for every item the copy holds, the tables the choices name and no
-/// other.
 pub(crate) fn reconcile_all(conn: &Connection) -> Result<()> {
     let chosen = choices(conn)?;
     if chosen.is_empty() {
@@ -301,7 +294,6 @@ pub(crate) fn reconcile_all(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Refused where no type the catalog holds under `type_id` declares `table`.
 pub(crate) fn choose(conn: &mut Connection, type_id: &str, table: &str) -> Result<bool> {
     let catalog = crate::catalog::load(conn)?;
     let held = crate::store::type_rows(conn)?;
@@ -395,7 +387,6 @@ fn invalid() -> CoreError {
     crate::reach::invalid()
 }
 
-/// Holds a row as the server answered it.
 fn hold_row(
     conn: &Connection,
     item: &str,
@@ -440,7 +431,6 @@ fn hold_row(
     Ok(())
 }
 
-/// A row of a server's answer: `{ id, values, updated_at, withheld? }`.
 fn hold_answered(conn: &Connection, item: &str, table: &str, row: &Value) -> Result<String> {
     let id = row.get("id").and_then(Value::as_str).ok_or_else(invalid)?;
     let values = row
@@ -467,7 +457,6 @@ fn withheld_of(row: &Value) -> Result<Vec<String>> {
     }
 }
 
-/// Past the cap the rows go and the table is read from the server.
 fn past_cap(conn: &Connection, item: &str, table: &str) -> Result<bool> {
     let (rows, bytes): (i64, i64) = conn.query_row(
         "SELECT rows, bytes FROM item_tables WHERE item_id = ?1 AND name = ?2",
@@ -490,7 +479,6 @@ fn is_gone(error: &CoreError) -> bool {
     matches!(error, CoreError::NotFound { .. })
 }
 
-/// A table not yet whole: its item, name, state and the cursor it sends next.
 struct Owed {
     item: String,
     table: String,
@@ -498,7 +486,6 @@ struct Owed {
     cursor: Option<String>,
 }
 
-/// The next table a pass has not yet tried.
 fn next_owed(conn: &Connection, tried: &HashSet<(String, String)>) -> Result<Option<Owed>> {
     let mut query = conn.prepare(
         "SELECT t.item_id, t.name, t.state, t.cursor FROM item_tables t JOIN items i ON i.id = t.item_id
@@ -520,8 +507,7 @@ fn next_owed(conn: &Connection, tried: &HashSet<(String, String)>) -> Result<Opt
     Ok(None)
 }
 
-/// One request towards a table not yet whole; `false` where none is left
-/// for this pass.
+/// Returns false when this pass has no table left to try.
 fn step(
     core: &Core,
     http: &Http,
@@ -640,8 +626,7 @@ fn step(
     Ok(true)
 }
 
-/// Fills every table the copy holds that is not whole. The caller holds the
-/// stream, so no event applies between a page's read and its write.
+// The caller holds the stream, excluding events between a page's read and write.
 pub(crate) fn fill(core: &Core, stop: &AtomicBool) -> Result<FillReport> {
     {
         let mut conn = core.conn()?;
@@ -669,13 +654,11 @@ pub(crate) fn fill(core: &Core, stop: &AtomicBool) -> Result<FillReport> {
     Ok(report)
 }
 
-/// One request of a fill, for a follow between the frames it reads.
 pub(crate) fn fill_step(core: &Core, tried: &mut HashSet<(String, String)>) -> Result<bool> {
     step(core, core.http()?, tried, &mut FillReport::default())
 }
 
-/// The rows an event names without values, read from the server before the
-/// event applies; `None` where the copy does not hold the table.
+/// Returns None when the event needs no row read.
 pub(crate) fn rows_to_read(
     core: &Core,
     event: &RowsEvent,
@@ -783,8 +766,6 @@ pub(crate) fn apply(
     Ok(true)
 }
 
-/// The table's definition where the copy answers it, or `None` where the
-/// server does.
 fn local_table(conn: &Connection, item: &str, table: &str) -> Result<Option<Map<String, Value>>> {
     let held: Option<(String, String)> = conn
         .query_row(

@@ -1096,9 +1096,7 @@ impl Core {
         Ok(pinned)
     }
 
-    /// Holds the table `table` of each item the copy holds whose type
-    /// `type_id` names, as a slice's type names one, and fills it now unless
-    /// a catch-up, follow or hydration holds the stream, which fills it.
+    /// Holds matching tables and fills them when no stream operation is active.
     pub fn hold_table(&self, type_id: &str, table: &str) -> Result<TableHold> {
         self.hold_table_until(type_id, table, &NEVER_STOPPED)
     }
@@ -1125,8 +1123,7 @@ impl Core {
         })
     }
 
-    /// Removes every row the copy holds of the tables `type_id` and `table`
-    /// named; answers whether they were held.
+    /// Releases a choice, retaining tables held by other choices.
     pub fn let_go_table(&self, type_id: &str, table: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
         tables::let_go(&mut *self.conn()?, type_id, table)
@@ -1144,8 +1141,7 @@ impl Core {
         tables::fill(self, stop)
     }
 
-    /// `GET /items/{id}/tables/{table}/rows`, answered from the copy where it
-    /// holds the table whole, with `held` saying which.
+    /// Reads rows from the copy when held whole, marking the answer with `held`.
     pub fn table_rows(&self, item: &str, table: &str, asked: &RowsAsked) -> Result<Value> {
         tables::rows(self, item, table, asked)
     }
@@ -8488,7 +8484,10 @@ mod tests {
                 "let_go_table",
                 reader.let_go_table("core.note", "x").unwrap_err(),
             ),
-            ("fill_tables", reader.fill_tables(&NEVER_STOPPED).unwrap_err()),
+            (
+                "fill_tables",
+                reader.fill_tables(&NEVER_STOPPED).unwrap_err(),
+            ),
             (
                 "follow",
                 reader
