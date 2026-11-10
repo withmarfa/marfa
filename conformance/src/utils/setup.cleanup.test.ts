@@ -627,6 +627,18 @@ describe("typeDeletionLevels", () => {
     }
   });
 
+  it("deletes a type whose column constrains to another before that other", async () => {
+    const { typeDeletionLevels } = await import("./setup.js");
+    const levels = typeDeletionLevels([
+      { id: "receipt" },
+      { id: "ledger", constrainedTo: ["receipt", "ledger"] },
+    ] as Parameters<typeof typeDeletionLevels>[0]);
+    expect(levels.map((level) => level.map((type) => type.id))).toEqual([
+      ["ledger"],
+      ["receipt"],
+    ]);
+  });
+
   it("puts a declared child in an earlier group than its parent's", async () => {
     const { typeDeletionLevels } = await import("./setup.js");
     const levels = typeDeletionLevels([

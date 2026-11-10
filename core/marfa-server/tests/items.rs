@@ -1196,9 +1196,9 @@ async fn a_system_row_stays_out_of_the_bin_where_a_note_goes_in() {
         .unwrap()
         .execute(
             "INSERT INTO items (id, type, state, source, properties, version, schema_version, \
-             occurred_at, created_at, updated_at) VALUES (?1, 'system.folder', 'active', 'system', \
-             jsonb('{}'), 1, 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', \
-             '2026-01-01T00:00:00.000Z')",
+             occurred_at, created_at, updated_at, last_activity_at) VALUES (?1, 'system.folder', \
+             'active', 'system', jsonb('{}'), 1, 1, '2026-01-01T00:00:00.000Z', \
+             '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')",
             [id],
         )
         .unwrap();

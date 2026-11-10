@@ -53,6 +53,8 @@ const RUST_SERVER_ONLY: Record<string, string> = {
   export_entry_unrestorable:
     "`GET /export?format=archive`, for an item or an edge a restore would refuse",
   no_bucket: "the backup doors, `/backups`",
+  row_not_found: "the row doors, `/items/{id}/tables/{table}/rows`",
+  table_not_found: "the table doors, `/items/{id}/tables/{table}`",
   too_many_connections: "any door, past the connection cap",
 };
 

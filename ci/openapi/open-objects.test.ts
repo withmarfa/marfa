@@ -50,6 +50,11 @@ const OPEN_ON_PURPOSE: readonly { pattern: RegExp; reason: string }[] = [
       "A connector's own record of a row, whose shape is the connector's.",
   },
   {
+    pattern: /^(TableRow|RowOperation|RowsChangedFrame\.rows)\.values$/,
+    reason:
+      "A row's values, whose shape the columns of its table declare at runtime.",
+  },
+  {
     pattern: /^AuditEntry\.details$/,
     reason: "What an audited action records, which differs by action.",
   },

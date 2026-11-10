@@ -232,14 +232,20 @@ fn merged(catalog: &Catalog, id: &str, stored: &Obj, merge: Merge) -> Result<Obj
     Ok(definition)
 }
 
-/// Without `schema.write`, only changes that leave stored data valid.
-pub async fn replace(app: &App, caller: &Caller, id: String, body: Obj) -> Result<Value> {
-    replacing(app, caller, id, Replacement::Whole(body)).await
+/// Forced schema changes retain stored row values.
+pub async fn replace(
+    app: &App,
+    caller: &Caller,
+    id: String,
+    body: Obj,
+    force: bool,
+) -> Result<Value> {
+    replacing(app, caller, id, Replacement::Whole(body), force).await
 }
 
 /// Merges into the definition the write commits, so a change made meanwhile is kept.
 pub async fn change(app: &App, caller: &Caller, id: String, merge: Merge) -> Result<Value> {
-    replacing(app, caller, id, Replacement::Merge(merge)).await
+    replacing(app, caller, id, Replacement::Merge(merge), false).await
 }
 
 async fn replacing(
@@ -247,6 +253,7 @@ async fn replacing(
     caller: &Caller,
     id: String,
     replacement: Replacement,
+    force: bool,
 ) -> Result<Value> {
     let cache = app.catalog_handle();
     let replaced = app
@@ -282,6 +289,20 @@ async fn replacing(
             };
             let family = with_subtypes(unit.tx(), &id)?;
             require_evolution(unit.tx(), caller, &family, stored, &schema)?;
+            if !force {
+                let next = catalog.types.with(schema.clone());
+                let held = crate::app::tables::held_in_use(unit.tx(), &catalog, &next, &family)?;
+                if !held.is_empty() {
+                    return Err(Refusal::new(
+                        Code::TypeInUse,
+                        format!(
+                            "Rows hold {}, which this change removes. Remove those rows first, or replace the type with force=true to keep them as they are.",
+                            held.join(", ")
+                        ),
+                    )
+                    .with_detail("tables", held));
+                }
+            }
             require_reach(caller, &schema, stored)?;
             if let Some(parent) = text_of(&schema, "parent") {
                 let below = descendant_depth(&catalog.types, &id);
@@ -385,15 +406,17 @@ pub async fn delete(app: &App, caller: &Caller, id: String, force: bool) -> Resu
         let held = items::count_of_type(unit.tx(), &id)?;
         let settings = super::moving::naming(unit.tx(), caller, &id)?;
         let named = settings.as_array().is_some_and(|named| !named.is_empty());
-        if (held > 0 || named) && !force {
+        let columns = crate::app::tables::constraining_columns(&catalog, &id);
+        if (held > 0 || named || !columns.is_empty()) && !force {
             return Err(Refusal::new(
                 Code::TypeInUse,
                 format!(
-                    "Type \"{id}\" still has {held} item(s), or a folder, view or webhook names it. Move its items to another type, which rewrites those settings, or delete with ?force=true to keep the items and settings as they are."
+                    "Type \"{id}\" still has {held} item(s), or a folder, view, webhook or table column names it. Move its items to another type, which rewrites those settings, or delete with ?force=true to keep the items, settings and columns as they are."
                 ),
             )
             .with_detail("item_count", held)
-            .with_detail("settings", settings));
+            .with_detail("settings", settings)
+            .with_detail("columns", columns));
         }
         unit.tx().execute("DELETE FROM types WHERE id = ?1", [&id])?;
         catalog::raise(unit.tx())?;

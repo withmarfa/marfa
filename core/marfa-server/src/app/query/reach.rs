@@ -34,10 +34,7 @@ impl Reach {
     }
 
     pub fn within(tx: &Transaction<'_>, caller: &Caller, catalog: &Catalog) -> Result<Reach> {
-        let present: Vec<String> = tx
-            .prepare_cached(PRESENT_TYPES)?
-            .query_map([], |row| row.get(0))?
-            .collect::<rusqlite::Result<_>>()?;
+        let present = present(tx)?;
         let mut reach = Reach {
             open: Vec::new(),
             held: Vec::new(),
@@ -108,6 +105,24 @@ impl Reach {
             sources: owned(sources),
         }
     }
+}
+
+fn present(tx: &Transaction<'_>) -> Result<Vec<String>> {
+    Ok(tx
+        .prepare_cached(PRESENT_TYPES)?
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+/// The types of held items `caller` may read, or `None` where it may read every one.
+pub fn readable_types(tx: &Transaction<'_>, caller: &Caller) -> Result<Option<Vec<String>>> {
+    let present = present(tx)?;
+    let readable: Vec<String> = present
+        .iter()
+        .filter(|type_id| caller.may_read_type(type_id))
+        .cloned()
+        .collect();
+    Ok((readable.len() < present.len()).then_some(readable))
 }
 
 pub fn keeps_type(rules: &Rules, named: &[String], system: bool, type_id: &str) -> bool {

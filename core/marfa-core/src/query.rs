@@ -166,6 +166,12 @@ pub(crate) fn list_where_with(
     if let SortField::Property(name) = &sort.field {
         SortField::property(name)?;
     }
+    if sort.field == SortField::LastActivityAt {
+        return Err(marfa_rules::error::RuleError::validation(
+            "A device does not hold when an item's rows last changed, so it does not sort by last_activity_at.",
+        )
+        .into());
+    }
     let order_sql = match &sort.field {
         // Rows with no scalar there go last in either direction, and ties
         // fall to the id ascending in both, as on the server
@@ -175,7 +181,8 @@ pub(crate) fn list_where_with(
         SortField::Property(name) => format!(
             "ORDER BY {expression} IS NULL, {expression} {}, id ASC",
             direction_sql(sort.direction),
-            expression = rules::property_sort_expression("items", &format!("'$.{name}'")),
+            expression =
+                rules::property_sort_expression("items.properties", &format!("'$.{name}'")),
         ),
         // As on the server (`search-and-filters/bin-order`).
         SortField::TrashedAt => format!(

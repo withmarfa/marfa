@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use super::super::backups;
 use super::super::blobs::upkeep;
-use super::super::{enrichment, inbound, items, jobs};
+use super::super::{enrichment, inbound, items, jobs, tables};
 use super::{Job, cleanups, heartbeat};
 use crate::settings::registry::{
     AUDIT_CLEANUP_INTERVAL_MS, BACKUP_INTERVAL_MS, BLOB_CLEANUP_INTERVAL_MS,
@@ -78,6 +78,9 @@ pub(super) const JOBS: &[Job] = &[
     ),
     Job::fixed("bulk-action-gc", HOUR_MS, 30_000, HOUR, |app, run| {
         Box::pin(jobs::gc(app, run))
+    }),
+    Job::fixed("table-row-cleanup", HOUR_MS, 30_000, HOUR, |app, run| {
+        Box::pin(tables::cleanup(app, run))
     }),
     Job::new(
         "credential-cleanup",

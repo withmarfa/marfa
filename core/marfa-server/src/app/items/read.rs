@@ -133,7 +133,7 @@ impl<'a, 'c> Reader<'a, 'c> {
             .lists(&self.catalog.rules, &row.type_id, &row.source))
     }
 
-    fn row(&self, id: &str) -> Result<Item> {
+    pub(super) fn row(&self, id: &str) -> Result<Item> {
         self.caller.require_reach()?;
         rows::by_id(self.tx, id)?
             .filter(|row| row.state != "trashed" && self.caller.may_read_type(&row.type_id))

@@ -254,7 +254,7 @@ fn condition(
             let literal = system_literal(column, *compare, value).map_err(ruled)?;
             compared(sql, &Sql::new(&format!("i.{column}")), *compare, &literal);
         }
-        Term::Property { name, op } => property(sql, name, *op, value),
+        Term::Property { name, op } => property(sql, "i.properties", name, *op, value),
         Term::Entry { field, member } => entry(sql, field, member, value),
         Term::TagHeld => {
             // `+` takes the column's text affinity off, so a number never
@@ -307,25 +307,33 @@ fn condition(
     Ok(())
 }
 
-fn extract(name: &str) -> Sql {
-    let mut sql = Sql::new("json_extract(i.properties, ");
+fn extract(source: &str, name: &str) -> Sql {
+    let mut sql = Sql::new(&format!("json_extract({source}, "));
     sql.bind(format!("$.{name}"));
     sql.push(")");
     sql
 }
 
-fn property(sql: &mut Sql, name: &str, op: Op, value: &Literal) {
-    let held = extract(name);
+/// A condition on member `name` of the JSON object in the column `source`.
+fn property(sql: &mut Sql, source: &str, name: &str, op: Op, value: &Literal) {
+    let mut kind = Sql::new(&format!("json_type({source}, "));
+    kind.bind(format!("$.{name}"));
+    kind.push(")");
+    held_property(sql, &extract(source, name), &kind, op, value);
+}
+
+/// A condition on the value `held`, whose JSON type is `kind`.
+pub(crate) fn held_property(sql: &mut Sql, held: &Sql, kind: &Sql, op: Op, value: &Literal) {
     match op {
         Op::Compare(compare @ (Compare::Eq | Compare::Neq))
             if matches!(value, Literal::Number(_)) =>
         {
-            let mut number = Sql::new("CASE WHEN json_type(i.properties, ");
-            number.bind(format!("$.{name}"));
-            number.push(") IN ('integer', 'real') THEN CAST(");
-            number.append(&held);
+            let mut number = Sql::new("CASE WHEN ");
+            number.append(kind);
+            number.push(" IN ('integer', 'real') THEN CAST(");
+            number.append(held);
             number.push(" AS REAL) ELSE ");
-            number.append(&held);
+            number.append(held);
             number.push(" END");
             compared(sql, &number, compare, value);
         }
@@ -333,17 +341,17 @@ fn property(sql: &mut Sql, name: &str, op: Op, value: &Literal) {
             if matches!(value, Literal::Number(_)) =>
         {
             let mut number = Sql::new("CAST(");
-            number.append(&held);
+            number.append(held);
             number.push(" AS REAL)");
             compared(sql, &number, compare, value);
         }
-        Op::Compare(compare) => compared(sql, &held, compare, value),
+        Op::Compare(compare) => compared(sql, held, compare, value),
         Op::Exists => {
-            sql.append(&held);
+            sql.append(held);
             sql.push(" IS NOT NULL");
         }
         Op::NotExists => {
-            sql.append(&held);
+            sql.append(held);
             sql.push(" IS NULL");
         }
     }
@@ -449,7 +457,7 @@ fn status_group(sql: &mut Sql, op: Op, value: &Literal, statuses: &[StatusField]
     sql.push("), 0)");
 }
 
-fn compared(sql: &mut Sql, held: &Sql, compare: Compare, value: &Literal) {
+pub(crate) fn compared(sql: &mut Sql, held: &Sql, compare: Compare, value: &Literal) {
     sql.append(held);
     let operator = match compare {
         Compare::Eq => " = ",

@@ -40,6 +40,7 @@ pub mod refusal;
 mod reindex;
 pub mod sources;
 pub mod stored;
+pub mod tables;
 pub mod types;
 pub mod unit;
 pub mod views;
