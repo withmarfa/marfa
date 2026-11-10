@@ -60,7 +60,7 @@ async function runToCompletion(
 }
 
 describe("POST /items/{id}/purge with version", () => {
-  it("refuses a stale version with version_conflict, and the row survives", async () => {
+  it("refuses a stale version with version_conflict, and the item survives", async () => {
     const tag = `purge-stale-${ctx.runId}`;
     const r = await client.createItem(
       createNote({ source: ctx.source, tags: [tag] }),
@@ -127,14 +127,14 @@ describe("a version that is not a positive whole number", () => {
       }
     }
     const kept = await client.getItem(live.data.item.id);
-    expect(kept.data.item.state, "a refused delete trashed the row").toBe(
+    expect(kept.data.item.state, "a refused delete trashed the item").toBe(
       "active",
     );
-    expect(await trashedIds(tag), "a refused purge took the row").toEqual([
+    expect(await trashedIds(tag), "a refused purge took the item").toEqual([
       binned,
     ]);
 
-    // The witness: the same operations naming the row's version succeed, so
+    // The witness: the same operations naming the item's version succeed, so
     // the refusals above are about the number.
     const purged = await client.purgeItem(binned, { version: 1 });
     expect(purged.status).toBe(200);
@@ -151,11 +151,11 @@ describe("a version that is not a positive whole number", () => {
     });
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("validation_error");
-    expect(await trashedIds(tag), "the refused purge took the row").toEqual([
+    expect(await trashedIds(tag), "the refused purge took the item").toEqual([
       id,
     ]);
 
-    // The witness: the same request without the parameter purges the row.
+    // The witness: the same request without the parameter purges the item.
     const purged = await client.purgeItem(id);
     expect(purged.status).toBe(200);
     expect(await trashedIds(tag)).toEqual([]);
@@ -163,7 +163,7 @@ describe("a version that is not a positive whole number", () => {
 });
 
 describe("POST /items/bulk-actions purge with expected_ids", () => {
-  it("does not purge a row trashed after the dry run", async () => {
+  it("does not purge an item trashed after the dry run", async () => {
     const tag = `purge-expected-${ctx.runId}`;
     const seen = [await trashedNote(tag), await trashedNote(tag)];
     const filter = { tags: [tag], state: "trashed" as const };
@@ -178,7 +178,7 @@ describe("POST /items/bulk-actions purge with expected_ids", () => {
     expect(dryIds.slice().sort()).toEqual(seen.slice().sort());
 
     const late = await trashedNote(tag);
-    // The witness: the filter now reaches the late row.
+    // The witness: the filter now reaches the late item.
     expect(await trashedIds(tag)).toContain(late);
 
     const result = await runToCompletion({
@@ -233,7 +233,7 @@ describe("POST /items/bulk-actions purge with expected_ids", () => {
     expect(await trashedIds(tag)).toEqual([id]);
   });
 
-  it("caps the rows the purge takes, not the filter's whole match", async () => {
+  it("caps the items the purge takes, not the filter's whole match", async () => {
     const tag = `purge-expected-cap-${ctx.runId}`;
     const listed = await trashedNote(tag);
     const others = [await trashedNote(tag), await trashedNote(tag)];

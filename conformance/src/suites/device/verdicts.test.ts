@@ -30,7 +30,7 @@ afterEach(async () => {
  * Six verdicts, and the set is closed. An open set means a default branch in
  * practice, and a default branch is where a refusal becomes a retry and a
  * merge becomes a silent overwrite. The three a successful answer can carry
- * are told apart by one field rather than by comparing rows, because every
+ * are told apart by one field rather than by comparing items, because every
  * answer carries fields the server stamped and the device never sent.
  */
 
@@ -59,7 +59,7 @@ function held() {
   };
 }
 
-/** Queue one update to the held row and drain once. */
+/** Queue one update to the held item and drain once. */
 async function updateAndDrain(
   harness: Harness,
   update: ScriptedWrites["update"],
@@ -89,7 +89,7 @@ async function updateAndDrain(
 
 describe("the set is closed", () => {
   it("answers every write with one of the six verdicts", async () => {
-    harness = await hydratedHarness("verdicts-closed", { rows: held() });
+    harness = await hydratedHarness("verdicts-closed", { items: held() });
     const reached = new Set<string>();
 
     // One answer per verdict, each the answer its statement names. Driven
@@ -143,7 +143,7 @@ describe("the set is closed", () => {
 
     for (const scenario of cases) {
       const own = await hydratedHarness(`verdicts-${scenario.expected}`, {
-        rows: held(),
+        items: held(),
       });
       try {
         const report = await updateAndDrain(
@@ -163,7 +163,7 @@ describe("the set is closed", () => {
 
     // `dead` needs the ceiling, which is five counted refusals rather than
     // one answer, so it is reached here rather than in the table above.
-    const dying = await hydratedHarness("verdicts-dead", { rows: held() });
+    const dying = await hydratedHarness("verdicts-dead", { items: held() });
     try {
       const edit = await dying.device.update(HELD.id, {
         properties: { title: "dying" },
@@ -195,10 +195,10 @@ describe("the set is closed", () => {
   });
 
   it("tells the three successful verdicts apart by the resolution the answer carries", async () => {
-    // The same row, the same version, the same fields on the way back. The
+    // The same item, the same version, the same fields on the way back. The
     // only thing that differs is what the answer reports about resolving,
     // which is the statement: a device reads that rather than comparing the
-    // row it got against the row it imagined.
+    // item it got against the item it imagined.
     const row = wireItem({
       id: HELD.id,
       version: 4,
@@ -220,7 +220,7 @@ describe("the set is closed", () => {
     ];
     for (const [expected, update] of cases) {
       const own = await hydratedHarness(`verdicts-apart-${expected}`, {
-        rows: held(),
+        items: held(),
       });
       try {
         const report = await updateAndDrain(own, update, [
@@ -228,7 +228,7 @@ describe("the set is closed", () => {
         ]);
         expect(
           report.verdicts[0]?.verdict,
-          `three answers carrying the same row were not told apart by the resolution each reported, so a merge reads as a plain success and a caller never learns their value was changed`,
+          `three answers carrying the same item were not told apart by the resolution each reported, so a merge reads as a plain success and a caller never learns their value was changed`,
         ).toBe(expected);
       } finally {
         await own.stop();
@@ -238,8 +238,8 @@ describe("the set is closed", () => {
 });
 
 describe("the server took the write", () => {
-  it("accepted: adopts the row the server returned", async () => {
-    harness = await hydratedHarness("verdicts-accepted", { rows: held() });
+  it("accepted: adopts the item the server returned", async () => {
+    harness = await hydratedHarness("verdicts-accepted", { items: held() });
     const report = await updateAndDrain(
       harness,
       [
@@ -271,7 +271,7 @@ describe("the server took the write", () => {
     expect(read.ok).toBe(true);
     if (!read.ok) return;
     // The version and the stamped fields both, because those are the ones
-    // the device never sent: a copy that kept its own is a copy of a row
+    // the device never sent: a copy that kept its own is a copy of an item
     // the server never wrote.
     expect(
       read.value.version,
@@ -285,7 +285,7 @@ describe("the server took the write", () => {
   });
 
   it("accepted: takes an upsert and a replayed repeat as accepted", async () => {
-    harness = await hydratedHarness("verdicts-upsert", { rows: held() });
+    harness = await hydratedHarness("verdicts-upsert", { items: held() });
     const created = await harness.device.create({
       type: "core.note",
       properties: { title: "by natural key", body: "by natural key" },
@@ -295,7 +295,7 @@ describe("the server took the write", () => {
     expect(created.ok).toBe(true);
     if (!created.ok) return;
 
-    // A natural-key upsert: the server answers 200 with the row it already
+    // A natural-key upsert: the server answers 200 with the item it already
     // held, under a different id than the one this device minted.
     const theirs = "01a00000-0000-7000-8000-0000000000cc";
     scriptWrites(harness.server, {
@@ -314,7 +314,7 @@ describe("the server took the write", () => {
     if (!drained.ok) return;
     expect(
       drained.value.verdicts[0]?.verdict,
-      "an upsert answered from the server's record was read as something other than accepted, and the row it returned is the truth whatever the device held",
+      "an upsert answered from the server's record was read as something other than accepted, and the item it returned is the truth whatever the device held",
     ).toBe("accepted");
     expect(
       drained.value.verdicts[0]?.replayed,
@@ -324,7 +324,7 @@ describe("the server took the write", () => {
     const adopted = await harness.device.get(theirs);
     expect(
       adopted.ok,
-      "the copy did not take the row the server returned, so an upsert leaves the device holding a row that exists nowhere",
+      "the copy did not take the item the server returned, so an upsert leaves the device holding an item that exists nowhere",
     ).toBe(true);
   });
 
@@ -332,7 +332,7 @@ describe("the server took the write", () => {
     "accepted: takes %s as accepted",
     async (shape) => {
       harness = await hydratedHarness("verdicts-upsert-alone", {
-        rows: held(),
+        items: held(),
       });
       const keyed = shape === "an upsert under another id";
       const created = await harness.device.create({
@@ -371,8 +371,8 @@ describe("the server took the write", () => {
     },
   );
 
-  it("merged: adopts the row a resolution returned", async () => {
-    harness = await hydratedHarness("verdicts-merged", { rows: held() });
+  it("merged: adopts the item a resolution returned", async () => {
+    harness = await hydratedHarness("verdicts-merged", { items: held() });
     const report = await updateAndDrain(
       harness,
       [
@@ -404,8 +404,8 @@ describe("the server took the write", () => {
     const read = await harness.device.get(HELD.id);
     expect(read.ok).toBe(true);
     if (!read.ok) return;
-    // Both halves of the returned row, because the point of a merge is that
-    // the row carries the device's field and the other writer's.
+    // Both halves of the returned item, because the point of a merge is that
+    // the item carries the device's field and the other writer's.
     expect(read.value.properties.title).toBe("mine");
     expect(
       read.value.properties.body,
@@ -413,8 +413,8 @@ describe("the server took the write", () => {
     ).toBe("theirs, kept");
   });
 
-  it("holds the row a fresh read returns where it differs from the row the answer carried", async () => {
-    harness = await hydratedHarness("verdicts-fresh-read", { rows: held() });
+  it("holds the item a fresh read returns where it differs from the item the answer carried", async () => {
+    harness = await hydratedHarness("verdicts-fresh-read", { items: held() });
     const report = await updateAndDrain(
       harness,
       [
@@ -443,12 +443,12 @@ describe("the server took the write", () => {
     if (!read.ok) return;
     expect(
       [read.value.version, read.value.properties.title],
-      "the copy took the row the answer carried over the row the read after it returned",
+      "the copy took the item the answer carried over the item the read after it returned",
     ).toEqual([5, "the read's"]);
   });
 
   it("conflicted: names the sibling the server wrote", async () => {
-    harness = await hydratedHarness("verdicts-conflicted", { rows: held() });
+    harness = await hydratedHarness("verdicts-conflicted", { items: held() });
     const sibling = "01a00000-0000-7000-8000-0000000000bb";
     const report = await updateAndDrain(
       harness,
@@ -492,7 +492,7 @@ describe("the server took the write", () => {
     harness = await startHarness("verdicts-conflicted-later");
     const { server, device } = harness;
     const sibling = "01a00000-0000-7000-8000-0000000000bb";
-    scriptHydration(server, { head: "1", rows: held() });
+    scriptHydration(server, { head: "1", items: held() });
     // The catch-up after the drain reads this: the server logs the sibling
     // as a create of its own, in the same transaction as the update.
     server.copyAnswer(
@@ -536,14 +536,14 @@ describe("the server took the write", () => {
     );
     expect(report.verdicts[0]?.conflicted_copy_id).toBe(sibling);
 
-    // The answer names the sibling and carries only the row written to, so
+    // The answer names the sibling and carries only the item written to, so
     // a read of the sibling straight after the drain races the stream. The
     // read after the catch-up below is the witness that the copy can hold
     // it.
     const before = await device.get(sibling);
     expect(
       before.ok,
-      "the copy held the sibling before any event brought it, so it was made up from an answer that carries only the row written to",
+      "the copy held the sibling before any event brought it, so it was made up from an answer that carries only the item written to",
     ).toBe(false);
     if (!before.ok) expect(before.refusal.code).toBe("not_held");
 
@@ -584,7 +584,7 @@ describe("a write the server took is settled once", () => {
       ],
     ] as Array<[string, ScriptedWrites["update"]]>) {
       const own = await hydratedHarness(`verdicts-once-${expected}`, {
-        rows: held(),
+        items: held(),
       });
       try {
         const first = await updateAndDrain(own, update, [answers.updated(row)]);
@@ -607,7 +607,7 @@ describe("a write the server took is settled once", () => {
   });
 
   it("keeps an accepted write accepted, counts nothing and reads it again at the next drain when the read after it fails", async () => {
-    harness = await hydratedHarness("verdicts-read-fails", { rows: held() });
+    harness = await hydratedHarness("verdicts-read-fails", { items: held() });
     const { device, server } = harness;
     const edited = await device.update(HELD.id, {
       properties: { title: "edited" },
@@ -722,7 +722,7 @@ describe("a conflicted copy names its original", () => {
   it("holds the link with the sibling after the verdict's catch-up, and after the store is reopened", async () => {
     harness = await startHarness("verdicts-conflicted-link");
     const { server, device } = harness;
-    scriptHydration(server, { head: "1", rows: held() });
+    scriptHydration(server, { head: "1", items: held() });
     // The server logs the sibling, then its link to the original, then the
     // original's update, all from the one transaction.
     server.copyAnswer(
@@ -790,7 +790,7 @@ describe("a conflicted copy names its original", () => {
     harness = await startHarness("verdicts-conflicted-link-unheld");
     const { server, device } = harness;
     const unheld = "01a00000-0000-7000-8000-0000000000ef";
-    scriptHydration(server, { head: "1", rows: {} });
+    scriptHydration(server, { head: "1", items: {} });
     server.copyAnswer(
       "GET",
       "/events",
@@ -819,7 +819,7 @@ describe("a conflicted copy names its original", () => {
     const unheld = "01a00000-0000-7000-8000-0000000000ef";
     scriptHydration(server, {
       head: "1",
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -844,11 +844,11 @@ describe("a conflicted copy names its original", () => {
 
 describe("the server did not take the write", () => {
   it("refused: carries the server's code and is not sent again", async () => {
-    harness = await hydratedHarness("verdicts-refused", { rows: held() });
+    harness = await hydratedHarness("verdicts-refused", { items: held() });
     const report = await updateAndDrain(
       harness,
       [refusal(403, "type_forbidden", "this key may not write core.note")],
-      // The read a refusal is reconciled against: the server's row, which
+      // The read a refusal is reconciled against: the server's item, which
       // still carries what it held before the write it declined.
       [
         answers.updated(
@@ -894,19 +894,19 @@ describe("the server did not take the write", () => {
     if (!read.ok) return;
     expect(
       read.value.properties.title,
-      "the copy kept the edit the server refused, and a refusal produces no event, so every later read of that row would answer a change that never happened",
+      "the copy kept the edit the server refused, and a refusal produces no event, so every later read of that item would answer a change that never happened",
     ).toBe("held");
   });
 
-  it("refused: preserves the local row until a fresh read succeeds at the next drain", async () => {
+  it("refused: preserves the local item until a fresh read succeeds at the next drain", async () => {
     harness = await hydratedHarness("verdicts-refused-unread", {
-      rows: held(),
+      items: held(),
     });
     const report = await updateAndDrain(
       harness,
       [refusal(403, "type_forbidden", "this key may not write core.note")],
       // The first read meets a server that cannot answer; the next is the
-      // row as another device has since left it.
+      // item as another device has since left it.
       [
         refusal(503, "write_contention", "the write lock is busy"),
         answers.updated(
@@ -935,7 +935,7 @@ describe("the server did not take the write", () => {
     if (!read.ok) return;
     expect(
       read.value.properties.title,
-      "the read-back that failed was never tried again, so the copy stays on a row the server moved past until something else touches it",
+      "the read-back that failed was never tried again, so the copy stays on an item the server moved past until something else touches it",
     ).toBe("theirs");
     expect(read.value.version).toBe(HELD.version + 1);
     expect(
@@ -947,9 +947,9 @@ describe("the server did not take the write", () => {
     ).toBe(2);
   });
 
-  it("refused: takes a read-back answered 400 invalid_id as the server holding no such row", async () => {
+  it("refused: takes a read-back answered 400 invalid_id as the server holding no such item", async () => {
     harness = await hydratedHarness("verdicts-refused-invalid-id", {
-      rows: held(),
+      items: held(),
     });
     const created = await harness.device.create({
       type: "core.note",
@@ -961,7 +961,7 @@ describe("the server did not take the write", () => {
     const shown = await harness.device.get(id);
     expect(
       shown.ok,
-      "the fixture's create was not shown to a read before the drain, so a row gone after it proves nothing",
+      "the fixture's create was not shown to a read before the drain, so an item gone after it proves nothing",
     ).toBe(true);
 
     scriptWrites(harness.server, {
@@ -978,7 +978,7 @@ describe("the server did not take the write", () => {
     const gone = await harness.device.get(id);
     expect(
       gone.ok ? "held" : gone.refusal.code,
-      "the read-back refused for its id was read as a failure, so the row the create showed stays in the copy",
+      "the read-back refused for its id was read as a failure, so the item the create showed stays in the copy",
     ).toBe("not_held");
     const discarded = await harness.device.discard(created.value.id);
     expect(discarded.ok).toBe(true);
@@ -998,10 +998,10 @@ describe("the server did not take the write", () => {
     ],
   ] as const;
   it.each(goneReads)(
-    "refused: lets the row go where the read-back is answered %s",
+    "refused: lets the item go where the read-back is answered %s",
     async (_status, read) => {
       harness = await hydratedHarness("verdicts-refused-read-gone", {
-        rows: held(),
+        items: held(),
       });
       const created = await harness.device.create({
         type: "core.note",
@@ -1009,7 +1009,7 @@ describe("the server did not take the write", () => {
       });
       if (!created.ok) throw new Error(JSON.stringify(created));
       const id = created.value.item_id ?? "";
-      // The witness: the row was shown before the drain.
+      // The witness: the item was shown before the drain.
       expect((await harness.device.get(id)).ok).toBe(true);
       scriptWrites(harness.server, {
         create: [refusal(400, "invalid_properties", "body is required")],
@@ -1020,18 +1020,18 @@ describe("the server did not take the write", () => {
       const gone = await harness.device.get(id);
       expect(
         gone.ok ? "held" : gone.refusal.code,
-        "a read-back saying the server holds no row the key reads left the refused create's row in the copy",
+        "a read-back saying the server holds no item the key reads left the refused create's item in the copy",
       ).toBe("not_held");
     },
   );
 
-  it("refused: keeps the row the copy holds where the read-back answers an older one", async () => {
-    // The copy holds the row as a later write stamped it, which a follow on
+  it("refused: keeps the item the copy holds where the read-back answers an older one", async () => {
+    // The copy holds the item as a later write stamped it, which a follow on
     // the same core can bring between the read-back and its write. The
     // version alone cannot order the two: a transition, a delete, a restore
     // and a tag write leave it where it was.
     harness = await hydratedHarness("verdicts-refused-older", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -1064,14 +1064,14 @@ describe("the server did not take the write", () => {
     if (!read.ok) return;
     expect(
       read.value.properties.title,
-      "a read-back stamped before the row the copy holds was written over it, which rolls the copy back under a change whose event is already behind the cursor",
+      "a read-back stamped before the item the copy holds was written over it, which rolls the copy back under a change whose event is already behind the cursor",
     ).toBe("held");
     expect(read.value.updated_at).toBe("2026-03-02T00:00:00.000Z");
   });
 
   it("refused: reads the server's code, message, fields and missing grant into the refusal", async () => {
     harness = await hydratedHarness("verdicts-refused-typed", {
-      rows: {
+      items: {
         "core.note": [
           { item: { id: "a", version: 1 } },
           { item: { id: "b", version: 1 } },
@@ -1134,9 +1134,9 @@ describe("the server did not take the write", () => {
     ]);
   });
 
-  it("refused: says when the row a write named is in the bin", async () => {
+  it("refused: says when the item a write named is in the bin", async () => {
     harness = await hydratedHarness("verdicts-refused-trashed", {
-      rows: {
+      items: {
         "core.note": [
           { item: { id: "binned", version: 1 } },
           { item: { id: "gone", version: 1 } },
@@ -1165,12 +1165,12 @@ describe("the server did not take the write", () => {
     if (!drained.ok) return;
     expect(
       drained.value.verdicts.map((verdict) => verdict.refusal?.trashed),
-      "a refusal saying the row is in the bin read the same as one for a row that is gone, so nothing offers to restore it with the edit",
+      "a refusal saying the item is in the bin read the same as one for an item that is gone, so nothing offers to restore it with the edit",
     ).toEqual([true, false]);
   });
 
   it("blocked: is passed over by a drain and reported with its reason", async () => {
-    harness = await hydratedHarness("verdicts-blocked", { rows: held() });
+    harness = await hydratedHarness("verdicts-blocked", { items: held() });
     const report = await updateAndDrain(harness, [
       refusal(409, "ancestor_unavailable", "no snapshot of that version"),
     ]);
@@ -1192,7 +1192,7 @@ describe("the server did not take the write", () => {
     ).toBe(before);
     expect(
       again.value.answered,
-      "the drain counted a blocked row as sent, so its own report disagrees with what went out",
+      "the drain counted a blocked write as sent, so its own report disagrees with what went out",
     ).toBe(0);
 
     // And the queue still reports it, which is how a person finds it.
@@ -1201,12 +1201,12 @@ describe("the server did not take the write", () => {
     if (!queue.ok) return;
     expect(
       queue.value[0]?.reason,
-      "the queue does not say why the row is stopped, so a caller sees a write that never moves and no reason",
+      "the queue does not say why the write is stopped, so a caller sees a write that never moves and no reason",
     ).toBe("ancestor_unavailable");
   });
 
   it("dead: is terminal once the ceiling is reached", async () => {
-    harness = await hydratedHarness("verdicts-dead", { rows: held() });
+    harness = await hydratedHarness("verdicts-dead", { items: held() });
     const edit = await harness.device.update(HELD.id, {
       properties: { title: "dying" },
       version: HELD.version,
@@ -1249,11 +1249,11 @@ describe("the server did not take the write", () => {
 
 describe("a verdict is reported, not acted on", () => {
   it("reports a conflict rather than resolving it", async () => {
-    harness = await hydratedHarness("verdicts-report", { rows: held() });
+    harness = await hydratedHarness("verdicts-report", { items: held() });
     const envelope = refusal(
       409,
       "version_conflict",
-      "the row moved under this write",
+      "the item moved under this write",
     );
     const report = await updateAndDrain(harness, [envelope]);
     expect(
@@ -1269,7 +1269,7 @@ describe("a verdict is reported, not acted on", () => {
     if (!read.ok) return;
     expect(
       read.value.version,
-      "the device advanced the version of a row the server refused to change, which is a version it minted",
+      "the device advanced the version of an item the server refused to change, which is a version it minted",
     ).toBe(HELD.version);
 
     // And the envelope is kept whole, because what a device reports has to
@@ -1284,7 +1284,7 @@ describe("a verdict is reported, not acted on", () => {
   });
 
   it("refuses the writes that were waiting on a create the server refused", async () => {
-    harness = await hydratedHarness("verdicts-dependants", { rows: held() });
+    harness = await hydratedHarness("verdicts-dependants", { items: held() });
     const created = await harness.device.create({
       type: "core.note",
       properties: { title: "never lands", body: "never lands" },
@@ -1301,7 +1301,7 @@ describe("a verdict is reported, not acted on", () => {
 
     scriptWrites(harness.server, {
       create: [refusal(400, "invalid_properties", "body is required")],
-      // The create was refused, so the server holds no such row.
+      // The create was refused, so the server holds no such item.
       read: [refusal(404, "item_not_found", "no such item")],
     });
     const drained = await harness.device.drain();
@@ -1314,11 +1314,11 @@ describe("a verdict is reported, not acted on", () => {
     expect(byId.get(created.value.id)?.verdict).toBe("refused");
     expect(
       byId.get(edit.value.id)?.verdict,
-      "a write waiting on a create the server never accepted was left queued or sent, and there is no row for it to be written to",
+      "a write waiting on a create the server never accepted was left queued or sent, and there is no item for it to be written to",
     ).toBe("refused");
     expect(
       byId.get(edit.value.id)?.reason,
-      "the dependant's reason does not name the write that was refused, so a caller is told this row failed and not why",
+      "the dependant's reason does not name the write that was refused, so a caller is told this item failed and not why",
     ).toContain("create_item");
     expect(
       byId.get(edit.value.id)?.refusal,
@@ -1346,7 +1346,7 @@ describe("a verdict is reported, not acted on", () => {
       harness = await hydratedHarness(
         `verdicts-not-retained-${originalStatus}`,
         {
-          rows: held(),
+          items: held(),
         },
       );
       const created = await harness.device.create({
@@ -1425,7 +1425,7 @@ describe("a verdict is reported, not acted on", () => {
   );
 
   it("answers about whole fields, never about part of one", async () => {
-    harness = await hydratedHarness("verdicts-whole", { rows: held() });
+    harness = await hydratedHarness("verdicts-whole", { items: held() });
     const edit = await harness.device.update(HELD.id, {
       properties: { body: "line one\nline two\nmine" },
       version: HELD.version,

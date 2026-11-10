@@ -859,9 +859,7 @@ describe("who may read and write rows", () => {
     expect(same.data.batch).toBeNull();
 
     const edited = await writer.writeRows(item, "lines", {
-      operations: [
-        { op: "put", id: row, values: { amount: 7, memo: "kept" } },
-      ],
+      operations: [{ op: "put", id: row, values: { amount: 7, memo: "kept" } }],
     });
     expect(edited.status, JSON.stringify(edited.error)).toBe(200);
     expect(edited.data.results[0]?.outcome).toBe("replaced");

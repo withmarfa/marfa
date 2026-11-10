@@ -112,7 +112,7 @@ describe("trash — soft delete and restore", () => {
   it("refuses to purge an item that is not trashed", async () => {
     // The same code the restore door beside it answers for the same class
     // of mistake: a lifecycle move the graph does not allow. The two doors
-    // are the two halves of one question — what may happen to a row in the
+    // are the two halves of one question — what may happen to an item in the
     // state it is in — and a caller that sorted their refusals apart would
     // be sorting on which door it asked rather than on what was wrong.
     const r = await client.createItem(createNote({ source: ctx.source }));

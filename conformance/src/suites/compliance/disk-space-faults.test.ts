@@ -218,7 +218,7 @@ describe("a restore whose archive inflates past the room", () => {
       [{ data: entry, mime_type: "application/octet-stream" }],
     );
 
-  it("is answered 507 insufficient_storage and writes no row and no blob when an entry would take the volume inside the reserve", async () => {
+  it("is answered 507 insufficient_storage and writes no item and no blob when an entry would take the volume inside the reserve", async () => {
     const body = archive();
     // The blob entry needs 6 MiB, and the volume has 5 MiB.
     await room({ database: 1024 * MiB, blobs: 5 * MiB });
@@ -264,7 +264,7 @@ describe("a write that meets a volume with no room", () => {
     expect(await diskHolds(server.controlSocket, hash)).toBe(true);
   });
 
-  it("is answered 507 insufficient_storage when the disk store has no room for the bytes of a restore, which writes no row", async () => {
+  it("is answered 507 insufficient_storage when the disk store has no room for the bytes of a restore, which writes no item", async () => {
     const entry = new TextEncoder().encode("restored bytes with no room");
     const id = uuidv7();
     const archive = itemsArchive(

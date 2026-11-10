@@ -27,12 +27,12 @@ afterEach(async () => {
 const id = "01a00000-0000-7000-8000-00000000000a";
 
 it.each(["dead", "released"] as const)(
-  "keeps a %s edit visible after a newer server row arrives",
+  "keeps a %s edit visible after a newer server item arrives",
   async (state) => {
     harness = await startHarness(`projection-${state}`);
     scriptHydration(harness.server, {
       head: "1",
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -103,7 +103,7 @@ it.each(["parent-first", "dependent-first"] as const)(
   "sends an unsent dependent edit after release in %s order",
   async (order) => {
     harness = await hydratedHarness("projection-release-dependents", {
-      rows: {},
+      items: {},
     });
     const { device, server } = harness;
     const create = await device.create({
@@ -228,7 +228,7 @@ it.each(["parent-first", "dependent-first"] as const)(
 );
 
 it("keeps a dead create visible through hydration", async () => {
-  harness = await hydratedHarness("projection-dead-create", { rows: {} });
+  harness = await hydratedHarness("projection-dead-create", { items: {} });
   const { device, server } = harness;
   const create = await device.create({
     type: "core.note",
@@ -258,7 +258,7 @@ it("keeps a dead edge edit over a newer edge event", async () => {
   });
   scriptHydration(server, {
     head: "1",
-    rows: {
+    items: {
       "core.note": [
         {
           item: {
@@ -314,7 +314,7 @@ it("keeps a dead edge create over an existing server edge", async () => {
   let edgeId = "";
   scriptHydration(server, {
     head: "1",
-    rows: { "core.note": [{ item: { id } }, { item: { id: "target" } }] },
+    items: { "core.note": [{ item: { id } }, { item: { id: "target" } }] },
   });
   server.copyAnswer("GET", "/events", () =>
     copyReplay("2", [
@@ -375,7 +375,7 @@ async function createdWithUnreadEdge(
   listing: () => Answer,
 ): Promise<{ harness: Harness; made: string; drawn: string; created: string }> {
   const started = await hydratedHarness(label, {
-    rows: { "core.note": [{ item: { id: drawnTarget } }] },
+    items: { "core.note": [{ item: { id: drawnTarget } }] },
   });
   const { device, server } = started;
   const create = await device.create({

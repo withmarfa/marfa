@@ -72,7 +72,7 @@ async function seed(
   };
   const frames: SseFrame[] = [];
   folder = await folderHarness("held-links", {
-    rows,
+    items: rows,
     edges: { "parent-of": [], "attached-to": [] },
     lookup,
     events: [

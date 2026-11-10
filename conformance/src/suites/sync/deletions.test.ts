@@ -15,11 +15,11 @@ import type { SyncCapabilities } from "./capabilities.js";
  * "A replay is what a live subscriber would have seen", applied to removals:
  * one reaches a client that was not connected when it happened.
  *
- * A client holds rows it can only drop when told to. Within the retention
+ * A client holds items it can only drop when told to. Within the retention
  * window that telling is an event; beyond it, the client's re-import prunes
  * what the server no longer has. The events are the cheap path and the one
  * that keeps a running client correct, so a removal that never announces
- * itself leaves every connected client holding a row the server does not have
+ * itself leaves every connected client holding an item the server does not have
  * — an item in a list that 404s when opened, or an edge pointing at nothing.
  */
 
@@ -154,7 +154,7 @@ describe("deletions reach the stream", () => {
     ).toContain("edge.deleted");
   });
 
-  it("announces a purge, so a client offline across it learns the row is gone", async (context) => {
+  it("announces a purge, so a client offline across it learns the item is gone", async (context) => {
     requireRule(caps, "itemPurgedEvent");
 
     const id = await makeNote("purge-announcement");
@@ -183,7 +183,7 @@ describe("deletions reach the stream", () => {
         context.signal,
       );
       // A purge announcement can land a beat after the delete's, so the wait
-      // is on a row written after the purge rather than on a fixed window:
+      // is on an item written after the purge rather than on a fixed window:
       // items reach a subscriber in publish order, and this one arrives
       // whether or not a purge is ever announced.
       const sentinel = await makeNote("purge-announcement-sentinel");
@@ -213,7 +213,7 @@ describe("deletions reach the stream", () => {
     ).toContain("item.deleted");
     expect(
       names,
-      "a hard delete was not announced, so a client that was offline across it keeps the row forever",
+      "a hard delete was not announced, so a client that was offline across it keeps the item forever",
     ).toContain("item.purged");
   });
 });

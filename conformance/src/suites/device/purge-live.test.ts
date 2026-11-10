@@ -14,7 +14,7 @@ import { requireBinary } from "./harness.js";
 /**
  * A purge through a working copy (the device chapter's section "Purging"),
  * against a real server and the real binary: sent at once and never queued,
- * refused with the copy and the queue left as they were, and the row, its
+ * refused with the copy and the queue left as they were, and the item, its
  * edges and its pin taken out once the server answers.
  */
 
@@ -88,11 +88,11 @@ async function trashed(device: CliDevice): Promise<string[]> {
   return value(await device.list({ state: "trashed" })).map((row) => row.id);
 }
 
-it("purges a row in the bin at once, queueing nothing", async () => {
+it("purges an item in the bin at once, queueing nothing", async () => {
   const doomed = await note("Purged at once");
   expect((await client.deleteItem(doomed.id)).ok).toBe(true);
   const device = await hydrated("at-once", ["items.purge"]);
-  // The witness: the row is held in the bin, and nothing is queued.
+  // The witness: the item is held in the bin, and nothing is queued.
   expect(await trashed(device)).toContain(doomed.id);
   expect(value(await device.queue())).toEqual([]);
 
@@ -105,23 +105,23 @@ it("purges a row in the bin at once, queueing nothing", async () => {
     "a purge was held in the queue rather than sent",
   ).toEqual([]);
   const read = await client.getItem(doomed.id);
-  expect(read.status, "the server still holds the purged row").toBe(404);
+  expect(read.status, "the server still holds the purged item").toBe(404);
   expect(await trashed(device)).not.toContain(doomed.id);
 });
 
-it("takes the row and its pin out once the server accepts, and the event after changes nothing", async () => {
+it("takes the item and its pin out once the server accepts, and the event after changes nothing", async () => {
   const doomed = await note("Purged from the slice");
-  const kept = await note("Keeps its own row");
+  const kept = await note("Keeps its own item");
   trackItem(ctx, kept.id);
   const pinned = await note("Pinned outside the slice", "feed");
 
   const device = await hydrated("pinned", ["items.purge"]);
   value(await device.pin(pinned.id));
-  // Trashed by another client, so the copy holds both rows in the bin.
+  // Trashed by another client, so the copy holds both items in the bin.
   expect((await client.deleteItem(doomed.id)).ok).toBe(true);
   expect((await client.deleteItem(pinned.id)).ok).toBe(true);
   value(await device.catchUp());
-  // The witnesses: both rows are held in the bin, and the pin is held.
+  // The witnesses: both items are held in the bin, and the pin is held.
   expect(await trashed(device)).toEqual(
     expect.arrayContaining([doomed.id, pinned.id]),
   );
@@ -130,13 +130,13 @@ it("takes the row and its pin out once the server accepts, and the event after c
   value(await device.purgeItem(doomed.id));
   value(await device.purgeItem(pinned.id));
   const left = await trashed(device);
-  expect(left, "the copy kept a row the server purged").not.toContain(
+  expect(left, "the copy kept an item the server purged").not.toContain(
     doomed.id,
   );
   expect(left).not.toContain(pinned.id);
   expect(
     value(await device.status()).pinned,
-    "the purged row stayed pinned",
+    "the purged item stayed pinned",
   ).not.toContain(pinned.id);
   expect(value(await device.get(kept.id)).id).toBe(kept.id);
 
@@ -153,7 +153,7 @@ it("takes the row and its pin out once the server accepts, and the event after c
   expect(value(await device.queue())).toEqual([]);
 });
 
-it("takes the edges at both ends of a purged row out of the copy", async () => {
+it("takes the edges at both ends of a purged item out of the copy", async () => {
   const doomed = await note("Purged with its edges");
   const other = await note("At the far end of both edges");
   trackItem(ctx, other.id);
@@ -171,22 +171,22 @@ it("takes the edges at both ends of a purged row out of the copy", async () => {
   const device = await hydrated("edges", ["items.purge"], ["references"]);
   expect((await client.deleteItem(doomed.id)).ok).toBe(true);
   value(await device.catchUp());
-  // The witness: the copy holds both edges while the row is in the bin.
+  // The witness: the copy holds both edges while the item is in the bin.
   expect(value(await device.status()).edges).toBe(2);
   value(await device.purgeItem(doomed.id));
   expect(
     value(await device.status()).edges,
-    "the copy kept an edge at an end of the purged row",
+    "the copy kept an edge at an end of the purged item",
   ).toBe(0);
   expect(value(await device.get(other.id)).id).toBe(other.id);
 });
 
-it("refuses a purge of a row not in the bin, keeping it", async () => {
+it("refuses a purge of an item not in the bin, keeping it", async () => {
   const active = await note("Not in the bin");
   trackItem(ctx, active.id);
   const device = await hydrated("active", ["items.purge"]);
   const refused = await device.purgeItem(active.id);
-  expect(refused.ok, "a row outside the bin was purged").toBe(false);
+  expect(refused.ok, "an item outside the bin was purged").toBe(false);
   if (!refused.ok) {
     expect(refused.refusal.code).toBe("validation");
     expect(refused.refusal.raw).toContain("invalid_transition");
@@ -196,14 +196,14 @@ it("refuses a purge of a row not in the bin, keeping it", async () => {
   expect(value(await device.queue())).toEqual([]);
 });
 
-it("refuses a purge the key may not make, keeping the row", async () => {
+it("refuses a purge the key may not make, keeping the item", async () => {
   const doomed = await note("Refused a purge");
   trackItem(ctx, doomed.id);
   expect((await client.deleteItem(doomed.id)).ok).toBe(true);
   const device = await hydrated("no-purge", []);
   expect(await trashed(device)).toContain(doomed.id);
   const refused = await device.purgeItem(doomed.id);
-  expect(refused.ok, "a key without items.purge purged a row").toBe(false);
+  expect(refused.ok, "a key without items.purge purged an item").toBe(false);
   if (!refused.ok) expect(refused.refusal.code).toBe("forbidden");
   expect(await trashed(device)).toContain(doomed.id);
   // Still on the server: the owner's key brings it back.
@@ -211,7 +211,7 @@ it("refuses a purge the key may not make, keeping the row", async () => {
   expect(value(await device.queue())).toEqual([]);
 });
 
-it("refuses a purge of a row that moved since the copy read it, keeping it", async () => {
+it("refuses a purge of an item that moved since the copy read it, keeping it", async () => {
   const moved = await note("Moved since it was read");
   trackItem(ctx, moved.id);
   expect((await client.deleteItem(moved.id)).ok).toBe(true);
@@ -228,9 +228,10 @@ it("refuses a purge of a row that moved since the copy read it, keeping it", asy
   expect((await client.deleteItem(moved.id)).ok).toBe(true);
 
   const refused = await device.purgeItem(moved.id);
-  expect(refused.ok, "a purge destroyed a row changed since it was read").toBe(
-    false,
-  );
+  expect(
+    refused.ok,
+    "a purge destroyed an item changed since it was read",
+  ).toBe(false);
   if (!refused.ok) expect(refused.refusal.raw).toContain("version_conflict");
   expect(await trashed(device)).toContain(moved.id);
   expect((await client.restoreItem(moved.id)).ok).toBe(true);

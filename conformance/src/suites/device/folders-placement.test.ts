@@ -36,7 +36,7 @@ import {
   hashOf,
   requireBinary,
   scriptBlob,
-  scriptFolderRow,
+  scriptFolderItem,
   scriptHydration,
 } from "./harness.js";
 import {
@@ -48,7 +48,7 @@ import { ScriptedServer } from "../../device/scripted-server.js";
 import {
   CONFLICTED_COPY_TAG,
   FolderDoor,
-  type DoorRow,
+  type DoorItem,
 } from "../../device/folder-door.js";
 import type { FolderHarness } from "./harness.js";
 import { writeSteadily } from "../../device/steady-writer.js";
@@ -115,7 +115,7 @@ describe("where a file sits", () => {
   ): Promise<{
     harness: FolderHarness;
     edges: EdgeDoor;
-    held: Map<string, DoorRow>;
+    held: Map<string, DoorItem>;
   }> {
     const edges = new EdgeDoor();
     const rows = notes.map((note) => ({
@@ -137,7 +137,7 @@ describe("where a file sits", () => {
     }
     const made = await folderHarness(label, {
       settings,
-      rows: byType,
+      items: byType,
       hydrate: false,
       events: [edges.stream()],
     });
@@ -275,7 +275,7 @@ describe("where a file sits", () => {
         query: { types: ["core.note", "core.bookmark"] },
         first_placement: { "core.note": "Notes/" },
       },
-      rows: {
+      items: {
         "core.note": [
           { item: { id: note, properties: { title: "An idea", body: "x\n" } } },
         ],
@@ -2357,7 +2357,7 @@ describe("where a file sits", () => {
           "core.file.image": "Images/",
         },
       },
-      rows: {
+      items: {
         "core.file": [
           {
             item: {
@@ -2411,7 +2411,7 @@ describe("where a file sits", () => {
         head: "1",
         key: [answers.currentKey("k", grant)],
       });
-      const row = scriptFolderRow(server, {
+      const row = scriptFolderItem(server, {
         query: { types: ["core.note"] },
       });
       const parent = mkdtempSync(
@@ -2505,7 +2505,7 @@ describe("where a file sits", () => {
       label: string,
       title = "Plan",
       path = "Plan.md",
-    ): Promise<{ edges: EdgeDoor; held: Map<string, DoorRow> }> {
+    ): Promise<{ edges: EdgeDoor; held: Map<string, DoorItem> }> {
       const placed = await placedHarness(label, [{ id: NOTE, title, path }]);
       harness = placed.harness;
       expect((await harness.folder.pull()).ok).toBe(true);
@@ -2543,7 +2543,7 @@ describe("where a file sits", () => {
         .sort();
     }
 
-    function titleOf(held: Map<string, DoorRow>, id = NOTE): unknown {
+    function titleOf(held: Map<string, DoorItem>, id = NOTE): unknown {
       return held.get(id)?.properties.title;
     }
 
@@ -3745,7 +3745,7 @@ describe("writing", () => {
           return answer.kind === "sse" ? { ...answer, hold: false } : answer;
         },
       ],
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -3863,7 +3863,7 @@ describe("writing", () => {
   it("sends a file edited twice before a push as two edits, not a conflict with itself", async () => {
     const id = "01a00000-0000-7000-8000-00000000000a";
     harness = await folderHarness("folder-edit-twice", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -3897,7 +3897,7 @@ describe("writing", () => {
       pushed.value.drain.verdicts
         .filter((entry) => entry.kind === "update_item")
         .map((entry) => entry.verdict),
-      "the second edit of the file was not taken as sent: the server merged it against the folder's own first edit as though another machine had written it, and kept the first on the row with the second set aside in a copy",
+      "the second edit of the file was not taken as sent: the server merged it against the folder's own first edit as though another machine had written it, and kept the first on the item with the second set aside in a copy",
     ).toEqual(["accepted", "accepted"]);
     expect(
       harness.server.requests
@@ -3917,7 +3917,7 @@ describe("writing", () => {
     const noteId = "01a00000-0000-7000-8000-0000000000a1";
     const controlId = "01a00000-0000-7000-8000-0000000000a2";
     harness = await folderHarness("folder-save-twice-retitled", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -3982,7 +3982,7 @@ describe("writing", () => {
     expect(read(harness, "Retitled.md")).toContain("second save");
     expect(read(harness, "Retitled.md")).toContain("title: Retitled");
     expect(existsSync(join(harness.dir, "Note.md"))).toBe(false);
-    const copiesIn = (held: Iterable<DoorRow>) =>
+    const copiesIn = (held: Iterable<DoorItem>) =>
       [...held].filter((row) => (row.tags ?? []).includes(CONFLICTED_COPY_TAG));
     // The witness: the same two saves, each sent on the version the file
     // was read at, leave a conflicted copy on this door, tagged.
@@ -4015,7 +4015,7 @@ describe("writing", () => {
   it("keeps a file whose newest save conflicted with its own earlier one, and sends it again", async () => {
     const id = "01a00000-0000-7000-8000-0000000000a3";
     harness = await folderHarness("folder-save-against-its-own", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -4045,7 +4045,7 @@ describe("writing", () => {
     const pushed = await harness.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
     if (!pushed.ok) return;
-    // The witness: the second save was set aside in a copy, and the row
+    // The witness: the second save was set aside in a copy, and the item
     // kept the first save's body.
     expect(
       itemVerdicts(pushed.value.drain.verdicts)
@@ -4055,10 +4055,10 @@ describe("writing", () => {
     expect(rows.get(id)?.properties.body).toBe("first save\n");
     expect(
       read(harness, "Note.md"),
-      "the pull wrote the row's older save over the file holding the newest one",
+      "the pull wrote the item's older save over the file holding the newest one",
     ).toContain("second save");
 
-    // The next push sends what the file holds as an edit of the row.
+    // The next push sends what the file holds as an edit of the item.
     const again = await harness.folder.push();
     expect(again.ok, JSON.stringify(again)).toBe(true);
     if (!again.ok) return;
@@ -4090,7 +4090,7 @@ describe("writing", () => {
     title = "NOTE",
   ) {
     harness = await folderHarness(label, {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -4345,7 +4345,7 @@ describe("writing", () => {
   it("merges a file whose line names a version the copy skipped against that line", async () => {
     const id = "01a00000-0000-7000-8000-000000001493";
     harness = await folderHarness("folder-skipped-version", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -4410,7 +4410,7 @@ describe("writing", () => {
     const edges = new EdgeDoor();
     harness = await folderHarness("folder-refused-then-behind", {
       settings: { query: { types: ["core.note", "core.bookmark"] } },
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -4520,7 +4520,7 @@ describe("writing", () => {
   it("keeps a line spent where a pull writes the file over the edit that spent it", async () => {
     const id = "01a00000-0000-7000-8000-0000000000b9";
     harness = await folderHarness("folder-version-spent-under-pull", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -4582,7 +4582,7 @@ describe("writing", () => {
   it("sends nothing for a save that changes only the version line", async () => {
     const id = "01a00000-0000-7000-8000-0000000000ba";
     harness = await folderHarness("folder-version-line-only", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -4635,7 +4635,7 @@ describe("writing", () => {
   it("writes the line into a file saved without one, once its edit lands", async () => {
     const id = "01a00000-0000-7000-8000-0000000000bb";
     harness = await folderHarness("folder-version-line-restored", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -4701,7 +4701,7 @@ describe("writing", () => {
         }),
       );
     harness = await folderHarness("folder-version-line-alone", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -4776,7 +4776,7 @@ describe("writing", () => {
   it("rewrites the line once its own edit lands, where a pull wrote the file while that edit waited", async () => {
     const id = "01a00000-0000-7000-8000-0000000000b4";
     harness = await folderHarness("folder-version-written-while-waiting", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -4855,7 +4855,7 @@ describe("writing", () => {
     const id = "01a00000-0000-7000-8000-0000000000bd";
     const properties = { title: "Note", body: "as read\n" };
     harness = await folderHarness("folder-version-pulled-over-waiting", {
-      rows: { "core.note": [{ item: { id, version: 1, properties } }] },
+      items: { "core.note": [{ item: { id, version: 1, properties } }] },
       events: [
         copyLiveReplay("2", [
           copyItemEvent(
@@ -4945,12 +4945,12 @@ describe("writing", () => {
   ): Promise<{
     door: FolderDoor;
     edges: EdgeDoor;
-    rows: Map<string, DoorRow>;
+    rows: Map<string, DoorItem>;
     update: FolderDoor["update"];
   }> {
     const edges = new EdgeDoor();
     harness = await folderHarness(label, {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -5291,7 +5291,7 @@ describe("writing", () => {
   it("keeps a line an edit spent spent after the pull rewrites it", async () => {
     const id = "01a00000-0000-7000-8000-0000000000b5";
     harness = await folderHarness("folder-version-spent-rewritten", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -5333,7 +5333,7 @@ describe("writing", () => {
   it("keeps the line a landed edit spent when a later edit from the same buffer is refused", async () => {
     const id = "01a00000-0000-7000-8000-0000000000bc";
     harness = await folderHarness("folder-version-spent-refused", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -5479,7 +5479,7 @@ describe("writing", () => {
     // only one in which the clear inside the rename arm is the thing under
     // test: the file leaves the folder, the scan journals the path it left,
     // and the file then arrives under a different name with that journal
-    // row still standing.
+    // item still standing.
     //
     // It moves into a dot-led directory rather than being deleted and
     // rewritten, because the device, inode and birth time have to survive
@@ -5835,7 +5835,7 @@ describe("a file that is not a document", () => {
     const other = Buffer.from("the bytes another file item names\n");
     harness = await folderHarness("folder-file-pull", {
       settings,
-      rows: {
+      items: {
         "core.file": [
           {
             item: {
@@ -5934,7 +5934,7 @@ describe("a file that is not a document", () => {
     const hash = hashOf(photo);
     harness = await folderHarness("folder-file-let-go", {
       settings,
-      rows: {
+      items: {
         "core.file": [
           {
             item: {
@@ -5982,7 +5982,7 @@ describe("a file that is not a document", () => {
     const hash = hashOf(photo);
     harness = await folderHarness("folder-file-credential", {
       settings,
-      rows: {
+      items: {
         "core.file": [
           {
             item: {
@@ -6019,7 +6019,7 @@ describe("a file that is not a document", () => {
         query: { types: ["core.note", "core.bookmark", "core.file"] },
         defaults: { type: "core.note" },
       },
-      rows: {
+      items: {
         "core.bookmark": [
           {
             item: {
@@ -6083,7 +6083,7 @@ describe("a file that is not a document", () => {
     };
     harness = await folderHarness("folder-file-titled", {
       settings,
-      rows: { "core.file": [{ item: row }] },
+      items: { "core.file": [{ item: row }] },
       // Somebody retitles the item once its file is written.
       events: [
         copyReplay("2", [
@@ -6140,7 +6140,7 @@ describe("a file that is not a document", () => {
     };
     harness = await folderHarness("folder-file-kept", {
       settings,
-      rows: { "core.file": [{ item: row }] },
+      items: { "core.file": [{ item: row }] },
       events: [
         copyReplay("2", [
           copyItemEvent(
@@ -6184,7 +6184,7 @@ describe("a file that is not a document", () => {
     ) as [Buffer, Buffer, Buffer];
     harness = await folderHarness("folder-file-absent", {
       settings,
-      rows: {
+      items: {
         "core.file": [
           image("01a00000-0000-7000-8000-0000000000fa", "failing.png", failing),
           image("01a00000-0000-7000-8000-0000000000fb", "limited.png", limited),
@@ -6231,7 +6231,7 @@ describe("a file that is not a document", () => {
     const text = Buffer.from("plain text a server holds as a file\n");
     harness = await folderHarness("folder-file-move-behind-bytes", {
       settings,
-      rows: {
+      items: {
         "core.file": [
           {
             item: {
@@ -6255,7 +6255,7 @@ describe("a file that is not a document", () => {
     expect((await harness.folder.pull()).ok).toBe(true);
 
     // New bytes, whose edit waits on their upload, then a move of the same
-    // file, which is an edit of the same row waiting on nothing.
+    // file, which is an edit of the same item waiting on nothing.
     const edited = Buffer.from("plain text, edited\n");
     writeFileSync(join(harness.dir, "notes.txt"), edited);
     expect((await harness.folder.scan()).ok).toBe(true);
@@ -6299,7 +6299,7 @@ describe("a file that is not a document", () => {
     const text = Buffer.from("plain text a server holds as a file\n");
     harness = await folderHarness("folder-move-behind-refused-bytes", {
       settings,
-      rows: {
+      items: {
         "core.file": [
           {
             item: {
@@ -6383,7 +6383,7 @@ describe("a file that is not a document", () => {
     const text = Buffer.from("plain text a server holds as a file\n");
     harness = await folderHarness("folder-file-move-behind-locked-bytes", {
       settings,
-      rows: {
+      items: {
         "core.file": [
           {
             item: {
@@ -6457,7 +6457,7 @@ describe("a file that is not a document", () => {
     const hash = hashOf(text);
     harness = await folderHarness("folder-file-text", {
       settings,
-      rows: {
+      items: {
         "core.file": [
           {
             item: {
@@ -6508,7 +6508,7 @@ describe("a file that is not a document", () => {
       const text = Buffer.from("plain text a server holds as a file\n");
       harness = await folderHarness("folder-file-at-document-name", {
         settings,
-        rows: {
+        items: {
           "core.file": [
             {
               item: {
@@ -6619,7 +6619,7 @@ describe("a file that is not a document", () => {
     const made = await folderHarness(label, {
       settings: options.settings ?? settings,
       catalog: options.catalog,
-      rows: {
+      items: {
         [options.type ?? "core.file"]: [
           {
             item: {
@@ -6711,7 +6711,7 @@ describe("a file that is not a document", () => {
     expect((await made.folder.push()).ok).toBe(true);
 
     // The file item moves on and a note is written at its old path before the
-    // next pass, so the row at that path is no longer its file's.
+    // next pass, so the item at that path is no longer its file's.
     renameSync(join(made.dir, "notes.md"), join(made.dir, "moved.md"));
     writeFileSync(
       join(made.dir, "notes.md"),

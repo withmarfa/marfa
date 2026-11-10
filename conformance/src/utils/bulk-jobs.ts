@@ -7,7 +7,7 @@ import type {
 } from "../client/types.js";
 
 /**
- * What the fixtures that hold or restart a bulk-action job share: rows seeded
+ * What the fixtures that hold or restart a bulk-action job share: items seeded
  * under a tag, a job queued and read back, and the chunk size, which the
  * contract states nowhere and a fixture learns from the job's own audit
  * entries (`events/audit-job-chunk`).
@@ -17,9 +17,9 @@ import type {
 export const HOLD = {
   /** A request selecting the job's items, before its last check. */
   selected: "hold:bulk-job:selected",
-  /** The worker has taken the job and not yet written a row. */
+  /** The worker has taken the job and not yet written an item. */
   claimed: "hold:bulk-job:claimed",
-  /** A chunk's rows are written and its checkpoint is not. */
+  /** A chunk's items are written and its checkpoint is not. */
   inChunk: "hold:bulk-job:in-chunk",
   /** A chunk is committed and the job has more. */
   betweenChunks: "hold:bulk-job:between-chunks",
@@ -33,7 +33,7 @@ export async function seed(
   tag: string,
   rows: number,
   options: {
-    /** One type for every row, or the type of the row at an index. */
+    /** One type for every item, or the type of the item at an index. */
     type?: string | ((index: number) => string);
   } = {},
 ): Promise<void> {
@@ -111,7 +111,7 @@ export async function jobOf(
   return read.data;
 }
 
-/** How many rows the job's first chunk took, from the audit entries of its chunks. */
+/** How many items the job's first chunk took, from the audit entries of its chunks. */
 export async function firstChunkRows(
   client: MarfaClient,
   jobId: string,
@@ -127,8 +127,8 @@ export async function firstChunkRows(
 }
 
 /**
- * Rows enough that a job takes more than one chunk, and the size of its
- * first. A job of fewer rows than a chunk would have nothing to hold between.
+ * Items enough that a job takes more than one chunk, and the size of its
+ * first. A job of fewer items than a chunk would have nothing to hold between.
  */
 export async function rowsAndChunk(
   client: MarfaClient,
@@ -142,5 +142,5 @@ export async function rowsAndChunk(
     const chunk = await firstChunkRows(client, job.id);
     if (chunk < rows) return { rows, chunk };
   }
-  throw new Error("a job took one chunk for every number of rows tried");
+  throw new Error("a job took one chunk for every number of items tried");
 }

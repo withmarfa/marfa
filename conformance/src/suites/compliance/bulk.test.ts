@@ -250,7 +250,7 @@ describe("bulk", () => {
     );
   });
 
-  it("upsert mode updates an existing (source, source_id) row in place", async () => {
+  it("upsert mode updates an existing (source, source_id) item in place", async () => {
     const sourceId = `upsert-${ctx.runId}`;
     const first = await client.bulkItems({
       items: [
@@ -286,7 +286,7 @@ describe("bulk", () => {
     expect((getRes.data.item.properties as { body: string }).body).toBe("v2");
   });
 
-  it("atomic rollback on invalid type returns 400 and leaves no rows", async () => {
+  it("atomic rollback on invalid type returns 400 and leaves no items", async () => {
     const tag = `atomic-${ctx.runId}`;
     const res = await client.bulkItems({
       items: [
@@ -368,7 +368,7 @@ describe("bulk", () => {
     expect(listed.data.data).toHaveLength(0);
   });
 
-  it("leaves a state alone on an entry that resolves a row rather than creating one", async () => {
+  it("leaves a state alone on an entry that resolves an item rather than creating one", async () => {
     // The update path never reads `state`, so an entry carrying one that
     // its type's lifecycle could not have created is a field the write it
     // describes is going to ignore. Refusing it would roll a page back
@@ -433,7 +433,7 @@ describe("bulk", () => {
     expect(rejected.error?.error.code).toBe("bulk_atomic_rollback");
     expect(rejected.error?.error.details?.code).toBe("unknown_type");
 
-    // A missing row is 404: an entry linking to an item nothing holds.
+    // A missing item is 404: an entry linking to an item nothing holds.
     const missingTarget = await client.bulkItems({
       items: [
         {
@@ -447,7 +447,7 @@ describe("bulk", () => {
     expect(missingTarget.error?.error.code).toBe("bulk_atomic_rollback");
     expect(missingTarget.error?.error.details?.code).toBe("item_not_found");
 
-    // A row that moved on is 409: an entry based on a version since
+    // An item that moved on is 409: an entry based on a version since
     // overtaken.
     const sourceId = `bulk-rollback-status-${ctx.runId}`;
     const seeded = await client.createItem(
@@ -541,7 +541,7 @@ describe("bulk", () => {
           type: "core.note",
           properties: { title: "overwrites", body: "overwrites" },
         },
-        // The natural key resolves a row first, so the id beside it is not
+        // The natural key resolves an item first, so the id beside it is not
         // asked about.
         {
           id: binned.data.item.id,
@@ -660,7 +660,7 @@ describe("bulk", () => {
     expect(row?.properties.body).toBe("binned");
   });
 
-  it("reads a natural key over trashed rows, as the single create does", async () => {
+  it("reads a natural key over trashed items, as the single create does", async () => {
     const sourceId = `trashed-${ctx.runId}`;
     const created = await client.createItem({
       type: "core.note",
@@ -681,14 +681,14 @@ describe("bulk", () => {
       return binned.data.data.find((item) => item.id === id);
     };
     const before = await binnedRow();
-    expect(before, "the deleted row is not in the bin").toBeDefined();
+    expect(before, "the deleted item is not in the bin").toBeDefined();
     const entry = {
       type: "core.note",
       properties: { title: "trashed", body: "a re-sync" },
       source_id: sourceId,
     };
 
-    // The single create's answer: the trashed row, acknowledged, and
+    // The single create's answer: the trashed item, acknowledged, and
     // nothing written.
     const single = await client.createItem(entry);
     expect(single.status, JSON.stringify(single.error)).toBe(200);
@@ -696,11 +696,11 @@ describe("bulk", () => {
     expect(single.data.item.id).toBe(id);
 
     // The same entry through the bulk door, atomic by default: the page
-    // lands, and the entry is the trashed row, left as it is.
+    // lands, and the entry is the trashed item, left as it is.
     const upserted = await client.bulkItems({ items: [entry] });
     expect(
       upserted.status,
-      `the bulk door did not find the trashed row by its natural key, so a re-sync of one deleted row rolls the whole page back: ${JSON.stringify(upserted.error)}`,
+      `the bulk door did not find the trashed item by its natural key, so a re-sync of one deleted item rolls the whole page back: ${JSON.stringify(upserted.error)}`,
     ).toBe(200);
     expect(upserted.data.results[0]).toMatchObject({
       outcome: "skipped",
@@ -721,9 +721,9 @@ describe("bulk", () => {
       reason: "duplicate_source",
     });
 
-    // Nothing was written to the row, and it is still in the bin.
+    // Nothing was written to the item, and it is still in the bin.
     const after = await binnedRow();
-    expect(after?.version, "an acknowledgment wrote to the trashed row").toBe(
+    expect(after?.version, "an acknowledgment wrote to the trashed item").toBe(
       before?.version,
     );
     expect((after?.properties as { body?: string } | undefined)?.body).toBe(
@@ -886,8 +886,8 @@ describe("bulk", () => {
   it("writes nothing for a best-effort entry whose edge target is missing", async (context) => {
     // The edge step is the last of an entry's writes, and a child syncing
     // before its parent meets it in ordinary use: the entry is reported
-    // errored, so its row must not have landed either. The entry after it is
-    // the stream's sentinel, and its row is the witness that this page writes.
+    // errored, so its item must not have landed either. The entry after it is
+    // the stream's sentinel, and its item is the witness that this page writes.
     const phantom = `bulk-edge-phantom-${ctx.runId}`;
     const sentinel = `bulk-edge-sentinel-${ctx.runId}`;
     await withStream(apiUrl, apiKey, {}, async (stream) => {
@@ -1005,8 +1005,8 @@ describe("bulk_action time filters", () => {
     expect(recent.ok).toBe(true);
     trackItem(ctx, recent.data.item.id);
 
-    // The control: unbounded, both rows are in the match set. Without it a
-    // bounded run returning one row says nothing about the bound.
+    // The control: unbounded, both items are in the match set. Without it a
+    // bounded run returning one item says nothing about the bound.
     const unbounded = await client.bulkAction({
       action: "update_tags",
       add: [`${tag}-probe`],
@@ -1045,7 +1045,7 @@ describe("bulk_action time filters", () => {
     const tag = `ba-undeclared-${ctx.runId}`;
     await seedTagged(1, tag);
 
-    // A dropped filter field here is not a narrower match set but every row
+    // A dropped filter field here is not a narrower match set but every item
     // the credential can see, so the door refuses rather than strips.
     for (const undeclared of ["since", "until", "occurred_at_after"]) {
       const res = await client.bulkAction({
@@ -1111,7 +1111,7 @@ describe("bulk_action", () => {
     }
   });
 
-  it("restores a row and what its trash took in one transition, counting each row once", async () => {
+  it("restores an item and what its trash took in one transition, counting each item once", async () => {
     // Restoring the parent brings the other two back before the job reaches them.
     const tag = `ba-restore-${ctx.runId}`;
     const [grandchild, child, parent] = await seedTagged(3, tag);
@@ -1149,7 +1149,7 @@ describe("bulk_action", () => {
     expect(result.matched).toBe(3);
     expect(
       [result.succeeded, result.errored],
-      `a row the parent's restore brought back was moved again or counted twice: ${JSON.stringify(result.errors)}`,
+      `an item the parent's restore brought back was moved again or counted twice: ${JSON.stringify(result.errors)}`,
     ).toEqual([3, 0]);
     for (const id of [parent!, child!, grandchild!]) {
       const got = await client.getItem(id);
@@ -1188,7 +1188,7 @@ describe("bulk_action", () => {
       confirm: "PURGE",
       filter: { tags: [tag] },
     });
-    // The witness: the filter reached the row.
+    // The witness: the filter reached the item.
     expect(result.matched).toBe(1);
     expect(result.succeeded).toBe(0);
     expect(result.errored).toBe(1);
@@ -1200,7 +1200,7 @@ describe("bulk_action", () => {
     expect(got.data.item.state).toBe("active");
   });
 
-  it("reports a refused row in a job's errors and goes on to the next", async () => {
+  it("reports a refused item in a job's errors and goes on to the next", async () => {
     const tag = `ba-continue-${ctx.runId}`;
     const [first] = await seedTagged(1, tag);
     // A bookmark's `url` must be a string, so the patch below refuses it and
@@ -1377,7 +1377,7 @@ describe("bulk_action async-job lifecycle", () => {
 
   it("cancel on a terminal job answers 200 with its final state unchanged", async () => {
     // The worker takes a job the moment it is queued and a local run of a
-    // few hundred rows completes before a second request can land, so the
+    // few hundred items completes before a second request can land, so the
     // queued and in-flight cancellations are not reachable over the wire.
     // What is reachable is the door's answer once the job is terminal.
     const tag = `ba-cancel-${ctx.runId}`;
@@ -1553,9 +1553,9 @@ describe("bulk_action async-job lifecycle", () => {
 
   it("tells a reused id from a mistaken declaration, as the single-item doors do", async () => {
     // The code a batched write gets must not depend on its being batched.
-    // An entry whose own `id` resolves a row of another type is the
+    // An entry whose own `id` resolves an item of another type is the
     // reused-id mistake and answers `id_reused`; one whose natural key
-    // resolves a row of another type is the declaration mistake and
+    // resolves an item of another type is the declaration mistake and
     // answers `type_mismatch`. Both travel in `details.code` here,
     // because the page rolls back under the default `atomic`.
     const byId = await client.createItem(createNote({ source: ctx.source }));
@@ -1596,7 +1596,7 @@ describe("bulk_action async-job lifecycle", () => {
       "type_mismatch",
     );
 
-    // The witness for both: the same two entries declaring the rows' own
+    // The witness for both: the same two entries declaring the items' own
     // type land, so each refusal is the type rather than the door.
     const accepted = await client.bulkItems({
       items: [

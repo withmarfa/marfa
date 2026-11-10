@@ -13,7 +13,7 @@ import {
  * reads items by them: `GET /items`, `GET /items/stats`, `GET /search` and
  * `GET /export` (`search-and-filters/type-list`, `search-and-filters/state-list`).
  *
- * Every case asserts on which ids come back, and each seeds a row the list
+ * Every case asserts on which ids come back, and each seeds an item the list
  * leaves out, so a door that ignored the list and a door that read only its
  * first entry both fail.
  */
@@ -66,13 +66,13 @@ beforeAll(async () => {
     const res = await client.transitionItem(item.id, "archived");
     expect(
       res.ok,
-      "the fixture cannot archive a row, so no case below tells two states apart",
+      "the fixture cannot archive an item, so no case below tells two states apart",
     ).toBe(true);
   }
   const binned = await client.deleteItem(binnedNote.id);
   expect(
     binned.ok,
-    "the fixture cannot put a row in the bin, so no case below reaches it",
+    "the fixture cannot put an item in the bin, so no case below reaches it",
   ).toBe(true);
 
   mine = new Set(
@@ -144,19 +144,19 @@ describe("a type list", () => {
     ).toContain(liveBookmark.id);
     expect(
       sorted(await listed({ type: both })),
-      "the listing did not answer exactly the active rows of both types",
+      "the listing did not answer exactly the active items of both types",
     ).toEqual(sorted([liveNote.id, liveTask.id]));
     expect(
       sorted(await searched({ type: both })),
-      "the search did not match exactly the active rows of both types",
+      "the search did not match exactly the active items of both types",
     ).toEqual(sorted([liveNote.id, liveTask.id]));
     expect(
       sorted(await exported({ type: both })),
-      "the export did not carry exactly the rows of both types outside the bin",
+      "the export did not carry exactly the items of both types outside the bin",
     ).toEqual(sorted([liveNote.id, filedNote.id, liveTask.id, filedTask.id]));
     expect(
       await counted({ type: both, by: "type", state: "active" }),
-      "the count did not group exactly the active rows of both types",
+      "the count did not group exactly the active items of both types",
     ).toEqual({ "core.note": 1, "core.task": 1 });
   });
 
@@ -212,11 +212,11 @@ describe("a type list", () => {
 });
 
 describe("a state list", () => {
-  it("answers the rows in any state it names, on every door", async () => {
+  it("answers the items in any state it names, on every door", async () => {
     const both = "active,archived";
     expect(
       sorted(await listed({ state: both })),
-      "the listing did not answer exactly the active and archived rows",
+      "the listing did not answer exactly the active and archived items",
     ).toEqual(
       sorted([
         liveNote.id,
@@ -228,7 +228,7 @@ describe("a state list", () => {
     );
     expect(
       sorted(await searched({ state: both })),
-      "the search did not match exactly the active and archived rows",
+      "the search did not match exactly the active and archived items",
     ).toEqual(
       sorted([
         liveNote.id,
@@ -240,11 +240,11 @@ describe("a state list", () => {
     );
     expect(
       sorted(await exported({ state: "archived,trashed" })),
-      "the export did not carry exactly the archived and binned rows",
+      "the export did not carry exactly the archived and binned items",
     ).toEqual(sorted([filedNote.id, filedTask.id, binnedNote.id]));
     expect(
       await counted({ state: "archived,trashed" }),
-      "the count did not group exactly the archived and binned rows",
+      "the count did not group exactly the archived and binned items",
     ).toEqual({ archived: 2, trashed: 1 });
   });
 
@@ -252,9 +252,9 @@ describe("a state list", () => {
     const ids = await searched({ state: "archived,trashed" });
     expect(
       ids,
-      "the archived rows are not matched, so the absence of the bin below proves nothing",
+      "the archived items are not matched, so the absence of the bin below proves nothing",
     ).toContain(filedNote.id);
-    expect(ids, "a search matched a row in the bin").not.toContain(
+    expect(ids, "a search matched an item in the bin").not.toContain(
       binnedNote.id,
     );
   });
@@ -306,8 +306,8 @@ describe("a state list", () => {
 });
 
 describe("the page limit", () => {
-  it("counts only the rows the state and type lists keep", async () => {
-    // The two newest rows, the bookmark and the live task, are rows the
+  it("counts only the items the state and type lists keep", async () => {
+    // The two newest items, the bookmark and the live task, are items the
     // lists leave out, and the archived task is the newest they keep: a
     // limit applied before the filter would answer an empty page or one of
     // those two.
@@ -322,11 +322,11 @@ describe("the page limit", () => {
     expect(first.ok, JSON.stringify(first.error)).toBe(true);
     expect(
       first.data.data.map((item) => item.id),
-      "a page of one did not hold the newest row the lists keep",
+      "a page of one did not hold the newest item the lists keep",
     ).toEqual([filedTask.id]);
     expect(
       first.data.next_cursor,
-      "a page of one with more matching rows reported no next page",
+      "a page of one with more matching items reported no next page",
     ).not.toBeNull();
 
     const hits = await client.search(WORD, {
@@ -338,7 +338,7 @@ describe("the page limit", () => {
     expect(hits.ok, JSON.stringify(hits.error)).toBe(true);
     expect(
       hits.data.data.map((hit) => hit.item.id),
-      "a search page of one held no row or a row the lists leave out",
+      "a search page of one held no item or an item the lists leave out",
     ).toHaveLength(1);
     expect([liveNote.id, filedNote.id]).toContain(hits.data.data[0]?.item.id);
   });

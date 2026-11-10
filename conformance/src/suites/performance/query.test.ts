@@ -49,7 +49,7 @@ const FILTER_TAG = "perf-query";
 
 function buildSeedItem(index: number): BulkItemInput {
   // A mixed type distribution keeps the type-filter benchmark honest: filtering
-  // on core.note has to actually exclude rows rather than return everything.
+  // on core.note has to actually exclude items rather than return everything.
   return index % 3 === 0
     ? {
         type: "core.bookmark",
@@ -63,7 +63,7 @@ function buildSeedItem(index: number): BulkItemInput {
         type: "core.note",
         properties: {
           title: `Query perf note ${String(index)}`,
-          body: `Seeded row ${String(index)} for read-path latency measurement.`,
+          body: `Seeded item ${String(index)} for read-path latency measurement.`,
         },
         tags: [FILTER_TAG],
       };
@@ -104,7 +104,7 @@ describe(`query performance (scale: ${scale})`, () => {
     const series = await measureSeries(
       "GET /items/:id",
       async () => {
-        // Rotate through the seeded set so a per-row cache cannot flatter the
+        // Rotate through the seeded set so a per-item cache cannot flatter the
         // measurement.
         const id = seededIds[Math.floor(Math.random() * seededIds.length)];
         const res = await client.getItem(id);

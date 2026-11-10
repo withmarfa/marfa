@@ -720,7 +720,7 @@
           },
           "type": {
             "type": "string",
-            "description": "The type the row had at this version, which a row moved since no longer has. A snapshot is answered only to a credential that may read it."
+            "description": "The type the item had at this version, which an item moved since no longer has. A snapshot is answered only to a credential that may read it."
           },
           "tier": {
             "allOf": [
@@ -2522,7 +2522,7 @@
             "$ref": "#/components/schemas/ItemReadWithMetadata"
           }
         ],
-        "description": "An `Item`, or, when `include` names `metadata`, an `ItemReadWithMetadata`; every row of one page is the same shape."
+        "description": "An `Item`, or, when `include` names `metadata`, an `ItemReadWithMetadata`; every item of one page is the same shape."
       },
       "ItemReadWithMetadata": {
         "allOf": [
@@ -3323,7 +3323,7 @@
           },
           "id": {
             "type": "string",
-            "description": "The id of what the entry wrote or resolved. Absent where an item entry's natural key resolved a row of a type the credential may not read: the entry learns that its key is taken and nothing of the row."
+            "description": "The id of what the entry wrote or resolved. Absent where an item entry's natural key resolved an item of a type the credential may not read: the entry learns that its key is taken and nothing of the item."
           },
           "reason": {
             "type": "string",
@@ -3670,7 +3670,7 @@
           },
           "purged_at": {
             "type": "string",
-            "description": "When the row holding the key was purged."
+            "description": "When the item holding the key was purged."
           },
           "settled_at": {
             "type": "string",
@@ -5719,7 +5719,7 @@
           },
           "relevance_score": {
             "type": "number",
-            "description": "How well the item matches `q`: the absolute value of its BM25 score, so higher is better. Scores depend on the rows indexed, so compare them only within one search."
+            "description": "How well the item matches `q`: the absolute value of its BM25 score, so higher is better. Scores depend on the items indexed, so compare them only within one search."
           },
           "snippet_html": {
             "type": "string",
@@ -8284,7 +8284,7 @@
           },
           "source": {
             "type": "string",
-            "description": "The key's own source, stamped on the rows it writes unless a write names a source it claims. No other key that hasn't been revoked or expired has it as its own, and it can't change."
+            "description": "The key's own source, stamped on the items it writes unless a write names a source it claims. No other key that hasn't been revoked or expired has it as its own, and it can't change."
           },
           "sources": {
             "type": "array",
@@ -8446,7 +8446,7 @@
           },
           "source": {
             "type": "string",
-            "description": "The key's own source, stamped on the rows it writes unless a write names a source it claims. No other key that hasn't been revoked or expired has it as its own, and it can't change."
+            "description": "The key's own source, stamped on the items it writes unless a write names a source it claims. No other key that hasn't been revoked or expired has it as its own, and it can't change."
           },
           "sources": {
             "type": "array",
@@ -9392,7 +9392,7 @@
         ],
         "description": "An error response."
       },
-      "ExportRowsUnrestorableRefusal": {
+      "ExportItemsUnrestorableRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -9401,7 +9401,7 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "export_rows_unrestorable"
+                  "export_entry_unrestorable"
                 ],
                 "description": "A machine-readable code for the error. Use it in your logic."
               },
@@ -11751,7 +11751,7 @@
                   },
                   "source_id": {
                     "type": "string",
-                    "description": "The item's identifier at its source, such as a vendor's row ID. With `source`, it is the item's natural key: creating with a key that exists updates that item."
+                    "description": "The item's identifier at its source, such as a vendor's record ID. With `source`, it is the item's natural key: creating with a key that exists updates that item."
                   },
                   "mode": {
                     "type": "string",
@@ -17716,7 +17716,7 @@
           "Items"
         ],
         "summary": "Settle tombstones",
-        "description": "Settles tombstones, moving their `settled_at` later, never earlier, and returns them. A connector calls it after changing the vendor's copy to carry out a purge, so that change doesn't bring the item back as a new row.",
+        "description": "Settles tombstones, moving their `settled_at` later, never earlier, and returns them. A connector calls it after changing the vendor's copy to carry out a purge, so that change doesn't bring the item back as a new item.",
         "security": [
           {
             "bearerAuth": []
@@ -19486,7 +19486,7 @@
                           "type": "string"
                         },
                         "minItems": 1,
-                        "description": "The ids a dry run of this purge returned. Where given, the purge takes only rows that are both in this list and matched by the filter now: a row the filter has come to match since is left untouched, and a listed id the filter no longer matches is not purged. `matched` counts what the purge will take, and `max_items` caps that rather than what the filter reaches. An empty list is refused, since it names nothing to purge. Taken by `purge` alone."
+                        "description": "The ids a dry run of this purge returned. Where given, the purge takes only items that are both in this list and matched by the filter now: an item the filter has come to match since is left untouched, and a listed id the filter no longer matches is not purged. `matched` counts what the purge will take, and `max_items` caps that rather than what the filter reaches. An empty list is refused, since it names nothing to purge. Taken by `purge` alone."
                       }
                     },
                     "required": [
@@ -43866,7 +43866,7 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 200,
-                    "description": "The key's own source, stamped on the rows it writes unless a write names a source it claims. No other key that hasn't been revoked or expired may have it as its own, and it can't change later."
+                    "description": "The key's own source, stamped on the items it writes unless a write names a source it claims. No other key that hasn't been revoked or expired may have it as its own, and it can't change later."
                   },
                   "sources": {
                     "type": "array",
@@ -48772,10 +48772,10 @@
                 "true",
                 "false"
               ],
-              "description": "For an app, also revoke every key it minted, as its `minted_by` rows show. Only an app takes it."
+              "description": "For an app, also revoke every key it minted, as its `minted_by` entries show. Only an app takes it."
             },
             "required": false,
-            "description": "For an app, also revoke every key it minted, as its `minted_by` rows show. Only an app takes it.",
+            "description": "For an app, also revoke every key it minted, as its `minted_by` entries show. Only an app takes it.",
             "name": "revoke_keys",
             "in": "query"
           },
@@ -52940,11 +52940,11 @@
             }
           },
           "409": {
-            "description": "- `export_rows_unrestorable`: with `format=archive`, a restore would refuse or skip a row this instance holds, so no archive was sent. `details.row` names the row by `kind`, `id`, `type` and `field`, with the `code` a restore refuses it with or the reason it skips it. Correct the row or its type, then export again.",
+            "description": "- `export_entry_unrestorable`: with `format=archive`, a restore would refuse or skip an item or edge this instance holds, so no archive was sent. `details.entry` names it by `kind`, `id`, `type` and `field`, with the `code` a restore refuses it with or the reason it skips it. Correct it or its type, then export again.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ExportRowsUnrestorableRefusal"
+                  "$ref": "#/components/schemas/ExportItemsUnrestorableRefusal"
                 }
               }
             },
@@ -53226,7 +53226,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: the body isn't an archive, lacks or repeats an entry, is at another version, has an invalid row, or a line over 64 MiB.\n- `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.\n- `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.",
+            "description": "- `validation_error`: the body isn't an archive, lacks or repeats an entry, is at another version, has an invalid line, or a line over 64 MiB.\n- `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.\n- `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -53310,7 +53310,7 @@
             }
           },
           "409": {
-            "description": "- `conflict`: the archive redefines a type this instance registers differently or registered while the restore ran, carries a core edge type, or carries a snapshot ID that already exists.\n- `link_taken`: the archive registers a type naming a `link_field` in which two rows a forced delete left share a value.",
+            "description": "- `conflict`: the archive redefines a type this instance registers differently or registered while the restore ran, carries a core edge type, or carries a snapshot ID that already exists.\n- `link_taken`: the archive registers a type naming a `link_field` in which two items a forced delete left share a value.",
             "content": {
               "application/json": {
                 "schema": {
@@ -53338,7 +53338,7 @@
             }
           },
           "413": {
-            "description": "- `request_too_large`: an item's properties, the properties of one of its earlier versions, or an edge's properties are larger than the bulk write endpoints accept. `details` names the row and the field.",
+            "description": "- `request_too_large`: an item's properties, the properties of one of its earlier versions, or an edge's properties are larger than the bulk write endpoints accept. `details` names the line and the field.",
             "content": {
               "application/json": {
                 "schema": {
@@ -54102,7 +54102,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: the body isn't an archive, lacks or repeats an entry, is at another version, has an invalid row, or a line over 64 MiB.\n- `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.\n- `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.",
+            "description": "- `validation_error`: the body isn't an archive, lacks or repeats an entry, is at another version, has an invalid line, or a line over 64 MiB.\n- `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.\n- `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -54186,7 +54186,7 @@
             }
           },
           "409": {
-            "description": "- `conflict`: the archive redefines a type this instance registers differently or registered while the restore ran, carries a core edge type, or carries a snapshot ID that already exists.\n- `link_taken`: the archive registers a type naming a `link_field` in which two rows a forced delete left share a value.\n- `no_bucket`: the instance has no object store, so it keeps no backups.",
+            "description": "- `conflict`: the archive redefines a type this instance registers differently or registered while the restore ran, carries a core edge type, or carries a snapshot ID that already exists.\n- `link_taken`: the archive registers a type naming a `link_field` in which two items a forced delete left share a value.\n- `no_bucket`: the instance has no object store, so it keeps no backups.",
             "content": {
               "application/json": {
                 "schema": {
@@ -54217,7 +54217,7 @@
             }
           },
           "413": {
-            "description": "- `request_too_large`: an item's properties, the properties of one of its earlier versions, or an edge's properties are larger than the bulk write endpoints accept. `details` names the row and the field.",
+            "description": "- `request_too_large`: an item's properties, the properties of one of its earlier versions, or an edge's properties are larger than the bulk write endpoints accept. `details` names the line and the field.",
             "content": {
               "application/json": {
                 "schema": {

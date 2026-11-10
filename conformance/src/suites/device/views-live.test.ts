@@ -104,7 +104,7 @@ afterAll(async () => {
   if (ctx) await cleanup(ctx);
 });
 
-it("returns the same rows in the same order as the server for each shared sort", async () => {
+it("returns the same items in the same order as the server for each shared sort", async () => {
   for (const sort of fields) {
     for (const direction of directions) {
       const remote: string[] = [];

@@ -2,7 +2,7 @@
  * Full-text search against a seeded corpus.
  *
  * A bounded benchmark. It measures search latency across a handful of query
- * shapes and checks that the index returns exactly the rows it should. It does
+ * shapes and checks that the index returns exactly the items it should. It does
  * not seed a corpus large enough to characterize how search degrades with
  * dataset size — that would need a target that can absorb a six-figure import,
  * which is what the larger `MARFA_LOAD_PROFILE` values are for.
@@ -35,7 +35,7 @@ const SAMPLES_PER_SHAPE = Math.max(3, Math.round(readSamples / 6));
 const SEARCH_LIMIT = Math.max(50, corpusItems);
 
 /**
- * Newly written rows can take a moment to become visible to full-text search.
+ * Newly written items can take a moment to become visible to full-text search.
  * Poll for the expected count before measuring so an indexing lag shows up as
  * a clear failure here rather than as noise in every latency sample. Throws
  * once the deadline passes without reaching `expected`, naming the query, the
@@ -76,7 +76,7 @@ describe("search at scale", () => {
     const warmMs = await warmTarget(client);
     marker = benchMarker(ctx, "search");
 
-    // A single type keeps the count assertions exact: every row's marker
+    // A single type keeps the count assertions exact: every item's marker
     // lands in the same searchable field, so a miss is an index problem
     // rather than an untested question about which fields a type indexes.
     const seeded = await seedCorpus(client, ctx, {
@@ -203,7 +203,7 @@ describe("search at scale", () => {
       limit: SEARCH_LIMIT,
     });
     expect(response.ok).toBe(true);
-    // Every seeded row is active, so a state filter must not shrink the set.
+    // Every seeded item is active, so a state filter must not shrink the set.
     expect(response.data.data.length).toBe(markedCount);
     for (const hit of response.data.data) {
       expect(hit.item.state).toBe("active");

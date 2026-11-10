@@ -36,7 +36,7 @@ afterEach(async () => {
 it("writes matching library and feed items with query tier all", async () => {
   harness = await folderHarness("query-all", {
     settings: { query: { types: ["core.note"], tier: "all" } },
-    rows: {
+    items: {
       "core.note": [
         {
           item: {
@@ -188,7 +188,7 @@ it("keeps files and sends no item write when a query narrows from all to library
   let changed: Record<string, unknown> = {};
   harness = await folderHarness("query-all-narrowed", {
     settings: { query: { types: ["core.note"], tier: "all" } },
-    rows: {
+    items: {
       "core.note": [
         {
           item: {
@@ -251,7 +251,7 @@ it("keeps a file and sends no item write when its item leaves the query tier", a
   };
   harness = await folderHarness("query-tier-departure", {
     settings: { query: { types: ["core.note"], tier: "library" } },
-    rows: { "core.note": [{ item: { ...item, tier: "library" } }] },
+    items: { "core.note": [{ item: { ...item, tier: "library" } }] },
     events: [
       copyReplay("2", [
         copyItemEvent(

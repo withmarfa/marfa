@@ -13,7 +13,7 @@ import { QUIET_SCHEDULE, quiet } from "../../utils/moved-clock.js";
  * What the audit log keeps of work that runs as a job, and what it does not
  * keep of a housekeeping run.
  *
- * A server of its own, for two reasons. A job needs rows to act on, and a
+ * A server of its own, for two reasons. A job needs items to act on, and a
  * few thousand of them left in the run's shared dataset would outlive the
  * file. And the claim that a request writes nothing is a claim about the
  * whole log, which on the shared server every sibling file is writing to.
@@ -107,7 +107,7 @@ describe("the audit log of a bulk action", () => {
     });
 
     // One entry for each slice the job committed, which together walk the
-    // matched rows from the first to the last with nothing between them
+    // matched items from the first to the last with nothing between them
     // and nothing twice.
     const chunks = (
       await wholeLog({ action: "items.bulk_action.chunk" })

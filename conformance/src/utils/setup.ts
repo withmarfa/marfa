@@ -77,7 +77,7 @@ export function newRunId(): string {
 /**
  * Set up an isolated test context: a per-file key whose server-stamped
  * `source` is unique to this file, and a client bound to it. Every write the
- * client makes carries `ctx.source`, which is what isolates one file's rows
+ * client makes carries `ctx.source`, which is what isolates one file's items
  * from every other file's inside the one dataset. The key is tracked so
  * `cleanup` revokes it.
  *
@@ -202,7 +202,7 @@ export function trackEdgeType(ctx: TestContext, id: string): void {
  * Track an outbound webhook subscription for cleanup, with the credential that
  * registered it. Call it the moment the id is in hand: a subscription left
  * behind keeps attempting delivery. `DELETE /webhooks/{id}` answers 404 to a
- * credential that cannot see the row, which teardown reads as already gone, so
+ * credential that cannot see the subscription, which teardown reads as already gone, so
  * the registering credential is the one that has to delete it.
  */
 export function trackWebhook(
@@ -376,7 +376,7 @@ async function deleteAll(
 /**
  * Delete a phase's resources through the credential that created each one,
  * falling back to `fallback` where none was recorded. Both routes this serves
- * answer 404 to a credential that cannot see the row, and 404 is what
+ * answer 404 to a credential that cannot see the resource, and 404 is what
  * `deleteAll` treats as already gone.
  */
 async function deleteAllByOwner(
@@ -406,7 +406,7 @@ async function deleteAllByOwner(
  * while a compatibility claim depends on it.
  * Deletes within a level are concurrent, so each dependent's level must
  * finish before its targets'. A cycle has no deletion order; attempt the
- * remaining rows once so teardown reports refusals instead of hanging.
+ * remaining items once so teardown reports refusals instead of hanging.
  */
 export function typeDeletionLevels(
   tracked: readonly TrackedResource[],
@@ -455,11 +455,11 @@ function mergeOutcomes(
  *
  * Phase order is load-bearing. Edges go first so `parent-of` cascades do not
  * race the deletion of tracked children. Items are soft-deleted then purged,
- * because a soft delete alone leaves the row. Webhooks, edge types and types
+ * because a soft delete alone leaves the item. Webhooks, edge types and types
  * go through the credential that made them, types dependents first.
  * Keys go last, through the provisioning client, because one of the tracked
  * keys is the file's own. Types are deleted non-forced: a type that still
- * owns rows at that point is a genuine leak and fails loudly.
+ * owns items at that point is a genuine leak and fails loudly.
  *
  * Every phase runs before anything throws, and then it throws: a suite that
  * cannot clean up after itself must not report green.
@@ -473,7 +473,7 @@ export async function cleanup(ctx: TestContext): Promise<void> {
   outcomes.push(
     await deleteAll(ctx.trackedEdges, (id) => scoped.deleteEdge(id), "Edge"),
   );
-  // The first reportable refusal wins: a refused soft delete leaves a live row
+  // The first reportable refusal wins: a refused soft delete leaves a live item
   // and the purge behind it answers 404, so reporting only the purge would
   // hide the failure that left something behind. A 404 on the delete is
   // already-gone and must not shadow the purge's answer.

@@ -327,7 +327,7 @@ export interface paths {
         put?: never;
         /**
          * Settle tombstones
-         * @description Settles tombstones, moving their `settled_at` later, never earlier, and returns them. A connector calls it after changing the vendor's copy to carry out a purge, so that change doesn't bring the item back as a new row.
+         * @description Settles tombstones, moving their `settled_at` later, never earlier, and returns them. A connector calls it after changing the vendor's copy to carry out a purge, so that change doesn't bring the item back as a new item.
          */
         post: operations["settleTombstones"];
         delete?: never;
@@ -2685,7 +2685,7 @@ export interface components {
             properties: {
                 [key: string]: unknown;
             };
-            /** @description The type the row had at this version, which a row moved since no longer has. A snapshot is answered only to a credential that may read it. */
+            /** @description The type the item had at this version, which an item moved since no longer has. A snapshot is answered only to a credential that may read it. */
             type: string;
             tier: components["schemas"]["Tier"] & unknown;
             /** @description When the item happened, in UTC, at this version. */
@@ -3410,7 +3410,7 @@ export interface components {
             /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
             next_cursor: string | null;
         };
-        /** @description An `Item`, or, when `include` names `metadata`, an `ItemReadWithMetadata`; every row of one page is the same shape. */
+        /** @description An `Item`, or, when `include` names `metadata`, an `ItemReadWithMetadata`; every item of one page is the same shape. */
         ItemListRow: components["schemas"]["Item"] | components["schemas"]["ItemReadWithMetadata"];
         /** @description An item with its metadata, as a read returns it. */
         ItemReadWithMetadata: components["schemas"]["ItemWithMetadata"] & {
@@ -3761,7 +3761,7 @@ export interface components {
             /** @description The entry's position in the request, counting from 0. */
             index: number;
             outcome: components["schemas"]["BulkResultOutcome"] & unknown;
-            /** @description The id of what the entry wrote or resolved. Absent where an item entry's natural key resolved a row of a type the credential may not read: the entry learns that its key is taken and nothing of the row. */
+            /** @description The id of what the entry wrote or resolved. Absent where an item entry's natural key resolved an item of a type the credential may not read: the entry learns that its key is taken and nothing of the item. */
             id?: string;
             /**
              * @description Why a `skipped` entry wrote nothing. Under `create_only`, a match exists: `duplicate_source` by natural key, `duplicate_id` by `id`, `duplicate_edge` by source, target and edge type. Under `upsert`, `trashed`: the natural key matches a trashed item.
@@ -3899,7 +3899,7 @@ export interface components {
         Tombstone: {
             /** @description The link value, or the natural key's `source_id`. */
             key: string;
-            /** @description When the row holding the key was purged. */
+            /** @description When the item holding the key was purged. */
             purged_at: string;
             /** @description When the purge happened, or the later time of the vendor's change a connector made to carry it out. Set with `POST /items/tombstones`. A vendor change after this time is a new item. */
             settled_at: string;
@@ -4690,7 +4690,7 @@ export interface components {
         SearchResult: {
             item: components["schemas"]["Item"] & unknown;
             metadata: components["schemas"]["Metadata"] & unknown;
-            /** @description How well the item matches `q`: the absolute value of its BM25 score, so higher is better. Scores depend on the rows indexed, so compare them only within one search. */
+            /** @description How well the item matches `q`: the absolute value of its BM25 score, so higher is better. Scores depend on the items indexed, so compare them only within one search. */
             relevance_score: number;
             /** @description An excerpt of at most 32 words from the text that matches best, as escaped HTML with each matched word in `<mark>` tags and `...` where the text is cut. Absent if there is none. */
             snippet_html?: string;
@@ -5695,7 +5695,7 @@ export interface components {
             key: string;
             /** @description A name for the key, to tell it apart from your other keys. */
             label: string;
-            /** @description The key's own source, stamped on the rows it writes unless a write names a source it claims. No other key that hasn't been revoked or expired has it as its own, and it can't change. */
+            /** @description The key's own source, stamped on the items it writes unless a write names a source it claims. No other key that hasn't been revoked or expired has it as its own, and it can't change. */
             source: string;
             /** @description Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. Empty if the key claims none. */
             sources: string[];
@@ -5747,7 +5747,7 @@ export interface components {
             id: string;
             /** @description A name for the key, to tell it apart from your other keys. */
             label: string;
-            /** @description The key's own source, stamped on the rows it writes unless a write names a source it claims. No other key that hasn't been revoked or expired has it as its own, and it can't change. */
+            /** @description The key's own source, stamped on the items it writes unless a write names a source it claims. No other key that hasn't been revoked or expired has it as its own, and it can't change. */
             source: string;
             /** @description Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. Empty if the key claims none. */
             sources: string[];
@@ -6153,14 +6153,14 @@ export interface components {
             };
         };
         /** @description An error response. */
-        ExportRowsUnrestorableRefusal: {
+        ExportItemsUnrestorableRefusal: {
             /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "export_rows_unrestorable";
+                code: "export_entry_unrestorable";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -7322,7 +7322,7 @@ export interface operations {
                     occurred_at?: string;
                     /** @description The source to key and stamp the item with. Defaults to your credential's own; it can also name one of your key's `sources`. An item's source never changes. */
                     source?: string;
-                    /** @description The item's identifier at its source, such as a vendor's row ID. With `source`, it is the item's natural key: creating with a key that exists updates that item. */
+                    /** @description The item's identifier at its source, such as a vendor's record ID. With `source`, it is the item's natural key: creating with a key that exists updates that item. */
                     source_id?: string;
                     /**
                      * @description `upsert` (the default) updates the item `source_id` matches. `create_only` writes nothing when an item already holds the `source_id` under the source, or the `id`, in any state, and answers `item_exists` (409) with `details.existing_id`.
@@ -11179,7 +11179,7 @@ export interface operations {
                     action: "purge";
                     /** @enum {string} */
                     confirm?: "PURGE";
-                    /** @description The ids a dry run of this purge returned. Where given, the purge takes only rows that are both in this list and matched by the filter now: a row the filter has come to match since is left untouched, and a listed id the filter no longer matches is not purged. `matched` counts what the purge will take, and `max_items` caps that rather than what the filter reaches. An empty list is refused, since it names nothing to purge. Taken by `purge` alone. */
+                    /** @description The ids a dry run of this purge returned. Where given, the purge takes only items that are both in this list and matched by the filter now: an item the filter has come to match since is left untouched, and a listed id the filter no longer matches is not purged. `matched` counts what the purge will take, and `max_items` caps that rather than what the filter reaches. An empty list is refused, since it names nothing to purge. Taken by `purge` alone. */
                     expected_ids?: string[];
                 } | {
                     filter?: components["schemas"]["BulkActionFilter"];
@@ -24432,7 +24432,7 @@ export interface operations {
                 "application/json": {
                     /** @description A name for the key, to tell it apart from your other keys. */
                     label: string;
-                    /** @description The key's own source, stamped on the rows it writes unless a write names a source it claims. No other key that hasn't been revoked or expired may have it as its own, and it can't change later. */
+                    /** @description The key's own source, stamped on the items it writes unless a write names a source it claims. No other key that hasn't been revoked or expired may have it as its own, and it can't change later. */
                     source: string;
                     /** @description Sources the key may also write under, besides its own `source`. Several keys may claim one source, so their writes share natural keys. You can grant only your own `source` and the sources you claim; the local command can grant any. */
                     sources?: string[];
@@ -26853,7 +26853,7 @@ export interface operations {
     endSignIn: {
         parameters: {
             query?: {
-                /** @description For an app, also revoke every key it minted, as its `minted_by` rows show. Only an app takes it. */
+                /** @description For an app, also revoke every key it minted, as its `minted_by` entries show. Only an app takes it. */
                 revoke_keys?: "true" | "false";
             };
             header?: {
@@ -29172,7 +29172,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description - `export_rows_unrestorable`: with `format=archive`, a restore would refuse or skip a row this instance holds, so no archive was sent. `details.row` names the row by `kind`, `id`, `type` and `field`, with the `code` a restore refuses it with or the reason it skips it. Correct the row or its type, then export again. */
+            /** @description - `export_entry_unrestorable`: with `format=archive`, a restore would refuse or skip an item or edge this instance holds, so no archive was sent. `details.entry` names it by `kind`, `id`, `type` and `field`, with the `code` a restore refuses it with or the reason it skips it. Correct it or its type, then export again. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -29181,7 +29181,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ExportRowsUnrestorableRefusal"];
+                    "application/json": components["schemas"]["ExportItemsUnrestorableRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -29322,7 +29322,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: the body isn't an archive, lacks or repeats an entry, is at another version, has an invalid row, or a line over 64 MiB.
+             * @description - `validation_error`: the body isn't an archive, lacks or repeats an entry, is at another version, has an invalid line, or a line over 64 MiB.
              *     - `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.
              *     - `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.
              */
@@ -29375,7 +29375,7 @@ export interface operations {
             };
             /**
              * @description - `conflict`: the archive redefines a type this instance registers differently or registered while the restore ran, carries a core edge type, or carries a snapshot ID that already exists.
-             *     - `link_taken`: the archive registers a type naming a `link_field` in which two rows a forced delete left share a value.
+             *     - `link_taken`: the archive registers a type naming a `link_field` in which two items a forced delete left share a value.
              */
             409: {
                 headers: {
@@ -29388,7 +29388,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConflictOrLinkTakenRefusal"] | components["schemas"]["InstanceChangedRefusal"];
                 };
             };
-            /** @description - `request_too_large`: an item's properties, the properties of one of its earlier versions, or an edge's properties are larger than the bulk write endpoints accept. `details` names the row and the field. */
+            /** @description - `request_too_large`: an item's properties, the properties of one of its earlier versions, or an edge's properties are larger than the bulk write endpoints accept. `details` names the line and the field. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -29803,7 +29803,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: the body isn't an archive, lacks or repeats an entry, is at another version, has an invalid row, or a line over 64 MiB.
+             * @description - `validation_error`: the body isn't an archive, lacks or repeats an entry, is at another version, has an invalid line, or a line over 64 MiB.
              *     - `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.
              *     - `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.
              */
@@ -29856,7 +29856,7 @@ export interface operations {
             };
             /**
              * @description - `conflict`: the archive redefines a type this instance registers differently or registered while the restore ran, carries a core edge type, or carries a snapshot ID that already exists.
-             *     - `link_taken`: the archive registers a type naming a `link_field` in which two rows a forced delete left share a value.
+             *     - `link_taken`: the archive registers a type naming a `link_field` in which two items a forced delete left share a value.
              *     - `no_bucket`: the instance has no object store, so it keeps no backups.
              */
             409: {
@@ -29870,7 +29870,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConflictOrLinkTakenRefusal"] | components["schemas"]["InstanceChangedRefusal"] | components["schemas"]["NoBucketRefusal"];
                 };
             };
-            /** @description - `request_too_large`: an item's properties, the properties of one of its earlier versions, or an edge's properties are larger than the bulk write endpoints accept. `details` names the row and the field. */
+            /** @description - `request_too_large`: an item's properties, the properties of one of its earlier versions, or an edge's properties are larger than the bulk write endpoints accept. `details` names the line and the field. */
             413: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

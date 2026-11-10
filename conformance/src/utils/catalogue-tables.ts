@@ -77,7 +77,7 @@ const PERMISSION_TEXT: Readonly<Record<string, string>> = {
   "instance.read":
     "Reading detailed health, metrics, housekeeping status, blob storage diagnostics and bulk job status.",
   "items.purge":
-    "Destroying a trashed row irrecoverably, through the single-row operation and the bulk one alike.",
+    "Destroying a trashed item irrecoverably, through the single-item operation and the bulk one alike.",
   "keys.manage":
     "Listing and revoking keys across the instance, changing their metadata or narrowing access, and setting the name and mark of any source.",
   "keys.mint":

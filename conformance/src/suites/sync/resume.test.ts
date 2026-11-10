@@ -139,7 +139,7 @@ describe("resuming from the head", () => {
     // observation rather than by a pause: a server slow to read its head
     // would otherwise see them all land before it and replay the lot,
     // and the read would never leave the replay. A purge announces every
-    // edge of the row before the row, and an edge frame waits on a read
+    // edge of the item before the item, and an edge frame waits on a read
     // before it is sent, which is where a frame published after it could
     // overtake it. The first read ends on the purge's own frame, so it
     // carries live frames of both kinds past the head, and the last id it
@@ -158,14 +158,14 @@ describe("resuming from the head", () => {
       ]);
       during = [one, two];
       duringEdge = edge;
-      // The row is gone by the time the reads are judged, so neither it
+      // The item is gone by the time the reads are judged, so neither it
       // nor its edges are tracked for teardown.
       const created = await client.createItem({
         type: "core.note",
         source: ctx.source,
         properties: { body: "resume-purged" },
       });
-      expect(created.ok, "the row to purge could not be created").toBe(true);
+      expect(created.ok, "the item to purge could not be created").toBe(true);
       doomed = created.data.item.id;
       for (const target of [before[2]!, before[3]!]) {
         const made = await client.createEdge({
@@ -173,13 +173,13 @@ describe("resuming from the head", () => {
           target_id: target,
           edge_type: "about",
         });
-        expect(made.ok, "an edge of the row to purge failed").toBe(true);
+        expect(made.ok, "an edge of the item to purge failed").toBe(true);
         doomedEdges.push(made.data.edge.id);
       }
       const trashed = await client.deleteItem(doomed);
-      expect(trashed.ok, "the row could not be trashed").toBe(true);
+      expect(trashed.ok, "the item could not be trashed").toBe(true);
       const purged = await client.purgeItem(doomed);
-      expect(purged.ok, "the row could not be purged").toBe(true);
+      expect(purged.ok, "the item could not be purged").toBe(true);
     };
     const first = await withStream(
       apiUrl,
@@ -212,7 +212,7 @@ describe("resuming from the head", () => {
               )
             );
           },
-          "the announced head, then the purge of the row written after it to reach the stream",
+          "the announced head, then the purge of the item written after it to reach the stream",
           context.signal,
         );
         const { events } = await Promise.race([read, failure]);
@@ -296,8 +296,8 @@ describe("resuming from the head", () => {
       ).toBe(true);
     }
     // Every edge frame the writes produced, each in exactly one read: the
-    // purged row's edges were announced twice, created and then deleted,
-    // and the deletions are the frames a row's purge overtakes.
+    // purged item's edges were announced twice, created and then deleted,
+    // and the deletions are the frames an item's purge overtakes.
     const framesFirst = edgeFrames(first);
     const framesSecond = edgeFrames(second);
     const expected = [
@@ -330,7 +330,7 @@ describe("the order across item and edge frames", () => {
       source: ctx.source,
       properties: { body: "purge-order-doomed" },
     });
-    expect(doomed.ok, "the row to purge could not be created").toBe(true);
+    expect(doomed.ok, "the item to purge could not be created").toBe(true);
     const doomedId = doomed.data.item.id;
     const edgeIds: string[] = [];
     for (const target of peers) {
@@ -339,7 +339,7 @@ describe("the order across item and edge frames", () => {
         target_id: target,
         edge_type: "about",
       });
-      expect(made.ok, "an edge of the row to purge failed").toBe(true);
+      expect(made.ok, "an edge of the item to purge failed").toBe(true);
       edgeIds.push(made.data.edge.id);
     }
     const sentinelOf = (events: SseEvent[]) =>
@@ -362,7 +362,7 @@ describe("the order across item and edge frames", () => {
       const { events } = await collectUntil(
         stream,
         sentinelOf,
-        "the purge of the row to reach the stream",
+        "the purge of the item to reach the stream",
         context.signal,
       );
       return events;
@@ -377,7 +377,7 @@ describe("the order across item and edge frames", () => {
         const { events } = await collectUntil(
           stream,
           sentinelOf,
-          "the purge of the row to reach the replay",
+          "the purge of the item to reach the replay",
           context.signal,
         );
         return events;
@@ -418,7 +418,7 @@ describe("the order across item and edge frames", () => {
     }
     // The two reads name the same frames for this purge in the same order,
     // so the order is not an accident of live publication: the edges' deletions,
-    // then the row's purge, and nothing else about the row or its edges.
+    // then the item's purge, and nothing else about the item or its edges.
     const concerning = (events: SseEvent[]) =>
       events
         .filter((e) => {

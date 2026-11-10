@@ -15,7 +15,7 @@ A credential holds any of these permissions, each a row of the table below, whic
 | `grants.manage`     | Listing and revoking other apps' access.                                                                                                                |
 | `instance.maintain` | Running housekeeping and cancelling bulk jobs.                                                                                                          |
 | `instance.read`     | Reading detailed health, metrics, housekeeping status, blob storage diagnostics and bulk job status.                                                    |
-| `items.purge`       | Destroying a trashed row irrecoverably, through the single-row operation and the bulk one alike.                                                        |
+| `items.purge`       | Destroying a trashed item irrecoverably, through the single-item operation and the bulk one alike.                                                      |
 | `keys.manage`       | Listing and revoking keys across the instance, changing their metadata or narrowing access, and setting the name and mark of any source.                |
 | `keys.mint`         | Minting keys within the caller's current access, and listing, changing and revoking keys within that access.                                            |
 | `schema.write`      | Removing type and edge type definitions that already exist, and replacing them, only those the credential's type or edge map grants write on.           |
@@ -31,7 +31,7 @@ A named permission opens the operations it names and no item. What a credential 
 
 When a credential holding named permissions and no content map reads or writes items, the server MUST answer `403 type_not_permitted`.
 
-**Tests:** `compliance/key-management.test.ts › management permissions do not grant content access`, `› refuses a bulk action to a key reaching no type, and narrows one for a key writing none`, `compliance/unreadable-items.test.ts › a key reaching no type is refused a single row, whatever the id names`.
+**Tests:** `compliance/key-management.test.ts › management permissions do not grant content access`, `› refuses a bulk action to a key reaching no type, and narrows one for a key writing none`, `compliance/unreadable-items.test.ts › a key reaching no type is refused a single item, whatever the id names`.
 
 ### `keys-and-oauth/direct-mint-everything`
 
@@ -107,7 +107,7 @@ The server MUST match a credential's type map entry against a type identifier ch
 
 When an operation names by id, in its path or its body, an item whose type the credential may not read, live or in the bin, the server MUST answer exactly as it answers an id no item holds, status, body and headers alike.
 
-**Reason:** The answer says nothing of whether the row exists or what type it is. A key learns its own reach from `GET /keys/current`, never from a refusal. `items/create-id-unreadable`, `edges/end-source-hidden`, `edges/end-target-hidden`, `edges/read-id-source` and `edges/filter-backref-anchor` hold the same for a create, an edge's ends and a filter.
+**Reason:** The answer says nothing of whether the item exists or what type it is. A key learns its own reach from `GET /keys/current`, never from a refusal. `items/create-id-unreadable`, `edges/end-source-hidden`, `edges/end-target-hidden`, `edges/read-id-source` and `edges/filter-backref-anchor` hold the same for a create, an edge's ends and a filter.
 
 **Tests:** `compliance/unreadable-items.test.ts › an item the key cannot read answers as a missing one`, `compliance/type-permissions.test.ts › a key without reach on the item's type is answered as if the item, its edges and its backrefs were not there`.
 
@@ -117,7 +117,7 @@ When a write that answered an unreadable item's `404` is replayed under its `Ide
 
 **Reason:** Releasing the key, as a `403` is released, would tell the two apart.
 
-**Tests:** `compliance/unreadable-items.test.ts › replays a hidden row's 404 under its Idempotency-Key, as it replays a missing id's`.
+**Tests:** `compliance/unreadable-items.test.ts › replays a hidden item's 404 under its Idempotency-Key, as it replays a missing id's`.
 
 ### `keys-and-oauth/unreadable-bulk-upsert`
 
@@ -129,7 +129,7 @@ When a `POST /items/bulk` entry under `upsert` names as its `id` the id of an it
 
 If a credential that may read an item's type and not write it writes the item, then the server MUST answer `403 type_not_permitted`.
 
-**Reason:** The credential already knows the row is there, so the refusal says nothing it did not know.
+**Reason:** The credential already knows the item is there, so the refusal says nothing it did not know.
 
 **Tests:** `compliance/unreadable-items.test.ts › a write to a type the key reads and does not write is still refused 403`, `compliance/type-permissions.test.ts › read-only scoped key cannot DELETE items of that type`.
 
@@ -147,7 +147,7 @@ An extension namespace is gated twice: by the type map on the item's type, as ev
 
 ### `keys-and-oauth/extension-unreadable-type`
 
-When an extension operation names an item whose type the key may not read, the server MUST answer exactly as for an item no row holds, `404 item_not_found`.
+When an extension operation names an item whose type the key may not read, the server MUST answer exactly as for an id no item holds, `404 item_not_found`.
 
 **Tests:** `compliance/extensions.test.ts › answers every door on an item whose type the key does not hold as a missing item, as the item doors answer it`.
 
@@ -173,7 +173,7 @@ If a key that may read an item's type and not write it replaces or deletes one o
 
 If a key holding write on `system.folder` replaces or deletes an extension namespace of a folder, then the server MUST answer `403 type_not_permitted`.
 
-**Reason:** A folder is written through `/folders`, and its extensions take the write fence the item operations put on every `system.*` row (`items/system-types`).
+**Reason:** A folder is written through `/folders`, and its extensions take the write fence the item operations put on every `system.*` item (`items/system-types`).
 
 **Tests:** `compliance/extensions.test.ts › refuses a folder's extensions to a key holding write on system.folder, as the item doors refuse the folder`.
 
@@ -247,7 +247,7 @@ When `POST /keys` mints a key, the server MUST send `Cache-Control: no-store` wi
 
 If a mint names as the new key's own `source` one that another key, neither revoked nor past its `expires_at`, holds as its own, then the server MUST answer `409 conflict` with `details.source` naming it.
 
-**Reason:** A key's own source is stamped on what it writes and is how a file of fixtures or a device tells its rows apart. Two keys share a source by claiming it instead.
+**Reason:** A key's own source is stamped on what it writes and is how a file of fixtures or a device tells its items apart. Two keys share a source by claiming it instead.
 
 **Tests:** `compliance/key-management.test.ts › refuses a second key naming as its own a source already in use`.
 
@@ -305,7 +305,7 @@ When `PATCH /keys/{id}` names a family empty, the server MUST leave the key hold
 
 If a `PATCH /keys/{id}` body names `source`, then the server MUST answer `400 validation_error`.
 
-**Reason:** A key's own source is stamped on every row it wrote, so a key that needs another source is a new key.
+**Reason:** A key's own source is stamped on every item it wrote, so a key that needs another source is a new key.
 
 **Tests:** `compliance/keys-update.test.ts › refuses a change of source`.
 
@@ -865,15 +865,15 @@ The server MUST compare a key's own `source` with another key's claims exactly, 
 
 If a key whose claim was taken away creates or upserts by natural key under that source, then the server MUST answer `403 forbidden` with `details.source`.
 
-**Reason:** A claim is not unique, so two separately enrolled devices can share natural keys (`items/natural-key-upsert`), and narrowing one takes effect at its next write. A row already under the source stays editable by `items/source-fixed`.
+**Reason:** A claim is not unique, so two separately enrolled devices can share natural keys (`items/natural-key-upsert`), and narrowing one takes effect at its next write. An item already under the source stays editable by `items/source-fixed`.
 
-**Tests:** `compliance/claimed-sources.test.ts › stops a narrowed key writing under a source it no longer claims, and leaves its rows there editable`.
+**Tests:** `compliance/claimed-sources.test.ts › stops a narrowed key writing under a source it no longer claims, and leaves its items there editable`.
 
 ### `keys-and-oauth/claims-narrowed-unwritten`
 
 If a key whose claim was taken away creates or upserts by natural key under that source, then the server MUST write nothing.
 
-**Tests:** `compliance/claimed-sources.test.ts › stops a narrowed key writing under a source it no longer claims, and leaves its rows there editable`.
+**Tests:** `compliance/claimed-sources.test.ts › stops a narrowed key writing under a source it no longer claims, and leaves its items there editable`.
 
 ## Source names and marks
 

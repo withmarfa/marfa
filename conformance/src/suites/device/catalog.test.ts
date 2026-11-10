@@ -17,11 +17,11 @@ import type {
 } from "../../device/protocol.js";
 
 /**
- * "A working copy holds the catalog it reads its rows by."
+ * "A working copy holds the catalog it reads its items by."
  *
  * An app shows an item by its type's fields and an edge by its type's names,
  * and a copy that can only answer that with the server reachable is a copy
- * that cannot show a row offline. So the copy keeps both catalogs, reads them
+ * that cannot show an item offline. So the copy keeps both catalogs, reads them
  * locally, says plainly when it has none, and lets a caller learn that they
  * changed.
  */

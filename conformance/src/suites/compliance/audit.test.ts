@@ -286,23 +286,23 @@ describe("audit log", () => {
   });
 
   it("bounds by created_after and created_before, both exclusive", async () => {
-    // Three rows written in order, so one sits on each side of the middle
-    // one's instant. Two rows could not tell these failures apart: the
-    // boundary row proves the comparison is strict rather than inclusive,
-    // and the row inside the range proves the predicate reached the query
+    // Three entries written in order, so one sits on each side of the middle
+    // one's instant. Two entries could not tell these failures apart: the
+    // boundary entry proves the comparison is strict rather than inclusive,
+    // and the entry inside the range proves the predicate reached the query
     // at all — a bound that was dropped and a bound that excluded
-    // everything both leave the boundary row absent.
+    // everything both leave the boundary entry absent.
     //
     // The audit log stamps its own instant, so the three are seeded and
     // then read back rather than chosen. A pause between them keeps the
     // three stamps distinct at millisecond resolution.
     //
     // Every read below carries both bounds, holding the one not under test
-    // a millisecond outside the outermost row. The log is instance-wide and
+    // a millisecond outside the outermost entry. The log is instance-wide and
     // sibling files write to it, so an unbounded page would be truncated
     // and a whole page could not be asserted; a window this narrow can be.
     // It does not weaken the case: a dropped bound under test still leaves
-    // the boundary row inside the window, where the assertion finds it.
+    // the boundary entry inside the window, where the assertion finds it.
     const rows = [];
     for (let i = 0; i < 3; i++) {
       const item = await client.createItem(createNote({ source: ctx.source }));
@@ -329,7 +329,7 @@ describe("audit log", () => {
       // rather than a bound.
       expect(
         page.data.next_cursor,
-        "the page was truncated, so a row missing from it proves nothing about the bound",
+        "the page was truncated, so an entry missing from it proves nothing about the bound",
       ).toBeNull();
       return page.data.data.map((r) => r.id);
     };
@@ -343,11 +343,11 @@ describe("audit log", () => {
     });
     expect(
       afterBound,
-      "the row whose instant is exactly the lower bound came back, so the bound is inclusive where the rule says exclusive",
+      "the entry whose instant is exactly the lower bound came back, so the bound is inclusive where the rule says exclusive",
     ).not.toContain(onBound.id);
     expect(
       afterBound,
-      "a row written after the lower bound was missing, so the bound is being dropped or is narrowing the wrong way",
+      "an entry written after the lower bound was missing, so the bound is being dropped or is narrowing the wrong way",
     ).toContain(later.id);
     expect(afterBound).not.toContain(earlier.id);
 
@@ -357,16 +357,16 @@ describe("audit log", () => {
     });
     expect(
       beforeBound,
-      "the row whose instant is exactly the upper bound came back: this is the inclusive-`until` defect, and it is what this case exists to keep dead",
+      "the entry whose instant is exactly the upper bound came back: this is the inclusive-`until` defect, and it is what this case exists to keep dead",
     ).not.toContain(onBound.id);
     expect(
       beforeBound,
-      "a row written before the upper bound was missing, so the bound is being dropped or is narrowing the wrong way",
+      "an entry written before the upper bound was missing, so the bound is being dropped or is narrowing the wrong way",
     ).toContain(earlier.id);
     expect(beforeBound).not.toContain(later.id);
   });
 
-  it("paginates with a cursor and delivers every row once", async () => {
+  it("paginates with a cursor and delivers every entry once", async () => {
     const ids: string[] = [];
     for (let i = 0; i < 3; i++) {
       const item = await client.createItem(createNote({ source: ctx.source }));
@@ -424,8 +424,8 @@ describe("audit log", () => {
     trackItem(ctx, item.data.item.id);
     const row = await createdRow(item.data.item.id);
 
-    // The same instant as the row, spelled without the milliseconds. On a
-    // door that compares the raw string this excludes the row it names.
+    // The same instant as the entry, spelled without the milliseconds. On a
+    // door that compares the raw string this excludes the entry it names.
     const second = `${row.created_at.slice(0, 19)}Z`;
 
     const seen = async (bound: Record<string, string>): Promise<boolean> => {
@@ -439,21 +439,21 @@ describe("audit log", () => {
       return page.data.data.some((r) => r.id === row.id);
     };
 
-    // `second` names the start of the row's own second, which is earlier
-    // than the row. So both answers follow from the instants alone: the row
+    // `second` names the start of the entry's own second, which is earlier
+    // than the entry. So both answers follow from the instants alone: the entry
     // is strictly after it, and not strictly before it.
     //
     // Both assertions bite, and they bite in opposite directions, which is
     // what makes the pair worth writing. Compared as raw text, `.` sorts
     // below `Z`, so `"…12.948Z"` sorts BEFORE `"…12Z"` — a lower bound at
-    // second precision drops the row it should keep, and an upper bound at
-    // the same precision keeps the row it should drop. One assertion would
+    // second precision drops the entry it should keep, and an upper bound at
+    // the same precision keeps the entry it should drop. One assertion would
     // have caught one of those.
     expect(await seen({ created_after: second })).toBe(true);
     expect(await seen({ created_before: second })).toBe(false);
 
     // The witness: a bound written at the stored width, one millisecond
-    // below the row. Without it a failure to read anything at all — a
+    // below the entry. Without it a failure to read anything at all — a
     // refused request, an empty page — would satisfy the exclusion above
     // for free.
     const justBefore = new Date(Date.parse(row.created_at) - 1).toISOString();
@@ -472,7 +472,7 @@ describe("audit log", () => {
 
   it("refuses an undeclared bound rather than answering the whole trail", async () => {
     // A bound the door does not declare, answered `200` with everything,
-    // would read exactly like a time range that matched every row. The
+    // would read exactly like a time range that matched every entry. The
     // control is the second assertion: the same request under the declared
     // name has to come back `200`, or this case would pass against a door
     // that refused its own vocabulary.

@@ -57,7 +57,7 @@ interface Made {
 async function unmatchedFolder(label: string, count = 3): Promise<Made> {
   const items = Array.from({ length: count }, (_, at) => note(at + 1));
   const harness = await folderHarness(label, {
-    rows: { "core.note": items.map((item) => ({ item })) },
+    items: { "core.note": items.map((item) => ({ item })) },
     events: [
       copyReplay(
         String(count + 1),

@@ -10,7 +10,7 @@ import {
 /**
  * A real round trip on throwaway servers: the archive is exported from one
  * instance and restored into a fresh one, and what the second instance holds
- * is compared with what the first held. A row whose type is gone, or whose
+ * is compared with what the first held. An item whose type is gone, or whose
  * type has since gained a required field, is the instance's own, and the way
  * to make one is the HTTP API alone: a forced delete, and a replacement.
  */
@@ -19,9 +19,9 @@ let destination: FreshServer;
 let third: FreshServer;
 beforeEach(async () => {
   [origin, destination, third] = await Promise.all([
-    bootFreshServer("rows-shape-origin"),
-    bootFreshServer("rows-shape-destination"),
-    bootFreshServer("rows-shape-third"),
+    bootFreshServer("items-shape-origin"),
+    bootFreshServer("items-shape-destination"),
+    bootFreshServer("items-shape-third"),
   ]);
 }, 3 * FRESH_SERVER_TIMEOUT_MS);
 afterEach(async () => {
@@ -65,7 +65,7 @@ async function archiveOf(client: MarfaClient) {
   return exported.data;
 }
 
-describe("a restore of rows whose type no longer shapes them", () => {
+describe("a restore of items whose type no longer shapes them", () => {
   it("restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again", async () => {
     const source = working(origin);
     const type = "user.vanished";
@@ -160,7 +160,7 @@ describe("a restore of rows whose type no longer shapes them", () => {
       ).toContain(id);
     }
 
-    // The row is the orphan an ordinary forced delete leaves
+    // The item is the orphan an ordinary forced delete leaves
     // (`types/orphan-write`, `types/orphan-kept-writable`).
     const patched = await reader.updateItem(id, {
       version: 2,

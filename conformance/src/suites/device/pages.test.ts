@@ -55,7 +55,7 @@ afterEach(async () => {
   folder = undefined;
 });
 
-/** A row the server holds before the fixture starts, the target of every
+/** An item the server holds before the fixture starts, the target of every
  *  edge the fixtures create. */
 const HELD = "01a00000-0000-7000-8000-0000000000aa";
 
@@ -76,7 +76,7 @@ interface PageResult {
 
 /**
  * The item and edge doors, holding what they write. A create naming an id
- * the door holds is a repeat, acknowledged with the row as it stands
+ * the door holds is a repeat, acknowledged with the item as it stands
  * (`items/create-repeat` and `edges/id-repeat`); a page entry naming one is
  * skipped as `duplicate_id` (`items/bulk-create-only-id`).
  */
@@ -236,7 +236,7 @@ function value<T>(outcome: Outcome<T>): T {
 }
 
 /** Queues `count` creates of notes titled `Note 0` on, and, where `edges`,
- *  an edge from each to the held row. */
+ *  an edge from each to the held item. */
 async function queue(
   harness: Harness,
   count: number,
@@ -283,7 +283,7 @@ async function start(
   others: string[] = [],
 ): Promise<{ harness: Harness; door: Door }> {
   const made = await hydratedHarness(label, {
-    rows: {
+    items: {
       "core.note": [HELD, ...others].map((id) => ({ item: { id } })),
     },
   });
@@ -525,7 +525,7 @@ describe("creates in pages", () => {
 
   it("sends no create in a page ahead of a write queued before it that is not a create", async () => {
     const target = "01a00000-0000-7000-8000-0000000000bb";
-    // A row of its own, since an edge to a row in the bin is refused before
+    // An item of its own, since an edge to an item in the bin is refused before
     // it is queued (`queue-and-verdicts/edge-end-in-bin-refused`).
     const gone = "01a00000-0000-7000-8000-0000000000cc";
     const sources = Array.from(
@@ -978,7 +978,7 @@ describe("creates in pages", () => {
 
     expect(first.unavailable, JSON.stringify(first)).toMatch(/rate limited/);
     expect(patches).toEqual([]);
-    // Another device edits the row between the page and its owed read.
+    // Another device edits the item between the page and its owed read.
     const created = door.items.get(id) ?? {};
     door.items.set(id, {
       ...created,

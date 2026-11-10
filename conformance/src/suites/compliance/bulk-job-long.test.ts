@@ -36,7 +36,7 @@ afterAll(async () => {
   await server.stop();
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-/** How many rows of `tag` stand at each type and version. */
+/** How many items of `tag` stand at each type and version. */
 async function versionsOf(tag: string): Promise<Map<string, number>> {
   const counts = new Map<string, number>();
   let cursor: string | undefined;
@@ -52,7 +52,7 @@ async function versionsOf(tag: string): Promise<Map<string, number>> {
   return counts;
 }
 
-/** How many rows a second the worker writes, from a job over `SAMPLE_ROWS`. */
+/** How many items a second the worker writes, from a job over `SAMPLE_ROWS`. */
 async function rowsPerSecond(): Promise<number> {
   await seed(working(), "pace", SAMPLE_ROWS);
   const started = Date.now();
@@ -97,7 +97,7 @@ describe("stopping the server on SIGTERM", () => {
     expect(ended.ms).toBeLessThan(8_000);
 
     // The witness that the run outlived the wait: the job is not finished,
-    // and it has written some of its rows and not all.
+    // and it has written some of its items and not all.
     const cut = await jobOf(working(), id);
     expect(cut.status).toBe("in_progress");
     expect(cut.processed).toBeGreaterThan(0);

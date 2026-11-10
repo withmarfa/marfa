@@ -95,7 +95,7 @@ describe("edge cascade semantics", () => {
       expect(read.status, id).toBe(200);
       expect(read.data.item.state).toBe("active");
     }
-    // The witness for the three above: a row the parent's trash did not
+    // The witness for the three above: an item the parent's trash did not
     // take stays where its own trash put it.
     expect((await client.getItem(alone)).status).toBe(404);
   });
@@ -117,7 +117,7 @@ describe("edge cascade semantics", () => {
     expect((await client.getItem(child)).status).toBe(200);
   });
 
-  it("restoring a row the trash above took brings back what that trash took beneath it, and not its siblings", async () => {
+  it("restoring an item the trash above took brings back what that trash took beneath it, and not its siblings", async () => {
     const parent = await makeItem("m-parent");
     const middle = await makeItem("m-middle");
     const beneath = await makeItem("m-beneath");
@@ -165,7 +165,7 @@ describe("edge cascade semantics", () => {
     expect((await client.getItem(kept)).status).toBe(200);
   });
 
-  it("restoring a row brings back what lay beneath it after the parent whose trash took them is purged", async () => {
+  it("restoring an item brings back what lay beneath it after the parent whose trash took them is purged", async () => {
     const parent = await makeItem("g-parent");
     const middle = await makeItem("g-middle");
     const beneath = await makeItem("g-beneath");
@@ -187,7 +187,7 @@ describe("edge cascade semantics", () => {
     expect((await client.restoreItem(middle)).ok).toBe(true);
     expect(
       (await client.getItem(beneath)).status,
-      "the row beneath stayed in the bin once the trash that took it lost its parent",
+      "the item beneath stayed in the bin once the trash that took it lost its parent",
     ).toBe(200);
   });
 
@@ -488,14 +488,14 @@ describe("edge cascade semantics", () => {
     expect(refused.error?.error.code).toBe("edge_constraint_violation");
     expect(blockedBy(refused).sort()).toEqual([...blockers].sort());
 
-    // A delete of the same row names the same edges.
+    // A delete of the same item names the same edges.
     const deleted = await client.deleteItem(root);
     expect(deleted.status).toBe(400);
     expect(blockedBy(deleted).sort()).toEqual(blockedBy(refused).sort());
     for (const id of [root, child]) {
       expect(
         (await client.getItem(id)).data.item.state,
-        "a refused transition moved a row",
+        "a refused transition moved an item",
       ).toBe("active");
     }
   });
@@ -629,7 +629,7 @@ describe("edge cascade semantics", () => {
     ).toEqual([edgeId]);
     expect((await client.getItem(source)).data.item.state).toBe("active");
 
-    // The bulk-action transition is held by the same edge, per row.
+    // The bulk-action transition is held by the same edge, per item.
     const tag = `block-bulk-${ctx.runId}`;
     expect((await client.addTags(source, [tag])).ok).toBe(true);
     const queued = await client.bulkAction({
@@ -694,7 +694,7 @@ describe("edge cascade semantics", () => {
     expect(back.data.item.state).toBe("active");
   });
 
-  it("refuses a transition into the bin held by a block edge into the row, or on a row the cascade reaches", async () => {
+  it("refuses a transition into the bin held by a block edge into the item, or on an item the cascade reaches", async () => {
     const etId = `mock.block-reach.${ctx.runId}`;
     const reg = await client.registerEdgeType({
       label: "Test edge type",
@@ -727,7 +727,7 @@ describe("edge cascade semantics", () => {
           Array<{ id: string }> | undefined
       )?.map((e) => e.id) ?? [];
 
-    // A block edge pointing into the row named.
+    // A block edge pointing into the item named.
     const named = await makeItem("br-named");
     const pointing = await makeItem("br-pointing");
     const into = await edgeBetween(pointing, named, etId);
@@ -750,7 +750,7 @@ describe("edge cascade semantics", () => {
     for (const id of [parent, child]) {
       expect(
         (await client.getItem(id)).data.item.state,
-        "a refused transition moved a row",
+        "a refused transition moved an item",
       ).toBe("active");
     }
 

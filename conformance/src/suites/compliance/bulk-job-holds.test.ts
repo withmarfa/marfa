@@ -24,7 +24,7 @@ import {
  * race against the worker.
  *
  * **Independent of the chunk size.** The contract states none, so the
- * fixture learns it (`rowsAndChunk`) and seeds rows enough that a job takes
+ * fixture learns it (`rowsAndChunk`) and seeds items enough that a job takes
  * more than one chunk.
  */
 let server: FreshServer;
@@ -107,7 +107,7 @@ async function workerCaughtUp(): Promise<void> {
   expect((await working.pollBulkActionToTerminal(id)).status).toBe("completed");
 }
 
-/** A job over `rows` held after its first chunk, with the chunk's counters. */
+/** A job over its items held after its first chunk, with the chunk's counters. */
 async function heldBetweenChunks(
   client: MarfaClient,
   input: (tag: string) => Parameters<typeof queue>[1],
@@ -398,7 +398,7 @@ describe("a credential that changes while its job runs", () => {
       remaining += page.data.data.length;
       cursor = page.data.next_cursor ?? undefined;
     }
-    // The first chunk was purged, and the rows after it are still in the bin.
+    // The first chunk was purged, and the items after it are still in the bin.
     expect(held.succeeded).toBeGreaterThan(0);
     expect(remaining).toBe(learned.rows - held.succeeded);
   });
@@ -616,7 +616,7 @@ describe("a source filter that comes to hide items while its job runs", () => {
         expect(entry.code).toBe("item_not_found");
         expect(JSON.stringify(entry)).not.toContain("core.note");
       }
-      // The instance's own lever would hide the rows from this read too.
+      // The instance's own lever would hide the items from this read too.
       expect((await operator.updateConfig({})).status).toBe(200);
       const written = await idsWith(working, marker);
       expect(written).toHaveLength(3);
@@ -647,11 +647,11 @@ async function writerOf(name: string): Promise<MarfaClient> {
 describe("a strict mode that is set while its job waits", () => {
   const PATCH = { not_a_real_field: "x" };
 
-  it("is asked of every row the job writes, as it stands then", async () => {
+  it("is asked of every item the job writes, as it stands then", async () => {
     const tag = fresh("strict-set");
     await seed(working, tag, 3);
     // The witness: with the lever off the patch lands, so what refuses the
-    // rows below is the lever.
+    // items below is the lever.
     const before = await queue(working, {
       action: "update_properties",
       patch: PATCH,
@@ -695,7 +695,7 @@ describe("a strict mode that is set while its job waits", () => {
     }
   });
 
-  it("is asked for the credential as it stands then, so a key loosened while the job waits writes its rows", async () => {
+  it("is asked for the credential as it stands then, so a key loosened while the job waits writes its items", async () => {
     expect(
       (
         await operator.updateConfig({

@@ -69,11 +69,11 @@ export interface MarfaClientOptions {
 export interface CreateItemInput {
   type: string;
   /**
-   * The row's id, minted by the caller.
+   * The item's id, minted by the caller.
    *
    * Optional, and omitting it lets the server mint one. A client that renders
-   * a row before its write leaves the device has to name the id itself, or the
-   * row it drew and the row the server stores are two different things.
+   * an item before its write leaves the device has to name the id itself, or the
+   * item it drew and the item the server stores are two different things.
    */
   id?: string;
   properties?: Record<string, unknown>;
@@ -85,7 +85,7 @@ export interface CreateItemInput {
    *  the item `source_id` matches. */
   mode?: "upsert" | "create_only";
   /**
-   * Only meaningful when `source_id` resolves a live row: that upsert is
+   * Only meaningful when `source_id` resolves a live item: that upsert is
    * conditional and answers what the update door answers. Ignored on a
    * genuine create, which has no version to have read, and on a repeated
    * `id` or a trashed natural key, which are acknowledged rather than
@@ -106,7 +106,7 @@ export interface CreateItemInput {
 
 export interface UpdateItemInput {
   properties?: Record<string, unknown>;
-  /** Whether `properties` lays over the row's or is the whole of them, so a
+  /** Whether `properties` lays over the item's or is the whole of them, so a
    *  field left out is cleared (`versions/merge-replace-clear` for a stale write). */
   properties_mode?: "merge" | "replace";
   /** Properties to remove, leaving every other as it stands
@@ -117,7 +117,7 @@ export interface UpdateItemInput {
   retype?: boolean;
   source_id?: string; // Mutable — updated value round-trips on subsequent GET
   tier?: "library" | "feed";
-  /** The item's own time. One of the three fields of the row that are not
+  /** The item's own time. One of the three fields of the item that are not
    *  properties and that the version check covers (`versions/collision-item-field`). */
   occurred_at?: string;
   /**
@@ -181,7 +181,7 @@ export class MarfaClient {
 
   /**
    * `acknowledged` is present only on a repeat: send an `id` the caller has
-   * already created and the server answers 200 with the stored row rather
+   * already created and the server answers 200 with the stored item rather
    * than writing a second one. It is optional here because it is absent from
    * every other answer this door gives, and a caller reading it as a boolean
    * would take a first create for a repeat.
@@ -697,7 +697,7 @@ export class MarfaClient {
    * `GET /items/stats` with no parameters — counts keyed by lifecycle state.
    *
    * With no filter the narrowing is entirely the caller's own scope. That is
-   * what makes it worth asserting on: it returns numbers rather than rows, so
+   * what makes it worth asserting on: it returns numbers rather than items, so
    * a filter applied while shaping a response instead of inside the query
    * leaves this answer unchanged while every other read narrows.
    */
@@ -734,7 +734,7 @@ export class MarfaClient {
     );
   }
 
-  /** POST /items/lookup — rows by link, natural key or id, in every state,
+  /** POST /items/lookup — items by link, natural key or id, in every state,
    *  and the tombstones purges left for the keys named. */
   async lookupItems(input: LookupInput): Promise<ApiResponse<LookupResponse>> {
     return this.request<LookupResponse>("/items/lookup", {
@@ -809,7 +809,7 @@ export class MarfaClient {
     );
   }
 
-  /** Request cancellation of a bulk-action job. Idempotent on terminal rows. */
+  /** Request cancellation of a bulk-action job. Idempotent on a job already in a terminal state. */
   async bulkActionCancel(jobId: string): Promise<ApiResponse<BulkActionJob>> {
     return this.request<BulkActionJob>(
       `/items/bulk-actions/jobs/${encodeURIComponent(jobId)}/cancel`,
@@ -875,7 +875,7 @@ export class MarfaClient {
   /**
    * `id` and `acknowledged` mirror `createItem`: a client that mints its own
    * edge ids keeps them, and a repeat under an id already naming this exact
-   * edge is answered with the stored row rather than a second one. An id
+   * edge is answered with the stored edge rather than a second one. An id
    * naming a *different* edge is a collision rather than a repeat and is
    * refused 409.
    */
@@ -975,7 +975,7 @@ export class MarfaClient {
 
   /**
    * Remove an outbound webhook subscription. Needs `webhooks.manage`. The route
-   * answers 404 to a credential that cannot see the row, so it takes the
+   * answers 404 to a credential that cannot see the item, so it takes the
    * credential that registered it.
    */
   async deleteWebhook(id: string): Promise<ApiResponse<{ ok: boolean }>> {

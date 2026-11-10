@@ -96,7 +96,7 @@ describe("the modification time a catch-up reads", () => {
     ]);
     expect(after.ok && control.ok).toBe(true);
 
-    // The control. A server that restamped every row on read, or a clock that
+    // The control. A server that restamped every item on read, or a clock that
     // moved under the test, would satisfy the assertion below without the tag
     // write having done anything.
     expect(
@@ -233,8 +233,8 @@ describe("incremental catch-up", () => {
   it("reads across every lifecycle state in one pass", async () => {
     requireRule(caps, "stateAny");
 
-    // A client re-importing has to see trashed rows too: a row it holds as
-    // active and the server holds as trashed is a row it will never correct
+    // A client re-importing has to see trashed items too: an item it holds as
+    // active and the server holds as trashed is an item it will never correct
     // if the read cannot return it.
     const active = await client.createItem({
       type: "core.note",
@@ -263,11 +263,11 @@ describe("incremental catch-up", () => {
 
     expect(
       ids.has(active.data.item.id),
-      "an active row was missing from a state=any read",
+      "an active item was missing from a state=any read",
     ).toBe(true);
     expect(
       ids.has(trashed.data.item.id),
-      "a trashed row was missing from a state=any read, so a client cannot learn that a row it holds as active has been trashed",
+      "a trashed item was missing from a state=any read, so a client cannot learn that an item it holds as active has been trashed",
     ).toBe(true);
   });
 });

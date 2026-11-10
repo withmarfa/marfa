@@ -12,11 +12,11 @@ import { collectUntil, withStream } from "../../utils/stream.js";
 
 /**
  * What a write meets while a restore runs. A restore holds the write lock
- * from its first row to its commit, so a write issued meanwhile waits behind
+ * from its first item to its commit, so a write issued meanwhile waits behind
  * it, and the only question is what the write is answered and where its event
  * lands among the restore's. Each test boots a server of its own: the restore
  * is large enough to be in flight for a while, and the run's server must not
- * carry its rows or its settings.
+ * carry its items or its settings.
  *
  * The writes are fired while the restore is in flight and not at an arranged
  * instant, so which of them land before, behind or past the restore is for the
@@ -24,7 +24,7 @@ import { collectUntil, withStream } from "../../utils/stream.js";
  */
 
 const RESTORED = 4_000;
-/** Enough rows that the restore holds the writer well past `BUDGET_MS`. */
+/** Enough items that the restore holds the writer well past `BUDGET_MS`. */
 const RESTORED_PAST_THE_WAIT = 20_000;
 
 let ordered: FreshServer;

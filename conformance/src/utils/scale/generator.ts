@@ -19,7 +19,7 @@ const WORDS = (
 ).split(" ");
 
 /**
- * Held in one item in every `RARE_EVERY`, so a search for it finds a few rows
+ * Held in one item in every `RARE_EVERY`, so a search for it finds a few items
  * on any instance and the benchmark can tell a rare word from a common one.
  */
 export const RARE_WORD = "quokka";

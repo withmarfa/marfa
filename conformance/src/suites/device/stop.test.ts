@@ -164,7 +164,7 @@ describe("stopping a hydration", () => {
       itemsPage([]),
     );
     scriptHydration(server, { head: "10" });
-    // A hydration reads again the row a queued create made, which the server
+    // A hydration reads again the item a queued create made, which the server
     // does not hold yet.
     server.copyAnswer(
       "GET",
@@ -222,7 +222,7 @@ describe("stopping a hydration", () => {
     const read = await device.listAnswer();
     expect(
       read.ok ? read.value.completeness : read.refusal.code,
-      "a copy whose hydration was stopped answered a read from the rows it had taken as though they were the whole slice",
+      "a copy whose hydration was stopped answered a read from the items it had taken as though they were the whole slice",
     ).toBe("partial");
     expect(await device.queue(), "the stop touched the queue").toEqual(queued);
 
@@ -442,7 +442,7 @@ describe("stopping a drain", () => {
     const id = "01a00000-0000-7000-8000-00000000000a";
     harness = await hydratedHarness("stop-drain-tag", {
       head: "10",
-      rows: {
+      items: {
         "core.note": [
           { item: { id, properties: { title: "held", body: "held" } } },
         ],

@@ -1,6 +1,6 @@
 # Items
 
-An item is a typed row: an `id`, a `type`, `properties` the type validates, a `source` and `source_id`, a lifecycle `state`, a `tier`, an `occurred_at` and a `version`. Its tags and extensions live in its `metadata`.
+An item is a typed record: an `id`, a `type`, `properties` the type validates, a `source` and `source_id`, a lifecycle `state`, a `tier`, an `occurred_at` and a `version`. Its tags and extensions live in its `metadata`.
 
 ## Every read
 
@@ -82,7 +82,7 @@ When a write names an item whose `read_only` is `true`, the server MUST NOT refu
 
 If the server refuses a write to an item, then the server MUST leave every item, tag, edge and extension as it was and announce nothing.
 
-**Tests:** `compliance/claimed-sources.test.ts › refuses a source the key does not claim, naming it`, `compliance/field-enforcement.test.ts › device: no such field ships, and a body naming one is refused by name and stores nothing`, `correctness/dedup.test.ts › refuses a create naming an id that is not the row its natural key resolves`, `correctness/item-versioning.test.ts › refuses a retype into a type nothing registered, and moves nothing`, `compliance/links.test.ts › refuses a link on an update, in either mode and at a stale version`.
+**Tests:** `compliance/claimed-sources.test.ts › refuses a source the key does not claim, naming it`, `compliance/field-enforcement.test.ts › device: no such field ships, and a body naming one is refused by name and stores nothing`, `correctness/dedup.test.ts › refuses a create naming an id that is not the item its natural key resolves`, `correctness/item-versioning.test.ts › refuses a retype into a type nothing registered, and moves nothing`, `compliance/links.test.ts › refuses a link on an update, in either mode and at a stale version`.
 
 ## Creating an item
 
@@ -100,11 +100,11 @@ When `POST /items` creates an item and names no `id`, `state` or `tags`, the ser
 
 ### `items/create-client-id`
 
-When `POST /items` names a lowercase UUIDv7 `id` that no item holds, the server MUST create the item under that `id`, on the row and on its `item.created` event.
+When `POST /items` names a lowercase UUIDv7 `id` that no item holds, the server MUST create the item under that `id`, on the item and on its `item.created` event.
 
-**Reason:** a client that works offline names its rows before the server sees them.
+**Reason:** a client that works offline names its items before the server sees them.
 
-**Tests:** `sync/identity.test.ts › keeps the id a client mints for an item, on the row and on the event`.
+**Tests:** `sync/identity.test.ts › keeps the id a client mints for an item, on the item and on the event`.
 
 ### `items/create-id-format`
 
@@ -118,15 +118,15 @@ If `POST /items` names an `id` that is not a lowercase UUIDv7, then the server M
 
 When `POST /items`, without `mode: create_only`, names an `id` that an item of the same type, which the key may read, holds and names no natural key that resolves an item, the server MUST answer `200` with the stored item as it stands and `acknowledged: true`.
 
-**Reason:** a client that lost the answer to its create sends it again, and must get the row it made without overwriting an edit made since.
+**Reason:** a client that lost the answer to its create sends it again, and must get the item it made without overwriting an edit made since.
 
-**Tests:** `sync/acknowledged.test.ts › answers an item repeat with the stored row and announces nothing`, `correctness/dedup.test.ts › applies a create naming the id and the natural key of one row as an upsert onto it`.
+**Tests:** `sync/acknowledged.test.ts › answers an item repeat with the stored item and announces nothing`, `correctness/dedup.test.ts › applies a create naming the id and the natural key of one item as an upsert onto it`.
 
 ### `items/create-repeat-silent`
 
 When the server answers a create with `acknowledged: true`, the server MUST NOT announce an event for it.
 
-**Tests:** `sync/acknowledged.test.ts › answers an item repeat with the stored row and announces nothing`.
+**Tests:** `sync/acknowledged.test.ts › answers an item repeat with the stored item and announces nothing`.
 
 ### `items/create-id-other-type`
 
@@ -138,7 +138,7 @@ If `POST /items`, without `mode: create_only`, names an `id` that an item of ano
 
 If `POST /items` names an `id` that an item of a type the key may not read holds, then the server MUST answer `409 conflict` naming neither that item's type nor any of its properties.
 
-**Reason:** the key learns the id is taken, which it must to choose another, and nothing else about a row it may not read.
+**Reason:** the key learns the id is taken, which it must to choose another, and nothing else about an item it may not read.
 
 **Tests:** `compliance/unreadable-items.test.ts › POST /items naming the id of an item it cannot read learns the id is taken, and not the type`.
 
@@ -146,9 +146,9 @@ If `POST /items` names an `id` that an item of a type the key may not read holds
 
 When `POST /items`, without `mode: create_only`, names both the `id` and the natural key of one item, the server MUST apply it as a natural-key upsert onto that item, as `items/natural-key-upsert` states.
 
-**Reason:** the natural key decides before the id, so a connector that sends each row under its own id and its vendor's key updates the row on every sync.
+**Reason:** the natural key decides before the id, so a connector that sends each item under its own id and its vendor's key updates the item on every sync.
 
-**Tests:** `correctness/dedup.test.ts › applies a create naming the id and the natural key of one row as an upsert onto it`.
+**Tests:** `correctness/dedup.test.ts › applies a create naming the id and the natural key of one item as an upsert onto it`.
 
 ### `items/create-undeclared-key`
 
@@ -180,13 +180,13 @@ An item's natural key is its `source` and `source_id` together.
 
 When `POST /items` or a `POST /items/bulk` entry names no `source`, or the credential's own, the server MUST stamp the item with the credential's source.
 
-**Tests:** `compliance/claimed-sources.test.ts › writes under a source the key claims, and the row carries it`, `compliance/field-enforcement.test.ts › source: a body naming a source the key does not claim is refused, naming it`.
+**Tests:** `compliance/claimed-sources.test.ts › writes under a source the key claims, and the item carries it`, `compliance/field-enforcement.test.ts › source: a body naming a source the key does not claim is refused, naming it`.
 
 ### `items/source-claimed`
 
 When `POST /items` or a `POST /items/bulk` entry names a source the credential's key claims (`keys-and-oauth/claims-answered`), the server MUST stamp the item with that source.
 
-**Tests:** `compliance/claimed-sources.test.ts › writes under a source the key claims, and the row carries it`.
+**Tests:** `compliance/claimed-sources.test.ts › writes under a source the key claims, and the item carries it`.
 
 ### `items/source-unclaimed`
 
@@ -206,41 +206,41 @@ When the server asks a type's source allow-list (`types/source-allowlist`) of a 
 
 When `PATCH /items/{id}` names a `source`, the server MUST answer `400 validation_error`.
 
-**Reason:** a row's source never moves after its create.
+**Reason:** an item's source never moves after its create.
 
-**Tests:** `compliance/claimed-sources.test.ts › keeps a row's source where its create put it`.
+**Tests:** `compliance/claimed-sources.test.ts › keeps an item's source where its create put it`.
 
 ### `items/natural-key-upsert`
 
 When `POST /items` without `mode: create_only`, or a `POST /items/bulk` entry under `mode: upsert`, names a `source_id` that, under the source it resolves to, a live item of the declared type holds, the server MUST apply it as an update to that item, answered `200` at the item's next version, whichever credential sends it.
 
-**Reason:** two keys that claim one source share its natural keys, so a connector's row is one row whichever of its keys writes it.
+**Reason:** two keys that claim one source share its natural keys, so a connector's item is one item whichever of its keys writes it.
 
-**Tests:** `correctness/dedup.test.ts › duplicate (source, source_id) upserts onto the existing item (natural-key upsert)`, `compliance/claimed-sources.test.ts › upserts onto one row from two keys claiming one source`, `› lands a bulk entry naming a claim on the claim's row, not on its own source's`, `compliance/create-only.test.ts › updates the item as before under mode upsert and under no mode`.
+**Tests:** `correctness/dedup.test.ts › duplicate (source, source_id) upserts onto the existing item (natural-key upsert)`, `compliance/claimed-sources.test.ts › upserts onto one item from two keys claiming one source`, `› lands a bulk entry naming a claim on the claim's item, not on its own source's`, `compliance/create-only.test.ts › updates the item as before under mode upsert and under no mode`.
 
 ### `items/natural-key-merge`
 
 When a create is applied as a natural-key upsert, the server MUST lay its `properties` over the item's.
 
-**Tests:** `correctness/dedup.test.ts › merges a natural-key upsert's properties over the row's, and keeps its tags unless it names them`.
+**Tests:** `correctness/dedup.test.ts › merges a natural-key upsert's properties over the item's, and keeps its tags unless it names them`.
 
 ### `items/natural-key-tags`
 
 When a create applied as a natural-key upsert names no `tags`, the server MUST leave the item's tags as they stand.
 
-**Tests:** `correctness/dedup.test.ts › merges a natural-key upsert's properties over the row's, and keeps its tags unless it names them`.
+**Tests:** `correctness/dedup.test.ts › merges a natural-key upsert's properties over the item's, and keeps its tags unless it names them`.
 
 ### `items/natural-key-concurrent`
 
 When two `POST /items` without `mode: create_only` naming one natural key that no item holds arrive together, the server MUST create one item and apply every other as the natural-key upsert onto it.
 
-**Tests:** `correctness/dedup.test.ts › lands concurrent creates of one natural key on one row`.
+**Tests:** `correctness/dedup.test.ts › lands concurrent creates of one natural key on one item`.
 
 ### `items/natural-key-other-type`
 
 If the natural key of `POST /items`, without `mode: create_only`, resolves an item of a type other than the one the create declares, then the server MUST answer `409 type_mismatch`.
 
-**Tests:** `correctness/dedup.test.ts › refuses an upsert whose natural key lands on a row of another type`.
+**Tests:** `correctness/dedup.test.ts › refuses an upsert whose natural key lands on an item of another type`.
 
 ### `items/natural-key-new`
 
@@ -252,25 +252,25 @@ When a create names neither a `source_id` that an item holds under its source no
 
 If `POST /items`, without `mode: create_only`, names a natural key that resolves an item and an `id` that is not that item's, then the server MUST answer `400 validation_error` with `details.field` `id`, `details.requested_id`, `details.existing_id`, `details.source` and `details.source_id`.
 
-**Reason:** the natural key and the id each name a row, and writing onto either would ignore the other.
+**Reason:** the natural key and the id each name an item, and writing onto either would ignore the other.
 
-**Tests:** `correctness/dedup.test.ts › refuses a create naming an id that is not the row its natural key resolves`.
+**Tests:** `correctness/dedup.test.ts › refuses a create naming an id that is not the item its natural key resolves`.
 
 ### `items/natural-key-unreadable`
 
 If the natural key of `POST /items`, or of a `POST /items/bulk` entry under `mode: upsert`, resolves an item of a type the key may not read, then the server MUST refuse it `type_not_permitted` naming nothing of that item, before any other answer about it.
 
-**Reason:** a key that shares a source with another can reach a row of a type it holds nothing on, and learns only that its natural key is taken.
+**Reason:** a key that shares a source with another can reach an item of a type it holds nothing on, and learns only that its natural key is taken.
 
-**Tests:** `compliance/claimed-sources.test.ts › tells a key its natural key is taken, and nothing of a row it may not read`, `› refuses a create naming another id than the row its natural key resolves, to a key that may not read the row, without naming it`.
+**Tests:** `compliance/claimed-sources.test.ts › tells a key its natural key is taken, and nothing of an item it may not read`, `› refuses a create naming another id than the item its natural key resolves, to a key that may not read the item, without naming it`.
 
 ### `items/natural-key-trashed`
 
 When the natural key or the `id` of `POST /items`, without `mode: create_only`, resolves an item in the bin, of the type the create declares, that the key may read, the server MUST answer `200` with that item, still in the bin, and `acknowledged: true`.
 
-**Reason:** a connector re-syncing a row the person trashed must neither bring it back nor fail.
+**Reason:** a connector re-syncing an item the person trashed must neither bring it back nor fail.
 
-**Tests:** `compliance/cascade-marks.test.ts › marks a row a cascade trashed on the acknowledgement of a create naming its source and source id, and names the row trashed only to a key that may read its type`, `› marks a row a cascade trashed on the answer to a create repeated under its id, and names the row trashed only to a key that may read its type`.
+**Tests:** `compliance/cascade-marks.test.ts › marks an item a cascade trashed on the acknowledgement of a create naming its source and source id, and names the item trashed only to a key that may read its type`, `› marks an item a cascade trashed on the answer to a create repeated under its id, and names the item trashed only to a key that may read its type`.
 
 ### `items/create-only-source`
 
@@ -398,15 +398,15 @@ When a write names `capture_latitude` or `capture_longitude`, the server MUST st
 
 When a write creates an item, the server MUST give it the `tier` the write names, else the credential's `default_tier`, else `library`.
 
-**Tests:** `compliance/tier-axis.test.ts › default-when-omitted is library`, `› credential default_tier stamps tier when client omits`, `› client per-item tier overrides credential default_tier`, `› uses the credential default and explicit tier on new bulk rows ($mode, $defaultTier)`.
+**Tests:** `compliance/tier-axis.test.ts › default-when-omitted is library`, `› credential default_tier stamps tier when client omits`, `› client per-item tier overrides credential default_tier`, `› uses the credential default and explicit tier on new bulk items ($mode, $defaultTier)`.
 
 ### `items/tier-upsert`
 
 When a natural-key upsert names no `tier`, on `POST /items` or `POST /items/bulk`, the server MUST leave the item's tier as it stands.
 
-**Reason:** a row a person moved to the feed stays there through the connector's next sync.
+**Reason:** an item a person moved to the feed stays there through the connector's next sync.
 
-**Tests:** `compliance/tier-axis.test.ts › keeps a row's tier through a natural-key re-sync on both doors`.
+**Tests:** `compliance/tier-axis.test.ts › keeps an item's tier through a natural-key re-sync on both doors`.
 
 ### `items/initial-state`
 
@@ -418,7 +418,7 @@ When a create names a `state` the type's lifecycle can reach from `active`, the 
 
 If a create names a `state` the type's lifecycle cannot reach from `active`, then the server MUST answer `400 validation_error`.
 
-**Tests:** `correctness/lifecycle-transitions.test.ts › refuses an initial state the type's lifecycle cannot reach, and stores one it can`, `compliance/bulk.test.ts › leaves a state alone on an entry that resolves a row rather than creating one`.
+**Tests:** `correctness/lifecycle-transitions.test.ts › refuses an initial state the type's lifecycle cannot reach, and stores one it can`, `compliance/bulk.test.ts › leaves a state alone on an entry that resolves an item rather than creating one`.
 
 ### `items/initial-state-bulk-update`
 
@@ -426,7 +426,7 @@ When a `POST /items/bulk` entry resolves an existing item, the server MUST ignor
 
 **Reason:** the update the entry describes does not read `state`, so refusing it would roll a page back over a field the write ignores.
 
-**Tests:** `compliance/bulk.test.ts › leaves a state alone on an entry that resolves a row rather than creating one`.
+**Tests:** `compliance/bulk.test.ts › leaves a state alone on an entry that resolves an item rather than creating one`.
 
 ## Property values
 
@@ -528,7 +528,7 @@ When a write names a property whose value is a whole number written with the sho
 
 **Reason:** every whole number a double holds exactly up to 2^53 is written in those digits, except `-0`, which `items/property-number-exact` refuses, and so is `1152921504606847000`, which the server serves for a stored 2^60, so a value read back can be written back and read again as the same number. A number with a fraction or an exponent names a float, not digits.
 
-**Tests:** `compliance/exact-integers.test.ts › keeps %s as the number a float holds`, `› leaves the digits of a string alone`, `device/property-validation-live.test.ts › keeps %s on both paths as the same stored number`, `› keeps a large number in the digits a float is served as inside an array and a nested object on both paths`, `› holds the digits %s as written on the server and in the local row, before and after a drain`.
+**Tests:** `compliance/exact-integers.test.ts › keeps %s as the number a float holds`, `› leaves the digits of a string alone`, `device/property-validation-live.test.ts › keeps %s on both paths as the same stored number`, `› keeps a large number in the digits a float is served as inside an array and a nested object on both paths`, `› holds the digits %s as written on the server and in the local item, before and after a drain`.
 
 ### `items/property-name-empty`
 
@@ -554,7 +554,7 @@ When a create makes an item, the server MUST answer its properties with the fiel
 
 When a merge writes an item's properties, through `PATCH /items/{id}`, a natural-key upsert or a `replace` at a stale version, the server MUST keep the properties the item holds in their places and put each one it adds after them, in the order sent.
 
-**Tests:** `compliance/validation.test.ts › keeps the order a merge finds and adds after it, and takes the order a whole edit sends`, `› keeps the order a whole edit behind the row finds, as a merge does`.
+**Tests:** `compliance/validation.test.ts › keeps the order a merge finds and adds after it, and takes the order a whole edit sends`, `› keeps the order a whole edit behind the item finds, as a merge does`.
 
 ### `items/property-order-replace`
 
@@ -580,7 +580,7 @@ If a write names a `thumbnail` that is not `data:image/png;base64,`, `data:image
 
 The server MUST answer an item's `thumbnail` as a property on every operation and event that answers the item.
 
-**Reason:** a device holds the thumbnail with the item and never fetches it (`device/thumbnail-from-row`).
+**Reason:** a device holds the thumbnail with the item and never fetches it (`device/thumbnail-from-item`).
 
 **Tests:** `compliance/thumbnails.test.ts › travels inside its item on a get, a list, an event frame and an export`.
 
@@ -650,7 +650,7 @@ If a key writes an item of a type its type map does not grant write on, then the
 
 If any key the API can mint writes a `system.*` type through an item operation, then the server MUST answer `403 type_not_permitted`, whatever the key's type map grants.
 
-**Reason:** a `system.*` row is written only through its own operation, such as `items/folder-create` or `views/create`.
+**Reason:** a `system.*` item is written only through its own operation, such as `items/folder-create` or `views/create`.
 
 **Tests:** `compliance/system-types.test.ts › rejects system.* writes from every key the API can mint`, `› refuses a system.folder write on every item door, from a key the folder door admits`, `› refuses a system.view write on every item door, from a key the view door admits`.
 
@@ -684,13 +684,13 @@ If an operation on an item or a folder names an id that is not a lowercase UUIDv
 
 If `GET /items/{id}` names an id no item holds, an item in the bin or an item of a type the key may not read, then the server MUST answer `404 item_not_found`.
 
-**Tests:** `compliance/error-codes.test.ts › returns 404 for non-existent item`, `correctness/trash.test.ts › deleted item returns 404 on direct get`, `compliance/state-default.test.ts › a read by id answers an archived row and refuses one in the bin`.
+**Tests:** `compliance/error-codes.test.ts › returns 404 for non-existent item`, `correctness/trash.test.ts › deleted item returns 404 on direct get`, `compliance/state-default.test.ts › a read by id answers an archived item and refuses one in the bin`.
 
 ### `items/bulk-get`
 
 When a key sends `POST /items/bulk-get` with `ids`, the server MUST answer `200` with each item it may read that is not in the bin, and is not a `system.*` item unless the request's `include` holds `system`, once each, in the order the request named them.
 
-**Tests:** `compliance/bulk-get.test.ts › returns the requested items by id`, `› omits ids that do not resolve rather than erroring`, `compliance/links.test.ts › looks rows up by id in every state, where bulk-get leaves the bin out, and leaves a system row out`, `compliance/reach.test.ts › answers a system row to a bulk read under a reach only when include names system`.
+**Tests:** `compliance/bulk-get.test.ts › returns the requested items by id`, `› omits ids that do not resolve rather than erroring`, `compliance/links.test.ts › looks items up by id in every state, where bulk-get leaves the bin out, and leaves a system item out`, `compliance/reach.test.ts › answers a system item to a bulk read under a reach only when include names system`.
 
 ### `items/bulk-get-omits`
 
@@ -736,7 +736,7 @@ When `POST /items/bulk-get` names `metadata` in `include`, the server MUST answe
 
 If `POST /items/bulk-get` names a `system.*` item and its `include` does not hold `system`, then the server MUST leave the item out of the answer.
 
-**Tests:** `compliance/reach.test.ts › answers a system row to a bulk read under a reach only when include names system`.
+**Tests:** `compliance/reach.test.ts › answers a system item to a bulk read under a reach only when include names system`.
 
 ### `items/titles`
 
@@ -876,7 +876,7 @@ If `PATCH /items/{id}` names in `clear_properties` a property the item's type, o
 
 When `PATCH /items/{id}` names a `tier`, the server MUST move the item to that tier.
 
-**Tests:** `correctness/item-versioning.test.ts › moves a row's tier on an update`.
+**Tests:** `correctness/item-versioning.test.ts › moves an item's tier on an update`.
 
 ### `items/update-source-id`
 
@@ -888,7 +888,7 @@ When `PATCH /items/{id}` names a `source_id` on an item under the credential's o
 
 If a write gives a new `source_id` to an item under a source that is neither the credential's own nor one its key claims, then the server MUST answer `403 forbidden` with `details.source` naming the item's source.
 
-**Reason:** a natural key belongs to its source, and moving it takes the row from the key that syncs it.
+**Reason:** a natural key belongs to its source, and moving it takes the item from the key that syncs it.
 
 **Tests:** `compliance/claimed-sources.test.ts › refuses a key moving a natural key under a source it does not write under`.
 
@@ -896,7 +896,7 @@ If a write gives a new `source_id` to an item under a source that is neither the
 
 If a write gives an item a `source_id` that another item holds under the same source, in any state, the bin included, then the server MUST answer `409 source_id_conflict`.
 
-**Tests:** `correctness/items-source-id-mutation.test.ts › refuses a move onto a natural key another row already holds`, `› refuses a move onto the natural key of a row in the bin`.
+**Tests:** `correctness/items-source-id-mutation.test.ts › refuses a move onto a natural key another item already holds`, `› refuses a move onto the natural key of an item in the bin`.
 
 ### `items/update-type-mismatch`
 
@@ -938,13 +938,13 @@ When `PATCH /items/{id}`, a `POST /items` that lands on an item by its natural k
 
 When a write names `retype: true` and a `type`, the server MUST move the item to that type, with or without `properties`.
 
-**Tests:** `correctness/item-versioning.test.ts › moves the type with retype alone, holding the row to the type entered`, `› reads a null on a move by the type entered`.
+**Tests:** `correctness/item-versioning.test.ts › moves the type with retype alone, holding the item to the type entered`, `› reads a null on a move by the type entered`.
 
 ### `items/retype-validated`
 
 If the properties an item would hold after a move fall short of the type it enters, then the server MUST answer `400 invalid_properties`.
 
-**Tests:** `correctness/item-versioning.test.ts › moves the type with retype alone, holding the row to the type entered`.
+**Tests:** `correctness/item-versioning.test.ts › moves the type with retype alone, holding the item to the type entered`.
 
 ### `items/retype-unknown`
 
@@ -962,13 +962,13 @@ If a move names a type the key may not write, then the server MUST answer `403 t
 
 When a move names the type the item already has at the version it holds, the server MUST answer the item as it is, at its version, with no snapshot written.
 
-**Tests:** `correctness/item-versioning.test.ts › moves nothing when retype names the type the row already has`.
+**Tests:** `correctness/item-versioning.test.ts › moves nothing when retype names the type the item already has`.
 
 ### `items/retype-same-type-stale`
 
 If a move naming the type the item already has names a version the item no longer holds, then the server MUST answer `409 version_conflict`.
 
-**Tests:** `correctness/item-versioning.test.ts › refuses a retype naming the row's own type at a stale version, as any stale write that changes nothing`.
+**Tests:** `correctness/item-versioning.test.ts › refuses a retype naming the item's own type at a stale version, as any stale write that changes nothing`.
 
 ### `items/retype-null`
 
@@ -980,7 +980,7 @@ When a merge moves an item, the server MUST read each null by the type the item 
 
 When a write moves an item, the server MUST index it for search under the type it enters.
 
-**Tests:** `correctness/item-versioning.test.ts › indexes a row under the type it entered on a stale move`.
+**Tests:** `correctness/item-versioning.test.ts › indexes an item under the type it entered on a stale move`.
 
 ## Writes that race
 
@@ -988,9 +988,9 @@ When a write moves an item, the server MUST index it for search under the type i
 
 When two writes to one item race, the server MUST judge each against the item and its type as they stand when that write lands, with the same outcome as a request sent after any move, type change or trash that committed before it.
 
-**Reason:** a check made before the write lands is made of a row another write may change first. A preceding change does not always require refusal: the current permissions, lifecycle and version rules determine the outcome. SQLite serializes writers, so each write checks the state left by the writes admitted before it.
+**Reason:** a check made before the write lands is made of an item another write may change first. A preceding change does not always require refusal: the current permissions, lifecycle and version rules determine the outcome. SQLite serializes writers, so each write checks the state left by the writes admitted before it.
 
-**Tests:** `compliance/write-order.test.ts › judges an item update after a trash against the trashed row`, `› judges an exact item update after a move against the current version`, `› judges an item update after retyping against the current type`.
+**Tests:** `compliance/write-order.test.ts › judges an item update after a trash against the trashed item`, `› judges an exact item update after a move against the current version`, `› judges an item update after retyping against the current type`.
 
 ### `items/write-race-key-narrowed`
 
@@ -1004,7 +1004,7 @@ When a change to a key's grants that leaves it read but not write on a type the 
 
 When a change to a key's grants that leaves it no read on the type of the item a write addresses commits before a write bearing that key begins to write, the server MUST refuse the write `404 item_not_found`, for a write through `PATCH /items/{id}`, `DELETE /items/{id}`, `POST /items/{id}/restore`, `POST /items/{id}/transition` or `POST /items/{id}/purge`.
 
-**Reason:** a key that cannot read a type is told nothing of its rows, so the refusal is the one it meets with no race.
+**Reason:** a key that cannot read a type is told nothing of its items, so the refusal is the one it meets with no race.
 
 **Tests:** `compliance/item-write-live-key.test.ts › refuses an update 404 item_not_found when its key loses read on the item's type after the write is held`, `› refuses a delete 404 item_not_found when its key loses read on the item's type after the write is held`, `› refuses a purge 404 item_not_found when its key loses read on the item's type after the write is held`, `› refuses a restore 404 item_not_found when its key loses read on the item's type after the write is held`, `› refuses a transition 404 item_not_found when its key loses read on the item's type after the write is held`.
 
@@ -1048,13 +1048,13 @@ The server MUST honor an `Idempotency-Key` on `POST /items`, `PATCH /items/{id}`
 
 When a credential repeats, under one `Idempotency-Key`, the request whose answer the server kept, the server MUST answer with the first answer's status and body and the header `Idempotency-Replayed: true`, which the first answer lacks.
 
-**Tests:** `sync/idempotency.test.ts › answers a repeated create with the first result rather than a second row`, `› announces a replayed edge create`, `› announces a replayed delete, which would otherwise be a 404`, `compliance/bulk.test.ts › Idempotency-Key returns the same job id on replay`, `compliance/folders.test.ts › answers a folder create repeated under one Idempotency-Key once`.
+**Tests:** `sync/idempotency.test.ts › answers a repeated create with the first result rather than a second item`, `› announces a replayed edge create`, `› announces a replayed delete, which would otherwise be a 404`, `compliance/bulk.test.ts › Idempotency-Key returns the same job id on replay`, `compliance/folders.test.ts › answers a folder create repeated under one Idempotency-Key once`.
 
 ### `items/idempotency-once`
 
 When the server replays an answer, the server MUST NOT perform or announce the write again.
 
-**Tests:** `sync/idempotency.test.ts › makes a repeated update one version step, not two`, `› answers a repeated create with the first result rather than a second row`.
+**Tests:** `sync/idempotency.test.ts › makes a repeated update one version step, not two`, `› answers a repeated create with the first result rather than a second item`.
 
 ### `items/idempotency-reused`
 
@@ -1134,19 +1134,19 @@ If a replay's credential no longer holds a grant the first request needed, such 
 
 If a kept answer discloses a conflict snapshot, an extension namespace, a hydrated edge, a cascade mark or a bulk-action match that the replay's credential may no longer read, then the server MUST refuse the replay.
 
-**Tests:** `sync/idempotency-replay.test.ts › refuses the replay of a conflict envelope once the key cannot read the row it disclosed`, `› refuses a replay disclosing an extension namespace the key can no longer read`, `› refuses a replay disclosing hydrated edges the key can no longer read`, `› reauthorizes a retained cascade mark after the row it names is purged`, `› refuses a bulk-action replay once the key may no longer write the matched rows, naming none of them`.
+**Tests:** `sync/idempotency-replay.test.ts › refuses the replay of a conflict envelope once the key cannot read the item it disclosed`, `› refuses a replay disclosing an extension namespace the key can no longer read`, `› refuses a replay disclosing hydrated edges the key can no longer read`, `› reauthorizes a retained cascade mark after the item it names is purged`, `› refuses a bulk-action replay once the key may no longer write the matched items, naming none of them`.
 
 ### `items/replay-current-state`
 
 When the server reauthorizes a replay about an item or edge that still exists, the server MUST judge it by the item's or edge's current type and source as well as those the first answer recorded.
 
-**Tests:** `sync/idempotency-replay.test.ts › judges a replay by the row's current type after a retype`, `› judges a tag replay by the row's current type after a retype`, `› judges an edge replay by the edge's current source`.
+**Tests:** `sync/idempotency-replay.test.ts › judges a replay by the item's current type after a retype`, `› judges a tag replay by the item's current type after a retype`, `› judges an edge replay by the edge's current source`.
 
 ### `items/replay-removed-subject`
 
 When the server reauthorizes a replay about an item or edge since purged, the server MUST judge it by the type and source the first answer recorded.
 
-**Tests:** `sync/idempotency-replay.test.ts › judges a replay about a purged row by its original type and source`.
+**Tests:** `sync/idempotency-replay.test.ts › judges a replay about a purged item by its original type and source`.
 
 ### `items/replay-blocking-edges`
 
@@ -1184,13 +1184,13 @@ When the server refuses a replay, the server MUST keep the first answer for a la
 
 When the server refuses a replay, the server MUST NOT name an item, edge or source in the refusal that the request and the first answer did not name.
 
-**Tests:** `sync/idempotency-replay.test.ts › refuses a bulk-action replay once the key may no longer write the matched rows, naming none of them`.
+**Tests:** `sync/idempotency-replay.test.ts › refuses a bulk-action replay once the key may no longer write the matched items, naming none of them`.
 
 ### `items/replay-source-withheld`
 
 If a replay's credential may no longer read the item a kept answer disclosed a source for, then the server MUST answer the refusal without that source.
 
-**Tests:** `sync/idempotency-replay.test.ts › withholds a disclosed source once the key cannot read the row`, `› keeps the source refusal's details for a source the key still reads`.
+**Tests:** `sync/idempotency-replay.test.ts › withholds a disclosed source once the key cannot read the item`, `› keeps the source refusal's details for a source the key still reads`.
 
 ### `items/replay-restored`
 
@@ -1212,7 +1212,7 @@ When `POST /items/{id}/transition` names `active`, `archived` or `trashed`, the 
 
 If `POST /items/{id}/transition` names a move the graph does not hold, the state the item is in included, then the server MUST answer `400 invalid_transition`.
 
-**Tests:** `compliance/custom-type-lifecycle.test.ts › active -> archived -> active -> trashed -> (invalid) archived`, `correctness/lifecycle-transitions.test.ts › refuses a move to the state the row is in`.
+**Tests:** `compliance/custom-type-lifecycle.test.ts › active -> archived -> active -> trashed -> (invalid) archived`, `correctness/lifecycle-transitions.test.ts › refuses a move to the state the item is in`.
 
 ### `items/transition-unknown-state`
 
@@ -1232,7 +1232,7 @@ If `POST /items/{id}/transition` carries a top-level body key the operation does
 
 When a transition moves the item it names to another state, the server MUST announce `item.state_changed` for that item.
 
-**Tests:** `compliance/events-contract.test.ts › announces item.state_changed on a lifecycle transition`, `compliance/cascade-marks.test.ts › announces item.deleted with its mark for each row a transition into the bin takes`, `› announces item.deleted for the row a bulk transition into the bin names, and with its mark for each row it takes`, `› names the row moved on each row a transition out of the bin brings back, only to a key that may read its type`, `› names the row moved on each row a bulk transition out of the bin brings back, only to a key that may read its type`.
+**Tests:** `compliance/events-contract.test.ts › announces item.state_changed on a lifecycle transition`, `compliance/cascade-marks.test.ts › announces item.deleted with its mark for each item a transition into the bin takes`, `› announces item.deleted for the item a bulk transition into the bin names, and with its mark for each item it takes`, `› names the item moved on each item a transition out of the bin brings back, only to a key that may read its type`, `› names the item moved on each item a bulk transition out of the bin brings back, only to a key that may read its type`.
 
 ### `items/system-lifecycle`
 
@@ -1256,7 +1256,7 @@ The server MUST leave an item in the bin out of a listing that names no `state`.
 
 When a listing names `state=trashed` or `state=any`, the server MUST list the items in the bin the key may read.
 
-**Tests:** `compliance/state-default.test.ts › a named state and the sentinel still reach every row`, `sync/catchup.test.ts › reads across every lifecycle state in one pass`.
+**Tests:** `compliance/state-default.test.ts › a named state and the sentinel still reach every item`, `sync/catchup.test.ts › reads across every lifecycle state in one pass`.
 
 ### `items/trashed-at`
 
@@ -1288,7 +1288,7 @@ The server MUST leave an archived item out of a listing that names no `state`.
 
 When `GET /items/{id}` names an archived item the key may read, the server MUST answer it.
 
-**Tests:** `compliance/state-default.test.ts › a read by id answers an archived row and refuses one in the bin`.
+**Tests:** `compliance/state-default.test.ts › a read by id answers an archived item and refuses one in the bin`.
 
 ### `items/write-in-bin`
 
@@ -1328,19 +1328,19 @@ When a delete or a transition into the bin moves an item, on its own operation o
 
 When a cascade moves an item into the bin, the server MUST announce `item.deleted` for it.
 
-**Tests:** `compliance/cascade-marks.test.ts › marks a row a cascade trashed with the row named, and no row trashed on its own`, `› announces item.deleted with its mark for each row a transition into the bin takes`.
+**Tests:** `compliance/cascade-marks.test.ts › marks an item a cascade trashed with the item named, and no item trashed on its own`, `› announces item.deleted with its mark for each item a transition into the bin takes`.
 
 ### `items/delete-announced`
 
 When a delete or a transition into the bin moves an item into the bin, the server MUST announce `item.deleted` for it.
 
-**Tests:** `compliance/cascade-marks.test.ts › marks a row a cascade trashed with the row named, and no row trashed on its own`, `› announces item.deleted with its mark for each row a transition into the bin takes`, `› announces item.deleted for the row a bulk transition into the bin names, and with its mark for each row it takes`.
+**Tests:** `compliance/cascade-marks.test.ts › marks an item a cascade trashed with the item named, and no item trashed on its own`, `› announces item.deleted with its mark for each item a transition into the bin takes`, `› announces item.deleted for the item a bulk transition into the bin names, and with its mark for each item it takes`.
 
 ### `items/trash-blocked`
 
 If a delete or a transition into the bin would move an item that a `block` edge holds, as its source or its target, the item named or one the trash takes with it, then the server MUST answer `400 edge_constraint_violation`.
 
-**Tests:** `correctness/edges/edges-cascade.test.ts › a block edge refuses a transition into the bin as it refuses a delete`, `› refuses a transition into the bin held by a block edge into the row, or on a row the cascade reaches`.
+**Tests:** `correctness/edges/edges-cascade.test.ts › a block edge refuses a transition into the bin as it refuses a delete`, `› refuses a transition into the bin held by a block edge into the item, or on an item the cascade reaches`.
 
 ### `items/trash-blocked-names`
 
@@ -1448,31 +1448,31 @@ While an item a cascade moved into the bin stays there, the server MUST answer i
 
 **Reason:** a connector must know a trash was a cascade, or it carries to the vendor a trash the person never made.
 
-**Tests:** `compliance/cascade-marks.test.ts › marks a row a cascade trashed with the row named, and no row trashed on its own`, `› answers the marks on POST /items/lookup, to each reader as it may be told`, `› marks a row a cascade trashed on the acknowledgement of a create naming its source and source id, and names the row trashed only to a key that may read its type`, `› marks a row a cascade trashed on the answer to a create repeated under its id, and names the row trashed only to a key that may read its type`, `› delivers the item.deleted of a row a cascade trashed with its mark, and the row trashed's own without one`, `› restores a row a cascade trashed as its own trash, which its parent's restore leaves in the bin`.
+**Tests:** `compliance/cascade-marks.test.ts › marks an item a cascade trashed with the item named, and no item trashed on its own`, `› answers the marks on POST /items/lookup, to each reader as it may be told`, `› marks an item a cascade trashed on the acknowledgement of a create naming its source and source id, and names the item trashed only to a key that may read its type`, `› marks an item a cascade trashed on the answer to a create repeated under its id, and names the item trashed only to a key that may read its type`, `› delivers the item.deleted of an item a cascade trashed with its mark, and the item trashed's own without one`, `› restores an item a cascade trashed as its own trash, which its parent's restore leaves in the bin`.
 
 ### `items/cascade-mark-names`
 
 While an item a cascade moved into the bin stays there, the server MUST answer it with `trashed_with` naming the item the delete or transition named, to a key that may read that item's type, and to no other key.
 
-**Tests:** `compliance/cascade-marks.test.ts › names the row trashed only to a key that may read its type, and says a cascade took the row to any key that reads it`.
+**Tests:** `compliance/cascade-marks.test.ts › names the item trashed only to a key that may read its type, and says a cascade took the item to any key that reads it`.
 
 ### `items/cascade-mark-none`
 
 The server MUST NOT mark with `trashed_by_cascade` or `trashed_with` the item a delete named, an item trashed on its own, or a `system.*` item a cascade revokes.
 
-**Tests:** `compliance/cascade-marks.test.ts › marks a row a cascade trashed with the row named, and no row trashed on its own`, `› marks no row a cascade revokes rather than trashes`.
+**Tests:** `compliance/cascade-marks.test.ts › marks an item a cascade trashed with the item named, and no item trashed on its own`, `› marks no item a cascade revokes rather than trashes`.
 
 ### `items/cascade-mark-life`
 
 The server MUST keep an item's cascade marks through a purge of the item they name.
 
-**Tests:** `compliance/cascade-marks.test.ts › keeps the mark through a purge of the row named, and drops it when the row leaves the bin`.
+**Tests:** `compliance/cascade-marks.test.ts › keeps the mark through a purge of the item named, and drops it when the item leaves the bin`.
 
 ### `items/cascade-mark-dropped`
 
 When an item a cascade moved into the bin leaves it, by a restore or a transition, the server MUST drop its cascade marks.
 
-**Tests:** `compliance/cascade-marks.test.ts › keeps the mark through a purge of the row named, and drops it when the row leaves the bin`.
+**Tests:** `compliance/cascade-marks.test.ts › keeps the mark through a purge of the item named, and drops it when the item leaves the bin`.
 
 ### `items/restore`
 
@@ -1484,7 +1484,7 @@ When `POST /items/{id}/restore` names an item in the bin, the server MUST move i
 
 When a restore or a transition out of the bin moves an item to `active`, the server MUST announce `item.restored` for it.
 
-**Tests:** `compliance/events-contract.test.ts › announces item.restored when a trashed item comes back`, `› announces item.restored for a row a transition out of the bin brings back, at any depth`, `› announces item.restored for the item a transition out of the bin names`, `compliance/cascade-marks.test.ts › names the row moved on each row a transition out of the bin brings back, only to a key that may read its type`, `› names the row moved on each row a bulk transition out of the bin brings back, only to a key that may read its type`.
+**Tests:** `compliance/events-contract.test.ts › announces item.restored when a trashed item comes back`, `› announces item.restored for an item a transition out of the bin brings back, at any depth`, `› announces item.restored for the item a transition out of the bin names`, `compliance/cascade-marks.test.ts › names the item moved on each item a transition out of the bin brings back, only to a key that may read its type`, `› names the item moved on each item a bulk transition out of the bin brings back, only to a key that may read its type`.
 
 ### `items/restore-live`
 
@@ -1498,37 +1498,37 @@ When a restore, or a transition out of the bin on its own operation or in a bulk
 
 **Reason:** a person who trashed a project by mistake gets it back whole, and nothing they had trashed before comes back with it. The parts that come back with a host are `edges/parts-restore`.
 
-**Tests:** `correctness/edges/edges-cascade.test.ts › restoring a parent brings back what its trash took, at every depth, and nothing trashed on its own`, `› does not restore with a parent a child that left the bin and was trashed on its own since`, `› a transition out of the bin brings back what the trash took, as a restore does`, `compliance/events-contract.test.ts › announces item.restored for a row the restore of its parent brings back`, `› announces item.restored for a row a transition out of the bin brings back, at any depth`, `compliance/bulk.test.ts › restores a row and what its trash took in one transition, counting each row once`.
+**Tests:** `correctness/edges/edges-cascade.test.ts › restoring a parent brings back what its trash took, at every depth, and nothing trashed on its own`, `› does not restore with a parent a child that left the bin and was trashed on its own since`, `› a transition out of the bin brings back what the trash took, as a restore does`, `compliance/events-contract.test.ts › announces item.restored for an item the restore of its parent brings back`, `› announces item.restored for an item a transition out of the bin brings back, at any depth`, `compliance/bulk.test.ts › restores an item and what its trash took in one transition, counting each item once`.
 
 ### `items/restore-counted-once`
 
 When a bulk transition out of the bin brings back an item both because the filter matched it and because a matched item's trash took it, the server MUST count it once.
 
-**Tests:** `compliance/bulk.test.ts › restores a row and what its trash took in one transition, counting each row once`.
+**Tests:** `compliance/bulk.test.ts › restores an item and what its trash took in one transition, counting each item once`.
 
 ### `items/restore-child`
 
 When a restore moves an item that a trash above it took, the server MUST bring back what that trash took beneath the item, and none of the item's siblings.
 
-**Tests:** `correctness/edges/edges-cascade.test.ts › restoring a row the trash above took brings back what that trash took beneath it, and not its siblings`, `› restoring a child alone brings back only that child`.
+**Tests:** `correctness/edges/edges-cascade.test.ts › restoring an item the trash above took brings back what that trash took beneath it, and not its siblings`, `› restoring a child alone brings back only that child`.
 
 ### `items/restore-after-purge`
 
 When the item a trash was keyed to is purged, the server MUST keep each item that trash took restorable as its own trash, with what lay beneath it.
 
-**Tests:** `correctness/edges/edges-cascade.test.ts › restoring a row brings back what lay beneath it after the parent whose trash took them is purged`, `› restores a parent whose trash took a child purged since`, `compliance/cascade-marks.test.ts › keeps the mark through a purge of the row named, and drops it when the row leaves the bin`.
+**Tests:** `correctness/edges/edges-cascade.test.ts › restoring an item brings back what lay beneath it after the parent whose trash took them is purged`, `› restores a parent whose trash took a child purged since`, `compliance/cascade-marks.test.ts › keeps the mark through a purge of the item named, and drops it when the item leaves the bin`.
 
 ### `items/restored-with`
 
 When a restore or a transition out of the bin brings back an item it did not name, the server MUST carry `restored_with` on that item's `item.restored`, naming the item named, to a key that may read the named item's type and to no other key.
 
-**Tests:** `compliance/cascade-marks.test.ts › names the row restored on each row its restore brings back, and not on the row itself`, `› names the row moved on each row a transition out of the bin brings back, only to a key that may read its type`, `› names the row moved on each row a bulk transition out of the bin brings back, only to a key that may read its type`, `› names the row restored only to a key that may read its type`.
+**Tests:** `compliance/cascade-marks.test.ts › names the item restored on each item its restore brings back, and not on the item itself`, `› names the item moved on each item a transition out of the bin brings back, only to a key that may read its type`, `› names the item moved on each item a bulk transition out of the bin brings back, only to a key that may read its type`, `› names the item restored only to a key that may read its type`.
 
 ### `items/restored-with-none`
 
 The server MUST NOT carry `restored_with` on the `item.restored` of the item a restore or a transition named.
 
-**Tests:** `compliance/cascade-marks.test.ts › names the row restored on each row its restore brings back, and not on the row itself`, `› names the row moved on each row a transition out of the bin brings back, only to a key that may read its type`, `› names the row moved on each row a bulk transition out of the bin brings back, only to a key that may read its type`.
+**Tests:** `compliance/cascade-marks.test.ts › names the item restored on each item its restore brings back, and not on the item itself`, `› names the item moved on each item a transition out of the bin brings back, only to a key that may read its type`, `› names the item moved on each item a bulk transition out of the bin brings back, only to a key that may read its type`.
 
 ### `items/restore-archive-alone`
 
@@ -1536,7 +1536,7 @@ When an archive restore writes an item into the bin, the server MUST hold it as 
 
 **Reason:** what a trash took is the instance's record, and an archive does not carry it.
 
-**Tests:** `compliance/cascade-marks.test.ts › restores a row a cascade trashed as its own trash, which its parent's restore leaves in the bin`.
+**Tests:** `compliance/cascade-marks.test.ts › restores an item a cascade trashed as its own trash, which its parent's restore leaves in the bin`.
 
 ### `items/purge`
 
@@ -1548,7 +1548,7 @@ When `POST /items/{id}/purge` names an item in the bin, the server MUST delete i
 
 When the server purges an item, the server MUST announce `item.purged` with the item as it stood, its cascade marks included.
 
-**Tests:** `sync/deletions.test.ts › announces a purge, so a client offline across it learns the row is gone`, `compliance/cascade-marks.test.ts › names the row whose trash took it on the purge of a row a cascade trashed`, `compliance/cascade-marks.test.ts › names the row whose trash took it on each row a bulk purge purges, only to a key that may read its type`, `compliance/events-contract.test.ts › announces each item a bulk purge takes as item.purged`.
+**Tests:** `sync/deletions.test.ts › announces a purge, so a client offline across it learns the item is gone`, `compliance/cascade-marks.test.ts › names the item whose trash took it on the purge of an item a cascade trashed`, `compliance/cascade-marks.test.ts › names the item whose trash took it on each item a bulk purge purges, only to a key that may read its type`, `compliance/events-contract.test.ts › announces each item a bulk purge takes as item.purged`.
 
 ### `items/purge-edges`
 
@@ -1578,13 +1578,13 @@ If a key without `items.purge` sends `POST /items/{id}/purge`, then the server M
 
 If a key that may read an item's type but not write it sends `POST /items/{id}/purge` or `POST /items/{id}/restore` for that item, in any state, then the server MUST answer `403 type_not_permitted`.
 
-**Tests:** `compliance/type-permissions.test.ts › a key that may only read a type cannot purge a trashed row of it`, `› refuses a read-only key a purge of a live row, 403 type_not_permitted`.
+**Tests:** `compliance/type-permissions.test.ts › a key that may only read a type cannot purge a trashed item of it`, `› refuses a read-only key a purge of a live item, 403 type_not_permitted`.
 
 ### `items/purge-unreadable`
 
 If `POST /items/{id}/purge` names an item of a type the key may not read, then the server MUST answer `404 item_not_found`.
 
-**Tests:** `compliance/type-permissions.test.ts › answers 404 item_not_found to a purge of a row whose type the key cannot read`.
+**Tests:** `compliance/type-permissions.test.ts › answers 404 item_not_found to a purge of an item whose type the key cannot read`.
 
 ### `items/purge-version`
 
@@ -1592,7 +1592,7 @@ If `POST /items/{id}/purge` names a `version` the item no longer holds, then the
 
 **Reason:** a move to the bin does not change an item's version, so the version read before the trash is the one to send.
 
-**Tests:** `compliance/purge-preconditions.test.ts › refuses a stale version with version_conflict, and the row survives`, `› purges at the version read before the trash, which trashing does not move`.
+**Tests:** `compliance/purge-preconditions.test.ts › refuses a stale version with version_conflict, and the item survives`, `› purges at the version read before the trash, which trashing does not move`.
 
 ### `items/purge-undeclared-query`
 
@@ -1650,19 +1650,19 @@ If a `POST /items/bulk` entry carries a key the operation does not declare, then
 
 When a `POST /items/bulk` entry under `mode: upsert`, the default, names a natural key that resolves a live item, the server MUST update that item and report the entry `updated` with its `id`.
 
-**Tests:** `compliance/bulk.test.ts › upsert mode updates an existing (source, source_id) row in place`.
+**Tests:** `compliance/bulk.test.ts › upsert mode updates an existing (source, source_id) item in place`.
 
 ### `items/bulk-skipped`
 
 When the server reports a `POST /items/bulk` entry `skipped`, the server MUST NOT write it.
 
-**Tests:** `compliance/bulk.test.ts › create_only skips a repeated (source, source_id) as duplicate_source`, `› create_only skips an entry naming a held id as duplicate_id, live or in the bin, and writes nothing`, `› reads a natural key over trashed rows, as the single create does`.
+**Tests:** `compliance/bulk.test.ts › create_only skips a repeated (source, source_id) as duplicate_source`, `› create_only skips an entry naming a held id as duplicate_id, live or in the bin, and writes nothing`, `› reads a natural key over trashed items, as the single create does`.
 
 ### `items/bulk-create-only`
 
 When a `POST /items/bulk` entry under `mode: create_only` names a natural key that resolves an item, live or in the bin, the server MUST report it `skipped` with `reason: "duplicate_source"`.
 
-**Tests:** `compliance/bulk.test.ts › create_only skips a repeated (source, source_id) as duplicate_source`, `› reads a natural key over trashed rows, as the single create does`.
+**Tests:** `compliance/bulk.test.ts › create_only skips a repeated (source, source_id) as duplicate_source`, `› reads a natural key over trashed items, as the single create does`.
 
 ### `items/bulk-create-only-id`
 
@@ -1678,27 +1678,27 @@ When the server reports a `POST /items/bulk` entry `skipped` for an item of a ty
 
 **Reason:** a caller that sent an id already knows it, so naming it back discloses nothing (`items/bulk-create-only-id`).
 
-**Tests:** `compliance/claimed-sources.test.ts › tells a key its natural key is taken, and nothing of a row it may not read`, `compliance/bulk.test.ts › create_only skips a repeated (source, source_id) as duplicate_source`.
+**Tests:** `compliance/claimed-sources.test.ts › tells a key its natural key is taken, and nothing of an item it may not read`, `compliance/bulk.test.ts › create_only skips a repeated (source, source_id) as duplicate_source`.
 
 ### `items/bulk-trashed`
 
 When a `POST /items/bulk` entry under `mode: upsert` names a natural key or an `id` that resolves an item in the bin, of a type the key may write and the entry declares, the server MUST report it `skipped` with `reason: "trashed"` and the item's `id`.
 
-**Reason:** a connector re-syncing a page that holds a row the person trashed must neither revive it nor fail the page.
+**Reason:** a connector re-syncing a page that holds an item the person trashed must neither revive it nor fail the page.
 
-**Tests:** `compliance/bulk.test.ts › reads a natural key over trashed rows, as the single create does`, `› acknowledges an upsert entry naming the id of an item in the bin, and refuses one of another type`.
+**Tests:** `compliance/bulk.test.ts › reads a natural key over trashed items, as the single create does`, `› acknowledges an upsert entry naming the id of an item in the bin, and refuses one of another type`.
 
 ### `items/bulk-trashed-unwritable`
 
 If a `POST /items/bulk` entry under `mode: upsert` names a natural key that resolves an item in the bin of a type the key may not write, then the server MUST refuse the entry `type_not_permitted` without the item's `id`.
 
-**Tests:** `compliance/claimed-sources.test.ts › gates a bulk entry resolving a trashed row on the row's type, and names no id`.
+**Tests:** `compliance/claimed-sources.test.ts › gates a bulk entry resolving a trashed item on the item's type, and names no id`.
 
 ### `items/bulk-trashed-other-type`
 
 If a `POST /items/bulk` entry under `mode: upsert` and without `retype: true` names a natural key that resolves an item in the bin of another type than the entry declares, then the server MUST refuse the entry `type_mismatch` with `details.actual_type` naming the item's type.
 
-**Tests:** `compliance/claimed-sources.test.ts › gates a bulk entry resolving a trashed row on the row's type, and names no id`.
+**Tests:** `compliance/claimed-sources.test.ts › gates a bulk entry resolving a trashed item on the item's type, and names no id`.
 
 ### `items/bulk-id-other-type`
 
@@ -1734,15 +1734,15 @@ When a `POST /items/bulk` entry resolves an item, the server MUST apply its `pro
 
 If an entry of a `POST /items/bulk` page under `atomic: true` is refused, then the server MUST write no entry of the page and answer `bulk_atomic_rollback` with the entry's code in `details.code` and its position in `details.index`.
 
-**Tests:** `compliance/bulk.test.ts › atomic rollback on invalid type returns 400 and leaves no rows`, `› gates bulk writes per item type, and on nothing else`, `sync/idempotency.test.ts › a bulk entry naming a stale version is refused, and rolls the page back or not as atomic says`.
+**Tests:** `compliance/bulk.test.ts › atomic rollback on invalid type returns 400 and leaves no items`, `› gates bulk writes per item type, and on nothing else`, `sync/idempotency.test.ts › a bulk entry naming a stale version is refused, and rolls the page back or not as atomic says`.
 
 ### `items/bulk-atomic-status`
 
 When the server answers `bulk_atomic_rollback`, the server MUST answer it with the status the refused entry's code carries on its own operation.
 
-**Reason:** the status tells the caller what to do next, and a row that moved is not fixed by re-reading the body.
+**Reason:** the status tells the caller what to do next, and an item that moved is not fixed by re-reading the body.
 
-**Tests:** `compliance/bulk.test.ts › answers a rollback at the status of the refusal inside it`, `compliance/links.test.ts › refuses a bulk entry a link another row holds, on both halves`.
+**Tests:** `compliance/bulk.test.ts › answers a rollback at the status of the refusal inside it`, `compliance/links.test.ts › refuses a bulk entry a link another item holds, on both halves`.
 
 ### `items/bulk-atomic-undeclared-first`
 
@@ -1756,7 +1756,7 @@ When a `POST /items/bulk` page under `atomic: true` holds an entry with a key th
 
 When the server reads a `POST /items/bulk` page under `atomic: true` that holds no entry with a key the operation does not declare, the server MUST refuse an entry of a type the key may not write, or naming a source it does not claim, before it looks any entry up.
 
-**Reason:** otherwise a stale entry ahead of it answers `409`, and the caller re-reads a row when the cause is a permission it lacks.
+**Reason:** otherwise a stale entry ahead of it answers `409`, and the caller re-reads an item when the cause is a permission it lacks.
 
 **Tests:** `compliance/claimed-sources.test.ts › refuses an atomic page for an entry's source or type before a stale entry ahead of it`.
 
@@ -1812,7 +1812,7 @@ When the server reports a bulk entry `skipped`, the server MUST give its `reason
 
 **Reason:** `reason` is a closed list, so a generated client branches on it with every case known.
 
-**Tests:** `compliance/bulk.test.ts › create_only skips a repeated (source, source_id) as duplicate_source`, `› create_only skips an entry naming a held id as duplicate_id, live or in the bin, and writes nothing`, `› reads a natural key over trashed rows, as the single create does`, `compliance/edges-bulk.test.ts › create_only surfaces duplicates as skipped with reason duplicate_edge`.
+**Tests:** `compliance/bulk.test.ts › create_only skips a repeated (source, source_id) as duplicate_source`, `› create_only skips an entry naming a held id as duplicate_id, live or in the bin, and writes nothing`, `› reads a natural key over trashed items, as the single create does`, `compliance/edges-bulk.test.ts › create_only surfaces duplicates as skipped with reason duplicate_edge`.
 
 ### `items/bulk-reason-none`
 
@@ -1834,7 +1834,7 @@ When a bulk operation writes an item or an edge, the server MUST write its event
 
 When `POST /items/bulk`, `POST /edges/bulk` or `POST /items/bulk-actions` names no `enable_fanout: true`, or `POST /types/{id}/move` gives an item the type `to`, the server MUST NOT deliver those writes to outbound webhooks.
 
-**Reason:** one call writes thousands of rows, and a delivery for each to each subscriber is not what the caller asked for. A type move takes no `enable_fanout`, so the items it moves reach a stream (`types/move-announced`) and no webhook.
+**Reason:** one call writes thousands of items, and a delivery for each to each subscriber is not what the caller asked for. A type move takes no `enable_fanout`, so the items it moves reach a stream (`types/move-announced`) and no webhook.
 
 **Tests:** `compliance/webhooks.test.ts › calls out for a bulk write only when the call asks for fan-out`, `› calls out for a bulk edge write only when the call asks for fan-out`, `› calls out for a bulk action only when the call asks for fan-out`, `compliance/type-move.test.ts › announces each moved item to a stream and delivers it to no webhook, while the same webhook delivers a later write`.
 
@@ -1870,7 +1870,7 @@ When a bulk-action job runs, the server MUST apply its `transition`, `purge`, `u
 
 When `POST /items/bulk-actions` names `dry_run: true`, the server MUST answer `200` with `matched` and the matched `ids`.
 
-**Tests:** `compliance/bulk.test.ts › dry_run stays synchronous and returns matched ids without mutating`, `compliance/bulk-limits.test.ts › lists a live row in a purge dry run, which the purge then leaves`.
+**Tests:** `compliance/bulk.test.ts › dry_run stays synchronous and returns matched ids without mutating`, `compliance/bulk-limits.test.ts › lists a live item in a purge dry run, which the purge then leaves`.
 
 ### `items/bulk-action-dry-run-inert`
 
@@ -1882,7 +1882,7 @@ When `POST /items/bulk-actions` names `dry_run: true`, the server MUST NOT chang
 
 If a bulk action's filter matches more items than its `max_items`, which is 10,000 when the request names none and counts as 50,000 when it names more, then the server MUST answer `400 bulk_cap_exceeded` with `details.cap`.
 
-**Tests:** `compliance/bulk-limits.test.ts › refuses a bulk action matching more than 10,000 items when it names no max_items`, `› counts a max_items above 50,000 as 50,000`, `compliance/purge-preconditions.test.ts › caps the rows the purge takes, not the filter's whole match`.
+**Tests:** `compliance/bulk-limits.test.ts › refuses a bulk action matching more than 10,000 items when it names no max_items`, `› counts a max_items above 50,000 as 50,000`, `compliance/purge-preconditions.test.ts › caps the items the purge takes, not the filter's whole match`.
 
 ### `items/bulk-action-undeclared`
 
@@ -1890,7 +1890,7 @@ If a `POST /items/bulk-actions` body, or its filter, carries a key the operation
 
 **Reason:** a dropped filter field is not a narrower match set but every item the credential may write, so the operation refuses the field rather than strips it.
 
-**Tests:** `compliance/bulk-limits.test.ts › refuses a body key the bulk-action operation does not declare, naming it`, `compliance/bulk.test.ts › refuses a filter field it does not declare, naming it`, `sync/time-filters.test.ts › refuses an undeclared bound inside a bulk-action filter, where a dropped bound is every row`.
+**Tests:** `compliance/bulk-limits.test.ts › refuses a body key the bulk-action operation does not declare, naming it`, `compliance/bulk.test.ts › refuses a filter field it does not declare, naming it`, `sync/time-filters.test.ts › refuses an undeclared bound inside a bulk-action filter, where a dropped bound is every item`.
 
 ### `items/bulk-action-own-time`
 
@@ -1914,21 +1914,21 @@ If a bulk `purge`, a dry run included, does not name `confirm: "PURGE"`, then th
 
 When a bulk `purge` reaches an item that is not in the bin when the job runs, the server MUST leave it and report it in the job's `errors` with `invalid_transition`.
 
-**Tests:** `compliance/bulk.test.ts › purge leaves a match that is not in the trash, and reports it invalid_transition`, `compliance/bulk-limits.test.ts › lists a live row in a purge dry run, which the purge then leaves`.
+**Tests:** `compliance/bulk.test.ts › purge leaves a match that is not in the trash, and reports it invalid_transition`, `compliance/bulk-limits.test.ts › lists a live item in a purge dry run, which the purge then leaves`.
 
 ### `items/bulk-purge-expected-ids`
 
 When a bulk `purge` or its dry run names `expected_ids`, the server MUST match only the items both listed and matched by the filter when the request is made.
 
-**Reason:** a purge confirmed against a dry run takes no row the dry run did not show.
+**Reason:** a purge confirmed against a dry run takes no item the dry run did not show.
 
-**Tests:** `compliance/purge-preconditions.test.ts › does not purge a row trashed after the dry run`, `› does not purge a listed id the filter no longer matches`.
+**Tests:** `compliance/purge-preconditions.test.ts › does not purge an item trashed after the dry run`, `› does not purge a listed id the filter no longer matches`.
 
 ### `items/bulk-purge-expected-ids-cap`
 
 When a bulk `purge` names `expected_ids`, the server MUST hold its `max_items` to the items it matches, not to the filter's whole match.
 
-**Tests:** `compliance/purge-preconditions.test.ts › caps the rows the purge takes, not the filter's whole match`.
+**Tests:** `compliance/purge-preconditions.test.ts › caps the items the purge takes, not the filter's whole match`.
 
 ### `items/bulk-purge-expected-ids-refused`
 
@@ -1936,17 +1936,17 @@ If `expected_ids` is empty, or named on an action other than `purge`, then the s
 
 **Tests:** `compliance/purge-preconditions.test.ts › refuses an empty expected_ids, and purges nothing`, `› refuses expected_ids on an action other than purge`.
 
-### `items/bulk-action-row-atomic`
+### `items/bulk-action-item-atomic`
 
 When a bulk action reports an item in the job's `errors`, the server MUST have left that item, its edges and what its cascade reached as they were.
 
 **Tests:** `compliance/bulk.test.ts › purge leaves a match that is not in the trash, and reports it invalid_transition`, `correctness/edges/edges-cascade.test.ts › a block edge refuses a transition into the bin as it refuses a delete`.
 
-### `items/bulk-action-row-rules`
+### `items/bulk-action-item-rules`
 
 When a bulk action writes an item, the server MUST hold the write to the rules the single-item operation holds it to, reporting a refused item in the job's `errors` with the code that operation answers.
 
-**Tests:** `compliance/links.test.ts › reports a link another row holds per row of a bulk update_properties`, `correctness/edges/edges-cascade.test.ts › a block edge refuses a transition into the bin as it refuses a delete`, `compliance/odd-input.test.ts › refuses a tag or property name the item doors refuse`.
+**Tests:** `compliance/links.test.ts › reports a link another item holds per item of a bulk update_properties`, `correctness/edges/edges-cascade.test.ts › a block edge refuses a transition into the bin as it refuses a delete`, `compliance/odd-input.test.ts › refuses a tag or property name the item doors refuse`.
 
 ### `items/bulk-action-selection-moved`
 
@@ -2040,11 +2040,11 @@ If the credential that queued a job loses write on a matched item's type while t
 
 **Tests:** `compliance/bulk-job-holds.test.ts › reports an item of a type it may still read, and no longer write, as type_not_permitted, and goes on`, `› reports an item of a type it may no longer read as item_not_found, naming no type, and goes on`.
 
-### `items/job-row-continues`
+### `items/job-item-continues`
 
 When a job reports an item in its `errors`, the server MUST go on to the job's next item.
 
-**Tests:** `compliance/bulk.test.ts › reports a refused row in a job's errors and goes on to the next`.
+**Tests:** `compliance/bulk.test.ts › reports a refused item in a job's errors and goes on to the next`.
 
 ### `items/job-chunk-fault`
 
@@ -2418,31 +2418,31 @@ A type that names a `link_field` (`types/link-field`) makes that field each item
 
 If a write would give an item a non-empty value in its type's `link_field` that another item of the type holds, in any state, then the server MUST refuse it `409 link_taken` with `details.existing_id`, `details.field` and `details.value`.
 
-**Tests:** `compliance/links.test.ts › refuses a second row a link another holds, on a create and a natural-key upsert`, `› holds a trashed row's link against every other row`.
+**Tests:** `compliance/links.test.ts › refuses a second item a link another holds, on a create and a natural-key upsert`, `› holds a trashed item's link against every other item`.
 
 ### `items/link-every-write`
 
 The server MUST hold every write to an item's link to `items/link-taken`, on `POST /items` and its natural-key upsert, `PATCH /items/{id}` under `merge` or `replace` at any version, a move into the type, each `POST /items/bulk` entry and each item a bulk `update_properties` writes.
 
-**Tests:** `compliance/links.test.ts › refuses a link on an update, in either mode and at a stale version`, `› holds a retype to the type's links and frees the link a row takes away`, `› holds a retype from a type naming no link, and frees the link of a row retyped into one`, `› refuses a bulk entry a link another row holds, on both halves`, `› reports a link another row holds per row of a bulk update_properties`.
+**Tests:** `compliance/links.test.ts › refuses a link on an update, in either mode and at a stale version`, `› holds a retype to the type's links and frees the link an item takes away`, `› holds a retype from a type naming no link, and frees the link of an item retyped into one`, `› refuses a bulk entry a link another item holds, on both halves`, `› reports a link another item holds per item of a bulk update_properties`.
 
 ### `items/link-empty`
 
 The server MUST NOT hold an empty string, or no value, as a link.
 
-**Tests:** `compliance/links.test.ts › refuses a second row a link another holds, on a create and a natural-key upsert`.
+**Tests:** `compliance/links.test.ts › refuses a second item a link another holds, on a create and a natural-key upsert`.
 
 ### `items/link-freed`
 
 When an item's link is cleared or changed, or the item moves out of the type, the server MUST free the old value for another item of the type.
 
-**Tests:** `compliance/links.test.ts › frees a link its row clears or changes`, `› holds a retype to the type's links and frees the link a row takes away`.
+**Tests:** `compliance/links.test.ts › frees a link its item clears or changes`, `› holds a retype to the type's links and frees the link an item takes away`.
 
 ### `items/link-keep-both`
 
 When the server writes a keep-both copy of an item (`versions/copy-written`), the server MUST give the copy neither the item's natural key nor its link.
 
-**Tests:** `compliance/links.test.ts › leaves the link off a keep-both copy of a row`.
+**Tests:** `compliance/links.test.ts › leaves the link off a keep-both copy of an item`.
 
 ### `items/link-keep-both-required`
 
@@ -2456,7 +2456,7 @@ When the server purges an item through `POST /items/{id}/purge` or a bulk `purge
 
 **Reason:** a connector must hold a purge against a vendor that still has the item, for as long as the vendor keeps it.
 
-**Tests:** `compliance/links.test.ts › leaves a tombstone for a purged row's link and natural key`, `› leaves tombstones from the bulk purge action`.
+**Tests:** `compliance/links.test.ts › leaves a tombstone for a purged item's link and natural key`, `› leaves tombstones from the bulk purge action`.
 
 ### `items/tombstone-trash-purge`
 
@@ -2468,7 +2468,7 @@ When the `trash-purge` housekeeping job purges an item, the server MUST record i
 
 The server MUST NOT remove a tombstone in a housekeeping job.
 
-**Reason:** a vendor can keep a purged item for as long as it likes, and each tombstone is one small row.
+**Reason:** a vendor can keep a purged item for as long as it likes, and each tombstone is one small record.
 
 **Tests:** `compliance/tombstone-housekeeping.test.ts › is not removed by any housekeeping job, however far the clock moves`.
 
@@ -2482,7 +2482,7 @@ The server MUST answer and move a tombstone only under the type it was recorded 
 
 When an item comes to hold a link a tombstone records in its type, or a natural key a tombstone records in any type, the server MUST remove that tombstone.
 
-**Tests:** `compliance/links.test.ts › removes a tombstone when a row holds its key again`, `› removes a natural key's tombstone when an update gives a row the key`.
+**Tests:** `compliance/links.test.ts › removes a tombstone when an item holds its key again`, `› removes a natural key's tombstone when an update gives an item the key`.
 
 ### `items/tombstone-link-change`
 
@@ -2500,13 +2500,13 @@ When a type changes and keeps its `link_field`, the server MUST keep its link to
 
 When a type is registered, the server MUST hold no tombstone under its identifier.
 
-**Tests:** `compliance/links.test.ts › starts a type deleted and registered again with none of its tombstones`, `› starts a type registered again with no tombstones, even those its orphaned rows left`.
+**Tests:** `compliance/links.test.ts › starts a type deleted and registered again with none of its tombstones`, `› starts a type registered again with no tombstones, even those its orphaned items left`.
 
 ### `items/tombstone-settle`
 
 When a key sends `POST /items/tombstones` naming a `type`, either `links` or `source` with `source_ids`, and a `settled_at`, the server MUST move each named tombstone's `settled_at` to that time where it is later, and keep it otherwise.
 
-**Reason:** a connector whose own carrying of a purge changed the vendor's copy, closing an issue it cannot delete, moves the time to that change, so its own close does not bring the row back.
+**Reason:** a connector whose own carrying of a purge changed the vendor's copy, closing an issue it cannot delete, moves the time to that change, so its own close does not bring the item back.
 
 **Tests:** `compliance/links.test.ts › moves settled_at later, never earlier`.
 
@@ -2562,7 +2562,7 @@ If a request body, other than one sent to `POST /blobs`, `POST /restore` or an i
 
 **Reason:** RFC 8259 section 8.2 lets a JSON string carry a surrogate code unit with no partner, which no UTF-8 text can carry. The server holds only text that UTF-8 can represent, so every client can decode what it holds.
 
-**Tests:** `compliance/well-formed-text.test.ts › refuses $name, naming where, and takes a surrogate pair there`, `› writes nothing when it refuses a create`, `› refuses a lone low surrogate and a reversed pair, in either letter case of the escape`, `› refuses it on every published operation that takes a JSON body, before any credential`, `› is refused for a surrogate escape with no partner, before any credential`, `device/well-formed-text-live.test.ts › refuses a surrogate escape with no partner and leaves a device able to hydrate and catch up over the row that is`.
+**Tests:** `compliance/well-formed-text.test.ts › refuses $name, naming where, and takes a surrogate pair there`, `› writes nothing when it refuses a create`, `› refuses a lone low surrogate and a reversed pair, in either letter case of the escape`, `› refuses it on every published operation that takes a JSON body, before any credential`, `› is refused for a surrogate escape with no partner, before any credential`, `device/well-formed-text-live.test.ts › refuses a surrogate escape with no partner and leaves a device able to hydrate and catch up over the item that is`.
 
 ### `items/json-text-pointer`
 

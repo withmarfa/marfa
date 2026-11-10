@@ -115,7 +115,7 @@ describe("type-scoped permissions", () => {
 
   it("none permission hides the type from a listing, not only from a write", async () => {
     // A `none` entry has to reach the list filter, not only the write gate:
-    // a caller told a row is not there by id and handed that same row in a
+    // a caller told an item is not there by id and handed that same item in a
     // listing is the divergence a permission map exists to prevent.
     const seededNote = await client.createItem(
       createNote({ source: ctx.source }),
@@ -229,7 +229,7 @@ describe("type-scoped permissions", () => {
     const trashed = await client.deleteItem(note.data.item.id);
     expect(trashed.ok).toBe(true);
 
-    // Once trashed, the row is invisible to the scoped key before the type
+    // Once trashed, the item is invisible to the scoped key before the type
     // gate is reached.
     const delTrashed = await scopedClient.deleteItem(note.data.item.id);
     expect(delTrashed.status).toBe(404);
@@ -269,9 +269,9 @@ describe("type-scoped permissions", () => {
     expect(own.data.type_permissions).toEqual({ "core.bookmark": "read" });
   });
 
-  // `items.purge` opens the door; the type map says which rows it destroys,
+  // `items.purge` opens the door; the type map says which items it destroys,
   // trashed ones included, as restore asks.
-  it("a key that may only read a type cannot purge a trashed row of it", async () => {
+  it("a key that may only read a type cannot purge a trashed item of it", async () => {
     const note = await client.createItem(createNote({ source: ctx.source }));
     expect(note.ok).toBe(true);
     trackItem(ctx, note.data.item.id);
@@ -296,7 +296,7 @@ describe("type-scoped permissions", () => {
       apiKey: keyResp.data.key,
     });
 
-    // Restore refuses this key the same row; purge must agree.
+    // Restore refuses this key the same item; purge must agree.
     const restore = await scopedClient.restoreItem(bookmark.data.item.id);
     expect(restore.status).toBe(403);
     expect(restore.error?.error.code).toBe("type_not_permitted");
@@ -309,12 +309,12 @@ describe("type-scoped permissions", () => {
     const restoredByOwner = await client.restoreItem(bookmark.data.item.id);
     expect(restoredByOwner.status).toBe(200);
 
-    // The witness: the same key purges a trashed row of a type it writes.
+    // The witness: the same key purges a trashed item of a type it writes.
     const purgedNote = await scopedClient.purgeItem(note.data.item.id);
     expect(purgedNote.status).toBe(200);
   });
 
-  it("refuses a read-only key a purge of a live row, 403 type_not_permitted", async () => {
+  it("refuses a read-only key a purge of a live item, 403 type_not_permitted", async () => {
     const note = await client.createItem(createNote({ source: ctx.source }));
     const bookmark = await client.createItem(
       createBookmark({ source: ctx.source }),
@@ -341,14 +341,14 @@ describe("type-scoped permissions", () => {
     expect(purged.error?.error.code).toBe("type_not_permitted");
     expect((await client.getItem(bookmark.data.item.id)).ok).toBe(true);
 
-    // The witness: the same key, asked to purge a live row of a type it
-    // writes, is let past the type gate and refused for the row's state.
+    // The witness: the same key, asked to purge a live item of a type it
+    // writes, is let past the type gate and refused for the item's state.
     const own = await scopedClient.purgeItem(note.data.item.id);
     expect(own.status).toBe(400);
     expect(own.error?.error.code).toBe("invalid_transition");
   });
 
-  it("answers 404 item_not_found to a purge of a row whose type the key cannot read", async () => {
+  it("answers 404 item_not_found to a purge of an item whose type the key cannot read", async () => {
     const live = await client.createItem(
       createBookmark({ source: ctx.source }),
     );
@@ -377,8 +377,8 @@ describe("type-scoped permissions", () => {
     });
 
     for (const [label, id] of [
-      ["a live row", live.data.item.id],
-      ["a trashed row", binned.data.item.id],
+      ["a live item", live.data.item.id],
+      ["a trashed item", binned.data.item.id],
     ] as const) {
       const purged = await scopedClient.purgeItem(id);
       expect(
@@ -389,10 +389,10 @@ describe("type-scoped permissions", () => {
     expect((await client.getItem(live.data.item.id)).ok).toBe(true);
     expect(
       (await client.restoreItem(binned.data.item.id)).ok,
-      "a refused purge destroyed the row",
+      "a refused purge destroyed the item",
     ).toBe(true);
 
-    // The witness: the same key purges a trashed row of a type it reads.
+    // The witness: the same key purges a trashed item of a type it reads.
     const purgedNote = await scopedClient.purgeItem(note.data.item.id);
     expect(purgedNote.status).toBe(200);
   });
@@ -442,7 +442,7 @@ describe("type-scoped permissions", () => {
     expect(kept.data.item.type).toBe("core.bookmark");
     expect(kept.data.item.version).toBe(bookmark.data.item.version);
 
-    // The witness: a key that writes the destination moves a row the same
+    // The witness: a key that writes the destination moves an item the same
     // way, so the refusal above is the grant on the type entered.
     const writesNotes = await mint("retype-writes-notes", {
       "core.bookmark": "write",

@@ -20,7 +20,7 @@ import {
   type WireEdgeOptions,
 } from "../../device/marfa-answers.js";
 import type { FolderSettings } from "../../device/cli-adapter.js";
-import type { DoorRow, FolderDoor } from "../../device/folder-door.js";
+import type { DoorItem, FolderDoor } from "../../device/folder-door.js";
 import type { Item, Outcome } from "../../device/protocol.js";
 import type { SseFrame } from "../../device/scripted-server.js";
 import {
@@ -161,7 +161,7 @@ describe("a folder's copy narrowed by its query", () => {
   it("hydrates only the items its query shows, with those in the bin and its conflicted copies", async () => {
     harness = await folderHarness("copy-query-holds", {
       settings: { query: { types: ["core.note"], filter: TAGGED_A } },
-      rows: {
+      items: {
         "core.note": [
           note(1, "member", ["a"]),
           note(2, "outside", ["b"]),
@@ -191,7 +191,7 @@ describe("a folder's copy narrowed by its query", () => {
       filter: TAGGED_A,
     });
 
-    // The witness: the rows the query leaves out are ones the server gives.
+    // The witness: the items the query leaves out are ones the server gives.
     value(await harness.folder.device().pin(id(2)));
     expect(await heldIds(harness)).toContain(id(2));
   });
@@ -201,7 +201,7 @@ describe("a folder's copy narrowed by its query", () => {
       settings: {
         query: { types: ["core.note"], filter: "edge[references] exists" },
       },
-      rows: {
+      items: {
         "core.note": [note(1, "one", ["a"]), note(2, "two", ["b"])],
       },
     });
@@ -218,7 +218,7 @@ describe("a folder's copy narrowed by its query", () => {
     const log: SseFrame[] = [];
     harness = await folderHarness("copy-query-refused", {
       settings,
-      rows: {
+      items: {
         "core.note": [note(1, "one", ["a"]), note(2, "two", ["b"])],
       },
       events: [copyHeldLog(log)],
@@ -284,7 +284,7 @@ async function unsentWork(
   const paused = [note(7, "paused one", ["b"]), note(8, "paused two", ["b"])];
   harness = await folderHarness(label, {
     settings: { query: { types: ["core.note"] }, removal_threshold },
-    rows: {
+    items: {
       "core.note": [
         note(1, "kept", ["a"]),
         note(2, "leaving", ["b"]),
@@ -335,8 +335,8 @@ async function unsentWork(
     await device.update(id(9), { properties: { body: "mine\n" }, version: 1 }),
   );
   value(await device.drain());
-  const [[copyId, copy]] = door!.conflictedCopies() as [[string, DoorRow]];
-  harness.rows["core.note"]!.push({
+  const [[copyId, copy]] = door!.conflictedCopies() as [[string, DoorItem]];
+  harness.items["core.note"]!.push({
     item: { id: copyId, properties: copy.properties },
     tags: copy.tags,
   });
@@ -354,7 +354,7 @@ async function unsentWork(
   );
 
   const held = await heldIds(harness);
-  // The witness: a row the query does not take, held before the shrink.
+  // The witness: an item the query does not take, held before the shrink.
   expect(held).toContain(id(6));
 
   moveSettings(
@@ -458,7 +458,7 @@ describe("shrinking a copy that holds more than its query shows", () => {
       const held = await heldIds(harness!);
       expect(
         held,
-        "the shrink kept a row its query does not take",
+        "the shrink kept an item its query does not take",
       ).not.toContain(id(6));
       expect(held).toEqual(
         expect.arrayContaining([id(1), id(2), id(4), id(5), before.copyId]),
@@ -509,7 +509,7 @@ describe("shrinking a copy that holds more than its query shows", () => {
     const log: SseFrame[] = [];
     harness = await folderHarness("copy-shrink-restarted", {
       settings: { query: { types: ["core.note"] } },
-      rows: {
+      items: {
         "core.note": [
           note(1, "one", ["a", "b"]),
           note(2, "two", ["a", "b"]),
@@ -542,7 +542,7 @@ describe("shrinking a copy that holds more than its query shows", () => {
       { query: { types: ["core.note"], filter: 'tags contains "b"' } },
       "3",
     );
-    // The hydration reads the folder's row before its first page.
+    // The hydration reads the folder's item before its first page.
     const again = value(await harness.folder.hydrate());
     expect([again.resumed, again.restarted]).toEqual([false, "slice_changed"]);
     expect(again.query?.filter).toBe('tags contains "b"');
@@ -551,7 +551,7 @@ describe("shrinking a copy that holds more than its query shows", () => {
 
 describe("a narrowed copy kept by catch-up", () => {
   /** A folder of the notes tagged `a`, with a held stream a fixture adds
-   *  events to, not yet pulled: a row bound to a file is pinned, and stays
+   *  events to, not yet pulled: an item bound to a file is pinned, and stays
    *  whatever its query says. */
   async function narrowed(
     label: string,
@@ -562,14 +562,14 @@ describe("a narrowed copy kept by catch-up", () => {
     const log: SseFrame[] = [];
     harness = await folderHarness(label, {
       settings: { query },
-      rows: { "core.note": rows },
+      items: { "core.note": rows },
       events: [copyHeldLog(log)],
     });
     scriptFolderWrites(harness, edges === undefined ? {} : { edges });
     return log;
   }
 
-  it("lets a row go when an event takes it out of the query, and holds one an event brings into it", async () => {
+  it("lets an item go when an event takes it out of the query, and holds one an event brings into it", async () => {
     const log = await narrowed("copy-query-events", [
       note(1, "leaving", ["a"]),
       note(2, "entering", ["b"]),
@@ -577,7 +577,7 @@ describe("a narrowed copy kept by catch-up", () => {
     expect(await heldIds(harness!)).toEqual([id(1)]);
     const leaving = note(1, "leaving", ["b"]);
     const entering = note(2, "entering", ["a"]);
-    harness!.rows["core.note"] = [leaving, entering];
+    harness!.items["core.note"] = [leaving, entering];
     log.push(
       copyItemEvent("2", "metadata.changed", wireItem(leaving.item), {
         tags: ["b"],
@@ -593,7 +593,7 @@ describe("a narrowed copy kept by catch-up", () => {
       harness!.server.requests.some(
         (request) => request.pathname === `/items/${id(2)}`,
       ),
-      "a row entering the query was held without a read of its edges",
+      "an item entering the query was held without a read of its edges",
     ).toBe(true);
   });
 
@@ -604,9 +604,9 @@ describe("a narrowed copy kept by catch-up", () => {
     ]);
     value(await harness!.folder.pull());
     expect(existsSync(join(harness!.dir, "bound.md"))).toBe(true);
-    // The witness: a row with no file, held by the query alone.
+    // The witness: an item with no file, held by the query alone.
     const entering = note(3, "unbound", ["a"]);
-    harness!.rows["core.note"] = [note(1, "bound", ["a"]), entering];
+    harness!.items["core.note"] = [note(1, "bound", ["a"]), entering];
     log.push(
       copyItemEvent("2", "metadata.changed", wireItem(entering.item), {
         tags: ["a"],
@@ -616,7 +616,7 @@ describe("a narrowed copy kept by catch-up", () => {
     expect(await heldIds(harness!)).toEqual([id(1), id(3)]);
 
     const leaving = [note(1, "bound", ["b"]), note(3, "unbound", ["b"])];
-    harness!.rows["core.note"] = leaving;
+    harness!.items["core.note"] = leaving;
     for (const [index, row] of leaving.entries()) {
       log.push(
         copyItemEvent(
@@ -634,7 +634,7 @@ describe("a narrowed copy kept by catch-up", () => {
     ).toEqual([id(1)]);
   });
 
-  it("keeps a row a waiting write names when an event takes it out of the query", async () => {
+  it("keeps an item a waiting write names when an event takes it out of the query", async () => {
     const log = await narrowed("copy-query-waiting", [
       note(1, "waiting", ["a"]),
       note(2, "witness", ["a"]),
@@ -664,7 +664,7 @@ describe("a narrowed copy kept by catch-up", () => {
     value(await device.catchUp());
 
     const held = await heldIds(harness!);
-    // The witness: the same event lets go of a row no write names.
+    // The witness: the same event lets go of an item no write names.
     expect(held).not.toContain(id(2));
     expect(held).toContain(id(1));
   });
@@ -682,7 +682,7 @@ describe("a narrowed copy kept by catch-up", () => {
     };
   }
 
-  /** Whether the device read the row by id, on either door. */
+  /** Whether the device read the item by id, on either door. */
   function readById(folder: FolderHarness, n: number): boolean {
     return folder.server.requests.some(
       (request) =>
@@ -700,8 +700,8 @@ describe("a narrowed copy kept by catch-up", () => {
       .trim();
   }
 
-  it("reads by id a row an event without its tags names, and holds it with the tags it read", async () => {
-    // Archived rows a copy of active notes leaves out, which a bin it holds
+  it("reads by id an item an event without its tags names, and holds it with the tags it read", async () => {
+    // Archived items a copy of active notes leaves out, which a bin it holds
     // can bring in.
     const log = await narrowed(
       "copy-query-unknown-tags",
@@ -715,7 +715,7 @@ describe("a narrowed copy kept by catch-up", () => {
     expect(await heldIds(harness!)).toEqual([id(1)]);
     const entering = note(2, "binned", ["a"], "trashed");
     const witness = note(3, "binned outside", ["b"], "trashed");
-    harness!.rows["core.note"] = [note(1, "kept", ["a"]), entering, witness];
+    harness!.items["core.note"] = [note(1, "kept", ["a"]), entering, witness];
     log.push(binned("2", entering), binned("3", witness));
     value(await harness!.folder.device().catchUp());
 
@@ -736,11 +736,11 @@ describe("a narrowed copy kept by catch-up", () => {
           request.query.get("filter") === `id eq "${id(3)}"` &&
           request.query.get("state") === "trashed",
       ),
-      "the row whose tags no frame carried was not read from the bin",
+      "the item whose tags no frame carried was not read from the bin",
     ).toBe(true);
   });
 
-  it("reads nothing for a row an event bins where the copy held every state it could leave", async () => {
+  it("reads nothing for an item an event bins where the copy held every state it could leave", async () => {
     const log = await narrowed("copy-query-unknown-tags-unread", [
       note(1, "kept", ["a"]),
       note(2, "outside", ["b"]),
@@ -751,7 +751,7 @@ describe("a narrowed copy kept by catch-up", () => {
       note(2, "outside", ["b"]),
       note(3, "archived outside", ["b"]),
     ];
-    harness!.rows["core.note"] = [
+    harness!.items["core.note"] = [
       note(1, "kept", ["a"]),
       ...rows.map((row) => ({
         ...row,
@@ -764,17 +764,17 @@ describe("a narrowed copy kept by catch-up", () => {
     expect(await heldIds(harness!)).toEqual([id(1)]);
     expect(
       readById(harness!, 2),
-      "a row the bin cannot bring in was read",
+      "an item the bin cannot bring in was read",
     ).toBe(false);
     expect(readById(harness!, 3)).toBe(false);
-    // The rows the copy does not hold keep no mark; the witness is a held
-    // row's.
+    // The items the copy does not hold keep no mark; the witness is a held
+    // item's.
     expect(listedMark(harness!, 1)).toBe("1");
     expect(listedMark(harness!, 2)).toBe("0");
     expect(listedMark(harness!, 3)).toBe("0");
   });
 
-  it("holds a row a query of states alone takes from an event without its tags, with the tags its read answers", async () => {
+  it("holds an item a query of states alone takes from an event without its tags, with the tags its read answers", async () => {
     const log = await narrowed(
       "copy-query-states-tags",
       [note(1, "kept", ["x"]), note(2, "archived", ["x"], "archived")],
@@ -782,7 +782,7 @@ describe("a narrowed copy kept by catch-up", () => {
     );
     expect(await heldIds(harness!)).toEqual([id(1)]);
     const entering = note(2, "archived", ["x"], "trashed");
-    harness!.rows["core.note"] = [note(1, "kept", ["x"]), entering];
+    harness!.items["core.note"] = [note(1, "kept", ["x"]), entering];
     log.push(binned("2", entering));
     value(await harness!.folder.device().catchUp());
 
@@ -830,7 +830,7 @@ describe("a narrowed copy kept by catch-up", () => {
     value(await device.catchUp());
 
     const held = await heldIds(harness!);
-    // The witness: the same event lets go of a row no write names.
+    // The witness: the same event lets go of an item no write names.
     expect(held).not.toContain(id(3));
     expect(held).toContain(id(2));
 
@@ -992,7 +992,7 @@ describe("a folder's copy narrowed beneath an item", () => {
     const log: SseFrame[] = [];
     harness = await folderHarness(label, {
       settings: { query: { types: ["core.note"], beneath: id(1) } },
-      rows: { "core.note": rows },
+      items: { "core.note": rows },
       edges: { "parent-of": edges },
       events: [copyHeldLog(log)],
     });
@@ -1046,14 +1046,14 @@ describe("a folder's copy narrowed beneath an item", () => {
       states: ["active", "archived"],
       beneath: id(1),
     });
-    // An edge between two rows the copy does not hold is held all the same.
+    // An edge between two items the copy does not hold is held all the same.
     expect(
       value(await harness!.folder.device().edgesFrom(id(4))).map(
         (edge) => edge.target_id,
       ),
     ).toEqual([id(7)]);
 
-    // The witness: the rows left out are ones the server gives.
+    // The witness: the items left out are ones the server gives.
     value(await harness!.folder.device().pin(id(4)));
     expect(await heldIds(harness!)).toContain(id(4));
   });
@@ -1084,7 +1084,7 @@ describe("a folder's copy narrowed beneath an item", () => {
       [readsOf(harness!.server, id(5)), readsOf(harness!.server, id(6))],
       "the branch was not read by id, once",
     ).toEqual([1, 1]);
-    expect(readsOf(harness!.server, id(2)), "a row held was read").toBe(0);
+    expect(readsOf(harness!.server, id(2)), "an item held was read").toBe(0);
     expect(readFileSync(join(harness!.dir, "branch.md"), "utf8")).toContain(
       "branch",
     );
@@ -1093,7 +1093,7 @@ describe("a folder's copy narrowed beneath an item", () => {
     );
   });
 
-  it("lets go of a branch moved out from beneath the item, but a row a waiting write names", async () => {
+  it("lets go of a branch moved out from beneath the item, but an item a waiting write names", async () => {
     const { log } = await beneath(
       "copy-beneath-leaves",
       [
@@ -1118,7 +1118,7 @@ describe("a folder's copy narrowed beneath an item", () => {
     value(await device.catchUp());
 
     const held = await heldIds(harness!);
-    // The witness: the same move lets go of rows no write names.
+    // The witness: the same move lets go of items no write names.
     expect(held).not.toContain(id(2));
     expect(held).not.toContain(id(4));
     expect(held).toEqual([id(1), id(3)]);
@@ -1133,14 +1133,14 @@ describe("a folder's copy narrowed beneath an item", () => {
     expect(await heldIds(harness!)).toEqual([id(1), id(2), id(3)]);
 
     const binned = note(1, "root", [], "trashed");
-    harness!.rows["core.note"]![0] = binned;
+    harness!.items["core.note"]![0] = binned;
     log.push(
       copyItemEvent("2", "item.deleted", wireItem(binned.item), { tags: [] }),
     );
     value(await harness!.folder.device().catchUp());
     expect(await heldIds(harness!)).toEqual([id(1), id(2), id(3)]);
 
-    harness!.rows["core.note"]!.shift();
+    harness!.items["core.note"]!.shift();
     log.push(
       copyItemEvent("3", "item.purged", wireItem(binned.item), { tags: [] }),
     );
@@ -1181,7 +1181,7 @@ describe("a narrowed copy and its catalog", () => {
           filter: 'status_group eq "in_progress"',
         },
       },
-      rows: {
+      items: {
         "app.test.ticket": [
           {
             item: {
@@ -1231,7 +1231,7 @@ describe("a saved view read from a narrowed copy", () => {
     });
     harness = await folderHarness("copy-query-view", {
       settings: { query: { types: ["core.note"], filter: TAGGED_A } },
-      rows: {
+      items: {
         "core.note": [note(1, "member", ["a"]), note(2, "outside", ["b"])],
         "system.view": [view(10, TAGGED_A), view(11, 'tags contains "b"')],
       },
@@ -1271,7 +1271,7 @@ describe("a saved view read from a narrowed copy", () => {
     });
     harness = await folderHarness("copy-query-view-states", {
       settings: { query: { types: ["core.note"], state: ["active"] } },
-      rows: {
+      items: {
         "core.note": [
           note(1, "member", ["a"]),
           note(2, "other member", ["b"]),
@@ -1310,7 +1310,7 @@ describe("a file naming an item a narrowed copy leaves out", () => {
       settings: {
         query: { types: ["core.note"], ...(filter && { filter }) },
       },
-      rows: {
+      items: {
         "core.note": [note(1, "member", ["a"]), note(3, "outside", ["b"])],
       },
     });
@@ -1355,7 +1355,7 @@ describe("a file naming an item a narrowed copy leaves out", () => {
         // Holds the new files back unbound, so every pass meets them again.
         addition_threshold: { files: 2, fraction: 0.25 },
       },
-      rows: { "core.note": [note(1, "member", ["a"])] },
+      items: { "core.note": [note(1, "member", ["a"])] },
     });
     scriptFolderWrites(harness);
     value(await harness.folder.pull());
@@ -1436,7 +1436,7 @@ describe("giving a shrunk copy's freed pages back to the disk", () => {
     };
   }
 
-  it("rewrites a copy whose rows left without losing a pin, and its search still answers", async () => {
+  it("rewrites a copy whose items left without losing a pin, and its search still answers", async () => {
     const log: SseFrame[] = [];
     const bulk = "lorem ipsum dolor sit amet ".repeat(500);
     const leaving = Array.from({ length: 400 }, (_, at) =>
@@ -1445,7 +1445,7 @@ describe("giving a shrunk copy's freed pages back to the disk", () => {
     for (const row of leaving) row.item.properties.body = bulk;
     harness = await folderHarness("copy-reclaim", {
       settings: { query: { types: ["core.note"] } },
-      rows: {
+      items: {
         "core.note": [
           note(1, "kept one", ["a"]),
           note(2, "kept two", ["a"]),
@@ -1457,7 +1457,7 @@ describe("giving a shrunk copy's freed pages back to the disk", () => {
     });
     scriptFolderWrites(harness);
     const device = harness.folder.device();
-    // No pull: a file bound to a row would keep the row past the shrink.
+    // No pull: a file bound to an item would keep the item past the shrink.
     value(await device.pin(id(100)));
     expect(await heldIds(harness)).toHaveLength(402);
 
@@ -1473,7 +1473,7 @@ describe("giving a shrunk copy's freed pages back to the disk", () => {
     const shrunk = pagesOf(harness.dir);
     const pinnedBefore = value(await device.status()).pinned;
     expect(pinnedBefore).toContain(id(100));
-    // The witness: the rows left and the disk did not get them back.
+    // The witness: the items left and the disk did not get them back.
     expect(shrunk.free).toBeGreaterThanOrEqual(1024);
     expect(shrunk.free * 2).toBeGreaterThanOrEqual(shrunk.pages);
 
@@ -1498,7 +1498,7 @@ describe("giving a shrunk copy's freed pages back to the disk", () => {
   it("leaves a copy with little to free as it is", async () => {
     harness = await folderHarness("copy-reclaim-small", {
       settings: { query: { types: ["core.note"] } },
-      rows: { "core.note": [note(1, "one", ["a"]), note(2, "two", ["b"])] },
+      items: { "core.note": [note(1, "one", ["a"]), note(2, "two", ["b"])] },
     });
     scriptFolderWrites(harness);
     value(await harness.folder.push());

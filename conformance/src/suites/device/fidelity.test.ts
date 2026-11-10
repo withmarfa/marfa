@@ -314,7 +314,7 @@ describe("the scripted answers match the server's", () => {
     );
   });
 
-  it("matches a create onto a natural key a row holds: named by id, and not", async () => {
+  it("matches a create onto a natural key an item holds: named by id, and not", async () => {
     // What a device meets when a create it queued carries a key another
     // device's create already landed under (`queue-and-verdicts/keyed-create-no-id`).
     const sourceId = `fidelity-${ctx.runId}.md`;
@@ -327,7 +327,7 @@ describe("the scripted answers match the server's", () => {
     expect(first.status, JSON.stringify(first.error)).toBe(201);
     trackItem(ctx, first.data.item.id);
 
-    // A body naming an id that is not the row the key resolves.
+    // A body naming an id that is not the item the key resolves.
     const named = "01a00000-0000-7000-8000-0000000000fd";
     const refused = await client.rawRequest("/items", {
       method: "POST",
@@ -341,10 +341,10 @@ describe("the scripted answers match the server's", () => {
     });
     expect(
       refused.status,
-      "a create naming another id was taken onto the row its key resolves, so the refusal this case compares was never produced",
+      "a create naming another id was taken onto the item its key resolves, so the refusal this case compares was never produced",
     ).toBe(400);
     expectFidelity(
-      "a create whose id is not the row its natural key resolves",
+      "a create whose id is not the item its natural key resolves",
       { status: refused.status, body: refused.error },
       answers.idNotTheKeys(named, first.data.item.id, ctx.source, sourceId),
       {
@@ -360,7 +360,7 @@ describe("the scripted answers match the server's", () => {
       },
     );
 
-    // The same create naming no id lands on that row, under its id.
+    // The same create naming no id lands on that item, under its id.
     const upserted = await client.rawRequest("/items", {
       method: "POST",
       body: {
@@ -375,7 +375,7 @@ describe("the scripted answers match the server's", () => {
     const body = upserted.data as { item: { id: string; version: number } };
     expect(body.item.id).toBe(first.data.item.id);
     expectFidelity(
-      "a create with no id whose natural key resolves a row",
+      "a create with no id whose natural key resolves an item",
       { status: upserted.status, body: upserted.data },
       answers.upserted(
         wireItem({
@@ -505,7 +505,7 @@ describe("the scripted answers match the server's", () => {
       source_id: sourceId,
     };
 
-    // Nothing under the key: the create makes a row.
+    // Nothing under the key: the create makes an item.
     const minted = await decide(
       "a create onto a natural key nothing holds",
       { ...keyed, version: 0, properties: { title: "door", body: "door" } },
@@ -523,9 +523,9 @@ describe("the scripted answers match the server's", () => {
     const doorId = String(at(minted.scripted, "item.id"));
     trackItem(ctx, realId);
 
-    // A create naming an id and no natural key makes that row. The same
-    // create again, once somebody has edited the row, is acknowledged with
-    // the row as it now stands.
+    // A create naming an id and no natural key makes that item. The same
+    // create again, once somebody has edited the item, is acknowledged with
+    // the item as it now stands.
     const ownId = {
       type: "core.note",
       id: uuidv7(),
@@ -543,7 +543,7 @@ describe("the scripted answers match the server's", () => {
     });
     expect(
       editedReal.ok,
-      `the fixture could not edit the row it named: ${JSON.stringify(editedReal.error)}`,
+      `the fixture could not edit the item it named: ${JSON.stringify(editedReal.error)}`,
     ).toBe(true);
     door.update(ownId.id, movedOn);
     await decide("the same create again, after an edit", ownId, {
@@ -551,7 +551,7 @@ describe("the scripted answers match the server's", () => {
       shape: ["item.source"],
     });
     // And again carrying a natural key nothing holds: the key resolves no
-    // row, so the id decides, and the create is still a repeat.
+    // item, so the id decides, and the create is still a repeat.
     await decide(
       "the same create again, carrying a natural key nothing holds",
       { ...ownId, source: ctx.source, source_id: `unkeyed-${ctx.runId}` },
@@ -567,9 +567,9 @@ describe("the scripted answers match the server's", () => {
       },
     );
 
-    // The version the row is at: the create lands on it.
+    // The version the item is at: the create lands on it.
     const upserted = await decide(
-      "a create carrying the version its natural key's row is at",
+      "a create carrying the version its natural key's item is at",
       { ...keyed, version: 1, properties: { title: "door, again" } },
       {
         same: [
@@ -583,13 +583,13 @@ describe("the scripted answers match the server's", () => {
     );
     expect(
       [at(upserted.real, "item.id"), at(upserted.scripted, "item.id")],
-      "a create onto the key's row landed somewhere else on one side",
+      "a create onto the key's item landed somewhere else on one side",
     ).toEqual([realId, doorId]);
 
-    // An id that is not the key's row: refused on both.
+    // An id that is not the key's item: refused on both.
     const named = "01a00000-0000-7000-8000-0000000000fe";
     const refused = await decide(
-      "a create naming an id that is not its natural key's row",
+      "a create naming an id that is not its natural key's item",
       { ...keyed, id: named, properties: { title: "named" } },
       {
         same: [
@@ -607,9 +607,9 @@ describe("the scripted answers match the server's", () => {
       at(refused.scripted, "error.details.existing_id"),
     ]).toEqual([realId, doorId]);
 
-    // Zero, which says nothing was read: refused, naming the row.
+    // Zero, which says nothing was read: refused, naming the item.
     const zero = await decide(
-      "a create carrying version zero onto a natural key a row holds",
+      "a create carrying version zero onto a natural key an item holds",
       { ...keyed, version: 0, properties: { title: "zero" } },
       {
         same: [
@@ -630,12 +630,12 @@ describe("the scripted answers match the server's", () => {
     );
     expect(
       [at(zero.real, "current.id"), at(zero.scripted, "current.id")],
-      "the refusal did not name the key's row on one side",
+      "the refusal did not name the key's item on one side",
     ).toEqual([realId, doorId]);
 
-    // A version the row has moved past, colliding with what moved it.
+    // A version the item has moved past, colliding with what moved it.
     const stale = await decide(
-      "a create carrying a version the row has moved past",
+      "a create carrying a version the item has moved past",
       { ...keyed, version: 1, properties: { title: "stale" } },
       {
         same: [
@@ -667,7 +667,7 @@ describe("the scripted answers match the server's", () => {
       at(stale.scripted, "current.id"),
     ]).toEqual([realId, doorId]);
 
-    // An update and a read, decided by both on the row each holds.
+    // An update and a read, decided by both on the item each holds.
     const patch = async (
       name: string,
       ids: [string, string],
@@ -703,7 +703,7 @@ describe("the scripted answers match the server's", () => {
     };
     const missing = "01a00000-0000-7000-8000-0000000000fc";
     await patch(
-      "an update naming the version the row is at",
+      "an update naming the version the item is at",
       [realId, doorId],
       { properties: { title: "patched" }, version: 2 },
       {
@@ -711,7 +711,7 @@ describe("the scripted answers match the server's", () => {
         shape: ["item.id"],
       },
     );
-    // Stale, at version 2 of a row since moved on: a change nobody else made
+    // Stale, at version 2 of an item since moved on: a change nobody else made
     // is merged, a collision on a last-writer field is refused, and resolved
     // where the caller asks.
     const merged = {
@@ -763,7 +763,7 @@ describe("the scripted answers match the server's", () => {
       },
       true,
     );
-    // A collision on a keep-both property, resolved: the row keeps its own
+    // A collision on a keep-both property, resolved: the item keeps its own
     // value and the losing one goes to a sibling, which both sides then read.
     const keptBoth = { properties: { body: "stale body" }, version: 2 };
     const keptReal = await client.rawRequest<Record<string, unknown>>(
@@ -828,12 +828,12 @@ describe("the scripted answers match the server's", () => {
         ],
       },
     );
-    // A create naming a version the row has moved past, changing only what
-    // nobody changed since: merged over the row as it stands, and answered
+    // A create naming a version the item has moved past, changing only what
+    // nobody changed since: merged over the item as it stands, and answered
     // as an upsert onto it.
     const beforeMerge = door.rows.get(doorId);
     const mergedCreate = await decide(
-      "a create carrying a version the row has moved past, colliding with nothing",
+      "a create carrying a version the item has moved past, colliding with nothing",
       { ...keyed, version: 5, properties: { title: "created stale" } },
       {
         same: [
@@ -851,7 +851,7 @@ describe("the scripted answers match the server's", () => {
     ]).toEqual([realId, doorId]);
     // The same again on the version before that create, carrying the title
     // as it stood there, which that create has changed since: the title is
-    // no change of this create's, so the row keeps the one written since,
+    // no change of this create's, so the item keeps the one written since,
     // and only the body it changed is applied.
     const echoed = await decide(
       "a stale create carrying a property changed since at the value it named",
@@ -878,44 +878,44 @@ describe("the scripted answers match the server's", () => {
       at(echoed.real, "item.properties.body"),
     ]).toEqual(["created stale", "created again"]);
     await patch(
-      "an update of a row nobody holds",
+      "an update of an item nobody holds",
       [missing, missing],
       { properties: { title: "nowhere" }, version: 1 },
       { same: ["error.code"], shape: ["error.message"] },
     );
-    await readBoth("a read of a row held", [realId, doorId], {
+    await readBoth("a read of an item held", [realId, doorId], {
       same: ["item.version", "item.properties", "item.state"],
       shape: ["item.id"],
     });
-    await readBoth("a read of a row nobody holds", [missing, missing], {
+    await readBoth("a read of an item nobody holds", [missing, missing], {
       same: ["error.code"],
       shape: ["error.message"],
     });
 
-    // The row in the bin: an update is refused, a read finds nothing, and a
+    // The item in the bin: an update is refused, a read finds nothing, and a
     // keyed create is acknowledged and not written.
     const binned = await client.deleteItem(realId);
     expect(binned.ok, JSON.stringify(binned.error)).toBe(true);
     door.trash(doorId);
     await patch(
-      "an update of a row in the bin",
+      "an update of an item in the bin",
       [realId, doorId],
       { properties: { title: "binned" }, version: 3 },
       {
         same: ["error.code"],
         shape: ["error.message"],
-        // The server says the row is in the bin (`errors/bin-trashed`). No
+        // The server says the item is in the bin (`errors/bin-trashed`). No
         // device reads it yet; the device change that keeps a refused write
         // where the person can get it back models it here when it starts to.
         absent: ["error.details"],
       },
     );
-    await readBoth("a read of a row in the bin", [realId, doorId], {
+    await readBoth("a read of an item in the bin", [realId, doorId], {
       same: ["error.code"],
       shape: ["error.message"],
     });
     const acknowledged = await decide(
-      "a keyed create onto a row in the bin",
+      "a keyed create onto an item in the bin",
       { ...keyed, version: 0, properties: { title: "after the bin" } },
       {
         same: [
@@ -946,8 +946,8 @@ describe("the scripted answers match the server's", () => {
       new FolderDoor([], () => false),
     );
 
-    // A row of a type the key may not read, reached through a source it
-    // claims: refused without the row named, on both.
+    // An item of a type the key may not read, reached through a source it
+    // claims: refused without the item named, on both.
     const hidden = `door-hidden-${ctx.runId}`;
     const bookmark = await client.createItem({
       type: "core.bookmark",
@@ -986,7 +986,7 @@ describe("the scripted answers match the server's", () => {
       (type) => type === "core.note",
     );
     const unreadable = await decide(
-      "a create whose natural key resolves a row of a type its key may not read",
+      "a create whose natural key resolves an item of a type its key may not read",
       { ...keyed, source_id: hidden, version: 0, properties: { title: "x" } },
       { same: ["error.code", "error.message"] },
       hiddenDoor,
@@ -994,16 +994,16 @@ describe("the scripted answers match the server's", () => {
     );
     expect(
       JSON.stringify(unreadable.real),
-      "the server named a row its key may not read",
+      "the server named an item its key may not read",
     ).not.toContain(bookmark.data.item.id);
 
-    // The same row in the bin: the type is asked of it before the bin is,
-    // so the key learns no more than it did of the live row.
+    // The same item in the bin: the type is asked of it before the bin is,
+    // so the key learns no more than it did of the live item.
     const hiddenBinned = await client.deleteItem(bookmark.data.item.id);
     expect(hiddenBinned.ok, JSON.stringify(hiddenBinned.error)).toBe(true);
     hiddenDoor.trash("01a00000-0000-7000-8000-0000000000bb");
     await decide(
-      "a create whose natural key resolves a row in the bin of a type its key may not read",
+      "a create whose natural key resolves an item in the bin of a type its key may not read",
       { ...keyed, source_id: hidden, version: 0, properties: { title: "x" } },
       { same: ["error.code", "error.message"] },
       hiddenDoor,
@@ -1068,7 +1068,7 @@ describe("the scripted answers match the server's", () => {
       version: 1,
     });
     await both(
-      "whole properties at the version the row is at",
+      "whole properties at the version the item is at",
       current.path,
       "PATCH",
       current.body,
@@ -1077,7 +1077,7 @@ describe("the scripted answers match the server's", () => {
     );
     const movedOn = edit({ properties: { title: "moved on" }, version: 2 });
     await both(
-      "an edit moving the row on",
+      "an edit moving the item on",
       movedOn.path,
       "PATCH",
       movedOn.body,
@@ -1238,7 +1238,7 @@ describe("the scripted answers match the server's", () => {
     );
   });
 
-  it("matches the refusal of an exact update at a version the row moved past, under conflict=auto", async () => {
+  it("matches the refusal of an exact update at a version the item moved past, under conflict=auto", async () => {
     const seeded = await note({ title: "base", body: "base" });
     const winner = await client.updateItem(seeded.id, {
       properties: { title: "winner" },
@@ -1493,8 +1493,8 @@ describe("the scripted answers match the server's", () => {
       },
     );
 
-    // A pin reads a row this way. A hydration reads its pinned rows in a
-    // bulk read, which leaves the row out, and keeps the pin over it.
+    // A pin reads an item this way. A hydration reads its pinned items in a
+    // bulk read, which leaves the item out, and keeps the pin over it.
     const note = await client.createItem({
       type: "core.note",
       source: ctx.source,
@@ -1507,7 +1507,7 @@ describe("the scripted answers match the server's", () => {
     );
     expect(unread.status).toBe(404);
     expectFidelity(
-      "a row of a type the key does not hold, read by id",
+      "an item of a type the key does not hold, read by id",
       { status: unread.status, body: unread.error },
       answers.itemNotFound(),
       { same: ["error.code", "error.message"] },
@@ -1521,7 +1521,7 @@ describe("the scripted answers match the server's", () => {
     });
     expect(left.status).toBe(200);
     expectFidelity(
-      "a row of a type the key does not hold, in a bulk read by id",
+      "an item of a type the key does not hold, in a bulk read by id",
       { status: left.status, body: left.data },
       bulkGetOf([answers.itemNotFound()], {
         withReach: false,
@@ -1852,7 +1852,7 @@ describe("the scripted answers match the server's", () => {
           "data.0.item.version",
           "data.0.item.schema_version",
           "data.0.item.source",
-          // Absent rather than null on a row that has neither, which is a
+          // Absent rather than null on an item that has neither, which is a
           // difference `kindAt` can see and a device reads as two different
           // things.
           "data.0.item.source_id",
@@ -2105,7 +2105,7 @@ describe("the scripted answers match the server's", () => {
       (lookup.data as { data: Array<{ id: string }> }).data.map(
         (row) => row.id,
       ),
-      "the lookup did not answer exactly the row its key names",
+      "the lookup did not answer exactly the item its key names",
     ).toEqual([created.data.item.id]);
     expectFidelity(
       "the natural-key lookup",
@@ -2816,7 +2816,7 @@ describe("the scripted answers match the server's", () => {
     // Every device that hydrated an empty instance holds `0` (`device/cursor-zero`), so the scripted `replay` a cursor of zero is answered with has
     // to be the real server's answer: the head, then the events, and no
     // terminal frame. The run's server has written since its first event,
-    // so the replay is read until a row this case wrote arrives.
+    // so the replay is read until an item this case wrote arrives.
     const marker = `fidelity-zero-${ctx.runId}`;
     const seeded = await note({ title: marker, body: marker });
     const frames = await withStream(
@@ -2907,7 +2907,7 @@ describe("the scripted answers match the server's", () => {
     );
   });
 
-  it("matches the marker that ends a replay whose rows were withheld", async (context) => {
+  it("matches the marker that ends a replay whose items were withheld", async (context) => {
     // A type filter withholds here in place of a credential, which the
     // server's marker treats the same (`events/stream-live-cursor`).
     const marker = `fidelity-live-${ctx.runId}`;
@@ -2934,7 +2934,7 @@ describe("the scripted answers match the server's", () => {
     expect(
       BigInt(cursor as string) >=
         BigInt((head.data as { cursor: string }).cursor),
-      "the marker's cursor fell short of the head it announced, so a device adopting it would read the withheld rows again",
+      "the marker's cursor fell short of the head it announced, so a device adopting it would read the withheld items again",
     ).toBe(true);
 
     const scripted = liveReplay("1", []);
@@ -2953,7 +2953,7 @@ describe("the scripted answers match the server's", () => {
 /**
  * The listing grammar a device answers from its copy (`device/filter-grammar-refused` and `device/filter-as-server`), held against the server that defines it. A device hydrates a slice of
  * one type the run registers, so the server's answer and the device's are
- * about the same four rows and no others, and each expression is asked of
+ * about the same four items and no others, and each expression is asked of
  * both.
  */
 describe("a local read answers the listing grammar as the server does", () => {
@@ -2988,7 +2988,7 @@ describe("a local read answers the listing grammar as the server does", () => {
       });
       expect(
         created.ok,
-        `the fixture could not seed a row: ${JSON.stringify(created.error)}`,
+        `the fixture could not seed an item: ${JSON.stringify(created.error)}`,
       ).toBe(true);
       trackItem(ctx, created.data.item.id);
       return created.data.item.id;
@@ -3112,7 +3112,7 @@ describe("a local read answers the listing grammar as the server does", () => {
       'properties.list contains "0.0000015"',
       `id eq "${stranger}"`,
       // The server binds every number as a REAL, which a text column reads
-      // as `5.0`: this selects the row spelled that way, not the one
+      // as `5.0`: this selects the item spelled that way, not the one
       // spelled `5`.
       "source_id eq 5",
       "version gte 1",
@@ -3137,7 +3137,7 @@ describe("a local read answers the listing grammar as the server does", () => {
       const expected = named(served.data.data.map((item) => item.id));
       expect(
         named(local.ok ? local.value.map((item) => item.id) : []),
-        `the device answers ${filter} with other rows than the server does`,
+        `the device answers ${filter} with other items than the server does`,
       ).toEqual(expected);
       if (expected.length > 0 && expected.length < names.size) {
         selective.push(filter);
@@ -3173,9 +3173,9 @@ describe("a local read answers the listing grammar as the server does", () => {
     // matched nothing, reaches too.
     expect(
       selective.length,
-      "too few expressions select some rows and not others for the agreement above to mean anything",
+      "too few expressions select some items and not others for the agreement above to mean anything",
     ).toBeGreaterThanOrEqual(expressions.length - 3);
-    // And the rows that tell a cast, a REAL and a number's text apart.
+    // And the items that tell a cast, a REAL and a number's text apart.
     for (const [filter, rows] of [
       ["properties.s gt 4", ["five", "ten"]],
       ["source_id eq true", ["five"]],
@@ -3209,7 +3209,7 @@ describe("a local read answers the listing grammar as the server does", () => {
       expect(local.ok).toBe(true);
       expect(
         named(local.ok ? local.value.map((hit) => hit.item.id) : []),
-        `the device searches by ${filter} and answers other rows than the server does`,
+        `the device searches by ${filter} and answers other items than the server does`,
       ).toEqual(named(served.data.data.map((hit) => hit.item.id)));
     }
 
@@ -3404,7 +3404,7 @@ describe("a local read answers the listing grammar as the server does", () => {
       expect(local.ok, JSON.stringify(local)).toBe(true);
       expect(
         (local.ok ? local.value.map((item) => item.id) : []).sort(),
-        `the device answers ${filter} with other rows than the server does`,
+        `the device answers ${filter} with other items than the server does`,
       ).toEqual(served.data.data.map((item) => item.id).sort());
     }
     const to = await narrow.listItems({
@@ -3482,7 +3482,7 @@ it("matches copy marker tuples and conditional listing proofs", async (context) 
   };
   expect(row.listed).toBe(true);
   expect(row.item.id).toBe(seeded.id);
-  // A hydration reads its pinned rows this way: a bulk read by id under the
+  // A hydration reads its pinned items this way: a bulk read by id under the
   // reach, which leaves out an id that names nothing.
   const gone = uuidv7();
   const bulk = await fetch(`${apiUrl}/items/bulk-get`, {
@@ -3510,7 +3510,7 @@ it("matches copy marker tuples and conditional listing proofs", async (context) 
     ),
     { same: ["listed"], shape: ["items", "metadata"] },
   );
-  // A pinned folder row is a `system.*` row, which the bulk read answers
+  // A pinned folder item is a `system.*` item, which the bulk read answers
   // only where `include` names `system` (`items/bulk-get-system`).
   const folder = await client.createFolder({
     title: `fidelity ${ctx.runId}`,
@@ -3544,10 +3544,10 @@ it("matches copy marker tuples and conditional listing proofs", async (context) 
       (scriptedBody(scripted) as { items: { id: string }[] }).items.map(
         (item) => item.id,
       ),
-      `the scripted bulk read and the server disagree on a system row ${system ? "with" : "without"} system`,
+      `the scripted bulk read and the server disagree on a system item ${system ? "with" : "without"} system`,
     ).toEqual(real.items.map((item) => item.id));
     expectFidelity(
-      `a bulk read of a system row ${system ? "with" : "without"} system`,
+      `a bulk read of a system item ${system ? "with" : "without"} system`,
       { status: read.status, body: real },
       scripted,
       { same: ["listed"], shape: ["items", "metadata"] },

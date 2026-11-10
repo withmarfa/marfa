@@ -129,7 +129,7 @@ export default defineConfig({
       {
         // A device filling a large image library, driven with the `marfa`
         // binary against the server the run booted. It seeds tens of
-        // thousands of rows and fills a copy of each set, so the budget is
+        // thousands of items and fills a copy of each set, so the budget is
         // the run's, not a request's. A measurement `benchmarks.yml` runs
         // every night, not a gate.
         test: {

@@ -396,7 +396,7 @@ When machines follow the same `system.folder`, a device MUST keep each machine�
 
 ## A store another build made
 
-A folder's store holds a copy of the server's rows, the writes still to be sent, and the folder's record of its files: which file is which item, what the folder last read and wrote there, which files went missing, which writes and placements the server refused, and which items were purged. An answer the folder has yet to record is an answer a file's state still waits on, a write the server gave up on, or a write the server refused, unless it is the delete of an edge already gone, or an edit, a tag, a state change or an edge of an item a file in the folder is bound to, which the folder records against the file or its placements, or no longer needs once a later save is taken. Where the store holds no write still to be sent and no answer the folder has yet to record, a hydration brings the copy back and the record carried into the new store keeps each file where it was (`folders/refused-store-record-kept`), so this build can replace a store that another build of the core made (`device/wrong-schema`) without losing anything.
+A folder's store holds a copy of the server's items, the writes still to be sent, and the folder's record of its files: which file is which item, what the folder last read and wrote there, which files went missing, which writes and placements the server refused, and which items were purged. An answer the folder has yet to record is an answer a file's state still waits on, a write the server gave up on, or a write the server refused, unless it is the delete of an edge already gone, or an edit, a tag, a state change or an edge of an item a file in the folder is bound to, which the folder records against the file or its placements, or no longer needs once a later save is taken. Where the store holds no write still to be sent and no answer the folder has yet to record, a hydration brings the copy back and the record carried into the new store keeps each file where it was (`folders/refused-store-record-kept`), so this build can replace a store that another build of the core made (`device/wrong-schema`) without losing anything.
 
 ### `folders/refused-store-replaced`
 
@@ -562,7 +562,7 @@ When a watch of every folder refuses a folder's store `wrong_schema` without rep
 
 Where a folder's query names a filter that names no edge, backreference or part, an item to narrow beneath, or member states other than `active` and `archived`, a device MUST hydrate the folder's copy with a slice whose query is the folder's member states, filter and item to narrow beneath.
 
-**Reason:** the copy then holds about the rows the folder shows, so a folder of six files does not hold every note on the server.
+**Reason:** the copy then holds about the items the folder shows, so a folder of six files does not hold every note on the server.
 
 **Tests:** `device/folders-copy-shrink.test.ts › hydrates only the items its query shows, with those in the bin and its conflicted copies`, `› hydrates only the item and everything beneath it, with its parent-of edges whole`.
 
@@ -570,7 +570,7 @@ Where a folder's query names a filter that names no edge, backreference or part,
 
 Where a folder's query filters by an edge, a backreference or a part, a device MUST hydrate the folder's copy without the query's filter, with the query's item to narrow beneath, and with its member states where they are other than `active` and `archived`.
 
-**Reason:** the item listing cannot yet be narrowed by edges, so such a folder's copy holds every row of its types beneath the item it names, or every row of its types where it names none.
+**Reason:** the item listing cannot yet be narrowed by edges, so such a folder's copy holds every item of its types beneath the item it names, or every item of its types where it names none.
 
 **Tests:** `device/folders-copy-shrink.test.ts › hydrates with the query's states alone a query that filters by an edge`.
 
@@ -578,7 +578,7 @@ Where a folder's query filters by an edge, a backreference or a part, a device M
 
 When a folder's copy holds a slice whose query differs from the one the folder's settings now ask for, including a copy filled with no query, a device MUST hydrate the copy at the folder's next pass.
 
-**Reason:** a store an earlier build filled holds every row of its types and records no query, so its next pass shrinks it to what the folder shows.
+**Reason:** a store an earlier build filled holds every item of its types and records no query, so its next pass shrinks it to what the folder shows.
 
 **Tests:** `device/folders-copy-shrink.test.ts › keeps every unsent write and changes no file when a changed query %s shrinks the copy`.
 
@@ -586,7 +586,7 @@ When a folder's copy holds a slice whose query differs from the one the folder's
 
 When a device hydrates a folder's copy again, a device MUST keep every queued write with its verdict, the folder's record of its files, its journal, its pins and its paused removals.
 
-**Reason:** a hydration removes rows of the copy and nothing the person has not yet sent, so a push after it sends every unsent write.
+**Reason:** a hydration removes items of the copy and nothing the person has not yet sent, so a push after it sends every unsent write.
 
 **Tests:** `device/folders-copy-shrink.test.ts › keeps every unsent write and changes no file when a changed query %s shrinks the copy`, `› keeps every unsent write when a shrink stopped midway is resumed`.
 
@@ -606,7 +606,7 @@ When a folder evaluates membership, a device MUST apply its query types and thei
 
 When a folder query names `beneath`, a device MUST include the named item and its readable descendants reached through `parent-of`.
 
-**Tests:** `device/folders-contract-a.test.ts › materializes only readable copy rows reached by a beneath query`, `device/folders.test.ts › holds exactly what its query matches`.
+**Tests:** `device/folders-contract-a.test.ts › materializes only readable copy items reached by a beneath query`, `device/folders.test.ts › holds exactly what its query matches`.
 
 ### `folders/search-default-types`
 
@@ -1922,19 +1922,19 @@ When a document writes an edge to a readable item outside the folder query, a de
 
 While at least one document line names an item outside the slice, a device MUST retain the pin it made for that item.
 
-**Tests:** `device/folders-frontmatter.test.ts › holds a pin while a line names its row, and lets go only a pin it made`, `device/folders-contract-extra-c.test.ts › keeps a shared edge target pinned until the last owning file releases it`.
+**Tests:** `device/folders-frontmatter.test.ts › holds a pin while a line names its item, and lets go only a pin it made`, `device/folders-contract-extra-c.test.ts › keeps a shared edge target pinned until the last owning file releases it`.
 
 ### `folders/edge-pin-release`
 
 When no file binding or edge line requires an item pinned by the folder, a device MUST release the folder's pin, unless a pinned create was answered with the item after an edge line pinned it (`device/pin-create-lasts`).
 
-**Tests:** `device/folders-frontmatter.test.ts › holds a pin while a line names its row, and lets go only a pin it made`, `device/folders-contract-extra-c.test.ts › keeps a shared edge target pinned until the last owning file releases it`.
+**Tests:** `device/folders-frontmatter.test.ts › holds a pin while a line names its item, and lets go only a pin it made`, `device/folders-contract-extra-c.test.ts › keeps a shared edge target pinned until the last owning file releases it`.
 
 ### `folders/edge-pin-other-owner`
 
 When an edge line is removed, a device MUST retain a pin for its target that the folder did not create.
 
-**Tests:** `device/folders-frontmatter.test.ts › holds a pin while a line names its row, and lets go only a pin it made`.
+**Tests:** `device/folders-frontmatter.test.ts › holds a pin while a line names its item, and lets go only a pin it made`.
 
 ### `folders/edge-writing-end`
 
@@ -1970,7 +1970,7 @@ When the copy cannot determine whether an edge's designated writing end carries 
 
 ### `folders/edge-title-format`
 
-When a target has a title that link syntax can represent and that no other row the folder's copy holds shares, a device MUST render an edge target as `[[title]]`.
+When a target has a title that link syntax can represent and that no other item the folder's copy holds shares, a device MUST render an edge target as `[[title]]`.
 
 **Tests:** `device/folders-frontmatter.test.ts › writes an edge in one file only`.
 
@@ -3914,7 +3914,7 @@ When a person deletes a bound file that a device holds because a name on one of 
 
 When a person deletes a bound file whose edit the server refused, a device MUST retain the journaled deletion while the item has not changed in content the file showed, counting the refused edit as unchanged while the item is still at the version the file showed and no other write of the device's to the item waits.
 
-**Reason:** The refused edit never reached the item, and the device reads back the item's row in its place, so its absence from what the device would write now is no change made elsewhere. Counted as one, a pull would write the file back inside the grace and the person's delete of their own file would never stand. A refused edit spends no version, so a change another device makes to the item's properties moves its version and brings the file back under `folders/missing-file-changed-revives`. The server changes tags, state and edges without a version step, so they are still compared, a refused tag or state change aside. A write of the device's own that the server has not answered sits in the working copy at the version it was based on, so while one waits the whole item is compared.
+**Reason:** The refused edit never reached the item, and the device reads back the item in its place, so its absence from what the device would write now is no change made elsewhere. Counted as one, a pull would write the file back inside the grace and the person's delete of their own file would never stand. A refused edit spends no version, so a change another device makes to the item's properties moves its version and brings the file back under `folders/missing-file-changed-revives`. The server changes tags, state and edges without a version step, so they are still compared, a refused tag or state change aside. A write of the device's own that the server has not answered sits in the working copy at the version it was based on, so while one waits the whole item is compared.
 
 **Tests:** `device/folders-held-links.test.ts › trashes the item of a deleted file whose edit the server refused`, `› writes back a deleted file whose edit the server refused when another device archives its item`.
 
@@ -4424,31 +4424,31 @@ When an item outside the file types carries `blob_ref`, a device MUST render it 
 
 **Tests:** `device/folders-placement.test.ts › writes an item carrying a blob_ref outside the file types as a document`.
 
-### `folders/lost-row-file-kept`
+### `folders/lost-item-file-kept`
 
-When a folder file’s create is refused and the copy loses the row, a device MUST preserve the person’s file.
+When a folder file’s create is refused and the copy loses the item, a device MUST preserve the person’s file.
 
 **Tests:** `device/folders-identity.test.ts › keeps a file the folder never wrote whose create was refused, inside one push`.
 
-### `folders/lost-row-edit-retried`
+### `folders/lost-item-edit-retried`
 
-When the person changes or moves a folder file whose row the copy no longer holds, a device MUST queue the file as a new item under a new device-minted ID.
+When the person changes or moves a folder file whose item the copy no longer holds, a device MUST queue the file as a new item under a new device-minted ID.
 
-**Tests:** `device/folders-identity.test.ts › queues a file whose row the copy lost again once it changes, and says so`, `device/folders-identity.test.ts › queues a file whose row the copy lost again once it moves`.
+**Tests:** `device/folders-identity.test.ts › queues a file whose item the copy lost again once it changes, and says so`, `device/folders-identity.test.ts › queues a file whose item the copy lost again once it moves`.
 
-### `folders/lost-row-unchanged-held`
+### `folders/lost-item-unchanged-held`
 
-While a folder file whose row the copy no longer holds stays unchanged at its path, a device MUST report the file as lost.
+While a folder file whose item the copy no longer holds stays unchanged at its path, a device MUST report the file as lost.
 
-**Tests:** `device/folders-identity.test.ts › queues a file whose row the copy lost again once it changes, and says so`, `device/folders-identity.test.ts › keeps a file the folder never wrote whose create was refused, inside one push`, `device/folders.test.ts › pulls again after a rebuild at the drain after the pull, writing what the new reach holds and keeping a file it no longer reads`.
+**Tests:** `device/folders-identity.test.ts › queues a file whose item the copy lost again once it changes, and says so`, `device/folders-identity.test.ts › keeps a file the folder never wrote whose create was refused, inside one push`, `device/folders.test.ts › pulls again after a rebuild at the drain after the pull, writing what the new reach holds and keeping a file it no longer reads`.
 
 ### `folders/lost-create-not-repeated`
 
-While a folder file whose row the copy no longer holds stays unchanged at its path, a device MUST NOT queue another create.
+While a folder file whose item the copy no longer holds stays unchanged at its path, a device MUST NOT queue another create.
 
-**Tests:** `device/folders-identity.test.ts › queues a file whose row the copy lost again once it changes, and says so`, `device/folders-identity.test.ts › keeps a file the folder never wrote whose create was refused, inside one push`.
+**Tests:** `device/folders-identity.test.ts › queues a file whose item the copy lost again once it changes, and says so`, `device/folders-identity.test.ts › keeps a file the folder never wrote whose create was refused, inside one push`.
 
-### `folders/lost-row-binding-ownership`
+### `folders/lost-item-binding-ownership`
 
 When a live file has taken a lost file’s former path, a device MUST preserve the live file’s binding.
 
@@ -4460,9 +4460,9 @@ When a live file has taken a lost file’s former path, a device MUST requeue th
 
 **Tests:** `device/folders-identity.test.ts › keeps a live file's binding when it takes a lost file's old name`, `device/folders-identity.test.ts › keeps a live file's binding when it takes a lost file's old name, across a push`.
 
-### `folders/lost-row-watch-notice`
+### `folders/lost-item-watch-notice`
 
-While a folder file stays bound to a row the copy no longer holds, the CLI MUST say its lost-row watch notice only once.
+While a folder file stays bound to an item the copy no longer holds, the CLI MUST say its lost-item watch notice only once.
 
 **Tests:** `device/folders-identity.test.ts › says in words when a file is bound to an item that is gone, once while watching`.
 
@@ -4506,9 +4506,9 @@ When a folder’s cursor has aged out of the server log, a device MUST hydrate a
 
 ### `folders/watch-awaits-first-hydration`
 
-While a folder's copy has not completed its first hydration, a device MUST NOT end a watch of the folder because the copy does not hold the folder's `system.folder` row.
+While a folder's copy has not completed its first hydration, a device MUST NOT end a watch of the folder because the copy does not hold the folder's `system.folder` item.
 
-**Reason:** `folders add` with `--yes` hydrates nothing, so a watch's first passes can meet a copy that does not yet hold the folder's `system.folder` row, which is a hydration still to come and not a folder the key cannot read. Writing no file meanwhile is `folders/pull-waits-for-whole-copy`.
+**Reason:** `folders add` with `--yes` hydrates nothing, so a watch's first passes can meet a copy that does not yet hold the folder's `system.folder` item, which is a hydration still to come and not a folder the key cannot read. Writing no file meanwhile is `folders/pull-waits-for-whole-copy`.
 
 **Tests:** `device/folders.test.ts › waits for the first hydration instead of ending on a copy without the folder's settings`.
 
@@ -4516,7 +4516,7 @@ While a folder's copy has not completed its first hydration, a device MUST NOT e
 
 While a hydration of a folder's copy has started and not completed, or the folder's copy is stale, a device MUST refuse a pull of the folder `hydration_incomplete`, writing and removing no file.
 
-**Reason:** a copy still filling answers its reads from the rows it has been given (`device/read-partial-answers`), and a row it has not been given yet is not a row the server deleted; a stale copy (`device/read-stale-answers`) holds rows the server may since have changed or deleted, and a file written from one would overwrite a newer one.
+**Reason:** a copy still filling answers its reads from the items it has been given (`device/read-partial-answers`), and an item it has not been given yet is not an item the server deleted; a stale copy (`device/read-stale-answers`) holds items the server may since have changed or deleted, and a file written from one would overwrite a newer one.
 
 **Tests:** `device/folders.test.ts › keeps every file through a hydration that stopped part way, and pulls nothing from its copy`.
 
@@ -4532,7 +4532,7 @@ When any drain of a folder push or a send-only run, the drain after the push's p
 
 When the drain after a folder push's pull hydrates the copy again under `folders/reach-changed-push-rebuilds`, a device MUST pull once more in the same run, and drain once more where that pull queued the placement of a file it wrote.
 
-**Reason:** The first pull wrote the directory out from the copy built under the old reach. Pulling from the rebuilt copy writes what the new reach holds in the same push, rather than leaving it for the next one. A file bound to a row the new key cannot read is not removed by that pull; the next scan reports it as lost (`folders/lost-row-unchanged-held`).
+**Reason:** The first pull wrote the directory out from the copy built under the old reach. Pulling from the rebuilt copy writes what the new reach holds in the same push, rather than leaving it for the next one. A file bound to an item the new key cannot read is not removed by that pull; the next scan reports it as lost (`folders/lost-item-unchanged-held`).
 
 **Tests:** `device/folders.test.ts › pulls again after a rebuild at the drain after the pull, writing what the new reach holds and keeping a file it no longer reads`.
 
@@ -6190,25 +6190,25 @@ When the person deletes either of two files whose folders both hold the item, a 
 
 If an item leaves the working copy before a pull writes its file, then a device MUST NOT write a file for that item.
 
-**Tests:** `device/folders-identity.test.ts › writes no file for a row purged while the pull writes it, and reads the copy again`.
+**Tests:** `device/folders-identity.test.ts › writes no file for an item purged while the pull writes it, and reads the copy again`.
 
 ### `folders/pull-gone-item-binding`
 
 If an item leaves the working copy before a pull writes its file, then a device MUST NOT bind a file to that item.
 
-**Tests:** `device/folders-identity.test.ts › writes no file for a row purged while the pull writes it, and reads the copy again`.
+**Tests:** `device/folders-identity.test.ts › writes no file for an item purged while the pull writes it, and reads the copy again`.
 
 ### `folders/pull-gone-item-placement`
 
 If an item leaves the working copy before a pull queues its placement, then a device MUST NOT queue a placement for that item.
 
-**Tests:** `device/folders-identity.test.ts › places nothing for a row purged before its placement is queued, and takes its file away at the next pull`.
+**Tests:** `device/folders-identity.test.ts › places nothing for an item purged before its placement is queued, and takes its file away at the next pull`.
 
 ### `folders/pull-gone-item-continue`
 
 If an item leaves the working copy during a pull, then a device MUST continue the pull without failing solely because that item is gone.
 
-**Tests:** `device/folders-identity.test.ts › writes no file for a row purged while the pull writes it, and reads the copy again`, `device/folders-identity.test.ts › places nothing for a row purged before its placement is queued, and takes its file away at the next pull`.
+**Tests:** `device/folders-identity.test.ts › writes no file for an item purged while the pull writes it, and reads the copy again`, `device/folders-identity.test.ts › places nothing for an item purged before its placement is queued, and takes its file away at the next pull`.
 
 ### `folders/pull-retry-copy`
 
@@ -6390,7 +6390,7 @@ While the key, saved folder settings and placement used by a refused placement w
 
 When a folder's drain begins, a device MUST take out of the folder's queue each write that clearing the answered writes takes out (`queue-and-verdicts/clear-answered`, `queue-and-verdicts/clear-withdrawn-leftovers`), other than a write whose answer a file's record still waits on or a link rewrite the folder has yet to settle.
 
-**Reason:** a folder sends a write for each edit it reads. Kept after the folder had recorded its answer, every write it ever sent stayed in the queue, and every drain read them all, so a quiet folder cost more with each edit. An answered write is laid over no row of the working copy, so taking it out changes nothing a pull reads, and a quiet folder stays quiet (`folders/watch-pull-renders-reached`).
+**Reason:** a folder sends a write for each edit it reads. Kept after the folder had recorded its answer, every write it ever sent stayed in the queue, and every drain read them all, so a quiet folder cost more with each edit. An answered write is laid over no item of the working copy, so taking it out changes nothing a pull reads, and a quiet folder stays quiet (`folders/watch-pull-renders-reached`).
 
 **Tests:** `device/folders-cleared-answers.test.ts › clears the writes it recorded as its next drain begins, and keeps a refused edit's words and every refusal it shows`.
 
@@ -6398,7 +6398,7 @@ When a folder's drain begins, a device MUST take out of the folder's queue each 
 
 When a folder's drain begins and the working copy holds, as the server last gave it, an edge with the source, target and type of an edge create the server refused and with every property that create carried, a device MUST take that create out of the folder's queue, other than a placement, a create another write depends on or follows, a create whose answer a file's record or a link rewrite still waits on, a create with a receipt or a read still owed, or a create whose refusal a file still shows.
 
-**Reason:** a refused write otherwise leaves only by `queue-and-verdicts/discard-refused`, which a watch's hold on the store refuses, and no file shows this one, so it would stay for good asking for what the server already holds. A row of the copy's own, at version 0, or with a write waiting on it is no proof of what the server holds.
+**Reason:** a refused write otherwise leaves only by `queue-and-verdicts/discard-refused`, which a watch's hold on the store refuses, and no file shows this one, so it would stay for good asking for what the server already holds. An item of the copy's own, at version 0, or with a write waiting on it is no proof of what the server holds.
 
 **Tests:** `device/folders-cleared-answers.test.ts › takes out a refused edge create once the server has given the copy its edge, moving nothing else`.
 
@@ -6860,7 +6860,7 @@ When a folder push scans a document with a size warning, the CLI MUST say the pa
 
 ### `folders/refused-create-said`
 
-While a file is held under `folders/lost-row-unchanged-held` and the queue keeps the server's refusal of its create, a device MUST name that refusal in the reason `folders status` gives.
+While a file is held under `folders/lost-item-unchanged-held` and the queue keeps the server's refusal of its create, a device MUST name that refusal in the reason `folders status` gives.
 
 **Reason:** "bound to an item this copy no longer holds" does not tell a person that the server refused the file, or why.
 
@@ -6928,7 +6928,7 @@ When the server refuses a folder document edit with `413 request_too_large`, a d
 
 ### `folders/request-too-large-create-lost`
 
-When the server refuses a folder document create with `413 request_too_large` and the copy forgets the row, a device MUST hold its file under `folders/lost-row-unchanged-held` until the person changes or moves it.
+When the server refuses a folder document create with `413 request_too_large` and the copy forgets the item, a device MUST hold its file under `folders/lost-item-unchanged-held` until the person changes or moves it.
 
 **Tests:** `device/folders-contract-b.test.ts › preserves a document after a request-too-large %s refusal`.
 
@@ -7258,7 +7258,7 @@ Where a device is a binding, a device MUST report the held files as `heldOutside
 
 ### `folders/watch-unchanged-unread`
 
-When a watch scans a bound file whose identity, size, modification time and executable permission remain unchanged, with no held or lost-row condition requiring a read, a device MUST omit reading that file on a quick pass.
+When a watch scans a bound file whose identity, size, modification time and executable permission remain unchanged, with no held or lost-item condition requiring a read, a device MUST omit reading that file on a quick pass.
 
 **Tests:** `device/folders.test.ts › does not reread an unchanged file`.
 

@@ -8,7 +8,7 @@
  * shape falls over, so nothing here says where an index stops helping.
  *
  * Every query is scoped to this file's credential `source`, so another file's
- * rows cannot inflate the result sets.
+ * items cannot inflate the result sets.
  *
  * Self-cleaning: the seeded corpus is tracked on the test context and removed
  * by `cleanup(ctx)` in `afterAll`.
@@ -167,7 +167,7 @@ describe("filter query performance", () => {
     expect(nothing.length).toBe(0);
   });
 
-  it("pages a filtered result set without repeating rows", async () => {
+  it("pages a filtered result set without repeating items", async () => {
     const pageSize = Math.max(5, Math.floor(corpusSize / 4));
     const seen = new Set<string>();
     let cursor: string | undefined;

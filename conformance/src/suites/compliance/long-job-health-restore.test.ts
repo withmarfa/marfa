@@ -13,10 +13,10 @@ import { heldWhenHealthAnswered } from "../../utils/held-when-answered.js";
 
 /**
  * `GET /health` answered while an archive restore runs, between its first
- * and its last row (`instance/long-job-health`); `heldWhenHealthAnswered`
+ * and its last item (`instance/long-job-health`); `heldWhenHealthAnswered`
  * says how the order is witnessed.
  *
- * A restore holds the write lock from its first row to its commit, so the
+ * A restore holds the write lock from its first item to its commit, so the
  * write probe cannot commit while it is held. The write wait is set shorter
  * than the time `/health` waits on the probe, so the probe's attempt during
  * the hold ends `degraded` and answers the calls of the next ten seconds, and
@@ -40,9 +40,9 @@ afterAll(async () => {
 }, FRESH_SERVER_TIMEOUT_MS);
 
 describe("GET /health while an archive restore runs", () => {
-  it("is answered between the first and the last row of an archive restore", async () => {
-    // The restore waits before its first row, once the blob is placed, and
-    // again with every row written, before it commits.
+  it("is answered between the first and the last line of an archive restore", async () => {
+    // The restore waits before its first item, once the blob is placed, and
+    // again with every item written, before it commits.
     const held = await heldWhenHealthAnswered(server, {
       start: "hold:restore:item=1",
       later: "hold:restore:before-commit",

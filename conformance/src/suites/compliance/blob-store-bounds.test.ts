@@ -364,7 +364,7 @@ describe("an integrity run while the disk store cannot be reached", () => {
       const s3 = stores.find((store) => store.kind === "s3")!;
 
       // Six copies and three to a run: the disk's, never stamped while it is
-      // away, would take every row if the run kept asking for them.
+      // away, would take every item if the run kept asking for them.
       await server.setFault("store-check-deadline=200");
       await server.setFault("hold:blob-read");
       try {

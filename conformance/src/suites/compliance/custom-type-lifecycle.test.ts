@@ -66,7 +66,7 @@ describe("a custom type follows the universal lifecycle", () => {
     expect(trashed.status).toBe(200);
     expect(trashed.data.item.state).toBe("trashed");
 
-    // A trashed row is read past the trashed-invisible getter, so the
+    // A trashed item is read past the trashed-invisible getter, so the
     // lifecycle graph judges the move rather than the door answering 404.
     const refused = await client.transitionItem(
       created.data.item.id,

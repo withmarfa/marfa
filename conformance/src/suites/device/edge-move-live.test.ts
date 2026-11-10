@@ -19,7 +19,7 @@ import { queuedEdit, requireBinary } from "./harness.js";
 /**
  * A move of an edge's end made through a working copy, against a real
  * server (`queue-and-verdicts/edge-move-one-update`, `queue-and-verdicts/edge-move-shown` and `queue-and-verdicts/edge-move-waits-new-end`): one write, sent when the copy
- * comes back online, refused as a whole, and held for the create of the row
+ * comes back online, refused as a whole, and held for the create of the item
  * it moves to. Every call to the device is a process of its own, so each
  * step reads the queue and the copy a restart left.
  */
@@ -381,7 +381,7 @@ it("puts the edge back at its old parent when the server refuses the move for a 
   }
 });
 
-it("holds a move onto its own unanswered create, and sends it naming the row the create landed on", async () => {
+it("holds a move onto its own unanswered create, and sends it naming the item the create landed on", async () => {
   const store = newStore("edge-move-live-create");
   const proxy = await proxied();
   try {
@@ -438,7 +438,7 @@ it("holds a move onto its own unanswered create, and sends it naming the row the
     expect(moved.ok, JSON.stringify(moved.error)).toBe(true);
     expect(
       moved.data.edge.source_id,
-      "the move named the id the device minted, not the row its create landed on",
+      "the move named the id the device minted, not the item its create landed on",
     ).toBe(landing);
     value(await device().hydrate(["core.note"], "library"));
     expect(

@@ -260,7 +260,7 @@ describe("a retained answer after its credential is narrowed", () => {
 
     await grant(actor, { type_permissions: { "core.note": "read" } });
     const readable = await actor.client.getItem(item.id);
-    expect(readable.status, "the key can no longer read the row").toBe(200);
+    expect(readable.status, "the key can no longer read the item").toBe(200);
     expectRefused(await ask(), 403, "type_not_permitted");
 
     await grant(actor, { type_permissions: { "core.note": "write" } });
@@ -294,9 +294,9 @@ describe("a retained answer after its credential is narrowed", () => {
       first = await ask();
       expectFirst(first, 201);
       trackItem(ctx, itemOf(first).id);
-      // A row retyped out from under the retained answer is a refusal a
+      // An item retyped out from under the retained answer is a refusal a
       // second run of the create would not share: the key still writes a
-      // note, so running it again would make a second row.
+      // note, so running it again would make a second item.
       retyped = await client.updateItem(itemOf(first).id, {
         version: itemOf(first).version,
         type: "core.task",
@@ -368,7 +368,7 @@ describe("a retained answer after its credential is narrowed", () => {
     expectFirst(first, 200);
     expect(
       (await client.getItem(item.id)).status,
-      "the row is gone, so only the record can answer the repeat",
+      "the item is gone, so only the record can answer the repeat",
     ).toBe(404);
     expectReplay(await ask(), first);
 
@@ -450,10 +450,10 @@ describe("a retained answer after its credential is narrowed", () => {
     expectReplay(await ask(), first);
   });
 
-  it("refuses the replay of a conflict envelope once the key cannot read the row it disclosed", async () => {
+  it("refuses the replay of a conflict envelope once the key cannot read the item it disclosed", async () => {
     const actor = await mint();
     const item = await note();
-    // Another writer retypes the row, so the conflict names the row as it is
+    // Another writer retypes the item, so the conflict names the item as it is
     // (a task) and as the stale write read it (a note).
     const moved = await client.updateItem(item.id, {
       version: item.version,
@@ -474,7 +474,7 @@ describe("a retained answer after its credential is narrowed", () => {
     });
     expectReplay(await ask(), first);
 
-    // The key still reads the current row and writes it, but not the
+    // The key still reads the current item and writes it, but not the
     // snapshot the stale write was based on.
     await grant(actor, { type_permissions: { "core.task": "write" } });
     expect((await actor.client.getItem(item.id)).status).toBe(200);
@@ -511,7 +511,7 @@ describe("a retained answer after its credential is narrowed", () => {
 
     await grant(actor, { extension_permissions: {} });
     const readable = await actor.client.getItem(item.id);
-    expect(readable.status, "the row is still readable").toBe(200);
+    expect(readable.status, "the item is still readable").toBe(200);
     expect(JSON.stringify(readable.data)).not.toContain(marker);
     const refused = await ask();
     expectRefused(refused, 403, "forbidden");
@@ -537,7 +537,7 @@ describe("a retained answer after its credential is narrowed", () => {
 
     await grant(actor, { edge_permissions: {} });
     const readable = await actor.client.getItem(item.id);
-    expect(readable.status, "the row is still readable").toBe(200);
+    expect(readable.status, "the item is still readable").toBe(200);
     expect(JSON.stringify(readable.data)).not.toContain(marker);
     const refused = await ask();
     expectRefused(refused, 404, "edge_not_found");
@@ -547,7 +547,7 @@ describe("a retained answer after its credential is narrowed", () => {
     expectReplay(await ask(), first);
   });
 
-  it("refuses a bulk-action replay once the key may no longer write the matched rows, naming none of them", async () => {
+  it("refuses a bulk-action replay once the key may no longer write the matched items, naming none of them", async () => {
     const actor = await mint();
     const tag = `replay-job-${ctx.runId}`;
     const rows = [
@@ -579,7 +579,7 @@ describe("a retained answer after its credential is narrowed", () => {
     expectReplay(await ask(), first);
   });
 
-  it("judges a replay by the row's current type after a retype", async () => {
+  it("judges a replay by the item's current type after a retype", async () => {
     const actor = await mint();
     const item = await note();
     const ask = keyed(actor, "PATCH", `/items/${item.id}`, {
@@ -645,7 +645,7 @@ describe("a retained answer after its credential is narrowed", () => {
     expectReplay(await ask(), first);
   });
 
-  it("judges a replay about a purged row by its original type and source", async () => {
+  it("judges a replay about a purged item by its original type and source", async () => {
     const actor = await mint();
 
     const item = await note();
@@ -771,7 +771,7 @@ describe("a retained answer after its credential is narrowed", () => {
     expectReplay(await askEdge(), patchedEdge);
   });
 
-  it("withholds a disclosed source once the key cannot read the row", async () => {
+  it("withholds a disclosed source once the key cannot read the item", async () => {
     const actor = await mint();
     const source = `${ctx.source}-withheld`;
     await grant(actor, { sources: [source] }, owner);
@@ -835,7 +835,7 @@ describe("a retained answer after its credential is narrowed", () => {
     await grant(actor, { sources: [] }, owner);
     expect(
       (await actor.client.getItem(item.id)).status,
-      "the key still reads the row",
+      "the key still reads the item",
     ).toBe(200);
     const refused = await ask();
     expectRefused(refused, 403, "forbidden");
@@ -845,7 +845,7 @@ describe("a retained answer after its credential is narrowed", () => {
     expectReplay(await ask(), first);
   });
 
-  it("reauthorizes a retained cascade mark after the row it names is purged", async () => {
+  it("reauthorizes a retained cascade mark after the item it names is purged", async () => {
     const actor = await mint();
     for (const purgedBeforeFirst of [false, true]) {
       const child = await note();
@@ -863,7 +863,7 @@ describe("a retained answer after its credential is narrowed", () => {
       expectFirst(first, 200);
       expect(
         itemOf(first).trashed_with,
-        "the acknowledged create names the row whose trash took the child",
+        "the acknowledged create names the item whose trash took the child",
       ).toBe(parent.id);
       expectReplay(await ask(), first);
       if (!purgedBeforeFirst)
@@ -914,7 +914,7 @@ interface Prepared {
   body?: unknown;
 }
 
-/** The request one door answers, with whatever rows it acts on made first. */
+/** The request one door answers, with whatever items it acts on made first. */
 async function prepare(door: string): Promise<Prepared> {
   const [method, template] = door.split(" ") as [Method, string];
   const trashed = async (): Promise<MarfaItem> => {
@@ -1236,7 +1236,7 @@ describe("a metadata or extension write sent again under its key", () => {
     },
   );
 
-  it("judges a tag replay by the row's current type after a retype", async () => {
+  it("judges a tag replay by the item's current type after a retype", async () => {
     const actor = await mint();
     const item = await note();
     const ask = keyed(actor, "POST", `/items/${item.id}/tags`, {
@@ -1273,14 +1273,14 @@ describe("the key on operations that do not take it, and on a refused write", ()
     const ask = (method: Method, path: string, body: unknown) =>
       keyed(actor, method, path, body);
 
-    // POST /items/bulk: each repeat is a create, so two rows.
+    // POST /items/bulk: each repeat is a create, so two items.
     const tag = `replay-bulk-${ctx.runId}`;
     expect(
       listsIdempotencyKey(document.data.paths, "/items/bulk", "POST"),
     ).toBe(false);
     const bulk = ask("POST", "/items/bulk", {
       items: [
-        { type: "core.note", properties: { body: "bulk row" }, tags: [tag] },
+        { type: "core.note", properties: { body: "bulk item" }, tags: [tag] },
       ],
     });
     const bulkFirst = await bulk();

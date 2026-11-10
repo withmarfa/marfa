@@ -20,7 +20,7 @@ export interface MarfaItem {
   capture_longitude: number | null;
   /** When the item went to the bin; null outside it. */
   trashed_at: string | null;
-  /** Present on a row a cascading edge took into the bin, while it stays there. */
+  /** Present on an item a cascading edge took into the bin, while it stays there. */
   trashed_by_cascade?: boolean;
   /** The item whose trash took this one, to a key that may read its type. */
   trashed_with?: string;
@@ -40,7 +40,7 @@ export interface MarfaMetadata {
 }
 
 /** An item's properties and fields as they stood at an earlier version,
- *  under the type the row had then. */
+ *  under the type the item had then. */
 export interface MarfaVersion {
   id: string;
   item_id: string;
@@ -226,8 +226,8 @@ export interface TypeSchema {
     /** An Iconify icon ID, `<set>:<name>`, from a set the instance pins. */
     icon?: string;
   };
-  /** The string field holding each row's own id at the vendor, which the
-   *  server keeps to one row of the type. A subtype names its own. */
+  /** The string field holding each item's own id at the vendor, which the
+   *  server keeps to one item of the type. A subtype names its own. */
   link_field?: string;
   /**
    * Per-field merge policy a client reads to drive conflict resolution.
@@ -246,7 +246,7 @@ export interface TypeSchema {
   compatible_with?: string | string[];
 }
 
-/** What a purge left of a row's link or natural key under its type. */
+/** What a purge left of an item's link or natural key under its type. */
 export interface Tombstone {
   key: string;
   purged_at: string;
@@ -538,15 +538,15 @@ export interface MergePolicy {
  * shown neither side's value has been named a reason it cannot act on.
  */
 export interface ConflictSnapshot {
-  /** The row the snapshot is of: the only way a create that named a natural
-   *  key learns which row refused it. */
+  /** The item the snapshot is of: the only way a create that named a natural
+   *  key learns which item refused it. */
   id: string;
   version: number;
   properties: Record<string, unknown>;
   tier: "library" | "feed";
   occurred_at: string;
   source_id: string | null;
-  /** The type the row had at this version, so a collision naming `type`
+  /** The type the item had at this version, so a collision naming `type`
    *  shows both sides of the move. */
   type: string;
 }
@@ -599,7 +599,7 @@ export interface BulkItemInput {
   source?: string;
   source_id?: string;
   occurred_at?: string;
-  /** The version this entry was based on, where it resolves a row that
+  /** The version this entry was based on, where it resolves an item that
    *  already exists. Optional, as on the create door. */
   version?: number;
   edges?: Record<string, string[]>;
@@ -635,7 +635,7 @@ export interface BulkInput {
   mode?: "upsert" | "create_only";
   atomic?: boolean;
   enable_fanout?: boolean;
-  /** Move a row an entry resolves into the entry's type. */
+  /** Move an item an entry resolves into the entry's type. */
   retype?: boolean;
 }
 
@@ -688,7 +688,7 @@ export interface BulkActionFilter {
    * Lower bound on the item's own time — `occurred_at`, falling back to
    * `created_at` — exclusive.
    *
-   * The bulk-action door is where a dropped bound costs rows rather than a
+   * The bulk-action door is where a dropped bound costs items rather than a
    * wrong answer, which makes it the typed surface most worth keeping honest.
    */
   occurred_after?: string;
@@ -833,8 +833,8 @@ export interface PerfResult {
  * A resource awaiting teardown, paired with the credential that created it.
  *
  * Both `DELETE /types/{id}` and `DELETE /webhooks/{id}` answer 404 to a
- * credential that cannot see the row, and 404 is the status teardown reads
- * as already gone, so a row deleted through the wrong credential reports a
+ * credential that cannot see the resource, and 404 is the status teardown reads
+ * as already gone, so a resource deleted through the wrong credential reports a
  * clean cleanup and stays.
  */
 export interface TrackedResource {
@@ -864,9 +864,9 @@ export interface TestContext {
   trackedKeys: string[];
   trackedEdges: string[];
   trackedEdgeTypes: string[];
-  /** `system.folder` rows, which the item doors cannot remove: revoked, then purged. */
+  /** `system.folder` items, which the item doors cannot remove: revoked, then purged. */
   trackedFolders: string[];
-  /** `system.view` rows, which the item doors cannot remove: deleted through `/views`. */
+  /** `system.view` items, which the item doors cannot remove: deleted through `/views`. */
   trackedViews: string[];
   /**
    * Outbound webhook subscriptions for cleanup, each with the credential that

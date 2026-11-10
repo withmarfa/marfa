@@ -69,7 +69,7 @@ async function hydrated(label: string): Promise<Harness> {
   });
   scriptHydration(started.server, {
     head: "10",
-    rows: {
+    items: {
       "core.note": [
         {
           item: {
@@ -190,7 +190,7 @@ describe("an edit that moves an edge's end", () => {
     expect(await drawnTo(device, OLDER)).toEqual([]);
   });
 
-  it("holds a move onto its own create refused onto a row no read has found yet, and sends it naming that row once found", async () => {
+  it("holds a move onto its own create refused onto an item no read has found yet, and sends it naming that item once found", async () => {
     harness = await hydrated("edge-move-onto-landing");
     const { server, device } = harness;
     const THEIRS = "01a00000-0000-7000-8000-0000000000f4";
@@ -261,7 +261,7 @@ describe("an edit that moves an edge's end", () => {
     );
     expect(
       moved.depends_on,
-      "a move onto the row of a create refused onto a row no read has found did not wait on that create",
+      "a move onto the item of a create refused onto an item no read has found did not wait on that create",
     ).toEqual([created.id]);
     value(await device.drain());
     const patches = () =>
@@ -278,7 +278,7 @@ describe("an edit that moves an edge's end", () => {
     value(await device.drain());
     expect(
       patches().map((request) => JSON.parse(request.body).target_id),
-      "once the row was found, the move did not go naming it",
+      "once the item was found, the move did not go naming it",
     ).toEqual([THEIRS]);
   });
 
@@ -398,7 +398,7 @@ describe("an edit that moves an edge's end", () => {
     expect(await drawnTo(device, OLDER)).toEqual([]);
   });
 
-  it("refuses a move the server refuses whatever its rows hold, queueing nothing", async () => {
+  it("refuses a move the server refuses whatever its items hold, queueing nothing", async () => {
     harness = await hydrated("edge-move-refused-locally");
     const { device } = harness;
     const before = value(await device.queue());
@@ -488,7 +488,7 @@ async function reparentable(label: string): Promise<Harness> {
   const started = await startHarness(label);
   scriptHydration(started.server, {
     head: "10",
-    rows: {
+    items: {
       "core.note": [
         {
           item: {

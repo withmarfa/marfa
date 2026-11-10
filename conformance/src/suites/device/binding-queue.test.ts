@@ -69,7 +69,7 @@ async function queueOf(
   return queue.ok ? queue.value : [];
 }
 
-/** The row the server holds once another device has moved it on. */
+/** The item the server holds once another device has moved it on. */
 function movedOn(): Answer {
   return answers.updated(
     wireItem({
@@ -203,7 +203,7 @@ describe("a withdraw while the copy changes under it", () => {
     second: BindingQueuedWrite;
     harness: Followed;
   }> {
-    const own = await bindingHarness(label, { rows: held() });
+    const own = await bindingHarness(label, { items: held() });
     harness = own;
     const { device, server } = own;
     const edit = await device.updateItem(HELD.id, {
@@ -240,12 +240,12 @@ describe("a withdraw while the copy changes under it", () => {
       "the first write was not blocked, or the second was answered, so nothing below is about a withdraw",
     ).toEqual(["blocked", undefined]);
     if (first === undefined || second === undefined) {
-      throw new Error("the queue lost a row");
+      throw new Error("the queue lost a write");
     }
     return { first, second, harness: own };
   }
 
-  it("keeps the row a catch-up brought while a withdraw's read of it was out, with the writes still waiting laid over it", async () => {
+  it("keeps the item a catch-up brought while a withdraw's read of it was out, with the writes still waiting laid over it", async () => {
     const reading = gate();
     const setup = await blocked("binding-withdraw-caught-up", [
       { kind: "gated", until: reading.until, then: movedOn() },
@@ -288,19 +288,19 @@ describe("a withdraw while the copy changes under it", () => {
     expect(row.ok, JSON.stringify(row)).toBe(true);
     expect(
       row.ok && row.value,
-      "the withdraw lost the preserved row",
+      "the withdraw lost the preserved item",
     ).not.toBeNull();
     if (!row.ok || row.value === null) return;
     expect(
       [row.value.version, row.value.properties],
-      "the withdraw put back the row it read, over the one a catch-up brought after, or dropped the write still waiting",
+      "the withdraw put back the item it read, over the one a catch-up brought after, or dropped the write still waiting",
     ).toEqual([HELD.version + 3, { title: "newer", body: "mine" }]);
   });
 });
 
 describe("a drain while another call changes the copy", () => {
-  it("keeps a row something wrote in the copy while the read after an answer was out and found no row", async () => {
-    const own = await bindingHarness("binding-absent-read", { rows: held() });
+  it("keeps an item something wrote in the copy while the read after an answer was out and found no item", async () => {
+    const own = await bindingHarness("binding-absent-read", { items: held() });
     harness = own;
     const { device, server, events } = own;
     const reading = gate();
@@ -319,7 +319,7 @@ describe("a drain while another call changes the copy", () => {
           }),
         ),
       ],
-      // The row has gone from the server by the time it is read back.
+      // The item has gone from the server by the time it is read back.
       read: [
         {
           kind: "gated",
@@ -365,13 +365,13 @@ describe("a drain while another call changes the copy", () => {
     expect(
       row.ok &&
         row.value !== null && [row.value.version, row.value.properties.title],
-      "the drain let go of a row a catch-up wrote while it read, and took the copy back under a change already applied",
+      "the drain let go of an item a catch-up wrote while it read, and took the copy back under a change already applied",
     ).toEqual([HELD.version + 3, "theirs"]);
   });
 
   it("keeps the refusal a withdraw recorded for a write held behind a create while a drain ran, rather than holding the write again", async () => {
     const own = await bindingHarness("binding-drain-keeps-refusal", {
-      rows: held(),
+      items: held(),
     });
     harness = own;
     const { device, server } = own;
@@ -505,7 +505,7 @@ describe("taking the answered writes", () => {
     accepted: string;
     waiting: string;
   }> {
-    const own = await bindingHarness(label, { rows: held() });
+    const own = await bindingHarness(label, { items: held() });
     const { device, server } = own;
     const refused = await device.addTag(HELD.id, "refused");
     const accepted = await device.addTag(HELD.id, "accepted");

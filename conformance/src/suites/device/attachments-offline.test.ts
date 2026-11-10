@@ -110,7 +110,7 @@ function file(
   };
 }
 
-/** A device hydrated with the notes and files of `rows`, whose bytes the server serves. */
+/** A device hydrated with the notes and files given, whose bytes the server serves. */
 async function hydratedWith(
   label: string,
   notes: string[],
@@ -122,7 +122,7 @@ async function hydratedWith(
   const made = await startHarness(label);
   scriptHydration(made.server, {
     head: "10",
-    rows: { "core.note": notes.map(note), "core.file": files },
+    items: { "core.note": notes.map(note), "core.file": files },
   });
   // Queued before the hydration, which takes the answers ahead of these.
   if (events.length > 0) made.server.copyAnswer("GET", "/events", ...events);
@@ -393,7 +393,7 @@ describe("a fetch of the attachments", () => {
     const { server, device } = harness;
     scriptHydration(server, {
       head: "10",
-      rows: {
+      items: {
         "core.note": [note("note")],
         "core.file": [
           file("absent", absent, ["note"]),
@@ -440,7 +440,7 @@ describe("a fetch of the attachments", () => {
     const { server, device } = harness;
     scriptHydration(server, {
       head: "10",
-      rows: {
+      items: {
         "core.note": [note("note")],
         "core.file": [file("video", bytes, ["note"])],
       },
@@ -480,7 +480,7 @@ describe("a fetch of the attachments", () => {
     const { server, device } = harness;
     scriptHydration(server, {
       head: "10",
-      rows: {
+      items: {
         "core.note": [note("note")],
         "core.file": [
           file("video", video, ["note"]),
@@ -514,7 +514,7 @@ describe("a fetch of the attachments", () => {
     const { server, device } = harness;
     scriptHydration(server, {
       head: "10",
-      rows: {
+      items: {
         "core.note": [note("note")],
         "core.file": [file("video", video, ["note"])],
       },
@@ -550,7 +550,7 @@ describe("a fetch of the attachments", () => {
     const { server, device } = harness;
     scriptHydration(server, {
       head: "10",
-      rows: {
+      items: {
         "core.note": [note("note")],
         "core.file": [
           file("waited", waited, ["note"]),
@@ -617,7 +617,7 @@ describe("a fetch of the attachments", () => {
 
   it("fetches nothing for a queued upload that is an attachment, which stays", async () => {
     harness = await hydratedHarness("queued-upload", {
-      rows: { "core.note": [note("note")] },
+      items: { "core.note": [note("note")] },
     });
     const { server, device } = harness;
     const bytes = bytesOf(15, 50);
@@ -650,7 +650,7 @@ describe("the attachments of a copy", () => {
       head: "10",
       pageSize: 1,
       drop: () => cut,
-      rows: {
+      items: {
         "core.note": [note("note"), note("other"), note("third")],
         "core.file": [file("photo", photo, ["note"]), file("loose", loose)],
       },
@@ -685,7 +685,7 @@ describe("the attachments of a copy", () => {
     const filling = await device.status();
     expect(filling.ok && filling.value.hydration).toBe("in_progress");
     expect(filling.ok && filling.value.file_cache.attachments).toBeNull();
-    // The rows that made the photo an attachment have not arrived again,
+    // The items that made the photo an attachment have not arrived again,
     // and its bytes stay; the budget still holds for the rest.
     expect(await budget(device, "0")).toBe(40);
     expect(readFileSync(heldAt(device, photo))).toEqual(photo);
@@ -698,7 +698,7 @@ describe("the attachments of a copy", () => {
     expect(await budget(device, "0")).toBe(40);
     expect(readFileSync(heldAt(device, photo))).toEqual(photo);
 
-    // A stale copy still holds its rows, so its attachments stay.
+    // A stale copy still holds its items, so its attachments stay.
     aged = true;
     expect((await device.catchUp()).ok).toBe(false);
     const stale = await device.status();
@@ -715,7 +715,7 @@ describe("the attachments of a copy", () => {
     const { server, device } = harness;
     scriptHydration(server, {
       head: "10",
-      rows: {
+      items: {
         "core.note": [note("note")],
         "core.file": [file("video", video, ["note"]), file("clip", clip)],
       },
@@ -751,7 +751,7 @@ describe("the attachments of a copy", () => {
     const { server, device } = harness;
     scriptHydration(server, {
       head: "10",
-      rows: {
+      items: {
         "core.note": [note("note")],
         "core.file": [file("photo", photo, ["note"])],
       },
@@ -787,7 +787,7 @@ describe("the attachments of a copy", () => {
     const { server, device } = harness;
     scriptHydration(server, {
       head: "10",
-      rows: { "core.note": [note("note")] },
+      items: { "core.note": [note("note")] },
       edges: {
         "attached-to": [
           { id: "outside-on-note", source_id: "outside", target_id: "note" },

@@ -14,9 +14,9 @@ import { createNote } from "../../generators/items.js";
  * `items/trashed-at-null`, `items/trashed-at-fresh`), and the bin's own
  * order (`search-and-filters/bin-order`).
  *
- * The rows are created in one order and binned in another, so a listing
+ * The items are created in one order and binned in another, so a listing
  * that still ordered the bin by creation answers a different sequence from
- * one ordered by when each row went there.
+ * one ordered by when each item went there.
  */
 
 let client: MarfaClient;
@@ -35,14 +35,14 @@ async function seed(label: string): Promise<MarfaItem> {
   return res.data.item;
 }
 
-/** Bin a row, then wait out the millisecond, so the next row's time differs. */
+/** Bin an item, then wait out the millisecond, so the next item's time differs. */
 async function bin(id: string): Promise<void> {
   const res = await client.deleteItem(id);
   expect(res.ok, JSON.stringify(res)).toBe(true);
   await new Promise((resolve) => setTimeout(resolve, 5));
 }
 
-/** This file's rows in the bin, in the order the listing returned them. */
+/** This file's items in the bin, in the order the listing returned them. */
 async function binned(
   reader: MarfaClient,
   filters: Parameters<MarfaClient["listItems"]>[0] = {},
@@ -85,7 +85,7 @@ describe("trashed_at on the item", () => {
 
     const reader = await createSecondClient(ctx, "trashed-at-reader");
     const [row] = await binned(reader, {}, new Set([item.id]));
-    expect(row, "a second key cannot see the binned row").toBeDefined();
+    expect(row, "a second key cannot see the binned item").toBeDefined();
     expect(row.trashed_at, "the bin listing carries no trashed_at").not.toBe(
       null,
     );

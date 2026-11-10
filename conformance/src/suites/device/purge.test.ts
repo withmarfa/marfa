@@ -26,7 +26,7 @@ afterEach(async () => {
 const TRASHED = "01900000-0000-7000-8000-0000000000a1";
 const ACTIVE = "01900000-0000-7000-8000-0000000000a2";
 
-/** A copy holding one row in the bin, at version 3, and one outside it. */
+/** A copy holding one item in the bin, at version 3, and one outside it. */
 async function holding(
   label: string,
   instance: () => string = () => SCRIPTED_INSTANCE,
@@ -38,7 +38,7 @@ async function holding(
   scriptHydration(started.server, {
     head: "10",
     instance,
-    rows: {
+    items: {
       "core.note": [
         { item: { id: TRASHED, state: "trashed", version: 3 } },
         { item: { id: ACTIVE, version: 2 } },
@@ -83,8 +83,8 @@ describe("the version a purge names", () => {
   });
 });
 
-describe("a device sends a purge only for a row it holds in the bin", () => {
-  it("refuses a row the copy does not hold, sending nothing", async () => {
+describe("a device sends a purge only for an item it holds in the bin", () => {
+  it("refuses an item the copy does not hold, sending nothing", async () => {
     harness = await holding("purge-unheld");
     const refused = await harness.device.purgeItem(
       "01900000-0000-7000-8000-0000000000ff",
@@ -96,10 +96,10 @@ describe("a device sends a purge only for a row it holds in the bin", () => {
     }
     expect(
       purges(harness),
-      "a purge of a row the copy never held was sent",
+      "a purge of an item the copy never held was sent",
     ).toEqual([]);
 
-    // The witness: a row the copy holds in the bin is sent at once, at the
+    // The witness: an item the copy holds in the bin is sent at once, at the
     // version the copy holds, and leaves the copy.
     harness.server.answer("POST", `/items/${TRASHED}/purge`, accepted);
     const purged = await harness.device.purgeItem(TRASHED);
@@ -109,7 +109,7 @@ describe("a device sends a purge only for a row it holds in the bin", () => {
     expect(await queued(harness.device)).toEqual([]);
   });
 
-  it("refuses a row the copy shows restored, sending nothing and keeping the restore", async () => {
+  it("refuses an item the copy shows restored, sending nothing and keeping the restore", async () => {
     harness = await holding("purge-restored");
     expect(await trashed(harness.device)).toContain(TRASHED);
     const restore = await harness.device.restoreItem(TRASHED);
@@ -119,7 +119,7 @@ describe("a device sends a purge only for a row it holds in the bin", () => {
     const refused = await harness.device.purgeItem(TRASHED);
     expect(
       refused.ok,
-      "a purge destroyed a row this device had restored, before the restore was sent",
+      "a purge destroyed an item this device had restored, before the restore was sent",
     ).toBe(false);
     if (!refused.ok) {
       expect(refused.refusal.code).toBe("validation");
@@ -129,18 +129,18 @@ describe("a device sends a purge only for a row it holds in the bin", () => {
     expect(await queued(harness.device)).toEqual([restore.value.id]);
   });
 
-  it("refuses a row a write to which still waits, sending nothing", async () => {
+  it("refuses an item a write to which still waits, sending nothing", async () => {
     harness = await holding("purge-waiting");
     const deleted = await harness.device.deleteItem(ACTIVE);
     expect(deleted.ok, JSON.stringify(deleted)).toBe(true);
     if (!deleted.ok) return;
-    // The witness: the copy shows the row in the bin, as a purge needs.
+    // The witness: the copy shows the item in the bin, as a purge needs.
     expect(await trashed(harness.device)).toContain(ACTIVE);
 
     const refused = await harness.device.purgeItem(ACTIVE);
     expect(
       refused.ok,
-      "a purge went out ahead of a write to the same row",
+      "a purge went out ahead of a write to the same item",
     ).toBe(false);
     if (!refused.ok) {
       expect(refused.refusal.code).toBe("invalid");
@@ -151,8 +151,8 @@ describe("a device sends a purge only for a row it holds in the bin", () => {
   });
 });
 
-describe("a device purges no row a blocked write still names", () => {
-  it("refuses a row a blocked write names, sending nothing", async () => {
+describe("a device purges no item a blocked write still names", () => {
+  it("refuses an item a blocked write names, sending nothing", async () => {
     harness = await holding("purge-blocked");
     const deleted = await harness.device.deleteItem(ACTIVE);
     expect(deleted.ok, JSON.stringify(deleted)).toBe(true);
@@ -166,7 +166,7 @@ describe("a device purges no row a blocked write still names", () => {
     expect(drained.ok, JSON.stringify(drained)).toBe(true);
     const queue = await harness.device.queue();
     // The witness: the write is blocked, not waiting to be sent, and the
-    // copy still shows the row in the bin.
+    // copy still shows the item in the bin.
     expect(queue.ok && queue.value.map((row) => [row.id, row.verdict])).toEqual(
       [[deleted.value.id, "blocked"]],
     );
@@ -236,7 +236,7 @@ describe("a device names the copy's instance on a purge", () => {
 describe("a device reads the bin from the server alone", () => {
   it("refuses to read the bin while the server cannot be reached", async () => {
     harness = await holding("bin-offline");
-    // The witness: the copy holds a row in the bin it could have answered.
+    // The witness: the copy holds an item in the bin it could have answered.
     expect(await trashed(harness.device)).toContain(TRASHED);
     await harness.server.offline();
     const refused = await harness.device.bin();
@@ -249,8 +249,8 @@ describe("a device reads the bin from the server alone", () => {
   });
 });
 
-describe("a device keeps the row while a purge's outcome is unknown", () => {
-  it("keeps the row when a purge that was sent is never answered", async () => {
+describe("a device keeps the item while a purge's outcome is unknown", () => {
+  it("keeps the item when a purge that was sent is never answered", async () => {
     harness = await holding("purge-unanswered");
     harness.server.answer("POST", `/items/${TRASHED}/purge`, { kind: "drop" });
     const refused = await harness.device.purgeItem(TRASHED);

@@ -48,7 +48,7 @@ export const SHARD_SECONDS: Readonly<Record<string, number>> = {
   "src/suites/compliance/restore-compatible-types.test.ts": 65,
   "src/suites/compliance/restore-concurrent.test.ts": 50,
   "src/suites/compliance/restore-edges-constraint-types.test.ts": 30,
-  "src/suites/compliance/restore-rows-shape.test.ts": 25,
+  "src/suites/compliance/restore-items-shape.test.ts": 25,
   "src/suites/compliance/search-depth.test.ts": 35,
   "src/suites/compliance/sign-in-limits.test.ts": 20,
   "src/suites/compliance/stop-webhook.test.ts": 25,

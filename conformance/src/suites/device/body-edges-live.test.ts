@@ -576,7 +576,7 @@ describe("links", () => {
     );
     expect(
       (await unsent(device)).map((write) => write.kind),
-      "an edit the server will merge was read against the copy's newer row",
+      "an edit the server will merge was read against the copy's newer item",
     ).toEqual(["update_item"]);
     await drained(device);
     const queued = (await unsent(device)).filter(

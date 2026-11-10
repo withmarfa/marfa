@@ -16,7 +16,7 @@ import {
   type EdgeDraft,
   type EdgeType,
   type Edit,
-  type FolderRow,
+  type FolderItem,
   type FollowReport,
   type Found,
   type HydrateReport,
@@ -59,7 +59,7 @@ export interface CopyChanges {
  * a command, stdout becomes an answer, and a non-zero exit becomes a refusal.
  */
 
-/** The rows of an answer that also says how whole the copy was. */
+/** The items of an answer that also says how whole the copy was. */
 function rows<T, R>(outcome: Outcome<T>, of: (answer: T) => R): Outcome<R> {
   return outcome.ok ? { ok: true, value: of(outcome.value) } : outcome;
 }
@@ -293,21 +293,21 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<Item>(["items", "get", id]);
   }
 
-  /** The row as the device prints it, unparsed, so the digits of a number can be read as held. */
+  /** The item as the device prints it, unparsed, so the digits of a number can be read as held. */
   async getText(id: string): Promise<Outcome<string>> {
     return this.invokeText([...this.prefix(), "items", "get", id]);
   }
 
   /** A folder's settings as the copy holds them. */
-  async folder(id: string): Promise<Outcome<FolderRow>> {
-    return this.json<FolderRow>(["folders", "get", id]);
+  async folder(id: string): Promise<Outcome<FolderItem>> {
+    return this.json<FolderItem>(["folders", "get", id]);
   }
 
   /** Sent through the folder door at once, never queued (`device/folder-write-at-once` and `device/folder-write-unqueued`). */
   async createFolder(
     settings: Record<string, unknown>,
-  ): Promise<Outcome<FolderRow>> {
-    return this.json<FolderRow>([
+  ): Promise<Outcome<FolderItem>> {
+    return this.json<FolderItem>([
       "folders",
       "create",
       ...this.server(),
@@ -320,8 +320,8 @@ export class CliDevice implements DeviceUnderTest {
     id: string,
     changes: Record<string, unknown>,
     version: number,
-  ): Promise<Outcome<FolderRow>> {
-    return this.json<FolderRow>([
+  ): Promise<Outcome<FolderItem>> {
+    return this.json<FolderItem>([
       "folders",
       "change",
       ...this.server(),
@@ -333,12 +333,12 @@ export class CliDevice implements DeviceUnderTest {
     ]);
   }
 
-  async revokeFolder(id: string): Promise<Outcome<FolderRow>> {
-    return this.json<FolderRow>(["folders", "revoke", ...this.server(), id]);
+  async revokeFolder(id: string): Promise<Outcome<FolderItem>> {
+    return this.json<FolderItem>(["folders", "revoke", ...this.server(), id]);
   }
 
   /**
-   * The thumbnail an item carries (`device/thumbnail-from-row`), its bytes written to
+   * The thumbnail an item carries (`device/thumbnail-from-item`), its bytes written to
    * `out`; `thumbnail` is null for an item that carries none.
    */
   async thumbnail(
@@ -1250,11 +1250,11 @@ export interface ScanReport {
    *  that are not documents (`folders/binary-waits-for-settle`) and file
    *  items at a document name (`folders/file-item-doc-name-settle`). */
   settling: string[];
-  /** Files bound to a row the copy lost, queued again because they changed
-   *  or moved (`folders/lost-row-edit-retried`). Counted in `created` too. */
+  /** Files bound to an item the copy lost, queued again because they changed
+   *  or moved (`folders/lost-item-edit-retried`). Counted in `created` too. */
   requeued: number;
-  /** Files bound to a row the copy lost and unchanged since, so nothing was
-   *  sent (`folders/lost-row-unchanged-held`). */
+  /** Files bound to an item the copy lost and unchanged since, so nothing was
+   *  sent (`folders/lost-item-unchanged-held`). */
   lost: number;
   /** Files this scan read and holds rather than sends (`folders/refused-edit-report`, `folders/encoding-flag` and `folders/edge-line-invalid-report`). */
   flagged: FlaggedFile[];

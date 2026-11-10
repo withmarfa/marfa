@@ -179,7 +179,7 @@ describe("a signed-in app's idempotency key", () => {
     expect(repeat.data).toEqual(first.data);
 
     // The witness: the key is held to the pair, not open to every signed-in
-    // credential, so another app of the same person writes its own row.
+    // credential, so another app of the same person writes its own item.
     const other = await approve(await register("replay-other-app"));
     const own = await create(other.access_token, key, "written once");
     expect(own.status, JSON.stringify(own.error)).toBe(201);

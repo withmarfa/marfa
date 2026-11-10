@@ -141,7 +141,7 @@ describe("a write that names an instance", () => {
       expect(await codeOf(res), value).toBe("unauthorized");
     }
 
-    // A body with no type, and an update of a row that does not exist.
+    // A body with no type, and an update of an item that does not exist.
     const shapeless = await send("/items", {
       body: { properties: { body: "no type" } },
       headers: { [HEADER]: OTHER },

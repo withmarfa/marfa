@@ -496,7 +496,7 @@ describe("source names in an archive", () => {
     expect((await readSource(owner, target)).data.name_from).toBe("code");
 
     // An app's source is restored under the code a restore gives an app's
-    // rows, which no app holds.
+    // items, which no app holds.
     const app = `oauth:${ctx.runId}:owner`;
     const restoredApp = `restored:${app}`;
     named.add(restoredApp);

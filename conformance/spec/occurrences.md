@@ -596,18 +596,18 @@ If a `PATCH /items/{id}` with `conflict=auto` would write a conflicted copy whos
 
 If a `POST /items/bulk` entry of a page under `atomic: false` adds a schedule or a task's `recurrence` that the rules above refuse, then the server MUST report that entry `errored` with the code `invalid_properties`.
 
-**Reason:** the refusal is the row's and not the page's.
+**Reason:** the refusal is the item's and not the page's.
 
 **Tests:** `compliance/recurrence.test.ts › refuses the same rule added by an update or a bulk write, and stores none of it`, `› refuses a task's rule on a bulk write, a bulk-action patch and a restored archive`.
 
 ### `occurrences/schedule-bulk-action`
 
-If a `POST /items/bulk-actions` job with `update_properties` writes a schedule or a task's `recurrence` that the rules above refuse, then the server MUST record the refusal in that row's entry of the job's `errors` with the code `invalid_properties`.
+If a `POST /items/bulk-actions` job with `update_properties` writes a schedule or a task's `recurrence` that the rules above refuse, then the server MUST record the refusal in that item's entry of the job's `errors` with the code `invalid_properties`.
 
-**Tests:** `compliance/recurrence.test.ts › refuses it on a bulk-action patch per row, and in a restored archive`, `› refuses a task's rule on a bulk write, a bulk-action patch and a restored archive`.
+**Tests:** `compliance/recurrence.test.ts › refuses it on a bulk-action patch per item, and in a restored archive`, `› refuses a task's rule on a bulk write, a bulk-action patch and a restored archive`.
 
 ### `occurrences/schedule-restore`
 
 If an archive holds an event or a task with a schedule that the rules above refuse, then the server MUST refuse the archive `400 invalid_properties` naming `recurrence`.
 
-**Tests:** `compliance/recurrence.test.ts › refuses it on a bulk-action patch per row, and in a restored archive`, `compliance/restore-archive.test.ts › leaves no row, type, edge type, blob, event or audit record behind when a later row is refused`, `compliance/recurrence.test.ts › refuses a task's rule on a bulk write, a bulk-action patch and a restored archive`.
+**Tests:** `compliance/recurrence.test.ts › refuses it on a bulk-action patch per item, and in a restored archive`, `compliance/restore-archive.test.ts › leaves no item, type, edge type, blob, event or audit record behind when a later item is refused`, `compliance/recurrence.test.ts › refuses a task's rule on a bulk write, a bulk-action patch and a restored archive`.

@@ -124,7 +124,7 @@ describe("folder settings and retained directory identity", () => {
   it("refuses a settings-file submission while first sync waits, then submits the same edit once confirmed", async () => {
     harness = await bindingFolderHarness("binding-folder-first-settings", {
       confirm: false,
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -235,7 +235,7 @@ async function movedApart(
     properties: { title: "Plan", body: "Plan\n" },
   };
   const made = await folderHarness(label, {
-    rows: { "core.note": [{ item }] },
+    items: { "core.note": [{ item }] },
     hydrate: false,
     events: [edges.stream()],
   });

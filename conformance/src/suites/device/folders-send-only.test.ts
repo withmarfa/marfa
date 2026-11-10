@@ -71,7 +71,7 @@ function writesSent(made: FolderHarness): string[] {
 
 describe("a push that only sends", () => {
   it("sends a file made here and writes no file into the directory, where a push writes the server's item", async () => {
-    witness = await folderHarness("send-only-witness", { rows });
+    witness = await folderHarness("send-only-witness", { items: rows });
     scriptFolderWrites(witness);
     put(witness, "mine.md", typed("Mine"));
     const plain = await witness.folder.push();
@@ -81,7 +81,7 @@ describe("a push that only sends", () => {
       "the witness push wrote nothing, so the send-only case below shows nothing",
     ).toBe(true);
 
-    harness = await folderHarness("send-only", { rows });
+    harness = await folderHarness("send-only", { items: rows });
     scriptFolderWrites(harness);
     put(harness, "mine.md", typed("Mine"));
     const before = directory(harness);
@@ -102,7 +102,7 @@ describe("a push that only sends", () => {
   });
 
   it("says what it sent and that it did not pull, in JSON and in words", async () => {
-    harness = await folderHarness("send-only-report", { rows });
+    harness = await folderHarness("send-only-report", { items: rows });
     scriptFolderWrites(harness);
     put(harness, "mine.md", typed("Mine"));
     const sent = await harness.folder.pushSendOnly();
@@ -123,7 +123,7 @@ describe("a push that only sends", () => {
   });
 
   it("leaves what it did not pull for the next push", async () => {
-    harness = await folderHarness("send-only-later", { rows });
+    harness = await folderHarness("send-only-later", { items: rows });
     scriptFolderWrites(harness);
     put(harness, "mine.md", typed("Mine"));
     expect((await harness.folder.pushSendOnly()).ok).toBe(true);
@@ -144,7 +144,7 @@ describe("a push that only sends", () => {
       properties: { title: "going", body: "body\n" },
     };
     harness = await folderHarness("send-only-departed", {
-      rows: { "core.note": [{ item: departed }] },
+      items: { "core.note": [{ item: departed }] },
       events: [
         copyReplay("2", [
           copyItemEvent(
@@ -180,7 +180,7 @@ describe("a push that only sends", () => {
 
   it("hydrates a copy that never was first, which writes no file, and then sends", async () => {
     harness = await folderHarness("send-only-hydrates", {
-      rows,
+      items: rows,
       hydrate: false,
       files: { "mine.md": typed("Mine") },
     });
@@ -202,7 +202,7 @@ describe("a push that only sends", () => {
 
   it("is refused while the first sync waits, before it sends anything", async () => {
     harness = await folderHarness("send-only-waiting", {
-      rows,
+      items: rows,
       confirm: false,
       hydrate: false,
       files: { "mine.md": typed("Mine") },
@@ -228,7 +228,7 @@ describe("a push that only sends", () => {
   });
 
   it("keeps its writes queued where the server cannot be reached, and sends them at the next run", async () => {
-    harness = await folderHarness("send-only-offline", { rows });
+    harness = await folderHarness("send-only-offline", { items: rows });
     scriptFolderWrites(harness);
     put(harness, "mine.md", typed("Mine"));
     await harness.server.offline();
@@ -255,7 +255,7 @@ describe("a push that only sends", () => {
     expect(existsSync(join(harness.dir, "Server note.md"))).toBe(false);
   });
   it("leaves the write a rate limit refused for the next run, without waiting", async () => {
-    harness = await folderHarness("send-only-rate-limit", { rows });
+    harness = await folderHarness("send-only-rate-limit", { items: rows });
     let attempts = 0;
     scriptFolderWrites(harness, {
       creating: (answer) => {

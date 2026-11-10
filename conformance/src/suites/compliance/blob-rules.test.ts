@@ -129,7 +129,7 @@ function blobFaults(): FaultTarget {
 }
 
 /** This run's own bytes, so a state directory reused across runs holds no
- *  earlier copy, row or audit entry for them. */
+ *  earlier copy, item or audit entry for them. */
 function text(words: string): string {
   return `${words} ${ctx.runId}`;
 }

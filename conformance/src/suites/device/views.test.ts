@@ -51,7 +51,7 @@ async function copy(
   harness = await startHarness("views");
   scriptHydration(harness.server, {
     head: "1",
-    rows: {
+    items: {
       "system.view": [
         {
           item: {

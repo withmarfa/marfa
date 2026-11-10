@@ -22,7 +22,7 @@ async function note(): Promise<string> {
   return result.data.item.id;
 }
 
-it("refuses stale exact writes without changing the row or history", async () => {
+it("refuses stale exact writes without changing the item or history", async () => {
   const id = await note();
   expect(
     (

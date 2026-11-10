@@ -202,7 +202,7 @@ describe("items from the terminal", () => {
     expect(archived.item.state).toBe("archived");
 
     await c.cli.json(["items", "delete", id]);
-    // A trashed row reads as absent on the direct door, with the server's
+    // A trashed item reads as absent on the direct door, with the server's
     // code carried through.
     const gone = await c.cli.refused(["items", "get", id]);
     expect(gone.envelope.error.code).toBe("not_found");
@@ -214,7 +214,7 @@ describe("items from the terminal", () => {
     await c.cli.json(["items", "delete", id]);
     // The purge is the one destruction; the file's key holds `items.purge`
     // because it inherited the operator-minted key's whole set. A trashed
-    // row could be restored above; a purged one cannot, which is what
+    // item could be restored above; a purged one cannot, which is what
     // tells the purge from a delete that did nothing.
     await c.cli.json(["items", "purge", id]);
     const purged = await c.cli.refused(["items", "restore", id]);

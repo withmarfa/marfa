@@ -72,13 +72,13 @@ it("records each folder's distinct store identity in the shared registry", async
   }
 });
 
-it("materializes only readable copy rows reached by a beneath query", async () => {
+it("materializes only readable copy items reached by a beneath query", async () => {
   const root = "01a00000-0000-7000-8000-00000000a201";
   const child = "01a00000-0000-7000-8000-00000000a202";
   const unreadable = "01a00000-0000-7000-8000-00000000a203";
   harness = await folderHarness("contract-readable-beneath", {
     settings: { query: { types: ["core.note"], beneath: root } },
-    rows: {
+    items: {
       "core.note": [
         { item: { id: root, properties: { title: "Root", body: "root\n" } } },
         {
@@ -402,7 +402,7 @@ describe("document rendering contract", () => {
       if (remove) delete changed.base;
       else changed.base = { keep: "é", change: "new" };
       harness = await folderHarness("contract-aliases", {
-        rows: { "core.note": [{ item: { id, properties: original } }] },
+        items: { "core.note": [{ item: { id, properties: original } }] },
         files: {
           "Styled.md": `---\ntitle: Styled\nbase: &base {keep: 'é', change: old}\ncopy: *base # alias\nother: &other [a, b]\nuntouched: *other\nmarfa_id: ${id}\nmarfa_version: 1\n---\nbody\n`,
         },
@@ -450,7 +450,7 @@ describe("document rendering contract", () => {
 
   it("writes own fields in order before properties including an explicit time", async () => {
     harness = await folderHarness("contract-own-order", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -483,7 +483,7 @@ describe("document rendering contract", () => {
   it("keeps a read-only document unchanged when another device changes its item", async () => {
     const id = "01a00000-0000-7000-8000-000000000aa3";
     harness = await folderHarness("contract-read-only", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: { id, properties: { title: "Protected", body: "before\n" } },
@@ -756,7 +756,7 @@ describe("settings and folder reporting", () => {
     "leaves every replacement byte intact at %s",
     async (fault) => {
       harness = await folderHarness("contract-final-boundary", {
-        rows: {
+        items: {
           "core.note": [
             {
               item: {
@@ -925,7 +925,7 @@ describe("remaining document field boundaries", () => {
     async (line) => {
       const id = "01a00000-0000-7000-8000-000000000ab1";
       harness = await folderHarness("contract-line-base", {
-        rows: {
+        items: {
           "core.note": [
             {
               item: {
@@ -966,7 +966,7 @@ describe("remaining document field boundaries", () => {
     const id = "01a00000-0000-7000-8000-000000000ab2";
     harness = await folderHarness("contract-behind-render", {
       settings: { query: { types: ["core.note", "core.bookmark"] } },
-      rows: {
+      items: {
         "core.note": [
           {
             item: { id, properties: { title: "Stale", body: "body\n" } },
@@ -1024,7 +1024,7 @@ describe("remaining document field boundaries", () => {
   it("queues successive state changes from one version in save order", async () => {
     const id = "01a00000-0000-7000-8000-000000000ab3";
     harness = await folderHarness("contract-two-state-saves", {
-      rows: {
+      items: {
         "core.note": [
           { item: { id, properties: { title: "State", body: "body\n" } } },
         ],
@@ -1058,7 +1058,7 @@ describe("deletion guards", () => {
       "01a00000-0000-7000-8000-000000000ac2",
     ];
     harness = await folderHarness("contract-incomplete-delete", {
-      rows: {
+      items: {
         "core.note": ids.map((id, index) => ({
           item: { id, properties: { title: `Note${index}`, body: "body\n" } },
         })),
@@ -1111,7 +1111,7 @@ describe("deletion guards", () => {
 
   it("journals files from a directory removed before the walk begins", async () => {
     harness = await folderHarness("contract-directory-before-walk", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -1177,7 +1177,7 @@ describe("own-field recovery", () => {
         },
       });
     harness = await folderHarness("contract-tag-version-advance", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: { id, properties: { title: "Tags", body: "body\n" } },
@@ -1251,7 +1251,7 @@ describe("own-field recovery", () => {
         },
       });
     harness = await folderHarness("contract-state-version-advance", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: { id, properties: { title: "Tags", body: "body\n" } },
@@ -1332,7 +1332,7 @@ describe("own-field recovery", () => {
       ]);
       let changed = false;
       harness = await folderHarness(`contract-refused-${kind}`, {
-        rows: { "core.note": [{ item: { id, properties }, tags: ["a"] }] },
+        items: { "core.note": [{ item: { id, properties }, tags: ["a"] }] },
         events: [
           () =>
             copyLiveReplay(
@@ -1464,7 +1464,7 @@ it("expands an alias moved before its anchor while preserving other anchor group
     kept: ["a", "b"],
   };
   harness = await folderHarness("contract-alias-moved", {
-    rows: { "core.note": [{ item: { id, properties } }] },
+    items: { "core.note": [{ item: { id, properties } }] },
     files: {
       "Moved.md": `---\ntitle: Moved\nsteps:\n  - base: &shared {value: old}\n    rank: 1\n  - copy: *shared # retained value\n    rank: 2\nother: &other [a, b]\nkept: *other\nmarfa_id: ${id}\nmarfa_version: 1\n---\nbody\n`,
     },
@@ -1508,7 +1508,7 @@ it("reports a locally missing item already trashed elsewhere as waiting on scan"
   const id = "01a00000-0000-7000-8000-000000000af1";
   const item = { id, properties: { title: "Trashed", body: "body\n" } };
   harness = await folderHarness("contract-trashed-status", {
-    rows: { "core.note": [{ item }] },
+    items: { "core.note": [{ item }] },
     events: [
       copyReplay("2", [
         copyItemEvent(

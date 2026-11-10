@@ -1101,7 +1101,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         if !self.caller().may_read_type(&row.type_id) {
             return Err(Refusal::new(
                 Code::TypeNotPermitted,
-                "The natural key resolves a row of a type this credential may not reach",
+                "The natural key resolves an item of a type this credential may not reach",
             ));
         }
         if put.create_only {
@@ -1958,7 +1958,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             } else {
                 Refusal::new(
                     Code::TypeNotPermitted,
-                    "The natural key resolves a row of a type this credential may not reach",
+                    "The natural key resolves an item of a type this credential may not reach",
                 )
             });
         }

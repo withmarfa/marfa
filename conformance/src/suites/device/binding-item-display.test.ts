@@ -12,7 +12,7 @@ import type { BindingHarness } from "./harness.js";
 import { bindingHarness } from "./binding.shared.js";
 
 /**
- * A device names and previews an item from its held catalog and rows, as the server
+ * A device names and previews an item from its held catalog and items, as the server
  * names it. The cases are the ones the server's names are held to in
  * `compliance/item-summaries.test.ts`, so the two cannot drift. Given an
  * item's id, it names a part with no title of its own after the host the copy
@@ -110,7 +110,7 @@ describe("an item's name and preview on a device", () => {
       },
     });
     const own = await bindingHarness("binding-item-display-parts", {
-      rows: {
+      items: {
         "core.note": [
           { item: { id: "issue", properties: { title: "Fix login bug" } } },
           {

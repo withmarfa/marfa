@@ -50,7 +50,7 @@ describe("occurred_at compliance", () => {
     });
 
     // The witness, and the proof nothing was written: the same natural key
-    // with a timestamp lands as a new row.
+    // with a timestamp lands as a new item.
     const accepted = await client.createItem(
       createNote({
         source: ctx.source,
@@ -213,15 +213,15 @@ describe("occurred_at compliance", () => {
   });
 
   it("both bounds exclude an item sitting exactly on them", async () => {
-    // Three rows, because two of them cannot tell the failures apart. The
-    // boundary row proves the comparison is strict rather than inclusive;
-    // the row inside the range proves the predicate reached the query at
+    // Three items, because two of them cannot tell the failures apart. The
+    // boundary item proves the comparison is strict rather than inclusive;
+    // the item inside the range proves the predicate reached the query at
     // all, because a dropped bound and a bound that excluded everything
-    // both leave the boundary row absent; the far row proves the bound is
+    // both leave the boundary item absent; the far item proves the bound is
     // narrowing in the direction it claims.
     //
     // A distinct base instant per run, so a bound set to it can only be
-    // answered by these rows and not by a sibling from another run that
+    // answered by these items and not by a sibling from another run that
     // happens to share a whole second.
     const base =
       Date.UTC(2001, 0, 1) + Number.parseInt(ctx.runId.slice(1, 7), 16);
@@ -253,7 +253,7 @@ describe("occurred_at compliance", () => {
       // rather than a bound.
       expect(
         page.data.next_cursor,
-        "the page was truncated, so a row missing from it proves nothing about the bound",
+        "the page was truncated, so an item missing from it proves nothing about the bound",
       ).toBeNull();
       return page.data.data.map((i) => i.id);
     };
@@ -261,31 +261,31 @@ describe("occurred_at compliance", () => {
     const afterBound = await ids({ occurred_after: at(0) });
     expect(
       afterBound,
-      "a row whose own time is exactly the lower bound came back, so the bound is inclusive where the rule says exclusive",
+      "an item whose own time is exactly the lower bound came back, so the bound is inclusive where the rule says exclusive",
     ).not.toContain(onBound);
     expect(
       afterBound,
-      "a row after the lower bound was missing, so the bound is being dropped or is narrowing the wrong way",
+      "an item after the lower bound was missing, so the bound is being dropped or is narrowing the wrong way",
     ).toContain(later);
     expect(afterBound).not.toContain(earlier);
 
     const beforeBound = await ids({ occurred_before: at(0) });
     expect(
       beforeBound,
-      "a row whose own time is exactly the upper bound came back, so the bound is inclusive where the rule says exclusive",
+      "an item whose own time is exactly the upper bound came back, so the bound is inclusive where the rule says exclusive",
     ).not.toContain(onBound);
     expect(
       beforeBound,
-      "a row before the upper bound was missing, so the bound is being dropped or is narrowing the wrong way",
+      "an item before the upper bound was missing, so the bound is being dropped or is narrowing the wrong way",
     ).toContain(earlier);
     expect(beforeBound).not.toContain(later);
   });
 
   /**
-   * The same three rows as the listing's case, read through a door that takes
+   * The same three items as the listing's case, read through a door that takes
    * no `source` of its own: the search finds them by a word of their own and
    * the export by the source. A distinct base instant per run keeps a bound
-   * set to it from being answered by a sibling run's rows.
+   * set to it from being answered by a sibling run's items.
    */
   async function seedAroundABound(word: string): Promise<{
     at: (offsetMs: number) => string;
@@ -325,11 +325,11 @@ describe("occurred_at compliance", () => {
       expect(page.status, JSON.stringify(page.error)).toBe(200);
       expect(
         page.data.next_cursor,
-        "the page was truncated, so a row missing from it proves nothing about the bound",
+        "the page was truncated, so an item missing from it proves nothing about the bound",
       ).toBeNull();
       return page.data.data.map((hit) => hit.item.id);
     };
-    // The control: without a bound every row is found, so each absence below
+    // The control: without a bound every item is found, so each absence below
     // is the bound's.
     expect(await ids({})).toEqual(
       expect.arrayContaining([earlier, onBound, later]),
@@ -338,7 +338,7 @@ describe("occurred_at compliance", () => {
     const afterBound = await ids({ occurred_after: at(0) });
     expect(
       afterBound,
-      "a row whose own time is exactly the lower bound came back, so the bound is inclusive where the rule says exclusive",
+      "an item whose own time is exactly the lower bound came back, so the bound is inclusive where the rule says exclusive",
     ).not.toContain(onBound);
     expect(afterBound).toContain(later);
     expect(afterBound).not.toContain(earlier);
@@ -346,7 +346,7 @@ describe("occurred_at compliance", () => {
     const beforeBound = await ids({ occurred_before: at(0) });
     expect(
       beforeBound,
-      "a row whose own time is exactly the upper bound came back, so the bound is inclusive where the rule says exclusive",
+      "an item whose own time is exactly the upper bound came back, so the bound is inclusive where the rule says exclusive",
     ).not.toContain(onBound);
     expect(beforeBound).toContain(earlier);
     expect(beforeBound).not.toContain(later);
@@ -388,7 +388,7 @@ describe("occurred_at compliance", () => {
     const afterBound = await ids({ occurred_after: at(0) });
     expect(
       afterBound,
-      "a row whose own time is exactly the lower bound came back, so the bound is inclusive where the rule says exclusive",
+      "an item whose own time is exactly the lower bound came back, so the bound is inclusive where the rule says exclusive",
     ).not.toContain(onBound);
     expect(afterBound).toContain(later);
     expect(afterBound).not.toContain(earlier);
@@ -396,7 +396,7 @@ describe("occurred_at compliance", () => {
     const beforeBound = await ids({ occurred_before: at(0) });
     expect(
       beforeBound,
-      "a row whose own time is exactly the upper bound came back, so the bound is inclusive where the rule says exclusive",
+      "an item whose own time is exactly the upper bound came back, so the bound is inclusive where the rule says exclusive",
     ).not.toContain(onBound);
     expect(beforeBound).toContain(earlier);
     expect(beforeBound).not.toContain(later);

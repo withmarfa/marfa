@@ -10,7 +10,7 @@ Every operation declares the query keys it takes. The rules here hold for all of
 
 When a request carries a query key that its operation does not declare, the server MUST answer `400 validation_error` naming each such key in `details.unknown_parameters`.
 
-**Reason:** the validator drops a key it does not declare, so a misspelled bound answers the whole set and cannot be told from a filter that matched every row. A rule that holds on some operations leaves the caller to find out which, by being wrong once.
+**Reason:** the validator drops a key it does not declare, so a misspelled bound answers the whole set and cannot be told from a filter that matched every item. A rule that holds on some operations leaves the caller to find out which, by being wrong once.
 
 **Tests:** `compliance/declared-refusals.test.ts › is refused 400 and named on every published door, the event stream included`, `› names a misspelled key on the event stream rather than opening it unfiltered`, `sync/time-filters.test.ts › honors the item listing's own-time bound and refuses a name it does not declare`, `correctness/edges/edges-list.test.ts › refuses an unknown query key and an unknown edge id`, `compliance/audit.test.ts › refuses an undeclared bound rather than answering the whole trail`, `compliance/connectors.test.ts › refuses a query key the runs listing does not declare`, `compliance/inbound-webhooks.test.ts › refuses a query key the listing does not declare, rather than answering unfiltered`, `compliance/item-stats.test.ts › refuses a query key it does not declare, naming it`, `compliance/envelope.test.ts › refuses an offset query key`.
 
@@ -130,7 +130,7 @@ When a `type` filter of `GET /items`, `GET /items/stats`, `GET /search`, `GET /e
 
 When the `type` of `GET /items`, `GET /items/stats`, `GET /search` or `GET /export` is a comma-separated list, the server MUST select the items that any entry of the list selects.
 
-**Reason:** a client that shows several types at once asks for them in one read, so a page and its limit count the rows of all of them together.
+**Reason:** a client that shows several types at once asks for them in one read, so a page and its limit count the items of all of them together.
 
 **Tests:** `compliance/filter-lists.test.ts › answers the items of any type it names, on every door`, `› combines with a type list`.
 
@@ -154,21 +154,21 @@ If a credential that reaches some type sends a `type` filter with an entry namin
 
 **Reason:** an empty page is the one answer a client cannot tell from a quiet instance, so a mistyped name, a type registered under another handle and a type deleted since the client last read the registry would all read as nothing here. A wildcard is not refused, because what it names may be nothing (`search-and-filters/type-wildcard-none`).
 
-**Tests:** `compliance/unreadable-type-filter.test.ts › $name answers 400 unknown_type, whatever the key reads`, `› GET /events holds each entry of a list to the rule`, `correctness/pagination.test.ts › a nonexistent type is refused rather than answered with an empty page`, `compliance/item-stats.test.ts › counts the rows a listing's filters match`, `compliance/filter-lists.test.ts › refuses the list for an entry it would refuse alone`.
+**Tests:** `compliance/unreadable-type-filter.test.ts › $name answers 400 unknown_type, whatever the key reads`, `› GET /events holds each entry of a list to the rule`, `correctness/pagination.test.ts › a nonexistent type is refused rather than answered with an empty page`, `compliance/item-stats.test.ts › counts the items a listing's filters match`, `compliance/filter-lists.test.ts › refuses the list for an entry it would refuse alone`.
 
 ### `search-and-filters/type-bulk-unregistered`
 
-If the `filter.type` of `POST /items/bulk-actions` names a type that nothing registers, then the server MUST select the rows that carry that type name rather than refuse the request `400 unknown_type`.
+If the `filter.type` of `POST /items/bulk-actions` names a type that nothing registers, then the server MUST select the items that carry that type name rather than refuse the request `400 unknown_type`.
 
-**Reason:** the operation takes no wildcard, so the type's own name is the only way to select the rows that a type removed with `force` left behind, in order to purge them.
+**Reason:** the operation takes no wildcard, so the type's own name is the only way to select the items that a type removed with `force` left behind, in order to purge them.
 
-**Tests:** `compliance/unreadable-type-filter.test.ts › POST /items/bulk-actions does not refuse one, because it takes no wildcard to reach the rows a removed type kept`, `› POST /items/bulk-actions selects the rows a type removed with force left behind, by the type's own name`.
+**Tests:** `compliance/unreadable-type-filter.test.ts › POST /items/bulk-actions does not refuse one, because it takes no wildcard to reach the items a removed type kept`, `› POST /items/bulk-actions selects the items a type removed with force left behind, by the type's own name`.
 
 ### `search-and-filters/type-unreadable`
 
 If a `type` filter names a registered type that the credential may not read, and no type under it that the credential may read, then the server MUST answer `403 type_not_permitted` on `GET /items`, `GET /items/stats`, `GET /search`, `GET /export`, `GET /occurrences`, each entry of the `type` list of `GET /events` and the `filter.type` of `POST /items/bulk-actions`.
 
-**Reason:** an empty page would say nothing here about a type that is registered, which tells a caller nothing it can act on, while a write of the same type by the same credential is already answered `403 type_not_permitted`. The refusal discloses nothing the registry does not (`types/registry-open`). An item named by id keeps answering as a missing one when its type is unreadable (`items/get-missing`), because there the caller named a row and not a type.
+**Reason:** an empty page would say nothing here about a type that is registered, which tells a caller nothing it can act on, while a write of the same type by the same credential is already answered `403 type_not_permitted`. The refusal discloses nothing the registry does not (`types/registry-open`). An item named by id keeps answering as a missing one when its type is unreadable (`items/get-missing`), because there the caller named an item and not a type.
 
 **Tests:** `compliance/unreadable-type-filter.test.ts › $name answers 403 type_not_permitted naming the type`, `› the same type is served to a key that reads it, on every door but the bulk action`, `› GET /events holds each entry of a list to the rule`, `› refuses the same type to a key that reads nothing under it`.
 
@@ -200,7 +200,7 @@ When the `filter.type` of `POST /items/bulk-actions` names a type that the crede
 
 When a concrete `type` filter names a type that the credential may not read, and the credential may read a type under it, the server MUST answer the items of the types under it that the credential may read rather than refuse the request.
 
-**Reason:** a concrete type selects its subtree, so refusing would withhold rows that the credential is entitled to. The refusal in `search-and-filters/type-unreadable` is for a filter that reaches nothing readable.
+**Reason:** a concrete type selects its subtree, so refusing would withhold items that the credential is entitled to. The refusal in `search-and-filters/type-unreadable` is for a filter that reaches nothing readable.
 
 **Tests:** `compliance/unreadable-type-filter.test.ts › answers the readable descendants on every door`, `› GET /items/stats counts the readable descendants of a type the key may not read`, `› GET /occurrences answers the readable subtype of an event type the key may not read`, `› GET /events streams the readable descendants of a type the key may not read and withholds the rest`.
 
@@ -214,7 +214,7 @@ When a credential that may read some type sends a wildcard `type` filter, the se
 
 ### `search-and-filters/type-wildcard-none`
 
-When a wildcard `type` filter matches no type that a credential reaching some type may read, the server MUST answer as it answers a filter that matches no row: an empty page, a counts object with no count, or a stream with no frame of those types.
+When a wildcard `type` filter matches no type that a credential reaching some type may read, the server MUST answer as it answers a filter that matches no item: an empty page, a counts object with no count, or a stream with no frame of those types.
 
 **Reason:** nothing is a correct answer to everything under this root, as it is for a root under which nothing is registered.
 
@@ -242,17 +242,17 @@ The listing leaves out what is not `active` when it names no `state`: `items/bin
 
 ### `search-and-filters/state-named`
 
-When `GET /items`, `GET /items/stats`, `GET /search` or `GET /export` names a `state`, the server MUST select only the rows in that state.
+When `GET /items`, `GET /items/stats`, `GET /search` or `GET /export` names a `state`, the server MUST select only the items in that state.
 
-**Tests:** `compliance/state-default.test.ts › a named state and the sentinel still reach every row`, `› a search that names no state answers the active state`, `compliance/export.test.ts › filters by state`, `correctness/lifecycle-transitions.test.ts › state filter works on listItems`, `compliance/item-stats.test.ts › counts the rows a listing's filters match`.
+**Tests:** `compliance/state-default.test.ts › a named state and the sentinel still reach every item`, `› a search that names no state answers the active state`, `compliance/export.test.ts › filters by state`, `correctness/lifecycle-transitions.test.ts › state filter works on listItems`, `compliance/item-stats.test.ts › counts the items a listing's filters match`.
 
 ### `search-and-filters/state-list`
 
-When the `state` of `GET /items`, `GET /items/stats`, `GET /search` or `GET /export` is a comma-separated list of lifecycle states, the server MUST select the rows in any state the list names.
+When the `state` of `GET /items`, `GET /items/stats`, `GET /search` or `GET /export` is a comma-separated list of lifecycle states, the server MUST select the items in any state the list names.
 
 **Reason:** a client that shows live and filed items together, such as `active,archived`, reads them in one page rather than merging two.
 
-**Tests:** `compliance/filter-lists.test.ts › answers the rows in any state it names, on every door`, `› combines with a type list`.
+**Tests:** `compliance/filter-lists.test.ts › answers the items in any state it names, on every door`, `› combines with a type list`.
 
 ### `search-and-filters/state-any-alone`
 
@@ -272,25 +272,25 @@ If `GET /items`, `GET /items/stats`, `GET /search` or `GET /export` names a `sta
 
 ### `search-and-filters/state-search-default`
 
-When `GET /search` names no `state`, the server MUST match only rows in the `active` state.
+When `GET /search` names no `state`, the server MUST match only items in the `active` state.
 
-**Reason:** a search never answers a row that a listing hides, because that would be two answers to one question.
+**Reason:** a search never answers an item that a listing hides, because that would be two answers to one question.
 
 **Tests:** `compliance/state-default.test.ts › a search that names no state answers the active state`.
 
 ### `search-and-filters/state-search-any`
 
-When `GET /search` names `state=any`, the server MUST match the rows of every lifecycle state but `trashed`.
+When `GET /search` names `state=any`, the server MUST match the items of every lifecycle state but `trashed`.
 
 **Tests:** `compliance/state-default.test.ts › a search reads across states under the sentinel, except the bin`.
 
 ### `search-and-filters/search-bin`
 
-The server MUST NOT match a row in the bin on `GET /search`, whatever `state` the search names.
+The server MUST NOT match an item in the bin on `GET /search`, whatever `state` the search names.
 
-**Reason:** the index holds no row in the bin, so `state=trashed` and `state=any` alike leave it unmatched, however the row came to be there.
+**Reason:** the index holds no entry for an item in the bin, so `state=trashed` and `state=any` alike leave it unmatched, however the item came to be there.
 
-**Tests:** `compliance/state-default.test.ts › a search reads across states under the sentinel, except the bin`, `› a search does not reach a row born in the bin either`, `compliance/enrichment-search.test.ts › leaves a file in the bin unmatched, and matches it again once restored`, `compliance/filter-lists.test.ts › never matches the bin on the search door, even when the list names it`.
+**Tests:** `compliance/state-default.test.ts › a search reads across states under the sentinel, except the bin`, `› a search does not reach an item born in the bin either`, `compliance/enrichment-search.test.ts › leaves a file in the bin unmatched, and matches it again once restored`, `compliance/filter-lists.test.ts › never matches the bin on the search door, even when the list names it`.
 
 ### `search-and-filters/state-invalid`
 
@@ -302,15 +302,15 @@ If `GET /items`, `GET /items/stats`, `GET /search` or `GET /export` names a `sta
 
 ### `search-and-filters/source-narrows`
 
-When `GET /items`, `GET /items/stats`, `GET /search`, `GET /export` or `POST /items/bulk-actions` names a `source`, the server MUST select only the rows stamped with that source.
+When `GET /items`, `GET /items/stats`, `GET /search`, `GET /export` or `POST /items/bulk-actions` names a `source`, the server MUST select only the items stamped with that source.
 
-**Tests:** `compliance/source-narrowing.test.ts › GET /items answers only the rows stamped with the source named`, `› GET /items/stats counts only the rows stamped with the source named`, `› GET /search answers only the rows stamped with the source named`, `› GET /export carries only the rows stamped with the source named`, `› POST /items/bulk-actions selects only the rows stamped with the source named`.
+**Tests:** `compliance/source-narrowing.test.ts › GET /items answers only the items stamped with the source named`, `› GET /items/stats counts only the items stamped with the source named`, `› GET /search answers only the items stamped with the source named`, `› GET /export carries only the items stamped with the source named`, `› POST /items/bulk-actions selects only the items stamped with the source named`.
 
 ### `search-and-filters/tags-every`
 
-When `GET /items`, `GET /items/stats`, `GET /search` or `POST /items/bulk-actions` names tags, the server MUST select only the rows that carry every tag named.
+When `GET /items`, `GET /items/stats`, `GET /search` or `POST /items/bulk-actions` names tags, the server MUST select only the items that carry every tag named.
 
-**Tests:** `correctness/tags.test.ts › narrows the listing, the stats, the search and the bulk action to the rows that carry every tag named`, `› filters items by tag in queries`, `› filtering by tags=[favorite] returns tagged items and excludes others`.
+**Tests:** `correctness/tags.test.ts › narrows the listing, the stats, the search and the bulk action to the items that carry every tag named`, `› filters items by tag in queries`, `› filtering by tags=[favorite] returns tagged items and excludes others`.
 
 ### `search-and-filters/tags-blank-search`
 
@@ -322,13 +322,13 @@ When `GET /search` names a `tags` list that holds a blank entry beside a tag, th
 
 ### `search-and-filters/tier-narrows`
 
-When `GET /items`, `GET /items/stats` or `GET /search` names `tier=library` or `tier=feed`, the server MUST select only the rows in that tier.
+When `GET /items`, `GET /items/stats` or `GET /search` names `tier=library` or `tier=feed`, the server MUST select only the items in that tier.
 
 **Tests:** `compliance/tier-axis.test.ts › tier=library returns library items only`, `› tier=feed returns feed items only`, `› narrows the stats and the search by tier as the listing does`.
 
 ### `search-and-filters/tier-both`
 
-When `GET /items`, `GET /items/stats` or `GET /search` names `tier=all` or names no `tier`, the server MUST select the rows of both tiers.
+When `GET /items`, `GET /items/stats` or `GET /search` names `tier=all` or names no `tier`, the server MUST select the items of both tiers.
 
 **Tests:** `compliance/tier-axis.test.ts › default query omitting tier returns both library and feed items`, `› tier=all returns both library and feed items`, `› narrows the stats and the search by tier as the listing does`.
 
@@ -346,15 +346,15 @@ If `GET /items`, `GET /items/stats` or `GET /search` names a `tier` that is not 
 
 When `GET /items` names `beneath`, the server MUST list only that item and the items under it by `parent-of` at any depth.
 
-**Reason:** a folder's copy holds one subtree, and without this its hydration reads every row of its types to keep a few.
+**Reason:** a folder's copy holds one subtree, and without this its hydration reads every item of its types to keep a few.
 
 **Tests:** `compliance/items-beneath.test.ts › lists and counts the item beneath and everything under it by parent-of, at any depth, in the states the listing names`, `› lists and counts nothing beneath an id that is no item`.
 
 ### `search-and-filters/beneath-stats`
 
-When `GET /items/stats` names `beneath`, the server MUST count only the rows `GET /items` lists with the same `beneath`.
+When `GET /items/stats` names `beneath`, the server MUST count only the items `GET /items` lists with the same `beneath`.
 
-**Reason:** the device sizes a hydration by these counts, so a count of more rows than the listing gives reads as a hydration that never finishes.
+**Reason:** the device sizes a hydration by these counts, so a count of more items than the listing gives reads as a hydration that never finishes.
 
 **Tests:** `compliance/items-beneath.test.ts › lists and counts the item beneath and everything under it by parent-of, at any depth, in the states the listing names`, `› lists and counts nothing beneath an id that is no item`.
 
@@ -384,7 +384,7 @@ An item's own time is its `occurred_at`, or its `created_at` where it has none.
 
 ### `search-and-filters/own-time-bounds`
 
-When `GET /items`, `GET /search` or `GET /export` names `occurred_after` or `occurred_before`, the server MUST bound the rows by their own time.
+When `GET /items`, `GET /search` or `GET /export` names `occurred_after` or `occurred_before`, the server MUST bound the items by their own time.
 
 **Tests:** `compliance/occurred-at.test.ts › occurred_after filter uses COALESCE(occurred_at, created_at)`, `› occurred_before filter uses COALESCE(occurred_at, created_at)`, `› GET /search bounds a search by the item's own time and excludes an item sitting exactly on either bound`, `› GET /export bounds an export by the item's own time and excludes an item sitting exactly on either bound`, `compliance/canonical-time.test.ts › stores own time in UTC and orders and bounds it by instant`, `compliance/export.test.ts › filters by date range on the item's own time`.
 
@@ -392,7 +392,7 @@ When `GET /items`, `GET /search` or `GET /export` names `occurred_after` or `occ
 
 When `GET /items`, `GET /search` or `GET /export` names `occurred_after` or `occurred_before`, the server MUST leave out an item whose own time is exactly the bound.
 
-**Reason:** the row sitting on a bound is the row that tells an exclusive bound from an inclusive one.
+**Reason:** the item sitting on a bound is the item that tells an exclusive bound from an inclusive one.
 
 **Tests:** `compliance/occurred-at.test.ts › both bounds exclude an item sitting exactly on them`, `› GET /search bounds a search by the item's own time and excludes an item sitting exactly on either bound`, `› GET /export bounds an export by the item's own time and excludes an item sitting exactly on either bound`.
 
@@ -420,7 +420,7 @@ If `GET /items`, `GET /items/stats` or `GET /search` names `occurred_after`, `oc
 
 When `GET /items` or `GET /search` names `updated_after`, the server MUST select only the items whose `updated_at` is at or after it.
 
-**Reason:** the bound is inclusive because `updated_at` ties across a bulk write, so a strict bound would drop every row sharing the instant of a resuming client's cursor. A tag moves `updated_at` as a property does (`items/tag-updated-at`).
+**Reason:** the bound is inclusive because `updated_at` ties across a bulk write, so a strict bound would drop every item sharing the instant of a resuming client's cursor. A tag moves `updated_at` as a property does (`items/tag-updated-at`).
 
 **Tests:** `sync/time-filters.test.ts › keeps updated_after inclusive, which the catch-up depends on`, `sync/catchup.test.ts › sees a tag written after the boundary, not just a property change`, `compliance/search-ordering.test.ts › bounds a search by updated_at, inclusive below and exclusive above`.
 
@@ -458,7 +458,7 @@ When `GET /search` names `updated_after`, the server MUST order the hits as it w
 
 When `GET /items` names `include=edges`, the server MUST add to each item its outbound edges, keyed by edge type, each block a page of `data` and `next_cursor`.
 
-**Reason:** `edges/hydrate` states the blocks of an item read, and `POST /items/lookup` hydrates its rows the same way.
+**Reason:** `edges/hydrate` states the blocks of an item read, and `POST /items/lookup` hydrates its items the same way.
 
 **Tests:** `compliance/links.test.ts › hydrates edges on a lookup as the listing does`, `compliance/envelope.test.ts › carries each hydrated edge block as a page`.
 
@@ -478,9 +478,9 @@ When `GET /items` names a `type` in the `system.` namespace, the server MUST lis
 
 The server MUST hold the `filter` of `GET /items`, `GET /items/stats` and `GET /search`, the `filter` inside the filter of `POST /items/bulk-actions`, and a view's and a folder's `query.filter` to one grammar, except that a folder's `query.filter` refuses every `backref` condition (`items/folder-setting-followable`).
 
-**Reason:** an expression a client learned at one door then selects the same rows, or draws the same refusal, at every other.
+**Reason:** an expression a client learned at one door then selects the same items, or draws the same refusal, at every other.
 
-**Tests:** `compliance/filter-grammar.test.ts › selects the same rows by one expression at each door`, `› refuses %s at each door with validation_error`, `› answers an edge term the same on the doors beyond the listing`, `› takes a backref term in a view and refuses it in a folder`.
+**Tests:** `compliance/filter-grammar.test.ts › selects the same items by one expression at each door`, `› refuses %s at each door with validation_error`, `› answers an edge term the same on the doors beyond the listing`, `› takes a backref term in a view and refuses it in a folder`.
 
 ### `search-and-filters/filter-unknown-field`
 
@@ -518,19 +518,19 @@ When the value of a condition in a `filter` is a double-quoted string, `true`, `
 
 ### `search-and-filters/filter-join-and`
 
-When a `filter` joins conditions with `AND`, the server MUST select the rows every condition selects.
+When a `filter` joins conditions with `AND`, the server MUST select the items every condition selects.
 
-**Tests:** `compliance/filter-grammar.test.ts › selects by AND the rows every condition selects, and by OR the rows any selects`.
+**Tests:** `compliance/filter-grammar.test.ts › selects by AND the items every condition selects, and by OR the items any selects`.
 
 ### `search-and-filters/filter-join-or`
 
-When a `filter` joins conditions with `OR`, the server MUST select the rows at least one condition selects.
+When a `filter` joins conditions with `OR`, the server MUST select the items at least one condition selects.
 
-**Tests:** `compliance/filter-grammar.test.ts › selects by AND the rows every condition selects, and by OR the rows any selects`.
+**Tests:** `compliance/filter-grammar.test.ts › selects by AND the items every condition selects, and by OR the items any selects`.
 
 ### `search-and-filters/filter-or-narrows`
 
-When `GET /items`, `GET /items/stats` or `GET /search` names a `filter` joined with `OR` beside another key that narrows, other than an `edge[<edge type>]` or `backref[<edge type>]` key (`search-and-filters/filter-or-shorthand`), the server MUST select only the rows both the key and the `filter` select.
+When `GET /items`, `GET /items/stats` or `GET /search` names a `filter` joined with `OR` beside another key that narrows, other than an `edge[<edge type>]` or `backref[<edge type>]` key (`search-and-filters/filter-or-shorthand`), the server MUST select only the items both the key and the `filter` select.
 
 **Tests:** `compliance/filter-grammar.test.ts › narrows by the request's other keys what OR selects, on the listing, the stats and the search`.
 
@@ -550,21 +550,21 @@ When a `filter` compares `version` with a number using `eq`, `neq`, `gt`, `gte`,
 
 ### `search-and-filters/filter-absent-unselected`
 
-When a `filter` compares a property using an operator that takes a value, the server MUST NOT select a row whose property is absent or null.
+When a `filter` compares a property using an operator that takes a value, the server MUST NOT select an item whose property is absent or null.
 
-**Reason:** `neq` on a property therefore passes by a row without the property, where `neq` on an edge term selects a row without the edge (`search-and-filters/filter-edge-neq`). `not_exists` finds such a row (`search-and-filters/filter-not-exists`).
+**Reason:** `neq` on a property therefore passes by an item without the property, where `neq` on an edge term selects an item without the edge (`search-and-filters/filter-edge-neq`). `not_exists` finds such an item (`search-and-filters/filter-not-exists`).
 
-**Tests:** `compliance/filter-grammar.test.ts › selects no row whose property is absent or null, with any operator that takes a value`.
+**Tests:** `compliance/filter-grammar.test.ts › selects no item whose property is absent or null, with any operator that takes a value`.
 
 ### `search-and-filters/filter-contains`
 
-When a `filter` compares a property holding text, `id`, `type`, `state`, `source` or `source_id` using `contains`, the server MUST select the rows whose value holds the text.
+When a `filter` compares a property holding text, `id`, `type`, `state`, `source` or `source_id` using `contains`, the server MUST select the items whose value holds the text.
 
 **Tests:** `compliance/filter-grammar.test.ts › selects a value that holds the text, and one that begins with it`, `› selects by id, state and source_id as it does by a property`.
 
 ### `search-and-filters/filter-starts-with`
 
-When a `filter` compares a property holding text, `id`, `type`, `state`, `source` or `source_id` using `starts_with`, the server MUST select the rows whose value begins with the text.
+When a `filter` compares a property holding text, `id`, `type`, `state`, `source` or `source_id` using `starts_with`, the server MUST select the items whose value begins with the text.
 
 **Tests:** `compliance/filter-grammar.test.ts › selects a value that holds the text, and one that begins with it`, `› selects by id, state and source_id as it does by a property`.
 
@@ -600,7 +600,7 @@ If a `filter` applies `exists` or `not_exists` to `id`, `type`, `state`, `source
 
 ### `search-and-filters/filter-tags-contains`
 
-When a `filter` holds `tags contains "<tag>"`, the server MUST select the rows that carry a tag equal to the whole of the value, with regard to case.
+When a `filter` holds `tags contains "<tag>"`, the server MUST select the items that carry a tag equal to the whole of the value, with regard to case.
 
 **Reason:** unlike `contains` on a property, this names one tag rather than a fragment.
 
@@ -608,15 +608,15 @@ When a `filter` holds `tags contains "<tag>"`, the server MUST select the rows t
 
 ### `search-and-filters/filter-tags-exists`
 
-When a `filter` applies `exists` to `tags`, the server MUST select the rows that carry at least one tag.
+When a `filter` applies `exists` to `tags`, the server MUST select the items that carry at least one tag.
 
-**Tests:** `compliance/filter-grammar.test.ts › selects by exists the rows with a tag, and by not_exists the rows with none`.
+**Tests:** `compliance/filter-grammar.test.ts › selects by exists the items with a tag, and by not_exists the items with none`.
 
 ### `search-and-filters/filter-tags-not-exists`
 
-When a `filter` applies `not_exists` to `tags`, the server MUST select the rows that carry no tag.
+When a `filter` applies `not_exists` to `tags`, the server MUST select the items that carry no tag.
 
-**Tests:** `compliance/filter-grammar.test.ts › selects by exists the rows with a tag, and by not_exists the rows with none`.
+**Tests:** `compliance/filter-grammar.test.ts › selects by exists the items with a tag, and by not_exists the items with none`.
 
 ### `search-and-filters/filter-tags-refused`
 
@@ -626,53 +626,53 @@ If a `filter` applies to `tags` an operator other than `contains`, `exists` and 
 
 ### `search-and-filters/filter-edge-neq`
 
-When a `filter` holds `edge[<edge type>] neq "<id>"`, the server MUST select every row that holds no outbound edge of that type to that id, a row with no edge of that type included.
+When a `filter` holds `edge[<edge type>] neq "<id>"`, the server MUST select every item that holds no outbound edge of that type to that id, an item with no edge of that type included.
 
-**Tests:** `compliance/filter-grammar.test.ts › selects by edge neq every row without that edge, a row with no edge of the type among them`.
+**Tests:** `compliance/filter-grammar.test.ts › selects by edge neq every item without that edge, an item with no edge of the type among them`.
 
 ### `search-and-filters/filter-edge-exists`
 
-When a `filter` applies `exists` to `edge[<edge type>]`, the server MUST select the rows that hold at least one outbound edge of that type.
+When a `filter` applies `exists` to `edge[<edge type>]`, the server MUST select the items that hold at least one outbound edge of that type.
 
-**Tests:** `compliance/filter-grammar.test.ts › selects by edge exists the rows with an outbound edge of the type, and by not_exists the rows with none`.
+**Tests:** `compliance/filter-grammar.test.ts › selects by edge exists the items with an outbound edge of the type, and by not_exists the items with none`.
 
 ### `search-and-filters/filter-edge-not-exists`
 
-When a `filter` applies `not_exists` to `edge[<edge type>]`, the server MUST select the rows that hold no outbound edge of that type.
+When a `filter` applies `not_exists` to `edge[<edge type>]`, the server MUST select the items that hold no outbound edge of that type.
 
-**Tests:** `compliance/filter-grammar.test.ts › selects by edge exists the rows with an outbound edge of the type, and by not_exists the rows with none`.
+**Tests:** `compliance/filter-grammar.test.ts › selects by edge exists the items with an outbound edge of the type, and by not_exists the items with none`.
 
 ### `search-and-filters/filter-backref-eq`
 
-When a `filter` holds `backref[<edge type>] eq "<id>"`, the server MUST select the rows that are the target of an edge of that type whose source is that id.
+When a `filter` holds `backref[<edge type>] eq "<id>"`, the server MUST select the items that are the target of an edge of that type whose source is that id.
 
 **Reason:** which inbound edges count is `edges/filter-backref`.
 
-**Tests:** `compliance/filter-grammar.test.ts › selects by backref eq the rows that an edge of the type from that item points at`, `› selects by an edge eq term and a backref eq term on every door as the listing does`.
+**Tests:** `compliance/filter-grammar.test.ts › selects by backref eq the items that an edge of the type from that item points at`, `› selects by an edge eq term and a backref eq term on every door as the listing does`.
 
 ### `search-and-filters/filter-backref-neq`
 
-When a `filter` holds `backref[<edge type>] neq "<id>"`, the server MUST select every row that is not the target of an edge of that type from that id, a row with no inbound edge of that type included.
+When a `filter` holds `backref[<edge type>] neq "<id>"`, the server MUST select every item that is not the target of an edge of that type from that id, an item with no inbound edge of that type included.
 
 **Reason:** which inbound edges count is `edges/filter-backref`.
 
-**Tests:** `compliance/filter-grammar.test.ts › selects by backref neq every row without that inbound edge, a row with no inbound edge of the type among them`.
+**Tests:** `compliance/filter-grammar.test.ts › selects by backref neq every item without that inbound edge, an item with no inbound edge of the type among them`.
 
 ### `search-and-filters/filter-backref-exists`
 
-When a `filter` applies `exists` to `backref[<edge type>]`, the server MUST select the rows that are the target of at least one edge of that type.
+When a `filter` applies `exists` to `backref[<edge type>]`, the server MUST select the items that are the target of at least one edge of that type.
 
 **Reason:** which inbound edges count is `edges/filter-backref`.
 
-**Tests:** `compliance/filter-grammar.test.ts › selects by backref exists the rows with an inbound edge of the type, and by not_exists the rows with none`.
+**Tests:** `compliance/filter-grammar.test.ts › selects by backref exists the items with an inbound edge of the type, and by not_exists the items with none`.
 
 ### `search-and-filters/filter-backref-not-exists`
 
-When a `filter` applies `not_exists` to `backref[<edge type>]`, the server MUST select the rows that are the target of no edge of that type.
+When a `filter` applies `not_exists` to `backref[<edge type>]`, the server MUST select the items that are the target of no edge of that type.
 
 **Reason:** which inbound edges count is `edges/filter-backref`.
 
-**Tests:** `compliance/filter-grammar.test.ts › selects by backref exists the rows with an inbound edge of the type, and by not_exists the rows with none`.
+**Tests:** `compliance/filter-grammar.test.ts › selects by backref exists the items with an inbound edge of the type, and by not_exists the items with none`.
 
 ### `search-and-filters/filter-edge-refused`
 
@@ -682,23 +682,23 @@ If a `filter` applies to `edge[<edge type>]` or `backref[<edge type>]` an operat
 
 ### `search-and-filters/filter-state-default`
 
-When `GET /items`, `GET /search` or `POST /items/bulk-actions` names no `state` and its `filter` holds a `state` term, the server MUST select only the rows in the `active` state that the term selects.
+When `GET /items`, `GET /search` or `POST /items/bulk-actions` names no `state` and its `filter` holds a `state` term, the server MUST select only the items in the `active` state that the term selects.
 
-**Reason:** the term narrows the default and does not replace it, so `filter=state eq "archived"` alone selects nothing. Naming `state=archived` reaches those rows, as does `state=any` on `GET /items` and `GET /search`.
+**Reason:** the term narrows the default and does not replace it, so `filter=state eq "archived"` alone selects nothing. Naming `state=archived` reaches those items, as does `state=any` on `GET /items` and `GET /search`.
 
 **Tests:** `compliance/filter-grammar.test.ts › meets the default state when no state is named, so state eq archived alone selects nothing`.
 
 ### `search-and-filters/filter-state-named`
 
-When `GET /items`, `GET /items/stats`, `GET /search` or `POST /items/bulk-actions` names a `state` and its `filter` holds a `state` term, the server MUST select only the rows the named `state` reaches that the term also selects.
+When `GET /items`, `GET /items/stats`, `GET /search` or `POST /items/bulk-actions` names a `state` and its `filter` holds a `state` term, the server MUST select only the items the named `state` reaches that the term also selects.
 
-**Tests:** `compliance/filter-grammar.test.ts › meets a named state, so the two must agree to select a row`.
+**Tests:** `compliance/filter-grammar.test.ts › meets a named state, so the two must agree to select an item`.
 
 ### `search-and-filters/filter-state-stats`
 
-When `GET /items/stats` names no `state` and its `filter` holds a `state` term, the server MUST count the rows of every state that the term selects.
+When `GET /items/stats` names no `state` and its `filter` holds a `state` term, the server MUST count the items of every state that the term selects.
 
-**Reason:** the door's default is every state (`search-and-filters/stats-every-state`), so the same `filter=state eq "archived"` that selects nothing on `GET /items` counts the archived rows here.
+**Reason:** the door's default is every state (`search-and-filters/stats-every-state`), so the same `filter=state eq "archived"` that selects nothing on `GET /items` counts the archived items here.
 
 **Tests:** `compliance/filter-grammar.test.ts › counts on GET /items/stats among every state when none is named`.
 
@@ -790,7 +790,7 @@ If a `filter` on `GET /items`, `GET /items/stats` or `GET /search` compares with
 
 When a `filter` on `GET /items` or `GET /search` compares a numeric JSON property with a number using `eq`, `neq`, `gt`, `gte`, `lt` or `lte`, the server MUST compare it as a finite double, with the value the API returns.
 
-**Tests:** `compliance/numeric-property-filters.test.ts › witnesses every seeded row on both doors before filtering`, `› compares numeric properties as finite doubles on the listing and search`.
+**Tests:** `compliance/numeric-property-filters.test.ts › witnesses every seeded item on both doors before filtering`, `› compares numeric properties as finite doubles on the listing and search`.
 
 ### `search-and-filters/filter-numeric-spellings`
 
@@ -816,13 +816,13 @@ If a `filter` compares a field with a `null` literal after an operator that take
 
 When the server refuses a comparison of a property with `null`, the server MUST name `not_exists` in the message as the way to ask for an absent value.
 
-**Reason:** `not_exists` asks the question the caller means and answers the rows whose property is absent or null, and `exists` the rows that hold a value. A system field always exists, so a refusal about one names no presence test.
+**Reason:** `not_exists` asks the question the caller means and answers the items whose property is absent or null, and `exists` the items that hold a value. A system field always exists, so a refusal about one names no presence test.
 
 **Tests:** `compliance/null-filter.test.ts › is refused 400 on every operator, naming not_exists where a property can be absent`.
 
 ### `search-and-filters/filter-not-exists`
 
-When a `filter` applies `not_exists` to a property, the server MUST select the rows whose property is absent or null, and `exists` the rows whose property holds a value.
+When a `filter` applies `not_exists` to a property, the server MUST select the items whose property is absent or null, and `exists` the items whose property holds a value.
 
 **Tests:** `compliance/null-filter.test.ts › is not needed: not_exists asks for a property that is absent or null, and exists for one that has a value`.
 
@@ -868,7 +868,7 @@ When a `filter` on `GET /items` or `GET /search` compares `created_at`, `updated
 
 ### `search-and-filters/filter-entry-member`
 
-When a `filter` on `GET /items` or `GET /search` compares `properties.<field>.<member>` with a value using `eq`, the server MUST select the rows whose `<field>` is a list holding at least one object whose `<member>` equals the value, compared as `properties.<field>` is.
+When a `filter` on `GET /items` or `GET /search` compares `properties.<field>.<member>` with a value using `eq`, the server MUST select the items whose `<field>` is a list holding at least one object whose `<member>` equals the value, compared as `properties.<field>` is.
 
 **Reason:** a person is found by any one of their email addresses, phone numbers or addresses, not only the first. A saved view's `filter` takes the same term (`views/filter-terms`).
 
@@ -876,11 +876,11 @@ When a `filter` on `GET /items` or `GET /search` compares `properties.<field>.<m
 
 ### `search-and-filters/filter-entry-member-none`
 
-When a `filter` compares `properties.<field>.<member>` and a row's `<field>` is absent or is not a list, or no object in it holds `<member>`, the server MUST NOT select the row by that condition.
+When a `filter` compares `properties.<field>.<member>` and an item's `<field>` is absent or is not a list, or no object in it holds `<member>`, the server MUST NOT select the item by that condition.
 
-**Reason:** the term reads the stored value and not the type's declaration, as every property term does, so it answers the same rows for every type a listing spans.
+**Reason:** the term reads the stored value and not the type's declaration, as every property term does, so it answers the same items for every type a listing spans.
 
-**Tests:** `compliance/contact-lists.test.ts › selects no row whose field is not a list of objects holding the member`.
+**Tests:** `compliance/contact-lists.test.ts › selects no item whose field is not a list of objects holding the member`.
 
 ### `search-and-filters/filter-entry-member-refused`
 
@@ -964,7 +964,7 @@ If a `filter` compares `part` with an operator other than `eq` and `neq`, or wit
 
 When `GET /items` names `state=trashed` alone and no `sort` or `updated_after`, the server MUST order the items by `trashed_at`, newest first unless `direction=asc`, then by `id` in the same direction, ordering an item without a `trashed_at` by its `updated_at`.
 
-**Reason:** a bin reads as what went there most recently first, and creation order would put an old item binned a minute ago at the bottom. An item an archive restored to the bin without its time (`items/trash-archive-identity`) has no `trashed_at`, and its `updated_at` is no earlier than the move. A listing of any other set of states keeps the creation order, because its rows have no one time in common.
+**Reason:** a bin reads as what went there most recently first, and creation order would put an old item binned a minute ago at the bottom. An item an archive restored to the bin without its time (`items/trash-archive-identity`) has no `trashed_at`, and its `updated_at` is no earlier than the move. A listing of any other set of states keeps the creation order, because its items have no one time in common.
 
 **Tests:** `compliance/trashed-at.test.ts › lists the bin newest binned first when no sort is named`, `› reverses it with direction=asc`, `› walks the same order one page at a time`, `› orders a listing of several states by creation`.
 
@@ -978,7 +978,7 @@ When `GET /items` names `state=trashed` and a `sort`, the server MUST order the 
 
 ### `search-and-filters/sort-property`
 
-When `GET /items` names `sort=properties.<field>`, the server MUST order the rows by the scalar value each stores in that property, whatever the row's type and whether the `type` filter is concrete, a wildcard or absent.
+When `GET /items` names `sort=properties.<field>`, the server MUST order the items by the scalar value each stores in that property, whatever the item's type and whether the `type` filter is concrete, a wildcard or absent.
 
 **Tests:** `correctness/property-sort-pagination.test.ts › walks numeric properties whatever the type filter`, `› walks mixed scalar kinds across types, with ascending ID ties and nulls last`.
 
@@ -996,19 +996,19 @@ When `GET /items` sorts by a property descending, the server MUST reverse the sc
 
 ### `search-and-filters/sort-property-missing`
 
-When `GET /items` sorts by a property, the server MUST put the rows whose property is missing, null, an object or an array after every scalar, in either direction.
+When `GET /items` sorts by a property, the server MUST put the items whose property is missing, null, an object or an array after every scalar, in either direction.
 
 **Tests:** `correctness/property-sort-pagination.test.ts › walks mixed scalar kinds across types, with ascending ID ties and nulls last`.
 
 ### `search-and-filters/sort-property-ties`
 
-When `GET /items` sorts by a property, the server MUST order rows with equal values, numerically equal booleans and numbers and the whole null tail included, by item ID ascending in both directions.
+When `GET /items` sorts by a property, the server MUST order items with equal values, numerically equal booleans and numbers and the whole null tail included, by item ID ascending in both directions.
 
 **Tests:** `correctness/property-sort-pagination.test.ts › walks mixed scalar kinds across types, with ascending ID ties and nulls last`.
 
 ### `search-and-filters/sort-property-cursor`
 
-When a client follows `next_cursor` through a `GET /items` listing sorted by a property, the server MUST deliver every matching row once, across type boundaries, scalar kinds and ties.
+When a client follows `next_cursor` through a `GET /items` listing sorted by a property, the server MUST deliver every matching item once, across type boundaries, scalar kinds and ties.
 
 **Reason:** the cursor keeps the scalar kind of the value it stopped at.
 
@@ -1016,7 +1016,7 @@ When a client follows `next_cursor` through a `GET /items` listing sorted by a p
 
 ## Pages and limits
 
-The rows of one page and the key that continues them are in `search-and-filters/page-envelope`.
+The items of one page and the key that continues them are in `search-and-filters/page-envelope`.
 
 This section holds the pages of `GET /items` and `GET /search`. The other listings state theirs beside the rest of their rules, such as `edges/list-limit-default`, `events/audit-limit-default`, `events/record-limit-default`, `items/owner-trash-limit-default`, `search-and-filters/owner-summaries-limit-default`, `views/items-limit`, `versions/history-default-limit`, `connectors/runs-limit-default`, `connectors/list-agreements-limit-default`, `inbound-webhooks/deliveries-limit-default` and `folder-status/inventory-limit`.
 
@@ -1060,11 +1060,11 @@ When `GET /search` names a `limit` from 1 to 100, the server MUST answer a page 
 
 ### `search-and-filters/limit-after-filter`
 
-When `GET /items` or `GET /search` names a `limit` with a `type` or `state` filter, the server MUST fill the page with the rows that the filters select, up to the limit.
+When `GET /items` or `GET /search` names a `limit` with a `type` or `state` filter, the server MUST fill the page with the items that the filters select, up to the limit.
 
-**Reason:** a limit applied before the filters would answer a short or empty page while matching rows remain.
+**Reason:** a limit applied before the filters would answer a short or empty page while matching items remain.
 
-**Tests:** `compliance/filter-lists.test.ts › counts only the rows the state and type lists keep`.
+**Tests:** `compliance/filter-lists.test.ts › counts only the items the state and type lists keep`.
 
 ### `search-and-filters/limit-search-refused`
 
@@ -1074,13 +1074,13 @@ If `GET /search` names a `limit` that is not a whole number of 1 to 100, then th
 
 ### `search-and-filters/cursor-continues`
 
-When a client sends back the `next_cursor` of a page of `GET /items`, the server MUST answer the page that follows it, so that walking to the end delivers every row exactly once.
+When a client sends back the `next_cursor` of a page of `GET /items`, the server MUST answer the page that follows it, so that walking to the end delivers every item exactly once.
 
 **Tests:** `correctness/pagination.test.ts › cursor continuation delivers every item exactly once`, `› cursor is opaque and enables next page retrieval`.
 
 ### `search-and-filters/cursor-last-page`
 
-When a page of `GET /items` holds the last row, the server MUST answer `next_cursor` `null`.
+When a page of `GET /items` holds the last item, the server MUST answer `next_cursor` `null`.
 
 **Tests:** `correctness/pagination.test.ts › the last page answers next_cursor: null`.
 
@@ -1116,7 +1116,7 @@ When `GET /items` names `sort=updated_at` and no `updated_after`, the server MUS
 
 When `GET /items` names `updated_after`, the server MUST order the items by `updated_at`, then by `id`, ascending.
 
-**Reason:** the order is the one a catch-up cursor advances through (`search-and-filters/updated-after-order`), and an `id` breaks a tie between rows a bulk write gave one `updated_at`.
+**Reason:** the order is the one a catch-up cursor advances through (`search-and-filters/updated-after-order`), and an `id` breaks a tie between items a bulk write gave one `updated_at`.
 
 **Tests:** `correctness/pagination.test.ts › orders a catch-up by updated_at, then by id, ascending`.
 
@@ -1168,7 +1168,7 @@ The server MUST NOT match an item on its identifier alone.
 
 The server MUST carry on each hit of `GET /search` a positive `relevance_score`, higher for a hit ranked better and equal for hits of equal rank.
 
-**Reason:** the score is relative to the rows of the index it ranks in, so it compares hits only within one search.
+**Reason:** the score is relative to the items of the index it ranks in, so it compares hits only within one search.
 
 **Tests:** `compliance/search-matching.test.ts › scores a hit by its rank and gives the better hit the higher score`.
 
@@ -1212,11 +1212,11 @@ When a client sends back the `next_cursor` of each page of a `GET /search` that 
 
 ### `search-and-filters/search-depth`
 
-When a page of `GET /search` holds the 10,000th row of the ranking, the server MUST answer `next_cursor` of `null`.
+When a page of `GET /search` holds the 10,000th item of the ranking, the server MUST answer `next_cursor` of `null`.
 
-**Reason:** the server reads the ranking at most 10,000 rows deep, so a search is narrowed rather than paged past that depth.
+**Reason:** the server reads the ranking at most 10,000 items deep, so a search is narrowed rather than paged past that depth.
 
-**Tests:** `compliance/search-depth.test.ts › stops paging a search at its 10,000th row`.
+**Tests:** `compliance/search-depth.test.ts › stops paging a search at its 10,000th item`.
 
 ### `search-and-filters/search-sort-relevance`
 
@@ -1242,7 +1242,7 @@ When `GET /search` names `sort=created_at`, `sort=updated_at` or `sort=occurred_
 
 When `GET /search` names `sort=properties.<field>`, the server MUST order the hits by the scalar value each stores in that property, in the order `search-and-filters/sort-property-ascending` and `search-and-filters/sort-property-descending` give a listing, and put the hits whose property is missing, null, an object or an array after every scalar in either direction.
 
-**Tests:** `compliance/search-ordering.test.ts › orders a search by a property with the rows that lack one last in both directions`.
+**Tests:** `compliance/search-ordering.test.ts › orders a search by a property with the items that lack one last in both directions`.
 
 ### `search-and-filters/search-sort-ties`
 
@@ -1286,7 +1286,7 @@ The server MUST split words of the indexed text and of a query at anything that 
 
 ### `search-and-filters/search-all-words`
 
-When a query is not wholly inside double quotes, the server MUST match only the rows in which every whitespace-separated word of it matches, in any order and in any column.
+When a query is not wholly inside double quotes, the server MUST match only the items in which every whitespace-separated word of it matches, in any order and in any column.
 
 **Tests:** `compliance/search-matching.test.ts › $name: $query`.
 
@@ -1350,13 +1350,13 @@ When a query holds no word, the server MUST answer an empty page without an erro
 
 ### `search-and-filters/index-fields`
 
-While a row is not in the bin, the server MUST match a query against the row's `title`, `body`, `description` and `name` where each is a string, every other string property its type declares or inherits, and its tags.
+While an item is not in the bin, the server MUST match a query against the item's `title`, `body`, `description` and `name` where each is a string, every other string property its type declares or inherits, and its tags.
 
 **Tests:** `compliance/search-matching.test.ts › $name: $query`.
 
 ### `search-and-filters/index-order`
 
-When a query is a phrase, the server MUST match it against the string properties of a row beyond the four core ones joined in the order of their names, and against its tags joined in byte order.
+When a query is a phrase, the server MUST match it against the string properties of an item beyond the four core ones joined in the order of their names, and against its tags joined in byte order.
 
 **Reason:** two indexes that join the text in the same order answer the same phrase.
 
@@ -1364,7 +1364,7 @@ When a query is a phrase, the server MUST match it against the string properties
 
 ### `search-and-filters/index-undeclared`
 
-The server MUST NOT match a property that the row's type does not declare.
+The server MUST NOT match a property that the item's type does not declare.
 
 **Reason:** a thumbnail's base64 or an undeclared property is not text a person wrote to be found.
 
@@ -1394,23 +1394,23 @@ The server MUST NOT match a value that is not a string.
 
 ### `search-and-filters/index-unregistered`
 
-When the type of a row is not registered, the server MUST match the row by its `title`, `body`, `description`, `name` and tags alone.
+When the type of an item is not registered, the server MUST match the item by its `title`, `body`, `description`, `name` and tags alone.
 
-**Tests:** `compliance/fts-searchable.test.ts › keeps the four core properties and the tags of a row whose type was removed with force`.
+**Tests:** `compliance/fts-searchable.test.ts › keeps the four core properties and the tags of an item whose type was removed with force`.
 
 ### `search-and-filters/index-type-change`
 
-When a type is registered, replaced, or deleted with `force`, the server MUST match each row not in the bin of that type and of each type that inherits from it by what the type then marks searchable.
+When a type is registered, replaced, or deleted with `force`, the server MUST match each item not in the bin of that type and of each type that inherits from it by what the type then marks searchable.
 
-**Reason:** what a row contributes to the index is decided when it is written, so without this a row would keep answering by the fields its type had until the row is next written, and a field marked `searchable: false` would stay matched.
+**Reason:** what an item contributes to the index is decided when it is written, so without this an item would keep answering by the fields its type had until the item is next written, and a field marked `searchable: false` would stay matched.
 
-**Tests:** `compliance/fts-searchable.test.ts › rows already stored follow a change to what their type marks searchable`, `› indexes the rows of a type that inherits again when its parent changes what it marks searchable`.
+**Tests:** `compliance/fts-searchable.test.ts › items already stored follow a change to what their type marks searchable`, `› indexes the items of a type that inherits again when its parent changes what it marks searchable`.
 
 ### `search-and-filters/rank-bm25`
 
 When `GET /search` names no `sort`, or `sort=relevance`, the server MUST rank hits by BM25 over the `title`, `body`, `description`, `name`, extra properties and tags at equal weight.
 
-**Reason:** a device ranks by the same measure (`device/rank-bm25`), so the two orders agree where they rank the same rows.
+**Reason:** a device ranks by the same measure (`device/rank-bm25`), so the two orders agree where they rank the same items.
 
 **Tests:** `compliance/search-matching.test.ts › $name: $query`, `› scores a hit by its rank and gives the better hit the higher score`.
 
@@ -1442,17 +1442,17 @@ When an excerpt cuts the text, the server MUST write `...` where it is cut.
 
 ### `search-and-filters/excerpt-escaped`
 
-The server MUST write an excerpt as HTML in which every `&`, `<`, `>`, `"` and `'` of the row's text is escaped as `&amp;`, `&lt;`, `&gt;`, `&quot;` and `&#39;`.
+The server MUST write an excerpt as HTML in which every `&`, `<`, `>`, `"` and `'` of the item's text is escaped as `&amp;`, `&lt;`, `&gt;`, `&quot;` and `&#39;`.
 
-**Reason:** an app shows the excerpt as HTML, and a row's text is what a person or a source wrote, never markup for that app to render.
+**Reason:** an app shows the excerpt as HTML, and an item's text is what a person or a source wrote, never markup for that app to render.
 
-**Tests:** `compliance/search-matching.test.ts › escapes the row's text in an excerpt and marks only the match`.
+**Tests:** `compliance/search-matching.test.ts › escapes the item's text in an excerpt and marks only the match`.
 
 ### `search-and-filters/excerpt-markup`
 
 The server MUST NOT put markup in an excerpt other than pairs of `<mark>` and `</mark>`, each pair opened before it closes.
 
-**Tests:** `compliance/search-matching.test.ts › escapes the row's text in an excerpt and marks only the match`.
+**Tests:** `compliance/search-matching.test.ts › escapes the item's text in an excerpt and marks only the match`.
 
 ## Counts and exports
 
@@ -1466,37 +1466,37 @@ When a request carries only private local authority to `GET /items/stats` or `GE
 
 ## Counting
 
-`GET /items/stats` counts the rows a listing matches.
+`GET /items/stats` counts the items a listing matches.
 
 ### `search-and-filters/stats-counts-listing`
 
-When `GET /items/stats` names the filters of a `GET /items` listing, the server MUST count the rows that listing matches.
+When `GET /items/stats` names the filters of a `GET /items` listing, the server MUST count the items that listing matches.
 
-**Tests:** `compliance/item-stats.test.ts › counts the rows a listing's filters match`.
+**Tests:** `compliance/item-stats.test.ts › counts the items a listing's filters match`.
 
 ### `search-and-filters/stats-group`
 
 The server MUST group the counts of `GET /items/stats` by lifecycle state, by type when the request names `by=type`, or by source code when it names `by=source`.
 
-**Tests:** `compliance/item-stats.test.ts › counts the rows a listing's filters match`, `compliance/source-names.test.ts › counts items by source under a listing's filters`.
+**Tests:** `compliance/item-stats.test.ts › counts the items a listing's filters match`, `compliance/source-names.test.ts › counts items by source under a listing's filters`.
 
 ### `search-and-filters/stats-every-state`
 
-When `GET /items/stats` names no `state`, the server MUST count the rows of every state, the bin included.
+When `GET /items/stats` names no `state`, the server MUST count the items of every state, the bin included.
 
 **Reason:** the default answer is the breakdown across the states, so the listing's own default of `active` does not apply.
 
-**Tests:** `compliance/item-stats.test.ts › counts the rows a listing's filters match`, `› answers the listing's own count as the bucket of its state, and the sum of the buckets under state=any`, `compliance/state-default.test.ts › a named state and the sentinel still reach every row`.
+**Tests:** `compliance/item-stats.test.ts › counts the items a listing's filters match`, `› answers the listing's own count as the bucket of its state, and the sum of the buckets under state=any`, `compliance/state-default.test.ts › a named state and the sentinel still reach every item`.
 
 ### `search-and-filters/stats-empty-group`
 
-When no row that `GET /items/stats` counts falls in a state or a type, the server MUST leave that state or type out of the counts, and not answer it as `0`.
+When no item that `GET /items/stats` counts falls in a state or a type, the server MUST leave that state or type out of the counts, and not answer it as `0`.
 
-**Tests:** `compliance/item-stats.test.ts › counts the rows a listing's filters match`, `compliance/filter-grammar.test.ts › counts on GET /items/stats among every state when none is named`.
+**Tests:** `compliance/item-stats.test.ts › counts the items a listing's filters match`, `compliance/filter-grammar.test.ts › counts on GET /items/stats among every state when none is named`.
 
 ### `search-and-filters/stats-equals-listing`
 
-When `GET /items/stats` and `GET /items` name the same filters, the server MUST count as many rows in the bucket of the named state, or in the `active` bucket where none is named, as the listing lists, and under `state=any` as many as the sum of the buckets.
+When `GET /items/stats` and `GET /items` name the same filters, the server MUST count as many items in the bucket of the named state, or in the `active` bucket where none is named, as the listing lists, and under `state=any` as many as the sum of the buckets.
 
 **Tests:** `compliance/item-stats.test.ts › answers the listing's own count as the bucket of its state, and the sum of the buckets under state=any`.
 
@@ -1528,61 +1528,61 @@ If `GET /items/stats` names an `include` other than `system`, then the server MU
 
 ## Lookup
 
-`POST /items/lookup` finds rows by link, by natural key or by id.
+`POST /items/lookup` finds items by link, by natural key or by id.
 
 ### `search-and-filters/lookup-answer`
 
 When the server takes a `POST /items/lookup` request, the server MUST answer `200` with `data` and `tombstones` and no other key.
 
-**Tests:** `compliance/links.test.ts › looks rows up by link in every state, and refuses links for a type naming none`.
+**Tests:** `compliance/links.test.ts › looks items up by link in every state, and refuses links for a type naming none`.
 
 ### `search-and-filters/lookup-by-link`
 
-When `POST /items/lookup` names a `type` and `links`, the server MUST answer the rows of exactly that type that hold them.
+When `POST /items/lookup` names a `type` and `links`, the server MUST answer the items of exactly that type that hold them.
 
-**Reason:** a link is one row's within its type (`items/link-taken`), so a subtype's row holding the same value is not found.
+**Reason:** a link is one item's within its type (`items/link-taken`), so a subtype's item holding the same value is not found.
 
-**Tests:** `compliance/links.test.ts › answers by link only the rows of the type named`, `› looks rows up by link in every state, and refuses links for a type naming none`.
+**Tests:** `compliance/links.test.ts › answers by link only the items of the type named`, `› looks items up by link in every state, and refuses links for a type naming none`.
 
 ### `search-and-filters/lookup-by-key`
 
-When `POST /items/lookup` names `source` and `source_ids`, the server MUST answer the rows holding those natural keys, whatever their type.
+When `POST /items/lookup` names `source` and `source_ids`, the server MUST answer the items holding those natural keys, whatever their type.
 
-**Reason:** a row retyped since it was written is still found.
+**Reason:** an item retyped since it was written is still found.
 
-**Tests:** `compliance/links.test.ts › looks rows up by natural key whatever their type`.
+**Tests:** `compliance/links.test.ts › looks items up by natural key whatever their type`.
 
 ### `search-and-filters/lookup-by-id`
 
-When `POST /items/lookup` names `ids`, the server MUST answer the rows with those ids, whatever their type.
+When `POST /items/lookup` names `ids`, the server MUST answer the items with those ids, whatever their type.
 
-**Tests:** `compliance/links.test.ts › looks rows up by id in every state, where bulk-get leaves the bin out, and leaves a system row out`.
+**Tests:** `compliance/links.test.ts › looks items up by id in every state, where bulk-get leaves the bin out, and leaves a system item out`.
 
 ### `search-and-filters/lookup-every-state`
 
-When `POST /items/lookup` finds a row, the server MUST answer it in whatever state it holds, the bin included.
+When `POST /items/lookup` finds an item, the server MUST answer it in whatever state it holds, the bin included.
 
-**Reason:** a lookup asks whether a key is held, and a row in the bin still holds it. `POST /items/bulk-get` leaves the bin out (`items/bulk-get`).
+**Reason:** a lookup asks whether a key is held, and an item in the bin still holds it. `POST /items/bulk-get` leaves the bin out (`items/bulk-get`).
 
-**Tests:** `compliance/links.test.ts › looks rows up by link in every state, and refuses links for a type naming none`, `› looks rows up by natural key whatever their type`, `› looks rows up by id in every state, where bulk-get leaves the bin out, and leaves a system row out`.
+**Tests:** `compliance/links.test.ts › looks items up by link in every state, and refuses links for a type naming none`, `› looks items up by natural key whatever their type`, `› looks items up by id in every state, where bulk-get leaves the bin out, and leaves a system item out`.
 
 ### `search-and-filters/lookup-order`
 
-The server MUST answer the rows of `POST /items/lookup` in the order the request named their keys, each row once.
+The server MUST answer the items of `POST /items/lookup` in the order the request named their keys, each item once.
 
-**Tests:** `compliance/links.test.ts › looks rows up by link in every state, and refuses links for a type naming none`, `› looks rows up by id in every state, where bulk-get leaves the bin out, and leaves a system row out`.
+**Tests:** `compliance/links.test.ts › looks items up by link in every state, and refuses links for a type naming none`, `› looks items up by id in every state, where bulk-get leaves the bin out, and leaves a system item out`.
 
 ### `search-and-filters/lookup-system-left-out`
 
-The server MUST leave out of the rows of `POST /items/lookup` a `system.*` row, whichever key names it.
+The server MUST leave out of the items of `POST /items/lookup` a `system.*` item, whichever key names it.
 
-**Tests:** `compliance/links.test.ts › looks rows up by id in every state, where bulk-get leaves the bin out, and leaves a system row out`, `› leaves out a system row that holds a natural key a lookup names`.
+**Tests:** `compliance/links.test.ts › looks items up by id in every state, where bulk-get leaves the bin out, and leaves a system item out`, `› leaves out a system item that holds a natural key a lookup names`.
 
 ### `search-and-filters/lookup-unreadable-left-out`
 
-The server MUST leave out of the rows of `POST /items/lookup` a row whose type the credential's type map cannot read.
+The server MUST leave out of the items of `POST /items/lookup` an item whose type the credential's type map cannot read.
 
-**Tests:** `compliance/links.test.ts › leaves out a row the key may not read, and refuses a key that may not read the type`.
+**Tests:** `compliance/links.test.ts › leaves out an item the key may not read, and refuses a key that may not read the type`.
 
 ### `search-and-filters/lookup-tombstones`
 
@@ -1590,7 +1590,7 @@ When `POST /items/lookup` names links or natural keys, the server MUST answer un
 
 **Reason:** `items/tombstone` states what a purge leaves, and `items/tombstone-own-type` that a tombstone is answered only under the type it was recorded under.
 
-**Tests:** `compliance/links.test.ts › leaves a tombstone for a purged row's link and natural key`, `› answers tombstones in the order named`, `› keeps each tombstone to its type, read and moved`.
+**Tests:** `compliance/links.test.ts › leaves a tombstone for a purged item's link and natural key`, `› answers tombstones in the order named`, `› keeps each tombstone to its type, read and moved`.
 
 ### `search-and-filters/lookup-tombstones-subtype`
 
@@ -1602,15 +1602,15 @@ When `POST /items/lookup` answers a credential that may read a type under `type`
 
 ### `search-and-filters/lookup-source-filter`
 
-When `POST /items/lookup` names `ids`, or `source` and `source_ids`, the server MUST answer a row that the `enforcement.source_filter` holding for the credential leaves out of `GET /items`.
+When `POST /items/lookup` names `ids`, or `source` and `source_ids`, the server MUST answer an item that the `enforcement.source_filter` holding for the credential leaves out of `GET /items`.
 
-**Reason:** a lookup names the rows it wants, as a read by id does (`types/source-filter-by-id`), so a row left out would read as a row that does not exist.
+**Reason:** a lookup names the items it wants, as a read by id does (`types/source-filter-by-id`), so an item left out would read as an item that does not exist.
 
-**Tests:** `compliance/schema-enforcement.test.ts › answers a row the instance's source filter leaves out of listings, as a read by key`.
+**Tests:** `compliance/schema-enforcement.test.ts › answers an item the instance's source filter leaves out of listings, as a read by key`.
 
 ### `search-and-filters/lookup-edges`
 
-When `POST /items/lookup` names `include: ["edges"]`, the server MUST add to each row its outbound edges as `GET /items?include=edges` does.
+When `POST /items/lookup` names `include: ["edges"]`, the server MUST add to each item its outbound edges as `GET /items?include=edges` does.
 
 **Tests:** `compliance/links.test.ts › hydrates edges on a lookup as the listing does`.
 
@@ -1620,7 +1620,7 @@ If `POST /items/lookup` names a registered `type` and the credential may read ne
 
 **Reason:** an empty page would say that the keys named nothing. A type under `type` that the credential may read is held to `search-and-filters/type-descendant-readable`.
 
-**Tests:** `compliance/unreadable-type-filter.test.ts › answers 403 where it used to answer an empty 200, and 400 for an unregistered type`, `compliance/links.test.ts › leaves out a row the key may not read, and refuses a key that may not read the type`.
+**Tests:** `compliance/unreadable-type-filter.test.ts › answers 403 where it used to answer an empty 200, and 400 for an unregistered type`, `compliance/links.test.ts › leaves out an item the key may not read, and refuses a key that may not read the type`.
 
 ### `search-and-filters/lookup-body-first`
 
@@ -1658,13 +1658,13 @@ If a `POST /items/lookup` body names more than 500 values, then the server MUST 
 
 If a `POST /items/lookup` body names `links` for a `type` that names no `link_field`, then the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/links.test.ts › looks rows up by link in every state, and refuses links for a type naming none`, `› refuses a lookup naming no selector, two, or more than 500 values`.
+**Tests:** `compliance/links.test.ts › looks items up by link in every state, and refuses links for a type naming none`, `› refuses a lookup naming no selector, two, or more than 500 values`.
 
 ### `search-and-filters/lookup-bad-id`
 
 If a `POST /items/lookup` body names an id that is malformed, then the server MUST answer `400 invalid_id`.
 
-**Tests:** `compliance/links.test.ts › looks rows up by id in every state, where bulk-get leaves the bin out, and leaves a system row out`, `compliance/unreadable-type-filter.test.ts › answers 400 for a body it cannot read before it asks whether the key may read the type`.
+**Tests:** `compliance/links.test.ts › looks items up by id in every state, where bulk-get leaves the bin out, and leaves a system item out`, `compliance/unreadable-type-filter.test.ts › answers 400 for a body it cannot read before it asks whether the key may read the type`.
 
 ### `search-and-filters/lookup-bad-type`
 
@@ -1684,7 +1684,7 @@ Every list and every search answers the same envelope. A hydrated block of edges
 
 ### `search-and-filters/page-envelope`
 
-When a list or a search answers, the server MUST carry the rows under `data` and the cursor that continues them under `next_cursor`, `null` on the last page, and no other key but a sibling that the operation's own rule names.
+When a list or a search answers, the server MUST carry the items under `data` and the cursor that continues them under `next_cursor`, `null` on the last page, and no other key but a sibling that the operation's own rule names.
 
 **Reason:** a client reads every page from one shape, and the siblings are `occurrences/answer-keys`, the `min_copies` of `GET /blobs/stores`, and the `retention_days` of `GET /trash`.
 
@@ -1704,11 +1704,11 @@ The server MUST answer `GET /auth/grants` in the envelope of a list.
 
 ### `search-and-filters/page-full-last`
 
-When the rows of a page fill it exactly and it holds the last row, the server MUST answer `next_cursor` `null` on every operation that takes a cursor.
+When the items of a page fill it exactly and it holds the last item, the server MUST answer `next_cursor` `null` on every operation that takes a cursor.
 
 **Reason:** a walk then never ends on an empty page it was sent to. A page can still be short or empty with a cursor to follow, so a walk stops on `null` and never on a short page (`edges/read-list-short`).
 
-**Tests:** `compliance/full-last-page.test.ts › %s answers null when the rows fill the page exactly`, `› covers every door that takes a cursor`.
+**Tests:** `compliance/full-last-page.test.ts › %s answers null when the items fill the page exactly`, `› covers every door that takes a cursor`.
 
 ## Export
 
@@ -1718,7 +1718,7 @@ When the rows of a page fill it exactly and it holds the last row, the server MU
 
 When `GET /export` names no `format`, the server MUST answer NDJSON with one line per item, carrying the item and its metadata.
 
-**Tests:** `compliance/export.test.ts › filters by type`, `› filters by state`, `› carries on each row only the extension namespaces the key may read, on both output formats`.
+**Tests:** `compliance/export.test.ts › filters by type`, `› filters by state`, `› carries on each item only the extension namespaces the key may read, on both output formats`.
 
 ### `search-and-filters/export-edge-lines`
 
@@ -1736,11 +1736,11 @@ When a credential requests an export, the server MUST leave out the items of eve
 
 ### `search-and-filters/export-extensions`
 
-When `GET /export` answers a credential with a row, the server MUST carry on it only the extension namespaces that credential may read, in both formats.
+When `GET /export` answers a credential with an item, the server MUST carry on it only the extension namespaces that credential may read, in both formats.
 
 **Reason:** an archive written by a credential restores only the namespaces that credential may read. `keys-and-oauth/extension-map-only` states what a credential may read of an extension.
 
-**Tests:** `compliance/export.test.ts › carries on each row only the extension namespaces the key may read, on both output formats`.
+**Tests:** `compliance/export.test.ts › carries on each item only the extension namespaces the key may read, on both output formats`.
 
 ### `search-and-filters/export-format`
 
@@ -1754,29 +1754,29 @@ If `GET /export` names a `format` other than `ndjson` or `archive`, then the ser
 
 When `GET /export?format=archive` names `files=false`, the server MUST carry no `blobs/<hash>` entry, list no blob in `blobs`, count none in `blob_count`, and name in `missing_blobs` each blob the archive would otherwise have carried.
 
-**Reason:** a person who wants a copy of their rows, and not the often far larger files they name, can take one, and a restore of it reports in `blobs_missing` the files the instance it restores into does not hold.
+**Reason:** a person who wants a copy of their items, and not the often far larger files they name, can take one, and a restore of it reports in `blobs_missing` the files the instance it restores into does not hold.
 
 **Tests:** `compliance/export.test.ts › leaves out the bytes of files and names them under missing_blobs when it names files=false`.
 
 ### `search-and-filters/export-state-default`
 
-When `GET /export` names no `state`, the server MUST carry the rows of every state but `trashed`.
+When `GET /export` names no `state`, the server MUST carry the items of every state but `trashed`.
 
-**Reason:** the archive this operation writes is what a restore reads back, so a default that dropped archived rows would lose them on the round trip. The bin is the one thing a copy leaves behind.
+**Reason:** the archive this operation writes is what a restore reads back, so a default that dropped archived items would lose them on the round trip. The bin is the one thing a copy leaves behind.
 
-**Tests:** `compliance/state-default.test.ts › an export that names no state carries archived rows`, `compliance/export.test.ts › carries archived rows and leaves out the bin when an archive names no state`.
+**Tests:** `compliance/state-default.test.ts › an export that names no state carries archived items`, `compliance/export.test.ts › carries archived items and leaves out the bin when an archive names no state`.
 
 ### `search-and-filters/export-state-any`
 
-When `GET /export` names `state=any`, the server MUST carry every row it holds, the bin included, in both formats.
+When `GET /export` names `state=any`, the server MUST carry every item it holds, the bin included, in both formats.
 
-**Tests:** `compliance/export.test.ts › carries every row it holds, the bin included, when it names state=any, on both formats`.
+**Tests:** `compliance/export.test.ts › carries every item it holds, the bin included, when it names state=any, on both formats`.
 
 ### `search-and-filters/export-state-trashed`
 
-When `GET /export` names `state=trashed`, the server MUST carry only the rows in the bin, in both formats.
+When `GET /export` names `state=trashed`, the server MUST carry only the items in the bin, in both formats.
 
-**Tests:** `compliance/export.test.ts › carries only the rows in the bin when it names state=trashed, on both formats`.
+**Tests:** `compliance/export.test.ts › carries only the items in the bin when it names state=trashed, on both formats`.
 
 ### `search-and-filters/archive-media-type`
 
@@ -1788,15 +1788,15 @@ When `GET /export` names `format=archive`, the server MUST answer a tar archive 
 
 ### `search-and-filters/archive-same-selection`
 
-When `GET /export?format=archive` names the filters of an NDJSON export, the server MUST select the rows that export selects.
+When `GET /export?format=archive` names the filters of an NDJSON export, the server MUST select the items that export selects.
 
-**Tests:** `compliance/export.test.ts › carries every row it holds, the bin included, when it names state=any, on both formats`, `› carries only the rows in the bin when it names state=trashed, on both formats`, `› refuses a bound that is not an instant, on both output formats`.
+**Tests:** `compliance/export.test.ts › carries every item it holds, the bin included, when it names state=any, on both formats`, `› carries only the items in the bin when it names state=trashed, on both formats`, `› refuses a bound that is not an instant, on both output formats`.
 
 ### `search-and-filters/archive-entries`
 
 The server MUST write an archive's entries in this order: `manifest.json`, then the gzip-compressed line files `instance.ndjson.gz`, `items.ndjson.gz` and `edges.ndjson.gz`, then an uncompressed `blobs/<hash>` entry for each blob its manifest lists in `blobs`.
 
-**Reason:** the manifest comes first, so a reader knows what the archive holds before it reads the rest, and the registrations come before the rows, so a restore can check each row as it arrives.
+**Reason:** the manifest comes first, so a reader knows what the archive holds before it reads the rest, and the registrations come before the item and edge lines, so a restore can check each line as it arrives.
 
 **Tests:** `compliance/export.test.ts › opens an archive with its manifest, and the manifest counts what the archive holds`.
 
@@ -1842,7 +1842,7 @@ When an item that `GET /export?format=archive` carries is of `core.file` or a ty
 
 The server MUST NOT name in the manifest's `missing_blobs` a hash that the instance holds no blob of and that no carried file's `blob_ref` names.
 
-**Reason:** a run of hex in a row's text, or in any other property, may be anything, such as a checksum someone noted down. Only the instance's own record, or a file's `blob_ref`, makes it a blob.
+**Reason:** a run of hex in an item's text, or in any other property, may be anything, such as a checksum someone noted down. Only the instance's own record, or a file's `blob_ref`, makes it a blob.
 
 **Tests:** `compliance/export-missing-blob.test.ts › names in a later archive's missing_blobs a file's blob that a restore answered missing`.
 
@@ -1918,7 +1918,7 @@ The server MUST hold nothing in an archive but `manifest.json`, `instance.ndjson
 
 The server MUST carry in the `instance.ndjson.gz` of an archive a `type` line for every type, and an `edge_type` line for every edge type, registered on the instance beside the ones the build ships, whatever the selection and whatever the credential may read.
 
-**Reason:** the registrations are the instance's own and not the selected rows', so a restore into a new instance gets the types its rows need.
+**Reason:** the registrations are the instance's own and not the selected items', so a restore into a new instance gets the types its items need.
 
 **Tests:** `compliance/export.test.ts › carries every registered type and edge type in an archive, whatever its selection and credential reach`.
 
@@ -1950,7 +1950,7 @@ If a `type_icon` line of an archive names an icon that `types/icon-name` refuses
 
 If a `type_icon` line of an archive is not an object holding a `type_id` and a string `icon`, or names a type that neither the archive nor the instance registers, then the server MUST answer `POST /restore` with `400 invalid_schema` and write nothing.
 
-**Reason:** a line that is damaged, or an icon for a type nothing registers (`types/icon-missing-type`), is a fault in the archive and not a difference of release, and a restore checks every row before it writes any.
+**Reason:** a line that is damaged, or an icon for a type nothing registers (`types/icon-missing-type`), is a fault in the archive and not a difference of release, and a restore checks every line before it writes any.
 
 **Tests:** `compliance/type-icons.test.ts › skips and counts an icon outside the pinned sets, and refuses a line that names no type or no icon string, writing nothing`.
 
@@ -1972,9 +1972,9 @@ When `POST /restore` reads a `source` line, the server MUST set that name and ma
 
 ### `search-and-filters/restore-sources-app`
 
-When `POST /restore` reads a `source` line whose code starts with `oauth:`, the server MUST set the name and mark on that code with `restored:` before it, the code the restore gives the rows of that source.
+When `POST /restore` reads a `source` line whose code starts with `oauth:`, the server MUST set the name and mark on that code with `restored:` before it, the code the restore gives the items of that source.
 
-**Reason:** a restored row keeps no app's authority (`keys-and-oauth/claims-reserved`), so its source's name follows it to the restored code.
+**Reason:** a restored item keeps no app's authority (`keys-and-oauth/claims-reserved`), so its source's name follows it to the restored code.
 
 **Tests:** `compliance/source-names.test.ts › skips and counts a mark outside the pinned sets, and refuses a damaged source line, writing nothing`.
 
@@ -2094,19 +2094,19 @@ When a snapshot in an archive requested by a credential names a blob, the server
 
 ### `search-and-filters/archive-selection-read`
 
-The server MUST read every row, registration and record an archive carries from one snapshot of the instance, and count in its manifest exactly the items and edges its line files hold.
+The server MUST read every item, edge, registration and record an archive carries from one snapshot of the instance, and count in its manifest exactly the items and edges its line files hold.
 
-**Reason:** one snapshot is one committed state, so no write can make the rows an archive carries disagree with each other, and the selection is read whole before the first byte is sent, because the manifest comes first and a tar header carries each entry's size.
+**Reason:** one snapshot is one committed state, so no write can make the items and edges an archive carries disagree with each other, and the selection is read whole before the first byte is sent, because the manifest comes first and a tar header carries each entry's size.
 
-**Tests:** `compliance/export-snapshot.test.ts › carries the selection as it stood when the read began, and counts what its line files hold`, `compliance/export.test.ts › counts every row the archive holds in its manifest when the headers arrive`.
+**Tests:** `compliance/export-snapshot.test.ts › carries the selection as it stood when the read began, and counts what its line files hold`, `compliance/export.test.ts › counts every item the archive holds in its manifest when the headers arrive`.
 
-### `search-and-filters/archive-row-as-read`
+### `search-and-filters/archive-item-as-read`
 
-When a row is written after the selection read of `GET /export?format=archive` has begun, the server MUST carry the row as it stood before that write.
+When an item is written after the selection read of `GET /export?format=archive` has begun, the server MUST carry the item as it stood before that write.
 
 **Reason:** the archive's selection is one snapshot, taken before its headers are sent.
 
-**Tests:** `compliance/export-snapshot.test.ts › carries the selection as it stood when the read began, and counts what its line files hold`, `compliance/export.test.ts › carries a row as it stood when the export read it, whatever is written to it after the headers`.
+**Tests:** `compliance/export-snapshot.test.ts › carries the selection as it stood when the read began, and counts what its line files hold`, `compliance/export.test.ts › carries an item as it stood when the export read it, whatever is written to it after the headers`.
 
 ### `search-and-filters/archive-no-later-item`
 
@@ -2130,17 +2130,17 @@ When an edge is created after the selection read of `GET /export?format=archive`
 
 When `GET /export?format=archive` returns a complete archive, the server MUST ensure that the archive passes `POST /restore` validation into an empty store running the same build, without skipping any carried item or edge.
 
-**Reason:** `schema.write` permits replacements that leave an earlier row that a restore refuses, such as a type that becomes an event while a row holds a rule no calendar read can unfold (`types/evolve-schema-write`), so the export checks every row it carries with the restore's own checks. The guarantee excludes destination conflicts and the destination's own settings; missing blobs keep their declared missing status.
+**Reason:** `schema.write` permits replacements that leave an earlier item that a restore refuses, such as a type that becomes an event while an item holds a rule no calendar read can unfold (`types/evolve-schema-write`), so the export checks every item and edge it carries with the restore's own checks. The guarantee excludes destination conflicts and the destination's own settings; missing blobs keep their declared missing status.
 
 **Tests:** `compliance/export-write-order.test.ts › restores an archive as its selection stood when read, whatever lands while it is read`, `› restores a custom type retyped away and deleted between archive pages`.
 
-### `search-and-filters/archive-rows-shape-free`
+### `search-and-filters/archive-items-shape-free`
 
 When `GET /export?format=archive` selects an item that is not of a `core` or `system` type that this build ships, the server MUST NOT refuse the export because the item lacks a field its type requires, holds a value its type's field does not accept, or is of a type that is not registered.
 
-**Reason:** the export checks the selection with the restore's checks (`search-and-filters/archive-restorable`), and a restore takes such an item (`search-and-filters/restore-rows-shape-free`, `search-and-filters/restore-rows-orphan`). A type gains a required field while its rows stand (`types/field-gained`), and a forced delete leaves the rows of a type (`types/delete-force`), so an instance that refused to export them could not be backed up.
+**Reason:** the export checks the selection with the restore's checks (`search-and-filters/archive-restorable`), and a restore takes such an item (`search-and-filters/restore-items-shape-free`, `search-and-filters/restore-items-orphan`). A type gains a required field while its items stand (`types/field-gained`), and a forced delete leaves the items of a type (`types/delete-force`), so an instance that refused to export them could not be backed up.
 
-**Tests:** `compliance/restore-rows-shape.test.ts › restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`, `› restores an item that lacks a field its type now requires, as the archive holds it, and still holds an ordinary write to the type`.
+**Tests:** `compliance/restore-items-shape.test.ts › restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`, `› restores an item that lacks a field its type now requires, as the archive holds it, and still holds an ordinary write to the type`.
 
 ### `search-and-filters/archive-edges-unregistered`
 
@@ -2158,13 +2158,13 @@ When `GET /export?format=archive` selects an edge with an end that is an item of
 
 **Tests:** `compliance/restore-edges-constraint-types.test.ts › keeps an edge whose source constraint names the deleted type, and still refuses a registered end the constraint does not admit`, `› keeps an edge whose target constraint names the deleted type`, `› judges a constraint that lists a registered and a deleted type by the endpoint: an end of the deleted type is kept, and an end of a registered type must be one the list names`.
 
-### `search-and-filters/archive-rows-refused`
+### `search-and-filters/archive-entries-refused`
 
-If a row of the selection of `GET /export?format=archive` is one a restore would refuse or skip, then the server MUST answer `409 export_rows_unrestorable` without sending archive bytes, with `details.row` naming that row's `kind`, `id`, `type` and `field` and the `code` that restore refuses it with or the reason restore skips it for.
+If an item or an edge of the selection of `GET /export?format=archive` is one a restore would refuse or skip, then the server MUST answer `409 export_entry_unrestorable` without sending archive bytes, with `details.entry` naming it by its `kind`, `id`, `type` and `field` and the `code` that restore refuses it with or the reason restore skips it for.
 
-**Reason:** the fault is in the instance's own data, such as a row that a type's replacement schema no longer accepts, so the owner needs the row named to correct it.
+**Reason:** the fault is in the instance's own data, such as an item that a type's replacement schema no longer accepts, so the owner needs the item named to correct it.
 
-**Tests:** `compliance/export-rows-refused.test.ts › answers 409 naming the row, and exports once the row is corrected`.
+**Tests:** `compliance/export-entries-refused.test.ts › answers 409 naming the entry, and exports once the entry is corrected`.
 
 ### `search-and-filters/archive-spool-ended`
 
@@ -2176,7 +2176,7 @@ When a `GET /export?format=archive` response ends, whether the archive was read 
 
 ### `search-and-filters/archive-spool-fault`
 
-If the selection read, the check of its rows or the sending of `GET /export?format=archive` fails, then the server MUST leave nothing of the export on disk.
+If the selection read, the check of its lines or the sending of `GET /export?format=archive` fails, then the server MUST leave nothing of the export on disk.
 
 **Tests:** `compliance/export-faults.test.ts › is answered with an error, not an archive, and leaves nothing of the export on disk`.
 
@@ -2216,7 +2216,7 @@ When the key or signed-in app that a `GET /export` request was admitted on is re
 
 If the credential that a `GET /export` request was admitted on is narrowed while the response is open, so that it no longer reads something the export has still to send, then the server MUST end the response with an error and not with a clean end, in both formats.
 
-**Reason:** an export that left out what the credential can no longer read would be a copy that is incomplete without saying so, and an archive has already promised its rows and blobs in its manifest.
+**Reason:** an export that left out what the credential can no longer read would be a copy that is incomplete without saying so, and an archive has already promised its items, edges and blobs in its manifest.
 
 **Tests:** `compliance/export-credential.test.ts › ends with an error when its key is narrowed to types the export does not carry`.
 
@@ -2462,27 +2462,27 @@ When `POST /restore` reads an edge whose endpoint is an item in the bin, the ser
 
 ### `search-and-filters/restore-duplicate`
 
-When an archived item holds an id or a natural key that a row on the instance already holds, or a link that a row of its type already holds, the server MUST count it in `duplicates`.
+When an archived item holds an id or a natural key that an item on the instance already holds, or a link that an item of its type already holds, the server MUST count it in `duplicates`.
 
-**Reason:** a link is one row's within its type (`items/link-taken`).
+**Reason:** a link is one item's within its type (`items/link-taken`).
 
-**Tests:** `compliance/restore-archive.test.ts › round-trips: archive export then restore accepts the same payload`, `› answers the restore result fields on the first restore and on a repeat`, `compliance/links.test.ts › counts an archived row whose link another row holds as a duplicate`.
+**Tests:** `compliance/restore-archive.test.ts › round-trips: archive export then restore accepts the same payload`, `› answers the restore result fields on the first restore and on a repeat`, `compliance/links.test.ts › counts an archived item whose link another item holds as a duplicate`.
 
 ### `search-and-filters/restore-duplicate-kept`
 
-When `POST /restore` counts an archived item as a duplicate, the server MUST leave the existing item's row, tags, extensions and history as they are.
+When `POST /restore` counts an archived item as a duplicate, the server MUST leave the existing item's properties, tags, extensions and history as they are.
 
 **Reason:** replaying a backup must not overwrite work made since the backup.
 
-**Tests:** `compliance/archive-history.test.ts › leaves an existing row, its tags, its extensions and its history alone when the archive's copy is a duplicate`.
+**Tests:** `compliance/archive-history.test.ts › leaves an existing item, its tags, its extensions and its history alone when the archive's copy is a duplicate`.
 
 ### `search-and-filters/restore-link-held`
 
-If an archive registers a type with a `link_field` in which two rows that a forced delete left share a value, then the server MUST answer `409 link_taken`.
+If an archive registers a type with a `link_field` in which two items that a forced delete left share a value, then the server MUST answer `409 link_taken`.
 
 **Reason:** a type that an archive registers is held to its `link_field` as `POST /types` holds one (`types/link-gained`).
 
-**Tests:** `compliance/links.test.ts › stops a restore registering a link the rows a forced delete left share`.
+**Tests:** `compliance/links.test.ts › stops a restore registering a link the items a forced delete left share`.
 
 ### `search-and-filters/restore-compatible-types`
 
@@ -2514,7 +2514,7 @@ If an archive registers a type with a key `types/unknown-key` refuses, or an edg
 
 ### `search-and-filters/restore-nothing`
 
-When `POST /restore` takes an archive that carries no row, the server MUST answer `200` with `imported` of 0.
+When `POST /restore` takes an archive that carries no item, the server MUST answer `200` with `imported` of 0.
 
 **Reason:** an archive of nothing is not an empty body, and its members are present and empty, which `search-and-filters/restore-members` tells from missing.
 
@@ -2530,7 +2530,7 @@ If the body of `POST /restore` is empty, then the server MUST answer `400 valida
 
 If an archive lacks `manifest.json`, `instance.ndjson.gz`, `items.ndjson.gz` or `edges.ndjson.gz`, then the server MUST answer `400 validation_error` naming each missing entry in the message and in `details.entries`.
 
-**Reason:** an export writes all four even when it holds no row (`search-and-filters/archive-entries`), so a missing entry is a damaged archive or a file that is no archive, and an archive of nothing is told from it by its entries being empty (`search-and-filters/restore-nothing`). Without the check a restore answers `200` with counts of zero for a file it never read.
+**Reason:** an export writes all four even when it holds no item (`search-and-filters/archive-entries`), so a missing entry is a damaged archive or a file that is no archive, and an archive of nothing is told from it by its entries being empty (`search-and-filters/restore-nothing`). Without the check a restore answers `200` with counts of zero for a file it never read.
 
 **Tests:** `compliance/restore-archive.test.ts › refuses an archive without %s, naming it, and writes nothing`, `› refuses a tar that is no archive, naming every member it lacks`.
 
@@ -2568,13 +2568,13 @@ If the `manifest.json` of an archive is missing `version`, or `blobs`, or mistyp
 
 ### `search-and-filters/restore-state`
 
-If an archive records a row in a state that its type's lifecycle cannot produce, such as `revoked` for a canonical type, `trashed` for a `system.*` type or a value that is no state, then the server MUST answer `400 validation_error` naming the row.
+If an archive records an item in a state that its type's lifecycle cannot produce, such as `revoked` for a canonical type, `trashed` for a `system.*` type or a value that is no state, then the server MUST answer `400 validation_error` naming the item.
 
 **Tests:** `compliance/restore-archive.test.ts › refuses an archive recording a state the type's lifecycle cannot produce, and writes nothing`.
 
 ### `search-and-filters/restore-state-kept`
 
-When `POST /restore` takes a canonical row in a state that its lifecycle contains, the server MUST write the row in the state recorded.
+When `POST /restore` takes a canonical item in a state that its lifecycle contains, the server MUST write the item in the state recorded.
 
 **Tests:** `compliance/restore-archive.test.ts › refuses an archive recording a state the type's lifecycle cannot produce, and writes nothing`.
 
@@ -2602,23 +2602,23 @@ When restoring a `system.connection` item whose `kind` property is `app`, the se
 
 ### `search-and-filters/restore-scalars`
 
-If an archive records a `version` of an item or an edge that is not a positive safe integer, or a `tier` of an item that is not `library` or `feed`, then the server MUST answer `400 validation_error` naming the row and the field.
+If an archive records a `version` of an item or an edge that is not a positive safe integer, or a `tier` of an item that is not `library` or `feed`, then the server MUST answer `400 validation_error` naming the line and the field.
 
 **Tests:** `compliance/archive-scalars.test.ts › refuses invalid $field=$value before writing the archive`.
 
 ### `search-and-filters/restore-text`
 
-If the `manifest.json` of an archive, or a line the restore reads from its `instance.ndjson.gz`, `items.ndjson.gz` or `edges.ndjson.gz`, holds a string or an object key with a surrogate escape that has no partner, then the server MUST answer `400 validation_error` naming the entry or the row and the JSON pointer of the text, and write nothing.
+If the `manifest.json` of an archive, or a line the restore reads from its `instance.ndjson.gz`, `items.ndjson.gz` or `edges.ndjson.gz`, holds a string or an object key with a surrogate escape that has no partner, then the server MUST answer `400 validation_error` naming the entry or the line and the JSON pointer of the text, and write nothing.
 
 **Reason:** a restore is not a way to plant text the write doors refuse (`items/json-text-well-formed`).
 
-**Tests:** `compliance/well-formed-text.test.ts › refuses a %s that holds a surrogate escape with no partner, naming the row and where, and takes a pair there`.
+**Tests:** `compliance/well-formed-text.test.ts › refuses a %s that holds a surrogate escape with no partner, naming the line and where, and takes a pair there`.
 
 ### `search-and-filters/restore-scalars-held`
 
-When an archive records an invalid `version` or `tier` for a row that the instance already holds, or for an edge whose endpoint is missing, the server MUST still refuse the archive.
+When an archive records an invalid `version` or `tier` for an item that the instance already holds, or for an edge whose endpoint is missing, the server MUST still refuse the archive.
 
-**Tests:** `compliance/archive-scalars.test.ts › refuses invalid %s even when the row already exists`, `› refuses an invalid edge version even when its endpoint is missing`.
+**Tests:** `compliance/archive-scalars.test.ts › refuses invalid %s even when the item already exists`, `› refuses an invalid edge version even when its endpoint is missing`.
 
 ### `search-and-filters/restore-scalars-kept`
 
@@ -2630,41 +2630,41 @@ When `POST /restore` writes an item or an edge, the server MUST keep the `versio
 
 ### `search-and-filters/restore-dates`
 
-If an archive records a `created_at` or `updated_at` of an item or an edge that is not an instant, then the server MUST answer `400 validation_error` naming the row and the field.
+If an archive records a `created_at` or `updated_at` of an item or an edge that is not an instant, then the server MUST answer `400 validation_error` naming the line and the field.
 
-**Tests:** `compliance/archive-history.test.ts › refuses a row whose %s is malformed, and writes the row ahead of it nowhere`, `› refuses an edge whose date is malformed even when an endpoint is missing`.
+**Tests:** `compliance/archive-history.test.ts › refuses an item whose %s is malformed, and writes the item ahead of it nowhere`, `› refuses an edge whose date is malformed even when an endpoint is missing`.
 
 ### `search-and-filters/restore-dates-utc`
 
-When `POST /restore` writes a row, the server MUST write its `created_at` and `updated_at`, and the `created_at` and `occurred_at` of each snapshot in its history, as the instants they name, in UTC to the millisecond.
+When `POST /restore` writes an item, the server MUST write its `created_at` and `updated_at`, and the `created_at` and `occurred_at` of each snapshot in its history, as the instants they name, in UTC to the millisecond.
 
 **Reason:** canonical UTC values remain comparable with the filters and cursors of a listing, and with the dates of the versions the instance writes itself.
 
-**Tests:** `compliance/archive-history.test.ts › writes a row's dates in UTC to the millisecond`, `compliance/restore-archive.test.ts › writes a snapshot's dates in UTC to the millisecond`.
+**Tests:** `compliance/archive-history.test.ts › writes an item's dates in UTC to the millisecond`, `compliance/restore-archive.test.ts › writes a snapshot's dates in UTC to the millisecond`.
 
 ### `search-and-filters/restore-history-shape`
 
-If an archive records history that is not an array of snapshots, each an object with a valid snapshot ID, the item's own ID, object properties, a type identifier, a `library` or `feed` tier, `created_at` and `occurred_at` instants, and a `source_id` that is a string or null, then the server MUST answer `400 validation_error` naming the row and the field.
+If an archive records history that is not an array of snapshots, each an object with a valid snapshot ID, the item's own ID, object properties, a type identifier, a `library` or `feed` tier, `created_at` and `occurred_at` instants, and a `source_id` that is a string or null, then the server MUST answer `400 validation_error` naming the line and the field.
 
-**Tests:** `compliance/archive-history.test.ts › refuses a row whose %s is malformed, and writes the row ahead of it nowhere`.
+**Tests:** `compliance/archive-history.test.ts › refuses an item whose %s is malformed, and writes the item ahead of it nowhere`.
 
 ### `search-and-filters/restore-history-version`
 
-If an archive records a snapshot whose `version` is not a positive safe integer below the item's version, or repeats one of the same item's history, then the server MUST answer `400 validation_error` naming the row and the field.
+If an archive records a snapshot whose `version` is not a positive safe integer below the item's version, or repeats one of the same item's history, then the server MUST answer `400 validation_error` naming the line and the field.
 
-**Tests:** `compliance/archive-history.test.ts › refuses a row whose %s is malformed, and writes the row ahead of it nowhere`.
+**Tests:** `compliance/archive-history.test.ts › refuses an item whose %s is malformed, and writes the item ahead of it nowhere`.
 
 ### `search-and-filters/restore-history-id`
 
-If an archive records a snapshot ID that repeats another snapshot's of the archive, the same item's or another's, then the server MUST answer `400 validation_error` naming the row and the field.
+If an archive records a snapshot ID that repeats another snapshot's of the archive, the same item's or another's, then the server MUST answer `400 validation_error` naming the line and the field.
 
-**Tests:** `compliance/archive-history.test.ts › refuses a row whose %s is malformed, and writes the row ahead of it nowhere`.
+**Tests:** `compliance/archive-history.test.ts › refuses an item whose %s is malformed, and writes the item ahead of it nowhere`.
 
 ### `search-and-filters/restore-malformed-held`
 
-When an archive records a malformed date or history for a row that the instance already holds, the server MUST still refuse the archive.
+When an archive records a malformed date or history for an item that the instance already holds, the server MUST still refuse the archive.
 
-**Tests:** `compliance/archive-history.test.ts › refuses a malformed date or history even when the row is one the instance already holds`.
+**Tests:** `compliance/archive-history.test.ts › refuses a malformed date or history even when the item is one the instance already holds`.
 
 ### `search-and-filters/restore-history-exact`
 
@@ -2680,51 +2680,51 @@ The server MUST NOT hold a restored snapshot's properties to the current shape o
 
 **Tests:** `compliance/archive-history.test.ts › restores a snapshot the type's current shape would refuse, as it was`.
 
-### `search-and-filters/restore-rows-shape-free`
+### `search-and-filters/restore-items-shape-free`
 
 When `POST /restore` writes an item that is not of a `core` or `system` type that this build ships, the server MUST NOT refuse it because its properties lack a field its type requires or hold a value its type's field does not accept.
 
-**Reason:** a type gains a required field while its rows stand (`types/field-gained`), so an archive that an export wrote can hold a row that its type no longer accepts, and an export that the same build cannot restore is not a usable backup (`search-and-filters/restore-no-count-limit`). The current rows are held to the shape they had as a snapshot's properties are (`search-and-filters/restore-history-shape-free`). A `core` or `system` type that this build ships is read by the server's own code and cannot be deleted or replaced, so its rows keep to it. A property that no type declares is still refused where strict mode names the type (`search-and-filters/restore-strict`), and an event's schedule and a task's `recurrence` are still judged (`occurrences/schedule-unreadable`).
+**Reason:** a type gains a required field while its items stand (`types/field-gained`), so an archive that an export wrote can hold an item that its type no longer accepts, and an export that the same build cannot restore is not a usable backup (`search-and-filters/restore-no-count-limit`). The current items are held to the shape they had as a snapshot's properties are (`search-and-filters/restore-history-shape-free`). A `core` or `system` type that this build ships is read by the server's own code and cannot be deleted or replaced, so its items keep to it. A property that no type declares is still refused where strict mode names the type (`search-and-filters/restore-strict`), and an event's schedule and a task's `recurrence` are still judged (`occurrences/schedule-unreadable`).
 
-**Tests:** `compliance/restore-rows-shape.test.ts › restores an item that lacks a field its type now requires, as the archive holds it, and still holds an ordinary write to the type`.
+**Tests:** `compliance/restore-items-shape.test.ts › restores an item that lacks a field its type now requires, as the archive holds it, and still holds an ordinary write to the type`.
 
-### `search-and-filters/restore-rows-properties-kept`
+### `search-and-filters/restore-items-properties-kept`
 
 When `POST /restore` writes an item that is not of a `core` or `system` type that this build ships, the server MUST store its properties as the archive holds them.
 
 **Reason:** the properties are the person's own, and a restore that rewrote them to a shape the type has now would change the backup it restores.
 
-**Tests:** `compliance/restore-rows-shape.test.ts › restores an item that lacks a field its type now requires, as the archive holds it, and still holds an ordinary write to the type`, `› restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`.
+**Tests:** `compliance/restore-items-shape.test.ts › restores an item that lacks a field its type now requires, as the archive holds it, and still holds an ordinary write to the type`, `› restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`.
 
 ### `search-and-filters/restore-schema-version-kept`
 
 When `POST /restore` writes an item, the server MUST store the `schema_version` that the archive records for it.
 
-**Reason:** `schema_version` is the `version` the item's type had when the item was created, and Marfa never changes it. Stamping the type's present version on a row written under an earlier one would say the row has a field it lacks.
+**Reason:** `schema_version` is the `version` the item's type had when the item was created, and Marfa never changes it. Stamping the type's present version on an item written under an earlier one would say the item has a field it lacks.
 
-**Tests:** `compliance/restore-rows-shape.test.ts › restores an item that lacks a field its type now requires, as the archive holds it, and still holds an ordinary write to the type`.
+**Tests:** `compliance/restore-items-shape.test.ts › restores an item that lacks a field its type now requires, as the archive holds it, and still holds an ordinary write to the type`.
 
-### `search-and-filters/restore-rows-orphan`
+### `search-and-filters/restore-items-orphan`
 
 When `POST /restore` writes an item that is not of a `core` or `system` type that this build ships and whose type is not registered once the archive's own types are, the server MUST store the item under that type.
 
-**Reason:** a forced delete removes a type and keeps its items (`types/delete-force`), and an export carries them without the type. The item is restored as such a row stands: its properties, tier, time and natural key refuse a write until a type is registered (`types/orphan-write`), and it is read, listed and searched (`types/orphan-read`) and has its tags, extensions and lifecycle state written (`types/orphan-kept-writable`) as it was. A type registered again holds its later writes (`types/orphan-reregistered`).
+**Reason:** a forced delete removes a type and keeps its items (`types/delete-force`), and an export carries them without the type. The item is restored as such an item stands: its properties, tier, time and natural key refuse a write until a type is registered (`types/orphan-write`), and it is read, listed and searched (`types/orphan-read`) and has its tags, extensions and lifecycle state written (`types/orphan-kept-writable`) as it was. A type registered again holds its later writes (`types/orphan-reregistered`).
 
-**Tests:** `compliance/restore-rows-shape.test.ts › restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`.
+**Tests:** `compliance/restore-items-shape.test.ts › restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`.
 
 ### `search-and-filters/restore-item-line`
 
-If a line of the `items.ndjson.gz` of an archive holds no `item` object, then the server MUST answer `400 validation_error` naming the line's row in `details.row`.
+If a line of the `items.ndjson.gz` of an archive holds no `item` object, then the server MUST answer `400 validation_error` naming the line in `details.line`.
 
 **Reason:** a line that names no item is an archive that no instance wrote, and skipping it would leave it counted nowhere in the answer.
 
-**Tests:** `compliance/restore-archive.test.ts › refuses an item line that holds no item, naming its row, and writes nothing`.
+**Tests:** `compliance/restore-archive.test.ts › refuses an item line that holds no item, naming its line, and writes nothing`.
 
 ### `search-and-filters/restore-item-type`
 
 If an archived item's `type` is missing or is not a type identifier, then the server MUST answer `400 validation_error` naming the item's ID in the message.
 
-**Reason:** a forced delete leaves an item under an identifier a type was registered with (`search-and-filters/restore-rows-orphan`), so an identifier that none could have been is an archive that no instance wrote.
+**Reason:** a forced delete leaves an item under an identifier a type was registered with (`search-and-filters/restore-items-orphan`), so an identifier that none could have been is an archive that no instance wrote.
 
 **Tests:** `compliance/restore-archive.test.ts › refuses an item whose type is no identifier or whose properties are no object, and writes nothing`.
 
@@ -2732,7 +2732,7 @@ If an archived item's `type` is missing or is not a type identifier, then the se
 
 If an archived item's `properties` are present and are not an object, then the server MUST answer `400 invalid_properties` naming the item's ID in the message.
 
-**Reason:** a restore that took them would store a row whose properties no read can return as an object.
+**Reason:** a restore that took them would store an item whose properties no read can return as an object.
 
 **Tests:** `compliance/restore-archive.test.ts › refuses an item whose type is no identifier or whose properties are no object, and writes nothing`.
 
@@ -2794,15 +2794,15 @@ If an archive records a snapshot ID that existing history already holds, then th
 
 ### `search-and-filters/restore-strict`
 
-Where `enforcement.strict_mode` names the type of an archived row that the restore would write, if the row sets a property that no type declares, then the server MUST answer `400 invalid_properties`.
+Where `enforcement.strict_mode` names the type of an archived item that the restore would write, if the item sets a property that no type declares, then the server MUST answer `400 invalid_properties`.
 
-**Reason:** a restore is not a way to plant a row that `POST /items` would refuse. A row whose ID, natural key or link the instance already holds is counted in `duplicates` and written nowhere, so the lever has nothing to judge. `types/strict-mode` states the lever and `types/strict-mode-code` the code it carries.
+**Reason:** a restore is not a way to plant an item that `POST /items` would refuse. An item whose ID, natural key or link the instance already holds is counted in `duplicates` and written nowhere, so the lever has nothing to judge. `types/strict-mode` states the lever and `types/strict-mode-code` the code it carries.
 
-**Tests:** `compliance/schema-enforcement.test.ts › strict-on rejects the same unknown property arriving through the restore door`, `› strict-on counts a restored row the instance already holds as a duplicate`.
+**Tests:** `compliance/schema-enforcement.test.ts › strict-on rejects the same unknown property arriving through the restore door`, `› strict-on counts a restored item the instance already holds as a duplicate`.
 
 ### `search-and-filters/restore-strict-off`
 
-Where `enforcement.strict_mode` does not name the type of an archived row, the server MUST take a property that no type declares and serve it back.
+Where `enforcement.strict_mode` does not name the type of an archived item, the server MUST take a property that no type declares and serve it back.
 
 **Tests:** `compliance/schema-enforcement.test.ts › default-off accepts through the restore door as it does through the create door`.
 
@@ -2892,7 +2892,7 @@ When an archive carries an entry under a name that the restore does not read, th
 
 If the `manifest.json`, or a line of the `instance.ndjson.gz`, `items.ndjson.gz` or `edges.ndjson.gz` of an archive, is larger than 64 MiB, then the server MUST answer `400 validation_error` naming the entry.
 
-**Reason:** the restore parses each of these whole, so this limit bounds the memory a restore takes. The line files are otherwise read a line at a time, so an archive of any number of rows or registrations restores.
+**Reason:** the restore parses each of these whole, so this limit bounds the memory a restore takes. The line files are otherwise read a line at a time, so an archive of any number of items or registrations restores.
 
 **Tests:** `compliance/restore-archive.test.ts › refuses a line longer than 64 MiB, and writes nothing`.
 
@@ -2900,7 +2900,7 @@ If the `manifest.json`, or a line of the `instance.ndjson.gz`, `items.ndjson.gz`
 
 If an archive carries `manifest.json`, `instance.ndjson.gz`, `items.ndjson.gz`, `edges.ndjson.gz` or a `blobs/` entry more than once, then the server MUST answer `400 validation_error` naming the entry.
 
-**Reason:** a repeated entry has no single meaning, and reading both would let a later copy add rows that the first never listed.
+**Reason:** a repeated entry has no single meaning, and reading both would let a later copy add lines that the first never listed.
 
 **Tests:** `compliance/restore-archive.test.ts › refuses an archive carrying an entry twice, and writes nothing`.
 
@@ -2920,55 +2920,55 @@ When local authority restores an archive that the same build wrote, the server M
 
 **Tests:** `compliance/archive-limits.test.ts › restores an archive of more than 5,000 items, 20,000 edges, 200 types and 200 edge types, as one the same build wrote`.
 
-### `search-and-filters/restore-row-at-cap`
+### `search-and-filters/restore-item-at-cap`
 
-When an archived item's properties, those of one of its earlier versions, or an archived edge's properties are exactly as large as the largest body the bulk write operations take, the server MUST restore the row.
+When an archived item's properties, those of one of its earlier versions, or an archived edge's properties are exactly as large as the largest body the bulk write operations take, the server MUST restore the item or edge.
 
-**Tests:** `compliance/archive-limits.test.ts › takes %s of exactly the bulk write cap and refuses one byte more, 413 naming the row and the field, and writes nothing`.
+**Tests:** `compliance/archive-limits.test.ts › takes %s of exactly the bulk write cap and refuses one byte more, 413 naming the line and the field, and writes nothing`.
 
-### `search-and-filters/restore-row-over-cap`
+### `search-and-filters/restore-item-over-cap`
 
-If an archived item's properties, those of one of its earlier versions, or an archived edge's properties are larger than the largest body the bulk write operations take, then the server MUST answer `413 request_too_large` naming the row and the field in `details`.
+If an archived item's properties, those of one of its earlier versions, or an archived edge's properties are larger than the largest body the bulk write operations take, then the server MUST answer `413 request_too_large` naming the line and the field in `details`.
 
-**Reason:** a restore is not a way to plant a row that the write operations would refuse, and the cap is the largest bulk body (`items/bulk-body-cap`).
+**Reason:** a restore is not a way to plant an item that the write operations would refuse, and the cap is the largest bulk body (`items/bulk-body-cap`).
 
-**Tests:** `compliance/archive-limits.test.ts › takes %s of exactly the bulk write cap and refuses one byte more, 413 naming the row and the field, and writes nothing`.
+**Tests:** `compliance/archive-limits.test.ts › takes %s of exactly the bulk write cap and refuses one byte more, 413 naming the line and the field, and writes nothing`.
 
 ### `search-and-filters/restore-refused-nothing`
 
-If the server refuses an archive, then the server MUST leave no row, history, type, edge type, blob, event or audit record that the restore wrote.
+If the server refuses an archive, then the server MUST leave no item, history, type, edge type, blob, event or audit record that the restore wrote.
 
-**Reason:** the registrations, the blob bytes and the rows commit together or not at all, so an owner who gives up on a restore does not hold types or rows they did not ask for and can run the same restore again.
+**Reason:** the registrations, the blob bytes and the items commit together or not at all, so an owner who gives up on a restore does not hold types or items they did not ask for and can run the same restore again.
 
-**Tests:** `compliance/restore-archive.test.ts › leaves no row, type, edge type, blob, event or audit record behind when a later row is refused`, `compliance/archive-scalars.test.ts › refuses invalid $field=$value before writing the archive`, `compliance/archive-history.test.ts › refuses a snapshot ID the instance's history already holds, answering 409 and leaving that history as it was`.
+**Tests:** `compliance/restore-archive.test.ts › leaves no item, type, edge type, blob, event or audit record behind when a later item is refused`, `compliance/archive-scalars.test.ts › refuses invalid $field=$value before writing the archive`, `compliance/archive-history.test.ts › refuses a snapshot ID the instance's history already holds, answering 409 and leaving that history as it was`.
 
 ### `search-and-filters/restore-failed-nothing`
 
-If a write fails while the server restores an archive, then the server MUST leave no row, type, edge type, event or audit record that the restore wrote.
+If a write fails while the server restores an archive, then the server MUST leave no item, type, edge type, event or audit record that the restore wrote.
 
-**Tests:** `compliance/restore-faults.test.ts › leaves no row, type, edge type, event or audit record when a write fails ($fault), the next blob-integrity run removes the bytes it placed, and it restores whole when tried again`.
+**Tests:** `compliance/restore-faults.test.ts › leaves no item, type, edge type, event or audit record when a write fails ($fault), the next blob-integrity run removes the bytes it placed, and it restores whole when tried again`.
 
 ### `search-and-filters/restore-failed-blobs`
 
-If a write fails while the server restores an archive, then the server MUST queue for deletion the blob bytes the restore placed that no row names, so that `blob-integrity` and `blob-orphans` runs remove them.
+If a write fails while the server restores an archive, then the server MUST queue for deletion the blob bytes the restore placed that no item names, so that `blob-integrity` and `blob-orphans` runs remove them.
 
 **Reason:** the bytes are placed before the transaction opens and stay unrecorded and queued for deletion, so nothing serves them, and clean-up removes only what no record names.
 
-**Tests:** `compliance/restore-faults.test.ts › leaves no row, type, edge type, event or audit record when a write fails ($fault), the next blob-integrity run removes the bytes it placed, and it restores whole when tried again`.
+**Tests:** `compliance/restore-faults.test.ts › leaves no item, type, edge type, event or audit record when a write fails ($fault), the next blob-integrity run removes the bytes it placed, and it restores whole when tried again`.
 
 ### `search-and-filters/restore-stopped-nothing`
 
-If the process stops while the server restores an archive, then the server MUST leave no row, type, edge type, event or audit record that the restore wrote, and remove the blob bytes it placed that no row names.
+If the process stops while the server restores an archive, then the server MUST leave no item, type, edge type, event or audit record that the restore wrote, and remove the blob bytes it placed that no item names.
 
 **Reason:** the bytes are written before the transaction opens, which nothing can roll back, so the copy cleanup of `blob-replicate` and `blob-integrity` removes them.
 
-**Tests:** `compliance/restore-faults.test.ts › leaves no row, type, edge type, event or audit record when the process stops while it writes, and the next copy cleanup removes the bytes it placed`.
+**Tests:** `compliance/restore-faults.test.ts › leaves no item, type, edge type, event or audit record when the process stops while it writes, and the next copy cleanup removes the bytes it placed`.
 
 ### `search-and-filters/restore-announced`
 
 When a restore commits, the server MUST announce the items it wrote on the event stream.
 
-**Tests:** `compliance/restore-archive.test.ts › leaves no row, type, edge type, blob, event or audit record behind when a later row is refused`.
+**Tests:** `compliance/restore-archive.test.ts › leaves no item, type, edge type, blob, event or audit record behind when a later item is refused`.
 
 ### `search-and-filters/restore-announced-order`
 
@@ -2980,11 +2980,11 @@ When a restore commits, the server MUST tell subscribers about its events in eve
 
 ### `search-and-filters/restore-hidden`
 
-While a restore writes, the server MUST NOT show its rows, registrations or events to other requests.
+While a restore writes, the server MUST NOT show its items, registrations or events to other requests.
 
-**Reason:** a reader that saw part of a restore would see rows that a failed restore then takes away.
+**Reason:** a reader that saw part of a restore would see items that a failed restore then takes away.
 
-**Tests:** `compliance/restore-faults.test.ts › shows other requests none of its rows, registrations, blobs or events until it commits`.
+**Tests:** `compliance/restore-faults.test.ts › shows other requests none of its items, registrations, blobs or events until it commits`.
 
 ### `search-and-filters/restore-writers-wait`
 
@@ -2996,11 +2996,11 @@ While a restore writes, if another request has to write and waits for the restor
 
 ### `search-and-filters/restore-bytes-kept`
 
-When the server removes the blob bytes of a restore that did not commit, the server MUST NOT remove bytes that a committed row names.
+When the server removes the blob bytes of a restore that did not commit, the server MUST NOT remove bytes that a committed item names.
 
 **Reason:** content addressing means that another request can be told the same bytes are stored while the restore runs.
 
-**Tests:** `compliance/restore-faults.test.ts › keeps the bytes a committed row names, and removes those no row names`, `› keeps the bytes of an upload requested while the failed restore ran`.
+**Tests:** `compliance/restore-faults.test.ts › keeps the bytes a committed item names, and removes those no item names`, `› keeps the bytes of an upload requested while the failed restore ran`.
 
 ## Owner item summaries
 

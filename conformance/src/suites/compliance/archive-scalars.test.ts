@@ -84,7 +84,7 @@ const cases = [
   ...invalid.map((value) => ({ field: "edge.version", value })),
   ...["invalid", null, 5].map((value) => ({ field: "item.tier", value })),
 ];
-describe("archived row scalars", () => {
+describe("archived item and edge scalars", () => {
   it.each(cases)(
     "refuses invalid $field=$value before writing the archive",
     async ({ field, value }) => {
@@ -125,7 +125,7 @@ describe("archived row scalars", () => {
   );
 
   it.each(["item.version", "edge.version", "item.tier"])(
-    "refuses invalid %s even when the row already exists",
+    "refuses invalid %s even when the item already exists",
     async (field) => {
       const f = fixture();
       expect((await owner.restoreArchive(f.archive())).ok).toBe(true);

@@ -16,7 +16,7 @@ import { scriptHydration, startHarness, type Harness } from "./harness.js";
 
 /**
  * A working copy answers the `part` filter term as the server does, from the
- * rows and edges it holds: an item out of the bin with an edge of a
+ * items and edges it holds: an item out of the bin with an edge of a
  * `with-hosts` type to a host out of the bin is a part, and a host the copy
  * does not hold counts as out of the bin (`device/filter-part`). It applies
  * no part rule of its own on a delete: the parts of a host it deletes
@@ -135,7 +135,7 @@ async function hydrated(
   scriptHydration(harness.server, {
     head,
     replay: () => copyReplay(head(), log),
-    rows: {
+    items: {
       ...ROWS,
       ...(options.view
         ? {
@@ -331,7 +331,7 @@ describe("a working copy applies no part rule on a delete", () => {
       status: 200,
       body: { ok: true },
     });
-    // The device reads the row its delete binned back from the server.
+    // The device reads the item its delete binned back from the server.
     server.copyAnswer(
       "GET",
       "/items/host",
