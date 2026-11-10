@@ -208,19 +208,13 @@ describe("searching rows", () => {
     const type = await chatType();
     const item = await chat(type);
     const target = await chat(type, { title: "Referenced" });
-    const [across, , typed] = await put(
-      item,
-      "messages",
-      [
-        { subject: `${a} first`, text: `then ${b}` },
-        { author: `${a} ${b}`, n: 1 },
-        { subject: `about ${target}` },
-        { ref: target },
-      ],
-    );
-    expect(await rowKeys(`${a} ${b}`)).toEqual([
-      `${item} messages ${across}`,
+    const [across, , typed] = await put(item, "messages", [
+      { subject: `${a} first`, text: `then ${b}` },
+      { author: `${a} ${b}`, n: 1 },
+      { subject: `about ${target}` },
+      { ref: target },
     ]);
+    expect(await rowKeys(`${a} ${b}`)).toEqual([`${item} messages ${across}`]);
     // A row needs every word: one alone in its columns is no match.
     expect(await rowKeys(`${a} nothingelse${b}`)).toEqual([]);
 
@@ -284,7 +278,12 @@ describe("searching rows", () => {
     const ids = [uuidv7(), uuidv7(), uuidv7(), uuidv7()].sort();
     // Written out of order, so the answer's order is the server's.
     await put(newer, "notes", [{ body: w }], [ids[0]!]);
-    await put(newer, "messages", [{ text: w }, { text: w }], [ids[3]!, ids[1]!]);
+    await put(
+      newer,
+      "messages",
+      [{ text: w }, { text: w }],
+      [ids[3]!, ids[1]!],
+    );
     await put(older, "messages", [{ text: w }], [ids[2]!]);
     const newerHits = [
       newer,
@@ -300,15 +299,16 @@ describe("searching rows", () => {
     expect(
       keys((await search(w, { sort: "created_at", direction: "asc" })).data),
     ).toEqual([...olderHits, ...newerHits]);
-    expect(
-      keys((await search(w, { sort: "properties.title" })).data),
-    ).toEqual([...olderHits, ...newerHits]);
+    expect(keys((await search(w, { sort: "properties.title" })).data)).toEqual([
+      ...olderHits,
+      ...newerHits,
+    ]);
   });
 
   it("walks a search whose hits include rows to a null cursor, delivering every hit once", async () => {
     const w = word();
     const type = await chatType();
-    const items = [];
+    const items: string[] = [];
     for (let at = 0; at < 5; at++) items.push(await chat(type, { title: w }));
     const rows = await put(
       items[0]!,
@@ -332,7 +332,10 @@ describe("searching rows", () => {
       }
       expect(seen).toHaveLength(30);
       expect(new Set(seen)).toEqual(
-        new Set([...items, ...rows.map((row) => `${items[0]} messages ${row}`)]),
+        new Set([
+          ...items,
+          ...rows.map((row) => `${items[0]} messages ${row}`),
+        ]),
       );
     }
   });
@@ -398,7 +401,9 @@ describe("searching rows", () => {
     const lengthy = await put(item, "messages", [
       { text: `${"lead ".repeat(40)}${w}${" tail".repeat(40)}` },
     ]);
-    const cut = (await search(w)).data.find((hit) => hit.row?.id === lengthy[0]);
+    const cut = (await search(w)).data.find(
+      (hit) => hit.row?.id === lengthy[0],
+    );
     expect(cut?.snippet_html).toMatch(/^\.\.\..*<mark>.*\.\.\.$/);
     expect(cut!.snippet_html!.split(" ").length).toBeLessThanOrEqual(32);
   });
@@ -428,9 +433,7 @@ describe("searching rows", () => {
     expect(await rowKeys(second)).toEqual([]);
     expect(await rowKeys(third)).toEqual([hit]);
 
-    const removed = await write(item, "messages", [
-      { op: "delete", id: row! },
-    ]);
+    const removed = await write(item, "messages", [{ op: "delete", id: row! }]);
     expect(await rowKeys(third)).toEqual([]);
     const undone = await client.undoBatch(item, "messages", removed.batch!);
     expect(undone.status, JSON.stringify(undone.error)).toBe(200);
@@ -490,7 +493,10 @@ describe("searching rows", () => {
   it(
     "rebuilds a large table's index through table-row-cleanup, matching nothing by a withdrawn column meanwhile",
     async () => {
-      const server = await bootFreshServer("rows-search-rebuild", QUIET_SCHEDULE);
+      const server = await bootFreshServer(
+        "rows-search-rebuild",
+        QUIET_SCHEDULE,
+      );
       try {
         const writer = writerOf(server);
         const w = word();
@@ -553,39 +559,39 @@ describe("searching rows", () => {
     2 * FRESH_SERVER_TIMEOUT_MS,
   );
 
-  it(
-    "counts row hits toward the depth of a search",
-    async () => {
-      const w = word();
-      const type = await chatType();
-      const item = await chat(type);
-      await put(
-        item,
-        "messages",
-        Array.from({ length: 10_001 }, (_, at) => ({ text: `${w} ${String(at)}` })),
-      );
-      const seen = new Set<string>();
-      let cursor: string | undefined;
-      for (;;) {
-        const page = await search(w, {
-          ...(cursor !== undefined && { cursor }),
-        });
-        for (const key of keys(page.data)) seen.add(key);
-        if (page.next_cursor === null) break;
-        expect(seen.size).toBeLessThan(10_000);
-        cursor = page.next_cursor;
-      }
-      expect(seen.size).toBe(10_000);
-    },
-    300_000,
-  );
+  it("counts row hits toward the depth of a search", async () => {
+    const w = word();
+    const type = await chatType();
+    const item = await chat(type);
+    await put(
+      item,
+      "messages",
+      Array.from({ length: 10_001 }, (_, at) => ({
+        text: `${w} ${String(at)}`,
+      })),
+    );
+    const seen = new Set<string>();
+    let cursor: string | undefined;
+    for (;;) {
+      const page = await search(w, {
+        ...(cursor !== undefined && { cursor }),
+      });
+      for (const key of keys(page.data)) seen.add(key);
+      if (page.next_cursor === null) break;
+      expect(seen.size).toBeLessThan(10_000);
+      cursor = page.next_cursor;
+    }
+    expect(seen.size).toBe(10_000);
+  }, 300_000);
 
   it("names the row of a row hit in marfa_find", async () => {
     const w = word();
     const type = await chatType();
     const item = await chat(type);
     const [row] = await put(item, "messages", [{ text: `about ${w}` }]);
-    const found = toolResult(await callTool(mcp, "marfa_find", { query: w })) as {
+    const found = toolResult(
+      await callTool(mcp, "marfa_find", { query: w }),
+    ) as {
       items: { id: string; row?: unknown; snippet?: string }[];
     };
     expect(found.items).toEqual([
