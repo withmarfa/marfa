@@ -862,7 +862,7 @@ describe("tables reach the other doors", () => {
             await origin.registerType(
               declared(
                 child,
-                { extra: { columns: { n: { type: "integer" } } } },
+                { extra: { columns: { n: { type: "integer" } }, order: "n" } },
                 { parent },
               ),
             )
@@ -879,6 +879,7 @@ describe("tables reach the other doors", () => {
         });
         const inherited = lines.find((l) => l.type?.id === child)?.type;
         expect(Object.keys(inherited?.tables ?? {})).toEqual(["extra"]);
+        expect(inherited?.tables?.extra).toMatchObject({ order: "n" });
 
         const owner = new MarfaClient({
           baseUrl: destination.apiUrl,
@@ -896,6 +897,7 @@ describe("tables reach the other doors", () => {
           "lines",
         ]);
         expect(read.data.tables?.lines.columns.seen.adds_up).toBe("max");
+        expect(read.data.tables?.extra.order).toBe("n");
       } finally {
         await source.stop();
         await destination.stop();

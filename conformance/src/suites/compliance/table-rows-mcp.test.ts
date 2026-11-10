@@ -43,6 +43,7 @@ let counter = 0;
 
 async function ledger(
   extra: Record<string, unknown> = {},
+  order?: string,
 ): Promise<{ type: string; item: string }> {
   counter += 1;
   const type = `user.rows-mcp-${counter}-${ctx.runId}`;
@@ -58,6 +59,7 @@ async function ledger(
           kind: { type: "enum", enum_values: ["food", "travel"] },
           ...extra,
         },
+        ...(order ? { order } : {}),
       },
     },
   } as never);
@@ -155,6 +157,51 @@ describe("marfa_read_rows", () => {
     expect(
       (seen as { values: { amount: number } }[]).map((r) => r.values.amount),
     ).toEqual(Array.from({ length: 19 }, (_, n) => 119 - n));
+  });
+
+  it("reads a table's order column as the page door does, in either direction", async () => {
+    const { item } = await ledger({}, "amount");
+    await put(
+      item,
+      Array.from({ length: 40 }, (_, n) =>
+        n % 10 === 9 ? { memo: `m${n}` } : { amount: (n * 17) % 40 },
+      ),
+    );
+    for (const direction of ["asc", "desc"] as const) {
+      const asked = { sort: "values.amount", direction, limit: 7 };
+      let cursor: string | undefined;
+      const seen: { id: string; values: { amount?: number } }[] = [];
+      do {
+        const read = toolResult(
+          await callTool(mcp, "marfa_read_rows", {
+            id: item,
+            table: "lines",
+            ...asked,
+            ...(cursor ? { cursor } : {}),
+          }),
+        );
+        const same = (
+          await client.listRows(item, "lines", {
+            ...asked,
+            ...(cursor ? { cursor } : {}),
+          })
+        ).data;
+        expect(read.rows).toEqual(same.data);
+        expect(read.next_cursor).toBe(same.next_cursor);
+        seen.push(...(read.rows as typeof seen));
+        cursor = (read.next_cursor as string | null) ?? undefined;
+      } while (cursor);
+      const amounts = seen
+        .filter((row) => row.values.amount !== undefined)
+        .map((row) => row.values.amount!);
+      expect(amounts).toEqual(
+        [...amounts].sort((a, b) => (direction === "asc" ? a - b : b - a)),
+      );
+      expect(amounts).toHaveLength(36);
+      expect(
+        seen.slice(36).every((row) => row.values.amount === undefined),
+      ).toBe(true);
+    }
   });
 
   it("refuses a read as the page door does", async () => {

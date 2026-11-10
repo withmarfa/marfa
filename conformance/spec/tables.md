@@ -726,6 +726,22 @@ When a change to a type moves the order the server keeps for the rows of its ite
 
 **Tests:** `compliance/table-rows-reads.test.ts › rewrites the kept order of many small tables mostly in table-row-cleanup, sorting every page right meanwhile`.
 
+### `tables/order-undo`
+
+When an undo puts back or removes rows of a table that names an `order`, the server MUST answer each page of the table's rows sorted by the column the table names as its `order` when the undo is made, in the order `tables/rows-sort` states.
+
+**Reason:** an undo writes rows as any batch does, so a type's change to the `order` between a batch and its undo sorts the rows the undo puts back by the new `order`.
+
+**Tests:** `compliance/table-rows-undo.test.ts › puts back and removes the rows of an ordered table in its order, also after its order names another column`, `compliance/table-rows-archive.test.ts › undoes a write over restored rows, putting each back as the restore wrote it`.
+
+### `tables/order-restored`
+
+When `POST /restore` writes the rows of a table that names an `order`, the server MUST answer each page of the table's rows sorted by that column in the order `tables/rows-sort` states from the restore's answer on.
+
+**Reason:** the server keeps each restored row in the table's order as it writes the row, so the first read after a restore is as fast as any later one.
+
+**Tests:** `compliance/table-rows-archive.test.ts › restores a conversation's latest messages in sent_at order straight after the restore`.
+
 ### `tables/rows-get`
 
 When a caller sends `GET /items/{id}/tables/{table}/rows/{row}` for a row the table holds, the server MUST answer the row.
@@ -766,7 +782,7 @@ When `marfa_read_rows` names an item and a table, the server MUST answer as `row
 
 **Reason:** an agent reads rows with the expressions and the order a client of the API uses, and a prefix of the door's page, not a different page, is what a size limit leaves.
 
-**Tests:** `compliance/table-rows-mcp.test.ts › reads rows as the page door does, by filter, sort and cursor`.
+**Tests:** `compliance/table-rows-mcp.test.ts › reads rows as the page door does, by filter, sort and cursor`, `› reads a table's order column as the page door does, in either direction`.
 
 ### `tables/mcp-read-limit`
 

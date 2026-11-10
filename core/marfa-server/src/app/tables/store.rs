@@ -131,7 +131,6 @@ pub(super) fn put(tx: &Transaction<'_>, row: &Written<'_>) -> Result<()> {
     Ok(())
 }
 
-/// The bytes the removed row held, or `None` where there was none.
 pub(super) fn delete(tx: &Transaction<'_>, table: i64, id: &str) -> Result<Option<i64>> {
     let removed: Option<String> = tx
         .prepare_cached(
@@ -437,7 +436,6 @@ pub(super) fn rows_after(
 /// The mark of a row no logged batch left: `row_batches` numbers its batches from 1.
 pub(super) const UNLOGGED: i64 = 0;
 
-/// Writes a restored row as the archive holds it.
 pub(super) fn insert(tx: &Transaction<'_>, row: &Written<'_>) -> Result<()> {
     tx.prepare_cached(&format!(
         "INSERT INTO table_rows (table_seq, id, updated_at, batch, ord, refs, body) \
@@ -450,7 +448,6 @@ pub(super) fn insert(tx: &Transaction<'_>, row: &Written<'_>) -> Result<()> {
     Ok(())
 }
 
-/// The tables of item `seq` that hold a row.
 pub(super) fn held_tables(tx: &Transaction<'_>, seq: i64) -> Result<Vec<String>> {
     let mut statement = tx.prepare_cached(
         "SELECT table_name FROM table_summaries WHERE item_seq = ?1 AND row_count > 0 \
@@ -694,7 +691,6 @@ fn key_of(order: Option<&Order>, body: &str, refs: &str) -> String {
     )
 }
 
-/// Writes every row's key for `order` at once and records it as the table's.
 pub(super) fn reorder_whole(tx: &Transaction<'_>, table: i64, order: Option<&Order>) -> Result<()> {
     tx.execute(
         &format!(
