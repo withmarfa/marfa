@@ -215,6 +215,45 @@ async function keyFor(
   return { id: minted.data.id, key: minted.data.key };
 }
 
+const NAMED = {
+  columns: { count: { type: "integer" }, ref: { type: "item" } },
+};
+
+async function note(title: string): Promise<string> {
+  const made = await working.createItem({
+    type: "core.note",
+    properties: { title },
+  } as never);
+  expect(made.status, JSON.stringify(made.error)).toBe(201);
+  return made.data.item.id;
+}
+
+async function purge(item: string): Promise<void> {
+  expect((await working.deleteItem(item)).ok).toBe(true);
+  const out = await working.purgeItem(item);
+  expect(out.ok, JSON.stringify(out.error)).toBe(true);
+}
+
+/** Waits for the table of `item` that `device` holds to reach `state` with `rows`. */
+async function reached(
+  device: CliDevice,
+  item: string,
+  state: string,
+  rows: number,
+  what: string,
+): Promise<void> {
+  const started = Date.now();
+  for (;;) {
+    const held = stateOf(value(await device.heldTables()), item);
+    if (held?.state === state && held.rows === rows) return;
+    if (Date.now() - started > 60_000) {
+      expect(held, what).toMatchObject({ state, rows });
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
 describe("which tables a device holds", () => {
   it("holds the table of each item of the type it names, and no table it was not asked to hold", async () => {
     const both = await tableType({ steps: STEPS, notes: STEPS });
@@ -341,6 +380,57 @@ describe("how a device fills a table", () => {
     );
   });
 
+  it("expires its copy when its key narrows between two pages of a fill, and holds the rows withheld once it fills again", async () => {
+    const type = await tableType({ steps: NAMED });
+    const item = await itemOf(type);
+    const named = await note("named");
+    for (const from of [0, 1000]) {
+      await write(
+        item,
+        Array.from({ length: from === 0 ? 1000 : 500 }, (_, at) => ({
+          op: "put",
+          values: { count: from + at, ref: named },
+        })),
+      );
+    }
+    const own = await keyFor({ [type]: "read", "core.note": "read" });
+    const reader = new MarfaClient({ baseUrl: server.apiUrl, apiKey: own.key });
+    const device = await hydrated([type], "narrowed", own.key);
+    await server.setFault("fail:table-rows-page=2");
+    try {
+      expect((await device.holdTable(type, "steps")).ok).toBe(false);
+    } finally {
+      await server.clearFault();
+    }
+    expect(stateOf(value(await device.heldTables()), item)).toMatchObject({
+      state: "filling",
+      rows: 1000,
+    });
+    const narrowed = await minter.updateKey(own.id, {
+      type_permissions: { [type]: "read" },
+    });
+    expect(narrowed.ok, JSON.stringify(narrowed.error)).toBe(true);
+
+    const refused = await device.fillTables();
+    expect(refused.ok, "the second page was read under the earlier reach").toBe(
+      false,
+    );
+    if (!refused.ok) {
+      expect(refused.refusal.code).toBe("copy_expired");
+      expect(refused.refusal.raw).toContain("reach_changed");
+    }
+    expect(stateOf(value(await device.heldTables()), item)).toMatchObject({
+      state: "owed",
+      rows: 0,
+    });
+    value(await device.hydrate([type], "library"));
+    value(await device.catchUp());
+    const expected = await serverRows(item, reader);
+    expect(expected).toHaveLength(1500);
+    expect(expected.every((row) => row.withheld?.[0] === "ref")).toBe(true);
+    expect((await deviceRows(device, item)).rows).toEqual(expected);
+  }, 90_000);
+
   it("reads a table past the cap from the server, holding none of its rows, and holds it whole once a delete brings it within", async () => {
     const type = await tableType();
     const item = await itemOf(type);
@@ -374,6 +464,30 @@ describe("how a device fills a table", () => {
       rows: 0,
     });
   }, 240_000);
+
+  it("fills a table again each time a follow sees it come back within the cap", async () => {
+    const type = await tableType();
+    const item = await itemOf(type);
+    await filled(item, 100_001);
+    const device = await hydrated([type], "cap-follow");
+    expect(value(await device.holdTable(type, "steps")).fill).toMatchObject({
+      online: 1,
+    });
+    const follow = device.holdFollow(240);
+    const reader = device.reopen({ reader: true });
+    try {
+      for (const round of [1, 2]) {
+        const first = (await serverPage(item, { limit: "1" })).data[0]!;
+        await write(item, [{ op: "delete", id: first.id }]);
+        const at = `round ${String(round)}`;
+        await reached(reader, item, "whole", 100_000, `${at}: within`);
+        await write(item, [{ op: "put", values: { count: -round } }]);
+        await reached(reader, item, "online", 0, `${at}: past`);
+      }
+    } finally {
+      await follow.stop();
+    }
+  }, 300_000);
 });
 
 describe("applying rows.changed", () => {
@@ -526,6 +640,76 @@ describe("applying rows.changed", () => {
     const read = await deviceRows(device, item);
     expect(read.held).toEqual([true]);
     expect(read.rows).toEqual(expected);
+  });
+
+  it("answers a row naming a purged item as the server does, withheld unless its key reads every type", async () => {
+    const type = await tableType({ steps: NAMED });
+    const item = await itemOf(type);
+    const named = await note("purged later");
+    await write(item, [
+      { op: "put", values: { count: 1, ref: named } },
+      { op: "put", values: { count: 2 } },
+    ]);
+    const narrow = await keyFor({ [type]: "read", "core.note": "read" });
+    const reader = new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: narrow.key,
+    });
+    // The note is outside both slices.
+    const narrowDevice = await hydrated([type], "ref-narrow", narrow.key);
+    const everyDevice = await hydrated([type], "ref-every");
+    for (const device of [narrowDevice, everyDevice]) {
+      value(await device.holdTable(type, "steps"));
+      const before = await deviceRows(device, item);
+      expect(
+        before.rows.find((row) => row.values.count === 1)?.values.ref,
+      ).toBe(named);
+    }
+    await purge(named);
+    for (const device of [narrowDevice, everyDevice]) {
+      value(await device.catchUp());
+    }
+    const narrowed = await serverRows(item, reader);
+    expect(narrowed.find((row) => row.values.count === 1)?.withheld).toEqual([
+      "ref",
+    ]);
+    const narrowRead = await deviceRows(narrowDevice, item);
+    expect(narrowRead.held).toEqual([true]);
+    expect(narrowRead.rows).toEqual(narrowed);
+    const every = await serverRows(item);
+    expect(every.find((row) => row.values.count === 1)?.values.ref).toBe(named);
+    expect((await deviceRows(everyDevice, item)).rows).toEqual(every);
+  });
+
+  it("carries on past a rows.changed without values whose item is purged before it reads the rows", async () => {
+    const type = await tableType();
+    const purged = await itemOf(type);
+    const kept = await itemOf(type);
+    const device = await hydrated([type], "ids-purged");
+    value(await device.holdTable(type, "steps"));
+    const long = "x".repeat(1000);
+    await write(
+      purged,
+      Array.from({ length: 100 }, (_, at) => ({
+        op: "put",
+        values: { count: at, note: long },
+      })),
+    );
+    await purge(purged);
+    await write(kept, [{ op: "put", values: { count: 7 } }]);
+
+    for (const round of ["first", "second"]) {
+      const caught = await device.catchUp();
+      expect(caught.ok, `${round} catch-up: ${JSON.stringify(caught)}`).toBe(
+        true,
+      );
+    }
+    expect(value(await device.heldTables()).tables).toEqual([
+      { item: kept, table: "steps", state: "whole", rows: 1 },
+    ]);
+    expect((await deviceRows(device, kept)).rows).toEqual(
+      await serverRows(kept),
+    );
   });
 
   it("removes the rows of a table it lets go of, and of an item that is purged", async () => {
