@@ -744,7 +744,6 @@ pub(crate) fn rows_to_read(
     .map(Some)
 }
 
-/// Rows the device holds that name `target`, read again from the server.
 pub(crate) struct Refresh {
     item: String,
     table: String,
@@ -752,8 +751,8 @@ pub(crate) struct Refresh {
     read: Named,
 }
 
-/// The server withholds a purged item's id from any key that may not read every type
-/// (`tables/rows-item-gone`), so the rows that name it are read again.
+/// The server withholds a purged item's id from a key that may not read every type, so
+/// the held rows naming `target` are read again.
 pub(crate) fn naming(core: &Core, context: &Context, target: &str) -> Result<Vec<Refresh>> {
     let named: Vec<(String, String, String)> = {
         let conn = core.conn()?;
