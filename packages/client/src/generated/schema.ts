@@ -6386,14 +6386,29 @@ export interface components {
             /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
             next_cursor: string | null;
         };
-        /** @description What a webhook delivery adds to the event it carries. */
+        /** @description A delivery is one event Marfa sends, or tries to send, to a webhook's URL. */
         WebhookDelivery: {
-            /** @description The event's ID in the log, the same as its `id:` on `GET /events`. */
-            event_id: string;
-            /** @description The ID of the delivery, the same on every attempt. Use it to recognize a repeat. */
-            delivery_id: string;
-            /** @description When Marfa sent this attempt, in UTC. */
-            delivered_at: string;
+            /** @description Unique identifier for the delivery. Marfa sends it as `delivery_id`, the same on every attempt. */
+            id: string;
+            /**
+             * @description `pending`: waiting to be sent or retried. `success`: the receiver answered with a `2xx` status. `dead_letter`: Marfa gave up, and you can redeliver it. `canceled`: Marfa settled it unsent, and `error` says why.
+             * @enum {string}
+             */
+            status: "pending" | "success" | "dead_letter" | "canceled";
+            /** @description The ID of the webhook the delivery belongs to. */
+            webhook_id: string;
+            /** @description The event delivered, such as `item.created`. */
+            event_type: string;
+            /** @description The HTTP status the receiver answered on the latest recorded attempt, or `null` if that attempt got no answer or no attempt has run. */
+            status_code: number | null;
+            /** @description How many attempts have recorded an outcome, across every redelivery. A send whose outcome was lost, such as during a restart, isn't counted, so the receiver may have seen more. */
+            attempt: number;
+            /** @description `true` if `status` is `success`. */
+            succeeded: boolean;
+            /** @description Why the latest attempt failed, or why Marfa settled the delivery unsent. `null` after a success or before the first attempt. */
+            error: string | null;
+            /** @description When Marfa queued the delivery, in UTC. */
+            created_at: string;
         };
         /** @description One page of audit log entries. */
         AuditEntryPage: {
@@ -6679,7 +6694,7 @@ export interface components {
             delivered_at: string;
         };
         /** @description The body of a webhook delivery of an edge event. */
-        WebhookEdgeEvent: components["schemas"]["EdgeEventFrame"] & components["schemas"]["WebhookDelivery"];
+        WebhookEdgeEvent: components["schemas"]["EdgeEventFrame"] & components["schemas"]["WebhookDeliveryAttempt"];
         /** @description The body of a webhook delivery: the event, with its ID and the delivery's. */
         WebhookEvent: components["schemas"]["WebhookItemEvent"] | components["schemas"]["WebhookRowsEvent"] | components["schemas"]["WebhookEdgeEvent"];
         /** @description An error response. */
@@ -7034,7 +7049,7 @@ export interface components {
             }[];
         };
         /** @description The body of a webhook delivery of a rows event. */
-        WebhookRowsEvent: components["schemas"]["RowsChangedFrame"] & components["schemas"]["WebhookDelivery"];
+        WebhookRowsEvent: components["schemas"]["RowsChangedFrame"] & components["schemas"]["WebhookDeliveryAttempt"];
         /** @description An error response. */
         ItemNotFoundOrRowNotFoundOrTableNotFoundRefusal: {
             /** @description What went wrong. */
@@ -7085,6 +7100,15 @@ export interface components {
                     [key: string]: unknown;
                 };
             };
+        };
+        /** @description What a webhook delivery adds to the event it carries. */
+        WebhookDeliveryAttempt: {
+            /** @description The event's ID in the log, the same as its `id:` on `GET /events`. */
+            event_id: string;
+            /** @description The ID of the delivery, the same on every attempt. Use it to recognize a repeat. */
+            delivery_id: string;
+            /** @description When Marfa sent this attempt, in UTC. */
+            delivered_at: string;
         };
     };
     responses: never;

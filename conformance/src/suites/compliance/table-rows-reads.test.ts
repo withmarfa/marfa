@@ -3,6 +3,7 @@ import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
 import type { RowOperation, TestContext } from "../../client/types.js";
 import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
+import { expectMatchesSchema } from "../../utils/openapi.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -68,6 +69,7 @@ describe("reading rows", () => {
     const { item } = await spendingItem();
     const before = await client.listTables(item);
     expect(before.status, JSON.stringify(before.error)).toBe(200);
+    await expectMatchesSchema("GET", "/items/{id}/tables", 200, before.data);
     expect(before.data.data).toEqual([
       {
         name: "empty",
@@ -111,6 +113,12 @@ describe("reading rows", () => {
     for (let page = 0; page < 10; page++) {
       const res = await client.listRows(item, "spend", { limit: 10, cursor });
       expect(res.status, JSON.stringify(res.error)).toBe(200);
+      await expectMatchesSchema(
+        "GET",
+        "/items/{id}/tables/{table}/rows",
+        200,
+        res.data,
+      );
       seen.push(...res.data.data.map((r) => r.id));
       if (!res.data.next_cursor) break;
       cursor = res.data.next_cursor;
@@ -250,6 +258,12 @@ describe("reading rows", () => {
     const id = written.results[0]!.id;
     const row = await client.getRow(item, "spend", id);
     expect(row.status).toBe(200);
+    await expectMatchesSchema(
+      "GET",
+      "/items/{id}/tables/{table}/rows/{row}",
+      200,
+      row.data,
+    );
     expect(row.data).toEqual({
       id,
       values: { amount: 3, memo: "three" },
@@ -285,6 +299,12 @@ describe("reading rows", () => {
     ]);
     const all = await client.rowTotals(item, "spend");
     expect(all.status, JSON.stringify(all.error)).toBe(200);
+    await expectMatchesSchema(
+      "GET",
+      "/items/{id}/tables/{table}/totals",
+      200,
+      all.data,
+    );
     expect(all.data).toEqual({
       row_count: 3,
       totals: {

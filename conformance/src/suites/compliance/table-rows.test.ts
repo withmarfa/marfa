@@ -12,6 +12,7 @@ import {
   trackKey,
   cleanup,
 } from "../../utils/setup.js";
+import { expectMatchesSchema } from "../../utils/openapi.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -121,6 +122,12 @@ describe("writing rows", () => {
       ],
     });
     expect(second.status, JSON.stringify(second.error)).toBe(200);
+    await expectMatchesSchema(
+      "POST",
+      "/items/{id}/tables/{table}/rows",
+      200,
+      second.data,
+    );
     expect(second.data.results).toEqual([
       { id: kept, outcome: "replaced" },
       { id: first.data.results[0]!.id, outcome: "patched" },

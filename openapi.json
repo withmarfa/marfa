@@ -9929,25 +9929,67 @@
       "WebhookDelivery": {
         "type": "object",
         "properties": {
-          "event_id": {
+          "id": {
             "type": "string",
-            "description": "The event's ID in the log, the same as its `id:` on `GET /events`."
+            "description": "Unique identifier for the delivery. Marfa sends it as `delivery_id`, the same on every attempt."
           },
-          "delivery_id": {
+          "status": {
             "type": "string",
-            "description": "The ID of the delivery, the same on every attempt. Use it to recognize a repeat."
+            "enum": [
+              "pending",
+              "success",
+              "dead_letter",
+              "canceled"
+            ],
+            "description": "`pending`: waiting to be sent or retried. `success`: the receiver answered with a `2xx` status. `dead_letter`: Marfa gave up, and you can redeliver it. `canceled`: Marfa settled it unsent, and `error` says why."
           },
-          "delivered_at": {
+          "webhook_id": {
             "type": "string",
-            "description": "When Marfa sent this attempt, in UTC."
+            "description": "The ID of the webhook the delivery belongs to."
+          },
+          "event_type": {
+            "type": "string",
+            "description": "The event delivered, such as `item.created`."
+          },
+          "status_code": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "The HTTP status the receiver answered on the latest recorded attempt, or `null` if that attempt got no answer or no attempt has run."
+          },
+          "attempt": {
+            "type": "number",
+            "description": "How many attempts have recorded an outcome, across every redelivery. A send whose outcome was lost, such as during a restart, isn't counted, so the receiver may have seen more."
+          },
+          "succeeded": {
+            "type": "boolean",
+            "description": "`true` if `status` is `success`."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the latest attempt failed, or why Marfa settled the delivery unsent. `null` after a success or before the first attempt."
+          },
+          "created_at": {
+            "type": "string",
+            "description": "When Marfa queued the delivery, in UTC."
           }
         },
         "required": [
-          "event_id",
-          "delivery_id",
-          "delivered_at"
+          "id",
+          "status",
+          "webhook_id",
+          "event_type",
+          "status_code",
+          "attempt",
+          "succeeded",
+          "error",
+          "created_at"
         ],
-        "description": "What a webhook delivery adds to the event it carries."
+        "description": "A delivery is one event Marfa sends, or tries to send, to a webhook's URL."
       },
       "AuditEntryPage": {
         "type": "object",
@@ -10635,7 +10677,7 @@
             "$ref": "#/components/schemas/EdgeEventFrame"
           },
           {
-            "$ref": "#/components/schemas/WebhookDelivery"
+            "$ref": "#/components/schemas/WebhookDeliveryAttempt"
           }
         ]
       },
@@ -11482,7 +11524,7 @@
             "$ref": "#/components/schemas/RowsChangedFrame"
           },
           {
-            "$ref": "#/components/schemas/WebhookDelivery"
+            "$ref": "#/components/schemas/WebhookDeliveryAttempt"
           }
         ]
       },
@@ -11593,6 +11635,29 @@
           "error"
         ],
         "description": "An error response."
+      },
+      "WebhookDeliveryAttempt": {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "description": "The event's ID in the log, the same as its `id:` on `GET /events`."
+          },
+          "delivery_id": {
+            "type": "string",
+            "description": "The ID of the delivery, the same on every attempt. Use it to recognize a repeat."
+          },
+          "delivered_at": {
+            "type": "string",
+            "description": "When Marfa sent this attempt, in UTC."
+          }
+        },
+        "required": [
+          "event_id",
+          "delivery_id",
+          "delivered_at"
+        ],
+        "description": "What a webhook delivery adds to the event it carries."
       }
     },
     "parameters": {},

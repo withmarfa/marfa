@@ -852,6 +852,8 @@ export interface TrackedResource {
   parent?: string;
   /** Compatibility targets must outlive the types that name them. */
   compatibleWith?: string[];
+  /** The types a column's `type_constraints` names, which outlive this type. */
+  constrainedTo?: string[];
 }
 
 export interface TestContext {
