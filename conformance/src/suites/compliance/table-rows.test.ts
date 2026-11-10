@@ -175,6 +175,22 @@ describe("writing rows", () => {
     expect(await rowsOf(item)).toHaveLength(1);
   });
 
+  it("holds a column a put sends as null as one it leaves out", async () => {
+    const item = await itemOf(await ledgerType());
+    const id = rowId();
+    const first = await client.writeRows(item, "lines", {
+      operations: [{ op: "put", id, values: { amount: 7, memo: null } }],
+    });
+    expect(first.data.results).toEqual([{ id, outcome: "created" }]);
+    expect((await client.getRow(item, "lines", id)).data.values).toEqual({
+      amount: 7,
+    });
+    const again = await client.writeRows(item, "lines", {
+      operations: [{ op: "put", id, values: { amount: 7, kind: null } }],
+    });
+    expect(again.data.results).toEqual([{ id, outcome: "unchanged" }]);
+  });
+
   it("patches only the columns it names", async () => {
     const item = await itemOf(await ledgerType());
     const id = rowId();

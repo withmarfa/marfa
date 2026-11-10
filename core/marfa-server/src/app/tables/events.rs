@@ -51,8 +51,9 @@ fn logged_rows(announced: &Announced<'_>) -> (Vec<Value>, bool) {
                     .item_columns()
                     .filter_map(|column| {
                         let target = values.get(column)?.as_str()?;
-                        let type_id = announced.referenced.get(target)?.as_ref()?;
-                        Some((column.to_string(), Value::String(type_id.clone())))
+                        // An item no longer held reads as no type, which every reader is denied.
+                        let type_id = announced.referenced.get(target).cloned().flatten();
+                        Some((column.to_string(), type_id.map_or(Value::Null, Value::String)))
                     })
                     .collect();
                 if !named.is_empty() {

@@ -298,6 +298,25 @@ impl Batch<'_, '_> {
         Ok(())
     }
 
+    /// The type of each item a changed row names, also through a column the batch left alone.
+    fn name_referenced(&mut self) -> Result<()> {
+        let tx = self.unit.tx();
+        for (_, change) in &self.changed {
+            let Changed::Held(values) = change else {
+                continue;
+            };
+            for column in self.table.item_columns() {
+                let Some(id) = values.get(column).and_then(Value::as_str) else {
+                    continue;
+                };
+                if !self.referenced.contains_key(id) {
+                    self.referenced.insert(id.to_string(), items::type_of(tx, id)?);
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn note(&mut self, id: &str, change: Changed) {
         match self.changed.iter_mut().find(|(held, _)| held == id) {
             Some((_, held)) => *held = change,
@@ -312,8 +331,9 @@ impl Batch<'_, '_> {
             self.refuse_references(index, values)?;
         }
         match op {
-            Op::Put { id, values } => {
+            Op::Put { id, mut values } => {
                 self.refuse_values(index, &values, true)?;
+                values.retain(|_, value| !value.is_null());
                 let id = id.unwrap_or_else(|| Uuid::now_v7().to_string());
                 let held = store::row(tx, seq, table, &id)?;
                 if held.as_ref().is_some_and(|held| held.values == values) {
@@ -401,6 +421,7 @@ pub async fn write(
             let (id, outcome) = batch.land(index, op)?;
             results.push(json!({ "id": id, "outcome": outcome.word() }));
         }
+        batch.name_referenced()?;
         let Batch {
             changed,
             count,

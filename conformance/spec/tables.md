@@ -310,6 +310,14 @@ When a `put` names the `id` of a row the table holds, the server MUST replace th
 
 **Tests:** `compliance/table-rows.test.ts › creates, replaces, patches and deletes rows in one batch, answering each in order`.
 
+### `tables/rows-put-null`
+
+When a `put` sends `null` for a column, the server MUST hold the row without a value for the column.
+
+**Reason:** a row holds no `null`, so a `put` that names a column as `null` and one that leaves it out write the same row.
+
+**Tests:** `compliance/table-rows.test.ts › holds a column a put sends as null as one it leaves out`.
+
 ### `tables/rows-put-repeat`
 
 When a `put` sends exactly the values the row it names holds, the server MUST leave the row as it is and answer its outcome `unchanged`.

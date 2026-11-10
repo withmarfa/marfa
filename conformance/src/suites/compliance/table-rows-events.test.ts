@@ -351,6 +351,24 @@ describe("announcing rows", () => {
       expect(whole.rows[0]?.values).toEqual({ count: 1, about: hidden });
       expect(whole.rows[0]).not.toHaveProperty("withheld");
       expect(JSON.stringify(whole)).not.toContain("item_types");
+
+      const patched = await client.writeRows(item, "steps", {
+        operations: [
+          { op: "patch", id: written.data.results[0]!.id, values: { count: 2 } },
+        ],
+      });
+      expect(patched.status, JSON.stringify(patched.error)).toBe(200);
+      const later = (
+        await narrow.until(
+          (seen) => seen.filter(rowsFor(item)).length >= 2,
+          "the narrow frame of the patch",
+        )
+      ).filter(rowsFor(item))[1]!.data as RowsFrame;
+      expect(later.rows[0]).toMatchObject({
+        values: { count: 2 },
+        withheld: ["about"],
+      });
+      expect(later.rows[0]?.values).not.toHaveProperty("about");
     } finally {
       await narrow.close();
       await full.close();
