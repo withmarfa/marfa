@@ -1144,7 +1144,7 @@ When a drain counts a refusal against a write, other than one sent to test a sus
 
 ### `queue-and-verdicts/store-failure-counted`
 
-If the store fails, other than by filling, as a device takes the answer to a write that has no verdict, then a device MUST count a refusal against the write and leave it with no verdict until the ceiling.
+If the store fails, other than by filling or by another program's writes, as a device takes the answer to a write that has no verdict, then a device MUST count a refusal against the write and leave it with no verdict until the ceiling.
 
 **Reason:** a further attempt may clear it and nothing clears it on its own; ended there instead, the write would be retried uncounted for good, and every write behind it would wait on it.
 
