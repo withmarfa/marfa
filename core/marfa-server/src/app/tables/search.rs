@@ -8,10 +8,11 @@ use serde_json::{Map, Value};
 use super::store;
 use crate::app::refusal::Result;
 
-/// Where a search finds row hits: each match with its row, its table's summary and its item.
+/// Where a search finds row hits: each match with its row, its table's summary and its item. The
+/// index keeps the rows of an item in the bin, which no search matches.
 pub(crate) const HITS_FROM: &str = "rows_fts CROSS JOIN row_search m ON m.seq = rows_fts.rowid \
      CROSS JOIN table_summaries s ON s.seq = m.table_seq AND s.searched_by IS NOT NULL \
-     CROSS JOIN items i ON i.seq = s.item_seq";
+     CROSS JOIN items i ON i.seq = s.item_seq AND i.state <> 'trashed'";
 
 /// The columns a table's rows are searched by, in name order.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

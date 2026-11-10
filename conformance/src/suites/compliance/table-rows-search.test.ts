@@ -167,6 +167,7 @@ describe("searching rows", () => {
     const id = `user.rows-search-wide-${String(counter)}-${ctx.runId}`;
     const refused = await client.registerType({
       id,
+      fields: { title: { type: "string" } },
       tables: { wide: { columns: columns(9) } },
     } as never);
     expect(refused.status).toBe(400);
@@ -176,6 +177,7 @@ describe("searching rows", () => {
     );
     const taken = await client.registerType({
       id,
+      fields: { title: { type: "string" } },
       tables: { wide: { columns: columns(8) } },
     } as never);
     expect(taken.status, JSON.stringify(taken.error)).toBe(201);
