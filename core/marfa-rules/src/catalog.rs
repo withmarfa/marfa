@@ -835,6 +835,13 @@ pub struct Catalog {
 
 const MAX_PARENT_WALK: usize = 64;
 
+/// Which types a column's `type_constraints` may name: a write names registered ones, and an item already held keeps any a forced delete left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Naming {
+    Registered,
+    Any,
+}
+
 impl Catalog {
     /// A catalog that declares no type: every type reads its title and body from the default properties.
     pub fn empty() -> Catalog {
@@ -912,9 +919,7 @@ impl Catalog {
             fields.insert(name.as_str(), definition);
         }
         crate::validation::properties(&fields, properties, complete)?;
-        if written.contains_key(OWN_COLUMNS) && self.keeps_own_table(type_id) {
-            self.judge_own_columns(properties.get(OWN_COLUMNS))?;
-        }
+        self.judge_kept_columns(type_id, written, Naming::Registered)?;
         if complete {
             self.judge_schedule(type_id, properties)?;
         }
@@ -945,8 +950,24 @@ impl Catalog {
         type_id == OWN_TABLE_TYPE || self.descends_from(type_id, OWN_TABLE_TYPE)
     }
 
-    fn judge_own_columns(&self, columns: Option<&Value>) -> Result<(), RuleError> {
-        judge_item_columns(columns, &|id| self.known(id))
+    /// Judges the `columns` that `properties` name for an item of `core.table` or below, if they name any.
+    pub fn judge_kept_columns(
+        &self,
+        type_id: &str,
+        properties: &Map<String, Value>,
+        naming: Naming,
+    ) -> Result<(), RuleError> {
+        let Some(columns) = properties.get(OWN_COLUMNS) else {
+            return Ok(());
+        };
+        if !self.keeps_own_table(type_id) {
+            return Ok(());
+        }
+        let known = |id: &str| match naming {
+            Naming::Registered => self.known(id),
+            Naming::Any => true,
+        };
+        judge_item_columns(Some(columns), &known)
             .map(drop)
             .map_err(|issues| {
                 let message = issues
@@ -1867,5 +1888,28 @@ mod tests {
             "a note's columns are a property like any other"
         );
         assert!(judge("core.table", &json!({"columns": {}})).is_err());
+    }
+
+    #[test]
+    fn a_partial_write_is_judged_by_the_columns_it_leaves() {
+        let catalog = Catalog::from_wire(
+            &held(json!([
+                {"id": "core.table", "fields": {"columns": {"type": "object"}}},
+                {"id": "app.acme.ledger", "parent": "core.table", "fields": {}}
+            ])),
+            None,
+        );
+        let partial = Map::new();
+        let left = |columns: Value| json!({"title": "T", "columns": columns});
+        let judged = |written: &Value| {
+            catalog.validate_merged(
+                "app.acme.ledger",
+                &partial,
+                false,
+                written.as_object().unwrap(),
+            )
+        };
+        assert!(judged(&left(json!({"a": {"type": "string"}}))).is_ok());
+        assert!(judged(&left(json!({"a": {"type": "money"}}))).is_err());
     }
 }

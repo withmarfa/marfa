@@ -7,7 +7,7 @@ mod store;
 
 use std::collections::HashMap;
 
-use marfa_rules::schema::{OWN_COLUMNS, OWN_TABLE, normalize_table, with_table_labels};
+use marfa_rules::schema::Registry;
 use marfa_rules::validation;
 use rusqlite::Transaction;
 use serde_json::{Map, Value, json};
@@ -23,7 +23,8 @@ use store::Held;
 
 pub use events::{ROWS_CHANGED, judged as judged_event};
 pub use lifecycle::{
-    cleanup, constraining_columns, doom, held_in_use, refuse_moving_type, refuse_undeclared,
+    Shape, cleanup, constraining_columns, doom, held_in_use, judge_item_change, refuse_moving_type,
+    unkept_columns,
 };
 pub use read::{Page, get, list, page, totals};
 
@@ -190,61 +191,52 @@ impl Table {
     }
 }
 
-pub(crate) fn tables_of(catalog: &Catalog, type_id: &str) -> Vec<Table> {
-    let Ok(Some(resolved)) = marfa_rules::schema::resolve(&catalog.types, type_id, false) else {
-        return Vec::new();
-    };
-    let Some(Value::Object(tables)) = resolved.get("tables") else {
-        return Vec::new();
-    };
-    let mut found: Vec<Table> = tables
-        .iter()
-        .filter_map(|(name, table)| {
-            Some(Table {
-                name: name.clone(),
-                label: table.get("label")?.as_str()?.to_string(),
-                columns: table.get("columns")?.as_object()?.clone(),
-            })
-        })
-        .collect();
-    found.sort_by(|a, b| a.name.cmp(&b.name));
-    found
+fn unread_tables() -> Refusal {
+    Refusal::internal("a stored item's tables do not read")
 }
 
-fn own_table(host: &Host) -> Result<Table> {
-    let unread = || Refusal::internal("a stored item's columns do not read");
-    let properties: Value = serde_json::from_str(&host.properties).map_err(|_| unread())?;
-    let Some(columns) = properties.get(OWN_COLUMNS) else {
-        return Err(unread());
-    };
-    let mut raw = Map::new();
-    raw.insert(OWN_COLUMNS.into(), columns.clone());
-    let mut stored = Map::new();
-    stored.insert(OWN_TABLE.into(), Value::Object(normalize_table(&raw)));
-    let labelled = with_table_labels(&stored);
-    let table = labelled.get(OWN_TABLE).ok_or_else(unread)?;
-    Ok(Table {
-        name: OWN_TABLE.to_string(),
-        label: table
-            .get("label")
-            .and_then(Value::as_str)
-            .ok_or_else(unread)?
-            .to_string(),
-        columns: table
-            .get(OWN_COLUMNS)
-            .and_then(Value::as_object)
-            .ok_or_else(unread)?
-            .clone(),
-    })
+/// An item's tables by name, as `marfa_rules::schema::item_tables` gives them.
+pub(crate) fn tables_by_name(
+    types: &Registry,
+    type_id: &str,
+    properties: &Map<String, Value>,
+) -> Result<Map<String, Value>> {
+    marfa_rules::schema::item_tables(types, type_id, properties).map_err(|_| unread_tables())
+}
+
+pub(crate) fn item_tables(
+    types: &Registry,
+    type_id: &str,
+    properties: &Map<String, Value>,
+) -> Result<Vec<Table>> {
+    let mut found = tables_by_name(types, type_id, properties)?
+        .into_iter()
+        .map(|(name, table)| {
+            Ok(Table {
+                label: table
+                    .get("label")
+                    .and_then(Value::as_str)
+                    .ok_or_else(unread_tables)?
+                    .to_string(),
+                columns: table
+                    .get("columns")
+                    .and_then(Value::as_object)
+                    .ok_or_else(unread_tables)?
+                    .clone(),
+                name,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    found.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(found)
 }
 
 pub(crate) fn tables_of_host(catalog: &Catalog, host: &Host) -> Result<Vec<Table>> {
-    let mut found = tables_of(catalog, &host.type_id);
-    if catalog.rules.keeps_own_table(&host.type_id) {
-        found.push(own_table(host)?);
-        found.sort_by(|a, b| a.name.cmp(&b.name));
-    }
-    Ok(found)
+    let properties = match serde_json::from_str(&host.properties) {
+        Ok(Value::Object(properties)) => properties,
+        _ => return Err(unread_tables()),
+    };
+    item_tables(&catalog.types, &host.type_id, &properties)
 }
 
 pub(crate) fn table_of(catalog: &Catalog, host: &Host, name: &str) -> Result<Table> {

@@ -4,11 +4,17 @@ import { rmSync } from "node:fs";
 import type { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import { CliDevice, newStore } from "../../device/cli-adapter.js";
-import { cleanup, createTestContext, trackItem } from "../../utils/setup.js";
+import {
+  cleanup,
+  createTestContext,
+  trackItem,
+  trackType,
+} from "../../utils/setup.js";
 import { requireBinary } from "./harness.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
+let server: { url: string; key: string };
 let offline: CliDevice;
 let hydrated: CliDevice;
 const stores: string[] = [];
@@ -24,10 +30,8 @@ beforeAll(async () => {
   ({ client, ctx } = context);
   offline = device("own-columns-offline");
   expect((await offline.status()).ok).toBe(true);
-  hydrated = device("own-columns-hydrated", {
-    url: context.apiUrl,
-    key: context.apiKey,
-  });
+  server = { url: context.apiUrl, key: context.apiKey };
+  hydrated = device("own-columns-hydrated", server);
   expect((await hydrated.hydrate(["core.table"], "library")).ok).toBe(true);
 });
 
@@ -133,4 +137,75 @@ it("answers core.table as the server does, before and after a hydration", async 
     ).toBe("object");
     expect(held.value.label).toBe(served.data.label);
   }
+});
+
+it("refuses on the device columns naming a type its catalog does not hold, though the server takes them", async () => {
+  const only = `user.own-columns-server-${ctx.runId}`;
+  expect(
+    (
+      await client.registerType({
+        id: only,
+        fields: { title: { type: "string" } },
+      })
+    ).status,
+  ).toBe(201);
+  trackType(ctx, only);
+  const properties = {
+    title: "Budget",
+    columns: { a: { type: "item", type_constraints: [only] } },
+  };
+  const taken = await client.createItem({
+    type: "core.table",
+    source: ctx.source,
+    properties,
+  });
+  expect(taken.ok, JSON.stringify(taken.error)).toBe(true);
+  if (taken.ok) trackItem(ctx, taken.data.item.id);
+  const before = await offline.queue();
+  const refused = await offline.create({ type: "core.table", properties });
+  expect(refused.ok).toBe(false);
+  if (!refused.ok) {
+    expect(refused.refusal.raw).toContain("columns.a.type_constraints:");
+  }
+  expect(await offline.queue()).toEqual(before);
+});
+
+it("takes on the device a retype to a type below core.table that names no columns, keeping the columns the item holds", async () => {
+  const sheet = `user.own-columns-sheet-${ctx.runId}`;
+  expect(
+    (
+      await client.registerType({
+        id: sheet,
+        parent: "core.table",
+        fields: { owner: { type: "string" } },
+      })
+    ).status,
+  ).toBe(201);
+  trackType(ctx, sheet);
+  const made = await client.createItem({
+    type: "core.table",
+    source: ctx.source,
+    properties: { title: "Budget", columns: GOOD },
+  });
+  expect(made.ok, JSON.stringify(made.error)).toBe(true);
+  if (!made.ok) return;
+  trackItem(ctx, made.data.item.id);
+  const copy = device("own-columns-retype", server);
+  expect((await copy.hydrate(["core.table", sheet], "library")).ok).toBe(true);
+  const held = await copy.get(made.data.item.id);
+  expect(held.ok, JSON.stringify(held)).toBe(true);
+  if (!held.ok) return;
+  const retyped = await copy.update(made.data.item.id, {
+    type: sheet,
+    properties: {},
+    version: held.value.version,
+  });
+  expect(retyped.ok, JSON.stringify(retyped)).toBe(true);
+  const drained = await copy.drain();
+  expect(drained.ok && drained.value.verdicts.map((v) => v.verdict)).toEqual([
+    "accepted",
+  ]);
+  const read = await client.getItem(made.data.item.id);
+  expect(read.data.item.type).toBe(sheet);
+  expect(read.data.item.properties.columns).toEqual(GOOD);
 });

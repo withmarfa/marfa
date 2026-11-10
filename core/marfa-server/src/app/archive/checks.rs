@@ -1,5 +1,9 @@
 //! The per-line checks a restore makes, which an export makes too.
 
+use std::borrow::Cow;
+
+use marfa_rules::catalog::Naming;
+use marfa_rules::schema::OWN_COLUMNS;
 use marfa_rules::time;
 use serde_json::{Map, Value, json};
 
@@ -317,7 +321,7 @@ pub fn item(catalog: &Catalog, cap: usize, line: &Value, row: usize) -> Result<(
     shape(catalog, &at, type_id, properties.unwrap_or(&empty))
 }
 
-/// A shipped type holds its rows to it; a schedule or recurrence must unfold in a calendar read, whatever the type.
+/// A shipped type holds its items to it; whatever the type, a schedule or recurrence must unfold in a calendar read, and the columns of `core.table` and below must be ones a table takes.
 fn shape(
     catalog: &Catalog,
     at: &At<'_>,
@@ -326,12 +330,20 @@ fn shape(
 ) -> Result<(), Box<Refused>> {
     let rules = &catalog.rules;
     let judged = if Catalog::ships(type_id) {
-        rules.validate_properties(type_id, properties, true)
+        let written = if properties.contains_key(OWN_COLUMNS) {
+            let mut written = properties.clone();
+            written.remove(OWN_COLUMNS);
+            Cow::Owned(written)
+        } else {
+            Cow::Borrowed(properties)
+        };
+        rules.validate_merged(type_id, properties, true, &written)
     } else if rules.known(type_id) {
         rules.judge_schedule(type_id, properties)
     } else {
         Ok(())
     };
+    let judged = judged.and_then(|()| rules.judge_kept_columns(type_id, properties, Naming::Any));
     judged.map_err(|error| {
         let field = error.fields.first().map(|field| {
             if field.path.starts_with('_') {

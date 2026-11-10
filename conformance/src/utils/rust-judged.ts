@@ -265,6 +265,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/stream-unreadable-rows.test.ts",
   "src/suites/compliance/system-types.test.ts",
   "src/suites/compliance/table-own-columns.test.ts",
+  "src/suites/compliance/table-own-restore.test.ts",
   "src/suites/compliance/table-rows-events.test.ts",
   "src/suites/compliance/table-rows-lifecycle.test.ts",
   "src/suites/compliance/table-rows-own.test.ts",

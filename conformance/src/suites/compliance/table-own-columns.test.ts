@@ -300,12 +300,14 @@ describe("a table a person keeps", () => {
 let keys = 0;
 
 describe("a key changes a table's columns", () => {
-  async function writer(grants: string[] = []) {
+  async function writer(grants: string[] = [], types: string[] = []) {
     const made = await client.createKey({
       label: "own-columns-key",
       source: `${ctx.source}-own-columns-${(keys += 1)}`,
       permissions: grants,
-      type_permissions: { "core.table": "write" },
+      type_permissions: Object.fromEntries(
+        ["core.table", ...types].map((type) => [type, "write"]),
+      ),
     });
     expect(made.ok, JSON.stringify(made.error)).toBe(true);
     trackKey(ctx, made.data.id);
@@ -380,5 +382,89 @@ describe("a key changes a table's columns", () => {
     const res = await change(key, id, { properties: { columns: next } });
     expect(res.status, JSON.stringify(res.error)).toBe(200);
     expect(columnsOf((await client.getItem(id)).data.item)).toEqual(next);
+  });
+
+  async function declaring(name: string, columns: Columns) {
+    const id = `user.own-retype-${name}-${ctx.runId}`;
+    const res = await client.registerType({
+      id,
+      fields: { title: { type: "string" } },
+      tables: { table: { columns } },
+    });
+    expect(res.status, JSON.stringify(res.error)).toBe(201);
+    trackType(ctx, id);
+    return id;
+  }
+
+  function refusedFor(res: ApiResponse<unknown>, changes: string[]) {
+    expect(res.status, JSON.stringify(res.data)).toBe(403);
+    expect(res.error?.error.code).toBe("forbidden");
+    const details = res.error?.error.details as {
+      required_scope: string;
+      changes: string[];
+    };
+    expect(details.required_scope).toBe("schema.write");
+    expect(details.changes).toEqual(changes);
+  }
+
+  it("refuses a retype that reshapes a table the item has before and after to a key without schema.write, listing each and changing nothing", async () => {
+    const reshaped = await declaring("reshaped", {
+      a: { type: "number" },
+      b: { type: "string" },
+    });
+    const alike = await declaring("alike", { a: { type: "string" } });
+    const key = await writer([], [reshaped, alike]);
+    const id = await made({ a: { type: "string" } });
+
+    refusedFor(
+      await change(key, id, { type: reshaped, retype: true, properties: {} }),
+      ["tables.table.columns.a"],
+    );
+    expect((await client.getItem(id)).data.item.type).toBe("core.table");
+
+    const moved = await change(key, id, {
+      type: alike,
+      retype: true,
+      properties: {},
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    const emptied = await change(key, id, {
+      replace: true,
+      properties: { title: "Budget" },
+    });
+    expect(emptied.status, JSON.stringify(emptied.error)).toBe(200);
+    expect(emptied.data.item.properties).not.toHaveProperty("columns");
+
+    refusedFor(
+      await change(key, id, {
+        type: "core.table",
+        retype: true,
+        properties: { columns: { a: { type: "number" } } },
+      }),
+      ["columns.a"],
+    );
+    const held = (await client.getItem(id)).data.item;
+    expect(held.type).toBe(alike);
+    expect(held.properties).not.toHaveProperty("columns");
+
+    const back = await change(key, id, {
+      type: "core.table",
+      retype: true,
+      properties: { columns: { a: { type: "string" }, n: { type: "date" } } },
+    });
+    expect(back.status, JSON.stringify(back.error)).toBe(200);
+  });
+
+  it("lands a retype that reshapes a table the item has before and after for a key holding schema.write", async () => {
+    const reshaped = await declaring("forced", { a: { type: "number" } });
+    const key = await writer(["schema.write"], [reshaped]);
+    const id = await made({ a: { type: "string" } });
+    const res = await change(key, id, {
+      type: reshaped,
+      retype: true,
+      properties: {},
+    });
+    expect(res.status, JSON.stringify(res.error)).toBe(200);
+    expect(res.data.item.type).toBe(reshaped);
   });
 });

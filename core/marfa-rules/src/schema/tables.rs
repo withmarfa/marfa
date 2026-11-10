@@ -3,7 +3,7 @@
 use serde_json::{Map, Value, json};
 
 use super::field::{label_issue, normalize_field, validate_member, vocabulary};
-use super::resolve::{chain, label_member};
+use super::resolve::{ChainFault, chain, label_member};
 use super::unread::{unread_column_keys, unread_table_keys};
 use super::{Issue, Obj, Registry, as_obj, describe, kind, names, text};
 use crate::catalog::api_name;
@@ -265,7 +265,7 @@ pub(super) fn judge_tables(
         definition.get("tables"),
         &inherited,
         &descendants,
-        keeps_own_table(definition, registry),
+        keeps_as_defined(definition, registry),
         type_known,
         &mut errors,
     );
@@ -323,16 +323,41 @@ pub fn declared_tables(
     }
 }
 
-fn keeps_own_table(definition: &Obj, registry: &Registry) -> bool {
+fn keeps_as_defined(definition: &Obj, registry: &Registry) -> bool {
     text(definition, "id") == Some(OWN_TABLE_TYPE)
         || text(definition, "parent")
             .filter(|parent| !parent.is_empty())
             .and_then(|parent| chain(registry, parent).ok())
-            .is_some_and(|chain| {
-                chain
-                    .iter()
-                    .any(|row| text(row, "id") == Some(OWN_TABLE_TYPE))
-            })
+            .is_some_and(|chain| reaches_own_table(&chain))
+}
+
+fn reaches_own_table(chain: &[Obj]) -> bool {
+    chain
+        .iter()
+        .any(|row| text(row, "id") == Some(OWN_TABLE_TYPE))
+}
+
+/// Whether an item of `type_id` keeps its own table: `core.table` and every type below it.
+pub fn keeps_own_table(registry: &Registry, type_id: &str) -> bool {
+    chain(registry, type_id).is_ok_and(|chain| reaches_own_table(&chain))
+}
+
+/// An item's tables by name, labelled: those its type chain declares and, where the type keeps its own, `table` from the item's `columns`.
+pub fn item_tables(
+    registry: &Registry,
+    type_id: &str,
+    properties: &Obj,
+) -> Result<Obj, ChainFault> {
+    let chain = chain(registry, type_id)?;
+    let mut tables = chain_tables(&chain);
+    if reaches_own_table(&chain)
+        && let Some(columns @ Value::Object(_)) = properties.get(OWN_COLUMNS)
+    {
+        let mut raw = Obj::new();
+        raw.insert(OWN_COLUMNS.into(), columns.clone());
+        tables.insert(OWN_TABLE.into(), Value::Object(normalize_table(&raw)));
+    }
+    Ok(with_table_labels(&tables))
 }
 
 fn validate_tables(
@@ -344,6 +369,9 @@ fn validate_tables(
     errors: &mut Vec<Issue>,
 ) {
     descendants_declare_no_inherited_table(inherited, descendants, errors);
+    if own_table {
+        descendants_declare_no_own_table(descendants, errors);
+    }
     let Some(raw) = raw else { return };
     let Some(tables) = raw.as_object() else {
         errors.push(Issue::new(
@@ -456,6 +484,21 @@ fn descendants_declare_no_inherited_table(
                 .coded("inheritance_violation"),
             );
         }
+    }
+}
+
+fn descendants_declare_no_own_table(descendants: &[&Obj], errors: &mut Vec<Issue>) {
+    for child in descendants
+        .iter()
+        .filter(|child| declares(child, OWN_TABLE))
+    {
+        let child_id = text(child, "id").unwrap_or_default();
+        errors.push(Issue::new(
+            "parent",
+            format!("a parent under which no type declares a table named \"{OWN_TABLE}\""),
+            format!("a parent at or under \"{OWN_TABLE_TYPE}\", while \"{child_id}\" declares \"{OWN_TABLE}\""),
+            format!("An item of \"{OWN_TABLE_TYPE}\" keeps its own table under that name. Rename the table on \"{child_id}\" first."),
+        ));
     }
 }
 
@@ -605,7 +648,10 @@ pub(super) fn without_read_labels(submitted: &mut Obj, stored: Option<&Obj>, rea
 mod tests {
     use serde_json::{Value, json};
 
-    use super::super::{Issue, Registry, evolution_of, resolve, validate_type, with_set_stored};
+    use super::super::{
+        Issue, Obj, Registry, evolution_of, item_tables, keeps_own_table, resolve, validate_type,
+        with_set_stored,
+    };
 
     fn registry() -> Registry {
         Registry::new(
@@ -1146,5 +1192,64 @@ mod tests {
         assert_eq!(declared("user.below", "core.table"), vec!["tables.table"]);
         assert_eq!(declared("user.deeper", "user.sheet"), vec!["tables.table"]);
         assert_eq!(declared("core.table", ""), vec!["tables.table"]);
+    }
+
+    #[test]
+    fn a_type_moved_under_core_table_is_refused_while_a_type_below_it_declares_table() {
+        let held = Registry::new(
+            [
+                json!({"id": "core.table", "version": 0, "fields": {}}),
+                json!({"id": "user.top", "version": 0, "fields": {}}),
+                json!({"id": "user.leaf", "parent": "user.top", "version": 0, "fields": {},
+                       "tables": {"table": {"columns": {"a": {"type": "string"}}}}}),
+            ]
+            .into_iter()
+            .filter_map(|row| row.as_object().cloned()),
+        );
+        let moved = json!({"id": "user.top", "parent": "core.table", "fields": {}});
+        let fields: Vec<String> = validate_type(&moved, &held)
+            .err()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|issue| issue.field)
+            .collect();
+        assert_eq!(fields, ["parent"]);
+        let stays = json!({"id": "user.top", "fields": {}});
+        assert!(validate_type(&stays, &held).is_ok());
+    }
+
+    #[test]
+    fn an_item_s_tables_are_its_type_chain_s_and_its_own_where_its_type_keeps_one() {
+        let held = Registry::new(
+            [
+                json!({"id": "core.table", "version": 0, "fields": {}}),
+                json!({"id": "user.sheet", "parent": "core.table", "version": 0, "fields": {},
+                       "tables": {"notes": {"columns": {"text": {"type": "string"}}}}}),
+                json!({"id": "user.plain", "version": 0, "fields": {}}),
+            ]
+            .into_iter()
+            .filter_map(|row| row.as_object().cloned()),
+        );
+        let columns = json!({"columns": {"due_at": {"type": "date", "required": false}}});
+        let columns = columns.as_object().unwrap();
+        let sheet = item_tables(&held, "user.sheet", columns).unwrap();
+        assert_eq!(sheet.keys().collect::<Vec<_>>(), ["notes", "table"]);
+        assert_eq!(sheet["table"]["label"], "Table");
+        assert_eq!(
+            sheet["table"]["columns"]["due_at"],
+            json!({"type": "date", "label": "Due At"})
+        );
+        assert!(
+            item_tables(&held, "user.plain", columns)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            item_tables(&held, "core.table", &Obj::new())
+                .unwrap()
+                .is_empty()
+        );
+        assert!(keeps_own_table(&held, "user.sheet"));
+        assert!(!keeps_own_table(&held, "user.plain"));
     }
 }

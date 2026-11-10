@@ -22,7 +22,7 @@ pub use compat::{ShapeConflict, stored_shape_conflicts};
 pub use edge::{
     EdgeIssues, constraint_evolution_changes, edge_id, edge_type_from_request, request_shape,
 };
-pub use evolution::{evolution_of, own_column_changes};
+pub use evolution::{evolution_of, item_table_changes};
 pub use field::normalize_field;
 pub use icons::{icon_issue, is_icon_id};
 pub use registry::Registry;
@@ -32,8 +32,8 @@ pub use resolve::{
 };
 pub use tables::{
     ADDS_UP, ITEM_KIND, MAX_COLUMNS_PER_TABLE, MAX_TABLES_PER_TYPE, OWN_COLUMNS, OWN_TABLE,
-    OWN_TABLE_TYPE, chain_tables, declared_tables, judge_item_columns, normalize_table,
-    validate_columns, with_set_stored, with_table_labels,
+    OWN_TABLE_TYPE, chain_tables, declared_tables, item_tables, judge_item_columns,
+    keeps_own_table, normalize_table, validate_columns, with_set_stored, with_table_labels,
 };
 pub use type_def::validate_type;
 pub use unread::{unread_edge_keys, unread_keys};

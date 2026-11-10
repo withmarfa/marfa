@@ -522,4 +522,146 @@ describe("an item that keeps a table, and the types around it", () => {
     expect(fine.status, JSON.stringify(fine.error)).toBe(201);
     trackType(ctx, plain);
   });
+  async function plainType(): Promise<string> {
+    counter += 1;
+    const id = `user.own-rows-plain-${counter}-${ctx.runId}`;
+    const made = await client.registerType({
+      id,
+      fields: { owner: { type: "string" } },
+    } as never);
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    trackType(ctx, id);
+    return id;
+  }
+
+  it("refuses a replacement that takes a type away from core.table while its items hold rows in the table they keep, unless forced", async () => {
+    const below = await subtype();
+    const own = await tableItem(COLUMNS, below);
+    await put(own.id, [{ name: "kept", amount: 2 }]);
+    const away = { id: below, fields: { owner: { type: "string" } } };
+
+    const refused = await client.replaceType(below, away as never);
+    expect(refused.status, JSON.stringify(refused.data)).toBe(409);
+    expect(refused.error?.error).toMatchObject({
+      code: "type_in_use",
+      details: { tables: ["table"] },
+    });
+    expect((await client.getType(below)).data.parent).toBe("core.table");
+
+    const empty = await subtype();
+    await tableItem(COLUMNS, empty);
+    const free = await client.replaceType(empty, {
+      id: empty,
+      fields: { owner: { type: "string" } },
+    } as never);
+    expect(free.status, JSON.stringify(free.error)).toBe(200);
+
+    const forced = await client.replaceType(below, away as never, true);
+    expect(forced.status, JSON.stringify(forced.error)).toBe(200);
+    const back = await client.replaceType(below, {
+      ...away,
+      parent: "core.table",
+    } as never);
+    expect(back.status, JSON.stringify(back.error)).toBe(200);
+    expect(
+      (await client.listRows(own.id, "table")).data.data.map((r) => r.values),
+    ).toEqual([{ name: "kept", amount: 2 }]);
+  });
+
+  it("refuses a replacement that judges rows an item keeps by a table its type declares in their place, unless the column types agree", async () => {
+    const below = await subtype();
+    const own = await tableItem(COLUMNS, below);
+    await put(own.id, [{ name: "kept", amount: 2 }]);
+    const declaring = (amount: string) => ({
+      id: below,
+      fields: { owner: { type: "string" } },
+      tables: {
+        table: {
+          columns: { name: { type: "string" }, amount: { type: amount } },
+        },
+      },
+    });
+    const refused = await client.replaceType(
+      below,
+      declaring("string") as never,
+    );
+    expect(refused.status, JSON.stringify(refused.data)).toBe(409);
+    expect(refused.error?.error).toMatchObject({
+      code: "type_in_use",
+      details: { tables: ["table.amount"] },
+    });
+    const alike = await client.replaceType(below, declaring("number") as never);
+    expect(alike.status, JSON.stringify(alike.error)).toBe(200);
+  });
+
+  it("refuses a replacement that places a type under core.table while a type below it declares a table named table", async () => {
+    const top = await plainType();
+    counter += 1;
+    const leaf = `user.own-rows-leaf-${counter}-${ctx.runId}`;
+    const tables = { table: { columns: { a: { type: "string" } } } };
+    const made = await client.registerType({
+      id: leaf,
+      parent: top,
+      fields: { extra: { type: "string" } },
+      tables,
+    } as never);
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    trackType(ctx, leaf);
+
+    const moved = {
+      id: top,
+      parent: "core.table",
+      fields: { owner: { type: "string" } },
+    };
+    const refused = await client.replaceType(top, moved as never);
+    expect(refused.status, JSON.stringify(refused.data)).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_schema");
+    const fields = (
+      refused.error?.error.details as { errors: { field: string }[] }
+    ).errors.map((e) => e.field);
+    expect(fields).toEqual(["parent"]);
+    expect((await client.getType(top)).data.parent).not.toBe("core.table");
+
+    const renamed = await client.replaceType(leaf, {
+      id: leaf,
+      parent: top,
+      fields: { extra: { type: "string" } },
+      tables: { lines: tables.table },
+    } as never);
+    expect(renamed.status, JSON.stringify(renamed.error)).toBe(200);
+    const taken = await client.replaceType(top, moved as never);
+    expect(taken.status, JSON.stringify(taken.error)).toBe(200);
+  });
+
+  it("refuses a replacement that places a type under core.table while its items hold columns a table cannot take", async () => {
+    const top = await plainType();
+    const held = await client.createItem({
+      type: top,
+      properties: { title: "odd", columns: { a: { type: "money" } } },
+    } as never);
+    expect(held.status, JSON.stringify(held.error)).toBe(201);
+    trackItem(ctx, held.data.item.id);
+    const moved = {
+      id: top,
+      parent: "core.table",
+      fields: { owner: { type: "string" } },
+    };
+
+    const refused = await client.replaceType(top, moved as never);
+    expect(refused.status, JSON.stringify(refused.data)).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_schema");
+    const fields = (
+      refused.error?.error.details as { errors: { field: string }[] }
+    ).errors.map((e) => e.field);
+    expect(fields).toEqual(["parent"]);
+    expect((await client.getType(top)).data.parent).not.toBe("core.table");
+
+    const fixed = await client.updateItem(held.data.item.id, {
+      properties: { columns: { a: { type: "number" } } },
+      version: held.data.item.version,
+    });
+    expect(fixed.status, JSON.stringify(fixed.error)).toBe(200);
+    const taken = await client.replaceType(top, moved as never);
+    expect(taken.status, JSON.stringify(taken.error)).toBe(200);
+  });
 });

@@ -222,6 +222,43 @@ pub(super) fn column_held(
     )?)
 }
 
+pub(super) fn item_column_held(
+    tx: &Transaction<'_>,
+    seq: i64,
+    table: &str,
+    column: &str,
+) -> Result<bool> {
+    Ok(tx.query_row(
+        "SELECT EXISTS (SELECT 1 FROM table_summaries s \
+         JOIN table_rows r ON r.table_seq = s.seq \
+         WHERE s.item_seq = ?1 AND s.table_name = ?2 AND json_type(r.body, ?3) IS NOT NULL \
+         AND json_type(r.body, ?3) <> 'null')",
+        params![seq, table, format!("$.{column}")],
+        |row| row.get(0),
+    )?)
+}
+
+/// Each item of `type_id` that holds a row, as its seq and its properties.
+pub(super) fn holders_of_type(tx: &Transaction<'_>, type_id: &str) -> Result<Vec<(i64, String)>> {
+    let mut statement = tx.prepare_cached(
+        "SELECT i.seq, json(i.properties) FROM items i WHERE i.type = ?1 AND EXISTS \
+         (SELECT 1 FROM table_summaries s WHERE s.item_seq = i.seq AND s.row_count > 0) \
+         ORDER BY i.seq",
+    )?;
+    let found = statement.query_map([type_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    Ok(found.collect::<rusqlite::Result<_>>()?)
+}
+
+/// Each item of `type_id` that holds `columns`, as its id and its properties.
+pub(super) fn naming_columns(tx: &Transaction<'_>, type_id: &str) -> Result<Vec<(String, String)>> {
+    let mut statement = tx.prepare_cached(
+        "SELECT id, json(properties) FROM items \
+         WHERE type = ?1 AND json_type(properties, '$.columns') IS NOT NULL ORDER BY seq",
+    )?;
+    let found = statement.query_map([type_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    Ok(found.collect::<rusqlite::Result<_>>()?)
+}
+
 pub(super) fn own_columns_naming(
     tx: &Transaction<'_>,
     types: &[&str],

@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use serde_json::Value;
 
-use super::tables::{OWN_COLUMNS, normalize_table};
+use super::tables::{OWN_COLUMNS, OWN_TABLE};
 use super::{Obj, as_obj};
 
 const FREE_MEMBERS: [&str; 8] = [
@@ -62,18 +62,23 @@ fn column_changes(was: &Obj, is: &Obj, prefix: &str) -> Vec<String> {
     needs
 }
 
-/// Normalize defaults so writing an explicit default is not a schema change.
-pub fn own_column_changes(was: &Obj, is: &Obj) -> Vec<String> {
-    let stored = |columns: &Obj| {
-        let mut table = Obj::new();
-        table.insert(OWN_COLUMNS.into(), Value::Object(columns.clone()));
-        as_obj(normalize_table(&table).get(OWN_COLUMNS))
-            .cloned()
-            .unwrap_or_default()
-    };
-    let mut changes = column_changes(&stored(was), &stored(is), &format!("{OWN_COLUMNS}."));
-    changes.sort();
-    changes
+/// The columns only a schema writer may change, of each table an item has both before and after a write: `columns.<column>` for the item's own table after it, `tables.<table>.columns.<column>` for one its type declares.
+pub fn item_table_changes(before: &Obj, after: &Obj, keeps_own: bool) -> Vec<String> {
+    let columns = |table: &Value| as_obj(table.get("columns")).cloned().unwrap_or_default();
+    let mut needs = Vec::new();
+    for (name, was) in before {
+        let Some(is) = after.get(name) else {
+            continue;
+        };
+        let prefix = if keeps_own && name == OWN_TABLE {
+            format!("{OWN_COLUMNS}.")
+        } else {
+            format!("tables.{name}.columns.")
+        };
+        needs.extend(column_changes(&columns(was), &columns(is), &prefix));
+    }
+    needs.sort();
+    needs
 }
 
 /// The tables and columns only a schema writer may remove, change or require.
@@ -165,21 +170,34 @@ mod tests {
         );
     }
     #[test]
-    fn an_item_s_columns_compare_as_stored_so_a_written_default_and_a_label_change_nothing() {
-        let held = obj(json!({"a": {"type": "string"}, "b": {"type": "number"}}));
-        let same = obj(json!({
-            "b": {"type": "number", "label": "B", "required": false, "searchable": false},
-            "a": {"type": "string", "description": "A."},
-            "c": {"type": "date"}
+    fn an_item_s_tables_compare_by_shape_on_both_sides_and_name_where_the_column_now_lives() {
+        let before = obj(json!({
+            "table": {"columns": {"a": {"type": "string"}, "b": {"type": "number"}}},
+            "lines": {"columns": {"x": {"type": "string"}}},
+            "gone": {"columns": {"y": {"type": "string"}}}
         }));
-        assert!(own_column_changes(&held, &same).is_empty());
+        let same = obj(json!({
+            "table": {"columns": {"b": {"type": "number", "label": "B"}, "a": {"type": "string", "description": "A."}, "c": {"type": "date"}}},
+            "lines": {"columns": {"x": {"type": "string"}}},
+            "new": {"columns": {"z": {"type": "string", "required": true}}}
+        }));
+        assert!(item_table_changes(&before, &same, true).is_empty());
         let changed = obj(json!({
-            "a": {"type": "string", "required": true},
-            "c": {"type": "date", "required": true}
+            "table": {"columns": {"a": {"type": "string", "required": true}, "c": {"type": "date", "required": true}}},
+            "lines": {"columns": {"x": {"type": "number"}}}
         }));
         assert_eq!(
-            own_column_changes(&held, &changed),
-            ["columns.a", "columns.b", "columns.c"]
+            item_table_changes(&before, &changed, true),
+            [
+                "columns.a",
+                "columns.b",
+                "columns.c",
+                "tables.lines.columns.x"
+            ]
+        );
+        assert_eq!(
+            item_table_changes(&before, &changed, false)[0],
+            "tables.lines.columns.x"
         );
     }
 }
