@@ -13,11 +13,8 @@ pub const MAX_TABLES_PER_TYPE: usize = 32;
 pub const MAX_COLUMNS_PER_TABLE: usize = 64;
 /// The kind of a column that holds an item's id.
 pub const ITEM_KIND: &str = "item";
-/// The type whose items declare their own columns, as item data.
 pub const OWN_TABLE_TYPE: &str = "core.table";
-/// The property of such an item that holds its columns.
 pub const OWN_COLUMNS: &str = "columns";
-/// The name of the table such an item holds.
 pub const OWN_TABLE: &str = "table";
 /// How a column's values total: `count` is the rows that hold a value.
 pub const ADDS_UP: [&str; 5] = ["sum", "average", "min", "max", "count"];
@@ -52,7 +49,6 @@ fn name_issue(path: &str, name: &str, what: &str) -> Option<Issue> {
     })
 }
 
-/// Judges the columns an item of [`OWN_TABLE_TYPE`] declares, by the validator a declared table's columns pass, and answers the table they make, as stored.
 pub fn judge_item_columns(
     columns: Option<&Value>,
     type_known: &dyn Fn(&str) -> bool,
@@ -327,7 +323,6 @@ pub fn declared_tables(
     }
 }
 
-/// Whether items of the type declare their own table: it is [`OWN_TABLE_TYPE`] or descends from it.
 fn keeps_own_table(definition: &Obj, registry: &Registry) -> bool {
     text(definition, "id") == Some(OWN_TABLE_TYPE)
         || text(definition, "parent")

@@ -148,8 +148,7 @@ fn after_tables(
         .unwrap_or_default()
 }
 
-/// Names referring columns as `<type>.<table>.<column>`, and those an item of `core.table` declares as
-/// `<item>.table.<column>`, or `<type>.table.<column>` where the caller may not read the item's type.
+/// Hidden holders are named by type, never by item ID.
 pub fn constraining_columns(
     tx: &Transaction<'_>,
     catalog: &Catalog,

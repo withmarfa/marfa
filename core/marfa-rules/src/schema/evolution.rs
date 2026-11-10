@@ -44,7 +44,6 @@ fn column_shape_of(column: &Value) -> Value {
     shape
 }
 
-/// The columns of `was` that `is` removes, changes in shape or leaves out, and the required ones it adds, each named under `prefix`.
 fn column_changes(was: &Obj, is: &Obj, prefix: &str) -> Vec<String> {
     let mut needs = Vec::new();
     for (column, definition) in was {
@@ -63,7 +62,7 @@ fn column_changes(was: &Obj, is: &Obj, prefix: &str) -> Vec<String> {
     needs
 }
 
-/// The columns of an item of `core.table` only a schema writer may remove, change or require, as `columns.<name>`, sorted.
+/// Normalize defaults so writing an explicit default is not a schema change.
 pub fn own_column_changes(was: &Obj, is: &Obj) -> Vec<String> {
     let stored = |columns: &Obj| {
         let mut table = Obj::new();

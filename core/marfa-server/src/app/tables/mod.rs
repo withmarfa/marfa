@@ -172,7 +172,6 @@ pub(crate) fn not_found_row() -> Refusal {
     Refusal::new(Code::RowNotFound, "The table holds no row with this id.")
 }
 
-/// A table of an item, with its label: one its type declares, inherited or its own, or the item's own.
 pub(crate) struct Table {
     pub name: String,
     pub label: String,
@@ -212,7 +211,6 @@ pub(crate) fn tables_of(catalog: &Catalog, type_id: &str) -> Vec<Table> {
     found
 }
 
-/// The table an item of `core.table` keeps, whose columns are its `columns` property.
 fn own_table(host: &Host) -> Result<Table> {
     let unread = || Refusal::internal("a stored item's columns do not read");
     let properties: Value = serde_json::from_str(&host.properties).map_err(|_| unread())?;
@@ -240,7 +238,6 @@ fn own_table(host: &Host) -> Result<Table> {
     })
 }
 
-/// The tables of an item: those its type declares, and its own where it keeps one.
 pub(crate) fn tables_of_host(catalog: &Catalog, host: &Host) -> Result<Vec<Table>> {
     let mut found = tables_of(catalog, &host.type_id);
     if catalog.rules.keeps_own_table(&host.type_id) {

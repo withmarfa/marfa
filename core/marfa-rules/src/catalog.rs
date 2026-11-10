@@ -941,7 +941,6 @@ impl Catalog {
         Ok(())
     }
 
-    /// Whether an item of `type_id` declares its own columns, in the `columns` property.
     pub fn keeps_own_table(&self, type_id: &str) -> bool {
         type_id == OWN_TABLE_TYPE || self.descends_from(type_id, OWN_TABLE_TYPE)
     }

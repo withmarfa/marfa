@@ -1647,7 +1647,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         Ok(rules.coerced_properties(resulting, &result))
     }
 
-    /// Removing or reshaping a column, or requiring a new one, leaves rows that no longer fit, so only a schema writer may.
+    /// Reshaping columns can leave stored rows that no longer fit.
     fn refuse_column_changes(
         &self,
         resulting: &str,

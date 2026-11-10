@@ -222,7 +222,6 @@ pub(super) fn column_held(
     )?)
 }
 
-/// The items of `types` whose own columns name `type_id` in `type_constraints`, as item, type and column.
 pub(super) fn own_columns_naming(
     tx: &Transaction<'_>,
     types: &[&str],

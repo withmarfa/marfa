@@ -886,7 +886,7 @@ An item of `core.table`, or of a type below it, keeps one table of its own, name
 
 ### `tables/own-table-listed`
 
-When a caller that may read an item of `core.table`, or of a type below it, sends `GET /items/{id}/tables`, the server MUST answer in `data` a table named `table`, labelled `Table`, with its `row_count`, `bytes`, `last_batch` and `changed_at`.
+When a caller that may read an item of `core.table`, or of a type below it, sends `GET /items/{id}/tables`, the server MUST answer in `data` a table named `table`, labeled `Table`, with its `row_count`, `bytes`, `last_batch` and `changed_at`.
 
 **Tests:** `compliance/table-rows-own.test.ts › lists the table an item keeps, with what it holds`.
 
