@@ -1,7 +1,7 @@
 // Auto-generated from core/*.json and core/system/*.json — do not edit manually.
 // Run `pnpm --filter @withmarfa/types generate` to regenerate.
 
-import type { TypeSchema } from "../src/schema-types.js";
+import type { ShippedTypeSchema, TypeSchema } from "../src/schema-types.js";
 
 const coreBookmark: TypeSchema = {
   id: "core.bookmark",
@@ -39,7 +39,7 @@ const coreCollection: TypeSchema = {
   roles: ["container"],
 };
 
-const coreConversation: TypeSchema = {
+const coreConversation: ShippedTypeSchema = {
   id: "core.conversation",
   label: "Conversation",
   description: "A conversation, such as a chat with a person or an assistant. Its messages are the rows of its messages table.",

@@ -12,7 +12,11 @@
 
 import { readFileSync, readdirSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { FieldDefinition, TypeSchema } from "../src/schema-types.js";
+import type {
+  FieldDefinition,
+  ShippedTypeSchema,
+  TypeSchema,
+} from "../src/schema-types.js";
 import {
   validateEdgeTypeSchema,
   validateTypeSchema,
@@ -155,8 +159,8 @@ function resolveMergePolicy(schema: TypeSchema): TypeSchema["merge_policy"] {
   return out;
 }
 
-function buildFamily(raws: RawSchema[]): TypeSchema[] {
-  const built: TypeSchema[] = [];
+function buildFamily(raws: RawSchema[]): ShippedTypeSchema[] {
+  const built: ShippedTypeSchema[] = [];
   for (const raw of byAncestry(raws)) {
     const { rest, tables } = setAsideTables(raw.data);
     const result = validateTypeSchema(rest, {
@@ -168,7 +172,7 @@ function buildFamily(raws: RawSchema[]): TypeSchema[] {
       }
       continue;
     }
-    const schema: TypeSchema = {
+    const schema: ShippedTypeSchema = {
       ...result.data,
       fields: {},
     };
@@ -249,8 +253,9 @@ function fieldLiteral(field: FieldDefinition): string {
   return `{ ${parts.join(", ")} }`;
 }
 
-function emitSchema(schema: TypeSchema, lines: string[]): void {
-  lines.push(`const ${varName(schema.id)}: TypeSchema = {`);
+function emitSchema(schema: ShippedTypeSchema, lines: string[]): void {
+  const annotation = schema.tables ? "ShippedTypeSchema" : "TypeSchema";
+  lines.push(`const ${varName(schema.id)}: ${annotation} = {`);
   lines.push(`  id: ${quote(schema.id)},`);
   if (schema.parent) lines.push(`  parent: ${quote(schema.parent)},`);
   if (schema.label) lines.push(`  label: ${quote(schema.label)},`);
@@ -326,7 +331,9 @@ lines.push(
 );
 lines.push("// Run `pnpm --filter @withmarfa/types generate` to regenerate.");
 lines.push("");
-lines.push('import type { TypeSchema } from "../src/schema-types.js";');
+lines.push(
+  'import type { ShippedTypeSchema, TypeSchema } from "../src/schema-types.js";',
+);
 lines.push("");
 
 for (const schema of coreTypes) emitSchema(schema, lines);

@@ -258,8 +258,6 @@ export interface TypeSchema {
   description?: string;
   version: number;
   fields: Record<string, FieldDefinition>;
-  /** The tables a shipped type declares, by name, as the Rust validator reads them. */
-  tables?: Record<string, unknown>;
   /**
    * Structural roles this type plays. Inherited: a subtype plays every role
    * its ancestors declare, so a role is stated once at the top of a family.
@@ -282,6 +280,11 @@ export interface TypeSchema {
    * `compatible_with_violation`.
    */
   compatible_with?: string[];
+}
+
+/** A shipped type with the tables it declares, by name, as the Rust validator reads them. */
+export interface ShippedTypeSchema extends TypeSchema {
+  tables?: Record<string, unknown>;
 }
 
 /**
