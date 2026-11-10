@@ -1004,13 +1004,13 @@ When a `rows.changed` carries a row holding in a column of type `item` the id of
 
 **Tests:** `compliance/table-rows-events.test.ts › withholds an item column's id from a stream that may not read the item`.
 
-### `tables/rows-event-copy`
+### `tables/rows-event-copy-sent`
 
-While a stream is a copy stream, the server MUST NOT send it `rows.changed`.
+While a stream is a copy stream, the server MUST send it the `rows.changed` of each item whose type the credential may read, whatever the source filter.
 
-**Reason:** a copy stream feeds a device's working copy, which holds no rows.
+**Reason:** a device holds the tables of the items its copy holds (`device/table-hold`), and its copy can hold an item the source filter leaves out (`reach/frame-excluded`).
 
-**Tests:** `compliance/table-rows-events.test.ts › sends no rows.changed on a copy stream`.
+**Tests:** `compliance/table-rows-events.test.ts › sends rows.changed on a copy stream, for an item the source filter leaves out too`.
 
 ## The change log and undo
 

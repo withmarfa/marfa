@@ -1169,13 +1169,7 @@ impl Task for ProbeCatchUp {
         (|| -> marfa_core::Result<Self::Output> {
             let report = self.folder.catch_up()?;
             Ok(FolderCatchUp {
-                caught_up: report.caught_up.map(|report| crate::CatchUpReport {
-                    applied: count(report.applied),
-                    skipped: count(report.skipped),
-                    read_only_held: count(report.read_only_held),
-                    cursor: report.cursor,
-                    catalog_changed: report.catalog_changed,
-                }),
+                caught_up: report.caught_up.map(crate::CatchUpReport::from),
                 hydrated: report.hydrated.map(HydrateReport::from),
             })
         })()

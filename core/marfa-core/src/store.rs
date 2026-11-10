@@ -3745,6 +3745,7 @@ pub fn replace_catalog(
         meta_set(conn, META_CATALOG_VERSION, &next.to_string())?;
         // Which types are files is the catalog's to say.
         reconcile_attachments(conn)?;
+        crate::tables::reconcile_all(conn)?;
         Ok(
             if types == CatalogChange::IconsOnly && !edge_types && !local {
                 CatalogChange::IconsOnly
@@ -4204,6 +4205,9 @@ pub fn clear_slice(conn: &Connection) -> Result<(), CoreError> {
          DELETE FROM items_fts;
          DELETE FROM beneath;
          DELETE FROM beneath_reach;
+         DELETE FROM table_rows;
+         DELETE FROM item_tables;
+         DELETE FROM rows_reread;
          DELETE FROM meta WHERE key LIKE 'item_listed/%' OR key LIKE 'item_early/%' OR key LIKE 'edge_brought/%';",
     )?;
     Ok(())
@@ -4295,7 +4299,8 @@ fn edge_brought(id: &str) -> String {
 /// its end takes out unless the walk or the replay brings it again.
 pub fn start_refill(conn: &Connection) -> Result<(), CoreError> {
     conn.execute_batch(
-        "DELETE FROM meta WHERE key LIKE 'item_listed/%' OR key LIKE 'item_early/%' OR key LIKE 'edge_brought/%';",
+        "DELETE FROM rows_reread;
+         DELETE FROM meta WHERE key LIKE 'item_listed/%' OR key LIKE 'item_early/%' OR key LIKE 'edge_brought/%';",
     )?;
     Ok(())
 }
@@ -4856,6 +4861,7 @@ fn remove_item(
         changed |= forget_edge(conn, &edge)?;
     }
     let removed = conn.execute("DELETE FROM items WHERE id = ?1", [id])? > 0;
+    crate::tables::drop_item(conn, id)?;
     attachments_changed(conn, &[id], before)?;
     Ok(removed || changed)
 }
@@ -10597,7 +10603,7 @@ mod tests {
             .collect();
         assert_eq!(
             crate::folder::state::hash(named.as_bytes()),
-            "4946e63433f91c9d",
+            "5699a275608a979c",
             "the shape of a table changed, which refuses every store made before it"
         );
     }

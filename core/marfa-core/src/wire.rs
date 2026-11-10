@@ -112,7 +112,7 @@ pub struct WireErrorEnvelope {
     pub error: WireErrorBody,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct EventPayload {
     #[serde(default)]
     pub listed: Option<bool>,
@@ -136,6 +136,39 @@ pub struct EventPayload {
     pub head: Option<String>,
     #[serde(default)]
     pub reason: Option<String>,
+    /// A `rows.changed`, read by its own shape rather than these fields.
+    #[serde(skip)]
+    pub rows: Option<RowsEvent>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RowsEvent {
+    pub item: RowsItem,
+    pub table: String,
+    pub last_activity_at: String,
+    pub rows: Vec<RowChange>,
+    #[serde(default = "included")]
+    pub values_included: bool,
+}
+
+fn included() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RowsItem {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RowChange {
+    pub id: String,
+    #[serde(default)]
+    pub values: Option<Map<String, Value>>,
+    #[serde(default)]
+    pub deleted: bool,
+    #[serde(default)]
+    pub withheld: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

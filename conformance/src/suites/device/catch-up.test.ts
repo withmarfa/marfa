@@ -2005,14 +2005,24 @@ describe("catch-up replays from the cursor", () => {
     ).toMatchObject({ applied: 1, skipped: 0, cursor: "12" });
     expect(
       complete.ok ? Object.keys(complete.value).sort() : undefined,
-      "the report carried a field beyond the counts, the cursor and the catalog flag, which a caller would read as a promise the contract does not make",
+      "the report carried a field beyond the counts, the cursor, the catalog flag and the tables' fill, which a caller would read as a promise the contract does not make",
     ).toEqual([
       "applied",
       "catalog_changed",
       "cursor",
       "read_only_held",
       "skipped",
+      "tables",
     ]);
+    expect(complete.ok ? complete.value.tables : undefined).toEqual({
+      whole: 0,
+      online: 0,
+      unfilled: 0,
+      pages: 0,
+      rows: 0,
+      failed: 0,
+      failure: null,
+    });
   });
 });
 
@@ -2461,6 +2471,50 @@ describe("catch-up keeps the copy to its slice", () => {
     } finally {
       await follow.stop();
     }
+  });
+
+  it("tells a held stream's caller once that the server cannot be reached while an event cannot be applied, and once that it can when the event is applied", async () => {
+    harness = await startHarness("entering-read-stalls-held");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10", items: { "core.note": [] } });
+    const entered = wireItem({ id: "entered", version: 3 });
+    server.copyAnswer("GET", "/events", {
+      kind: "sse",
+      hold: true,
+      frames: [
+        connected,
+        copyStreamCursor("11"),
+        copyItemEvent("11", "item.updated", entered),
+      ],
+    });
+    const busy = () => refusal(503, "service_unavailable", "busy");
+    server.copyAnswer(
+      "GET",
+      "/items/entered",
+      busy(),
+      busy(),
+      busy(),
+      answers.updated({ ...entered, edges: {} }),
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const followed = await device.follow(12);
+    expect(followed.ok, JSON.stringify(followed)).toBe(true);
+    if (!followed.ok) return;
+    expect(
+      server.requests.filter(
+        (request) => request.pathname === "/items/entered",
+      ),
+      "the entering item's read was not refused three times before it was answered, so the changes below are about nothing",
+    ).toHaveLength(4);
+    expect(
+      followed.value.changes.map((change) => change.event),
+      "the caller was not told once that the server was lost and once, as the event was applied, that it was back",
+    ).toEqual(["server.unreachable", "server.reachable", "item.updated"]);
+    const lost = followed.value.changes[0];
+    expect([lost?.item_id, lost?.edge_id]).toEqual([null, null]);
+    expect(lost?.reason, "the caller was not told why").toContain("503");
+    expect(followed.value.report.cursor).toBe("11");
   });
 
   it("learns an item retyped out of its slice, asking the stream for every type", async () => {

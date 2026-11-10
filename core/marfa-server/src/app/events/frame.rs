@@ -63,8 +63,7 @@ impl Judge<'_> {
             }
             Kind::Edge
         } else if entry.event_type == crate::app::tables::ROWS_CHANGED {
-            // A copy stream feeds a working copy, which holds no rows.
-            if self.filter.copy || !self.selects(entry) {
+            if !self.selects(entry) {
                 return None;
             }
             Kind::Rows

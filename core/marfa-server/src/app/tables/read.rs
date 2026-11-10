@@ -11,6 +11,7 @@ use super::store::{self, Held};
 use super::{Sight, Table, not_found_row, table_of, tables_of};
 use crate::app::App;
 use crate::app::access::Caller;
+use crate::app::faults::FAIL_TABLE_ROWS_PAGE;
 use crate::app::items::{self, Reader, reading};
 use crate::app::query::{Position, Secret, Sql, compared, held_property, readable_types};
 use crate::app::refusal::{Refusal, Result};
@@ -564,6 +565,9 @@ fn answered_page(
     table: &str,
     asked: &Page,
 ) -> Result<String> {
+    if read.faults().fail(FAIL_TABLE_ROWS_PAGE, Some(table)) {
+        return Err(Refusal::internal("the read of a page of rows failed"));
+    }
     let host = items::readable_host(read, item_id)?;
     let table = table_of(&read.catalog, &host.type_id, table)?;
     let limit = limit_of(asked.limit)?;

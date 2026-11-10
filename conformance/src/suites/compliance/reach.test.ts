@@ -514,6 +514,63 @@ describe("conditional working-copy reaches", () => {
     expect(await ordinaryBulk.json()).not.toHaveProperty("listed");
   });
 
+  it("certifies the table doors a copy fills from, and an absent item or table, and refuses them under an earlier reach", async () => {
+    const type = `user.reach-tables-${ctx.runId}`;
+    const made = await client.registerType({
+      id: type,
+      fields: { title: { type: "string" } },
+      tables: { steps: { columns: { count: { type: "integer" } } } },
+    } as never);
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    trackType(ctx, type);
+    const item = await client.createItem({
+      type,
+      properties: { title: "Steps" },
+    } as never);
+    expect(item.ok, JSON.stringify(item.error)).toBe(true);
+    const id = item.data.item.id;
+    trackItem(ctx, id);
+    const wrote = await client.writeRows(id, "steps", {
+      operations: [
+        { op: "put", values: { count: 1 } },
+        { op: "put", values: { count: 2 } },
+      ],
+    });
+    expect(wrote.status, JSON.stringify(wrote.error)).toBe(200);
+    const proof = await bootstrap();
+    const filled = [
+      `/items/${id}/tables`,
+      `/items/${id}/tables/steps/rows?limit=1`,
+    ];
+    for (const path of filled) {
+      const response = await request(path, proof.reach);
+      certified(response, proof.reach);
+      const body = (await response.json()) as { data: unknown[] };
+      expect(body).not.toHaveProperty("reach");
+      expect(body.data).toHaveLength(1);
+      const ordinary = await request(path);
+      expect(ordinary.status).toBe(200);
+      expect(ordinary.headers.get("X-Marfa-Reach")).toBeNull();
+    }
+    for (const [path, code] of [
+      [`/items/${UNKNOWN_ID}/tables`, "item_not_found"],
+      [`/items/${UNKNOWN_ID}/tables/steps/rows`, "item_not_found"],
+      [`/items/${id}/tables/nothing/rows`, "table_not_found"],
+    ] as const) {
+      const response = await request(path, proof.reach);
+      certified(response, proof.reach, 404);
+      expect(await errorCode(response)).toBe(code);
+    }
+    const other = `user.reach-tables-moved-${ctx.runId}`;
+    const moved = await client.registerType({
+      id: other,
+      fields: { title: { type: "string" } },
+    } as never);
+    expect(moved.status, JSON.stringify(moved.error)).toBe(201);
+    trackType(ctx, other);
+    for (const path of filled) await changed(await request(path, proof.reach));
+  });
+
   it("rejects unsupported conditional doors, malformed proofs and metadata-free item pages", async () => {
     const proof = await bootstrap();
     for (const path of [
@@ -523,6 +580,8 @@ describe("conditional working-copy reaches", () => {
       "/items?include=edges",
       "/config",
       `/items/${UNKNOWN_ID}/versions`,
+      `/items/${UNKNOWN_ID}/tables/steps/rows/${UNKNOWN_ID}`,
+      `/items/${UNKNOWN_ID}/tables/steps/totals`,
     ]) {
       const ordinary = await request(path);
       expect([200, 404]).toContain(ordinary.status);
@@ -845,7 +904,7 @@ describe("conditional working-copy reaches", () => {
     }
   });
 
-  it("refuses stale HTTP and resume proofs before resource lookup after retype or read narrowing", async () => {
+  it("refuses stale HTTP and resume proofs before resource lookup after retype, read narrowing or read widening", async () => {
     const row = await seed("retype witness");
     const target = await seed("retype edge target");
     const edge = await client.createEdge({
@@ -935,6 +994,23 @@ describe("conditional working-copy reaches", () => {
     expect(
       (await request(`/items/${note.id}`, undefined, key.key)).status,
     ).toBe(403);
+    const widening = await mint("widened", {
+      type_permissions: { "core.note": "read" },
+      permissions: [],
+    });
+    const narrow = await bootstrap(widening.key);
+    expect(
+      (
+        await owner.updateKey(widening.id, {
+          type_permissions: { "core.note": "read", "core.task": "read" },
+        })
+      ).ok,
+    ).toBe(true);
+    const widened = await moves(narrow, widening.key);
+    certified(
+      await request(`/items/${note.id}`, widened.reach, widening.key),
+      widened.reach,
+    );
   });
 
   it("certifies matching resource absence without certifying generic validation or authentication failures", async () => {

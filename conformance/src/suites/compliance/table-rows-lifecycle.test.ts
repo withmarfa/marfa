@@ -5,10 +5,21 @@ import type {
   RowOperation,
   TestContext,
 } from "../../client/types.js";
+import {
+  bootFreshServer,
+  FRESH_SERVER_TIMEOUT_MS,
+  stopFreshServers,
+} from "../../utils/fresh-server.js";
 import { callTool, connectMcp, toolError } from "../../utils/mcp.js";
 import {
+  operatorOf,
+  QUIET_SCHEDULE,
+  quiet,
+  runJob,
+} from "../../utils/moved-clock.js";
+import { everythingClient } from "../../utils/own-blob-server.js";
+import {
   createTestContext,
-  getManagementClient,
   trackItem,
   trackKey,
   cleanup,
@@ -29,6 +40,8 @@ beforeAll(async () => {
 afterAll(async () => {
   await cleanup(ctx);
 });
+
+afterAll(stopFreshServers, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 let counter = 0;
 
@@ -133,76 +146,107 @@ describe("activity", () => {
 });
 
 describe("rows and the life of an item", () => {
-  it("removes a purged item's rows in pages, answering other requests meanwhile", async () => {
-    const type = await register(typeId("purge"));
-    const big = await itemOf(type, "big");
-    const other = await itemOf(type, "other");
-    await put(other.id, [{ amount: 1 }]);
-    for (let batch = 0; batch < 30; batch++) {
-      await put(
-        big.id,
-        Array.from({ length: 1000 }, (_, n) => ({
-          amount: n,
-          memo: `row ${batch}-${n}`,
-        })),
-      );
-    }
-    expect((await client.listTables(big.id)).data.data[0]?.row_count).toBe(
-      30_000,
-    );
-    expect((await client.deleteItem(big.id)).status).toBe(200);
-    const purgedAt = new Date().toISOString();
-    expect((await client.purgeItem(big.id)).status).toBe(200);
-    expect((await client.getItem(big.id)).status).toBe(404);
-
-    const slowest = { ms: 0 };
-    let running = true;
-    const reads = (async () => {
-      while (running) {
-        const started = Date.now();
-        const res = await client.listRows(other.id, "lines");
-        expect(res.status).toBe(200);
-        slowest.ms = Math.max(slowest.ms, Date.now() - started);
+  it(
+    "removes a purged item's rows in pages, answering other requests meanwhile",
+    async () => {
+      // On a server of its own, only this purge can bring the job forward, so
+      // a run started after `purgedAt` sees the purge whole.
+      const server = await bootFreshServer("rows-purge-pages", QUIET_SCHEDULE);
+      const own = await everythingClient(server);
+      await quiet(server, ["table-row-cleanup"]);
+      const type = `user.rows-life-purge-${ctx.runId}`;
+      const made = await own.registerType({
+        id: type,
+        fields: { title: { type: "string" } },
+        tables: LINES,
+      } as never);
+      expect(made.status, JSON.stringify(made.error)).toBe(201);
+      const itemOn = async (title: string) => {
+        const created = await own.createItem({
+          type,
+          properties: { title },
+        } as never);
+        expect(created.status, JSON.stringify(created.error)).toBe(201);
+        return created.data.item;
+      };
+      const putOn = async (item: string, values: Record<string, unknown>[]) => {
+        const res = await own.writeRows(item, "lines", {
+          operations: values.map(
+            (v) => ({ op: "put", values: v }) as RowOperation,
+          ),
+        });
+        expect(res.status, JSON.stringify(res.error)).toBe(200);
+      };
+      const big = await itemOn("big");
+      const other = await itemOn("other");
+      await putOn(other.id, [{ amount: 1 }]);
+      for (let batch = 0; batch < 30; batch++) {
+        await putOn(
+          big.id,
+          Array.from({ length: 1000 }, (_, n) => ({
+            amount: n,
+            memo: `row ${batch}-${n}`,
+          })),
+        );
       }
-    })();
-    // The purge brings the job forward, so the scheduler may run it before this fixture asks.
-    const management = getManagementClient();
-    let result: { removed: number; pages: number } | undefined;
-    const deadline = Date.now() + 60_000;
-    let asked = false;
-    while (!result && Date.now() < deadline) {
-      const job = (await management.listHousekeeping()).data.data.find(
-        (row) => row.name === "table-row-cleanup",
+      expect((await own.listTables(big.id)).data.data[0]?.row_count).toBe(
+        30_000,
       );
-      if (
-        job?.last_started_at &&
-        job.last_started_at > purgedAt &&
-        job.last_finished_at &&
-        !job.running_since
-      ) {
-        expect(job.last_outcome).toBe("ok");
-        result = job.last_result as { removed: number; pages: number };
-      } else if (!asked && !job?.running_since) {
-        asked = true;
-        await management.runHousekeeping("table-row-cleanup");
-      } else {
-        await new Promise((r) => setTimeout(r, 100));
-      }
-    }
-    running = false;
-    await reads;
-    expect(result).toBeDefined();
-    expect(result!.removed).toBeGreaterThanOrEqual(30_000);
-    expect(result!.pages).toBeGreaterThan(1);
-    expect(slowest.ms).toBeLessThan(1_000);
+      expect((await own.deleteItem(big.id)).status).toBe(200);
+      const purgedAt = new Date().toISOString();
+      expect((await own.purgeItem(big.id)).status).toBe(200);
+      expect((await own.getItem(big.id)).status).toBe(404);
 
-    const again = await management.runHousekeeping("table-row-cleanup");
-    expect(again.status, JSON.stringify(again.error)).toBe(200);
-    expect((again.data.result as { removed: number }).removed).toBe(0);
-    expect((await client.listRows(other.id, "lines")).data.data).toHaveLength(
-      1,
-    );
-  });
+      const slowest = { ms: 0 };
+      let running = true;
+      const reads = (async () => {
+        while (running) {
+          const started = Date.now();
+          const res = await own.listRows(other.id, "lines");
+          expect(res.status).toBe(200);
+          slowest.ms = Math.max(slowest.ms, Date.now() - started);
+        }
+      })();
+      // The purge brings the job forward, so the scheduler may run it before this fixture asks.
+      const operator = operatorOf(server);
+      let result: { removed: number; pages: number } | undefined;
+      const deadline = Date.now() + 60_000;
+      let asked = false;
+      try {
+        while (!result && Date.now() < deadline) {
+          const job = (await operator.listHousekeeping()).data.data.find(
+            (row) => row.name === "table-row-cleanup",
+          );
+          if (
+            job?.last_started_at &&
+            job.last_started_at > purgedAt &&
+            job.last_finished_at &&
+            !job.running_since
+          ) {
+            expect(job.last_outcome).toBe("ok");
+            result = job.last_result as { removed: number; pages: number };
+          } else if (!asked && !job?.running_since) {
+            asked = true;
+            await operator.runHousekeeping("table-row-cleanup");
+          } else {
+            await new Promise((r) => setTimeout(r, 100));
+          }
+        }
+      } finally {
+        running = false;
+        await reads;
+      }
+      expect(result).toBeDefined();
+      expect(result!.removed).toBeGreaterThanOrEqual(30_000);
+      expect(result!.pages).toBeGreaterThan(1);
+      expect(slowest.ms).toBeLessThan(1_000);
+
+      const again = await runJob(server, "table-row-cleanup");
+      expect((again.result as { removed: number }).removed).toBe(0);
+      expect((await own.listRows(other.id, "lines")).data.data).toHaveLength(1);
+    },
+    3 * FRESH_SERVER_TIMEOUT_MS,
+  );
 
   it("refuses a type move and a retype whose target does not declare the tables an item holds", async () => {
     const from = await register(typeId("from"), {

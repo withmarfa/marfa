@@ -74,6 +74,7 @@ mod sse;
 #[cfg(test)]
 mod stop_tests;
 mod store;
+mod tables;
 mod telemetry;
 #[cfg(all(test, feature = "telemetry"))]
 mod telemetry_tests;
@@ -117,6 +118,10 @@ pub use file_cache::{
 pub use marfa_rules::catalog::{EdgeType, End, ItemType, TypeField, WrittenAt};
 pub use marfa_rules::display::ItemDisplay;
 pub use marfa_rules::thumbnail::Thumbnail;
+pub use tables::{
+    BYTE_CAP as TABLE_BYTE_CAP, FillReport, HeldTable, HeldTables, ROW_CAP as TABLE_ROW_CAP,
+    RowsAsked, TableChoice, TableHold,
+};
 /// Refuses the first whole number in `text`, a JSON object of properties,
 /// that a float would change, read as written.
 pub fn refuse_inexact_integers(text: &str) -> Result<()> {
@@ -305,6 +310,9 @@ pub struct Core {
     renewals: Arc<Mutex<Vec<(String, String)>>>,
     /// Before when a `VACUUM` that was refused or failed is not tried again.
     reclaim_held_until: Mutex<Option<std::time::Instant>>,
+    /// Raised by a table held while another call held the stream; a follow
+    /// looks at it each time it waits for a frame.
+    tables_owed: AtomicBool,
 }
 
 const DEFAULT_CATCH_UP_IDLE: Duration = Duration::from_secs(3);
@@ -614,6 +622,7 @@ impl Core {
             watch: watch::Watch::new(),
             renewals: Arc::default(),
             reclaim_held_until: Mutex::default(),
+            tables_owed: AtomicBool::new(false),
         })
     }
 
@@ -721,6 +730,7 @@ impl Core {
             watch: watch::Watch::new(),
             renewals,
             reclaim_held_until: Mutex::default(),
+            tables_owed: AtomicBool::new(false),
         })
     }
 
@@ -1101,6 +1111,73 @@ impl Core {
         Ok(pinned)
     }
 
+    /// Holds matching tables and fills them, or leaves them to the follow or
+    /// catch-up that holds the stream.
+    pub fn hold_table(&self, type_id: &str, table: &str) -> Result<TableHold> {
+        self.hold_table_until(type_id, table, &NEVER_STOPPED)
+    }
+
+    pub fn hold_table_until(
+        &self,
+        type_id: &str,
+        table: &str,
+        stop: &AtomicBool,
+    ) -> Result<TableHold> {
+        self.lock.refuse_unless_writer()?;
+        let was_held = busy::retrying(&self.conn, stop, || {
+            tables::choose(&mut *self.conn()?, type_id, table)
+        })?;
+        let fill = match self.try_claim_stream(Mover::CatchUp) {
+            Ok(_streaming) if store::hydration_complete(&*self.conn()?)? => {
+                let context = reach::Context::capture(&*self.conn()?)?;
+                Some(tables::fill(self, &context, stop)?)
+            }
+            _ => {
+                self.tables_owed.store(true, Ordering::SeqCst);
+                None
+            }
+        };
+        Ok(TableHold {
+            type_id: type_id.into(),
+            table: table.into(),
+            was_held,
+            fill,
+        })
+    }
+
+    /// Releases a choice, retaining tables held by other choices.
+    pub fn let_go_table(&self, type_id: &str, table: &str) -> Result<bool> {
+        self.lock.refuse_unless_writer()?;
+        busy::retrying(&self.conn, &NEVER_STOPPED, || {
+            tables::let_go(&mut *self.conn()?, type_id, table)
+        })
+    }
+
+    pub fn held_tables(&self) -> Result<HeldTables> {
+        tables::held(&*self.conn()?)
+    }
+
+    /// Fills each table the copy holds that is not whole.
+    pub fn fill_tables(&self, stop: &AtomicBool) -> Result<FillReport> {
+        self.lock.refuse_unless_writer()?;
+        let _streaming = self.claim_stream(Mover::CatchUp)?;
+        let context = reach::Context::capture(&*self.conn()?)?;
+        tables::fill(self, &context, stop)
+    }
+
+    /// Reads rows from the copy when held whole, marking the answer with `held`.
+    pub fn table_rows(&self, item: &str, table: &str, asked: &RowsAsked) -> Result<Value> {
+        tables::rows(self, item, table, asked)
+    }
+
+    pub fn table_row(&self, item: &str, table: &str, row: &str) -> Result<Value> {
+        tables::row(self, item, table, row)
+    }
+
+    pub fn table_totals(&self, item: &str, table: &str, filter: Option<&str>) -> Result<Value> {
+        tables::totals(self, item, table, filter)
+    }
+
     /// A failure does not say whether the catalog changed before it;
     /// `catch_up_until` does.
     pub fn catch_up(&self) -> Result<CatchUpReport> {
@@ -1166,7 +1243,8 @@ impl Core {
     ///
     /// `told_unreachable` says the caller was last told `server.unreachable`
     /// by a follow before this one, so this one says `server.reachable` when
-    /// it has its first stream (`device/follow-told-reachable`).
+    /// a stream first takes an event or goes live, and nothing before
+    /// (`device/follow-told-reachable`).
     ///
     /// Each time it says `server.reachable` with work queued for a drain,
     /// it drains once, on a thread of its own so the stream is read
@@ -8425,6 +8503,20 @@ mod tests {
             ("pin_page", reader.pin_page(&["x".to_owned()]).unwrap_err()),
             ("unpin", reader.unpin("x").unwrap_err()),
             (
+                "hold_table_until",
+                reader
+                    .hold_table_until("core.note", "x", &NEVER_STOPPED)
+                    .unwrap_err(),
+            ),
+            (
+                "let_go_table",
+                reader.let_go_table("core.note", "x").unwrap_err(),
+            ),
+            (
+                "fill_tables",
+                reader.fill_tables(&NEVER_STOPPED).unwrap_err(),
+            ),
+            (
                 "follow",
                 reader
                     .follow(&std::sync::atomic::AtomicBool::new(true), false, |_| {})
@@ -8446,7 +8538,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            55,
+            58,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );
