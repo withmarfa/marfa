@@ -103,6 +103,16 @@ pub async fn event_log(app: Arc<App>, run: Run) -> Result<Report> {
         expire(&app, EVENT_LOG_RETENTION_HOURS, HOUR_MS, expire_events)
     })
     .await?;
+    if events_done {
+        report_kept(
+            &app,
+            &run,
+            EVENT_LOG_RETENTION_HOURS,
+            HOUR_MS,
+            &events::UNREAD,
+        )
+        .await?;
+    }
     Ok(Report {
         result: json!({ "deleted": deleted, "purged_records": purged_records }),
         again: !(records_done && events_done),
