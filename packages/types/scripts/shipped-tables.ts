@@ -1,4 +1,4 @@
-/** A file's `tables` are judged by `judge_tables` in `marfa-rules`, so they are set aside before this package's validator reads the rest. */
+// `marfa-rules::schema::declared_tables` validates shipped tables.
 export function setAsideTables(data: Record<string, unknown>): {
   rest: Record<string, unknown>;
   tables: Record<string, unknown> | undefined;

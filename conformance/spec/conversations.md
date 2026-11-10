@@ -18,7 +18,7 @@ The server MUST ship `core.conversation` taking `title` as an optional string fi
 
 The server MUST ship `core.conversation` declaring one table, `messages`, with the columns `author`, a required `string`, `text`, a `string` marked `searchable`, `sent_at`, a required `datetime`, and `attachment`, an `item` that admits `core.file`.
 
-**Reason:** `author` is a name, a handle or a role such as `assistant`, so one column serves a chat between people and one with an assistant. `sent_at` is when the message was sent, which differs from the row's `updated_at` for a message imported later or written on a device that was offline. `text` is not required, so a message may be only a picture. `attachment` holds one file, and a second picture is a second message. A message has no other column, so a type that extends `core.conversation` adds its own.
+**Reason:** `author` identifies a person or an assistant, and `sent_at` preserves when a message was sent even if it arrives later through an import or an offline device. Optional text allows a message containing only a file.
 
 **Tests:** `compliance/conversation.test.ts › declares a messages table with the author, text, sent time and attachment columns`.
 
