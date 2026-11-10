@@ -93,6 +93,9 @@ fn compact_tables(given: &Map<String, Value>) -> Map<String, Value> {
             columns.insert(column.clone(), Value::Object(held));
         }
         kept.insert("columns".into(), Value::Object(columns));
+        if let Some(order) = table.get("order").filter(|order| order.is_string()) {
+            kept.insert("order".into(), order.clone());
+        }
         tables.insert(name.clone(), Value::Object(kept));
     }
     tables

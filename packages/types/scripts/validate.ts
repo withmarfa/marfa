@@ -19,6 +19,7 @@ import {
   validateTypeSchema,
 } from "../src/schema-validation.js";
 import type { SchemaValidationIssue } from "../src/schema-validation.js";
+import { setAsideTables } from "./shipped-tables.js";
 
 const typesRoot = resolve(import.meta.dirname, "..");
 
@@ -80,7 +81,7 @@ for (const family of FAMILIES) {
   );
   for (const raw of raws) {
     checked++;
-    const result = validateTypeSchema(raw.data, {
+    const result = validateTypeSchema(setAsideTables(raw.data).rest, {
       resolveSchema: (id) => registry.get(id),
     });
     if (!result.success) {

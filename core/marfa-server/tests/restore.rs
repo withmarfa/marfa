@@ -252,3 +252,71 @@ async fn a_large_restore_leaves_the_database_log_emptied_once_it_has_committed()
     wait_for("the log was never emptied", || fresh.log_size() == 0);
     assert!(Path::new(&fresh.dir.path().join("marfa.db-wal")).exists());
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_restore_keeps_an_ordered_table_in_its_order_from_its_answer_on() {
+    let source = Instance::start(&[]).await;
+    let made = source
+        .write(
+            "/items",
+            json!({ "type": "core.conversation", "properties": {} }),
+        )
+        .await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    let id = made.body["item"]["id"].as_str().unwrap().to_string();
+    let ids: Vec<String> = (0..40).map(|_| uuid::Uuid::now_v7().to_string()).collect();
+    let operations: Vec<Value> = ids
+        .iter()
+        .enumerate()
+        .map(|(at, row)| {
+            let minute = (at * 17) % 40;
+            json!({ "op": "put", "id": row, "values": {
+                "author": "ada", "sent_at": format!("2026-01-01T10:{minute:02}:00+01:00") } })
+        })
+        .collect();
+    let written = source
+        .write(
+            &format!("/items/{id}/tables/messages/rows"),
+            json!({ "operations": operations }),
+        )
+        .await;
+    assert_eq!(written.status, StatusCode::OK, "{}", written.body);
+    let mut by_sent: Vec<(usize, String)> = ids
+        .iter()
+        .enumerate()
+        .map(|(at, row)| ((at * 17) % 40, row.clone()))
+        .collect();
+    by_sent.sort();
+    let by_sent: Vec<String> = by_sent.into_iter().map(|(_, row)| row).collect();
+
+    let destination = Instance::start(&[]).await;
+    let restored = destination.restore(source.archive("").await).await;
+    assert_eq!(restored.status, StatusCode::OK, "{}", restored.body);
+    assert_eq!(restored.body["rows_imported"], 40);
+
+    let db = rusqlite::Connection::open(destination.dir.path().join("marfa.db")).unwrap();
+    let ordered_by: Option<String> = db
+        .query_row(
+            "SELECT ordered_by FROM table_summaries WHERE table_name = 'messages'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(ordered_by.as_deref(), Some("datetime:sent_at"));
+    let kept: Vec<String> = db
+        .prepare("SELECT id FROM table_rows ORDER BY ord, id")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(kept, by_sent);
+    let marks: Vec<i64> = db
+        .prepare("SELECT DISTINCT batch FROM table_rows")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(marks, [0]);
+}

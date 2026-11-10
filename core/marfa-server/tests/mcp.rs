@@ -3157,3 +3157,76 @@ async fn a_move_confirmation_survives_properties_sent_in_another_order() {
     finished(&instance, &token, &started).await;
     assert_eq!(type_of(&instance, &token, &id).await, TO);
 }
+
+async fn read_messages(instance: &Instance, token: &str, id: &str, direction: &str) -> Vec<String> {
+    let read = instance
+        .tool(
+            token,
+            "marfa_read_rows",
+            json!({ "id": id, "table": "messages", "sort": "values.sent_at", "direction": direction }),
+        )
+        .await;
+    read.payload()["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["id"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[tokio::test]
+async fn marfa_read_rows_sorted_by_a_table_s_order_reads_the_order_the_server_keeps() {
+    let instance = Instance::start(&[]).await;
+    let token = instance.writer().await;
+    let made = instance
+        .call(
+            &token,
+            Method::POST,
+            "/items",
+            Some(json!({ "type": "core.conversation", "properties": {} })),
+        )
+        .await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    let id = made.body["item"]["id"].as_str().unwrap().to_string();
+    let ids: Vec<String> = (0..6).map(|_| uuid::Uuid::now_v7().to_string()).collect();
+    let hours = [3, 0, 4, 1, 5, 2];
+    let operations: Vec<Value> = ids
+        .iter()
+        .zip(hours)
+        .map(|(row, hour)| {
+            json!({ "op": "put", "id": row, "values": {
+                "author": "ada", "sent_at": format!("2026-01-01T0{hour}:00:00Z") } })
+        })
+        .collect();
+    let path = format!("/items/{id}/tables/messages/rows");
+    let written = instance
+        .call(
+            &token,
+            Method::POST,
+            &path,
+            Some(json!({ "operations": operations })),
+        )
+        .await;
+    assert_eq!(written.status, StatusCode::OK, "{}", written.body);
+    let mut latest: Vec<(i32, String)> = hours.into_iter().zip(ids.iter().cloned()).collect();
+    latest.sort_by_key(|(hour, _)| std::cmp::Reverse(*hour));
+    let latest: Vec<String> = latest.into_iter().map(|(_, row)| row).collect();
+    assert_eq!(read_messages(&instance, &token, &id, "desc").await, latest);
+
+    // A read through the stored keys follows them even where they disagree with the values.
+    let db = rusqlite::Connection::open(instance._dir.path().join("marfa.db")).unwrap();
+    db.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
+    assert_eq!(
+        db.execute("UPDATE table_rows SET ord = -ord", []).unwrap(),
+        ids.len()
+    );
+    let earliest: Vec<String> = latest.iter().rev().cloned().collect();
+    assert_eq!(
+        read_messages(&instance, &token, &id, "desc").await,
+        earliest
+    );
+    assert_eq!(read_messages(&instance, &token, &id, "asc").await, latest);
+    db.execute("UPDATE table_summaries SET ordered_by = NULL", [])
+        .unwrap();
+    assert_eq!(read_messages(&instance, &token, &id, "desc").await, latest);
+}

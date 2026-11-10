@@ -11173,6 +11173,10 @@
               "$ref": "#/components/schemas/ColumnDefinition"
             },
             "description": "The table's columns, by name: at least one and at most 64."
+          },
+          "order": {
+            "type": "string",
+            "description": "The name of a `datetime`, `number`, `integer` or `string` column whose order the server keeps for the rows, so a page sorted by it reads only the rows it answers. Changing or removing it needs `schema.write`."
           }
         },
         "required": [
@@ -23677,10 +23681,10 @@
             "schema": {
               "type": "string",
               "pattern": "^(id|updated_at|values\\.[a-z][a-z0-9_]*)$",
-              "description": "What to sort by: `id`, `updated_at` or `values.<column>`. Defaults to `id`."
+              "description": "What to sort by: `id`, `updated_at` or `values.<column>`. Defaults to `id`. A page sorted by the table's `order` column reads only the rows it answers; a page sorted by another column reads every row."
             },
             "required": false,
-            "description": "What to sort by: `id`, `updated_at` or `values.<column>`. Defaults to `id`.",
+            "description": "What to sort by: `id`, `updated_at` or `values.<column>`. Defaults to `id`. A page sorted by the table's `order` column reads only the rows it answers; a page sorted by another column reads every row.",
             "name": "sort",
             "in": "query"
           },

@@ -3,6 +3,7 @@
 pub mod archive;
 mod events;
 mod lifecycle;
+mod order;
 mod read;
 mod store;
 mod undo;
@@ -20,11 +21,13 @@ use super::catalog::{self, Catalog, Snapshot};
 use super::items::{self, Host};
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
+use order::Order;
 use store::Held;
 
 pub use events::{ROWS_CHANGED, judged as judged_event};
 pub use lifecycle::{
     cleanup, constraining_columns, doom, held_in_use, refuse_moving_type, refuse_undeclared,
+    reorder_item, reorder_types,
 };
 pub use read::{Page, batches, get, list, page, totals};
 pub use undo::undo;
@@ -115,7 +118,6 @@ fn refuse_wide(index: usize, values: &Map<String, Value>) -> Result<()> {
 
 const OP_FIELDS: [&str; 3] = ["op", "id", "values"];
 
-/// The batch a door sent, at most `most` operations long.
 pub fn operations(sent: Option<&Value>, most: usize) -> Result<Vec<Op>> {
     let Some(Value::Array(sent)) = sent else {
         return Err(whole_batch("operations is a list of operations."));
@@ -180,6 +182,7 @@ pub(crate) struct Table {
     pub name: String,
     pub label: String,
     pub columns: Map<String, Value>,
+    pub order: Option<Order>,
 }
 
 impl Table {
@@ -204,10 +207,12 @@ pub(crate) fn tables_of(catalog: &Catalog, type_id: &str) -> Vec<Table> {
     let mut found: Vec<Table> = tables
         .iter()
         .filter_map(|(name, table)| {
+            let table = table.as_object()?;
             Some(Table {
                 name: name.clone(),
                 label: table.get("label")?.as_str()?.to_string(),
                 columns: table.get("columns")?.as_object()?.clone(),
+                order: Order::of(table),
             })
         })
         .collect();
@@ -475,6 +480,7 @@ impl Batch<'_, '_> {
             self.unit.tx(),
             self.host.seq,
             &self.table.name,
+            self.table.order.as_ref(),
             &self.batch_id,
             &self.unit.at,
         )?;
@@ -526,6 +532,7 @@ impl Batch<'_, '_> {
                 batch,
                 body: &body,
                 refs: refs_text(&refs).as_deref(),
+                order: self.table.order.as_ref(),
             },
         )?;
         let printed = store::printed_len(&values);

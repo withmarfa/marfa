@@ -4,6 +4,7 @@ import { MarfaClient } from "../../client/api.js";
 import type { RowOperation, TestContext } from "../../client/types.js";
 import {
   createTestContext,
+  getManagementClient,
   trackItem,
   trackKey,
   cleanup,
@@ -599,5 +600,430 @@ describe("reading rows", () => {
     };
     expect(await paged(client)).toEqual([withHidden, withShown, without]);
     expect(await paged(reader)).toEqual([withShown, withHidden, without]);
+  });
+});
+
+describe("sorting by a table's order", () => {
+  async function ordered(
+    columns: Record<string, unknown>,
+    order: string,
+  ): Promise<{ type: string; item: string; table: Record<string, unknown> }> {
+    counter += 1;
+    const type = `user.rows-order-${counter}-${ctx.runId}`;
+    const table = { columns, order };
+    const made = await client.registerType({
+      id: type,
+      fields: { title: { type: "string" } },
+      tables: { lines: table },
+    } as never);
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    const item = await client.createItem({
+      type,
+      properties: { title: "Ordered" },
+    } as never);
+    expect(item.status, JSON.stringify(item.error)).toBe(201);
+    trackItem(ctx, item.data.item.id);
+    return { type, item: item.data.item.id, table };
+  }
+
+  async function write(item: string, operations: RowOperation[]) {
+    const res = await client.writeRows(item, "lines", { operations });
+    expect(res.status, JSON.stringify(res.error)).toBe(200);
+    return res.data.results.map((r) => r.id);
+  }
+
+  async function walk(
+    as: MarfaClient,
+    item: string,
+    sort: string,
+    direction: "asc" | "desc",
+    limit = 1000,
+  ): Promise<string[]> {
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const res = await as.listRows(item, "lines", {
+        sort,
+        direction,
+        limit,
+        cursor,
+      });
+      expect(res.status, JSON.stringify(res.error)).toBe(200);
+      seen.push(...res.data.data.map((r) => r.id));
+      cursor = res.data.next_cursor ?? undefined;
+    } while (cursor);
+    return seen;
+  }
+
+  it("sorts a datetime column by its instant, whatever the offset", async () => {
+    const { item } = await ordered(
+      { at: { type: "datetime" }, seen: { type: "datetime" } },
+      "at",
+    );
+    const times = [
+      "2026-01-01T10:00:00+05:00",
+      "2026-01-01T06:00:00Z",
+      "2026-01-01",
+      "2026-01-01T01:00:00.500-03:00",
+      "2025-12-31T23:30+00:00",
+    ];
+    const ids = await write(
+      item,
+      times.map(
+        (at) => ({ op: "put", values: { at, seen: at } }) as RowOperation,
+      ),
+    );
+    const [plus5, utc, date, minus3, before] = ids;
+    const instants = [before, date, minus3, plus5, utc];
+    for (const sort of ["values.at", "values.seen"]) {
+      expect(await walk(client, item, sort, "asc", 2)).toEqual(instants);
+      expect(await walk(client, item, sort, "desc", 2)).toEqual(
+        [...instants].reverse(),
+      );
+    }
+  });
+
+  it("sorts a value a forced change left of another type as no value", async () => {
+    const columns = {
+      kept: { type: "number" },
+      loose: { type: "number" },
+      label: { type: "string" },
+    };
+    const { type, item, table } = await ordered(columns, "kept");
+    const numbered = await write(
+      item,
+      [3, 1, 2].map(
+        (n) =>
+          ({
+            op: "put",
+            values: { kept: n, loose: n, label: `n${n}` },
+          }) as RowOperation,
+      ),
+    );
+    const changed = {
+      ...table,
+      columns: {
+        ...columns,
+        kept: { type: "string" },
+        loose: { type: "string" },
+      },
+    };
+    const forced = await client.replaceType(
+      type,
+      {
+        id: type,
+        fields: { title: { type: "string" } },
+        tables: { lines: changed },
+      },
+      true,
+    );
+    expect(forced.status, JSON.stringify(forced.error)).toBe(200);
+    const texts = await write(item, [
+      { op: "put", values: { kept: "b", loose: "b" } },
+      { op: "put", values: { kept: "a", loose: "a" } },
+    ]);
+    const expected = [texts[1], texts[0], ...[...numbered].sort()];
+    expect(await walk(client, item, "values.kept", "asc", 2)).toEqual(expected);
+    expect(await walk(client, item, "values.loose", "asc", 2)).toEqual(
+      expected,
+    );
+    expect(await walk(client, item, "values.kept", "desc", 2)).toEqual([
+      texts[0],
+      texts[1],
+      ...[...numbered].sort(),
+    ]);
+  });
+
+  it("sorts an item id a forced change left in the order column as no value", async () => {
+    counter += 1;
+    const pointed = `user.rows-order-pointed-${counter}-${ctx.runId}`;
+    expect(
+      (
+        await client.registerType({
+          id: pointed,
+          fields: { title: { type: "string" } },
+        } as never)
+      ).status,
+    ).toBe(201);
+    const target = await client.createItem({
+      type: pointed,
+      properties: { title: "Pointed at" },
+    } as never);
+    expect(target.status, JSON.stringify(target.error)).toBe(201);
+    trackItem(ctx, target.data.item.id);
+    const columns = { name: { type: "string" }, about: { type: "item" } };
+    const { type, item, table } = await ordered(columns, "name");
+    const pointing = await write(item, [
+      { op: "put", values: { name: "m", about: target.data.item.id } },
+    ]);
+    const forced = await client.replaceType(
+      type,
+      {
+        id: type,
+        fields: { title: { type: "string" } },
+        tables: {
+          lines: {
+            ...table,
+            columns: { ...columns, about: { type: "string" } },
+            order: "about",
+          },
+        },
+      },
+      true,
+    );
+    expect(forced.status, JSON.stringify(forced.error)).toBe(200);
+    const plain = await write(item, [
+      { op: "put", values: { name: "z", about: "zzzzzzzz" } },
+      { op: "put", values: { name: "a", about: "00000000" } },
+    ]);
+    counter += 1;
+    const key = await client.createKey({
+      label: `rows-order-${counter}`,
+      source: `${ctx.source}-order-${counter}`,
+      type_permissions: { [type]: "read" },
+    });
+    expect(key.ok, JSON.stringify(key.error)).toBe(true);
+    trackKey(ctx, key.data.id);
+    const reader = new MarfaClient({ baseUrl: apiUrl, apiKey: key.data.key });
+    for (const as of [client, reader]) {
+      expect(await walk(as, item, "values.about", "asc", 1)).toEqual([
+        plain[1],
+        plain[0],
+        pointing[0],
+      ]);
+      expect(await walk(as, item, "values.about", "desc", 1)).toEqual([
+        plain[0],
+        plain[1],
+        pointing[0],
+      ]);
+    }
+    const shown = (await client.getRow(item, "lines", pointing[0]!)).data;
+    expect(shown.values.about).toBe(target.data.item.id);
+  });
+
+  it("sorts by a new order at once, while table-row-cleanup rewrites the kept order of a large table", async () => {
+    const columns = { rank: { type: "integer" }, label: { type: "string" } };
+    const { type, item, table } = await ordered(columns, "rank");
+    const count = 1_500;
+    const label = (n: number) =>
+      `l${String((n * 7_919) % count).padStart(5, "0")}`;
+    const ids: string[] = [];
+    for (let start = 0; start < count; start += 750) {
+      ids.push(
+        ...(await write(
+          item,
+          Array.from(
+            { length: 750 },
+            (_, n) =>
+              ({
+                op: "put",
+                values: { rank: start + n, label: label(start + n) },
+              }) as RowOperation,
+          ),
+        )),
+      );
+    }
+    const byRank = [...ids];
+    expect(await walk(client, item, "values.rank", "asc")).toEqual(byRank);
+
+    const changedAt = new Date().toISOString();
+    const moved = await client.replaceType(type, {
+      id: type,
+      fields: { title: { type: "string" } },
+      tables: { lines: { ...table, order: "label" } },
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    const added = await write(item, [
+      { op: "put", values: { rank: -1, label: "l00000a" } },
+      { op: "patch", id: ids[0]!, values: { label: "l99999" } },
+    ]);
+    const labels = new Map(ids.map((id, n) => [id, label(n)]));
+    labels.set(ids[0]!, "l99999");
+    labels.set(added[0]!, "l00000a");
+    const byLabel = [...labels.keys()].sort((a, b) =>
+      labels.get(a)! < labels.get(b)! ? -1 : 1,
+    );
+    const ranks = new Map(ids.map((id, n) => [id, n]));
+    ranks.set(added[0]!, -1);
+    const byRankNow = [...ranks.keys()].sort(
+      (a, b) => ranks.get(a)! - ranks.get(b)!,
+    );
+    const sorted = async () => {
+      expect(await walk(client, item, "values.label", "asc")).toEqual(byLabel);
+      expect(await walk(client, item, "values.label", "desc")).toEqual(
+        [...byLabel].reverse(),
+      );
+      expect(await walk(client, item, "values.rank", "asc")).toEqual(byRankNow);
+    };
+    await sorted();
+
+    // The change brings the job forward, so the scheduler may run it before this fixture asks.
+    const management = getManagementClient();
+    const deadline = Date.now() + 60_000;
+    let asked = false;
+    for (;;) {
+      const job = (await management.listHousekeeping()).data.data.find(
+        (row) => row.name === "table-row-cleanup",
+      );
+      if (
+        job?.last_started_at &&
+        job.last_started_at > changedAt &&
+        job.last_finished_at &&
+        job.last_finished_at >= job.last_started_at &&
+        !job.running_since
+      ) {
+        expect(job.last_outcome).toBe("ok");
+        break;
+      }
+      if (!asked && !job?.running_since) {
+        asked = (await management.runHousekeeping("table-row-cleanup")).ok;
+      } else {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      expect(Date.now()).toBeLessThan(deadline);
+    }
+    await sorted();
+  });
+
+  it("refuses a cursor answered before the sorted column changed type", async () => {
+    const columns = { at: { type: "string" }, other: { type: "string" } };
+    const { type, item, table } = await ordered(columns, "at");
+    await write(
+      item,
+      [1, 2, 3, 4, 5].map(
+        (n) =>
+          ({
+            op: "put",
+            values: { at: `2026-01-0${n}`, other: `2026-01-0${n}` },
+          }) as RowOperation,
+      ),
+    );
+    const cursors = new Map<string, string>();
+    for (const sort of ["values.at", "values.other"]) {
+      const first = await client.listRows(item, "lines", { sort, limit: 2 });
+      expect(first.data.next_cursor).toEqual(expect.any(String));
+      cursors.set(sort, first.data.next_cursor!);
+    }
+    const forced = await client.replaceType(
+      type,
+      {
+        id: type,
+        fields: { title: { type: "string" } },
+        tables: {
+          lines: {
+            ...table,
+            columns: {
+              at: { type: "datetime" },
+              other: { type: "datetime" },
+            },
+          },
+        },
+      },
+      true,
+    );
+    expect(forced.status, JSON.stringify(forced.error)).toBe(200);
+    for (const [sort, cursor] of cursors) {
+      const res = await client.listRows(item, "lines", {
+        sort,
+        limit: 2,
+        cursor,
+      });
+      expect(res.status, sort).toBe(400);
+      expect(res.error?.error.code).toBe("validation_error");
+      expect(res.error?.error.details).toMatchObject({ field: "cursor" });
+      expect(await walk(client, item, sort, "asc", 2)).toHaveLength(5);
+    }
+  });
+
+  it("rewrites the kept order of many small tables mostly in table-row-cleanup, sorting every page right meanwhile", async () => {
+    const columns = { rank: { type: "integer" }, label: { type: "string" } };
+    const { type, item: first, table } = await ordered(columns, "rank");
+    const items = [first];
+    for (let n = 1; n < 50; n++) {
+      const made = await client.createItem({
+        type,
+        properties: { title: `Ordered ${n}` },
+      } as never);
+      expect(made.status, JSON.stringify(made.error)).toBe(201);
+      trackItem(ctx, made.data.item.id);
+      items.push(made.data.item.id);
+    }
+    const rows = 30;
+    const label = (n: number) => `l${String((n * 7) % rows).padStart(3, "0")}`;
+    const held: string[][] = [];
+    for (const item of items) {
+      held.push(
+        await write(
+          item,
+          Array.from(
+            { length: rows },
+            (_, n) =>
+              ({
+                op: "put",
+                values: { rank: n, label: label(n) },
+              }) as RowOperation,
+          ),
+        ),
+      );
+    }
+    const byLabel = (ids: string[]) =>
+      [...ids].sort((a, b) =>
+        label(ids.indexOf(a)) < label(ids.indexOf(b)) ? -1 : 1,
+      );
+    const sorted = async () => {
+      for (const [at, item] of items.entries()) {
+        expect(await walk(client, item, "values.label", "asc", 7)).toEqual(
+          byLabel(held[at]!),
+        );
+        expect(await walk(client, item, "values.rank", "asc", 7)).toEqual(
+          held[at],
+        );
+      }
+    };
+
+    const changedAt = new Date().toISOString();
+    const moved = await client.replaceType(type, {
+      id: type,
+      fields: { title: { type: "string" } },
+      tables: { lines: { ...table, order: "label" } },
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    await sorted();
+
+    const management = getManagementClient();
+    const deadline = Date.now() + 60_000;
+    const runs = new Map<string, number>();
+    let asked = false;
+    for (;;) {
+      const job = (await management.listHousekeeping()).data.data.find(
+        (row) => row.name === "table-row-cleanup",
+      );
+      if (job?.last_started_at && job.last_started_at > changedAt) {
+        runs.set(
+          job.last_started_at,
+          (job.last_result as { reordered: number }).reordered,
+        );
+      }
+      if (
+        job?.last_started_at &&
+        job.last_started_at > changedAt &&
+        job.last_finished_at &&
+        job.last_finished_at >= job.last_started_at &&
+        !job.running_since
+      ) {
+        expect(job.last_outcome).toBe("ok");
+        break;
+      }
+      if (!asked && !job?.running_since) {
+        asked = (await management.runHousekeeping("table-row-cleanup")).ok;
+      } else {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      expect(Date.now()).toBeLessThan(deadline);
+    }
+    // The type write rewrites at most one page of rows itself and leaves the rest to the job.
+    const left = [...runs.values()].reduce((sum, n) => sum + n, 0);
+    expect(left).toBeGreaterThanOrEqual(items.length * rows - 1_000);
+    await sorted();
   });
 });

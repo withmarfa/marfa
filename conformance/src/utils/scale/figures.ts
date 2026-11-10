@@ -151,6 +151,7 @@ export const CEILINGS: Record<string, CeilingEntry> = {
   tables_stream_live: recorded,
   tables_page_by_id: { ceiling: 20, issue: 2836 },
   tables_page_by_updated_at: { ceiling: 20, issue: 2836 },
+  tables_page_by_order: { ceiling: 20, issue: 2838 },
   tables_page_by_column: recorded,
   tables_page_filtered: recorded,
   tables_total_100k: { ceiling: 50, issue: 2836 },

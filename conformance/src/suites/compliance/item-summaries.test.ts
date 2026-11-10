@@ -55,6 +55,7 @@ it("names every built-in and custom type with bounded plain text and fallback fi
   const fields: Record<string, string> = {
     "core.bookmark": "title",
     "core.collection": "title",
+    "core.conversation": "title",
     "core.entity": "name",
     "core.entity.person": "name",
     "core.entity.place": "name",

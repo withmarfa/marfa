@@ -1370,7 +1370,8 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   "core.bookmark": "Bookmarks and saved links.",
   "core.highlight": "Highlights and excerpts.",
   "core.event": "Calendar events.",
-  "core.message": "Messages and conversations.",
+  "core.message": "Messages, such as emails and notifications.",
+  "core.conversation": "Conversations and their messages.",
   "core.collection": "Collections you gather items into.",
 
   // Entities

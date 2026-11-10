@@ -69,6 +69,8 @@ const made = {
   busy: "",
   photoRow: "",
   captionRow: "",
+  conversation: "",
+  latest: [] as string[],
   sourceRows: new Map<string, TableRow[]>(),
   sourceTables: new Map<string, TableSummary[]>(),
   lastActivity: "",
@@ -121,11 +123,18 @@ async function put(
   );
 }
 
-async function allRows(on: MarfaClient, itemId: string, table: string) {
+async function allRows(
+  on: MarfaClient,
+  itemId: string,
+  table: string,
+  sorted: { sort?: string; direction?: "asc" | "desc"; limit?: number } = {},
+) {
   const rows: TableRow[] = [];
   let cursor: string | undefined;
   for (;;) {
-    const page = await ok(on.listRows(itemId, table, { limit: 1000, cursor }));
+    const page = await ok(
+      on.listRows(itemId, table, { limit: 1000, ...sorted, cursor }),
+    );
     rows.push(...page.data);
     if (page.next_cursor === null) return rows;
     cursor = page.next_cursor;
@@ -186,7 +195,7 @@ beforeAll(async () => {
     extra: { columns: { n: { type: "integer" } } },
   });
   await register(origin, EVENTS, {
-    lines: { columns: { amount: { type: "number" } } },
+    lines: { columns: { amount: { type: "number" } }, order: "amount" },
   });
 
   const first = await item(origin, LEDGER, "first");
@@ -251,6 +260,32 @@ beforeAll(async () => {
       })),
     );
   }
+
+  const conversation = await item(origin, "core.conversation", "chat");
+  made.conversation = conversation.id;
+  const messages = Array.from({ length: 120 }, () => uuidv7()).sort();
+  const minuteOf = (at: number) => (at * 53) % 120;
+  const sentAt = (at: number) => {
+    const minute = minuteOf(at);
+    const hour = 10 + Math.floor(minute / 60);
+    const clock = `${String(minute % 60).padStart(2, "0")}:00`;
+    return at % 2 === 0
+      ? `2026-01-01T${hour}:${clock}Z`
+      : `2026-01-01T${hour + 2}:${clock}+02:00`;
+  };
+  await put(
+    origin,
+    conversation.id,
+    "messages",
+    messages.map((id, at) => ({
+      id,
+      values: { author: "ada", text: `m${at}`, sent_at: sentAt(at) },
+    })),
+  );
+  made.latest = messages
+    .map((id, at) => ({ id, minute: minuteOf(at) }))
+    .sort((a, b) => b.minute - a.minute)
+    .map(({ id }) => id);
 
   for (const id of [first.id, second.id]) {
     for (const table of ["lines", "notes", "photos"]) {
@@ -405,6 +440,30 @@ describe("rows in an archive", () => {
     );
   });
 
+  it("restores a conversation's latest messages in sent_at order straight after the restore", async () => {
+    const latest = await ok(
+      restoredInto.listRows(made.conversation, "messages", {
+        sort: "values.sent_at",
+        direction: "desc",
+        limit: 50,
+      }),
+    );
+    expect(latest.data.map((row) => row.id)).toEqual(made.latest.slice(0, 50));
+    const walked = await allRows(restoredInto, made.conversation, "messages", {
+      sort: "values.sent_at",
+      direction: "desc",
+      limit: 50,
+    });
+    expect(walked.map((row) => row.id)).toEqual(made.latest);
+    const earliest = await allRows(
+      restoredInto,
+      made.conversation,
+      "messages",
+      { sort: "values.sent_at", direction: "asc", limit: 50 },
+    );
+    expect(earliest.map((row) => row.id)).toEqual([...made.latest].reverse());
+  });
+
   it("keeps an item's last_activity_at through a restore", async () => {
     expect(made.lastActivity > made.updatedAt).toBe(true);
     const read = (await ok(restoredInto.getItem(made.second))).item;
@@ -532,6 +591,19 @@ describe("rows in an archive", () => {
   });
 
   it("undoes a write over restored rows, putting each back as the restore wrote it", async () => {
+    const byAmount = async () => {
+      const held = await allRows(restoredInto, made.busy, "lines");
+      const amount = (row: TableRow) => row.values.amount as number;
+      const expected = held
+        .sort((a, b) => amount(a) - amount(b) || (a.id < b.id ? -1 : 1))
+        .map((row) => row.id);
+      const sorted = await allRows(restoredInto, made.busy, "lines", {
+        sort: "values.amount",
+      });
+      expect(sorted.map((row) => row.id)).toEqual(expected);
+      return expected;
+    };
+    expect(await byAmount()).toHaveLength(MANY);
     const before = (await allRows(restoredInto, made.busy, "lines")).slice(
       0,
       2,
@@ -565,11 +637,13 @@ describe("rows in an archive", () => {
     expect(
       (await restoredInto.getRow(made.busy, "lines", createdId)).status,
     ).toBe(404);
+    expect(await byAmount()).toHaveLength(MANY);
     // Redoing and undoing again finds each restored row standing.
     await ok(restoredInto.undoBatch(made.busy, "lines", undo.batch!));
     expect(
       (await ok(restoredInto.getRow(made.busy, "lines", patched.id))).values,
     ).toEqual({ amount: -1 });
+    expect((await byAmount()).slice(0, 2)).toEqual([createdId, patched.id]);
     await ok(restoredInto.undoBatch(made.busy, "lines", written.batch!));
     expect(
       (await ok(restoredInto.getRow(made.busy, "lines", patched.id))).values,
@@ -577,6 +651,7 @@ describe("rows in an archive", () => {
     expect(
       (await ok(restoredInto.listBatches(made.busy, "lines"))).data,
     ).toHaveLength(4);
+    expect(await byAmount()).toHaveLength(MANY);
   });
 });
 

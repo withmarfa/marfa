@@ -12,6 +12,7 @@ Every instance ships these types, core and `system`, each a row of the table bel
 | -------------------- | ------ | ------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
 | `core.bookmark`      | core   | None          | None                           | Something you saved from elsewhere, such as a link, a highlighted excerpt or a clipped paragraph.                              |
 | `core.collection`    | core   | None          | `title`                        | A named group of items of any type, such as a reading list or the plans for a trip.                                            |
+| `core.conversation`  | core   | None          | None                           | A conversation, such as a chat with a person or an assistant. Its messages are the rows of its messages table.                 |
 | `core.entity`        | core   | None          | `name`                         | Someone or something with a name, such as a person, company, band, team, charity, brand, school or place.                      |
 | `core.entity.person` | core   | `core.entity` | `name`                         | A person, with their name, contact details and job.                                                                            |
 | `core.entity.place`  | core   | `core.entity` | `name`                         | A place, such as a cafe, an office or a city, with its address and coordinates.                                                |
@@ -1404,7 +1405,7 @@ The server MUST NOT apply `enforcement.source_filter` to the item or edge a read
 
 ### `types/shipped`
 
-The server MUST ship `core.bookmark`, `core.collection`, `core.entity`, `core.entity.person`, `core.entity.place`, `core.event`, `core.file`, `core.file.audio`, `core.file.image`, `core.file.video`, `core.file.webpage`, `core.highlight`, `core.media`, `core.media.album`, `core.media.article`, `core.media.book`, `core.media.episode`, `core.media.film`, `core.media.game`, `core.media.series`, `core.media.song`, `core.message`, `core.note` and `core.task`, each with fields and a label, and no other `core.*` type.
+The server MUST ship `core.bookmark`, `core.collection`, `core.conversation`, `core.entity`, `core.entity.person`, `core.entity.place`, `core.event`, `core.file`, `core.file.audio`, `core.file.image`, `core.file.video`, `core.file.webpage`, `core.highlight`, `core.media`, `core.media.album`, `core.media.article`, `core.media.book`, `core.media.episode`, `core.media.film`, `core.media.game`, `core.media.series`, `core.media.song`, `core.message`, `core.note` and `core.task`, each with fields and a label, and no other `core.*` type.
 
 **Tests:** `compliance/types.test.ts › ships exactly the core types, each with fields and a label`, `compliance/type-registry.test.ts › lists registered types including core types`, `› gets a single type by type identifier`, `compliance/type-inheritance.test.ts › core entity/file/media subtypes resolve`, `compliance/type-label.test.ts › built-in types have labels`, `› get single type includes label`.
 

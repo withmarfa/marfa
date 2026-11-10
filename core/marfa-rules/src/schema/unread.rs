@@ -49,7 +49,7 @@ const MEMBER_KEYS: [&str; 9] = [
     "minimum",
     "maximum",
 ];
-const TABLE_KEYS: [&str; 3] = ["label", "description", "columns"];
+const TABLE_KEYS: [&str; 4] = ["label", "description", "columns", "order"];
 const COLUMN_KEYS: [&str; 12] = [
     "type",
     "label",

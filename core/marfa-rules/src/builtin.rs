@@ -137,7 +137,31 @@ mod tests {
 
     use serde_json::{Map, Value, json};
 
-    use super::catalog;
+    use super::{catalog, shipped_types};
+
+    #[test]
+    fn every_table_a_shipped_type_declares_is_judged_as_a_registered_type_declares_it() {
+        let rows: Vec<Value> = shipped_types()
+            .unwrap()
+            .iter()
+            .cloned()
+            .map(Value::Object)
+            .collect();
+        let known: Vec<&str> = rows.iter().filter_map(|row| row["id"].as_str()).collect();
+        let judged = crate::schema::declared_tables(&rows, &|id| known.contains(&id))
+            .unwrap_or_else(|issues| panic!("a shipped table is refused: {issues:?}"));
+        let conversation = judged
+            .iter()
+            .find(|(id, _)| id == "core.conversation")
+            .map(|(_, tables)| tables)
+            .unwrap();
+        let columns: Vec<&String> = conversation["messages"]["columns"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect();
+        assert_eq!(columns, ["author", "text", "sent_at", "attachment"]);
+    }
 
     #[test]
     fn the_shipped_game_and_rating_are_judged_as_the_server_judges_them() {
