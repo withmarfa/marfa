@@ -835,7 +835,7 @@ pub struct Catalog {
 
 const MAX_PARENT_WALK: usize = 64;
 
-/// A write names registered types; an item already held keeps any a forced delete left.
+/// A write names registered types; an item or type held, or restored, keeps any a forced delete left.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Naming {
     Registered,

@@ -648,8 +648,8 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::super::{
-        Issue, Obj, Registry, evolution_of, item_tables, keeps_own_table, resolve, validate_type,
-        with_set_stored,
+        Issue, Obj, Registry, evolution_of, item_tables, keeps_own_table, resolve,
+        validate_restored_type, validate_type, with_set_stored,
     };
 
     fn registry() -> Registry {
@@ -1250,5 +1250,30 @@ mod tests {
         );
         assert!(keeps_own_table(&held, "user.sheet"));
         assert!(!keeps_own_table(&held, "user.plain"));
+    }
+
+    #[test]
+    fn a_restored_type_keeps_a_column_that_names_an_unregistered_type_but_not_a_malformed_list() {
+        let held = Registry::default();
+        let declared = |constraints: Value| {
+            json!({"id": "user.links", "fields": {"title": {"type": "string"}},
+                   "tables": {"lines": {"columns": {"link": {"type": "item",
+                   "type_constraints": constraints}}}}})
+        };
+        let named = declared(json!(["user.gone"]));
+        assert!(validate_type(&named, &held).is_err());
+        assert!(validate_restored_type(&named, &held).is_ok());
+        for refused in [
+            json!([]),
+            json!("user.gone"),
+            json!(["not an id"]),
+            json!([3]),
+        ] {
+            let found = validate_restored_type(&declared(refused), &held)
+                .err()
+                .unwrap_or_default();
+            let fields: Vec<_> = found.into_iter().map(|issue| issue.field).collect();
+            assert_eq!(fields, ["tables.lines.columns.link.type_constraints"]);
+        }
     }
 }

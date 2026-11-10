@@ -1,8 +1,8 @@
 use marfa_rules::grammar;
 use marfa_rules::schema::{
     Issue, OWN_TABLE_TYPE, Obj, Registry, broken_compatible_dependents, descendant_depth,
-    evolution_of, icon_issue, labelled, parent_chain_fault, read_back_free, resolve, validate_type,
-    with_set_stored,
+    evolution_of, icon_issue, labelled, parent_chain_fault, read_back_free, resolve,
+    validate_restored_type, validate_type, with_set_stored,
 };
 use rusqlite::{Transaction, params};
 use serde_json::{Value, json};
@@ -607,8 +607,8 @@ pub fn plan_restored(catalog: &Catalog, archived: &[Archived]) -> Result<Restori
         }
     }
     for (line, definition) in archived.iter().zip(&raw) {
-        let schema =
-            validate_type(&Value::Object(definition.clone()), &registry).map_err(schema_refusal)?;
+        let schema = validate_restored_type(&Value::Object(definition.clone()), &registry)
+            .map_err(schema_refusal)?;
         let schema = labelled(schema);
         let id = text_of(&schema, "id")
             .ok_or_else(|| Refusal::internal("an archived type has no id"))?

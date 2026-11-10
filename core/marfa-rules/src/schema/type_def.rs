@@ -16,7 +16,7 @@ use super::{
     whole,
 };
 use crate::builtin;
-use crate::catalog::merge_field_definition;
+use crate::catalog::{Naming, merge_field_definition};
 use crate::grammar;
 
 const SEARCHED_NAMES: [&str; 4] = ["title", "body", "description", "name"];
@@ -73,6 +73,15 @@ fn required_names(input: &Obj) -> Vec<String> {
 }
 
 pub fn validate_type(input: &Value, registry: &Registry) -> Result<Obj, Vec<Issue>> {
+    judge_type(input, registry, Naming::Registered)
+}
+
+/// `validate_type` for an archived type, which may keep a table column's name of a type a forced delete removed.
+pub fn validate_restored_type(input: &Value, registry: &Registry) -> Result<Obj, Vec<Issue>> {
+    judge_type(input, registry, Naming::Any)
+}
+
+fn judge_type(input: &Value, registry: &Registry, naming: Naming) -> Result<Obj, Vec<Issue>> {
     let Some(obj) = input.as_object() else {
         return Err(vec![Issue::new(
             "_root",
@@ -246,7 +255,7 @@ pub fn validate_type(input: &Value, registry: &Registry) -> Result<Obj, Vec<Issu
         );
     }
     let tables = judge_tables(obj, registry, &|held| {
-        registry.contains(held) || id == Some(held)
+        naming == Naming::Any || registry.contains(held) || id == Some(held)
     })
     .unwrap_or_else(|issues| {
         errors.extend(issues);

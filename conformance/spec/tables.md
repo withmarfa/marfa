@@ -350,13 +350,21 @@ When `POST /restore` reads a `type` line that declares tables, the server MUST r
 
 **Tests:** `compliance/type-tables.test.ts › carries a type's tables in an archive and registers them when the archive is restored`, `› restores a subtype whose type line restates a table of its parent (reversed: %s)`.
 
+### `tables/restore-unregistered`
+
+When `POST /restore` reads a `type` line that declares a table with a column whose `type_constraints` names a type that is not registered once the archive's own types are, the server MUST register the type with the table as the archive holds it.
+
+**Reason:** a forced delete keeps the columns that name the deleted type (`tables/delete-constrained`), so an export carries them, and a backup that its own instance cannot restore is no backup. An empty list, a value that is not a list and an entry that is not a type identifier stay refused (`tables/item-unregistered`).
+
+**Tests:** `compliance/type-tables.test.ts › restores a type whose table names a type deleted with force, and refuses an empty type_constraints on restore`.
+
 ### `tables/own-restore-columns`
 
-If `POST /restore` names an item of `core.table`, or of a type below it, whose `columns` break a rule `tables/own-columns-refused` names other than `tables/item-unregistered`, then the server MUST answer `400 invalid_properties` naming the path of the fault under `properties.columns` in `details.field`.
+If `POST /restore` names an item of `core.table`, or of a type below it, whose `columns` break a rule `tables/own-columns-refused` names other than `tables/item-unregistered` naming a type that is not registered, then the server MUST answer `400 invalid_properties` naming the path of the fault under `properties.columns` in `details.field`.
 
 **Reason:** the item's rows are judged by its columns, so an archive cannot bring in columns a write would refuse.
 
-**Tests:** `compliance/table-own-restore.test.ts › refuses an item of a type below core.table whose columns a table cannot take, naming the column`.
+**Tests:** `compliance/table-own-restore.test.ts › refuses an item of a type below core.table whose columns a table cannot take, naming the column`, `› refuses a restored item of core.table whose column has an empty type_constraints, naming it`.
 
 ### `tables/own-restore-unregistered`
 
@@ -1012,11 +1020,11 @@ If `PUT /types/{id}` would place a type at or below `core.table` while a type be
 
 ### `tables/own-columns-reparented`
 
-If `PUT /types/{id}` would place a type at or below `core.table` while an item of it, or of a type below it, holds `columns` that break a rule `tables/own-columns-refused` names other than `tables/item-unregistered`, then the server MUST answer `400 invalid_schema` naming the type's `parent`.
+If `PUT /types/{id}` would place a type at or below `core.table` while an item of it, or of a type below it, holds `columns` that break a rule `tables/own-columns-refused` names other than `tables/item-unregistered` naming a type that is not registered, then the server MUST answer `400 invalid_schema` naming the type's `parent`.
 
 **Reason:** an item there keeps its own table from its `columns` (`tables/own-table-listed`), so they are held to the rules a write of them is.
 
-**Tests:** `compliance/table-rows-own.test.ts › refuses a replacement that places a type under core.table while its items hold columns a table cannot take`.
+**Tests:** `compliance/table-rows-own.test.ts › refuses a replacement that places a type under core.table while its items hold columns a table cannot take`, `› takes a type under core.table whose items name an unregistered type in a column, and refuses one whose column has an empty type_constraints`.
 
 ### `tables/own-change-in-use`
 

@@ -664,4 +664,39 @@ describe("an item that keeps a table, and the types around it", () => {
     const taken = await client.replaceType(top, moved as never);
     expect(taken.status, JSON.stringify(taken.error)).toBe(200);
   });
+
+  it("takes a type under core.table whose items name an unregistered type in a column, and refuses one whose column has an empty type_constraints", async () => {
+    const named = await plainType();
+    const emptied = await plainType();
+    const columns = (constraints: string[]) => ({
+      link: { type: "item", type_constraints: constraints },
+    });
+    for (const [type, constraints] of [
+      [named, ["user.nothing_registers_this"]],
+      [emptied, []],
+    ] as const) {
+      const held = await client.createItem({
+        type,
+        properties: { title: "odd", columns: columns([...constraints]) },
+      } as never);
+      expect(held.status, JSON.stringify(held.error)).toBe(201);
+      trackItem(ctx, held.data.item.id);
+    }
+    const moved = (id: string) =>
+      ({
+        id,
+        parent: "core.table",
+        fields: { owner: { type: "string" } },
+      }) as never;
+
+    const taken = await client.replaceType(named, moved(named));
+    expect(taken.status, JSON.stringify(taken.error)).toBe(200);
+    const refused = await client.replaceType(emptied, moved(emptied));
+    expect(refused.status, JSON.stringify(refused.data)).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_schema");
+    const fields = (
+      refused.error?.error.details as { errors: { field: string }[] }
+    ).errors.map((e) => e.field);
+    expect(fields).toEqual(["parent"]);
+  });
 });

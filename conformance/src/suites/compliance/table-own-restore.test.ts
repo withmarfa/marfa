@@ -116,4 +116,41 @@ describe("a restore of an item that keeps a table", () => {
     expect(held.status, JSON.stringify(held.error)).toBe(200);
     expect(held.data.item.properties.columns).toEqual(columns);
   });
+
+  it("refuses a restored item of core.table whose column has an empty type_constraints, naming it", async () => {
+    const source = working(origin);
+    const target = "user.gone";
+    expect(
+      (
+        await source.registerType({
+          id: target,
+          fields: { title: { type: "string" } },
+        })
+      ).status,
+    ).toBe(201);
+    const made = await source.createItem({
+      type: "core.table",
+      properties: {
+        title: "Links",
+        columns: { link: { type: "item", type_constraints: [target] } },
+      },
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    const id = made.data.item.id;
+    expect((await source.deleteType(target, true)).status).toBe(200);
+    const exported = await archiveOf(source);
+
+    const emptied = editLineFile(exported, "items", (text) =>
+      text.replace(/"type_constraints":\["[^"]*"\]/, '"type_constraints":[]'),
+    );
+    expect(readLineFile(emptied, "items")).toContain('"type_constraints":[]');
+    const refused = await owner(destination).restoreArchive(emptied);
+    expect(refused.status, JSON.stringify(refused.data)).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_properties");
+    expect(refused.error?.error.details).toMatchObject({
+      field: "properties.columns.link.type_constraints",
+      item_id: id,
+    });
+    expect((await working(destination).getItem(id)).status).toBe(404);
+  });
 });
