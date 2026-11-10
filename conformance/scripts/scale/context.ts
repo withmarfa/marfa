@@ -92,7 +92,7 @@ export interface Answer {
  * answer's `ms` and a limiter cannot make a request look quick.
  */
 export async function api(
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "DELETE",
   path: string,
   body?: string | object,
   connection: Connection = connect(),

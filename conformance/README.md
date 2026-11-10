@@ -830,6 +830,17 @@ filled copy. It is a measurement, not a gate: it fails only when a hydration
 fails or brings fewer items than were seeded. Unset, the item count is small
 enough for a laptop; the nightly run sets 100,000.
 
+`pnpm scale tables --server <marfa-server> [--rows 1000000] [--pace 25000]` is a
+connector writing one very large table, measured from outside. It boots a
+release server of its own, and a second to restore into, registers a type that
+declares a table, writes the table in pages of 1,000 rows at `--pace` rows a
+second (`0` writes as fast as the server answers) while readers read the item,
+a page of rows, one row and the item's tables and a stream follows
+`rows.changed`, then times pages, a total, undo, an export, a restore and the
+purge of the item. It prints each figure against its goal and writes
+`reports/scale/tables.json`. It is a measurement on request, not a nightly
+step, and it stops both servers by their process IDs.
+
 ## Architecture
 
 `spec/` is the written specification, one file per area, citing fixtures.
