@@ -14,7 +14,23 @@ import {
   scalar,
   type Figure,
 } from "../../src/utils/scale/figures.js";
+import { timedAnswer } from "../../src/utils/scale/answer.js";
 import { readServerMemory } from "../../src/utils/scale/memory.js";
+import { StartedServers } from "../../src/utils/scale/servers.js";
+import {
+  expectedTotals,
+  judgeRows,
+  judgeTotals,
+  rowOf,
+  type Expected,
+} from "../../src/utils/scale/table-data.js";
+import { BatchLedger } from "../../src/utils/scale/table-stream.js";
+import {
+  WalkChecker,
+  type Ending,
+  type Ordering,
+} from "../../src/utils/scale/table-walk.js";
+import { Tasks } from "../../src/utils/scale/tasks.js";
 import { percentile } from "../../src/utils/timing.js";
 import {
   log,
@@ -26,7 +42,6 @@ import {
 } from "./context.js";
 
 const TABLE = "readings";
-// Polling stays below the default limit of 4,000 requests per key per minute.
 const POLL_GAP_MS = 20;
 const ORDER_BUDGET_MS = 30_000;
 const TOTAL_RUNS = 30;
@@ -36,8 +51,9 @@ const UNDO_REPEATS = 5;
 const PURGE_NUDGE_MS = 60_000;
 const PURGE_LIMIT_MS = 600_000;
 const WRITE_FLOOR = 20_000;
+const FRAME_WAIT_MS = 10_000;
 
-// Retrying a rate-limit refusal would hide it from the measurement.
+// A refusal is counted, never retried, so it cannot pass as a slow answer.
 async function send(
   method: "GET" | "POST" | "DELETE",
   path: string,
@@ -48,11 +64,8 @@ async function send(
     body === undefined || typeof body === "string"
       ? body
       : JSON.stringify(body);
-  const start = performance.now();
-  let status = 0;
-  let text = "";
-  try {
-    const response = await fetch(`${connection.url}${path}`, {
+  return timedAnswer(() =>
+    fetch(`${connection.url}${path}`, {
       method,
       headers: {
         Authorization: `Bearer ${connection.key}`,
@@ -62,18 +75,8 @@ async function send(
       },
       body: payload,
       signal: AbortSignal.timeout(900_000),
-    });
-    status = response.status;
-    text = await response.text();
-  } catch (error) {
-    text = String(error);
-  }
-  return {
-    status,
-    ms: performance.now() - start,
-    text,
-    json: () => JSON.parse(text) as unknown,
-  };
+    }),
+  );
 }
 
 interface Options {
@@ -161,8 +164,7 @@ function startReaders(
   };
 }
 
-function followStream(connection: Connection, itemId: string) {
-  const arrivals = new Map<string, number>();
+function followStream(connection: Connection, ledger: BatchLedger) {
   const live = { ms: Number.NaN };
   let close = async () => {};
   let ended: Promise<void> = Promise.resolve();
@@ -190,16 +192,7 @@ function followStream(connection: Connection, itemId: string) {
                 if (event.event === "stream_live" && Number.isNaN(live.ms)) {
                   live.ms = at - opened;
                 } else if (event.event === "rows.changed") {
-                  const frame = event.data as {
-                    item?: { id?: string };
-                    batch?: string;
-                  };
-                  if (
-                    frame.item?.id === itemId &&
-                    typeof frame.batch === "string"
-                  ) {
-                    arrivals.set(frame.batch, at);
-                  }
+                  ledger.frame(event.data, at);
                 }
               }
               pending = pending.slice(end + 2);
@@ -215,22 +208,11 @@ function followStream(connection: Connection, itemId: string) {
   return {
     ready,
     live,
-    arrivals,
     stop: async () => {
       await ready;
       await close();
       await ended;
     },
-  };
-}
-
-function rowOf(n: number, buckets: number) {
-  const sensor = n % 64;
-  return {
-    sensor: `s-${sensor}`,
-    reading: ((n * 7919) % 100_000) / 100,
-    bucket: n % buckets,
-    note: `Reading ${n} from sensor ${sensor}, steady`,
   };
 }
 
@@ -271,27 +253,61 @@ function judgeWrite(
 
 interface Walk {
   times: number[];
+  /** Pages refused, plus every way the traversal was wrong. */
   errors: number;
-  ids: string[];
+  ending: Ending;
   /** The first row of each page, to name a range of the table. */
   firsts: string[];
+  /** The rows of the first page. */
+  firstRows: { id: string; values: Record<string, unknown> }[];
+  /** Per page, how many rows it held and the cents they read in all. */
+  pageSums: { rows: number; cents: number }[];
+  digest: string;
 }
+
+interface WalkSpec {
+  order: Ordering;
+  /** What the generated rows `0..rows-1` hold, and the rows a filter keeps. */
+  rows: number;
+  buckets: number;
+  keep?: (n: number) => boolean;
+  query: string;
+  budgetMs?: number;
+}
+
+const WALK_LIMIT = 1000;
 
 async function walk(
   connection: Connection,
   itemId: string,
-  query: string,
-  pages: number,
-  keepIds = false,
-  budgetMs = Number.POSITIVE_INFINITY,
+  spec: WalkSpec,
 ): Promise<Walk> {
-  const base = `/items/${itemId}/tables/${TABLE}/rows?limit=1000&${query}`;
+  const base = `/items/${itemId}/tables/${TABLE}/rows?limit=${WALK_LIMIT}&${spec.query}`;
+  const pages = Math.ceil(spec.rows / WALK_LIMIT);
+  const checker = new WalkChecker({
+    limit: WALK_LIMIT,
+    rows: spec.rows,
+    buckets: spec.buckets,
+    order: spec.order,
+    ...(spec.keep === undefined ? {} : { keep: spec.keep }),
+  });
   await send("GET", base, undefined, connection);
-  const result: Walk = { times: [], errors: 0, ids: [], firsts: [] };
+  const result: Walk = {
+    times: [],
+    errors: 0,
+    ending: "pages",
+    firsts: [],
+    firstRows: [],
+    pageSums: [],
+    digest: "",
+  };
   let cursor: string | null = null;
   const started = performance.now();
   for (let page = 0; page < pages; page++) {
-    if (performance.now() - started > budgetMs) break;
+    if (performance.now() - started > (spec.budgetMs ?? Infinity)) {
+      result.ending = "budget";
+      break;
+    }
     const answer = await send(
       "GET",
       cursor === null ? base : `${base}&cursor=${encodeURIComponent(cursor)}`,
@@ -300,23 +316,35 @@ async function walk(
     );
     if (!ok(answer)) {
       result.errors++;
+      result.ending = "failed";
       log(
-        `page ${page} of ${query}: ${answer.status} ${answer.text.slice(0, 160)}`,
+        `page ${page} of ${spec.query}: ${answer.status} ${answer.text.slice(0, 160)}`,
       );
       break;
     }
     result.times.push(answer.ms);
-    const body = answer.json() as {
-      data: { id: string }[];
-      next_cursor: string | null;
-    };
-    if (keepIds && result.ids.length === 0)
-      result.ids = body.data.map((r) => r.id);
-    if (keepIds && body.data[0] !== undefined)
-      result.firsts.push(body.data[0].id);
-    cursor = body.next_cursor;
-    if (cursor === null) break;
+    let body: { data?: { id: string; values: Record<string, unknown> }[] };
+    try {
+      body = answer.json() as typeof body;
+    } catch {
+      body = {};
+    }
+    checker.page(body, cursor);
+    const first = body.data?.[0];
+    if (first !== undefined) result.firsts.push(first.id);
+    if (page === 0) result.firstRows = body.data ?? [];
+    cursor = (body as { next_cursor?: string | null }).next_cursor ?? null;
+    if (cursor === null) {
+      result.ending = "end";
+      break;
+    }
   }
+  checker.finish(result.ending);
+  result.errors += checker.problemCount;
+  result.pageSums = checker.pageSums;
+  result.digest = checker.digest();
+  for (const problem of checker.problems)
+    log(`${spec.query || "by id"}: ${problem}`);
   return result;
 }
 
@@ -374,6 +402,8 @@ export async function tables(): Promise<void> {
   const work = opts.state ?? mkdtempSync(join(tmpdir(), "marfa-scale-tables-"));
   const stateA = join(work, "a");
   const stateB = join(work, "b");
+  const started = new StartedServers();
+  const tasks = new Tasks();
   const exportFile = join(work, "export.tar");
   process.env.MARFA_SERVER_BIN = opts.server;
   const settings = { MARFA_TEST_HOOKS: "false" };
@@ -417,6 +447,7 @@ export async function tables(): Promise<void> {
   };
 
   try {
+    started.starting(stateA);
     await bootServer({ state: stateA, env: settings });
     const connection = connectionOf(stateA, "MARFA_API_KEY");
     const management = connectionOf(stateA, "MARFA_MANAGEMENT_KEY");
@@ -456,7 +487,6 @@ export async function tables(): Promise<void> {
       await mustOk("creating an item", made, 201);
       return (made.json() as { item: { id: string } }).item.id;
     };
-    // Separate keys prevent one reader from using another reader's rate limit.
     let minted = 0;
     const readerKeys: Connection[] = [];
     for (let n = 0; n < READER_KEYS; n++) {
@@ -486,8 +516,9 @@ export async function tables(): Promise<void> {
     const buckets = Math.max(1, Math.round(opts.rows / 100_000));
 
     const idPool: string[] = [];
-    const acks = new Map<string, number>();
-    const stream = followStream(reader(), itemId);
+    const ledger = new BatchLedger(itemId, TABLE, buckets);
+    const stream = followStream(reader(), ledger);
+    const stopStream = tasks.own(() => stream.stop());
     await stream.ready;
     const readers = startReaders({
       item: { connection: reader(), path: () => `/items/${itemId}` },
@@ -504,6 +535,7 @@ export async function tables(): Promise<void> {
       },
       tables: { connection: reader(), path: () => `/items/${itemId}/tables` },
     });
+    const stopReaders = tasks.own(readers.stop);
     const pages = Math.ceil(opts.rows / opts.page);
     const pageTimes: number[] = [];
     const stalls: string[] = [];
@@ -522,7 +554,9 @@ export async function tables(): Promise<void> {
       const body = tableBody(first, count, buckets);
       const answer = await send("POST", `${tablePath}/rows`, body, connection);
       const judged = judgeWrite(answer, count);
-      if (judged.batch !== null) acks.set(judged.batch, performance.now());
+      if (judged.batch !== null) {
+        ledger.written(judged.batch, judged.written, performance.now());
+      }
       written += judged.written.length;
       writeErrors += judged.errors;
       pageTimes.push(answer.ms);
@@ -543,9 +577,12 @@ export async function tables(): Promise<void> {
       }
     }
     const writeSeconds = (performance.now() - startedWriting) / 1000;
-    const during = await readers.stop();
-    await sleep(500);
-    await stream.stop();
+    const during = await stopReaders();
+    const framesBy = performance.now() + FRAME_WAIT_MS;
+    while (ledger.waiting > 0 && performance.now() < framesBy) await sleep(50);
+    await stopStream();
+    ledger.finish();
+    for (const problem of ledger.problems) log(`stream: ${problem}`);
 
     add(
       scalar("tables_write_rate", "per_s", written / writeSeconds, {
@@ -575,15 +612,10 @@ export async function tables(): Promise<void> {
     readFigure("row_page", "tables_read_row_page_during_write");
     readFigure("row", "tables_read_row_during_write");
     readFigure("tables", "tables_read_tables_during_write");
-    const lags: number[] = [];
-    for (const [batch, arrived] of stream.arrivals) {
-      const acked = acks.get(batch);
-      if (acked !== undefined) lags.push(Math.max(0, arrived - acked));
-    }
     add(
-      distribution("tables_stream_lag_during_write", "ms", lags, {
-        errors: Math.max(0, pages - stream.arrivals.size),
-        note: `${stream.arrivals.size} of ${pages} batch frames reached the stream; lag is from the write's answer to the frame, 0 when the frame came first`,
+      distribution("tables_stream_lag_during_write", "ms", ledger.lags, {
+        errors: ledger.problemCount,
+        note: `${ledger.batches} of ${pages} batches matched their frame; lag is from the write's answer to the frame, 0 when the frame came first`,
       }),
       upTo("p95 10 ms"),
     );
@@ -631,22 +663,27 @@ export async function tables(): Promise<void> {
         .join(" ")}`,
     );
 
-    const byId = await walk(connection, itemId, "", pages, true);
+    const walkPages = Math.ceil(opts.rows / WALK_LIMIT);
+    const byId = await walk(connection, itemId, {
+      order: "id",
+      rows: opts.rows,
+      buckets,
+      query: "",
+    });
     add(
       distribution("tables_page_by_id", "ms", byId.times, {
         errors: byId.errors,
-        note: `${byId.times.length} pages, the whole table by cursor`,
+        note: `${byId.times.length} of ${walkPages} pages, the whole table by cursor`,
       }),
       upTo("p95 20 ms"),
     );
-    const byUpdated = await walk(
-      connection,
-      itemId,
-      "sort=updated_at",
-      pages,
-      false,
-      ORDER_BUDGET_MS,
-    );
+    const byUpdated = await walk(connection, itemId, {
+      order: "updated_at",
+      rows: opts.rows,
+      buckets,
+      query: "sort=updated_at",
+      budgetMs: ORDER_BUDGET_MS,
+    });
     add(
       distribution("tables_page_by_updated_at", "ms", byUpdated.times, {
         errors: byUpdated.errors,
@@ -654,14 +691,13 @@ export async function tables(): Promise<void> {
       }),
       upTo("p95 20 ms"),
     );
-    const byColumn = await walk(
-      connection,
-      itemId,
-      "sort=values.reading",
-      pages,
-      false,
-      ORDER_BUDGET_MS,
-    );
+    const byColumn = await walk(connection, itemId, {
+      order: "reading",
+      rows: opts.rows,
+      buckets,
+      query: "sort=values.reading",
+      budgetMs: ORDER_BUDGET_MS,
+    });
     add(
       distribution("tables_page_by_column", "ms", byColumn.times, {
         errors: byColumn.errors,
@@ -669,14 +705,15 @@ export async function tables(): Promise<void> {
       }),
       recordedOnly("a known limit, about 480 ms"),
     );
-    const filtered = await walk(
-      connection,
-      itemId,
-      `filter=${encodeURIComponent("values.bucket eq 3")}`,
-      pages,
-      false,
-      ORDER_BUDGET_MS,
-    );
+    const picked = 3 % buckets;
+    const filtered = await walk(connection, itemId, {
+      order: "id",
+      rows: opts.rows,
+      buckets,
+      keep: (n) => n % buckets === picked,
+      query: `filter=${encodeURIComponent(`values.bucket eq ${picked}`)}`,
+      budgetMs: ORDER_BUDGET_MS,
+    });
     add(
       distribution("tables_page_filtered", "ms", filtered.times, {
         errors: filtered.errors,
@@ -689,12 +726,14 @@ export async function tables(): Promise<void> {
       path: string,
       filter: (run: number) => string,
       runs: number,
+      expected: (run: number) => Expected,
     ) => {
       const times: number[] = [];
       let errors = 0;
       let selected = 0;
       for (let run = -3; run < runs; run++) {
-        const query = filter(Math.abs(run));
+        const at = Math.abs(run);
+        const query = filter(at);
         const answer = await send(
           "GET",
           `${path}/totals${query === "" ? "" : `?filter=${encodeURIComponent(query)}`}`,
@@ -705,9 +744,15 @@ export async function tables(): Promise<void> {
           errors++;
           continue;
         }
+        const wrong = judgeTotals(answer.json(), expected(at));
+        if (wrong !== null) {
+          errors++;
+          log(`totals of ${query || "every row"}: ${wrong}`);
+          continue;
+        }
         if (run >= 0) {
           times.push(answer.ms);
-          selected = (answer.json() as { row_count: number }).row_count;
+          selected = expected(at).rows;
         }
       }
       return { times, errors, selected };
@@ -727,7 +772,12 @@ export async function tables(): Promise<void> {
       if (filled.errors > 0)
         throw new Error("filling the 100,000-row table failed");
     }
-    const small = await totals(hundredPath, () => "", TOTAL_RUNS);
+    const small = await totals(
+      hundredPath,
+      () => "",
+      TOTAL_RUNS,
+      () => expectedTotals(100_000),
+    );
     add(
       distribution("tables_total_100k", "ms", small.times, {
         errors: small.errors,
@@ -735,25 +785,43 @@ export async function tables(): Promise<void> {
       }),
       upTo("p95 50 ms"),
     );
+    const bucketTotals = new Map<number, Expected>();
+    const ofBucket = (bucket: number) => {
+      let held = bucketTotals.get(bucket);
+      if (held === undefined) {
+        held = expectedTotals(opts.rows, (n) => n % buckets === bucket);
+        bucketTotals.set(bucket, held);
+      }
+      return held;
+    };
     const byBucket = await totals(
       tablePath,
       (run) => `values.bucket eq ${run % buckets}`,
       TOTAL_RUNS,
+      (run) => ofBucket(run % buckets),
     );
     add(
       distribution("tables_total_100k_by_column", "ms", byBucket.times, {
         errors: byBucket.errors,
-        note: `each total over the ${byBucket.selected} rows of one bucket, picked by a column of a ${opts.rows}-row table`,
+        note: `each total over the rows of one bucket (${byBucket.selected} in the last), picked by a column of a ${opts.rows}-row table`,
       }),
       recordedOnly("recorded"),
     );
     const from = byId.firsts[100];
     const to = byId.firsts[200];
-    if (from !== undefined && to !== undefined) {
+    if (from !== undefined && to !== undefined && byId.ending === "end") {
+      const range = byId.pageSums.slice(100, 200).reduce(
+        (sum, page) => ({
+          rows: sum.rows + page.rows,
+          cents: sum.cents + page.cents,
+        }),
+        { rows: 0, cents: 0 },
+      );
       const byRange = await totals(
         tablePath,
         () => `id gte "${from}" AND id lt "${to}"`,
         TOTAL_RUNS,
+        () => range,
       );
       add(
         distribution("tables_total_100k_by_id", "ms", byRange.times, {
@@ -763,7 +831,13 @@ export async function tables(): Promise<void> {
         recordedOnly("recorded"),
       );
     }
-    const everything = await totals(tablePath, () => "", 5);
+    const whole = expectedTotals(opts.rows);
+    const everything = await totals(
+      tablePath,
+      () => "",
+      5,
+      () => whole,
+    );
     add(
       distribution("tables_total_all", "ms", everything.times, {
         errors: everything.errors,
@@ -781,8 +855,14 @@ export async function tables(): Promise<void> {
     const undoInsert: number[] = [];
     const undoPatch: number[] = [];
     const patchTimes: number[] = [];
-    let undoErrors = 0;
-    const undo = async (batch: string, into: number[]) => {
+    const insertTally = { errors: 0 };
+    const undoPatchTally = { errors: 0 };
+    const patchTally = { errors: 0 };
+    const undo = async (
+      batch: string,
+      into: number[],
+      tally: { errors: number },
+    ) => {
       const answer = await send(
         "POST",
         `${tablePath}/batches/${batch}/undo`,
@@ -790,14 +870,66 @@ export async function tables(): Promise<void> {
         connection,
       );
       if (!ok(answer)) {
-        undoErrors++;
+        tally.errors++;
         log(`undo of ${batch}: ${answer.status} ${answer.text.slice(0, 160)}`);
         return null;
       }
       into.push(answer.ms);
       return (answer.json() as { batch: string | null }).batch;
     };
+    const rowCount = async () => {
+      const listed = await send(
+        "GET",
+        `/items/${itemId}/tables`,
+        undefined,
+        connection,
+      );
+      await mustOk("listing the tables", listed);
+      return (
+        listed.json() as { data: { name: string; row_count: number }[] }
+      ).data.find((t) => t.name === TABLE)?.row_count;
+    };
     const batchRows = Math.min(1000, opts.rows);
+    const originals = byId.firstRows.slice(0, batchRows);
+    const originalIds = originals.map((row) => row.id);
+    const originalValues = originals.map((row) => row.values);
+    const firstRows = async () => {
+      const page = await send(
+        "GET",
+        `${tablePath}/rows?limit=${originalIds.length}`,
+        undefined,
+        connection,
+      );
+      if (!ok(page)) return undefined;
+      return (page.json() as { data?: unknown }).data;
+    };
+    const holds = async (
+      tally: { errors: number },
+      what: string,
+      values: Record<string, unknown>[],
+    ) => {
+      const wrong = judgeRows(await firstRows(), originalIds, values);
+      if (wrong !== null) {
+        tally.errors++;
+        log(`${what}: ${wrong}`);
+      }
+    };
+    const countIs = async (
+      tally: { errors: number },
+      what: string,
+      wanted: number,
+    ) => {
+      const held = await rowCount();
+      if (held !== wanted) {
+        tally.errors++;
+        log(`${what}: the table holds ${String(held)} rows, not ${wanted}`);
+      }
+    };
+    if (originals.length !== batchRows) {
+      throw new Error(
+        `the first page holds ${originals.length} rows, not ${batchRows}`,
+      );
+    }
     for (let repeat = 0; repeat < UNDO_REPEATS; repeat++) {
       const inserted = judgeWrite(
         await send(
@@ -808,21 +940,26 @@ export async function tables(): Promise<void> {
         ),
         batchRows,
       );
-      if (inserted.batch === null) {
-        undoErrors++;
+      if (inserted.batch === null || inserted.errors > 0) {
+        insertTally.errors++;
         continue;
       }
-      const undone = await undo(inserted.batch, undoInsert);
+      await countIs(insertTally, "after the insert", opts.rows + batchRows);
+      const undone = await undo(inserted.batch, undoInsert, insertTally);
       if (undone !== null) {
-        const redone = await undo(undone, undoInsert);
-        if (redone !== null) await undo(redone, undoInsert);
+        await countIs(insertTally, "after the undo", opts.rows);
+        const redone = await undo(undone, undoInsert, insertTally);
+        if (redone !== null) {
+          await countIs(insertTally, "after the redo", opts.rows + batchRows);
+          await undo(redone, undoInsert, insertTally);
+        }
       }
-      const ids = byId.ids.slice(0, batchRows);
+      await countIs(insertTally, "after the last undo", opts.rows);
       const patch = await send(
         "POST",
         `${tablePath}/rows`,
         JSON.stringify({
-          operations: ids.map((id) => ({
+          operations: originalIds.map((id) => ({
             op: "patch",
             id,
             values: { note: `patched ${repeat}` },
@@ -831,49 +968,71 @@ export async function tables(): Promise<void> {
         connection,
       );
       if (!ok(patch)) {
-        undoErrors++;
+        patchTally.errors++;
+        log(`patch: ${patch.status} ${patch.text.slice(0, 160)}`);
         continue;
       }
       patchTimes.push(patch.ms);
       const patchBatch = (patch.json() as { batch: string | null }).batch;
-      if (patchBatch !== null) await undo(patchBatch, undoPatch);
+      if (patchBatch === null) {
+        patchTally.errors++;
+        log("patch: the answer names no batch");
+        continue;
+      }
+      await holds(
+        patchTally,
+        "after the patch",
+        originalValues.map((values) => ({
+          ...values,
+          note: `patched ${repeat}`,
+        })),
+      );
+      if ((await undo(patchBatch, undoPatch, undoPatchTally)) !== null) {
+        await holds(
+          undoPatchTally,
+          "after the undo of the patch",
+          originalValues,
+        );
+      }
     }
     add(
       distribution("tables_undo_insert_batch", "ms", undoInsert, {
-        errors: undoErrors,
+        errors: insertTally.errors,
         note: `${batchRows} rows; the undo of an insert, of its undo, and of that`,
       }),
       recordedOnly("recorded"),
     );
     add(
       distribution("tables_undo_patch_batch", "ms", undoPatch, {
+        errors: undoPatchTally.errors,
         note: `${batchRows} rows patched, then undone`,
       }),
       recordedOnly("recorded"),
     );
     add(
       distribution("tables_patch_batch", "ms", patchTimes, {
+        errors: patchTally.errors,
         note: `${batchRows} rows patched`,
       }),
       recordedOnly("recorded"),
     );
-    const afterUndo = await send(
-      "GET",
-      `/items/${itemId}/tables`,
-      undefined,
-      connection,
-    );
-    const afterCount = (
-      afterUndo.json() as { data: { name: string; row_count: number }[] }
-    ).data.find((t) => t.name === TABLE)?.row_count;
+    const afterCount = await rowCount();
     if (afterCount !== opts.rows) {
       throw new Error(
         `after the undos the table holds ${String(afterCount)} rows, not ${opts.rows}`,
       );
     }
-    const totalsBefore = (
-      await send("GET", `${tablePath}/totals`, undefined, connection)
-    ).text;
+    const totalsAnswer = await send(
+      "GET",
+      `${tablePath}/totals`,
+      undefined,
+      connection,
+    );
+    await mustOk("totalling the table after the undos", totalsAnswer);
+    const wrongTotals = judgeTotals(totalsAnswer.json(), whole);
+    if (wrongTotals !== null) {
+      throw new Error(`after the undos the totals are wrong: ${wrongTotals}`);
+    }
 
     const exportStarted = performance.now();
     const exported = await fetch(
@@ -897,6 +1056,7 @@ export async function tables(): Promise<void> {
       recordedOnly("recorded"),
     );
 
+    started.starting(stateB);
     await bootServer({ state: stateB, env: settings });
     const restoreInto = connectionOf(stateB, "MARFA_API_KEY");
     const archive = readFileSync(exportFile);
@@ -922,31 +1082,49 @@ export async function tables(): Promise<void> {
       undefined,
       restoreInto,
     );
-    const restoredCount =
-      restoredTables.status === 200
-        ? (
-            restoredTables.json() as {
-              data: { name: string; row_count: number }[];
-            }
-          ).data.find((t) => t.name === TABLE)?.row_count
-        : undefined;
-    const restoredTotals = (
-      await send(
-        "GET",
-        `/items/${itemId}/tables/${TABLE}/totals`,
-        undefined,
-        restoreInto,
-      )
-    ).text;
-    const sameTotals = restoredTotals === totalsBefore;
+    await mustOk("listing the restored tables", restoredTables);
+    const restoredCount = (
+      restoredTables.json() as { data: { name: string; row_count: number }[] }
+    ).data.find((t) => t.name === TABLE)?.row_count;
+    const restoredTotals = await send(
+      "GET",
+      `/items/${itemId}/tables/${TABLE}/totals`,
+      undefined,
+      restoreInto,
+    );
+    await mustOk("totalling the restored table", restoredTotals);
+    const restoredProblems: string[] = [];
+    if (restoredCount !== opts.rows) {
+      restoredProblems.push(
+        `the table holds ${String(restoredCount)} rows, not ${opts.rows}`,
+      );
+    }
+    const wrongRestored = judgeTotals(restoredTotals.json(), whole);
+    if (wrongRestored !== null) restoredProblems.push(wrongRestored);
+    const restoredWalk = await walk(restoreInto, itemId, {
+      order: "id",
+      rows: opts.rows,
+      buckets,
+      query: "",
+    });
+    if (restoredWalk.errors > 0) {
+      restoredProblems.push(
+        `${restoredWalk.errors} faults reading the restored rows back`,
+      );
+    }
+    if (restoredWalk.digest !== byId.digest) {
+      restoredProblems.push("the restored row ids differ from the source's");
+    }
+    for (const problem of restoredProblems) log(`restore: ${problem}`);
     add(
       scalar("tables_rows_restored", "count", restoredCount ?? 0, {
-        errors: restoredCount === opts.rows && sameTotals ? 0 : 1,
-        note: sameTotals
-          ? "totals match the source"
-          : "totals differ from the source",
+        errors: restoredProblems.length,
+        note:
+          restoredProblems.length === 0
+            ? "every row read back, with the values written and the totals computed from them"
+            : restoredProblems.join("; "),
       }),
-      recordedOnly("every row, and the same totals"),
+      recordedOnly("every row, with its values, and the same totals"),
     );
     log(
       `load average after the restore: ${loadavg()
@@ -969,6 +1147,7 @@ export async function tables(): Promise<void> {
         path: () => `/items/${other}/tables/${TABLE}/rows?limit=100`,
       },
     });
+    const stopPurgeReaders = tasks.own(purgeReaders.stop);
     await mustOk(
       "trashing the item",
       await send("DELETE", `/items/${itemId}`, undefined, connection),
@@ -1031,7 +1210,7 @@ export async function tables(): Promise<void> {
       await sleep(100);
     }
     const cleanupSeconds = (performance.now() - purgeStarted) / 1000;
-    const duringPurge = await purgeReaders.stop();
+    const duringPurge = await stopPurgeReaders();
     add(
       scalar("tables_purge_request", "ms", purgeRequest),
       recordedOnly("recorded"),
@@ -1055,12 +1234,14 @@ export async function tables(): Promise<void> {
     recorder.finish();
   } finally {
     clearInterval(sampler);
-    await stopServer({ state: stateA }).catch((error: unknown) =>
-      log(`stopping the first server: ${String(error)}`),
-    );
-    await stopServer({ state: stateB }).catch((error: unknown) =>
-      log(`stopping the second server: ${String(error)}`),
-    );
+    for (const failure of await tasks.stopAll()) {
+      log(`stopping a reader or the stream: ${failure}`);
+    }
+    for (const failure of await started.stopAll((state) =>
+      stopServer({ state }),
+    )) {
+      log(`stopping a server: ${failure}`);
+    }
     if (opts.state === null) rmSync(work, { recursive: true, force: true });
     report();
   }

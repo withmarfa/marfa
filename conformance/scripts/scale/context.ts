@@ -119,8 +119,9 @@ export async function api(
         body: payload,
         signal: AbortSignal.timeout(900_000),
       });
+      const body = await response.text();
       status = response.status;
-      text = await response.text();
+      text = body;
       if (status === 429 && attempt < 8) {
         await sleep(Number(response.headers.get("retry-after") ?? "5") * 1000);
         continue;

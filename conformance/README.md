@@ -838,9 +838,13 @@ second (`0` writes as fast as the server answers) while readers read the item,
 a page of rows, one row and the item's tables and a stream follows
 `rows.changed`, then times pages, a total, undo, an export, a restore and the
 purge of the item. Connector traffic uses the public API; restore uses the
-operator's private control socket. It prints each figure against its goal and writes
-`reports/scale/tables.json`. It is a measurement on request, not a nightly
-step, and it stops both servers by their process IDs.
+operator's private control socket. It also checks what came back, so a figure
+cannot pass on a wrong answer: every page walk reads each row once, in order,
+with the values written, and the stream carries exactly the batches written.
+Totals match the generated data, an undo leaves the rows it should, and the
+restored table matches the source. It prints each figure against its goal and
+writes `reports/scale/tables.json`. It is a measurement on request, not a
+nightly step, and it stops the servers it started by their process IDs.
 
 ## Architecture
 
