@@ -221,7 +221,7 @@ describe("protocol revisions", () => {
 });
 
 describe("which tools a credential is offered", () => {
-  it("lists the six tools to a credential that writes a type", async () => {
+  it("lists the eight tools to a credential that writes a type", async () => {
     const writer = await connectMcp(
       apiUrl,
       await keyWith("writer", { "core.note": "write" }),
@@ -244,7 +244,7 @@ describe("which tools a credential is offered", () => {
     }
   });
 
-  it("lists only marfa_overview, marfa_find and marfa_get to a credential that only reads", async () => {
+  it("lists only marfa_overview, marfa_find, marfa_get and marfa_read_rows to a credential that only reads", async () => {
     const reader = await connectMcp(
       apiUrl,
       await keyWith("reader", { "core.note": "read" }),
@@ -815,7 +815,7 @@ describe("the schema and admin endpoints", () => {
     );
   }
 
-  it("lists the six tools and every schema tool at /mcp/schema to a credential that may use each", async () => {
+  it("lists the eight tools and every schema tool at /mcp/schema to a credential that may use each", async () => {
     const schema = await connectMcp(
       apiUrl,
       await schemaKey("schema-lister"),

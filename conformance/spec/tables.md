@@ -678,6 +678,116 @@ When no row the `filter` selects holds a value for a column that names `adds_up`
 
 **Tests:** `compliance/table-rows-reads.test.ts › totals nothing as zero or null`.
 
+## Rows through MCP
+
+`marfa_read_rows` reads an item's rows and `marfa_write_rows` writes them, each for one item and one table named in `id` and `table`, with the credential's own access: the doors under the item decide, so a refusal below is the one that door answers, carried as a tool error. `marfa_get` lists an item's tables without their rows.
+
+### `tables/mcp-read-rows`
+
+When `marfa_read_rows` names an item and a table, the server MUST answer as `rows` the first rows `GET /items/{id}/tables/{table}/rows` answers for the same `filter`, `sort`, `direction` and `cursor`, in that door's order, and as `next_cursor` the cursor that continues after the last of them, or `null` when no row follows.
+
+**Reason:** an agent reads rows with the expressions and the order a client of the API uses, and a prefix of the door's page, not a different page, is what a size limit leaves.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › reads rows as the page door does, by filter, sort and cursor`.
+
+### `tables/mcp-read-limit`
+
+When `marfa_read_rows` names a `limit` from 1 to 1000, the server MUST answer at most that many rows, and 50 where it names none.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › reads rows as the page door does, by filter, sort and cursor`.
+
+### `tables/mcp-read-refused`
+
+If a `marfa_read_rows` call names what `GET /items/{id}/tables/{table}/rows` refuses, then the server MUST answer a tool error with the code that door answers.
+
+**Reason:** an item the credential may not read, a table the type does not declare, and a `filter`, `sort`, `direction`, `cursor` or `limit` the door refuses are refused the same way through either door.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › refuses a read as the page door does`.
+
+### `tables/mcp-read-totals`
+
+When `marfa_read_rows` names `totals` `true`, the server MUST answer `row_count` and `totals` as `GET /items/{id}/tables/{table}/totals` answers them for the same `filter`.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › answers totals only when asked`.
+
+### `tables/mcp-read-totals-unasked`
+
+While a `marfa_read_rows` call names no `totals` or `totals` `false`, the server MUST NOT answer `row_count` or `totals`.
+
+**Reason:** a total over a large table costs the server a pass over its rows, which a call that did not ask for it does not pay.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › answers totals only when asked`.
+
+### `tables/mcp-read-budget`
+
+When `marfa_read_rows` answers, the server MUST keep the answer's text within 40,000 characters.
+
+**Reason:** a client cuts or drops a tool answer past its own limit, and the agent loses what the answer held.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › stops a page at the answer budget and continues by next_cursor`.
+
+### `tables/mcp-read-stopped`
+
+If the rows a `marfa_read_rows` call selects do not all fit within 40,000 characters, then the server MUST answer fewer rows, a `next_cursor` that continues after the last row it answers, and a `hint` that says the answer stopped for its size and to pass `next_cursor` as `cursor`.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › stops a page at the answer budget and continues by next_cursor`.
+
+### `tables/mcp-read-cut`
+
+If one row does not fit within 40,000 characters, then the server MUST cut the longest text values of the row and name each in `cut` with the row's `id`, the `column` and the `next_offset` to read from.
+
+**Reason:** a row may hold up to 64 KiB of values, more than one answer holds.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › cuts the text of a row too long to fit and reads the rest by offset`.
+
+### `tables/mcp-read-column-part`
+
+When `marfa_read_rows` names a `row`, a `column` and an `offset`, the server MUST answer the column's text of that row from that offset, with the `next_offset` to read from, or `null` when nothing is left.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › cuts the text of a row too long to fit and reads the rest by offset`.
+
+### `tables/mcp-write-rows`
+
+When `marfa_write_rows` names an item, a table and operations that all hold, the server MUST apply them as `POST /items/{id}/tables/{table}/rows` applies a batch, and answer that door's `batch`, `last_activity_at` and `results`.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › writes a batch through marfa_write_rows as the write door does`.
+
+### `tables/mcp-write-refused`
+
+If a `marfa_write_rows` call names a batch that `POST /items/{id}/tables/{table}/rows` refuses, then the server MUST answer a tool error with the code and `details` that door answers, and write none of the batch.
+
+**Reason:** the checks are the door's, including a column whose value the key may not read, which the door refuses `403 forbidden`.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › refuses a batch as the write door does and writes none of it`.
+
+### `tables/mcp-write-limit`
+
+If `operations` holds more than 200 operations, then the server MUST answer a tool error `validation_error` that names `operations`, and write none of them.
+
+**Reason:** the answer names every operation's outcome, and 200 of them fit within one answer.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › refuses a batch of more than 200 operations`.
+
+### `tables/mcp-get-tables`
+
+When `marfa_get` reads an item whose type declares tables, the server MUST answer under `tables` each table with its `name`, `label`, the names of its `columns` and its `row_count`, and no row.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › lists an item's tables with marfa_get and answers no row`.
+
+### `tables/mcp-get-no-tables`
+
+When `marfa_get` reads an item whose type declares no table, the server MUST NOT answer `tables` for it.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › leaves tables out of an item whose type declares none`.
+
+### `tables/mcp-get-columns-cut`
+
+If the items `marfa_get` reads do not fit within 40,000 characters once every field is cut, then the server MUST leave the `columns` out of the tables it lists before it leaves out an item.
+
+**Reason:** a type holds up to 32 tables of 64 columns, and a table's name and `row_count` serve the agent where its columns do not fit.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › leaves the columns out of the listed tables before it leaves out an item`.
+
 ## Activity
 
 ### `tables/last-activity`

@@ -29,7 +29,7 @@ use rpc::{Call, Entry, Era, Reply};
 use tools::Group;
 
 /// What a client is told about the server in its first message, at most 512 characters.
-const INSTRUCTIONS: &str = "Marfa is the person's own data store. Call marfa_overview first. Find and read with marfa_find and marfa_get, save with marfa_create (text, or a file by web address), change with marfa_update, and delete with marfa_delete. Read an item before changing it and send the version you read. marfa_delete, marfa_move_items and marfa_revoke_key only preview first: show the person what would change and ask before you confirm.";
+const INSTRUCTIONS: &str = "Marfa is the person's own data store. Call marfa_overview first. Find and read with marfa_find and marfa_get, save with marfa_create (text, or a file by web address), change with marfa_update, and delete with marfa_delete. An item's table rows are read with marfa_read_rows and changed with marfa_write_rows. Read an item before changing it and send the version you read. marfa_delete, marfa_move_items and marfa_revoke_key only preview first: show the person what would change and ask before you confirm.";
 
 const SERVER_NAME: &str = "marfa";
 const SERVER_TITLE: &str = "Marfa";
