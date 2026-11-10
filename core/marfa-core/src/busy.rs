@@ -12,7 +12,8 @@ const ATTEMPTS: u32 = 5;
 const FIRST_WAIT: Duration = Duration::from_millis(20);
 const POLL: Duration = Duration::from_millis(10);
 
-/// The attempt must be replay-safe and own every transaction it uses.
+/// `attempt` must be one transaction: a retry repeats it whole, and an earlier
+/// commit would be forgotten.
 pub(crate) fn retrying<T>(
     conn: &Mutex<Connection>,
     stop: &AtomicBool,

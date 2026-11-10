@@ -190,7 +190,6 @@ impl Context {
         Ok(expired)
     }
 
-    /// `expire` inside the caller's transaction.
     pub(crate) fn expire_in(&self, tx: &Connection, reason: &str) -> Result<CoreError> {
         if self.generation == revision(tx, GENERATION)? {
             // A first fill, or a fill that cleared the copy, holds a piece of
