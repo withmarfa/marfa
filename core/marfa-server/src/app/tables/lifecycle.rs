@@ -340,7 +340,6 @@ pub fn held_in_use(
     Ok(found.into_iter().collect())
 }
 
-/// Counts, by type, the items `after` first places under `core.table` whose `columns` a table cannot take.
 pub fn unkept_columns(
     tx: &Transaction<'_>,
     before: &Registry,

@@ -102,7 +102,6 @@ fn values_of(index: usize, value: Option<&Value>) -> Result<Map<String, Value>> 
     Ok(values.clone())
 }
 
-/// The row an operation leaves, as JSON, is at most [`MAX_ROW_BYTES`].
 fn refuse_wide(index: usize, values: &Map<String, Value>) -> Result<()> {
     let bytes = store::printed_len(values);
     if bytes > MAX_ROW_BYTES as i64 {
@@ -276,7 +275,6 @@ impl Outcome {
     }
 }
 
-/// A row as a batch left it, for its event.
 pub(crate) enum Changed {
     Held {
         values: Map<String, Value>,
@@ -312,7 +310,6 @@ impl Sight {
         Ok(sees)
     }
 
-    /// The columns of `refs` whose value the caller may not see.
     pub(crate) fn withheld(
         &mut self,
         tx: &Transaction<'_>,
@@ -358,8 +355,6 @@ struct Batch<'a, 'c> {
 }
 
 impl Batch<'_, '_> {
-    /// Refuses a put or patch naming a column whose value the writing key may not see, and
-    /// answers those columns.
     fn refuse_withheld(
         &mut self,
         index: usize,
@@ -460,7 +455,6 @@ impl Batch<'_, '_> {
         Ok(())
     }
 
-    /// Sets in `refs` each value `values` writes to an item column, and clears the rest it names.
     fn mark_refs(&self, refs: &mut Map<String, Value>, values: &Map<String, Value>) {
         for (column, value) in values {
             refs.remove(column);

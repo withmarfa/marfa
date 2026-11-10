@@ -254,6 +254,60 @@ describe("the table an item keeps", () => {
     expect(refused.status).toBe(400);
   });
 
+  it("keeps a declared table's order beside the item's own table, through a delete and its undo", async () => {
+    counter += 1;
+    const type = `user.own-rows-ordered-${counter}-${ctx.runId}`;
+    const registered = await client.registerType({
+      id: type,
+      parent: "core.table",
+      fields: {},
+      tables: {
+        log: {
+          order: "at",
+          columns: { at: { type: "datetime" }, what: { type: "string" } },
+        },
+      },
+    } as never);
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    trackType(ctx, type);
+    const own = await tableItem(COLUMNS, type);
+    await put(own.id, [{ name: "rent" }, { name: "bus" }, { name: "tea" }]);
+    const at = [
+      "2026-03-01T10:00:00Z",
+      "2026-03-01T09:00:00+02:00",
+      "2026-03-01T08:30:00Z",
+    ];
+    const logged = await client.writeRows(own.id, "log", {
+      operations: at.map((when, n) => ({
+        op: "put" as const,
+        values: { at: when, what: `entry ${n}` },
+      })),
+    });
+    expect(logged.status, JSON.stringify(logged.error)).toBe(200);
+    const whats = async (table: string, sort: string, direction = "asc") =>
+      (
+        await client.listRows(own.id, table, { sort, direction } as never)
+      ).data.data.map((row) => row.values.what ?? row.values.name);
+
+    const sorted = ["entry 1", "entry 2", "entry 0"];
+    expect(await whats("log", "values.at")).toEqual(sorted);
+    expect(await whats("table", "values.name")).toEqual(["bus", "rent", "tea"]);
+
+    const removed = await client.writeRows(own.id, "log", {
+      operations: [{ op: "delete", id: logged.data.results[1]!.id }],
+    });
+    expect(removed.status, JSON.stringify(removed.error)).toBe(200);
+    expect(await whats("log", "values.at")).toEqual(["entry 2", "entry 0"]);
+    const undone = await client.undoBatch(own.id, "log", removed.data.batch!);
+    expect(undone.status, JSON.stringify(undone.error)).toBe(200);
+    expect(await whats("log", "values.at")).toEqual(sorted);
+    expect(await whats("table", "values.name", "desc")).toEqual([
+      "tea",
+      "rent",
+      "bus",
+    ]);
+  });
+
   it("totals the columns the item says add up", async () => {
     const own = await tableItem();
     expect((await client.rowTotals(own.id, "table")).data).toEqual({
