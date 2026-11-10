@@ -265,6 +265,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/system-types.test.ts",
   "src/suites/compliance/telemetry-exception-alone.test.ts",
   "src/suites/compliance/telemetry-identity.test.ts",
+  "src/suites/compliance/thumbnails.test.ts",
   "src/suites/compliance/tier-axis.test.ts",
   "src/suites/compliance/tombstone-housekeeping.test.ts",
   "src/suites/compliance/trash-preview.test.ts",
