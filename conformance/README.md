@@ -203,6 +203,10 @@ stays because that thing is what it checks.
   build that ships a field on a type, below which a registered type declares the
   field in another shape, holds a conflict: every door and a restore refuse one,
   and no fault ships a build.
+- `compliance/type-standing-conflicts.test.ts` writes the stored fields of a
+  type below another. A build that ships a field, a status word or a thumbnail
+  above a registered type leaves it holding what its chain refuses; every door
+  refuses that, and no fault ships a build.
 - `compliance/stored-times.test.ts` reads every column that holds a time in
   every table, and rewrites one key's `expires_at` and the browser sessions'
   `expires_at` to values that do not read. The contract is about the form a

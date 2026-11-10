@@ -48,6 +48,7 @@ const REMOVED_FROM_CONTRACT: Record<string, string> = {
  */
 const RUST_SERVER_ONLY: Record<string, string> = {
   backup_not_found: "`POST /backups/{instance_id}/{name}/restore`",
+  batch_not_found: "`POST /items/{id}/tables/{table}/batches/{batch}/undo`",
   copy_held_by_backup:
     "`DELETE /blobs/{hash}/copies/{store}`, for a backed-up copy",
   export_entry_unrestorable:
@@ -56,6 +57,7 @@ const RUST_SERVER_ONLY: Record<string, string> = {
   row_not_found: "the row doors, `/items/{id}/tables/{table}/rows`",
   table_not_found: "the table doors, `/items/{id}/tables/{table}`",
   too_many_connections: "any door, past the connection cap",
+  undo_conflict: "`POST /items/{id}/tables/{table}/batches/{batch}/undo`",
 };
 
 function sourceFiles(dir: string): string[] {

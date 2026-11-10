@@ -76,7 +76,7 @@ fn enum_key(values: Option<&Value>) -> Option<String> {
     }
 }
 
-pub(super) fn describe_shape_conflict(child: &Obj, ancestor: &Obj) -> Option<Conflict> {
+fn describe_shape_conflict(child: &Obj, ancestor: &Obj) -> Option<Conflict> {
     for attribute in SHAPE_ATTRIBUTES {
         if !same(child.get(attribute), ancestor.get(attribute)) {
             return Some(Conflict {

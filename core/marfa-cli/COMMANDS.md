@@ -1640,7 +1640,7 @@ marfa tables list [OPTIONS] <ITEM>
 
 ## rows
 
-The rows of an item's tables, and what a table adds up to.
+The rows of an item's tables, what a table adds up to, and the batches that changed it.
 
 ### marfa rows
 
@@ -1767,6 +1767,38 @@ marfa rows totals [OPTIONS] <ITEM> <TABLE>
 | Option | Description |
 | --- | --- |
 | `--filter <FILTER>` | Only the rows this expression matches, in the server's filter grammar, where `values.<column>` names a column. Unset totals every row. |
+
+### marfa rows batches
+
+One page of the batches a table's change log holds, newest first, with how many rows each changed and the batch it undid. Pass the answer's `next_cursor` as `--cursor` for the next page.
+
+```text
+marfa rows batches [OPTIONS] <ITEM> <TABLE>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ITEM>` | The item id. |
+| `<TABLE>` | The table name. |
+
+| Option | Description |
+| --- | --- |
+| `--limit <LIMIT>` | How many at most. |
+| `--cursor <CURSOR>` | The cursor the previous page answered with. |
+
+### marfa rows undo
+
+Put back every row a batch changed as it was before the batch, all of them or none, as a new batch. Undo an undo to redo it.
+
+```text
+marfa rows undo [OPTIONS] <ITEM> <TABLE> <BATCH>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ITEM>` | The item id. |
+| `<TABLE>` | The table name. |
+| `<BATCH>` | The batch id, as a write or `rows batches` answers it. |
 
 ## blobs
 

@@ -314,6 +314,109 @@ describe("a copy no server has been named for", () => {
     expect(value(await device.declaredTypes())).toHaveLength(2);
   });
 
+  it("refuses a declaration whose type gives an inherited field another shape than a type above it, naming the type and the field", async () => {
+    const device = await offline("save-declare-field-shape");
+    const top = {
+      id: "app.shape.top",
+      fields: { count: { type: "integer" }, kind: { type: "string" } },
+    };
+    const middle = {
+      id: "app.shape.middle",
+      parent: "app.shape.top",
+      fields: {},
+    };
+    const leaf = (fields: unknown) => ({
+      id: "app.shape.leaf",
+      parent: "app.shape.middle",
+      fields,
+    });
+    for (const [declaration, named] of [
+      [[top, middle, leaf({ count: { type: "string" } })], "count"],
+      [[top, leaf({ count: { type: "string" } }), middle], "count"],
+      [
+        [
+          { ...top, fields: { count: { type: "integer", required: true } } },
+          middle,
+          leaf({ count: { type: "integer" } }),
+        ],
+        "required",
+      ],
+      [
+        [
+          {
+            id: "app.shape.note",
+            parent: "core.note",
+            fields: { title: { type: "integer" } },
+          },
+        ],
+        "title",
+      ],
+    ] as const) {
+      const refused = await device.declareTypes([...declaration]);
+      expect(
+        refused.ok ? "declared" : refused.refusal.code,
+        `${JSON.stringify(declaration)} was declared`,
+      ).toBe("invalid");
+      if (!refused.ok) expect(refused.refusal.raw).toContain(named);
+    }
+    expect(value(await device.declaredTypes())).toEqual([]);
+    value(
+      await device.declareTypes([
+        top,
+        middle,
+        leaf({
+          count: { type: "integer", description: "How many." },
+          kind: { type: "string", required: true },
+        }),
+      ]),
+    );
+    expect(value(await device.declaredTypes())).toHaveLength(3);
+  });
+
+  it("refuses a declaration whose type repeats a status word a type above it gives or holds a second thumbnail, naming the type and the word or the field", async () => {
+    const device = await offline("save-declare-words-thumbnails");
+    const stage = (word: string) => ({
+      type: "status",
+      status_values: [{ value: word, group: "not_started" }],
+    });
+    const top = {
+      id: "app.words.top",
+      fields: { stage: stage("open"), picture: { type: "thumbnail" } },
+    };
+    const middle = {
+      id: "app.words.middle",
+      parent: "app.words.top",
+      fields: {},
+    };
+    const leaf = (fields: unknown) => ({
+      id: "app.words.leaf",
+      parent: "app.words.middle",
+      fields,
+    });
+    for (const [declaration, named] of [
+      [[top, middle, leaf({ stage: stage("open") })], "open"],
+      [[leaf({ stage: stage("open") }), middle, top], "open"],
+      [[top, middle, leaf({ preview: { type: "thumbnail" } })], "preview"],
+      [[leaf({ preview: { type: "thumbnail" } }), middle, top], "preview"],
+    ] as const) {
+      const refused = await device.declareTypes([...declaration]);
+      expect(
+        refused.ok ? "declared" : refused.refusal.code,
+        `${JSON.stringify(declaration)} was declared`,
+      ).toBe("invalid");
+      if (!refused.ok) expect(refused.refusal.raw).toContain(named);
+    }
+    expect(value(await device.declaredTypes())).toEqual([]);
+    value(
+      await device.declareTypes([
+        top,
+        middle,
+        leaf({ stage: stage("closed"), picture: { type: "thumbnail" } }),
+      ]),
+    );
+    expect(value(await device.declaredTypes())).toHaveLength(3);
+  });
+
   it("reads a declared table as the server reads it, each column as the kind its format names", async () => {
     const device = await offline("save-declare-tables-read");
     const spelled = {

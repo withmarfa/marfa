@@ -37,6 +37,13 @@ impl Ancestry {
     }
 }
 
+/// What a type inherits, and the types that inherit from it.
+pub(super) struct Lineage<'a> {
+    pub ancestry: Ancestry,
+    pub tables: Vec<(String, String, Obj)>,
+    pub descendants: Vec<&'a Obj>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Registry {
     types: HashMap<String, Obj>,
@@ -139,6 +146,16 @@ impl Registry {
         children
     }
 
+    pub(super) fn lineage(&self, definition: &Obj) -> Lineage<'_> {
+        let id = text(definition, "id");
+        let parent = text(definition, "parent").filter(|p| !p.is_empty() && Some(*p) != id);
+        Lineage {
+            ancestry: parent.map(|p| self.ancestry(p)).unwrap_or_default(),
+            tables: parent.map(|p| self.inherited_tables(p)).unwrap_or_default(),
+            descendants: id.map(|id| self.descendants(id)).unwrap_or_default(),
+        }
+    }
+
     pub fn descendants(&self, id: &str) -> Vec<&Obj> {
         let mut found: Vec<&Obj> = self
             .types
@@ -163,6 +180,16 @@ impl Registry {
             cursor = self.parent_of(at);
         }
         false
+    }
+
+    /// Root first, ending with `row`.
+    pub(super) fn chain_through<'a>(&'a self, row: &'a Obj) -> Vec<&'a Obj> {
+        let mut chain = text(row, "parent")
+            .filter(|parent| Some(*parent) != text(row, "id"))
+            .map(|parent| self.chain_above(parent))
+            .unwrap_or_default();
+        chain.push(row);
+        chain
     }
 
     /// Root first. A chain that loops or names a type this registry lacks ends there.

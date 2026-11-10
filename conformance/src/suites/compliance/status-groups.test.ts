@@ -352,6 +352,65 @@ describe("a status field down a chain", () => {
     expect(taken.status, JSON.stringify(taken.error)).toBe(200);
   });
 
+  async function wordBelowAMiddleType(word: string) {
+    const top = nextId();
+    const middle = `${top}-middle`;
+    const leaf = `${middle}.leaf`;
+    await register({
+      id: top,
+      fields: {
+        title: { type: "string" },
+        stage: {
+          type: "status",
+          status_values: [{ value: "open", group: "not_started" }],
+        },
+      },
+    });
+    const detached = { id: middle, label: "Middle", fields: {} };
+    await register(detached);
+    await register({
+      id: leaf,
+      parent: middle,
+      fields: {
+        stage: {
+          type: "status",
+          status_values: [{ value: word, group: "completed" }],
+        },
+      },
+    });
+    return { middle, attached: { ...detached, version: 2, parent: top } };
+  }
+
+  it("refuses a replacement that gives a type a parent whose chain gives a word a subtype declares", async () => {
+    const repeated = await wordBelowAMiddleType("open");
+    const refused = await client.replaceType(
+      repeated.middle,
+      repeated.attached,
+    );
+    expect(
+      refused.status,
+      "a type took a parent whose status word its subtype declares, so the subtype's items read the word in the parent's group",
+    ).toBe(400);
+    expect(refused.error?.error.code).toBe("inheritance_violation");
+    expect(errorFields(refused)).toEqual(["parent"]);
+
+    // The witness: a word the chain does not give is taken.
+    const distinct = await wordBelowAMiddleType("closed");
+    const taken = await client.replaceType(distinct.middle, distinct.attached);
+    expect(taken.status, JSON.stringify(taken.error)).toBe(200);
+  });
+
+  it("changes nothing when it refuses a replacement for the parent it would give a type", async () => {
+    const { middle, attached } = await wordBelowAMiddleType("open");
+    expect((await client.replaceType(middle, attached)).status).toBe(400);
+    const held = (await client.getType(middle)).data;
+    expect(
+      held,
+      "a refused replacement gave the type a parent",
+    ).not.toHaveProperty("parent");
+    expect(held.label, "a refused replacement changed the type").toBe("Middle");
+  });
+
   it("takes a subtype's word on its own items and refuses it on the parent's", async () => {
     const onChild = await create(child, { title: "Child", stage: "blocked" });
     expect(onChild.status, JSON.stringify(onChild.error)).toBe(201);

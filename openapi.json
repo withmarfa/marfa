@@ -8804,6 +8804,12 @@
             "maximum": 36500,
             "description": "Days an item stays in the trash before Marfa purges it. `0` keeps them with no age limit. Absent: the server's default applies."
           },
+          "row_log_retention_days": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 36500,
+            "description": "Days a table keeps a batch in its change log, so you can undo it. `0` keeps them with no age limit. Absent: the server's default applies."
+          },
           "inbound_handled_retention_days": {
             "type": "integer",
             "minimum": 0,
@@ -11456,6 +11462,10 @@
             "type": "string",
             "description": "The ID of the batch."
           },
+          "undoes": {
+            "type": "string",
+            "description": "Present when the batch is an undo: the ID of the batch it undid."
+          },
           "last_activity_at": {
             "type": "string",
             "description": "The item's `last_activity_at` after the batch, in UTC."
@@ -11654,6 +11664,194 @@
           "delivered_at"
         ],
         "description": "What a webhook delivery adds to the event it carries."
+      },
+      "BatchNotFoundOrItemNotFoundOrTableNotFoundRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "batch_not_found",
+                  "item_not_found",
+                  "table_not_found"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the error, such as the field it concerns. Each code defines its own details."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
+      },
+      "UndoConflictRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "undo_conflict"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the error, such as the field it concerns. Each code defines its own details."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
+      },
+      "RowBatchEntry": {
+        "type": "object",
+        "description": "A batch a table's change log holds.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The ID of the batch.",
+            "example": "019a5b1e-8b22-7c4d-9e5f-6a7b8c9d0e1f"
+          },
+          "at": {
+            "type": "string",
+            "description": "When the batch was made, in UTC.",
+            "example": "2026-10-03T09:30:00.000Z"
+          },
+          "rows": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "How many rows the batch changed."
+          },
+          "undoes": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The ID of the batch this one undid, or `null` when it's not an undo."
+          }
+        },
+        "required": [
+          "id",
+          "at",
+          "rows",
+          "undoes"
+        ]
+      },
+      "RowBatchPage": {
+        "type": "object",
+        "description": "The batches a table's change log holds, newest first.",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RowBatchEntry"
+            },
+            "description": "Each batch, newest first."
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass this as `cursor` to get the next page. `null` when there are no more."
+          }
+        },
+        "required": [
+          "data",
+          "next_cursor"
+        ]
+      },
+      "RowUndoResult": {
+        "type": "object",
+        "description": "What an undo did.",
+        "properties": {
+          "batch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The ID of the undo's own batch, or `null` when every row already stood as it was before the undone batch. Undo this batch to redo the one it undid.",
+            "example": "019a5b1e-9c33-7e5f-8a6b-7c8d9e0f1a2b"
+          },
+          "undoes": {
+            "type": "string",
+            "description": "The ID of the batch you undid.",
+            "example": "019a5b1e-8b22-7c4d-9e5f-6a7b8c9d0e1f"
+          },
+          "last_activity_at": {
+            "type": "string",
+            "description": "The item's `last_activity_at` after the undo, in UTC.",
+            "example": "2026-10-03T09:31:00.000Z"
+          },
+          "results": {
+            "type": "array",
+            "description": "One entry per row the undone batch changed, by ID.",
+            "items": {
+              "type": "object",
+              "description": "What the undo did to one row.",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "The ID of the row."
+                },
+                "outcome": {
+                  "type": "string",
+                  "enum": [
+                    "created",
+                    "replaced",
+                    "deleted",
+                    "unchanged"
+                  ],
+                  "description": "`created` when the undo put back a row the batch deleted, `replaced` when it put back values the batch changed, `deleted` when it removed a row the batch created, and `unchanged` when the row already stood as it was before the batch."
+                }
+              },
+              "required": [
+                "id",
+                "outcome"
+              ]
+            }
+          }
+        },
+        "required": [
+          "batch",
+          "undoes",
+          "last_activity_at",
+          "results"
+        ]
       }
     },
     "parameters": {},
@@ -24416,6 +24614,527 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/WriteContentionRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/items/{id}/tables/{table}/batches": {
+      "get": {
+        "operationId": "listTableBatches",
+        "tags": [
+          "Tables"
+        ],
+        "summary": "List table batches",
+        "description": "Returns the batches the table's change log holds, newest first, so you can find one to undo. The log keeps a batch for `row_log_retention_days`.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The ID of the item."
+            },
+            "required": true,
+            "description": "The ID of the item.",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "The name of the table."
+            },
+            "required": true,
+            "description": "The name of the table.",
+            "name": "table",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 100,
+              "description": "The maximum number of results to return."
+            },
+            "required": false,
+            "description": "The maximum number of results to return.",
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "The `next_cursor` from the previous page. Leave it out to get the first page."
+            },
+            "required": false,
+            "description": "The `next_cursor` from the previous page. Leave it out to get the first page.",
+            "name": "cursor",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Returns a page of batches, newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RowBatchPage"
+                },
+                "example": {
+                  "data": [
+                    {
+                      "id": "019a5b1e-9c33-7e5f-8a6b-7c8d9e0f1a2b",
+                      "at": "2026-10-03T09:31:00.000Z",
+                      "rows": 2,
+                      "undoes": "019a5b1e-8b22-7c4d-9e5f-6a7b8c9d0e1f"
+                    },
+                    {
+                      "id": "019a5b1e-8b22-7c4d-9e5f-6a7b8c9d0e1f",
+                      "at": "2026-10-03T09:30:00.000Z",
+                      "rows": 2,
+                      "undoes": null
+                    }
+                  ],
+                  "next_cursor": null
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              }
+            }
+          },
+          "400": {
+            "description": "- `invalid_id`: the ID is not a valid item ID.\n- `validation_error`: a query parameter is unknown, `limit` is out of range, or `cursor` isn't from this listing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidIdOrValidationErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "403": {
+            "description": "- `type_not_permitted`: your credential reaches no type.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TypeNotPermittedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "404": {
+            "description": "- `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read.\n- `table_not_found`: the item's type declares no table of this name.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemNotFoundOrTableNotFoundRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "503": {
+            "description": "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteContentionRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/items/{id}/tables/{table}/batches/{batch}/undo": {
+      "post": {
+        "operationId": "undoTableBatch",
+        "tags": [
+          "Tables"
+        ],
+        "summary": "Undo a table batch",
+        "description": "Puts back every row a batch changed as it was before the batch, as a new batch, all or none. Undo an undo to redo it. Sends one `rows.changed` event that names the undone batch in `undoes`.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The ID of the item."
+            },
+            "required": true,
+            "description": "The ID of the item.",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "The name of the table."
+            },
+            "required": true,
+            "description": "The name of the table.",
+            "name": "table",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "The ID of the batch."
+            },
+            "required": true,
+            "description": "The ID of the batch.",
+            "name": "batch",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Returns the undo's batch ID and what it did to each row.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RowUndoResult"
+                },
+                "example": {
+                  "batch": "019a5b1e-9c33-7e5f-8a6b-7c8d9e0f1a2b",
+                  "undoes": "019a5b1e-8b22-7c4d-9e5f-6a7b8c9d0e1f",
+                  "last_activity_at": "2026-10-03T09:31:00.000Z",
+                  "results": [
+                    {
+                      "id": "019a5b1e-7c41-7d2e-9f3a-5b8c2d4e6f70",
+                      "outcome": "replaced"
+                    },
+                    {
+                      "id": "019a5b1e-7c41-7d2e-9f3a-5b8c2d4e6f72",
+                      "outcome": "deleted"
+                    }
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              }
+            }
+          },
+          "400": {
+            "description": "- `invalid_id`: the ID is not a valid item ID.\n- `validation_error`: a query parameter is unknown.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidIdOrValidationErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "403": {
+            "description": "- `type_not_permitted`: you can't write the item's type, or your credential reaches no type.\n- `forbidden`: a row the batch changed, other than one it created, names an item you can't read in a column, now, before the batch or after it. `details.row` names the row and `details.column` the column.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenOrTypeNotPermittedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "404": {
+            "description": "- `item_not_found`: no item has this ID, the item is in the trash (`details.trashed` is `true` if you can read its type), or its type is one you can't read.\n- `batch_not_found`: the table's change log holds no batch with this ID. It may be older than `row_log_retention_days`.\n- `table_not_found`: the item's type declares no table of this name.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchNotFoundOrItemNotFoundOrTableNotFoundRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "409": {
+            "description": "`undo_conflict`: a later batch changed rows the undo would put back. `details.rows` names them. Undo the later batches first, newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UndoConflictRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "503": {
+            "description": "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteContentionRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "507": {
+            "description": "`insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsufficientStorageRefusal"
                 }
               }
             },
@@ -50410,6 +51129,12 @@
                     "maximum": 36500,
                     "description": "Days an item stays in the trash before Marfa purges it. `0` keeps them with no age limit. Absent: the server's default applies."
                   },
+                  "row_log_retention_days": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 36500,
+                    "description": "Days a table keeps a batch in its change log, so you can undo it. `0` keeps them with no age limit. Absent: the server's default applies."
+                  },
                   "inbound_handled_retention_days": {
                     "type": "integer",
                     "minimum": 0,
@@ -50841,6 +51566,15 @@
                     "minimum": 0,
                     "maximum": 36500,
                     "description": "Days an item stays in the trash before Marfa purges it. `0` keeps them with no age limit. `null` removes it, so the server's default applies."
+                  },
+                  "row_log_retention_days": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 0,
+                    "maximum": 36500,
+                    "description": "Days a table keeps a batch in its change log, so you can undo it. `0` keeps them with no age limit. `null` removes it, so the server's default applies."
                   },
                   "inbound_handled_retention_days": {
                     "type": [
@@ -54595,7 +55329,9 @@
         "getTableRow",
         "listTableRows",
         "listItemTables",
-        "getTableTotals"
+        "getTableTotals",
+        "listTableBatches",
+        "undoTableBatch"
       ]
     },
     {

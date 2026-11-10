@@ -4,6 +4,8 @@ import type {
   ApiResponse,
   RowBatch,
   RowBatchAnswer,
+  RowBatchEntry,
+  RowUndoAnswer,
   RowTotals,
   TableRow,
   TableSummary,
@@ -270,6 +272,34 @@ export class MarfaClient {
         : `?${new URLSearchParams({ filter }).toString()}`;
     return this.request<RowTotals>(
       `/items/${itemId}/tables/${table}/totals${tail}`,
+    );
+  }
+
+  async undoBatch(
+    itemId: string,
+    table: string,
+    batch: string,
+  ): Promise<ApiResponse<RowUndoAnswer>> {
+    return this.request<RowUndoAnswer>(
+      `/items/${itemId}/tables/${table}/batches/${batch}/undo`,
+      { method: "POST" },
+    );
+  }
+
+  async listBatches(
+    itemId: string,
+    table: string,
+    query: { limit?: number; cursor?: string } = {},
+  ): Promise<
+    ApiResponse<{ data: RowBatchEntry[]; next_cursor: string | null }>
+  > {
+    const search = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) {
+      if (value !== undefined) search.set(key, String(value));
+    }
+    const tail = search.size ? `?${search.toString()}` : "";
+    return this.request<{ data: RowBatchEntry[]; next_cursor: string | null }>(
+      `/items/${itemId}/tables/${table}/batches${tail}`,
     );
   }
 
