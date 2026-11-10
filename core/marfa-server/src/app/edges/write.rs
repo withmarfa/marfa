@@ -1027,10 +1027,8 @@ fn once(targets: &[String]) -> Vec<&String> {
         .collect()
 }
 
+/// Asks across every inline edge in the order of `POST /edges`, so no door answers differently.
 pub(crate) fn inline_gates(writing: &Writing<'_, '_, '_>, inline: &Inline) -> Result<()> {
-    for (edge_type, _) in inline {
-        writing.require_edge_write(edge_type)?;
-    }
     for (edge_type, targets) in inline {
         for target in targets {
             if validation::id("target_id", target).is_err() {
@@ -1040,6 +1038,9 @@ pub(crate) fn inline_gates(writing: &Writing<'_, '_, '_>, inline: &Inline) -> Re
                 ));
             }
         }
+    }
+    for (edge_type, _) in inline {
+        writing.require_edge_write(edge_type)?;
     }
     for (edge_type, targets) in inline {
         if !targets.is_empty() && writing.catalog.edge_kind(edge_type).is_none() {
