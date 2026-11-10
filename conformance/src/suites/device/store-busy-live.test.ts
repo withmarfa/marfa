@@ -411,6 +411,61 @@ it("ends the drain store_busy when another program writes to the store at every 
   expect(outsideValue(device.store)).toBe(String(reaches));
 });
 
+it("ends the drain store_busy when another program writes to the store at every attempt to record a batch's answer, and the next drain sends the same batch under its key, keeping a change made between", async () => {
+  const { type, item } = await itemWithRows("batch", 1);
+  const listed = await client.listRows(item, "steps", { limit: 10 });
+  expect(listed.status, JSON.stringify(listed.error)).toBe(200);
+  const row = listed.data.data[0]!.id;
+  const device = await hydratedDevice("busy-batch", [type]);
+  const writes = [
+    value(
+      await device.writeRows(item, "steps", [
+        { op: "patch", id: row, values: { count: 5 } },
+      ]),
+    ),
+    value(
+      await device.writeRows(item, "steps", [
+        { op: "put", values: { count: 6 } },
+      ]),
+    ),
+  ];
+  const gate = new Gate(dirname(device.store), "gate-drain-receipt");
+  const draining = device.hold(["drain"], "device", gate.env);
+  held.push(draining);
+  const reaches = await gate.contend(device.store, () => !draining.running());
+  await draining.exited();
+  expect(reaches).toBeGreaterThan(1);
+  expect(draining.exitCode(), draining.stderr).toBe(3);
+  expect(JSON.parse(withoutWriteLine(draining.stderr)).error.code).toBe(
+    "store_busy",
+  );
+  for (const write of writes) {
+    const row = await queued(device, write.id);
+    expect([row?.verdict, row?.refusals]).toEqual([null, 0]);
+  }
+  expect((await queued(device, writes[1]!.id))?.batched_with).toBe(
+    writes[0]!.id,
+  );
+  // Sent again, the batch would set the count back over this change.
+  const between = await client.writeRows(item, "steps", {
+    operations: [{ op: "patch", id: row, values: { count: 7 } }],
+  } as never);
+  expect(between.status, JSON.stringify(between.error)).toBe(200);
+
+  const again = value(await device.drain());
+  expect(again.verdicts.map((entry) => [entry.id, entry.verdict])).toEqual([
+    [writes[0]!.id, "accepted"],
+    [writes[1]!.id, "accepted"],
+  ]);
+  expect(again.verdicts.every((entry) => entry.replayed)).toBe(true);
+  const after = await client.listRows(item, "steps", { limit: 10 });
+  expect(after.status, JSON.stringify(after.error)).toBe(200);
+  expect(
+    after.data.data.map((one) => (one.values as { count: number }).count),
+  ).toEqual([7, 6]);
+  expect(outsideValue(device.store)).toBe(String(reaches));
+});
+
 interface StepsPage {
   data: { values: { count: number } }[];
   next_cursor: string | null;

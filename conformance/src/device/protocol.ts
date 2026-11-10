@@ -433,6 +433,12 @@ export interface QueuedWrite {
   /** What the write last met when the failure was environmental
    *  (`queue-and-verdicts/queue-shows-last-failure`). */
   last_failure: LastFailure | null;
+  /** The table a row write or an undo names. */
+  table: string | null;
+  /** The write whose batch a row write was sent in, where it was not the first
+   *  (`queue-and-verdicts/rows-joined`). */
+  batched_with: string | null;
+  conflicts: RowConflict[];
   queued_at: string;
   answered_at: string | null;
 }
@@ -520,6 +526,14 @@ export interface DrainVerdict {
   merged_fields: string[];
   /** The terminal or credential refusal, read into its parts. */
   refusal: WriteRefusal | null;
+  /** On a `conflicted` row write, each row and column whose value it replaced unseen
+   *  (`queue-and-verdicts/rows-conflicts-named`). */
+  conflicts: RowConflict[];
+}
+
+export interface RowConflict {
+  row: string;
+  column: string;
 }
 
 /** What a link or an embed in a body names (`device/body-links-read`). */

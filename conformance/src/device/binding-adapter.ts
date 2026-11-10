@@ -174,6 +174,8 @@ export interface BindingDeviceOptions {
   reader?: boolean;
   /** An isolated folder registry for this host. */
   registry?: string;
+  /** Set for the host, such as the `MARFA_TEST_FAULT` of a gate. */
+  env?: NodeJS.ProcessEnv;
 }
 
 /** What a listener a fixture adds does besides record what it is told. */
@@ -387,6 +389,7 @@ export class BindingDevice {
         ...(options.registry === undefined
           ? {}
           : { MARFA_FOLDER_REGISTRY: options.registry }),
+        ...options.env,
       },
       // Collection is how a fixture lets go of a core the binding holds.
       execArgv: ["--expose-gc"],

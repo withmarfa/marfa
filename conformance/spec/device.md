@@ -6118,7 +6118,7 @@ An app writes a table on a device as `POST /items/{id}/tables/{table}/rows` take
 
 When an app writes rows to a table of an item its copy holds, a device MUST queue the batch as one `write_rows` write before the call returns.
 
-**Tests:** `device/table-writes-live.test.ts › queues a write to a table it holds whole and answers it from the copy at once, with the server out of reach`.
+**Tests:** `device/table-writes-live.test.ts › queues a write to a table it holds whole and answers it from the copy at once, before any drain`.
 
 ### `device/table-write-unheld-item`
 
@@ -6156,13 +6156,13 @@ While a `write_rows` write is waiting, a device MUST answer a read of a table it
 
 **Reason:** an app shows the person their edit at once, whether or not the server can be reached.
 
-**Tests:** `device/table-writes-live.test.ts › queues a write to a table it holds whole and answers it from the copy at once, with the server out of reach`, `› lays a waiting write back over each rows.changed it applies beneath it`.
+**Tests:** `device/table-writes-live.test.ts › queues a write to a table it holds whole and answers it from the copy at once, before any drain`, `› lays a waiting write back over each rows.changed it applies beneath it`.
 
 ### `device/table-write-updated-at`
 
 When a device answers a row that a waiting write changed, a device MUST answer as its `updated_at` the time the latest such write was queued.
 
-**Tests:** `device/table-writes-live.test.ts › queues a write to a table it holds whole and answers it from the copy at once, with the server out of reach`.
+**Tests:** `device/table-writes-live.test.ts › queues a write to a table it holds whole and answers it from the copy at once, before any drain`.
 
 ### `device/table-write-over-server`
 
