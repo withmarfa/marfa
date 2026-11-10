@@ -22,6 +22,8 @@ export interface WireItemOptions {
   occurred_at?: string;
   created_at?: string;
   updated_at?: string;
+  /** When the item or a row of its tables last changed; its update where the fixture names none. */
+  last_activity_at?: string;
   /** When the item went to the bin; null where the fixture names none. */
   trashed_at?: string | null;
   /** Null leaves the field out, as a server from before it does. */
@@ -57,6 +59,7 @@ export function wireItem(options: WireItemOptions): Record<string, unknown> {
     occurred_at: at,
     created_at: options.created_at ?? at,
     updated_at: options.updated_at ?? at,
+    last_activity_at: options.last_activity_at ?? options.updated_at ?? at,
     trashed_at: options.trashed_at ?? null,
     // No connector registration holds a scripted item read only unless a
     // fixture says so, and null stands for a server that leaves the field out.
