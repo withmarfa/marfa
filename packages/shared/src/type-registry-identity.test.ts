@@ -48,6 +48,7 @@ const CORE_TYPE_IDENTIFIERS = [
   "core.media.song",
   "core.message",
   "core.note",
+  "core.table",
   "core.task",
 ];
 

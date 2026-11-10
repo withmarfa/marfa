@@ -9,7 +9,7 @@ use uuid::Uuid;
 use super::events::{self, Announced};
 use super::order::Order;
 use super::store::{self, Held};
-use super::{Changed, MAX_OPERATIONS, Sight, refs_text, tables_of};
+use super::{Changed, MAX_OPERATIONS, Sight, refs_text, tables_of_host};
 use crate::app::archive::checks::RowKey;
 use crate::app::catalog::Catalog;
 use crate::app::items::{self, Host, Reader};
@@ -128,7 +128,6 @@ struct Run {
     changed_at: String,
 }
 
-/// Writes the rows of a restore's archive, line by line in the archive's order.
 pub(crate) struct Restoring<'a, 'u, 'c> {
     unit: &'a Unit<'u, 'c>,
     catalog: &'a Catalog,
@@ -165,7 +164,7 @@ impl<'a, 'u, 'c> Restoring<'a, 'u, 'c> {
             let host = items::host_of(tx, &key.item_id)?
                 .ok_or_else(|| Refusal::internal("a restored row's item is gone"))?;
             let batch = Uuid::now_v7().to_string();
-            let order = tables_of(self.catalog, &host.type_id)
+            let order = tables_of_host(self.catalog, &host)?
                 .into_iter()
                 .find(|table| table.name == key.table)
                 .and_then(|table| table.order);

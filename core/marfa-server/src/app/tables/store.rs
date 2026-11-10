@@ -483,6 +483,63 @@ pub(super) fn column_held(
     )?)
 }
 
+pub(super) fn item_column_held(
+    tx: &Transaction<'_>,
+    seq: i64,
+    table: &str,
+    column: &str,
+) -> Result<bool> {
+    Ok(tx.query_row(
+        "SELECT EXISTS (SELECT 1 FROM table_summaries s \
+         JOIN table_rows r ON r.table_seq = s.seq \
+         WHERE s.item_seq = ?1 AND s.table_name = ?2 AND json_type(r.body, ?3) IS NOT NULL \
+         AND json_type(r.body, ?3) <> 'null')",
+        params![seq, table, format!("$.{column}")],
+        |row| row.get(0),
+    )?)
+}
+
+pub(super) fn holders_of_type(tx: &Transaction<'_>, type_id: &str) -> Result<Vec<(i64, String)>> {
+    let mut statement = tx.prepare_cached(
+        "SELECT i.seq, json(i.properties) FROM items i WHERE i.type = ?1 AND EXISTS \
+         (SELECT 1 FROM table_summaries s WHERE s.item_seq = i.seq AND s.row_count > 0) \
+         ORDER BY i.seq",
+    )?;
+    let found = statement.query_map([type_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    Ok(found.collect::<rusqlite::Result<_>>()?)
+}
+
+pub(super) fn naming_columns(tx: &Transaction<'_>, type_id: &str) -> Result<Vec<(String, String)>> {
+    let mut statement = tx.prepare_cached(
+        "SELECT id, json(properties) FROM items \
+         WHERE type = ?1 AND json_type(properties, '$.columns') IS NOT NULL ORDER BY seq",
+    )?;
+    let found = statement.query_map([type_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    Ok(found.collect::<rusqlite::Result<_>>()?)
+}
+
+pub(super) fn own_columns_naming(
+    tx: &Transaction<'_>,
+    types: &[&str],
+    type_id: &str,
+) -> Result<Vec<(String, String, String)>> {
+    if types.is_empty() {
+        return Ok(Vec::new());
+    }
+    let marks = vec!["?"; types.len()].join(", ");
+    let sql = format!(
+        "SELECT i.id, i.type, c.key FROM items i, json_each(i.properties, '$.columns') c, \
+         json_each(c.value, '$.type_constraints') t \
+         WHERE i.type IN ({marks}) AND t.value = ?"
+    );
+    let mut statement = tx.prepare(&sql)?;
+    let bound = types.iter().copied().chain([type_id]);
+    let found = statement.query_map(rusqlite::params_from_iter(bound), |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+    })?;
+    Ok(found.collect::<rusqlite::Result<_>>()?)
+}
+
 /// Forgets a purged item's summaries and leaves its rows and their log for `table-row-cleanup`.
 pub(super) fn doom(tx: &Transaction<'_>, seq: i64) -> Result<bool> {
     tx.prepare_cached(

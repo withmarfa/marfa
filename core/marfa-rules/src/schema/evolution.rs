@@ -4,6 +4,7 @@ use std::collections::HashSet;
 
 use serde_json::Value;
 
+use super::tables::{OWN_COLUMNS, OWN_TABLE};
 use super::{Obj, as_obj};
 
 const FREE_MEMBERS: [&str; 8] = [
@@ -43,6 +44,43 @@ fn column_shape_of(column: &Value) -> Value {
     shape
 }
 
+fn column_changes(was: &Obj, is: &Obj, prefix: &str) -> Vec<String> {
+    let mut needs = Vec::new();
+    for (column, definition) in was {
+        if is
+            .get(column)
+            .is_none_or(|changed| column_shape_of(definition) != column_shape_of(changed))
+        {
+            needs.push(format!("{prefix}{column}"));
+        }
+    }
+    for (column, definition) in is {
+        if !was.contains_key(column) && definition.get("required") == Some(&Value::Bool(true)) {
+            needs.push(format!("{prefix}{column}"));
+        }
+    }
+    needs
+}
+
+/// Named where the column lives after the write: `columns.<column>` in the item's own table, `tables.<table>.columns.<column>` in a declared one.
+pub fn item_table_changes(before: &Obj, after: &Obj, keeps_own: bool) -> Vec<String> {
+    let columns = |table: &Value| as_obj(table.get("columns")).cloned().unwrap_or_default();
+    let mut needs = Vec::new();
+    for (name, was) in before {
+        let Some(is) = after.get(name) else {
+            continue;
+        };
+        let prefix = if keeps_own && name == OWN_TABLE {
+            format!("{OWN_COLUMNS}.")
+        } else {
+            format!("tables.{name}.columns.")
+        };
+        needs.extend(column_changes(&columns(was), &columns(is), &prefix));
+    }
+    needs.sort();
+    needs
+}
+
 /// The tables, columns and orders only a schema writer may remove, change or require.
 fn table_changes(stored: &Obj, next: &Obj) -> Vec<String> {
     let before = as_obj(stored.get("tables")).cloned().unwrap_or_default();
@@ -57,20 +95,11 @@ fn table_changes(stored: &Obj, next: &Obj) -> Vec<String> {
             needs.push(format!("tables.{name}.order"));
         }
         let columns = |table: &Value| as_obj(table.get("columns")).cloned().unwrap_or_default();
-        let (was, is) = (columns(table), columns(replaced));
-        for (column, definition) in &was {
-            if is
-                .get(column)
-                .is_none_or(|changed| column_shape_of(definition) != column_shape_of(changed))
-            {
-                needs.push(format!("tables.{name}.columns.{column}"));
-            }
-        }
-        for (column, definition) in &is {
-            if !was.contains_key(column) && definition.get("required") == Some(&Value::Bool(true)) {
-                needs.push(format!("tables.{name}.columns.{column}"));
-            }
-        }
+        needs.extend(column_changes(
+            &columns(table),
+            &columns(replaced),
+            &format!("tables.{name}.columns."),
+        ));
     }
     needs
 }
@@ -141,6 +170,37 @@ mod tests {
         assert_eq!(
             evolution_of(&stored, &changed).0,
             vec!["fields.x".to_string(), "fields.z".to_string()]
+        );
+    }
+    #[test]
+    fn an_item_s_tables_compare_by_shape_on_both_sides_and_name_where_the_column_now_lives() {
+        let before = obj(json!({
+            "table": {"columns": {"a": {"type": "string"}, "b": {"type": "number"}}},
+            "lines": {"columns": {"x": {"type": "string"}}},
+            "gone": {"columns": {"y": {"type": "string"}}}
+        }));
+        let same = obj(json!({
+            "table": {"columns": {"b": {"type": "number", "label": "B"}, "a": {"type": "string", "description": "A."}, "c": {"type": "date"}}},
+            "lines": {"columns": {"x": {"type": "string"}}},
+            "new": {"columns": {"z": {"type": "string", "required": true}}}
+        }));
+        assert!(item_table_changes(&before, &same, true).is_empty());
+        let changed = obj(json!({
+            "table": {"columns": {"a": {"type": "string", "required": true}, "c": {"type": "date", "required": true}}},
+            "lines": {"columns": {"x": {"type": "number"}}}
+        }));
+        assert_eq!(
+            item_table_changes(&before, &changed, true),
+            [
+                "columns.a",
+                "columns.b",
+                "columns.c",
+                "tables.lines.columns.x"
+            ]
+        );
+        assert_eq!(
+            item_table_changes(&before, &changed, false)[0],
+            "tables.lines.columns.x"
         );
     }
 }

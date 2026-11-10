@@ -1373,6 +1373,7 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   "core.message": "Messages, such as emails and notifications.",
   "core.conversation": "Conversations and their messages.",
   "core.collection": "Collections you gather items into.",
+  "core.table": "Tables you keep yourself.",
 
   // Entities
   //

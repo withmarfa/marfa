@@ -77,6 +77,7 @@ it("names every built-in and custom type with bounded plain text and fallback fi
     "core.media.song": "title",
     "core.message": "body",
     "core.note": "title",
+    "core.table": "title",
     "core.task": "title",
   };
   for (const [type, field] of Object.entries(fields)) {
@@ -86,6 +87,7 @@ it("names every built-in and custom type with bounded plain text and fallback fi
     if (type === "core.note" || type === "core.media.article")
       properties.body = "private body";
     if (type === "core.message") properties.from = "sender";
+    if (type === "core.table") properties.columns = { a: { type: "string" } };
     if (type.startsWith("core.file"))
       Object.assign(properties, { blob_ref: hash, mime_type: "text/plain" });
     const made = await key("/items", { type, properties });

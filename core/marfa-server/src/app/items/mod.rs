@@ -325,6 +325,7 @@ pub(crate) struct Host {
     pub type_id: String,
     pub source: String,
     pub last_activity_at: String,
+    pub properties: String,
 }
 
 impl Item {
@@ -335,6 +336,7 @@ impl Item {
             type_id: self.type_id,
             source: self.source,
             last_activity_at: self.last_activity_at,
+            properties: self.properties,
         }
     }
 }
