@@ -13102,7 +13102,10 @@ export interface operations {
                 /** @description The order of the sort: `asc` or `desc`. */
                 direction?: "asc" | "desc";
             };
-            header?: never;
+            header?: {
+                /** @description The reach from a copy stream, for a working copy. Marfa reads the current data and checks the reach in one snapshot, and returns `409 reach_changed` if it has changed. Leave it out for an ordinary read. */
+                "X-Marfa-Reach"?: string;
+            };
             path: {
                 /** @description The ID of the item. */
                 id: string;
@@ -13118,6 +13121,7 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -13172,6 +13176,7 @@ export interface operations {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -13187,10 +13192,23 @@ export interface operations {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["ItemNotFoundOrTableNotFoundRefusal"];
+                };
+            };
+            /** @description `reach_changed`: the reach in `X-Marfa-Reach` has changed. Rebuild the working copy. */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReachChangedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -13563,7 +13581,10 @@ export interface operations {
     listItemTables: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The reach from a copy stream, for a working copy. Marfa reads the current data and checks the reach in one snapshot, and returns `409 reach_changed` if it has changed. Leave it out for an ordinary read. */
+                "X-Marfa-Reach"?: string;
+            };
             path: {
                 /** @description The ID of the item. */
                 id: string;
@@ -13577,6 +13598,7 @@ export interface operations {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -13631,6 +13653,7 @@ export interface operations {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -13643,10 +13666,23 @@ export interface operations {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "X-Marfa-Reach": components["headers"]["X-Marfa-Reach"];
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
+                };
+            };
+            /** @description `reach_changed`: the reach in `X-Marfa-Reach` has changed. Rebuild the working copy. */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReachChangedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */

@@ -310,25 +310,25 @@ If `PATCH /items/{id}` moving an item to another type is refused `409 link_taken
 
 ## Conditional reads
 
-A conditional read is one of `GET /items`, `GET /items/{id}`, `GET /items/{id}/edges`, `GET /edges`, `GET /edges/{id}`, `GET /types`, `GET /edge-types`, `GET /keys/current` and `POST /items/bulk-get` that carries one `X-Marfa-Reach` header. A path is one of those of the conditional reads when it has the shape of one with any value in place of `{id}`, so `GET /items/stats` has the path of `GET /items/{id}` and is not a conditional read.
+A conditional read is one of `GET /items`, `GET /items/{id}`, `GET /items/{id}/edges`, `GET /items/{id}/tables`, `GET /items/{id}/tables/{table}/rows`, `GET /edges`, `GET /edges/{id}`, `GET /types`, `GET /edge-types`, `GET /keys/current` and `POST /items/bulk-get` that carries one `X-Marfa-Reach` header. A path is one of those of the conditional reads when it has the shape of one with any value in place of `{id}` and `{table}`, so `GET /items/stats` has the path of `GET /items/{id}` and is not a conditional read.
 
 ### `reach/conditional-certified`
 
 When a credential sends a conditional read whose header equals its current reach and the read answers `2xx`, the server MUST carry `X-Marfa-Reach` on the answer with that value.
 
-**Tests:** `compliance/reach.test.ts › walks conditional metadata pages to explicit null and certifies every supported read door`, `› refuses stale HTTP and resume proofs before resource lookup after retype or read narrowing`, `› certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`.
+**Tests:** `compliance/reach.test.ts › walks conditional metadata pages to explicit null and certifies every supported read door`, `› refuses stale HTTP and resume proofs before resource lookup after retype or read narrowing`, `› certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`, `› certifies the table doors a copy fills from, and an absent item or table, and refuses them under an earlier reach`.
 
 ### `reach/conditional-no-store`
 
 When a conditional read carries `X-Marfa-Reach` on its answer, the server MUST carry `Cache-Control: no-store` with it.
 
-**Tests:** `compliance/reach.test.ts › walks conditional metadata pages to explicit null and certifies every supported read door`, `› certifies matching resource absence without certifying generic validation or authentication failures`, `› certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`.
+**Tests:** `compliance/reach.test.ts › walks conditional metadata pages to explicit null and certifies every supported read door`, `› certifies matching resource absence without certifying generic validation or authentication failures`, `› certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`, `› certifies the table doors a copy fills from, and an absent item or table, and refuses them under an earlier reach`.
 
 ### `reach/conditional-no-body-reach`
 
 When a conditional read answers, the server MUST NOT carry a reach in the body.
 
-**Tests:** `compliance/reach.test.ts › walks conditional metadata pages to explicit null and certifies every supported read door`, `› certifies matching resource absence without certifying generic validation or authentication failures`, `› certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`.
+**Tests:** `compliance/reach.test.ts › walks conditional metadata pages to explicit null and certifies every supported read door`, `› certifies matching resource absence without certifying generic validation or authentication failures`, `› certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`, `› certifies the table doors a copy fills from, and an absent item or table, and refuses them under an earlier reach`.
 
 ### `reach/conditional-ordinary`
 
@@ -392,9 +392,9 @@ While a write that changes the reach lands, the server MUST NOT answer a conditi
 
 ### `reach/certified-absent`
 
-When a conditional read whose header equals the credential's current reach answers `404 item_not_found` or `404 edge_not_found`, the server MUST carry `X-Marfa-Reach` and `Cache-Control: no-store` on the answer.
+When a conditional read whose header equals the credential's current reach answers `404 item_not_found`, `404 edge_not_found` or `404 table_not_found`, the server MUST carry `X-Marfa-Reach` and `Cache-Control: no-store` on the answer.
 
-**Tests:** `compliance/reach.test.ts › certifies matching resource absence without certifying generic validation or authentication failures`, `› certifies type not permitted, edge permission denied and a hidden-type absence under the matching reach`.
+**Tests:** `compliance/reach.test.ts › certifies matching resource absence without certifying generic validation or authentication failures`, `› certifies type not permitted, edge permission denied and a hidden-type absence under the matching reach`, `› certifies the table doors a copy fills from, and an absent item or table, and refuses them under an earlier reach`.
 
 ### `reach/certified-type-refused`
 
@@ -418,7 +418,7 @@ When an app's access token sends `GET /keys/current` with a header that equals i
 
 ### `reach/uncertified-failures`
 
-When the server answers a request that names `X-Marfa-Reach` with other than a `2xx`, `404 item_not_found`, `404 edge_not_found`, `403 type_not_permitted`, `403 edge_permission_denied`, or `403 forbidden` on `GET /keys/current`, the server MUST NOT carry `X-Marfa-Reach` on the answer.
+When the server answers a request that names `X-Marfa-Reach` with other than a `2xx`, `404 item_not_found`, `404 edge_not_found`, `404 table_not_found`, `403 type_not_permitted`, `403 edge_permission_denied`, or `403 forbidden` on `GET /keys/current`, the server MUST NOT carry `X-Marfa-Reach` on the answer.
 
 **Tests:** `compliance/reach.test.ts › certifies matching resource absence without certifying generic validation or authentication failures`, `› rejects unsupported conditional doors, malformed proofs and metadata-free item pages`, `› answers 409 before a validation 400 and before a resource 403 under a stale reach`, `compliance/reach-order.test.ts › carries none on a 400 or a 409 to a conditional read, and carries one on the same door when the read succeeds`, `› answers 401, then 400 to a malformed reach, then 409 to a stale one before it checks the ids or asks whether the key reaches any type`.
 
@@ -502,7 +502,7 @@ When `POST /items`, `POST /edges`, `POST /folders` or `POST /views` creates an i
 
 If a conditional read names an `X-Marfa-Reach` of the right form that differs from the credential's current reach, then the server MUST answer `409 reach_changed`.
 
-**Tests:** `compliance/reach.test.ts › rejects every alternate copy grammar before starting a stream`, `› classifies source-excluded direct items and neighbors without admitting them to a listed page`, `› refuses stale HTTP and resume proofs before resource lookup after retype or read narrowing`, `› answers 409 to a reach minted for another credential, on every door and on resume`, `› certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`.
+**Tests:** `compliance/reach.test.ts › rejects every alternate copy grammar before starting a stream`, `› classifies source-excluded direct items and neighbors without admitting them to a listed page`, `› refuses stale HTTP and resume proofs before resource lookup after retype or read narrowing`, `› answers 409 to a reach minted for another credential, on every door and on resume`, `› certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`, `› certifies the table doors a copy fills from, and an absent item or table, and refuses them under an earlier reach`.
 
 ### `reach/changed-resume`
 

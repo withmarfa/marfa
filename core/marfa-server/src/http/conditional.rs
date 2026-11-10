@@ -26,7 +26,8 @@ fn has_shape(method: &Method, path: &str) -> bool {
             segments.as_slice(),
             ["items" | "edges"]
                 | ["items" | "edges", _]
-                | ["items", _, "edges"]
+                | ["items", _, "edges" | "tables"]
+                | ["items", _, "tables", _, "rows"]
                 | ["types" | "edge-types"]
                 | ["keys", "current"]
         ),
@@ -42,6 +43,8 @@ fn is_conditional(method: &Method, route: &str) -> bool {
             "/items"
                 | "/items/{id}"
                 | "/items/{id}/edges"
+                | "/items/{id}/tables"
+                | "/items/{id}/tables/{table}/rows"
                 | "/edges"
                 | "/edges/{id}"
                 | "/types"
@@ -93,7 +96,9 @@ fn certifies(route: &str, response: &Response) -> bool {
         return false;
     };
     match (status, page.code) {
-        (StatusCode::NOT_FOUND, Code::ItemNotFound | Code::EdgeNotFound) => true,
+        (StatusCode::NOT_FOUND, Code::ItemNotFound | Code::EdgeNotFound | Code::TableNotFound) => {
+            true
+        }
         (StatusCode::FORBIDDEN, Code::TypeNotPermitted | Code::EdgePermissionDenied) => true,
         (StatusCode::FORBIDDEN, Code::Forbidden) => route == "/keys/current",
         _ => false,
