@@ -299,12 +299,20 @@ pub fn row_values(
         let required = definition.get("required").and_then(Value::as_bool) == Some(true);
         let value = match values.get(name) {
             None if complete && required => {
-                faults.push(fault(name, field_code::REQUIRED, "Required column is missing"));
+                faults.push(fault(
+                    name,
+                    field_code::REQUIRED,
+                    "Required column is missing",
+                ));
                 continue;
             }
             None => continue,
             Some(Value::Null) if required => {
-                faults.push(fault(name, field_code::REQUIRED, "Required column cannot be cleared"));
+                faults.push(fault(
+                    name,
+                    field_code::REQUIRED,
+                    "Required column cannot be cleared",
+                ));
                 continue;
             }
             Some(Value::Null) => continue,
@@ -313,10 +321,16 @@ pub fn row_values(
         let kind = definition
             .get("type")
             .and_then(Value::as_str)
-            .ok_or_else(|| RuleError::decoding(format!("the held column {name} declares no type")))?;
+            .ok_or_else(|| {
+                RuleError::decoding(format!("the held column {name} declares no type"))
+            })?;
         if kind == crate::schema::ITEM_KIND {
             if !value.as_str().is_some_and(|text| id(name, text).is_ok()) {
-                faults.push(fault(name, field_code::INVALID_VALUE, "Must be an item's id"));
+                faults.push(fault(
+                    name,
+                    field_code::INVALID_VALUE,
+                    "Must be an item's id",
+                ));
             }
             continue;
         }

@@ -70,28 +70,45 @@ fn refused_at(index: usize, path: &str, message: impl Into<String>) -> Refusal {
 fn whole_batch(message: &str) -> Refusal {
     Refusal::validation(message.to_string())
         .with_detail("field", "operations")
-        .with_detail("errors", json!([{ "path": "operations", "message": message }]))
+        .with_detail(
+            "errors",
+            json!([{ "path": "operations", "message": message }]),
+        )
 }
 
 fn row_id(index: usize, value: Option<&Value>, required: bool) -> Result<Option<String>> {
     match value {
-        None if required => Err(refused_at(index, "id", "This operation names the row by id.")),
+        None if required => Err(refused_at(
+            index,
+            "id",
+            "This operation names the row by id.",
+        )),
         None => Ok(None),
         Some(Value::String(id)) if validation::id("id", id).is_ok() => Ok(Some(id.clone())),
-        Some(_) => Err(refused_at(index, "id", "A row id is a UUIDv7 in lowercase.")),
+        Some(_) => Err(refused_at(
+            index,
+            "id",
+            "A row id is a UUIDv7 in lowercase.",
+        )),
     }
 }
 
 fn values_of(index: usize, value: Option<&Value>) -> Result<Map<String, Value>> {
     let Some(Value::Object(values)) = value else {
-        return Err(refused_at(index, "values", "values is an object keyed by column."));
+        return Err(refused_at(
+            index,
+            "values",
+            "values is an object keyed by column.",
+        ));
     };
     let bytes = serde_json::to_vec(values).map_or(usize::MAX, |text| text.len());
     if bytes > MAX_ROW_BYTES {
         return Err(refused_at(
             index,
             "values",
-            format!("A row holds at most {MAX_ROW_BYTES} bytes of values as JSON; this holds {bytes}."),
+            format!(
+                "A row holds at most {MAX_ROW_BYTES} bytes of values as JSON; this holds {bytes}."
+            ),
         ));
     }
     Ok(values.clone())
@@ -120,7 +137,11 @@ pub fn operations(sent: Option<&Value>) -> Result<Vec<Op>> {
                 return Err(whole_batch("Each operation is an object."));
             };
             if let Some(unknown) = entry.keys().find(|key| !OP_FIELDS.contains(&key.as_str())) {
-                return Err(refused_at(index, unknown, "An operation names op, id and values."));
+                return Err(refused_at(
+                    index,
+                    unknown,
+                    "An operation names op, id and values.",
+                ));
             }
             match entry.get("op").and_then(Value::as_str) {
                 Some("put") => Ok(Op::Put {
@@ -167,7 +188,8 @@ impl Table {
         self.columns
             .iter()
             .filter(|(_, definition)| {
-                definition.get("type").and_then(Value::as_str) == Some(marfa_rules::schema::ITEM_KIND)
+                definition.get("type").and_then(Value::as_str)
+                    == Some(marfa_rules::schema::ITEM_KIND)
             })
             .map(|(name, _)| name.as_str())
     }
@@ -245,10 +267,19 @@ struct Batch<'a, 'c> {
 }
 
 impl Batch<'_, '_> {
-    fn refuse_values(&self, index: usize, values: &Map<String, Value>, complete: bool) -> Result<()> {
+    fn refuse_values(
+        &self,
+        index: usize,
+        values: &Map<String, Value>,
+        complete: bool,
+    ) -> Result<()> {
         validation::row_values(&self.table.columns, values, complete).map_err(|error| {
             match error.fields.first() {
-                Some(field) => refused_at(index, &format!("values.{}", field.path), field.message.clone()),
+                Some(field) => refused_at(
+                    index,
+                    &format!("values.{}", field.path),
+                    field.message.clone(),
+                ),
                 None => refused_at(index, "values", error.message),
             }
         })
@@ -264,7 +295,9 @@ impl Batch<'_, '_> {
             let found = match self.referenced.get(id) {
                 Some(known) => known.clone(),
                 None => items::row(tx, id)?
-                    .filter(|item| item.state != "trashed" && self.unit.caller.may_read_type(&item.type_id))
+                    .filter(|item| {
+                        item.state != "trashed" && self.unit.caller.may_read_type(&item.type_id)
+                    })
                     .map(|item| item.type_id),
             };
             let Some(type_id) = found else {
@@ -310,7 +343,8 @@ impl Batch<'_, '_> {
                     continue;
                 };
                 if !self.referenced.contains_key(id) {
-                    self.referenced.insert(id.to_string(), items::type_of(tx, id)?);
+                    self.referenced
+                        .insert(id.to_string(), items::type_of(tx, id)?);
                 }
             }
         }
@@ -326,7 +360,11 @@ impl Batch<'_, '_> {
 
     fn land(&mut self, index: usize, op: Op) -> Result<(String, Outcome)> {
         let tx = self.unit.tx();
-        let (seq, table, at) = (self.host.seq, self.table.name.as_str(), self.unit.at.as_str());
+        let (seq, table, at) = (
+            self.host.seq,
+            self.table.name.as_str(),
+            self.unit.at.as_str(),
+        );
         if let Some(values) = op.values() {
             self.refuse_references(index, values)?;
         }
@@ -434,7 +472,15 @@ pub async fn write(
         } else {
             let batch_id = Uuid::now_v7().to_string();
             let at = unit.at.as_str();
-            store::summarize(unit.tx(), host.seq, &table.name, count, bytes, &batch_id, at)?;
+            store::summarize(
+                unit.tx(),
+                host.seq,
+                &table.name,
+                count,
+                bytes,
+                &batch_id,
+                at,
+            )?;
             // The item's own write moves the backup counter, once for the batch.
             items::mark_activity(unit.tx(), host.seq, at)?;
             events::announce(

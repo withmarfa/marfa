@@ -29,7 +29,6 @@ mod health;
 mod housekeeping;
 mod inbound;
 mod items;
-mod tables;
 mod jobs;
 mod keys;
 mod limit;
@@ -49,6 +48,7 @@ mod query;
 mod restore;
 mod root;
 mod sources;
+mod tables;
 #[cfg(feature = "test-hooks")]
 mod test_hooks;
 mod trash;

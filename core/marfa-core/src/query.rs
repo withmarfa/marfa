@@ -181,7 +181,8 @@ pub(crate) fn list_where_with(
         SortField::Property(name) => format!(
             "ORDER BY {expression} IS NULL, {expression} {}, id ASC",
             direction_sql(sort.direction),
-            expression = rules::property_sort_expression("items.properties", &format!("'$.{name}'")),
+            expression =
+                rules::property_sort_expression("items.properties", &format!("'$.{name}'")),
         ),
         // As on the server (`search-and-filters/bin-order`).
         SortField::TrashedAt => format!(

@@ -908,7 +908,8 @@ mod tests {
 
     #[test]
     fn a_row_filter_reads_columns_and_its_own_fields_and_nothing_an_item_has() {
-        let expression = parse_rows("values.amount gt 5 AND updated_at gte \"2026-01-01\"").unwrap();
+        let expression =
+            parse_rows("values.amount gt 5 AND updated_at gte \"2026-01-01\"").unwrap();
         assert_eq!(
             expression.conditions[0].term,
             Term::Property {
@@ -918,9 +919,18 @@ mod tests {
         );
         assert!(matches!(
             expression.conditions[1].term,
-            Term::System { column: "updated_at", .. }
+            Term::System {
+                column: "updated_at",
+                ..
+            }
         ));
-        for refused in ["properties.amount eq 1", "state eq \"active\"", "tags exists", "values. eq 1", "values.a.b eq 1"] {
+        for refused in [
+            "properties.amount eq 1",
+            "state eq \"active\"",
+            "tags exists",
+            "values. eq 1",
+            "values.a.b eq 1",
+        ] {
             assert!(parse_rows(refused).is_err(), "{refused}");
         }
     }

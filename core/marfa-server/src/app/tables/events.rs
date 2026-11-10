@@ -53,7 +53,10 @@ fn logged_rows(announced: &Announced<'_>) -> (Vec<Value>, bool) {
                         let target = values.get(column)?.as_str()?;
                         // An item no longer held reads as no type, which every reader is denied.
                         let type_id = announced.referenced.get(target).cloned().flatten();
-                        Some((column.to_string(), type_id.map_or(Value::Null, Value::String)))
+                        Some((
+                            column.to_string(),
+                            type_id.map_or(Value::Null, Value::String),
+                        ))
                     })
                     .collect();
                 if !named.is_empty() {
@@ -110,7 +113,10 @@ pub fn judged(caller: &Caller, mut body: Map<String, Value>) -> Option<Map<Strin
         let mut withheld = Vec::new();
         if let Some(Value::Object(values)) = row.get_mut("values") {
             for (column, type_id) in named {
-                if !type_id.as_str().is_some_and(|type_id| caller.may_read_type(type_id)) {
+                if !type_id
+                    .as_str()
+                    .is_some_and(|type_id| caller.may_read_type(type_id))
+                {
                     values.remove(&column);
                     withheld.push(Value::String(column));
                 }

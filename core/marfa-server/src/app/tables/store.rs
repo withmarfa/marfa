@@ -77,7 +77,9 @@ pub(super) fn delete(tx: &Transaction<'_>, seq: i64, table: &str, id: &str) -> R
         )?
         .query_row(params![seq, table, id], |row| row.get(0))
         .optional()?;
-    removed.map(|text| Ok(printed_len(&values_of(&text)?))).transpose()
+    removed
+        .map(|text| Ok(printed_len(&values_of(&text)?)))
+        .transpose()
 }
 
 /// SQLite checks the inserted row before the conflict, so it never holds a negative change.

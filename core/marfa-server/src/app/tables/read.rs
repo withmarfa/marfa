@@ -51,8 +51,8 @@ impl Shown<'_> {
         if let Some(known) = self.seen.get(id) {
             return Ok(*known);
         }
-        let readable = items::type_of(self.tx, id)?
-            .is_some_and(|type_id| self.caller.may_read_type(&type_id));
+        let readable =
+            items::type_of(self.tx, id)?.is_some_and(|type_id| self.caller.may_read_type(&type_id));
         self.seen.insert(id.to_string(), readable);
         Ok(readable)
     }
@@ -62,7 +62,11 @@ impl Shown<'_> {
         let mut withheld = Vec::new();
         let columns: Vec<String> = self.table.item_columns().map(str::to_string).collect();
         for column in columns {
-            let Some(id) = values.get(&column).and_then(Value::as_str).map(str::to_string) else {
+            let Some(id) = values
+                .get(&column)
+                .and_then(Value::as_str)
+                .map(str::to_string)
+            else {
                 continue;
             };
             if !self.readable(&id)? {
@@ -92,24 +96,26 @@ pub async fn list(app: &App, caller: &Caller, item_id: String) -> Result<String>
         let held = store::summaries(read.tx, host.seq)?;
         let data: Vec<Value> = tables_of(&read.catalog, &host.type_id)
             .into_iter()
-            .map(|table| match held.iter().find(|summary| summary.table == table.name) {
-                Some(summary) => json!({
-                    "name": table.name,
-                    "label": table.label,
-                    "row_count": summary.row_count,
-                    "bytes": summary.bytes,
-                    "last_batch": summary.last_batch,
-                    "changed_at": summary.changed_at,
-                }),
-                None => json!({
-                    "name": table.name,
-                    "label": table.label,
-                    "row_count": 0,
-                    "bytes": 0,
-                    "last_batch": null,
-                    "changed_at": null,
-                }),
-            })
+            .map(
+                |table| match held.iter().find(|summary| summary.table == table.name) {
+                    Some(summary) => json!({
+                        "name": table.name,
+                        "label": table.label,
+                        "row_count": summary.row_count,
+                        "bytes": summary.bytes,
+                        "last_batch": summary.last_batch,
+                        "changed_at": summary.changed_at,
+                    }),
+                    None => json!({
+                        "name": table.name,
+                        "label": table.label,
+                        "row_count": 0,
+                        "bytes": 0,
+                        "last_batch": null,
+                        "changed_at": null,
+                    }),
+                },
+            )
             .collect();
         printed(&json!({ "data": data, "next_cursor": null }))
     })
@@ -145,7 +151,12 @@ fn conditions(sql: &mut Sql, expression: &Expression) -> Result<()> {
                     .map_err(|error| invalid("filter", error.message))?;
                 compared(sql, &Sql::new(&format!("r.{column}")), *compare, &value);
             }
-            _ => return Err(invalid("filter", "A row filter names columns, id and updated_at.")),
+            _ => {
+                return Err(invalid(
+                    "filter",
+                    "A row filter names columns, id and updated_at.",
+                ));
+            }
         }
         sql.push(")");
     }
@@ -269,11 +280,20 @@ fn opened(cursors: &Secret, scope: &str, cursor: &str) -> Result<Position> {
     Position::from_payload(&payload, 1).map_err(|_| refused())
 }
 
-fn answered_page(read: &Reader<'_, '_>, item_id: &str, table: &str, asked: &Page) -> Result<String> {
+fn answered_page(
+    read: &Reader<'_, '_>,
+    item_id: &str,
+    table: &str,
+    asked: &Page,
+) -> Result<String> {
     let host = items::readable_host(read, item_id)?;
     let table = table_of(&read.catalog, &host.type_id, table)?;
     let limit = limit_of(asked.limit)?;
-    let filter = asked.filter.as_deref().map(|text| expression(text, &table)).transpose()?;
+    let filter = asked
+        .filter
+        .as_deref()
+        .map(|text| expression(text, &table))
+        .transpose()?;
     let key = Key::of(asked.sort.as_deref(), &table)?;
     let scope = scope(&host.id, &table.name, asked);
     let position = asked
@@ -326,7 +346,10 @@ pub async fn page(
     table: String,
     asked: Page,
 ) -> Result<String> {
-    reading(app, caller, move |read| answered_page(read, &item_id, &table, &asked)).await
+    reading(app, caller, move |read| {
+        answered_page(read, &item_id, &table, &asked)
+    })
+    .await
 }
 
 /// `GET /items/{id}/tables/{table}/rows/{row}`. An id that is no row's answers as one the table does not hold.
@@ -340,7 +363,8 @@ pub async fn get(
     reading(app, caller, move |read| {
         let host = items::readable_host(read, &item_id)?;
         let table = table_of(&read.catalog, &host.type_id, &table)?;
-        let held = store::row(read.tx, host.seq, &table.name, &row_id)?.ok_or_else(not_found_row)?;
+        let held =
+            store::row(read.tx, host.seq, &table.name, &row_id)?.ok_or_else(not_found_row)?;
         let mut shown = Shown {
             tx: read.tx,
             caller: &read.caller,
@@ -394,7 +418,12 @@ fn total_value(kind: &str, way: &str, bound: &Bound) -> Value {
     }
 }
 
-fn answered_totals(read: &Reader<'_, '_>, item_id: &str, table: &str, filter: Option<&str>) -> Result<String> {
+fn answered_totals(
+    read: &Reader<'_, '_>,
+    item_id: &str,
+    table: &str,
+    filter: Option<&str>,
+) -> Result<String> {
     let host = items::readable_host(read, item_id)?;
     let table = table_of(&read.catalog, &host.type_id, table)?;
     let filter = filter.map(|text| expression(text, &table)).transpose()?;
@@ -405,7 +434,8 @@ fn answered_totals(read: &Reader<'_, '_>, item_id: &str, table: &str, filter: Op
         .filter_map(|(name, definition)| {
             let way = definition.get("adds_up")?.as_str()?;
             let kind = definition.get("type")?.as_str()?;
-            marfa_rules::catalog::api_name(name).then(|| (name.clone(), kind.to_string(), way.to_string()))
+            marfa_rules::catalog::api_name(name)
+                .then(|| (name.clone(), kind.to_string(), way.to_string()))
         })
         .collect();
     let mut sql = Sql::new("SELECT COUNT(*)");

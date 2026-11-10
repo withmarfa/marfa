@@ -26,7 +26,10 @@ pub async fn list(
     caller.require_reach()?;
     query::only(&uri, &[])?;
     check_item_id(&id)?;
-    Ok(text_answer(StatusCode::OK, tables::list(&app, &caller, id).await?))
+    Ok(text_answer(
+        StatusCode::OK,
+        tables::list(&app, &caller, id).await?,
+    ))
 }
 
 pub async fn write(

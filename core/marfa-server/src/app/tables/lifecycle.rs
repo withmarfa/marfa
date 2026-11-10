@@ -60,20 +60,43 @@ fn blocked(tables: Vec<String>) -> Refusal {
 }
 
 fn undeclared(catalog: &Catalog, to: &str, held: Vec<String>) -> Vec<String> {
-    let declared: Vec<String> = tables_of(catalog, to).into_iter().map(|table| table.name).collect();
-    held.into_iter().filter(|name| !declared.contains(name)).collect()
+    let declared: Vec<String> = tables_of(catalog, to)
+        .into_iter()
+        .map(|table| table.name)
+        .collect();
+    held.into_iter()
+        .filter(|name| !declared.contains(name))
+        .collect()
 }
 
 /// Refuses moving item `seq` into `to` while it holds rows in a table `to` does not declare.
-pub fn refuse_undeclared(tx: &Transaction<'_>, catalog: &Catalog, seq: i64, to: &str) -> Result<()> {
+pub fn refuse_undeclared(
+    tx: &Transaction<'_>,
+    catalog: &Catalog,
+    seq: i64,
+    to: &str,
+) -> Result<()> {
     let left = undeclared(catalog, to, store::held_tables(tx, seq)?);
-    if left.is_empty() { Ok(()) } else { Err(blocked(left)) }
+    if left.is_empty() {
+        Ok(())
+    } else {
+        Err(blocked(left))
+    }
 }
 
 /// Refuses moving the items of `from` into `to` while one holds rows in a table `to` does not declare.
-pub fn refuse_moving_type(tx: &Transaction<'_>, catalog: &Catalog, from: &str, to: &str) -> Result<()> {
+pub fn refuse_moving_type(
+    tx: &Transaction<'_>,
+    catalog: &Catalog,
+    from: &str,
+    to: &str,
+) -> Result<()> {
     let left = undeclared(catalog, to, store::held_tables_of_type(tx, from)?);
-    if left.is_empty() { Ok(()) } else { Err(blocked(left)) }
+    if left.is_empty() {
+        Ok(())
+    } else {
+        Err(blocked(left))
+    }
 }
 
 /// What a change from `before` to `after` would remove that rows of the `family`'s items hold:
@@ -92,7 +115,11 @@ pub fn held_in_use(
             if !held.contains(&table.name) {
                 continue;
             }
-            let Some(next) = kept.get(&table.name).and_then(|t| t.get("columns")).and_then(Value::as_object) else {
+            let Some(next) = kept
+                .get(&table.name)
+                .and_then(|t| t.get("columns"))
+                .and_then(Value::as_object)
+            else {
                 found.insert(table.name.clone());
                 continue;
             };
@@ -109,7 +136,10 @@ pub fn held_in_use(
     Ok(found.into_iter().collect())
 }
 
-fn after_tables(registry: &marfa_rules::schema::Registry, type_id: &str) -> serde_json::Map<String, Value> {
+fn after_tables(
+    registry: &marfa_rules::schema::Registry,
+    type_id: &str,
+) -> serde_json::Map<String, Value> {
     marfa_rules::schema::resolve(registry, type_id, true)
         .ok()
         .flatten()
@@ -135,7 +165,9 @@ pub fn constraining_columns(catalog: &Catalog, type_id: &str) -> Vec<String> {
                 let names = definition
                     .get("type_constraints")
                     .and_then(Value::as_array)
-                    .is_some_and(|admits| admits.iter().any(|admit| admit.as_str() == Some(type_id)));
+                    .is_some_and(|admits| {
+                        admits.iter().any(|admit| admit.as_str() == Some(type_id))
+                    });
                 if names {
                     found.push(format!("{owner}.{table}.{column}"));
                 }
