@@ -29,6 +29,7 @@ mod health;
 mod housekeeping;
 mod inbound;
 mod items;
+mod tables;
 mod jobs;
 mod keys;
 mod limit;
@@ -185,6 +186,13 @@ fn item_doors(app: Arc<App>) -> Routes {
         .route("/items/{id}/restore", post(trash::restore))
         .route("/items/{id}/purge", post(trash::purge))
         .route("/items/{id}/versions", get(items::versions))
+        .route("/items/{id}/tables", get(tables::list))
+        .route(
+            "/items/{id}/tables/{table}/rows",
+            get(tables::rows).post(tables::write),
+        )
+        .route("/items/{id}/tables/{table}/rows/{row}", get(tables::row))
+        .route("/items/{id}/tables/{table}/totals", get(tables::totals))
         .route("/items/{id}/edges", get(edges::outbound))
         .route("/items/{id}/backrefs", get(edges::backrefs))
         .route(

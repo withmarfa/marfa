@@ -78,8 +78,10 @@ codes! {
     OauthGrantNotFound = "oauth_grant_not_found", 404;
     OwnerNotFound = "owner_not_found", 404;
     PasskeyNotFound = "passkey_not_found", 404;
+    RowNotFound = "row_not_found", 404;
     SignInNotFound = "sign_in_not_found", 404;
     SourceNotFound = "source_not_found", 404;
+    TableNotFound = "table_not_found", 404;
     TypeNotFound = "type_not_found", 404;
     WebhookNotFound = "webhook_not_found", 404;
     RequestTimeout = "request_timeout", 408;

@@ -1317,6 +1317,9 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 .with_detail("source_id", source_id));
             }
         }
+        if let Some(destination) = writing.destination.as_deref() {
+            crate::app::tables::refuse_undeclared(tx, &self.catalog, row.seq, destination)?;
+        }
         let resulting = writing.destination.as_deref().unwrap_or(&row.type_id);
         self.refuse_undeclared(resulting, writing.properties.as_ref())?;
         if writing.exact {

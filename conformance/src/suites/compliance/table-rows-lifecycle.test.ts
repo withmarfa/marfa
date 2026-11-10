@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { BulkActionJob, RowOperation, TestContext } from "../../client/types.js";
-import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
+import {
+  createTestContext,
+  getManagementClient,
+  trackItem,
+  cleanup,
+} from "../../utils/setup.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -100,6 +105,7 @@ describe("rows and the life of an item", () => {
     }
     expect((await client.listTables(big.id)).data.data[0]?.row_count).toBe(30_000);
     expect((await client.deleteItem(big.id)).status).toBe(200);
+    const purgedAt = new Date().toISOString();
     expect((await client.purgeItem(big.id)).status).toBe(200);
     expect((await client.getItem(big.id)).status).toBe(404);
 
@@ -113,17 +119,34 @@ describe("rows and the life of an item", () => {
         slowest.ms = Math.max(slowest.ms, Date.now() - started);
       }
     })();
-    const ran = await client.runHousekeeping("table-row-cleanup");
+    // The purge brings the job forward, so the scheduler may run it before this fixture asks.
+    const management = getManagementClient();
+    let result: { removed: number; pages: number } | undefined;
+    const deadline = Date.now() + 60_000;
+    let asked = false;
+    while (!result && Date.now() < deadline) {
+      const job = (await management.listHousekeeping()).data.data.find(
+        (row) => row.name === "table-row-cleanup",
+      );
+      if (job?.last_started_at && job.last_started_at > purgedAt && job.last_finished_at && !job.running_since) {
+        expect(job.last_outcome).toBe("ok");
+        result = job.last_result as { removed: number; pages: number };
+      } else if (!asked && !job?.running_since) {
+        asked = true;
+        await management.runHousekeeping("table-row-cleanup");
+      } else {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
     running = false;
     await reads;
-    expect(ran.status, JSON.stringify(ran.error)).toBe(200);
-    expect(ran.data.outcome).toBe("ok");
-    const result = ran.data.result as { removed: number; pages: number };
-    expect(result.removed).toBe(30_000);
-    expect(result.pages).toBeGreaterThan(1);
+    expect(result).toBeDefined();
+    expect(result!.removed).toBeGreaterThanOrEqual(30_000);
+    expect(result!.pages).toBeGreaterThan(1);
     expect(slowest.ms).toBeLessThan(1_000);
 
-    const again = await client.runHousekeeping("table-row-cleanup");
+    const again = await management.runHousekeeping("table-row-cleanup");
+    expect(again.status, JSON.stringify(again.error)).toBe(200);
     expect((again.data.result as { removed: number }).removed).toBe(0);
     expect((await client.listRows(other.id, "lines")).data.data).toHaveLength(1);
   });

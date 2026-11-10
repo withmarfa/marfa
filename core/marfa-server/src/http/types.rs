@@ -50,10 +50,13 @@ pub async fn replace(
     State(app): State<Arc<App>>,
     caller: Caller,
     Path(id): Path<String>,
+    uri: Uri,
     body: JsonBody,
 ) -> Answer {
     caller.require_door(SchemaKind::Types, Door::Replace)?;
-    let replaced = types::replace(&app, &caller, id, body.open_object().await?).await?;
+    query::only(&uri, &["force"])?;
+    let force = query::flag(&uri, "force")?.unwrap_or(false);
+    let replaced = types::replace(&app, &caller, id, body.open_object().await?, force).await?;
     Ok(json_answer(StatusCode::OK, &json!({ "type": replaced })))
 }
 
