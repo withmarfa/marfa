@@ -115,23 +115,29 @@ describe("a type declares tables", () => {
     expect(listed).not.toHaveProperty("tables");
   });
 
-  it("answers a label made from its name for a table and a column that declare none, and only the declared one in the listing", async () => {
-    const id = typeId("labels");
-    const made = await client.registerType(
-      declared(id, {
-        line_items: {
-          columns: {
-            due_at: { type: "date" },
-            named: { type: "string", label: "Called" },
-          },
-        },
-      }),
-    );
+  const LABELLED = {
+    line_items: {
+      columns: {
+        due_at: { type: "date" },
+        named: { type: "string", label: "Called" },
+      },
+    },
+  };
+
+  it("answers a label made from its name for a table and a column that declare none on a read", async () => {
+    const id = typeId("labels-read");
+    const made = await client.registerType(declared(id, LABELLED));
     expect(made.ok, JSON.stringify(made.error)).toBe(true);
     const read = (await client.getType(id)).data.tables?.line_items;
     expect(read?.label).toBe("Line Items");
     expect(read?.columns.due_at.label).toBe("Due At");
     expect(read?.columns.named.label).toBe("Called");
+  });
+
+  it("answers only the declared label for a table and a column in the listing", async () => {
+    const id = typeId("labels-listed");
+    const made = await client.registerType(declared(id, LABELLED));
+    expect(made.ok, JSON.stringify(made.error)).toBe(true);
     const listed = (await client.listTypes()).data.data.find((t) => t.id === id)
       ?.tables?.line_items;
     expect(listed).not.toHaveProperty("label");
@@ -478,6 +484,50 @@ describe("tables down a chain of types", () => {
     expect(res.error?.error.code).toBe("inheritance_violation");
     expect(errorFields(res)).toEqual(["tables.extra"]);
   });
+
+  it("refuses a replacement that gives a type a parent above which a subtype declares a table of the parent's differently", async () => {
+    const top = typeId("top");
+    expect((await client.registerType(declared(top, LINES))).ok).toBe(true);
+    const middle = typeId("middle");
+    expect(
+      (
+        await client.registerType({
+          id: middle,
+          fields: { title: { type: "string" } },
+        })
+      ).ok,
+    ).toBe(true);
+    const leaf = `${middle}.leaf`;
+    expect(
+      (
+        await client.registerType(
+          declared(
+            leaf,
+            { lines: { columns: { other: { type: "string" } } } },
+            { parent: middle },
+          ),
+        )
+      ).ok,
+    ).toBe(true);
+    const attached = {
+      id: middle,
+      parent: top,
+      fields: { title: { type: "string" } },
+    } as never;
+    const res = await client.replaceType(middle, attached);
+    expect(res.status).toBe(400);
+    expect(res.error?.error.code).toBe("inheritance_violation");
+    expect(errorFields(res)).toEqual(["parent"]);
+    expect((await client.getType(middle)).data).not.toHaveProperty("parent");
+
+    const agreeing = await client.replaceType(
+      leaf,
+      declared(leaf, extra, { parent: middle }),
+    );
+    expect(agreeing.status, JSON.stringify(agreeing.error)).toBe(200);
+    const taken = await client.replaceType(middle, attached);
+    expect(taken.status, JSON.stringify(taken.error)).toBe(200);
+  });
 });
 
 describe("a key evolves a type's tables", () => {
@@ -602,10 +652,16 @@ describe("a key evolves a type's tables", () => {
 });
 
 describe("tables reach the other doors", () => {
-  it("saves tables through marfa_save_type, replacing a table by name and removing one with null", async () => {
+  async function withSchemaTool(
+    label: string,
+    run: (
+      schema: Awaited<ReturnType<typeof connectMcp>>,
+      owner: MarfaClient,
+    ) => Promise<void>,
+  ) {
     const made = await client.createKey({
-      label: "type-tables-mcp",
-      source: `${ctx.source}-tables-mcp`,
+      label,
+      source: `${ctx.source}-${label}`,
       permissions: ["schema.write"],
       metadata_permissions: { types: "write" },
       type_permissions: { "user.*": "write" },
@@ -620,6 +676,14 @@ describe("tables reach the other doors", () => {
       "/mcp/schema",
     );
     try {
+      await run(schema, owner);
+    } finally {
+      await schema.close();
+    }
+  }
+
+  it("registers a type with tables through marfa_save_type, and refuses a table the server refuses", async () => {
+    await withSchemaTool("type-tables-mcp-register", async (schema, owner) => {
       const id = typeId("mcp");
       const registered = toolResult(
         await callTool(schema, "marfa_save_type", {
@@ -647,6 +711,19 @@ describe("tables reach the other doors", () => {
         },
       });
       expect(toolError(refusedAnswer).code).toBe("invalid_schema");
+    });
+  });
+
+  it("changes a type's tables through marfa_save_type, replacing a table by name, removing one with null and leaving the rest", async () => {
+    await withSchemaTool("type-tables-mcp-change", async (schema, owner) => {
+      const id = typeId("mcp-change");
+      const registered = await owner.registerType(
+        declared(id, {
+          lines: { columns: { amount: { type: "number", adds_up: "sum" } } },
+        }),
+      );
+      expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+      ctx.trackedTypes.push({ id, createdBy: owner });
 
       const changed = toolResult(
         await callTool(schema, "marfa_save_type", {
@@ -685,9 +762,7 @@ describe("tables reach the other doors", () => {
         }),
       );
       expect(removed.type).not.toHaveProperty("tables");
-    } finally {
-      await schema.close();
-    }
+    });
   });
 
   it(

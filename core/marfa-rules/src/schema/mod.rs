@@ -31,8 +31,8 @@ pub use resolve::{
     read_back_free, resolve, roles_of, with_field_labels,
 };
 pub use tables::{
-    ADDS_UP, ITEM_KIND, MAX_COLUMNS_PER_TABLE, MAX_TABLES_PER_TYPE, normalize_table,
-    validate_columns,
+    ADDS_UP, ITEM_KIND, MAX_COLUMNS_PER_TABLE, MAX_TABLES_PER_TYPE, declared_tables_issues,
+    normalize_table, validate_columns, with_table_labels,
 };
 pub use type_def::validate_type;
 pub use unread::{unread_column_keys, unread_edge_keys, unread_keys};

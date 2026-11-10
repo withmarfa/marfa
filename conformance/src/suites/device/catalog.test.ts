@@ -121,6 +121,7 @@ describe("The type catalog a working copy holds", () => {
       description: null,
       parent: "core.note",
       version: 0,
+      tables: {},
       title_field: "title",
       body_field: "body",
       name_from_body: true,
@@ -227,6 +228,73 @@ describe("The type catalog a working copy holds", () => {
       [parent.acyclic, parent.flat, collected?.acyclic, collected?.flat],
       "a shipped edge type's cycle and nesting rules did not reach the caller",
     ).toEqual([true, false, false, true]);
+  });
+
+  it("reads the tables a type declares and those it inherits, each labelled by its name where it declares none, from the copy alone", async () => {
+    const ledger = wireType("acme.ledger", {
+      tables: {
+        lines: {
+          columns: {
+            due_at: { type: "date" },
+            amount: { type: "number", adds_up: "sum", label: "Sum" },
+          },
+        },
+      },
+    });
+    const yearly = wireType("acme.ledger.yearly", {
+      parent: "acme.ledger",
+      tables: {
+        notes: {
+          label: "Jottings",
+          columns: { text: { type: "string", searchable: true } },
+        },
+      },
+    });
+    harness = await startHarness("catalog-tables");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "1",
+      catalog: typeCatalog([ledger, yearly]),
+      edgeTypes: edgeTypeCatalog([]),
+    });
+    value(await device.hydrate(["core.note"], "library"), "the hydration");
+
+    const local = device.reopen({ url: undefined, key: undefined });
+    const own = value(await local.itemType("acme.ledger"), "acme.ledger");
+    const below = value(
+      await local.itemType("acme.ledger.yearly"),
+      "acme.ledger.yearly",
+    );
+    const none = value(await local.itemType("core.note"), "core.note");
+    const lines = {
+      label: "Lines",
+      columns: {
+        due_at: { type: "date", label: "Due At" },
+        amount: { type: "number", adds_up: "sum", label: "Sum" },
+      },
+    };
+    expect(own.tables, "a type's own table did not reach the caller").toEqual({
+      lines,
+    });
+    expect(
+      below.tables,
+      "a subtype did not read the table it inherits beside its own, each with its label",
+    ).toEqual({
+      lines,
+      notes: {
+        label: "Jottings",
+        columns: { text: { type: "string", searchable: true, label: "Text" } },
+      },
+    });
+    expect(
+      none.tables,
+      "a type that declares no table read as holding some",
+    ).toEqual({});
+    const listed = value(await local.itemTypes(), "the item types");
+    expect(
+      listed.find((type) => type.id === "acme.ledger.yearly"),
+      "the list and the read by id answer a type's tables differently",
+    ).toEqual(below);
   });
 
   it("reads a type's icon from the nearest type that sets it, from the copy alone", async () => {

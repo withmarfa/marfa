@@ -581,6 +581,53 @@ fn declaring_one_type_twice_in_a_set_is_refused() {
 }
 
 #[test]
+fn a_declared_table_is_judged_as_the_server_judges_it() {
+    let core = Core::open_in_memory(None).unwrap();
+    let ledger = |columns: serde_json::Value| {
+        json!({"id": "app.acme.ledger", "fields": {"title": {"type": "string"}},
+               "tables": {"lines": {"columns": columns}}})
+    };
+    let refused = core
+        .declare_types(&[ledger(
+            json!({"memo": {"type": "string", "adds_up": "sum"}}),
+        )])
+        .unwrap_err();
+    assert!(
+        matches!(&refused, CoreError::Invalid(message)
+            if message.contains("app.acme.ledger") && message.contains("adds_up")),
+        "{refused:?}"
+    );
+    assert!(core.declared_types().unwrap().is_empty());
+    // The witness: the same table with a column that can add up is taken.
+    core.declare_types(&[ledger(
+        json!({"amount": {"type": "number", "adds_up": "sum"}}),
+    )])
+    .unwrap();
+    assert_eq!(core.declared_types().unwrap().len(), 1);
+}
+
+#[test]
+fn a_declared_table_may_not_change_one_a_type_above_it_declares() {
+    let core = Core::open_in_memory(None).unwrap();
+    let base = json!({"id": "app.acme.base", "fields": {},
+        "tables": {"lines": {"columns": {"a": {"type": "string"}}}}});
+    let child = |columns: serde_json::Value| {
+        json!({"id": "app.acme.child", "parent": "app.acme.base", "fields": {},
+               "tables": {"lines": {"columns": columns}}})
+    };
+    let refused = core
+        .declare_types(&[base.clone(), child(json!({"b": {"type": "number"}}))])
+        .unwrap_err();
+    assert!(
+        matches!(&refused, CoreError::Invalid(message) if message.contains("app.acme.base")),
+        "{refused:?}"
+    );
+    // The witness: restating the table as the type above declares it is taken.
+    core.declare_types(&[base, child(json!({"a": {"type": "string"}}))])
+        .unwrap();
+}
+
+#[test]
 fn changes_since_is_refused_part_way_through_a_hydration_as_every_read_of_edges_is() {
     let server = Scripted::start();
     let core = notes(&server);

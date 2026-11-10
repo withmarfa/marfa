@@ -670,6 +670,55 @@ async fn a_subtype_inherits_tables_and_may_not_declare_one_again() {
     assert!(row.get("tables").is_none(), "{row}");
 }
 
+#[tokio::test]
+async fn attaching_a_type_under_an_ancestor_is_refused_where_a_subtype_declares_a_table_it_declares()
+ {
+    let instance = Instance::start().await;
+    assert_eq!(
+        instance.register(ledger(lines())).await.status,
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        instance.register(simple("acme.middle")).await.status,
+        StatusCode::CREATED
+    );
+    let mut leaf = child("acme.leaf", "acme.middle", json!({}));
+    leaf["tables"] = json!({ "lines": { "columns": { "other": { "type": "string" } } } });
+    assert_eq!(instance.register(leaf).await.status, StatusCode::CREATED);
+
+    let attached = child(
+        "acme.middle",
+        "acme.ledger",
+        json!({ "note": { "type": "string" } }),
+    );
+    let refused = instance
+        .local(Method::PUT, "/types/acme.middle", Some(attached))
+        .await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.body);
+    assert_eq!(refused.code(), "inheritance_violation", "{}", refused.body);
+    assert_eq!(refused_paths(&refused), vec!["parent".to_string()]);
+    let held = instance
+        .local(Method::GET, "/types/acme.middle", None)
+        .await;
+    assert!(held.body.get("parent").is_none(), "{}", held.body);
+
+    let mut agreeing = child("acme.leaf", "acme.middle", json!({}));
+    agreeing["tables"] = json!({ "own": { "columns": { "n": { "type": "integer" } } } });
+    let replaced = instance
+        .local(Method::PUT, "/types/acme.leaf", Some(agreeing))
+        .await;
+    assert_eq!(replaced.status, StatusCode::OK, "{}", replaced.body);
+    let attached = child(
+        "acme.middle",
+        "acme.ledger",
+        json!({ "note": { "type": "string" } }),
+    );
+    let taken = instance
+        .local(Method::PUT, "/types/acme.middle", Some(attached))
+        .await;
+    assert_eq!(taken.status, StatusCode::OK, "{}", taken.body);
+}
+
 async fn read_back_tables(instance: &Instance, id: &str) -> Value {
     let read = instance
         .local(Method::GET, &format!("/types/{id}"), None)

@@ -5,7 +5,7 @@ use serde_json::{Map, Value, json};
 use super::field::{label_issue, normalize_field, validate_member, vocabulary};
 use super::resolve::label_member;
 use super::unread::unread_column_keys;
-use super::{Issue, Obj, as_obj, describe, kind, names, text};
+use super::{Issue, Obj, Registry, as_obj, describe, kind, names, text};
 use crate::catalog::api_name;
 use crate::grammar;
 
@@ -239,6 +239,7 @@ pub(super) fn validate_tables(
     type_known: &dyn Fn(&str) -> bool,
     errors: &mut Vec<Issue>,
 ) {
+    descendants_hold_inherited_tables(inherited, descendants, errors);
     let Some(raw) = raw else { return };
     let Some(tables) = raw.as_object() else {
         errors.push(Issue::new(
@@ -303,7 +304,10 @@ pub(super) fn validate_tables(
             );
         }
         for child in descendants {
-            if as_obj(child.get("tables")).is_some_and(|held| held.contains_key(name)) {
+            let declares_otherwise = as_obj(child.get("tables"))
+                .and_then(|held| as_obj(held.get(name)))
+                .is_some_and(|held| !restates(name, held, &normalize_table(table)));
+            if declares_otherwise {
                 let child_id = text(child, "id").unwrap_or_default();
                 errors.push(
                     Issue::new(
@@ -319,6 +323,62 @@ pub(super) fn validate_tables(
             }
         }
     }
+}
+
+/// A subtype may not declare a table that a type above this one declares otherwise.
+fn descendants_hold_inherited_tables(
+    inherited: &[(String, String, Obj)],
+    descendants: &[&Obj],
+    errors: &mut Vec<Issue>,
+) {
+    for child in descendants {
+        let child_id = text(child, "id").unwrap_or_default();
+        for (name, table) in as_obj(child.get("tables")).into_iter().flatten() {
+            let Some((_, owner, held)) = inherited.iter().find(|(held, _, _)| held == name) else {
+                continue;
+            };
+            if as_obj(Some(table)).is_some_and(|table| restates(name, table, held)) {
+                continue;
+            }
+            errors.push(
+                Issue::new(
+                    "parent",
+                    format!("a parent whose chain does not declare the table \"{name}\" otherwise than \"{child_id}\" does"),
+                    format!("a parent under \"{owner}\", which declares \"{name}\" otherwise"),
+                    format!("Rename the table on \"{child_id}\", or change it there first."),
+                )
+                .coded("inheritance_violation"),
+            );
+        }
+    }
+}
+
+/// Each fault in the tables a set of types declares, with the id of the type that declares it. A table is judged against the tables of the types above and below it in the set.
+pub fn declared_tables_issues(
+    types: &[Value],
+    type_known: &dyn Fn(&str) -> bool,
+) -> Vec<(String, Issue)> {
+    let registry = Registry::new(types.iter().filter_map(|row| row.as_object().cloned()));
+    let mut found = Vec::new();
+    for definition in types.iter().filter_map(Value::as_object) {
+        let Some(id) = text(definition, "id") else {
+            continue;
+        };
+        let parent = text(definition, "parent").filter(|parent| *parent != id);
+        let inherited = parent
+            .map(|p| registry.inherited_tables(p))
+            .unwrap_or_default();
+        let mut issues = Vec::new();
+        validate_tables(
+            definition.get("tables"),
+            &inherited,
+            &registry.descendants(id),
+            type_known,
+            &mut issues,
+        );
+        found.extend(issues.into_iter().map(|issue| (id.to_string(), issue)));
+    }
+    found
 }
 
 fn restates(name: &str, table: &Obj, held: &Obj) -> bool {
@@ -771,6 +831,46 @@ mod tests {
         assert_eq!(changed.len(), 1, "{changed:?}");
         assert_eq!(changed[0].field, "tables.entries");
         assert_eq!(changed[0].code, Some("inheritance_violation"));
+    }
+
+    #[test]
+    fn attaching_a_type_to_an_ancestor_is_judged_against_every_descendant() {
+        let held = Registry::new(
+            [
+                json!({"id": "user.top", "version": 0, "fields": {"title": {"type": "string"}},
+                       "tables": {"lines": {"columns": {"a": {"type": "string"}}}}}),
+                json!({"id": "user.mid", "version": 0, "fields": {"title": {"type": "string"}}}),
+                json!({"id": "user.leaf", "version": 0, "parent": "user.mid",
+                       "fields": {}, "tables": {"lines": {"columns": {"b": {"type": "number"}}}}}),
+            ]
+            .into_iter()
+            .filter_map(|row| row.as_object().cloned()),
+        );
+        let found = validate_type(
+            &json!({"id": "user.mid", "parent": "user.top", "fields": {"title": {"type": "string"}}}),
+            &held,
+        )
+        .err()
+        .unwrap_or_default();
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].field, "parent");
+        assert_eq!(found[0].code, Some("inheritance_violation"));
+        let same = Registry::new(
+            [
+                json!({"id": "user.top", "version": 0, "fields": {"title": {"type": "string"}},
+                       "tables": {"lines": {"columns": {"a": {"type": "string"}}}}}),
+                json!({"id": "user.mid", "version": 0, "fields": {"title": {"type": "string"}}}),
+                json!({"id": "user.leaf", "version": 0, "parent": "user.mid",
+                       "fields": {}, "tables": {"other": {"columns": {"b": {"type": "number"}}}}}),
+            ]
+            .into_iter()
+            .filter_map(|row| row.as_object().cloned()),
+        );
+        let attached = validate_type(
+            &json!({"id": "user.mid", "parent": "user.top", "fields": {"title": {"type": "string"}}}),
+            &same,
+        );
+        assert!(attached.is_ok(), "{:?}", attached.err());
     }
 
     #[test]

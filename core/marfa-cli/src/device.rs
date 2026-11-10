@@ -1963,6 +1963,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                             lines.push("  not named by its body".into());
                         }
                         lines.extend(held.fields.iter().map(field_line));
+                        lines.extend(table_lines(&held.tables));
                         lines.join("\n")
                     })
                 }
@@ -2155,7 +2156,36 @@ fn type_line(held: &marfa_core::ItemType) -> String {
             .as_deref()
             .map_or(String::new(), |parent| format!("  inherits {parent}")),
         held.fields.len()
-    )
+    ) + &match held.tables.len() {
+        0 => String::new(),
+        count => format!("  {count} table(s)"),
+    }
+}
+
+fn table_lines(tables: &serde_json::Map<String, serde_json::Value>) -> Vec<String> {
+    let mut lines = Vec::new();
+    for (name, table) in tables {
+        lines.push(format!("  table {name}"));
+        for (column, definition) in table
+            .get("columns")
+            .and_then(serde_json::Value::as_object)
+            .into_iter()
+            .flatten()
+        {
+            let held = |key: &str| definition.get(key).and_then(serde_json::Value::as_str);
+            lines.push(format!(
+                "    {column}  {}{}{}",
+                held("type").unwrap_or("unknown"),
+                if definition.get("required") == Some(&serde_json::Value::Bool(true)) {
+                    "  required"
+                } else {
+                    ""
+                },
+                held("adds_up").map_or(String::new(), |way| format!("  adds up as {way}")),
+            ));
+        }
+    }
+    lines
 }
 
 fn field_line(field: &marfa_core::TypeField) -> String {

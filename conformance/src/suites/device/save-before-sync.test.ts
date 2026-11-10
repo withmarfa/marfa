@@ -254,6 +254,59 @@ describe("a copy no server has been named for", () => {
     expect(value(await device.declaredTypes())).toHaveLength(1);
   });
 
+  it("refuses a declaration of a table the server refuses, naming the type and the fault", async () => {
+    const device = await offline("save-declare-tables-refused");
+    const ledger = (tables: unknown) => ({
+      id: "app.ledger.entry",
+      fields: {},
+      tables,
+    });
+    const lines = (columns: unknown) => ({ lines: { columns } });
+    for (const [declaration, named] of [
+      [
+        [ledger(lines({ memo: { type: "string", adds_up: "sum" } }))],
+        "adds_up",
+      ],
+      [[ledger(lines({ memo: { type: "list" } }))], "type"],
+      [[ledger(lines({ Memo: { type: "string" } }))], "Memo"],
+      [[ledger({ lines: { label: "Lines" } })], "columns"],
+      [[ledger(lines({ memo: { type: "string", addsUp: "sum" } }))], "adds_up"],
+      [
+        [
+          ledger(lines({ a: { type: "string" } })),
+          {
+            id: "app.ledger.child",
+            parent: "app.ledger.entry",
+            fields: {},
+            tables: lines({ b: { type: "number" } }),
+          },
+        ],
+        "app.ledger.entry",
+      ],
+    ] as const) {
+      const refused = await device.declareTypes([...declaration]);
+      expect(
+        refused.ok ? "declared" : refused.refusal.code,
+        `${JSON.stringify(declaration)} was declared`,
+      ).toBe("invalid");
+      if (!refused.ok) expect(refused.refusal.raw).toContain(named);
+    }
+    expect(value(await device.declaredTypes())).toEqual([]);
+    // The witness: a table whose columns can add up, with a subtype that restates it, is taken.
+    value(
+      await device.declareTypes([
+        ledger(lines({ amount: { type: "number", adds_up: "sum" } })),
+        {
+          id: "app.ledger.child",
+          parent: "app.ledger.entry",
+          fields: {},
+          tables: lines({ amount: { type: "number", adds_up: "sum" } }),
+        },
+      ]),
+    );
+    expect(value(await device.declaredTypes())).toHaveLength(2);
+  });
+
   it("refuses a declaration whose status field has no words in its chain, naming the field", async () => {
     const device = await offline("save-declare-wordless-status");
     const wordless = { type: "status" };

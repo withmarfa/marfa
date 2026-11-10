@@ -26,11 +26,19 @@ Where a type declares no table and inherits none, the server MUST answer it with
 
 **Tests:** `compliance/type-tables.test.ts › answers no tables for a type that declares none`.
 
-### `tables/labels`
+### `tables/labels-read`
 
-Where a table or a column declares no `label`, the server MUST answer a label made from its name on `GET /types/{id}`, `due_at` as `Due At`, and answer only the declared label on `GET /types`.
+Where a table or a column declares no `label`, the server MUST answer a label made from its name on `GET /types/{id}`, `due_at` as `Due At`.
 
-**Tests:** `compliance/type-tables.test.ts › answers a label made from its name for a table and a column that declare none, and only the declared one in the listing`.
+**Tests:** `compliance/type-tables.test.ts › answers a label made from its name for a table and a column that declare none on a read`.
+
+### `tables/labels-listed`
+
+Where a table or a column declares no `label`, the server MUST answer it on `GET /types` without a `label`.
+
+**Reason:** the listing answers each type's own definition, as it does for fields.
+
+**Tests:** `compliance/type-tables.test.ts › answers only the declared label for a table and a column in the listing`.
 
 ### `tables/defaults`
 
@@ -170,6 +178,14 @@ If a replacement of a type would give it a table of the name of one a type below
 
 **Tests:** `compliance/type-tables.test.ts › refuses a parent that gains a table a subtype declares`.
 
+### `tables/inherit-reparented`
+
+If a replacement of a type would give it a parent above which a type below it declares a table of the name of one a type above that parent declares, with any definition other than the one `GET /types/{id}` answers for that parent, then the server MUST answer `400 inheritance_violation` naming the type's `parent`, and change nothing.
+
+**Reason:** a table is declared once down a chain, so attaching a type under an ancestor is judged against every type below it, as adding a table to it is (`tables/inherit-gained`).
+
+**Tests:** `compliance/type-tables.test.ts › refuses a replacement that gives a type a parent above which a subtype declares a table of the parent's differently`.
+
 ## Evolving a type's tables without schema.write
 
 ### `tables/evolve-free`
@@ -188,9 +204,15 @@ If a key holding `metadata.types:write` and not `schema.write` sends `PUT /types
 
 **Tests:** `compliance/type-tables.test.ts › refuses a column's changed kind, a required column, a removed column and a removed table to a key without schema.write, listing each`.
 
-### `tables/evolve-refusal-details`
+### `tables/evolve-refusal-scope`
 
-When the server refuses a replacement under `tables/evolve-schema-change`, the server MUST answer `details.required_scope` `schema.write` and `details.changes` listing, in sorted order, each change that needs it, a table as `tables.<name>` and a column as `tables.<name>.columns.<column>`.
+When the server refuses a replacement under `tables/evolve-schema-change`, the server MUST answer `details.required_scope` `schema.write`.
+
+**Tests:** `compliance/type-tables.test.ts › refuses a column's changed kind, a required column, a removed column and a removed table to a key without schema.write, listing each`.
+
+### `tables/evolve-refusal-changes`
+
+When the server refuses a replacement under `tables/evolve-schema-change`, the server MUST answer `details.changes` listing, in sorted order, each change that needs `schema.write`, a table as `tables.<name>` and a column as `tables.<name>.columns.<column>`.
 
 **Tests:** `compliance/type-tables.test.ts › refuses a column's changed kind, a required column, a removed column and a removed table to a key without schema.write, listing each`.
 
@@ -222,8 +244,14 @@ When `POST /restore` reads a `type` line that declares tables, the server MUST r
 
 **Tests:** `compliance/type-tables.test.ts › carries a type's tables in an archive and registers them when the archive is restored`.
 
-### `tables/save-type-tool`
+### `tables/save-type-register`
 
-When a caller sends `marfa_save_type` with `tables`, the server MUST register the type with them on `register`, and on `change` replace each table the call names, remove each it names as `null` and leave the rest.
+When a caller sends `marfa_save_type` with `action` `register` and `tables`, the server MUST register the type with them.
 
-**Tests:** `compliance/type-tables.test.ts › saves tables through marfa_save_type, replacing a table by name and removing one with null`.
+**Tests:** `compliance/type-tables.test.ts › registers a type with tables through marfa_save_type, and refuses a table the server refuses`.
+
+### `tables/save-type-change`
+
+When a caller sends `marfa_save_type` with `action` `change` and `tables`, the server MUST replace each table the call names, remove each it names as `null` and leave the rest.
+
+**Tests:** `compliance/type-tables.test.ts › changes a type's tables through marfa_save_type, replacing a table by name, removing one with null and leaving the rest`.

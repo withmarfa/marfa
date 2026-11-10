@@ -154,6 +154,9 @@ export function wireType(
      *  list answers it (`types/list-declared-plural`). */
     plural?: string;
     fields?: Record<string, unknown>;
+    /** The tables the type declares, as the list answers them: its own, with
+     *  no label that its name makes. */
+    tables?: Record<string, unknown>;
     /** Which fields collide how. What decides whether a resolution names a
      *  sibling (`queue-and-verdicts/success-conflicted`), so a scripted type without one
      *  describes a server that cannot keep both copies. */
@@ -190,6 +193,7 @@ export function wireType(
         : { name_from_body: options.nameFromBody }),
       ...(options.icon === undefined ? {} : { icon: options.icon }),
     },
+    ...(options.tables === undefined ? {} : { tables: options.tables }),
     merge_policy: options.mergePolicy ?? {
       fields: { body: "keep_both_copies" },
       default: "last_writer_wins",
