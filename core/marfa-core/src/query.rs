@@ -166,6 +166,12 @@ pub(crate) fn list_where_with(
     if let SortField::Property(name) = &sort.field {
         SortField::property(name)?;
     }
+    if sort.field == SortField::LastActivityAt {
+        return Err(marfa_rules::error::RuleError::validation(
+            "A device does not hold when an item's rows last changed, so it does not sort by last_activity_at.",
+        )
+        .into());
+    }
     let order_sql = match &sort.field {
         // Rows with no scalar there go last in either direction, and ties
         // fall to the id ascending in both, as on the server

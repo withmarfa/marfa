@@ -276,6 +276,57 @@ pub fn properties(
     refuse(Code::InvalidProperties, faults)
 }
 
+/// Refuses `values` as a row of a table whose columns are `columns`, `complete` where they are the
+/// whole row. A `null` clears a column. A column of kind `item` takes a lowercase UUIDv7; whether
+/// an item holds it is the caller's to judge. Each fault's path is the column's name.
+pub fn row_values(
+    columns: &Map<String, Value>,
+    values: &Map<String, Value>,
+    complete: bool,
+) -> Result<(), RuleError> {
+    let mut faults: Vec<_> = values
+        .keys()
+        .filter(|name| !columns.contains_key(name.as_str()))
+        .map(|name| {
+            fault(
+                name,
+                field_code::UNKNOWN_MEMBER,
+                "The table declares no such column",
+            )
+        })
+        .collect();
+    for (name, definition) in columns {
+        let required = definition.get("required").and_then(Value::as_bool) == Some(true);
+        let value = match values.get(name) {
+            None if complete && required => {
+                faults.push(fault(name, field_code::REQUIRED, "Required column is missing"));
+                continue;
+            }
+            None => continue,
+            Some(Value::Null) if required => {
+                faults.push(fault(name, field_code::REQUIRED, "Required column cannot be cleared"));
+                continue;
+            }
+            Some(Value::Null) => continue,
+            Some(value) => value,
+        };
+        let kind = definition
+            .get("type")
+            .and_then(Value::as_str)
+            .ok_or_else(|| RuleError::decoding(format!("the held column {name} declares no type")))?;
+        if kind == crate::schema::ITEM_KIND {
+            if !value.as_str().is_some_and(|text| id(name, text).is_ok()) {
+                faults.push(fault(name, field_code::INVALID_VALUE, "Must be an item's id"));
+            }
+            continue;
+        }
+        if let Some(problem) = field(kind, definition, value)? {
+            faults.push(fault(name, problem.code, problem.message));
+        }
+    }
+    refuse(Code::ValidationError, faults)
+}
+
 fn field(kind: &str, definition: &Value, value: &Value) -> Result<Option<Problem>, RuleError> {
     let expected = |kind| {
         Some(Problem::new(

@@ -566,6 +566,51 @@ fn expect<'a>(tokens: &'a [Token], pos: usize, context: &str) -> Result<&'a Toke
 }
 
 pub fn parse(input: &str) -> Result<Expression> {
+    parse_with(input, field)
+}
+
+/// The fields of a table's rows: `values.<column>`, `id` and `updated_at`.
+pub const ROW_FIELDS: [&str; 2] = ["id", "updated_at"];
+
+/// An expression over a table's rows, where `values.<column>` reads as a property term.
+pub fn parse_rows(input: &str) -> Result<Expression> {
+    parse_with(input, row_field)
+}
+
+fn row_field(token: &Token) -> Result<Field> {
+    let TokenKind::Identifier(name) = &token.kind else {
+        return Err(refused(format!(
+            "Expected field name at position {}, got {}",
+            token.pos, token.raw
+        )));
+    };
+    if let Some(column) = name.strip_prefix("values.") {
+        let mut chars = column.chars();
+        let valid = chars
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if !valid {
+            return Err(refused(format!(
+                "Invalid column name \"{column}\" at position {}",
+                token.pos
+            )));
+        }
+        return Ok(Field::Property(column.to_string()));
+    }
+    if let Some(column) = SYSTEM_FIELDS
+        .iter()
+        .find(|column| **column == name && ROW_FIELDS.contains(column))
+    {
+        return Ok(Field::System(column));
+    }
+    Err(refused(format!(
+        "Unknown field \"{name}\" at position {}. A row's fields are values.<column>, id and updated_at.",
+        token.pos
+    )))
+}
+
+fn parse_with(input: &str, field: fn(&Token) -> Result<Field>) -> Result<Expression> {
     if input.chars().all(char::is_whitespace) {
         return Err(refused("Filter expression cannot be empty"));
     }
@@ -859,5 +904,24 @@ mod tests {
         assert!(message("parts eq true").ends_with(
             "Use \"properties.<field>\" for custom fields, \"tags\" for tag filtering, \"status_group\" for a status group, or \"part\" for the parts of other items."
         ));
+    }
+
+    #[test]
+    fn a_row_filter_reads_columns_and_its_own_fields_and_nothing_an_item_has() {
+        let expression = parse_rows("values.amount gt 5 AND updated_at gte \"2026-01-01\"").unwrap();
+        assert_eq!(
+            expression.conditions[0].term,
+            Term::Property {
+                name: "amount".into(),
+                op: Op::Compare(Compare::Gt)
+            }
+        );
+        assert!(matches!(
+            expression.conditions[1].term,
+            Term::System { column: "updated_at", .. }
+        ));
+        for refused in ["properties.amount eq 1", "state eq \"active\"", "tags exists", "values. eq 1", "values.a.b eq 1"] {
+            assert!(parse_rows(refused).is_err(), "{refused}");
+        }
     }
 }
