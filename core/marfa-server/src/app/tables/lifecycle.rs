@@ -47,7 +47,7 @@ impl Tally {
         Report {
             result: json!({
                 "removed": self.rows,
-                "batches_expired": self.batches,
+                "batches_removed": self.batches,
                 "changes_removed": self.changes,
                 "pages": self.pages,
             }),
