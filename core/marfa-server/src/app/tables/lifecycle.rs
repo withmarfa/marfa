@@ -16,8 +16,8 @@ use crate::app::refusal::{Code, Refusal, Result};
 use crate::db::Write;
 
 pub const CLEANUP_JOB: &str = "table-row-cleanup";
-/// About 10 ms of the writer on the reference machine, so other writes wait little behind a page.
-const CLEANUP_PAGE: i64 = 5_000;
+/// About 2 ms of the writer on the reference machine, so other writes wait little behind a page.
+const CLEANUP_PAGE: i64 = 1_000;
 
 /// A purged item's rows go to `table-row-cleanup`, which removes them a page at a time.
 pub fn doom(tx: &Transaction<'_>, seq: i64, at: &str) -> Result<()> {
