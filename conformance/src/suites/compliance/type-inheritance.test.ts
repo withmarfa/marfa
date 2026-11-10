@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import type { TestContext } from "../../client/types.js";
+import type {
+  FieldDefinition,
+  TestContext,
+  TypeSchema,
+} from "../../client/types.js";
 import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
 
 let client: MarfaClient;
@@ -348,7 +352,9 @@ describe("type inheritance rule", () => {
     expect(same.ok, JSON.stringify(same.error)).toBe(true);
   });
 
-  async function chainBelowAParent(leafFields: Record<string, unknown>) {
+  async function chainBelowAParent(
+    leafFields: Record<string, FieldDefinition>,
+  ) {
     const top = `user.inherit-top-${ctx.runId}-${leafCounter++}`;
     const middle = `${top}-middle`;
     const leaf = `${middle}.leaf`;
@@ -360,7 +366,7 @@ describe("type inheritance rule", () => {
       },
     });
     expect(made.ok, JSON.stringify(made.error)).toBe(true);
-    const detached = {
+    const detached: TypeSchema = {
       id: middle,
       label: "Middle",
       fields: { title: { type: "string" } },
