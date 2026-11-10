@@ -494,6 +494,79 @@ describe("writing rows", () => {
     expect(readable.status, JSON.stringify(readable.error)).toBe(200);
   });
 
+  it("takes back the id of an item now in the bin that a column already holds, and refuses it as a new reference", async () => {
+    const type = await ledgerType({ about: { type: "item" } });
+    const item = await itemOf(type);
+    const note = async (title: string) => {
+      const made = await client.createItem({
+        type: "core.note",
+        properties: { title },
+      } as never);
+      expect(made.status, JSON.stringify(made.error)).toBe(201);
+      trackItem(ctx, made.data.item.id);
+      return made.data.item.id;
+    };
+    const held = await note("Held");
+    const other = await note("Other");
+    const row = rowId();
+    const written = await client.writeRows(item, "lines", {
+      operations: [{ op: "put", id: row, values: { amount: 1, about: held } }],
+    });
+    expect(written.status, JSON.stringify(written.error)).toBe(200);
+    expect((await client.deleteItem(held)).status).toBe(200);
+    expect((await client.deleteItem(other)).status).toBe(200);
+
+    const reader = await narrowClient({ [type]: "write", "core.note": "read" });
+    const seen = (await reader.getRow(item, "lines", row)).data;
+    expect(seen.values).toEqual({ amount: 1, about: held });
+    for (const as of [client, reader]) {
+      const same = await as.writeRows(item, "lines", {
+        operations: [
+          { op: "put", id: row, values: { amount: 1, about: held } },
+          { op: "patch", id: row, values: { about: held } },
+        ],
+      });
+      expect(same.status, JSON.stringify(same.error)).toBe(200);
+      expect(same.data.results.map((r) => r.outcome)).toEqual([
+        "unchanged",
+        "unchanged",
+      ]);
+    }
+    const edited = await reader.writeRows(item, "lines", {
+      operations: [
+        { op: "put", id: row, values: { amount: 5, about: held } },
+        { op: "patch", id: row, values: { memo: "kept" } },
+      ],
+    });
+    expect(edited.status, JSON.stringify(edited.error)).toBe(200);
+    expect((await client.getRow(item, "lines", row)).data.values).toEqual({
+      amount: 5,
+      memo: "kept",
+      about: held,
+    });
+
+    const swap: RowOperation[] = [
+      { op: "patch", id: row, values: { about: other } },
+      { op: "put", id: row, values: { amount: 5, about: other } },
+      { op: "put", id: rowId(), values: { amount: 1, about: held } },
+    ];
+    for (const op of swap) {
+      const refused = await client.writeRows(item, "lines", {
+        operations: [op],
+      });
+      expect(refusedAt(refused), JSON.stringify(op)).toEqual({
+        code: "validation_error",
+        operation: 0,
+        paths: ["operations.0.values.about"],
+      });
+    }
+    expect((await client.restoreItem(other)).status).toBe(200);
+    const live = await client.writeRows(item, "lines", {
+      operations: [{ op: "patch", id: row, values: { about: other } }],
+    });
+    expect(live.data.results[0]?.outcome).toBe("patched");
+  });
+
   it("refuses an item column naming an item of a type its constraints do not admit", async () => {
     const fileType = typeId("receipt");
     expect(

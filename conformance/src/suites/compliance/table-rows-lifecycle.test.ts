@@ -548,6 +548,67 @@ describe("rows and the life of an item", () => {
     ).toEqual([]);
   });
 
+  it("shows a purged item's id to a key that reads every type after its column is removed or retyped, and withholds it from any other", async () => {
+    const withItem = {
+      lines: {
+        columns: { amount: { type: "number" }, about: { type: "item" } },
+      },
+    };
+    const removed = await register(typeId("purged-removed"), withItem);
+    const retyped = await register(typeId("purged-retyped"), withItem);
+    const reader = await narrowReader({
+      [removed]: "read",
+      [retyped]: "read",
+      "core.note": "read",
+    });
+    const holding = async (type: string) => {
+      const item = await itemOf(type);
+      const note = await client.createItem({
+        type: "core.note",
+        properties: { title: "to purge" },
+      } as never);
+      expect(note.status, JSON.stringify(note.error)).toBe(201);
+      const gone = note.data.item.id;
+      const row = (await put(item.id, [{ amount: 1, about: gone }])).results[0]!
+        .id;
+      expect((await client.deleteItem(gone)).status).toBe(200);
+      expect((await client.purgeItem(gone)).status).toBe(200);
+      return { item, row, gone };
+    };
+    const a = await holding(removed);
+    const b = await holding(retyped);
+    const replaced = (type: string, columns: Record<string, unknown>) =>
+      client.replaceType(
+        type,
+        {
+          id: type,
+          fields: { title: { type: "string" } },
+          tables: { lines: { columns } },
+        },
+        true,
+      );
+    expect(
+      (await replaced(removed, { amount: { type: "number" } })).status,
+    ).toBe(200);
+    expect(
+      (
+        await replaced(retyped, {
+          amount: { type: "number" },
+          about: { type: "string" },
+        })
+      ).status,
+    ).toBe(200);
+
+    for (const { item, row, gone } of [a, b]) {
+      const owned = (await client.getRow(item.id, "lines", row)).data;
+      expect(owned.values).toEqual({ amount: 1, about: gone });
+      expect(owned).not.toHaveProperty("withheld");
+      const read = (await reader.getRow(item.id, "lines", row)).data;
+      expect(read.values).toEqual({ amount: 1 });
+      expect(read.withheld).toEqual(["about"]);
+    }
+  });
+
   it("refuses to delete a type a column constrains to unless forced", async () => {
     const target = typeId("target");
     expect(

@@ -361,17 +361,31 @@ impl Batch<'_, '_> {
         })
     }
 
-    /// An item column names an item the writing key reads, outside the bin, of an admitted type.
-    fn refuse_references(&mut self, index: usize, values: &Map<String, Value>) -> Result<()> {
+    /// An item column names an item the writing key reads, of an admitted type, and outside the
+    /// bin unless the row already holds that id in the column.
+    fn refuse_references(
+        &mut self,
+        index: usize,
+        values: &Map<String, Value>,
+        held: Option<&Map<String, Value>>,
+    ) -> Result<()> {
         let tx = self.unit.tx();
         for column in self.table.item_columns() {
             let Some(id) = values.get(column).and_then(Value::as_str) else {
                 continue;
             };
-            let found = match self.referenced.get(id) {
-                Some(known) => known.clone(),
-                None => items::live_type_of(tx, id)?
-                    .filter(|type_id| self.unit.caller.may_read_type(type_id)),
+            let unchanged = held
+                .and_then(|refs| refs.get(column))
+                .and_then(Value::as_str)
+                == Some(id);
+            let found = if unchanged {
+                items::type_of(tx, id)?.filter(|type_id| self.unit.caller.may_read_type(type_id))
+            } else {
+                match self.referenced.get(id) {
+                    Some(known) => known.clone(),
+                    None => items::live_type_of(tx, id)?
+                        .filter(|type_id| self.unit.caller.may_read_type(type_id)),
+                }
             };
             let Some(type_id) = found else {
                 return Err(refused_at(
@@ -399,7 +413,9 @@ impl Batch<'_, '_> {
                     format!("The column does not take an item of type \"{type_id}\"."),
                 ));
             }
-            self.referenced.insert(id.to_string(), Some(type_id));
+            if !unchanged {
+                self.referenced.insert(id.to_string(), Some(type_id));
+            }
         }
         Ok(())
     }
@@ -467,7 +483,7 @@ impl Batch<'_, '_> {
                     Some(held) => self.refuse_withheld(index, held, &sent)?,
                     None => Vec::new(),
                 };
-                self.refuse_references(index, &sent)?;
+                self.refuse_references(index, &sent, held.as_ref().map(|held| &held.refs))?;
                 self.refuse_values(index, &sent, true, &kept)?;
                 let mut refs = Map::new();
                 self.mark_refs(&mut refs, &sent);
@@ -518,7 +534,7 @@ impl Batch<'_, '_> {
                         .with_detail("id", id.as_str()));
                 };
                 self.refuse_withheld(index, &held, &values)?;
-                self.refuse_references(index, &values)?;
+                self.refuse_references(index, &values, Some(&held.refs))?;
                 self.refuse_values(index, &values, false, &[])?;
                 let mut refs = held.refs.clone();
                 self.mark_refs(&mut refs, &values);
