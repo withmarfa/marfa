@@ -2,6 +2,7 @@
 
 pub mod filters;
 mod folders;
+mod tables;
 mod views;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -262,6 +263,21 @@ pub struct CatchUpReport {
     /// The catch-up changed the catalog the copy holds. A catch-up that
     /// fails says the same on its error, as `catalogChanged`.
     pub catalog_changed: bool,
+    /// The fill of the tables the copy holds that were not whole.
+    pub tables: tables::TableFill,
+}
+
+impl From<marfa_core::CatchUpReport> for CatchUpReport {
+    fn from(report: marfa_core::CatchUpReport) -> Self {
+        CatchUpReport {
+            applied: count(report.applied),
+            skipped: count(report.skipped),
+            read_only_held: count(report.read_only_held),
+            cursor: report.cursor,
+            catalog_changed: report.catalog_changed,
+            tables: report.tables.into(),
+        }
+    }
 }
 
 /// How the cache of fetched files chooses its budget.
@@ -2038,13 +2054,7 @@ impl Task for CatchUp {
     }
 
     fn resolve(&mut self, _: Env, report: Self::Output) -> Result<Self::JsValue> {
-        Ok(CatchUpReport {
-            applied: count(report.applied),
-            skipped: count(report.skipped),
-            read_only_held: count(report.read_only_held),
-            cursor: report.cursor,
-            catalog_changed: report.catalog_changed,
-        })
+        Ok(report.into())
     }
 }
 

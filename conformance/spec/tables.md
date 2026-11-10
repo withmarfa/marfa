@@ -848,6 +848,12 @@ When a catch-up has applied the events it read, when a follow has no frame waiti
 
 **Tests:** `device/tables-live.test.ts › fills a table whole across pages, and answers it from the copy with the server out of reach`, `› applies each rows.changed a follow reads, rows put, patched and deleted`.
 
+### `tables/device-fill-report`
+
+When a catch-up ends on its live marker, a device MUST report in `tables` how many tables its fill left `whole`, found past the cap as `online` and left `unfilled`, and the `pages` and `rows` it read.
+
+**Tests:** `device/tables-live.test.ts › reads a table past the cap from the server, holding none of its rows, and holds it whole once a delete brings it within`, `device/catch-up.test.ts › reports what a catch-up carried, and refuses one that stopped short`.
+
 ### `tables/device-fill-resumes`
 
 When a fill was cut off, a device MUST carry it on from the page after the last page it took, keeping the rows the pages it took brought.
