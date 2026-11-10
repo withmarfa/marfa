@@ -898,11 +898,11 @@ If a listing of batches names a `cursor` that was not answered for the same item
 
 ### `tables/log-retention`
 
-Where `row_log_retention_days` is positive, when the `table-row-cleanup` job runs, the server MUST remove from each table's change log every batch made more than that many days before.
+Where `row_log_retention_days` is positive, when the `table-row-cleanup` job runs, the server MUST remove from each table's change log every batch made more than that many days before, up to the oldest batch whose stored time does not read.
 
 **Reason:** the log is for taking back recent writes, not a history, and an old batch could no longer be undone over what came after it anyway.
 
-**Tests:** `compliance/table-rows-retention.test.ts › removes the batches older than row_log_retention_days at the next table-row-cleanup run, and keeps the newer`.
+**Tests:** `compliance/table-rows-retention.test.ts › removes the batches older than row_log_retention_days at the next table-row-cleanup run, and keeps the newer`, `› keeps a batch whose stored time does not read and every batch after it, and removes the older batches before it`.
 
 ### `tables/log-retention-zero`
 

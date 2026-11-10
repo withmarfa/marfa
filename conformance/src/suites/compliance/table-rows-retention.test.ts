@@ -6,6 +6,7 @@ import {
   stopFreshServers,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { withInstanceDatabase } from "../../utils/instance-database.js";
 import {
   DAY_MS,
   movedClock,
@@ -95,6 +96,45 @@ describe("the change log's retention", () => {
       expect(kept.status, JSON.stringify(kept.error)).toBe(200);
       const rows = await writer.listRows(item, "lines");
       expect(rows.data.data.map((row) => row.values)).toEqual([{ amount: 1 }]);
+    },
+    3 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "keeps a batch whose stored time does not read and every batch after it, and removes the older batches before it",
+    async () => {
+      const server = await bootFreshServer("rows-retention-unread", {
+        ...QUIET_SCHEDULE,
+        MARFA_ROW_LOG_RETENTION_DAYS: "30",
+      });
+      const clock = movedClock(server);
+      const { writer, item } = await ledger(server);
+      const first = await batchOf(writer, item, 1);
+      const unread = await batchOf(writer, item, 2);
+      const after = await batchOf(writer, item, 3);
+      await clock.advance(31 * DAY_MS);
+      const storeAt = (at: string) =>
+        withInstanceDatabase(server.sqlitePath, (db) => {
+          db.prepare("UPDATE row_batches SET at = ? WHERE id = ?").run(
+            at,
+            unread,
+          );
+        });
+      // "0" sorts before any cutoff, so only reading the time keeps the batch.
+      storeAt("0");
+
+      const run = await runJob(server, "table-row-cleanup");
+      expect(run.outcome, String(run.error)).toBe("ok");
+      const gone = await writer.undoBatch(item, "lines", first);
+      expect(gone.status).toBe(404);
+      expect(gone.error?.error.code).toBe("batch_not_found");
+
+      // The witness: with an old time that reads, the same batch and the one after it go.
+      storeAt("2000-01-01T00:00:00.000Z");
+      expect(await held(writer, item)).toEqual([after, unread]);
+      const next = await runJob(server, "table-row-cleanup");
+      expect(next.outcome, String(next.error)).toBe("ok");
+      expect(await held(writer, item)).toEqual([]);
     },
     3 * FRESH_SERVER_TIMEOUT_MS,
   );
