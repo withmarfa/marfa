@@ -36,8 +36,7 @@ impl Order {
         format!("'$.{}'", self.column)
     }
 
-    /// The key of the column's value in the JSON `body`: a datetime as UTC milliseconds, a number
-    /// as itself, a string as its text, and NULL for no value or a value of another kind.
+    /// The key of the value in `body`: a datetime as UTC milliseconds, NULL for none or another kind.
     pub(crate) fn value_key_sql(&self, body: &str) -> String {
         let path = self.path();
         let value = format!("json_extract({body}, {path})");
@@ -58,8 +57,7 @@ impl Order {
         }
     }
 
-    /// As [`Order::value_key_sql`], and NULL for a value written as an item's id, which `refs`
-    /// holds by column.
+    /// As [`Order::value_key_sql`], and NULL for a value `refs` holds as an item's id.
     pub(crate) fn key_sql(&self, body: &str, refs: &str) -> String {
         format!(
             "CASE WHEN json_extract({refs}, {}) IS NULL THEN {} END",
@@ -77,9 +75,7 @@ impl Order {
 /// The stored key of a row with no key, after every number and text in SQLite's order.
 pub(crate) const NO_KEY: &str = "X''";
 
-/// `v`, a calendar date or a datetime with `Z` or a `±hh:mm` offset, as UTC milliseconds; a date
-/// is its midnight UTC. julianday reads the local part only, so any offset the time rule takes
-/// counts.
+/// `v` as UTC milliseconds; the offset is applied here so every offset the time rule takes counts.
 fn instant_ms() -> String {
     let at = |local: &str| LOCAL_MS.replace("local", local);
     let offset_ms = "(CASE substr(v, -6, 1) WHEN '-' THEN -60000 ELSE 60000 END) \

@@ -422,8 +422,7 @@ fn scanned_page(
     store::page(read.tx, &sql)
 }
 
-/// A page by the order column from its stored keys: the rows with a key through the index, then
-/// the rows without one by id, as [`scanned_page`] orders them.
+/// A page by the stored order keys, in the order [`scanned_page`] gives.
 fn keyed_page(
     read: &Reader<'_, '_>,
     asked: &Selected<'_>,
