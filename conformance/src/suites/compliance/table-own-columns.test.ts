@@ -428,10 +428,7 @@ describe("a key changes a table's columns", () => {
       properties: {},
     });
     expect(moved.status, JSON.stringify(moved.error)).toBe(200);
-    const emptied = await change(key, id, {
-      replace: true,
-      properties: { title: "Budget" },
-    });
+    const emptied = await change(key, id, { clear_properties: ["columns"] });
     expect(emptied.status, JSON.stringify(emptied.error)).toBe(200);
     expect(emptied.data.item.properties).not.toHaveProperty("columns");
 

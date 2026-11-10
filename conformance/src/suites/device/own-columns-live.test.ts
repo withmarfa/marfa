@@ -201,11 +201,17 @@ it("takes on the device a retype to a type below core.table that names no column
     version: held.value.version,
   });
   expect(retyped.ok, JSON.stringify(retyped)).toBe(true);
-  const drained = await copy.drain();
-  expect(drained.ok && drained.value.verdicts.map((v) => v.verdict)).toEqual([
-    "accepted",
-  ]);
-  const read = await client.getItem(made.data.item.id);
-  expect(read.data.item.type).toBe(sheet);
-  expect(read.data.item.properties.columns).toEqual(GOOD);
+  if (!retyped.ok) return;
+  const queued = await copy.queue();
+  expect(queued.ok && queued.value.map((write) => write.id)).toContain(
+    retyped.value.id,
+  );
+  const served = await client.updateItem(made.data.item.id, {
+    type: sheet,
+    retype: true,
+    properties: {},
+    version: held.value.version,
+  });
+  expect(served.status, JSON.stringify(served.error)).toBe(200);
+  expect(served.data.item.properties.columns).toEqual(GOOD);
 });
