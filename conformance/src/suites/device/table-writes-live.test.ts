@@ -536,8 +536,15 @@ describe("what a verdict does to the rows a copy holds", () => {
           { op: "patch", id: row, values: { note: "mine" } },
         ]),
       );
-      const report = value(await device.call<DrainReport>("drain"));
-      expect(verdictOf(report, mine.id)).toBe("accepted");
+      // The binding reads a verdict into its parts.
+      const report = value(
+        await device.call<{
+          verdicts: { id: string; verdict: { verdict: string } | null }[];
+        }>("drain"),
+      );
+      expect(
+        report.verdicts.find((entry) => entry.id === mine.id)?.verdict?.verdict,
+      ).toBe("accepted");
       expect(await shown()).toEqual({ [row]: { count: 1, note: "mine" } });
 
       gate.release(1);

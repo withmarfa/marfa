@@ -449,6 +449,10 @@ fn take(
         edge_id: None,
         cursor: id.to_string(),
     };
+    #[cfg(debug_assertions)]
+    if payload.rows.is_some() {
+        crate::fault::gate("gate-rows-event");
+    }
     crate::busy::retrying(&core.conn, stop, || {
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;

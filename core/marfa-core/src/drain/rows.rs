@@ -255,7 +255,7 @@ fn taken(
                 .then(|| serde_json::to_string(&conflicts))
                 .transpose()?;
             tx.execute(
-                "UPDATE queue SET conflicts = ?2, batched_with = NULL WHERE id = ?1",
+                "UPDATE queue SET conflicts = ?2 WHERE id = ?1",
                 params![write.id, named],
             )?;
             verdicts.push((verdict, conflicts));

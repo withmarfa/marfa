@@ -204,20 +204,6 @@ CREATE TABLE IF NOT EXISTS rows_dirty (
   id TEXT NOT NULL,
   PRIMARY KEY (item_id, name, id)
 ) WITHOUT ROWID;
-CREATE TRIGGER IF NOT EXISTS queue_rows_answered AFTER UPDATE ON queue
-  WHEN NEW.kind = 'write_rows'
-   AND (OLD.verdict IS NOT NEW.verdict OR OLD.idempotency_key IS NOT NEW.idempotency_key)
-BEGIN
-  INSERT OR IGNORE INTO rows_dirty (item_id, name, id)
-    SELECT item_id, name, id FROM rows_laid WHERE write_id = NEW.id;
-END;
-CREATE TRIGGER IF NOT EXISTS queue_rows_gone AFTER DELETE ON queue
-  WHEN OLD.kind = 'write_rows'
-BEGIN
-  INSERT OR IGNORE INTO rows_dirty (item_id, name, id)
-    SELECT item_id, name, id FROM rows_laid WHERE write_id = OLD.id AND batch IS NULL;
-  DELETE FROM rows_laid WHERE write_id = OLD.id AND batch IS NULL;
-END;
 
 -- The batches of `rows.changed` a copy applied while a row write it had sent
 -- was unanswered, so its answer naming one of them lays nothing to wait for it.
@@ -289,8 +275,9 @@ CREATE TABLE IF NOT EXISTS queue (
   blob TEXT,
   -- The table a row write or an undo names.
   row_table TEXT,
-  -- The row write whose batch this one was sent in, set when it is sent and
-  -- cleared once the batch is answered, so a batch sent again is the same.
+  -- The row write whose batch this one was sent in, set when it is sent, so a
+  -- batch sent again is the same, and cleared where a refusal or a block
+  -- leaves each write of it to go on its own.
   batched_with TEXT,
   base_version INTEGER,
   -- `UNIQUE` because the server answers a reused key from the first write's
@@ -364,6 +351,21 @@ CREATE INDEX IF NOT EXISTS queue_edge ON queue (edge_id);
 -- Numbering a send takes one past the highest `last_sent_seq`, which this
 -- index reads from its end instead of reading the whole queue.
 CREATE INDEX IF NOT EXISTS queue_sent_seq ON queue (last_sent_seq);
+-- A row write's verdict or key changing, or the write leaving, lays its rows again.
+CREATE TRIGGER IF NOT EXISTS queue_rows_answered AFTER UPDATE ON queue
+  WHEN NEW.kind = 'write_rows'
+   AND (OLD.verdict IS NOT NEW.verdict OR OLD.idempotency_key IS NOT NEW.idempotency_key)
+BEGIN
+  INSERT OR IGNORE INTO rows_dirty (item_id, name, id)
+    SELECT item_id, name, id FROM rows_laid WHERE write_id = NEW.id;
+END;
+CREATE TRIGGER IF NOT EXISTS queue_rows_gone AFTER DELETE ON queue
+  WHEN OLD.kind = 'write_rows'
+BEGIN
+  INSERT OR IGNORE INTO rows_dirty (item_id, name, id)
+    SELECT item_id, name, id FROM rows_laid WHERE write_id = OLD.id AND batch IS NULL;
+  DELETE FROM rows_laid WHERE write_id = OLD.id AND batch IS NULL;
+END;
 -- No index on `depends_on`: finding rows whose JSON array contains an id is a
 -- scan whatever is indexed, and an index would only make it look cheap.
 
