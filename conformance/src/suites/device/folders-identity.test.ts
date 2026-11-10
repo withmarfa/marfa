@@ -2560,19 +2560,6 @@ describe("what a pull does with a file whose item is purged", () => {
     // A column this build does not make, as in a store another build made.
     const db = new DatabaseSync(harness.folder.store);
     try {
-      console.log(
-        "QDUMP",
-        JSON.stringify(
-          db
-            .prepare(
-              "SELECT id, kind, item_id, target_id, verdict, reason, payload FROM queue",
-            )
-            .all(),
-        ),
-        JSON.stringify(
-          db.prepare("SELECT path, item_id, writes FROM folder_files").all(),
-        ),
-      );
       db.exec("ALTER TABLE items ADD COLUMN stray TEXT");
     } finally {
       db.close();
