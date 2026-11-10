@@ -49,11 +49,7 @@ pub enum WatchEvent {
     },
     /// The filesystem reported an error; the watch goes on.
     WatcherFailed(String),
-    /// A hydration, or the follow's write to a store kept busy, failed and
-    /// is tried again after `wait`, which doubles after each failure up to
-    /// `RETRY_MOST`; or a pass met a copy changing under its pull or a store
-    /// kept busy, and the next pass runs after `wait`. Told once for each run
-    /// of failures.
+    /// A recoverable failure; the watch will retry after `wait`.
     Retrying { error: CoreError, wait: Duration },
     /// The server cannot be reached, for `Some` reason, or answers again,
     /// for `None`. Told only when it changes.
@@ -454,9 +450,7 @@ impl Folder {
             }
             match passed {
                 Err(WatchError::Core(error)) if hydrated_by_the_follow(&error) => {}
-                // The follow kept changing the copy under the pull, or another
-                // program kept writing to the store; the next pass reads it
-                // again.
+                // The next pass reads the copy again.
                 Err(WatchError::Core(error))
                     if super::copy_changed(&error) || matches!(error, CoreError::StoreBusy(_)) =>
                 {
@@ -1244,8 +1238,7 @@ fn stirred(
 struct Telling {
     standing: Option<Standing>,
     unreachable: bool,
-    /// The code of the failure the pass before ended on, told once for each
-    /// run of passes it ends.
+    /// Last pass failure reported.
     unsettled: Option<&'static str>,
     health_changed: bool,
     /// The last pass ran to its end and left nothing that time alone would

@@ -28,12 +28,7 @@ import {
 } from "../../utils/setup.js";
 import { requireBinary } from "./harness.js";
 
-/**
- * Another program writes to a store while the device writes to it. A debug
- * build holds the device at a gate after a transaction's reads and before its
- * write, so the other program's commit lands in between, which SQLite then
- * refuses the device's write for (`SQLITE_BUSY_SNAPSHOT`).
- */
+// The gate places the competing commit after the transaction's first read.
 
 const WAIT = { timeout: 30_000, interval: 50 };
 /** More reaches of a gate than any bounded retry makes. */
@@ -107,11 +102,6 @@ class Gate {
     renameSync(next, `${this.path}.release`);
   }
 
-  /**
-   * Writes to `store` as another program at each reach, after the device's
-   * reads and before its write, until `enough` says so, then lets every
-   * later reach go on without one. Answers the reaches it wrote at.
-   */
   async contend(store: string, enough: () => boolean): Promise<number> {
     let reach = 0;
     while (!enough()) {

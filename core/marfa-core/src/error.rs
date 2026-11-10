@@ -69,8 +69,7 @@ pub enum CoreError {
     StorageFull(String),
     #[error("store: {0}")]
     Store(String),
-    /// Another connection held the store's write lock, or committed after
-    /// the transaction first read; a new transaction can clear it.
+    /// Store contention that a fresh transaction may clear.
     #[error("the store is busy with another program's write: {0}")]
     StoreBusy(String),
     #[error("{origin} answered {status}, a redirect to {}", location.as_deref().unwrap_or("nowhere it named"))]

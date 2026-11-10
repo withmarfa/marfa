@@ -12,12 +12,7 @@ const ATTEMPTS: u32 = 5;
 const FIRST_WAIT: Duration = Duration::from_millis(20);
 const POLL: Duration = Duration::from_millis(10);
 
-/// Runs `attempt` again from its first read, after a wait that doubles,
-/// while it fails `StoreBusy`, and answers its last result. In WAL mode a
-/// transaction that read and then writes after another connection committed
-/// is refused (`SQLITE_BUSY_SNAPSHOT`) and no wait lets it through: only a
-/// new transaction, which reads what that commit left, can. `attempt` must
-/// hold no transaction of its caller's, and must be one that may run again.
+/// The attempt must be replay-safe and own every transaction it uses.
 pub(crate) fn retrying<T>(
     conn: &Mutex<Connection>,
     stop: &AtomicBool,
@@ -41,8 +36,7 @@ pub(crate) fn retrying<T>(
     }
 }
 
-/// A statement refused busy can leave its transaction open, which would
-/// hold the stale snapshot into the next attempt.
+/// A busy statement can leave a transaction holding a stale snapshot.
 fn rolled_back(conn: &Mutex<Connection>) -> Result<()> {
     let conn = conn
         .lock()
@@ -84,8 +78,6 @@ mod tests {
         (dir, Mutex::new(ours), other)
     }
 
-    /// Reads the count, lets `between` write as another program, then
-    /// writes the count it read plus one, as a read-then-write does.
     fn add_one(conn: &Mutex<Connection>, between: impl FnOnce()) -> Result<()> {
         let mut conn = conn.lock().unwrap();
         let tx = conn.transaction()?;

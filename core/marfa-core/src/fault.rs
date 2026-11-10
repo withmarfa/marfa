@@ -27,10 +27,7 @@ pub fn named(_fault: &str) -> Option<String> {
     None
 }
 
-/// Holds the caller where `MARFA_TEST_FAULT` names `fault` with a path, for
-/// a fixture in another process: at the point's nth reach in this process it
-/// writes n to `<path>.ready`, and goes on once `<path>.release` holds a
-/// number of at least n, or exists and holds none.
+/// A nonnumeric release file releases every reach of the fixture's gate.
 #[cfg(debug_assertions)]
 pub fn gate(fault: &str) {
     use std::collections::HashMap;
