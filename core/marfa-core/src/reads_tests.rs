@@ -581,6 +581,107 @@ fn declaring_one_type_twice_in_a_set_is_refused() {
 }
 
 #[test]
+fn a_declared_table_is_judged_as_the_server_judges_it() {
+    let core = Core::open_in_memory(None).unwrap();
+    let ledger = |columns: serde_json::Value| {
+        json!({"id": "app.acme.ledger", "fields": {"title": {"type": "string"}},
+               "tables": {"lines": {"columns": columns}}})
+    };
+    let refused = core
+        .declare_types(&[ledger(
+            json!({"memo": {"type": "string", "adds_up": "sum"}}),
+        )])
+        .unwrap_err();
+    assert!(
+        matches!(&refused, CoreError::Invalid(message)
+            if message.contains("app.acme.ledger") && message.contains("adds_up")),
+        "{refused:?}"
+    );
+    assert!(core.declared_types().unwrap().is_empty());
+    core.declare_types(&[ledger(
+        json!({"amount": {"type": "number", "adds_up": "sum"}}),
+    )])
+    .unwrap();
+    assert_eq!(core.declared_types().unwrap().len(), 1);
+}
+
+#[test]
+fn a_declared_table_may_not_change_one_a_type_above_it_declares() {
+    let core = Core::open_in_memory(None).unwrap();
+    let base = json!({"id": "app.acme.base", "fields": {},
+        "tables": {"lines": {"columns": {"a": {"type": "string"}}}}});
+    let child = |columns: serde_json::Value| {
+        json!({"id": "app.acme.child", "parent": "app.acme.base", "fields": {},
+               "tables": {"lines": {"columns": columns}}})
+    };
+    let refused = core
+        .declare_types(&[base.clone(), child(json!({"b": {"type": "number"}}))])
+        .unwrap_err();
+    assert!(
+        matches!(&refused, CoreError::Invalid(message) if message.contains("app.acme.base")),
+        "{refused:?}"
+    );
+    core.declare_types(&[base, child(json!({"a": {"type": "string"}}))])
+        .unwrap();
+}
+
+#[test]
+fn a_declared_table_key_nothing_reads_is_refused() {
+    let core = Core::open_in_memory(None).unwrap();
+    let refused = core
+        .declare_types(&[json!({"id": "app.acme.ledger", "fields": {},
+            "tables": {"lines": {"mystery": true, "columns": {"a": {"type": "string"}}}}})])
+        .unwrap_err();
+    assert!(
+        matches!(&refused, CoreError::Invalid(message) if message.contains("tables.lines.mystery")),
+        "{refused:?}"
+    );
+}
+
+#[test]
+fn a_declared_subtype_restating_its_parent_s_table_with_the_defaults_written_down_is_taken() {
+    let core = Core::open_in_memory(None).unwrap();
+    let spelled = json!({"lines": {"columns": {
+        "a": {"type": "string", "required": false, "searchable": false}}}});
+    core.declare_types(&[
+        json!({"id": "app.acme.ledger", "fields": {}, "tables": spelled.clone()}),
+        json!({"id": "app.acme.child", "parent": "app.acme.ledger", "fields": {},
+               "tables": spelled}),
+    ])
+    .unwrap();
+}
+
+#[test]
+fn a_declared_parent_and_subtype_may_declare_one_table_alike_in_either_order() {
+    let memo = json!({"lines": {"columns": {"memo": {"type": "string"}}}});
+    let parent = json!({"id": "app.acme.ledger", "fields": {}, "tables": memo.clone()});
+    let child = json!({"id": "app.acme.child", "parent": "app.acme.ledger", "fields": {},
+                       "tables": memo});
+    for set in [
+        [parent.clone(), child.clone()],
+        [child.clone(), parent.clone()],
+    ] {
+        let core = Core::open_in_memory(None).unwrap();
+        core.declare_types(&set).unwrap();
+        let read = core.item_type("app.acme.child").unwrap();
+        assert_eq!(read.tables["lines"]["columns"]["memo"]["type"], "string");
+    }
+}
+
+#[test]
+fn a_declared_column_reads_back_as_the_kind_its_format_names() {
+    let core = Core::open_in_memory(None).unwrap();
+    core.declare_types(&[json!({"id": "app.acme.ledger", "fields": {},
+        "tables": {"lines": {"columns": {"to": {"type": "string", "format": "email"}}}}})])
+        .unwrap();
+    let read = core.item_type("app.acme.ledger").unwrap();
+    assert_eq!(
+        read.tables["lines"]["columns"]["to"],
+        json!({"type": "email", "label": "To"})
+    );
+}
+
+#[test]
 fn changes_since_is_refused_part_way_through_a_hydration_as_every_read_of_edges_is() {
     let server = Scripted::start();
     let core = notes(&server);

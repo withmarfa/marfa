@@ -279,6 +279,8 @@ export interface ItemType {
   parent: string | null;
   version: number;
   fields: TypeField[];
+  /** Declared and inherited tables, with resolved labels. */
+  tables: Record<string, unknown>;
   title_field: string | null;
   body_field: string | null;
   /** False where an item's body does not name it, from the nearest type

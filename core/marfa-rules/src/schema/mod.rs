@@ -8,6 +8,7 @@ mod field;
 mod icons;
 mod registry;
 mod resolve;
+mod tables;
 mod type_def;
 mod unread;
 
@@ -28,6 +29,10 @@ pub use registry::Registry;
 pub use resolve::{
     ChainFault, MAX_RESOLUTION_DEPTH, canonical, chain, label_or_default, labelled, plural_of,
     read_back_free, resolve, roles_of, with_field_labels,
+};
+pub use tables::{
+    ADDS_UP, ITEM_KIND, MAX_COLUMNS_PER_TABLE, MAX_TABLES_PER_TYPE, chain_tables, declared_tables,
+    normalize_table, validate_columns, with_set_stored, with_table_labels,
 };
 pub use type_def::validate_type;
 pub use unread::{unread_edge_keys, unread_keys};

@@ -733,7 +733,7 @@ impl Core {
     /// `app.*` one it holds in another definition, where the key may.
     /// On a copy that holds a server's catalog the set waits for the next
     /// hydration. A set that names one id twice, or a `status` field with no
-    /// words anywhere in its chain, is refused `Invalid`.
+    /// words anywhere in its chain, or a table a server would refuse, is refused `Invalid`.
     pub fn declare_types(&self, types: &[Value]) -> Result<()> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
@@ -762,6 +762,15 @@ impl Core {
             rows.push(row);
         }
         marfa_rules::catalog::refuse_wordless_status(types)?;
+        if let Err(found) = marfa_rules::schema::declared_tables(types, &known)
+            && let Some((id, issue)) = found.into_iter().next()
+        {
+            return Err(CoreError::Invalid(format!(
+                "{id} declares tables that do not hold: {}: {}",
+                issue.field,
+                issue.message()
+            )));
+        }
         // The same set again writes nothing, so a declaration at each launch
         // is no change to the copy (`changes_since`).
         let mut sorted = rows.clone();

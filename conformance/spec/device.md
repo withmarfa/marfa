@@ -4558,6 +4558,12 @@ A device MUST answer an item type as `GET /types/{id}` answers it (`types/read`)
 
 **Tests:** `device/catalog.test.ts › reads a registered type with its label and inherited fields, and an edge type's reverse name, from the copy alone`, `device/fidelity.test.ts › reads a registered type and edge type from a working copy as the server answers them`, `device/folders-frontmatter.test.ts › takes each display hint from the nearest type that sets it, as the server resolves them`.
 
+### `device/catalog-type-tables`
+
+A device MUST answer an item type with the tables it declares and those it inherits, as `GET /types/{id}` answers them (`tables/inherit`, `tables/labels-read`).
+
+**Tests:** `device/catalog.test.ts › reads the tables a type declares and those it inherits, each labelled by its name where it declares none, from the copy alone`, `device/save-before-sync.test.ts › reads a declared table as the server reads it, each column as the kind its format names`.
+
 ### `device/catalog-icon`
 
 When a device replaces its item type catalog, a device MUST hold each type's `display_hints.icon` as the server lists it, the owner's icon for the type included (`types/icon-read`).
@@ -5124,7 +5130,7 @@ If an app declares a type whose identifier breaks the type grammar or uses a res
 
 If an app declares a field, or a member of a list's entries (`items_fields`), that has a `type` other than a field type (for a member, other than `string`, `email`, `url`, `enum`, `boolean`, `integer`, `number`, `date` or `datetime`); that has `items_type` `status`; that has `status_values` where its `type` is not `status`; whose `type` is `status` with `enum_values`, or with `status_values` that is not a non-empty list of words, each exactly a `value` and a `group`, the `value` a lowercase letter then up to 63 lowercase letters, digits and underscores and named once, the `group` one of `not_started`, `in_progress`, `completed` and `canceled`; that is a `string` whose `format` is `currency` with a `maxLength`; or that has `items_fields` where it is not an `array` whose `items_type` is `object`, or that names no member, or a member that is not an object naming its `type`, then a device MUST refuse the declaration `invalid`, naming the field.
 
-**Reason:** the server refuses these when the type is registered (`types/field-grammar`, `types/status-refused`, `types/items-fields-refused`). A list whose entry declaration a device took, with a member of no type or of a kind an entry does not have, would fail every later write of that list with a decoding error instead of a refusal. A device checks only these. It leaves the rest of the field grammar to the server, which refuses it when a hydration registers the declaration (`device/hydrate-unregistered-said`): for example, in a field or in a member, an `enum` without `enum_values`, a `minimum` above its `maximum` or on a field that is not a number, a `format` it does not know or on a kind the format does not fit, and an `array` without `items_type`.
+**Reason:** the server refuses these when the type is registered (`types/field-grammar`, `types/status-refused`, `types/items-fields-refused`). A list whose entry declaration a device took, with a member of no type or of a kind an entry does not have, would fail every later write of that list with a decoding error instead of a refusal. A device checks only these, and the tables a type declares (`device/declaration-tables-refused`). It leaves the rest of the field grammar to the server, which refuses it when a hydration registers the declaration (`device/hydrate-unregistered-said`): for example, in a field or in a member, an `enum` without `enum_values`, a `minimum` above its `maximum` or on a field that is not a number, a `format` it does not know or on a kind the format does not fit, and an `array` without `items_type`.
 
 **Tests:** `device/save-before-sync.test.ts › refuses a declaration of a list of entries or a currency the server refuses, naming the field`, `› holds a member of a list's entries to the checks a declaration makes of a field, naming the field`.
 
@@ -5135,6 +5141,14 @@ Where an app declares a `string` field, or a member of a list's entries, whose `
 **Reason:** a device that read the declared `type` alone would take a member the server refuses, and keep a `url` untrimmed that the server trims (`types/url-stored`).
 
 **Tests:** `device/save-before-sync.test.ts › judges a declared string by the kind its format names, as the server does, in a field and in a member`, `› refuses a declaration of a list of entries or a currency the server refuses, naming the field`, `compliance/field-rules.test.ts › is held as that kind in a field and in a member of a list's entries`, `› is refused as a member where the kind is one an entry does not take`.
+
+### `device/declaration-tables-refused`
+
+If an app declares a table that the server refuses under `tables/unknown-key`, `tables/name-grammar`, `tables/column-kind`, `tables/columns-required`, `tables/column-rules`, `tables/adds-up-refused`, `tables/searchable-refused`, `tables/item-unregistered`, `tables/item-values-refused`, `tables/too-many` or `tables/inherit-changed`, or that a type below it in the declaration declares otherwise (`tables/inherit-gained`), then a device MUST refuse the declaration `invalid`, naming the type and the fault.
+
+**Reason:** the server refuses these when the type is registered, and a table a device took would fail there instead of at the app's own declaration.
+
+**Tests:** `device/save-before-sync.test.ts › refuses a declaration of a table the server refuses, naming the type and the fault`.
 
 ### `device/declaration-refused-whole`
 

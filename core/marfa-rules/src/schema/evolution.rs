@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use super::{Obj, as_obj};
 
-const FREE_MEMBERS: [&str; 7] = [
+const FREE_MEMBERS: [&str; 8] = [
     "id",
     "label",
     "plural",
@@ -14,6 +14,7 @@ const FREE_MEMBERS: [&str; 7] = [
     "display_hints",
     "version",
     "fields",
+    "tables",
 ];
 
 fn shape_of(field: &Value) -> Value {
@@ -31,6 +32,44 @@ fn shape_of(field: &Value) -> Value {
         }
     }
     Value::Object(shape)
+}
+
+fn column_shape_of(column: &Value) -> Value {
+    let mut shape = column.clone();
+    if let Value::Object(shape) = &mut shape {
+        shape.remove("description");
+        shape.remove("label");
+    }
+    shape
+}
+
+/// The tables and columns only a schema writer may remove, change or require.
+fn table_changes(stored: &Obj, next: &Obj) -> Vec<String> {
+    let before = as_obj(stored.get("tables")).cloned().unwrap_or_default();
+    let after = as_obj(next.get("tables")).cloned().unwrap_or_default();
+    let mut needs = Vec::new();
+    for (name, table) in &before {
+        let Some(replaced) = after.get(name) else {
+            needs.push(format!("tables.{name}"));
+            continue;
+        };
+        let columns = |table: &Value| as_obj(table.get("columns")).cloned().unwrap_or_default();
+        let (was, is) = (columns(table), columns(replaced));
+        for (column, definition) in &was {
+            if is
+                .get(column)
+                .is_none_or(|changed| column_shape_of(definition) != column_shape_of(changed))
+            {
+                needs.push(format!("tables.{name}.columns.{column}"));
+            }
+        }
+        for (column, definition) in &is {
+            if !was.contains_key(column) && definition.get("required") == Some(&Value::Bool(true)) {
+                needs.push(format!("tables.{name}.columns.{column}"));
+            }
+        }
+    }
+    needs
 }
 
 /// Returns (what only a schema writer may change, optional fields added).
@@ -68,6 +107,7 @@ pub fn evolution_of(stored: &Obj, next: &Obj) -> (Vec<String>, Vec<String>) {
             additions.push(name.clone());
         }
     }
+    needs.extend(table_changes(stored, next));
     (needs, additions)
 }
 

@@ -428,6 +428,9 @@ pub struct ItemType {
     pub parent: Option<String>,
     pub version: i64,
     pub fields: Vec<TypeField>,
+    /// Each table the type declares or inherits, by name.
+    #[napi(ts_type = "Record<string, unknown>")]
+    pub tables: serde_json::Value,
     pub title_field: Option<String>,
     pub body_field: Option<String>,
     /// False where an item's body does not name it, such as a highlight's
@@ -529,6 +532,7 @@ fn item_type(held: marfa_core::ItemType) -> ItemType {
         parent: held.parent,
         version: held.version,
         fields: held.fields.into_iter().map(type_field).collect(),
+        tables: serde_json::Value::Object(held.tables),
         title_field: held.title_field,
         body_field: held.body_field,
         name_from_body: held.name_from_body,

@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use super::{Issue, Obj, REFUSED_TYPE_KEYS, as_obj};
 
-const TYPE_KEYS: [&str; 15] = [
+const TYPE_KEYS: [&str; 16] = [
     "id",
     "parent",
     "label",
@@ -12,6 +12,7 @@ const TYPE_KEYS: [&str; 15] = [
     "description",
     "version",
     "fields",
+    "tables",
     "roles",
     "display_hints",
     "link_field",
@@ -47,6 +48,21 @@ const MEMBER_KEYS: [&str; 9] = [
     "maxLength",
     "minimum",
     "maximum",
+];
+const TABLE_KEYS: [&str; 3] = ["label", "description", "columns"];
+const COLUMN_KEYS: [&str; 12] = [
+    "type",
+    "label",
+    "description",
+    "required",
+    "enum_values",
+    "format",
+    "maxLength",
+    "minimum",
+    "maximum",
+    "type_constraints",
+    "adds_up",
+    "searchable",
 ];
 const HINT_KEYS: [&str; 4] = ["title_field", "body_field", "name_from_body", "icon"];
 const VERSION_KEYS: [&str; 4] = [
@@ -156,6 +172,14 @@ pub fn unread_keys(input: &Obj) -> Vec<Issue> {
     issues
 }
 
+pub(super) fn unread_table_keys(definition: &Obj, path: &str) -> Vec<Issue> {
+    unread_of(definition, path, &TABLE_KEYS, "a table definition", &[])
+}
+
+pub(super) fn unread_column_keys(definition: &Obj, path: &str) -> Vec<Issue> {
+    unread_of(definition, path, &COLUMN_KEYS, "a column definition", &[])
+}
+
 pub fn unread_edge_keys(input: &Obj) -> Vec<Issue> {
     let mut issues = unread_of(input, "", &EDGE_KEYS, "an edge type schema", &[]);
     for (name, definition) in as_obj(input.get("property_schema")).into_iter().flatten() {
@@ -170,4 +194,16 @@ pub fn unread_edge_keys(input: &Obj) -> Vec<Issue> {
         }
     }
     issues
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_column_takes_every_key_a_member_of_an_entry_takes() {
+        for key in MEMBER_KEYS {
+            assert!(COLUMN_KEYS.contains(&key), "{key}");
+        }
+    }
 }

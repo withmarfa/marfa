@@ -4264,6 +4264,10 @@ export interface components {
             fields: {
                 [key: string]: components["schemas"]["FieldDefinition"];
             };
+            /** @description The type's own tables, by name. `GET /types/{id}` adds the tables it inherits. */
+            tables?: {
+                [key: string]: components["schemas"]["TableDefinition"];
+            };
             /** @description The version number the type was last saved with. */
             version: number;
             display_hints?: components["schemas"]["DisplayHints"] & unknown;
@@ -4361,6 +4365,10 @@ export interface components {
             fields: {
                 [key: string]: components["schemas"]["FieldDefinition"];
             };
+            /** @description The type's own tables, by name: at most 32, each named by a lowercase letter, then up to 63 lowercase letters, digits and underscores. A subtype gets its parents' tables and declares only its own. */
+            tables?: {
+                [key: string]: components["schemas"]["TableDefinition"];
+            };
             /** @description A number for you to track changes to the type. Marfa never changes it. Leave it out for 0. */
             version?: number;
             /** @description The identifier of the type this one inherits from. To set or change it, you need write on it, unless Marfa ships it. Leave it out for a type with no parent. */
@@ -4446,6 +4454,10 @@ export interface components {
             /** @description The type's own fields, by name. */
             fields: {
                 [key: string]: components["schemas"]["FieldDefinition"];
+            };
+            /** @description The type's own tables, by name, as on registration. Tables you leave out are removed, which needs `schema.write`, as removing a field does. */
+            tables?: {
+                [key: string]: components["schemas"]["TableDefinition"];
             };
             /** @description A number for you to track changes to the type. Marfa never changes it. Leave it out for 0. */
             version?: number;
@@ -6751,6 +6763,57 @@ export interface components {
             rules: components["schemas"]["ConfigSettingRule"][];
             /** @description Every setting only the environment sets. */
             start_only: components["schemas"]["StartOnlySetting"][];
+        };
+        /** @description One column of a table: its type, and how rows may fill it. */
+        ColumnDefinition: {
+            /**
+             * @description The column's type. `item` holds the ID of an item, and `type_constraints` may name the types it accepts. The others are as a field of that type.
+             * @enum {string}
+             */
+            type: "string" | "email" | "url" | "enum" | "boolean" | "integer" | "number" | "date" | "datetime" | "item";
+            /** @description A name for people to read, up to 100 characters. Leave it out and a type read answers one made from the column's name, such as `Due At` for `due_at`. The type list answers only the declared label. */
+            label?: string;
+            /** @description What the column holds. */
+            description?: string;
+            /** @description `true` if every row must have a value for the column. */
+            required?: boolean;
+            /** @description The values an `enum` column allows. */
+            enum_values?: string[];
+            /**
+             * @description A refinement of a `string` column, as a field's `format`. Not for an `item` column.
+             * @enum {string}
+             */
+            format?: "url" | "email" | "datetime" | "date" | "bcp47" | "iso3166" | "currency" | "phone";
+            /** @description The longest value a `string` or `enum` column allows. Not for an `item` column. */
+            maxLength?: number;
+            /** @description The lowest value the column allows, itself included. Only a `number` or `integer` column takes it. */
+            minimum?: number;
+            /** @description The highest value the column allows, itself included. Only a `number` or `integer` column takes it. */
+            maximum?: number;
+            /** @description The identifiers of the types an `item` column accepts. Each must be registered, or be the type that declares the column. Leave it out to accept any type. */
+            type_constraints?: string[];
+            /**
+             * @description How the column totals: `sum` and `average` for a `number` or `integer` column, `min` and `max` also for a `date` or `datetime` column, and `count` of the rows that hold a value for any column. Leave it out for no total.
+             * @enum {string}
+             */
+            adds_up?: "sum" | "average" | "min" | "max" | "count";
+            /** @description `true` to feed full-text search from a `string`, `email` or `url` column. Defaults to `false`, unlike a field. */
+            searchable?: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        /** @description One table a type declares: the rows an item of the type holds under a name, in the columns it lists. */
+        TableDefinition: {
+            /** @description A name for people to read, up to 100 characters. Leave it out and a type read answers one made from the table's name, such as `Line Items` for `line_items`. */
+            label?: string;
+            /** @description What the table holds. */
+            description?: string;
+            /** @description The table's columns, by name: at least one and at most 64. */
+            columns: {
+                [key: string]: components["schemas"]["ColumnDefinition"];
+            };
+        } & {
+            [key: string]: unknown;
         };
     };
     responses: never;

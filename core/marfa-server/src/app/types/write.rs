@@ -1,7 +1,7 @@
 use marfa_rules::grammar;
 use marfa_rules::schema::{
     Obj, broken_compatible_dependents, descendant_depth, evolution_of, icon_issue, labelled,
-    parent_chain_fault, read_back_free, resolve, validate_type,
+    parent_chain_fault, read_back_free, resolve, validate_type, with_set_stored,
 };
 use rusqlite::{Transaction, params};
 use serde_json::{Value, json};
@@ -140,11 +140,12 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
     Ok(created)
 }
 
-/// What a change merges into a type's own definition: a field set to `null` is removed.
+/// What a change merges into a type's own definition: a field or table set to `null` is removed.
 pub struct Merge {
     pub label: Option<String>,
     pub description: Option<String>,
     pub fields: Obj,
+    pub tables: Obj,
 }
 
 enum Replacement {
@@ -152,8 +153,13 @@ enum Replacement {
     Merge(Merge),
 }
 
-/// The nearest ancestor of `id` whose own definition has the field.
-fn inherited_from<'a>(catalog: &'a Catalog, stored: &'a Obj, field: &str) -> Option<&'a str> {
+/// The nearest ancestor whose own definition has the field or table `name`.
+fn inherited_from<'a>(
+    catalog: &'a Catalog,
+    stored: &'a Obj,
+    member: &str,
+    name: &str,
+) -> Option<&'a str> {
     let mut seen: Vec<&str> = Vec::new();
     let mut next = text_of(stored, "parent");
     while let Some(parent) = next {
@@ -163,15 +169,21 @@ fn inherited_from<'a>(catalog: &'a Catalog, stored: &'a Obj, field: &str) -> Opt
         seen.push(parent);
         let definition = catalog.types.get(parent)?;
         if definition
-            .get("fields")
+            .get(member)
             .and_then(Value::as_object)
-            .is_some_and(|fields| fields.contains_key(field))
+            .is_some_and(|held| held.contains_key(name))
         {
             return Some(parent);
         }
         next = text_of(definition, "parent");
     }
     None
+}
+
+fn inherited_removal(id: &str, name: &str, owner: &str) -> Refusal {
+    Refusal::validation(format!(
+        "{id} inherits {name} from {owner}, so it cannot remove it. Removing {name} from {owner} removes it from every type that inherits it."
+    ))
 }
 
 fn merged(catalog: &Catalog, id: &str, stored: &Obj, merge: Merge) -> Result<Obj> {
@@ -186,14 +198,31 @@ fn merged(catalog: &Catalog, id: &str, stored: &Obj, merge: Merge) -> Result<Obj
         if !value.is_null() {
             fields.insert(name, value);
         } else if fields.remove(&name).is_none()
-            && let Some(owner) = inherited_from(catalog, stored, &name)
+            && let Some(owner) = inherited_from(catalog, stored, "fields", &name)
         {
-            return Err(Refusal::validation(format!(
-                "{id} inherits {name} from {owner}, so it cannot remove it. Removing {name} from {owner} removes it from every type that inherits it."
-            )));
+            return Err(inherited_removal(id, &name, owner));
         }
     }
     definition.insert("fields".into(), Value::Object(fields));
+    let mut tables = definition
+        .get("tables")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    for (name, value) in merge.tables {
+        if !value.is_null() {
+            tables.insert(name, value);
+        } else if tables.remove(&name).is_none()
+            && let Some(owner) = inherited_from(catalog, stored, "tables", &name)
+        {
+            return Err(inherited_removal(id, &name, owner));
+        }
+    }
+    if tables.is_empty() {
+        definition.remove("tables");
+    } else {
+        definition.insert("tables".into(), Value::Object(tables));
+    }
     if let Some(label) = merge.label {
         definition.insert("label".into(), label.into());
     }
@@ -308,7 +337,7 @@ fn require_evolution(
     Err(Refusal::new(
         Code::Forbidden,
         format!(
-            "Changing {} requires schema.write. A credential holding metadata.types:write alone may add optional fields that no stored row holds a value under, and change the label, plural, description, display hints and version, and a kept field's description and labels.",
+            "Changing {} requires schema.write. A credential holding metadata.types:write alone may add optional fields that no stored item holds a value under, add a table or an optional column, and change the type's label, plural, description, display hints and version, or a field's, table's or column's label and description.",
             changes.join(", ")
         ),
     )
@@ -513,9 +542,7 @@ pub fn plan_restored(catalog: &Catalog, archived: &[Archived]) -> Result<Restori
         }
         raw.push(definition.clone());
     }
-    let registry = raw
-        .iter()
-        .fold(catalog.types.clone(), |held, row| held.with(row.clone()));
+    let registry = with_set_stored(&catalog.types, &raw);
     let mut plan = Restoring {
         fresh: Vec::new(),
         skipped: 0,

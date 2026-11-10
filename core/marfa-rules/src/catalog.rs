@@ -127,6 +127,8 @@ pub struct ItemType {
     pub parent: Option<String>,
     pub version: i64,
     pub fields: Vec<TypeField>,
+    /// Each table the type declares or inherits, by name, with the labels a read of it gives.
+    pub tables: Map<String, Value>,
     pub title_field: Option<String>,
     pub body_field: Option<String>,
     /// False where an item's body does not name it, such as a highlight's passage.
@@ -368,7 +370,7 @@ pub fn refuse_wordless_status(types: &[Value]) -> Result<(), RuleError> {
 pub const STATUS_GROUPS: [&str; 4] = ["not_started", "in_progress", "completed", "canceled"];
 
 /// A lowercase letter, then up to 63 lowercase letters, digits and underscores.
-pub fn status_word(text: &str) -> bool {
+pub fn api_name(text: &str) -> bool {
     let mut chars = text.chars();
     text.len() <= 64
         && chars.next().is_some_and(|first| first.is_ascii_lowercase())
@@ -405,7 +407,7 @@ pub fn status_declaration(kind: &str, definition: &Value) -> Option<String> {
                 "with the status word {entry}, which is not an object of exactly value and group"
             ));
         };
-        let Some(word) = pair["value"].as_str().filter(|word| status_word(word)) else {
+        let Some(word) = pair["value"].as_str().filter(|word| api_name(word)) else {
             return Some(format!(
                 "with the status word {}, which is not a lowercase letter then up to 63 lowercase letters, digits and underscores",
                 pair["value"]
@@ -707,6 +709,7 @@ pub fn resolve_item_type(
     let Some((_, own)) = chain.first().copied() else {
         return Ok(None);
     };
+    let tables = crate::schema::chain_tables(chain.iter().rev().map(|(_, row)| *row));
     let mut fields: BTreeMap<String, TypeField> = BTreeMap::new();
     for (declaring, row) in chain.iter().rev() {
         if let Some(declared) = row.get("fields").and_then(Value::as_object) {
@@ -741,6 +744,7 @@ pub fn resolve_item_type(
         parent: text(own, "parent"),
         version: own.get("version").and_then(Value::as_f64).unwrap_or(0.0) as i64,
         fields: fields.into_values().collect(),
+        tables: crate::schema::with_table_labels(&tables),
         title_field: hints.title_field(id).map(str::to_string),
         body_field: hints.body_field(id).map(str::to_string),
         name_from_body: hints.name_from_body(id),
@@ -1777,5 +1781,34 @@ mod tests {
     fn a_parent_cycle_ends() {
         let catalog = catalog(&[("a", Some("b")), ("b", Some("a"))]);
         assert!(!catalog.matches("z", "a"));
+    }
+
+    #[test]
+    fn a_resolved_type_holds_the_tables_it_declares_and_inherits_with_their_labels() {
+        let held: HashMap<String, Map<String, Value>> = [
+            json!({"id": "app.acme.base", "fields": {},
+                   "tables": {"lines": {"columns": {"due_at": {"type": "date"}}}}}),
+            json!({"id": "app.acme.child", "parent": "app.acme.base", "fields": {},
+                   "tables": {"notes": {"label": "Jottings", "columns": {"text": {"type": "string"}}}}}),
+        ]
+        .into_iter()
+        .filter_map(|row| Some((row["id"].as_str()?.to_string(), row.as_object()?.clone())))
+        .collect();
+        let child = resolve_item_type("app.acme.child", &held, &Catalog::empty())
+            .unwrap()
+            .unwrap();
+        let mut names: Vec<&String> = child.tables.keys().collect();
+        names.sort();
+        assert_eq!(names, ["lines", "notes"]);
+        assert_eq!(child.tables["lines"]["label"], "Lines");
+        assert_eq!(
+            child.tables["lines"]["columns"]["due_at"]["label"],
+            "Due At"
+        );
+        assert_eq!(child.tables["notes"]["label"], "Jottings");
+        let base = resolve_item_type("app.acme.base", &held, &Catalog::empty())
+            .unwrap()
+            .unwrap();
+        assert_eq!(base.tables.len(), 1);
     }
 }

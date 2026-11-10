@@ -682,6 +682,8 @@ pub struct ItemType {
     pub parent: Option<String>,
     pub version: i64,
     pub fields: Vec<TypeField>,
+    /// Each table the type declares or inherits, by name.
+    pub tables: JsonObject,
     pub title_field: Option<String>,
     pub body_field: Option<String>,
     /// False where an item's body does not name it, such as a highlight's
@@ -770,6 +772,7 @@ impl From<marfa_core::ItemType> for ItemType {
             parent: held.parent,
             version: held.version,
             fields: held.fields.into_iter().map(Into::into).collect(),
+            tables: held.tables.into(),
             title_field: held.title_field,
             body_field: held.body_field,
             name_from_body: held.name_from_body,

@@ -9,7 +9,7 @@ use super::{
     Issue, MAX_LABEL_LENGTH, Obj, as_obj, describe, kind, number, positive_integer, text, whole,
 };
 use crate::builtin;
-use crate::catalog::{STATUS_GROUPS, status_word};
+use crate::catalog::{STATUS_GROUPS, api_name};
 
 const ANNOTATING_FORMATS: [&str; 4] = ["bcp47", "iso3166", "currency", "phone"];
 
@@ -406,36 +406,40 @@ fn validate_items_fields(path: &str, fd: &Obj, errors: &mut Vec<Issue>) {
         ));
         return;
     };
-    let vocabulary = vocabulary();
     for (member, definition) in members {
-        let member_path = format!("{at}.{member}");
-        if let Some(record) = definition.as_object()
-            && let Some(declared) = text(record, "type")
-        {
-            let folded = normalize_field(record, None);
-            let folded_kind = kind(&folded).unwrap_or("");
-            if vocabulary.field_types.iter().any(|t| t == declared)
-                && !vocabulary.member_types.iter().any(|t| t == folded_kind)
-            {
-                errors.push(Issue::new(
-                    format!("{member_path}.type"),
-                    format!("one of: {}", vocabulary.member_types.join(", ")),
-                    describe(folded.get("type")),
-                    "A member of an entry is a plain value. A list, an object, a status or a thumbnail would need nesting an entry does not have.",
-                ));
-                continue;
-            }
-        }
-        validate_field_shape(
-            member,
-            definition,
-            errors,
-            &Shape {
-                inherits_status: false,
-                path: Some(&member_path),
-            },
-        );
+        validate_member(&format!("{at}.{member}"), definition, errors);
     }
+}
+
+/// A plain value of a kind a list entry's member may take.
+pub(super) fn validate_member(path: &str, definition: &Value, errors: &mut Vec<Issue>) {
+    let vocabulary = vocabulary();
+    if let Some(record) = definition.as_object()
+        && let Some(declared) = text(record, "type")
+    {
+        let folded = normalize_field(record, None);
+        let folded_kind = kind(&folded).unwrap_or("");
+        if vocabulary.field_types.iter().any(|t| t == declared)
+            && !vocabulary.member_types.iter().any(|t| t == folded_kind)
+        {
+            errors.push(Issue::new(
+                format!("{path}.type"),
+                format!("one of: {}", vocabulary.member_types.join(", ")),
+                describe(folded.get("type")),
+                "A member of an entry is a plain value. A list, an object, a status or a thumbnail would need nesting an entry does not have.",
+            ));
+            return;
+        }
+    }
+    validate_field_shape(
+        path,
+        definition,
+        errors,
+        &Shape {
+            inherits_status: false,
+            path: Some(path),
+        },
+    );
 }
 
 fn validate_status_values(
@@ -494,7 +498,7 @@ fn validate_status_values(
             continue;
         };
         match record.get("value").and_then(Value::as_str) {
-            Some(word) if status_word(word) => {
+            Some(word) if api_name(word) => {
                 if !seen.insert(word.to_string()) {
                     errors.push(Issue::new(
                         format!("{at}.value"),
