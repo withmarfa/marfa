@@ -173,9 +173,7 @@ function untaken(store: string): number {
   }
 }
 
-/** Gives the folder's store a column this build does not make, as a store
- *  another build of the core made. A process that holds the store open and
- *  is mid-transaction fails on the change, so nothing may have it open. */
+/** Models another build's store; callers must first close every writer. */
 function misshape(folder: CliFolder): void {
   const db = new DatabaseSync(folder.store);
   try {
@@ -523,10 +521,7 @@ it("replaces a refused store a running watch hands to a push, and the watch take
   const watch = folder.watch();
   held.push(watch);
   await vi.waitFor(() => expect(watch.stderr).toContain("watching"), WAIT);
-  // The push holds the folder the watch let go, before it opens the store.
-  // The store becomes another build's then, as a watch the build that made
-  // the store started would have left it, with no process to fail on the
-  // change.
+  // Model another build's store only after the watch has closed it.
   const gate = join(at.base, "gate");
   const push = folder.hold(["folders", "push", folder.dir], {
     MARFA_TEST_FAULT: `gate-asked-store=${gate}`,
@@ -550,7 +545,6 @@ it("replaces a refused store a running watch hands to a push, and the watch take
     `pushed ${ctx.runId}`,
   );
 
-  // The edit meets a watch that has the new store back.
   await vi.waitFor(
     () => expect(takenBack(watch), watch.stdout + watch.stderr).toBe(true),
     WAIT,

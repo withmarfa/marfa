@@ -137,16 +137,12 @@ pub(crate) fn hold_if_asked() {
     }
 }
 
-/// Holds a command that asked for a folder, once it has the folder and before
-/// it opens the store, until a fixture releases its gate, so the fixture can
-/// change the store while no process has it open.
+/// Lets fixtures alter a handed-over store before it opens.
 pub(crate) fn hold_before_store() {
     #[cfg(debug_assertions)]
     wait_at_gate("gate-asked-store");
 }
 
-/// Tells a fixture the caller waits (`<gate>.ready`) and waits for it to
-/// release the caller (`<gate>.release`).
 #[cfg(debug_assertions)]
 fn wait_at_gate(fault: &str) {
     let Some(gate) = crate::fault::named(fault) else {
