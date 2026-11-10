@@ -12,6 +12,7 @@ mod keys;
 mod moving;
 mod overview;
 mod revoke;
+mod rows;
 mod sources;
 mod types;
 mod update;
@@ -62,8 +63,10 @@ fn definitions() -> Vec<(Group, Definition)> {
         (Group::Items, overview::definition()),
         (Group::Items, find::definition()),
         (Group::Items, get::definition()),
+        (Group::Items, rows::read_definition()),
         (Group::Items, create::definition()),
         (Group::Items, update::definition()),
+        (Group::Items, rows::write_definition()),
         (Group::Items, delete::definition()),
         (Group::Schema, types::definition()),
         (Group::Schema, views::definition()),
@@ -89,8 +92,10 @@ fn works_on_items(name: &str) -> bool {
         overview::NAME
             | find::NAME
             | get::NAME
+            | rows::READ_NAME
             | create::NAME
             | update::NAME
+            | rows::WRITE_NAME
             | delete::NAME
             | bulk::NAME
             | moving::NAME
@@ -102,10 +107,13 @@ fn offered(caller: &Caller, name: &str) -> bool {
         return false;
     }
     match name {
-        overview::NAME | find::NAME | get::NAME => true,
-        create::NAME | update::NAME | delete::NAME | bulk::NAME | moving::NAME => {
-            caller.writes_a_type()
-        }
+        overview::NAME | find::NAME | get::NAME | rows::READ_NAME => true,
+        create::NAME
+        | update::NAME
+        | rows::WRITE_NAME
+        | delete::NAME
+        | bulk::NAME
+        | moving::NAME => caller.writes_a_type(),
         types::NAME => caller.may_save_types(),
         views::NAME => caller.writes_views(),
         docs::NAME | sources::LIST_NAME | sources::NAME_NAME => true,
@@ -196,6 +204,8 @@ async fn run(
         get::NAME => get::run(app, caller, arguments).await,
         create::NAME => create::run(app, caller, arguments, exact).await,
         update::NAME => update::run(app, caller, arguments, exact).await,
+        rows::READ_NAME => rows::read(app, caller, arguments).await,
+        rows::WRITE_NAME => rows::write(app, caller, arguments).await,
         delete::NAME => delete::run(app, caller, arguments).await,
         bulk::NAME => bulk::run(app, caller, arguments, exact).await,
         moving::NAME => moving::run(app, caller, arguments, exact).await,

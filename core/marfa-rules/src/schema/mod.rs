@@ -35,7 +35,7 @@ pub use tables::{
     declared_tables, normalize_table, order_of, validate_columns, with_set_stored,
     with_table_labels,
 };
-pub use type_def::validate_type;
+pub use type_def::{declared_conflicts, validate_type};
 pub use unread::{unread_edge_keys, unread_keys};
 
 pub type Obj = Map<String, Value>;

@@ -5,8 +5,9 @@ import { gunzipSync, gzipSync } from "node:zlib";
  * A `marfa-archive-v0`, read and built here rather than taken from the server.
  *
  * An archive is a plain tar: `manifest.json`, then `instance.ndjson.gz`,
- * `items.ndjson.gz` and `edges.ndjson.gz`, each a gzip-compressed line file,
- * then a raw `blobs/<hash>` entry for each blob it carries.
+ * `items.ndjson.gz`, `edges.ndjson.gz` and `rows.ndjson.gz`, each a
+ * gzip-compressed line file, then a raw `blobs/<hash>` entry for each blob it
+ * carries.
  *
  * Most archive fixtures post back what `GET /export?format=archive` produced,
  * which keeps the round trip honest. A few preconditions cannot be arranged
@@ -28,8 +29,19 @@ export interface ArchiveFile {
   body: string | Uint8Array;
 }
 
-/** The three line files, each written as `<name>.ndjson.gz`. */
-export type LineFile = "instance" | "items" | "edges";
+/** The four line files, each written as `<name>.ndjson.gz`. */
+export type LineFile = "instance" | "items" | "edges" | "rows";
+
+/** The manifest's count of each line file's lines, for those it counts. */
+const COUNTED: Partial<Record<LineFile, string>> = {
+  items: "item_count",
+  edges: "edge_count",
+  rows: "row_count",
+};
+
+function lineCount(text: string): number {
+  return text.split("\n").filter((line) => line !== "").length;
+}
 
 function octal(value: number, width: number): string {
   return value.toString(8).padStart(width - 1, "0") + "\0";
@@ -150,19 +162,31 @@ export function readLineFile(
 
 /**
  * The archive with one line file's text replaced by what `edit` makes of it,
- * every other member kept as it was, in its place.
+ * and the manifest's count of that file's lines kept in step, every other
+ * member kept as it was, in its place.
  */
 export function editLineFile(
   archive: Uint8Array,
   name: LineFile,
   edit: (text: string) => string,
 ): Uint8Array {
+  const entries = listEntries(archive);
+  const found = entries.find((entry) => entry.name === `${name}.ndjson.gz`);
+  const text = edit(found ? gunzipSync(found.body).toString("utf8") : "");
+  const counted = COUNTED[name];
   return tar(
-    listEntries(archive).map((entry) =>
-      entry.name === `${name}.ndjson.gz`
-        ? lineFile(name, edit(gunzipSync(entry.body).toString("utf8")))
-        : { name: entry.name, body: entry.body },
-    ),
+    entries.map((entry) => {
+      if (entry.name === `${name}.ndjson.gz`) return lineFile(name, text);
+      if (entry.name === "manifest.json" && counted !== undefined) {
+        const manifest = JSON.parse(entry.body.toString("utf8")) as Record<
+          string,
+          unknown
+        >;
+        if (counted in manifest) manifest[counted] = lineCount(text);
+        return { name: entry.name, body: JSON.stringify(manifest) };
+      }
+      return { name: entry.name, body: entry.body };
+    }),
   );
 }
 
@@ -230,6 +254,7 @@ export function itemsArchive(
     created_at: new Date().toISOString(),
     item_count: items.length,
     edge_count: 0,
+    row_count: 0,
     blob_count: blobs.length,
     type_count: types.length,
     edge_type_count: 0,
@@ -263,6 +288,7 @@ export function itemsArchive(
       ),
     ),
     lineFile("edges", ""),
+    lineFile("rows", ""),
     ...blobs.map((blob) => ({
       name: `blobs/${blob.named ?? blobHash(blob.data)}`,
       body: blob.data,

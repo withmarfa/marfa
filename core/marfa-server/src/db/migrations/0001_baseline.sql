@@ -170,6 +170,8 @@ CREATE TABLE IF NOT EXISTS table_rows (
     id TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     ord ANY,
+    -- Undo restores the prior mark so earlier batches remain undoable.
+    batch INTEGER NOT NULL,
     refs BLOB,
     body BLOB NOT NULL,
     PRIMARY KEY (table_seq, id)
@@ -184,7 +186,30 @@ CREATE TABLE IF NOT EXISTS table_rows_reordering (
     after_id TEXT
 ) STRICT;
 
--- Tables of purged items whose rows `table-row-cleanup` has still to remove.
+-- Never reuse a sequence, so a change left without its batch never joins a new one.
+CREATE TABLE IF NOT EXISTS row_batches (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    table_seq INTEGER NOT NULL,
+    at TEXT NOT NULL,
+    rows INTEGER NOT NULL CHECK (rows >= 0),
+    undoes TEXT
+) STRICT;
+CREATE INDEX IF NOT EXISTS row_batches_table ON row_batches (table_seq, seq);
+
+-- A missing before or after mark means the row did not exist then.
+CREATE TABLE IF NOT EXISTS row_changes (
+    batch INTEGER NOT NULL,
+    id TEXT NOT NULL,
+    before_batch INTEGER,
+    after_batch INTEGER,
+    refs BLOB,
+    body BLOB,
+    after_refs BLOB,
+    PRIMARY KEY (batch, id)
+) STRICT, WITHOUT ROWID;
+
+-- Tables of purged items whose rows or log `table-row-cleanup` has still to remove.
 CREATE TABLE IF NOT EXISTS table_rows_purging (
     table_seq INTEGER PRIMARY KEY
 ) STRICT;

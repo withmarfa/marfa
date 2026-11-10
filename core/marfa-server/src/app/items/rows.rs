@@ -867,6 +867,7 @@ pub(super) fn set_title_key(tx: &Transaction<'_>, seq: i64, key: Option<&str>) -
 pub(super) struct Restoring<'a> {
     pub version: i64,
     pub updated_at: &'a str,
+    pub last_activity_at: &'a str,
     pub restored_at: Option<&'a str>,
 }
 
@@ -881,7 +882,7 @@ pub(super) fn insert_restored(
          capture_latitude, capture_longitude, writer_kind, writer_id, writer_name, link, \
          trashed_by_kind, trashed_by_id, trashed_by_name, restored_at, last_activity_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, jsonb(?7), ?8, ?22, ?9, ?10, ?11, ?23, ?12, ?13, ?14, \
-         ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?24, ?23)",
+         ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?24, ?25)",
     )?;
     statement.execute(params![
         row.id,
@@ -908,6 +909,7 @@ pub(super) fn insert_restored(
         kept.version,
         kept.updated_at,
         kept.restored_at,
+        kept.last_activity_at,
     ])?;
     clear_tombstones(tx, row.type_id, row.link, row.source, row.source_id)?;
     stored(tx, row.id)

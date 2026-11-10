@@ -306,6 +306,7 @@ registry! {
     REVOKED_GRANT_RETENTION_DAYS: u64 = "revoked_grant_retention_days", Rule::Whole { min: 0, max: 36_500 }, "90", "How many days a revoked app grant is kept. 0 keeps it for ever.";
     GRANT_INACTIVITY_DAYS: u64 = "grant_inactivity_days", Rule::Whole { min: 0, max: 36_500 }, "365", "How many days an app grant may go unused before it is retired. 0 never retires one.";
     TRASH_RETENTION_DAYS: u64 = "trash_retention_days", Rule::Whole { min: 0, max: 36_500 }, "60", "How many days a trashed item is kept before it is deleted. 0 keeps it for ever.";
+    ROW_LOG_RETENTION_DAYS: u64 = "row_log_retention_days", Rule::Whole { min: 0, max: 36_500 }, "30", "How many days a table keeps a batch in its change log, so the batch can be undone. 0 keeps every batch.";
     EVENT_LOG_RETENTION_HOURS: u64 = "event_log_retention_hours", Rule::Whole { min: 0, max: 876_000 }, "720", "How many hours the event log is kept. 0 keeps it for ever.";
     VERSION_RECENT_DAYS: u64 = "version_recent_days", Rule::Whole { min: 0, max: 36_500 }, "30", "For this many days, every version of an item is kept.";
     VERSION_DAILY_SNAPSHOT_DAYS: u64 = "version_daily_snapshot_days", Rule::Whole { min: 0, max: 36_500 }, "90", "Up to this many days, one version a day is kept.";

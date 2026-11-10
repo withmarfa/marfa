@@ -199,6 +199,123 @@ describe("reading rows", () => {
     }
   });
 
+  it("keeps a cursor short however long the sort value is, and follows the row it names", async () => {
+    const { item } = await spendingItem();
+    const long = (tail: string) => `${"a".repeat(54_000 - tail.length)}${tail}`;
+    const written = await put(
+      item,
+      ["0004", "0002", "0005", "0001", "0003"].map((tail) => ({
+        amount: 1,
+        memo: long(tail),
+      })),
+    );
+    const ids = written.results.map((r) => r.id);
+    for (const direction of ["asc", "desc"] as const) {
+      const whole = (
+        await client.listRows(item, "spend", {
+          sort: "values.memo",
+          direction,
+          limit: 1000,
+        })
+      ).data.data.map((r) => r.id);
+      expect([...whole].sort()).toEqual([...ids].sort());
+      const paged: string[] = [];
+      let cursor: string | undefined;
+      let pages = 0;
+      do {
+        const res = await client.listRows(item, "spend", {
+          sort: "values.memo",
+          direction,
+          limit: 2,
+          cursor,
+        });
+        expect(res.status, JSON.stringify(res.error)).toBe(200);
+        paged.push(...res.data.data.map((r) => r.id));
+        cursor = res.data.next_cursor ?? undefined;
+        if (cursor) expect(cursor.length).toBeLessThanOrEqual(512);
+        pages += 1;
+      } while (cursor);
+      expect(pages).toBe(3);
+      expect(paged).toEqual(whole);
+    }
+
+    const first = await client.listRows(item, "spend", {
+      sort: "values.memo",
+      limit: 2,
+    });
+    const cursor = first.data.next_cursor!;
+    const last = first.data.data[1]!.id;
+    const follows = async () =>
+      client.listRows(item, "spend", {
+        sort: "values.memo",
+        limit: 2,
+        cursor,
+      });
+    expect((await follows()).status).toBe(200);
+
+    const changed = await client.writeRows(item, "spend", {
+      operations: [{ op: "patch", id: last, values: { memo: long("0009") } }],
+    });
+    expect(changed.status, JSON.stringify(changed.error)).toBe(200);
+    const moved = await follows();
+    expect(moved.status).toBe(400);
+    expect(moved.error?.error.code).toBe("validation_error");
+    expect(moved.error?.error.details).toMatchObject({ field: "cursor" });
+
+    const restored = await client.writeRows(item, "spend", {
+      operations: [{ op: "patch", id: last, values: { memo: long("0002") } }],
+    });
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    expect((await follows()).status).toBe(200);
+
+    const removed = await client.writeRows(item, "spend", {
+      operations: [{ op: "delete", id: last }],
+    });
+    expect(removed.status, JSON.stringify(removed.error)).toBe(200);
+    const gone = await follows();
+    expect(gone.status).toBe(400);
+    expect(gone.error?.error.details).toMatchObject({ field: "cursor" });
+  });
+
+  it("pages rows that share a long sort value without skipping or repeating one", async () => {
+    const { item } = await spendingItem();
+    const a = "a".repeat(200);
+    const b = "b".repeat(200);
+    const written = await put(
+      item,
+      [a, a, a, a, a, b, b, b, "short", "short", "é".repeat(100)].map(
+        (memo) => ({ amount: 1, memo }),
+      ),
+    );
+    const ids = written.results.map((r) => r.id);
+    for (const direction of ["asc", "desc"] as const) {
+      const whole = (
+        await client.listRows(item, "spend", {
+          sort: "values.memo",
+          direction,
+          limit: 1000,
+        })
+      ).data.data.map((r) => r.id);
+      expect([...whole].sort()).toEqual([...ids].sort());
+      for (const limit of [1, 2, 3]) {
+        const paged: string[] = [];
+        let cursor: string | undefined;
+        do {
+          const res = await client.listRows(item, "spend", {
+            sort: "values.memo",
+            direction,
+            limit,
+            cursor,
+          });
+          expect(res.status, JSON.stringify(res.error)).toBe(200);
+          paged.push(...res.data.data.map((r) => r.id));
+          cursor = res.data.next_cursor ?? undefined;
+        } while (cursor);
+        expect(paged, `${direction} ${limit}`).toEqual(whole);
+      }
+    }
+  });
+
   it("filters rows on columns with the item filter grammar", async () => {
     const { item } = await spendingItem();
     const written = await put(item, [

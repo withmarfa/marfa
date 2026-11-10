@@ -11,9 +11,10 @@ use super::store::{self, Ordering};
 use super::tables_of;
 use crate::app::App;
 use crate::app::catalog::Catalog;
-use crate::app::housekeeping::{self, Report, Run};
+use crate::app::housekeeping::{self, DAY_MS, Report, Run, cutoff, report_kept};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::db::Write;
+use crate::settings::registry::ROW_LOG_RETENTION_DAYS;
 
 pub const CLEANUP_JOB: &str = "table-row-cleanup";
 /// About 2 ms of the writer on the reference machine, so other writes wait little behind a page.
@@ -26,33 +27,87 @@ pub fn doom(tx: &Transaction<'_>, seq: i64, at: &str) -> Result<()> {
     Ok(())
 }
 
-/// Removes purged items' rows, then writes the order keys of tables whose order changed.
-pub async fn cleanup(app: Arc<App>, run: Run) -> Result<Report> {
-    let (mut removed, mut reordered, mut pages) = (0_i64, 0_i64, 0_i64);
-    let result = |removed, reordered, pages| json!({ "removed": removed, "reordered": reordered, "pages": pages });
-    loop {
-        let page = app
-            .db
-            .write(Write::own(), |tx| {
-                Ok(match store::remove_page(tx, CLEANUP_PAGE)? {
-                    Some(taken) => Some((taken, 0)),
-                    None => store::reorder_page(tx, CLEANUP_PAGE)?.map(|taken| (0, taken)),
-                })
-            })
-            .await?;
-        let Some((taken, keyed)) = page else {
-            return Ok(Report::done(result(removed, reordered, pages)));
-        };
-        removed += taken;
-        reordered += keyed;
-        pages += 1;
-        if !run.go_on().await {
-            return Ok(Report {
-                result: result(removed, reordered, pages),
-                again: true,
-            });
+#[derive(Default)]
+struct Tally {
+    rows: i64,
+    batches: i64,
+    changes: i64,
+    reordered: i64,
+    pages: i64,
+}
+
+impl Tally {
+    fn add(&mut self, (page, reordered): &(store::Removed, i64)) {
+        self.rows += page.rows;
+        self.batches += page.batches;
+        self.changes += page.changes;
+        self.reordered += reordered;
+        self.pages += 1;
+    }
+
+    fn report(&self, again: bool) -> Report {
+        Report {
+            result: json!({
+                "removed": self.rows,
+                "batches_removed": self.batches,
+                "changes_removed": self.changes,
+                "reordered": self.reordered,
+                "pages": self.pages,
+            }),
+            again,
         }
     }
+}
+
+#[derive(Clone, Copy)]
+enum Stage {
+    Purged,
+    Reordered,
+    Orphaned,
+    Expired,
+}
+
+pub async fn cleanup(app: Arc<App>, run: Run) -> Result<Report> {
+    let mut tally = Tally::default();
+    for stage in [
+        Stage::Purged,
+        Stage::Reordered,
+        Stage::Orphaned,
+        Stage::Expired,
+    ] {
+        loop {
+            let live = app.clone();
+            let page = app
+                .db
+                .write(Write::own(), move |tx| {
+                    let removed = match stage {
+                        Stage::Purged => store::remove_page(tx, CLEANUP_PAGE)?,
+                        Stage::Reordered => {
+                            return Ok(store::reorder_page(tx, CLEANUP_PAGE)?
+                                .map(|keyed| (store::Removed::default(), keyed)));
+                        }
+                        Stage::Orphaned => store::orphan_page(tx, CLEANUP_PAGE)?,
+                        Stage::Expired => {
+                            match cutoff(tx, &live, ROW_LOG_RETENTION_DAYS, DAY_MS)? {
+                                Some(before) => store::expire_page(tx, &before, CLEANUP_PAGE)?,
+                                None => None,
+                            }
+                        }
+                    };
+                    Ok(removed.map(|removed| (removed, 0)))
+                })
+                .await?;
+            let Some(page) = page else {
+                break;
+            };
+            tally.add(&page);
+            if !run.go_on().await {
+                return Ok(tally.report(true));
+            }
+        }
+    }
+    report_kept(&app, &run, ROW_LOG_RETENTION_DAYS, DAY_MS, &store::UNREAD).await?;
+    Ok(tally.report(false))
 }
 
 fn orders(catalog: &Catalog, type_id: &str) -> BTreeMap<String, Option<Order>> {
