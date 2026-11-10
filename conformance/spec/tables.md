@@ -1,6 +1,6 @@
 # Tables
 
-What a type declares about the tables an item of it can hold: their names, their columns and how a column totals. A table holds rows, and a row is never an item. This chapter also holds how rows are written, read, announced and undone.
+What a type declares about the tables an item of it can hold: their names, their columns and how a column totals. A table holds rows, and a row is never an item. This chapter also holds how rows are written, read, announced, undone, searched and linked to.
 
 ## Declaring tables
 
