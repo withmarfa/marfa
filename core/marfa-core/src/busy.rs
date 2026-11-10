@@ -36,6 +36,24 @@ pub(crate) fn retrying<T>(
     }
 }
 
+/// One transaction on the copy `context` names, made again from its first
+/// read where another program's commit refuses it.
+pub(crate) fn transaction<T>(
+    core: &crate::Core,
+    context: &crate::reach::Context,
+    stop: &AtomicBool,
+    mut write: impl FnMut(&Connection) -> Result<T>,
+) -> Result<T> {
+    retrying(&core.conn, stop, || {
+        let mut conn = core.conn()?;
+        let tx = conn.transaction()?;
+        context.same_copy(&tx)?;
+        let value = write(&tx)?;
+        tx.commit()?;
+        Ok(value)
+    })
+}
+
 /// A busy statement can leave a transaction holding a stale snapshot.
 fn rolled_back(conn: &Mutex<Connection>) -> Result<()> {
     let conn = conn

@@ -146,17 +146,10 @@ fn in_a_page<T>(
     core: &Core,
     context: &Context,
     stop: &AtomicBool,
-    mut write: impl FnMut(&Connection) -> Result<T>,
+    write: impl FnMut(&Connection) -> Result<T>,
 ) -> Result<T> {
     refuse_if_stopped(stop)?;
-    crate::busy::retrying(&core.conn, stop, || {
-        let mut conn = core.conn()?;
-        let tx = conn.transaction()?;
-        context.same_copy(&tx)?;
-        let done = write(&tx)?;
-        tx.commit()?;
-        Ok(done)
-    })
+    crate::busy::transaction(core, context, stop, write)
 }
 
 /// `of` names what the page held, for a test to stop at one look's pages.
