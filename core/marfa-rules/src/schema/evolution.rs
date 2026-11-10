@@ -43,7 +43,7 @@ fn column_shape_of(column: &Value) -> Value {
     shape
 }
 
-/// A table or a column a stored type has that the next one lacks or changes, and a column added to a table the stored type has that every row must hold.
+/// The tables and columns only a schema writer may remove, change or require.
 fn table_changes(stored: &Obj, next: &Obj) -> Vec<String> {
     let before = as_obj(stored.get("tables")).cloned().unwrap_or_default();
     let after = as_obj(next.get("tables")).cloned().unwrap_or_default();

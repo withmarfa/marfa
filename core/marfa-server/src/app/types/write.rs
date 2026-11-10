@@ -140,7 +140,7 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
     Ok(created)
 }
 
-/// What a change merges into a type's own definition: a field or a table set to `null` is removed, and a table that is named replaces the one of that name whole.
+/// What a change merges into a type's own definition: a field or table set to `null` is removed.
 pub struct Merge {
     pub label: Option<String>,
     pub description: Option<String>,
@@ -153,7 +153,7 @@ enum Replacement {
     Merge(Merge),
 }
 
-/// The nearest ancestor of `id` whose own definition has the field, or the table when `member` is `tables`.
+/// The nearest ancestor whose own definition has the field or table `name`.
 fn inherited_from<'a>(
     catalog: &'a Catalog,
     stored: &'a Obj,

@@ -367,7 +367,7 @@ pub fn refuse_wordless_status(types: &[Value]) -> Result<(), RuleError> {
 /// The groups every status word belongs to one of.
 pub const STATUS_GROUPS: [&str; 4] = ["not_started", "in_progress", "completed", "canceled"];
 
-/// A lowercase letter, then up to 63 lowercase letters, digits and underscores: how a status word, a table and a column are named.
+/// A lowercase letter, then up to 63 lowercase letters, digits and underscores.
 pub fn api_name(text: &str) -> bool {
     let mut chars = text.chars();
     text.len() <= 64

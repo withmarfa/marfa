@@ -411,7 +411,7 @@ fn validate_items_fields(path: &str, fd: &Obj, errors: &mut Vec<Issue>) {
     }
 }
 
-/// A plain value: a kind a list entry's member may take, with the rules a field of that kind keeps.
+/// A plain value of a kind a list entry's member may take.
 pub(super) fn validate_member(path: &str, definition: &Value, errors: &mut Vec<Issue>) {
     let vocabulary = vocabulary();
     if let Some(record) = definition.as_object()

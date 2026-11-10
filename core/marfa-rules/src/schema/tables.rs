@@ -1,4 +1,4 @@
-//! The tables a type declares and the columns they hold. One column validator judges a type's declared tables and a table an item defines.
+//! The tables a type declares and their columns, judged by one column validator.
 
 use serde_json::{Map, Value, json};
 
@@ -46,7 +46,7 @@ fn name_issue(path: &str, name: &str, what: &str) -> Option<Issue> {
     })
 }
 
-/// Judges the columns of one table at `path`. `type_known` says whether an item reference may name a type.
+/// Judges the columns of one table at `path`; `type_known` says which types an item column may name.
 pub fn validate_columns(
     columns: Option<&Value>,
     path: &str,
@@ -231,7 +231,7 @@ fn validate_constraints(
     }
 }
 
-/// Judges a type's own `tables`. `inherited` is what its ancestors declare and `descendants` the types below it.
+/// Judges a type's own `tables` against its ancestors' and its descendants'.
 pub(super) fn validate_tables(
     raw: Option<&Value>,
     inherited: &[(String, String, Obj)],
@@ -361,7 +361,7 @@ pub fn normalize_table(raw: &Obj) -> Obj {
     out
 }
 
-/// The tables a type stores: its own, but for those it restates exactly as its ancestors declare them.
+/// A type's own tables, without any it restates exactly as an ancestor declares it.
 pub(super) fn stored_tables(raw: Option<&Value>, inherited: &[(String, String, Obj)]) -> Obj {
     as_obj(raw)
         .into_iter()
@@ -416,7 +416,7 @@ pub(super) fn with_column_defaults(tables: &mut Obj) {
     }
 }
 
-/// What a table written back as read leaves out: a label the stored table does not set and the submission gives as read.
+/// Drops a label the stored table does not set and the submission gives as read.
 pub(super) fn without_read_labels(submitted: &mut Obj, stored: Option<&Obj>, read: Option<&Obj>) {
     for (name, table) in submitted.iter_mut() {
         let Value::Object(table) = table else {

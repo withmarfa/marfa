@@ -182,7 +182,6 @@ impl Registry {
         chain
     }
 
-    /// Root first. A chain that loops or names a type this registry lacks ends there.
     pub fn ancestry(&self, parent: &str) -> Ancestry {
         let mut held = Ancestry::default();
         for row in self.chain_above(parent) {
@@ -204,7 +203,7 @@ impl Registry {
         held
     }
 
-    /// The tables the types from `parent` up declare, each with the type that declares it. A table is declared once down a chain, so a name appears once.
+    /// Each table the types from `parent` up declare, as (name, owner, definition).
     pub fn inherited_tables(&self, parent: &str) -> Vec<(String, String, Obj)> {
         let mut found: Vec<(String, String, Obj)> = Vec::new();
         for row in self.chain_above(parent) {
