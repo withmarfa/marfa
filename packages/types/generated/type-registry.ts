@@ -1,7 +1,7 @@
 // Auto-generated from core/*.json and core/system/*.json — do not edit manually.
 // Run `pnpm --filter @withmarfa/types generate` to regenerate.
 
-import type { ShippedTypeSchema, TypeSchema } from "../src/schema-types.js";
+import type { TypeSchema } from "../src/schema-types.js";
 
 const coreBookmark: TypeSchema = {
   id: "core.bookmark",
@@ -39,7 +39,7 @@ const coreCollection: TypeSchema = {
   roles: ["container"],
 };
 
-const coreConversation: ShippedTypeSchema = {
+const coreConversation: TypeSchema = {
   id: "core.conversation",
   label: "Conversation",
   description: "A conversation, such as a chat with a person or an assistant. Its messages are the rows of its messages table.",
@@ -47,7 +47,6 @@ const coreConversation: ShippedTypeSchema = {
   fields: {
     title: { type: "string", description: "The conversation's name." },
   },
-  tables: {"messages":{"description":"The messages of the conversation, kept in the order they were sent.","order":"sent_at","columns":{"author":{"type":"string","description":"Who wrote the message, such as a name, a handle or `assistant`.","required":true},"text":{"type":"string","description":"What the message says. A message may have no text and only an attachment.","searchable":true},"sent_at":{"type":"datetime","description":"When the message was sent.","required":true},"attachment":{"type":"item","description":"A picture or other file the message carries.","type_constraints":["core.file"]}}}},
   display_hints: { title_field: "title", icon: "lucide:messages-square" },
   merge_policy: { default: "last_writer_wins" },
 };
@@ -712,6 +711,39 @@ export const ALL_SYSTEM_TYPES: TypeSchema[] = [
   systemFolder,
   systemView,
 ];
+
+export const SHIPPED_TABLES: Record<string, Record<string, unknown>> = {
+  "core.conversation": {
+    "messages": {
+      "description": "The messages of the conversation, kept in the order they were sent.",
+      "order": "sent_at",
+      "columns": {
+        "author": {
+          "type": "string",
+          "description": "Who wrote the message, such as a name, a handle or `assistant`.",
+          "required": true
+        },
+        "text": {
+          "type": "string",
+          "description": "What the message says. A message may have no text and only an attachment.",
+          "searchable": true
+        },
+        "sent_at": {
+          "type": "datetime",
+          "description": "When the message was sent.",
+          "required": true
+        },
+        "attachment": {
+          "type": "item",
+          "description": "A picture or other file the message carries.",
+          "type_constraints": [
+            "core.file"
+          ]
+        }
+      }
+    }
+  }
+};
 
 export const ALL_TYPE_IDS = [
   "core.bookmark",

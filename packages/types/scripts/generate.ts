@@ -254,8 +254,7 @@ function fieldLiteral(field: FieldDefinition): string {
 }
 
 function emitSchema(schema: ShippedTypeSchema, lines: string[]): void {
-  const annotation = schema.tables ? "ShippedTypeSchema" : "TypeSchema";
-  lines.push(`const ${varName(schema.id)}: ${annotation} = {`);
+  lines.push(`const ${varName(schema.id)}: TypeSchema = {`);
   lines.push(`  id: ${quote(schema.id)},`);
   if (schema.parent) lines.push(`  parent: ${quote(schema.parent)},`);
   if (schema.label) lines.push(`  label: ${quote(schema.label)},`);
@@ -269,9 +268,6 @@ function emitSchema(schema: ShippedTypeSchema, lines: string[]): void {
     lines.push(`    ${name}: ${fieldLiteral(def)},`);
   }
   lines.push("  },");
-  if (schema.tables) {
-    lines.push(`  tables: ${JSON.stringify(schema.tables)},`);
-  }
   if (schema.display_hints) {
     const parts: string[] = [];
     if (schema.display_hints.title_field) {
@@ -331,9 +327,7 @@ lines.push(
 );
 lines.push("// Run `pnpm --filter @withmarfa/types generate` to regenerate.");
 lines.push("");
-lines.push(
-  'import type { ShippedTypeSchema, TypeSchema } from "../src/schema-types.js";',
-);
+lines.push('import type { TypeSchema } from "../src/schema-types.js";');
 lines.push("");
 
 for (const schema of coreTypes) emitSchema(schema, lines);
@@ -349,6 +343,19 @@ for (const schema of systemTypes) emitSchema(schema, lines);
 lines.push("export const ALL_SYSTEM_TYPES: TypeSchema[] = [");
 for (const schema of systemTypes) lines.push(`  ${varName(schema.id)},`);
 lines.push("];");
+lines.push("");
+
+// The tables a shipped type declares, by type, kept apart from the types
+// above, which are listed without tables. The core's catalog is written from
+// both.
+const shippedTables = Object.fromEntries(
+  [...coreTypes, ...systemTypes]
+    .filter((schema) => schema.tables)
+    .map((schema) => [schema.id, schema.tables]),
+);
+lines.push(
+  `export const SHIPPED_TABLES: Record<string, Record<string, unknown>> = ${JSON.stringify(shippedTables, null, 2)};`,
+);
 lines.push("");
 
 // The identifier set as literal types, so a consumer that keys a map or a

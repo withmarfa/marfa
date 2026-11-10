@@ -4,13 +4,14 @@ import {
   ALL_SYSTEM_TYPES,
   ALL_TYPES,
   SHIPPED_EDGE_TYPE_SHAPES,
+  SHIPPED_TABLES,
   SHIPPED_TYPE_SHAPES,
 } from "./index.js";
 
 /**
  * A definition as the shapes carry it: prose and the id left out of each
- * definition, and every name under `fields`, `property_schema` and
- * `items_fields` kept, since a field or a member may be called `description`
+ * definition, and every name under `fields`, `property_schema`,
+ * `items_fields`, `tables` and `columns` kept, since a field or a member may be called `description`
  * or `label`.
  */
 function withoutProse(value: unknown, named = false): unknown {
@@ -29,7 +30,14 @@ function withoutProse(value: unknown, named = false): unknown {
         key,
         withoutProse(
           v,
-          !named && ["fields", "property_schema", "items_fields"].includes(key),
+          !named &&
+            [
+              "fields",
+              "property_schema",
+              "items_fields",
+              "tables",
+              "columns",
+            ].includes(key),
         ),
       ]),
   );
@@ -45,7 +53,13 @@ describe("the shipped shapes", () => {
       expect(
         SHIPPED_TYPE_SHAPES[schema.id as keyof typeof SHIPPED_TYPE_SHAPES],
         schema.id,
-      ).toEqual(withoutProse(schema));
+      ).toEqual(
+        withoutProse(
+          schema.id in SHIPPED_TABLES
+            ? { ...schema, tables: SHIPPED_TABLES[schema.id] }
+            : schema,
+        ),
+      );
     }
   });
 

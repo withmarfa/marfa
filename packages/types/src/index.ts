@@ -62,6 +62,7 @@ export {
   ALL_TYPES,
   ALL_SYSTEM_TYPES,
   ALL_TYPE_IDS,
+  SHIPPED_TABLES,
   SHIPPED_TYPE_SHAPES,
 } from "../generated/type-registry.js";
 export type { PlatformTypeId } from "../generated/type-registry.js";

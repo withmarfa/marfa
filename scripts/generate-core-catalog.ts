@@ -21,6 +21,7 @@ import {
   listTypes,
   pluralOf,
 } from "../packages/shared/src/index.js";
+import { SHIPPED_TABLES } from "../packages/types/generated/type-registry.js";
 import { resolveRoles } from "../packages/server/src/storage/policy.js";
 import {
   isAcyclicEdgeType,
@@ -32,7 +33,21 @@ const resolve = (id: string) => listTypes().find((schema) => schema.id === id);
 const types = listTypes()
   .map((schema) => {
     const roles = resolveRoles(schema.id, resolve);
-    const listed = { ...schema, plural: pluralOf(schema) };
+    const tables = SHIPPED_TABLES[schema.id];
+    // Written after `fields`, where the registry keeps them.
+    const declared = tables
+      ? (Object.fromEntries(
+          Object.entries(schema).flatMap(([key, value]) =>
+            key === "fields"
+              ? [
+                  [key, value],
+                  ["tables", tables],
+                ]
+              : [[key, value]],
+          ),
+        ) as typeof schema & { tables: typeof tables })
+      : schema;
+    const listed = { ...declared, plural: pluralOf(schema) };
     return roles ? { ...listed, roles } : listed;
   })
   .sort((a, b) => a.id.localeCompare(b.id));
