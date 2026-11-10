@@ -234,12 +234,18 @@ fn conditions(sql: &mut Sql, expression: &Expression, withholding: &Withholding)
     Ok(())
 }
 
+/// `by_updated` names the index, which the planner passes by for a descending page.
 fn selection(
     table: Option<i64>,
     filter: Option<&Expression>,
     withholding: &Withholding,
+    by_updated: bool,
 ) -> Result<Sql> {
-    let mut sql = Sql::new(" FROM table_rows r WHERE r.table_seq = ");
+    let mut sql = Sql::new(if by_updated {
+        " FROM table_rows r INDEXED BY table_rows_updated WHERE r.table_seq = "
+    } else {
+        " FROM table_rows r WHERE r.table_seq = "
+    });
     sql.bind(table);
     if let Some(expression) = filter {
         conditions(&mut sql, expression, withholding)?;
@@ -380,7 +386,12 @@ fn answered_page(
         Sql::new("SELECT * FROM (SELECT r.id, r.updated_at, json(r.body), json(r.refs), ");
     sql.append(&key.expression(&withholding));
     sql.push(" AS k");
-    sql.append(&selection(seq, filter.as_ref(), &withholding)?);
+    sql.append(&selection(
+        seq,
+        filter.as_ref(),
+        &withholding,
+        matches!(key, Key::Updated),
+    )?);
     sql.push(") r WHERE 1 = 1");
     if let Some(position) = &position {
         position_after(&mut sql, &key, asked.descending, position);
@@ -507,7 +518,7 @@ fn answered_totals(
     let filter = filter.map(|text| expression(text, &table)).transpose()?;
     let withholding = Withholding::of(read)?;
     let seq = store::table_seq(read.tx, host.seq, &table.name)?;
-    let selected = selection(seq, filter.as_ref(), &withholding)?;
+    let selected = selection(seq, filter.as_ref(), &withholding, false)?;
     let adding: Vec<(String, String, String)> = table
         .columns
         .iter()
