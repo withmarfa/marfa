@@ -1,7 +1,8 @@
 use marfa_rules::grammar;
 use marfa_rules::schema::{
-    Obj, broken_compatible_dependents, descendant_depth, evolution_of, icon_issue, labelled,
-    parent_chain_fault, read_back_free, resolve, validate_type, with_set_stored,
+    Issue, OWN_TABLE_TYPE, Obj, Registry, broken_compatible_dependents, descendant_depth,
+    evolution_of, icon_issue, labelled, parent_chain_fault, read_back_free, resolve,
+    validate_restored_type, validate_type, with_set_stored,
 };
 use rusqlite::{Transaction, params};
 use serde_json::{Value, json};
@@ -291,9 +292,17 @@ async fn replacing(
             };
             let family = with_subtypes(unit.tx(), &id)?;
             require_evolution(unit.tx(), caller, &family, stored, &schema)?;
+            require_reach(caller, &schema, stored)?;
+            if let Some(parent) = text_of(&schema, "parent") {
+                let below = descendant_depth(&catalog.types, &id);
+                if let Some(fault) = parent_chain_fault(&catalog.types, &id, parent, below) {
+                    return Err(Refusal::validation(fault));
+                }
+            }
+            let next = catalog.types.with(schema.clone());
+            refuse_unkept_columns(unit.tx(), &catalog.types, &next, &family)?;
             if !force {
-                let next = catalog.types.with(schema.clone());
-                let held = tables::held_in_use(unit.tx(), &catalog, &next, &family)?;
+                let held = tables::held_in_use(unit.tx(), &catalog.types, &next, &family)?;
                 if !held.is_empty() {
                     return Err(Refusal::new(
                         Code::TypeInUse,
@@ -303,13 +312,6 @@ async fn replacing(
                         ),
                     )
                     .with_detail("tables", held));
-                }
-            }
-            require_reach(caller, &schema, stored)?;
-            if let Some(parent) = text_of(&schema, "parent") {
-                let below = descendant_depth(&catalog.types, &id);
-                if let Some(fault) = parent_chain_fault(&catalog.types, &id, parent, below) {
-                    return Err(Refusal::validation(fault));
                 }
             }
             if stored.and_then(|held| text_of(held, "parent")) != text_of(&schema, "parent") {
@@ -335,6 +337,31 @@ async fn replacing(
         .await?;
     app.publish_catalog().await;
     Ok(replaced)
+}
+
+/// An item placed under `core.table` keeps its own table from its `columns`, so they must be ones a table takes.
+fn refuse_unkept_columns(
+    tx: &Transaction<'_>,
+    before: &Registry,
+    after: &Registry,
+    family: &[String],
+) -> Result<()> {
+    let unkept = tables::unkept_columns(tx, before, after, family)?;
+    if unkept.is_empty() {
+        return Ok(());
+    }
+    let issues = unkept
+        .iter()
+        .map(|(type_id, count)| {
+            Issue::new(
+                "parent",
+                "a parent under which every item's columns are ones a table takes",
+                format!("a parent at or under \"{OWN_TABLE_TYPE}\", while {count} item(s) of \"{type_id}\" hold columns a table cannot take"),
+                "An item there keeps its own table from its columns. Correct or remove those columns first.",
+            )
+        })
+        .collect();
+    Err(schema_refusal(issues))
 }
 
 /// A stored definition that does not read can be replaced only by a schema writer.
@@ -409,7 +436,7 @@ pub async fn delete(app: &App, caller: &Caller, id: String, force: bool) -> Resu
         let held = items::count_of_type(unit.tx(), &id)?;
         let settings = super::moving::naming(unit.tx(), caller, &id)?;
         let named = settings.as_array().is_some_and(|named| !named.is_empty());
-        let columns = tables::constraining_columns(&catalog, &id);
+        let columns = tables::constraining_columns(unit.tx(), &catalog, caller, &id)?;
         if (held > 0 || named || !columns.is_empty()) && !force {
             return Err(Refusal::new(
                 Code::TypeInUse,
@@ -584,8 +611,8 @@ pub fn plan_restored(catalog: &Catalog, archived: &[Archived]) -> Result<Restori
         }
     }
     for (line, definition) in archived.iter().zip(&raw) {
-        let schema =
-            validate_type(&Value::Object(definition.clone()), &registry).map_err(schema_refusal)?;
+        let schema = validate_restored_type(&Value::Object(definition.clone()), &registry)
+            .map_err(schema_refusal)?;
         let schema = labelled(schema);
         let id = text_of(&schema, "id")
             .ok_or_else(|| Refusal::internal("an archived type has no id"))?

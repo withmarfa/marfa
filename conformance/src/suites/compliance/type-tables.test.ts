@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { ApiResponse, TestContext } from "../../client/types.js";
-import { archiveLines, editLineFile } from "../../utils/archive.js";
+import {
+  archiveLines,
+  editLineFile,
+  readLineFile,
+} from "../../utils/archive.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -904,6 +908,78 @@ describe("tables reach the other doors", () => {
       }
     },
     FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "restores a type whose table names a type deleted with force, and refuses an empty type_constraints on restore",
+    async () => {
+      const source = await bootFreshServer("tables-gone-source");
+      const destination = await bootFreshServer("tables-gone-destination");
+      try {
+        const origin = new MarfaClient({
+          baseUrl: source.apiUrl,
+          apiKey: source.workingKey,
+        });
+        const gone = "user.tables_gone";
+        const holder = "user.tables_links";
+        expect(
+          (
+            await origin.registerType({
+              id: gone,
+              fields: { title: { type: "string" } },
+            } as never)
+          ).status,
+        ).toBe(201);
+        const links = {
+          lines: {
+            columns: { link: { type: "item", type_constraints: [gone] } },
+          },
+        };
+        const made = await origin.registerType(declared(holder, links));
+        expect(made.status, JSON.stringify(made.error)).toBe(201);
+        expect((await origin.deleteType(gone, true)).status).toBe(200);
+        const exported = await origin.exportArchive({});
+        expect(exported.status).toBe(200);
+
+        const owner = (server: typeof destination) =>
+          new MarfaClient({
+            baseUrl: server.apiUrl,
+            controlSocket: server.controlSocket,
+          });
+        const emptied = editLineFile(exported.data, "instance", (text) =>
+          text.replace(
+            /"type_constraints":\["[^"]*"\]/,
+            '"type_constraints":[]',
+          ),
+        );
+        expect(readLineFile(emptied, "instance")).toContain(
+          '"type_constraints":[]',
+        );
+        const refused = await owner(destination).restoreArchive(emptied);
+        expect(refused.status, JSON.stringify(refused.data)).toBe(400);
+        expect(refused.error?.error.code).toBe("invalid_schema");
+        expect(errorFields(refused)).toEqual([
+          "tables.lines.columns.link.type_constraints",
+        ]);
+
+        const restored = await owner(destination).restoreArchive(exported.data);
+        expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+        const worker = new MarfaClient({
+          baseUrl: destination.apiUrl,
+          apiKey: destination.workingKey,
+        });
+        const read = await worker.getType(holder);
+        expect(read.status, JSON.stringify(read.error)).toBe(200);
+        expect(read.data.tables?.lines.columns.link.type_constraints).toEqual([
+          gone,
+        ]);
+        expect((await worker.getType(gone)).status).toBe(404);
+      } finally {
+        await source.stop();
+        await destination.stop();
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS * 2,
   );
 
   it.each([false, true])(

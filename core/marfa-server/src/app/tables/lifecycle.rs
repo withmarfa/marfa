@@ -3,13 +3,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use marfa_rules::schema::{
+    OWN_COLUMNS, OWN_TABLE, Registry, item_table_changes, judge_item_columns, keeps_own_table,
+};
 use rusqlite::Transaction;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use super::order::Order;
 use super::store::{self, Ordering};
-use super::tables_of;
+use super::{item_tables, tables_by_name};
 use crate::app::App;
+use crate::app::access::{Caller, Permission};
 use crate::app::catalog::Catalog;
 use crate::app::housekeeping::{self, DAY_MS, Report, Run, cutoff, report_kept};
 use crate::app::refusal::{Code, Refusal, Result};
@@ -110,11 +114,15 @@ pub async fn cleanup(app: Arc<App>, run: Run) -> Result<Report> {
     Ok(tally.report(false))
 }
 
-fn orders(catalog: &Catalog, type_id: &str) -> BTreeMap<String, Option<Order>> {
-    tables_of(catalog, type_id)
+/// The order each table a type declares keeps; an item's own table keeps none.
+fn orders(catalog: &Catalog, type_id: &str) -> Result<BTreeMap<String, Option<Order>>> {
+    if !catalog.types.contains(type_id) {
+        return Ok(BTreeMap::new());
+    }
+    Ok(item_tables(&catalog.types, type_id, &Map::new())?
         .into_iter()
         .map(|table| (table.name, table.order))
-        .collect()
+        .collect())
 }
 
 /// Rewrites a table's keys now while the change has rewritten at most one page of rows in all, and
@@ -151,8 +159,8 @@ pub fn reorder_types(
 ) -> Result<()> {
     let mut rewritten = 0;
     for type_id in types {
-        let declared = orders(after, type_id);
-        if orders(before, type_id) == declared {
+        let declared = orders(after, type_id)?;
+        if orders(before, type_id)? == declared {
             continue;
         }
         for held in store::orderings_of_type(tx, type_id)? {
@@ -170,7 +178,7 @@ pub fn reorder_item(
     type_id: &str,
     at: &str,
 ) -> Result<()> {
-    let declared = orders(catalog, type_id);
+    let declared = orders(catalog, type_id)?;
     let mut rewritten = 0;
     for held in store::orderings_of_item(tx, seq)? {
         let order = declared.get(&held.table).cloned().flatten();
@@ -190,28 +198,54 @@ fn blocked(tables: Vec<String>) -> Refusal {
     .with_detail("tables", tables)
 }
 
-fn undeclared(catalog: &Catalog, to: &str, held: Vec<String>) -> Vec<String> {
-    let declared: Vec<String> = tables_of(catalog, to)
-        .into_iter()
-        .map(|table| table.name)
-        .collect();
-    held.into_iter()
-        .filter(|name| !declared.contains(name))
-        .collect()
+fn parsed(text: &str) -> Result<Map<String, Value>> {
+    match serde_json::from_str(text) {
+        Ok(Value::Object(properties)) => Ok(properties),
+        _ => Err(Refusal::internal("a stored item's properties do not read")),
+    }
 }
 
-pub fn refuse_undeclared(
+pub type Shape<'a> = (&'a str, &'a Map<String, Value>);
+
+pub fn judge_item_change(
     tx: &Transaction<'_>,
     catalog: &Catalog,
+    caller: &Caller,
     seq: i64,
-    to: &str,
+    (was_type, was): Shape<'_>,
+    (is_type, is): Shape<'_>,
 ) -> Result<()> {
-    let left = undeclared(catalog, to, store::held_tables(tx, seq)?);
-    if left.is_empty() {
-        Ok(())
-    } else {
-        Err(blocked(left))
+    let moved = was_type != is_type;
+    if !moved && !keeps_own_table(&catalog.types, is_type) {
+        return Ok(());
     }
+    let before = tables_by_name(&catalog.types, was_type, was)?;
+    let after = tables_by_name(&catalog.types, is_type, is)?;
+    if moved {
+        let left: Vec<String> = store::held_tables(tx, seq)?
+            .into_iter()
+            .filter(|name| !after.contains_key(name))
+            .collect();
+        if !left.is_empty() {
+            return Err(blocked(left));
+        }
+    }
+    if caller.holds(Permission::SchemaWrite) {
+        return Ok(());
+    }
+    let changes = item_table_changes(&before, &after, keeps_own_table(&catalog.types, is_type));
+    if changes.is_empty() {
+        return Ok(());
+    }
+    Err(Refusal::new(
+        Code::Forbidden,
+        format!(
+            "Changing {} requires schema.write. A credential without it may add optional columns and change a column's label and description.",
+            changes.join(", ")
+        ),
+    )
+    .with_detail("required_scope", Permission::SchemaWrite.word())
+    .with_detail("changes", changes))
 }
 
 pub fn refuse_moving_type(
@@ -220,63 +254,124 @@ pub fn refuse_moving_type(
     from: &str,
     to: &str,
 ) -> Result<()> {
-    let left = undeclared(catalog, to, store::held_tables_of_type(tx, from)?);
+    let mut left = BTreeSet::new();
+    for (seq, properties) in store::holders_of_type(tx, from)? {
+        let after = tables_by_name(&catalog.types, to, &parsed(&properties)?)?;
+        left.extend(
+            store::held_tables(tx, seq)?
+                .into_iter()
+                .filter(|name| !after.contains_key(name)),
+        );
+    }
     if left.is_empty() {
         Ok(())
     } else {
-        Err(blocked(left))
+        Err(blocked(left.into_iter().collect()))
     }
+}
+
+fn lost(
+    before: &Map<String, Value>,
+    after: &Map<String, Value>,
+    held: &[String],
+    column_held: &mut dyn FnMut(&str, &str) -> Result<bool>,
+    found: &mut BTreeSet<String>,
+) -> Result<()> {
+    for (name, table) in before {
+        if !held.contains(name) {
+            continue;
+        }
+        let Some(next) = after
+            .get(name)
+            .and_then(|table| table.get("columns"))
+            .and_then(Value::as_object)
+        else {
+            found.insert(name.clone());
+            continue;
+        };
+        for (column, definition) in table
+            .get("columns")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+        {
+            let same = next
+                .get(column)
+                .is_some_and(|now| now.get("type") == definition.get("type"));
+            if !same && column_held(name, column)? {
+                found.insert(format!("{name}.{column}"));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Names held data as `<table>` or `<table>.<column>`.
 pub fn held_in_use(
     tx: &Transaction<'_>,
-    before: &Catalog,
-    after: &marfa_rules::schema::Registry,
+    before: &Registry,
+    after: &Registry,
     family: &[String],
 ) -> Result<Vec<String>> {
     let mut found = BTreeSet::new();
+    let none = Map::new();
     for type_id in family {
-        let kept = after_tables(after, type_id);
-        let held = store::held_tables_of_type(tx, type_id)?;
-        for table in tables_of(before, type_id) {
-            if !held.contains(&table.name) {
-                continue;
+        if keeps_own_table(before, type_id) || keeps_own_table(after, type_id) {
+            for (seq, properties) in store::holders_of_type(tx, type_id)? {
+                let properties = parsed(&properties)?;
+                lost(
+                    &tables_by_name(before, type_id, &properties)?,
+                    &tables_by_name(after, type_id, &properties)?,
+                    &store::held_tables(tx, seq)?,
+                    &mut |table, column| store::item_column_held(tx, seq, table, column),
+                    &mut found,
+                )?;
             }
-            let Some(next) = kept
-                .get(&table.name)
-                .and_then(|t| t.get("columns"))
-                .and_then(Value::as_object)
-            else {
-                found.insert(table.name.clone());
-                continue;
-            };
-            for (column, definition) in &table.columns {
-                let same = next
-                    .get(column)
-                    .is_some_and(|now| now.get("type") == definition.get("type"));
-                if !same && store::column_held(tx, type_id, &table.name, column)? {
-                    found.insert(format!("{}.{column}", table.name));
-                }
-            }
+        } else {
+            lost(
+                &tables_by_name(before, type_id, &none)?,
+                &tables_by_name(after, type_id, &none)?,
+                &store::held_tables_of_type(tx, type_id)?,
+                &mut |table, column| store::column_held(tx, type_id, table, column),
+                &mut found,
+            )?;
         }
     }
     Ok(found.into_iter().collect())
 }
 
-fn after_tables(
-    registry: &marfa_rules::schema::Registry,
-    type_id: &str,
-) -> serde_json::Map<String, Value> {
-    marfa_rules::schema::resolve(registry, type_id, true)
-        .ok()
-        .flatten()
-        .and_then(|resolved| resolved.get("tables").and_then(Value::as_object).cloned())
-        .unwrap_or_default()
+pub fn unkept_columns(
+    tx: &Transaction<'_>,
+    before: &Registry,
+    after: &Registry,
+    family: &[String],
+) -> Result<Vec<(String, usize)>> {
+    let mut found = Vec::new();
+    for type_id in family {
+        if keeps_own_table(before, type_id) || !keeps_own_table(after, type_id) {
+            continue;
+        }
+        let mut refused = 0;
+        for (_, properties) in store::naming_columns(tx, type_id)? {
+            let columns = parsed(&properties)?.remove(OWN_COLUMNS);
+            if judge_item_columns(columns.as_ref(), &|_| true).is_err() {
+                refused += 1;
+            }
+        }
+        if refused > 0 {
+            found.push((type_id.clone(), refused));
+        }
+    }
+    Ok(found)
 }
 
-/// Names referring columns as `<type>.<table>.<column>`.
-pub fn constraining_columns(catalog: &Catalog, type_id: &str) -> Vec<String> {
+/// Hidden holders are named by type, never by item ID.
+pub fn constraining_columns(
+    tx: &Transaction<'_>,
+    catalog: &Catalog,
+    caller: &Caller,
+    type_id: &str,
+) -> Result<Vec<String>> {
     let mut found = Vec::new();
     for (owner, definition) in catalog.types.rows() {
         if owner == type_id {
@@ -302,6 +397,20 @@ pub fn constraining_columns(catalog: &Catalog, type_id: &str) -> Vec<String> {
             }
         }
     }
+    let keepers: Vec<&str> = catalog
+        .types
+        .ids()
+        .into_iter()
+        .filter(|id| keeps_own_table(&catalog.types, id))
+        .collect();
+    for (id, item_type, column) in store::own_columns_naming(tx, &keepers, type_id)? {
+        let holder = if caller.may_read_type(&item_type) {
+            id
+        } else {
+            item_type
+        };
+        found.push(format!("{holder}.{OWN_TABLE}.{column}"));
+    }
     found.sort();
-    found
+    Ok(found)
 }

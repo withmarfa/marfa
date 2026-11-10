@@ -112,7 +112,7 @@ pub async fn undo(
     app.write(caller, "rows.undo", move |unit| {
         let catalog = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
         let host = items::writable_host(unit, &catalog, &item_id)?;
-        let table = table_of(&catalog, &host.type_id, &table)?;
+        let table = table_of(&catalog, &host, &table)?;
         let mut undoing = Batch::new(unit, &catalog, &host, &table, Some(batch.clone()))?;
         let seq = undoing.table_seq.ok_or_else(not_found_batch)?;
         let undone = store::batch(unit.tx(), seq, &batch)?.ok_or_else(not_found_batch)?;

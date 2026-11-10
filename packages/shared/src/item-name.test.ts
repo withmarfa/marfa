@@ -68,6 +68,7 @@ it("names every built-in type through its display hints, and a highlight by none
     "core.media.song": "title",
     "core.message": "body",
     "core.note": "title",
+    "core.table": "title",
     "core.task": "title",
   };
   expect(Object.keys(fields).sort()).toEqual(ALL_TYPES.map((t) => t.id).sort());

@@ -5070,6 +5070,48 @@ A device MUST refuse `validation` a write to a type its app declared that misses
 
 **Tests:** `device/save-before-sync.test.ts › checks a write against the types the app declares, and holds an unknown one back`.
 
+### `device/own-columns-checked`
+
+If a write creates or updates an item of `core.table`, or of a type below it, with `columns` that the server refuses under `tables/own-columns-refused` or `tables/own-columns-required`, then a device MUST refuse `validation` the write naming the same paths, whether or not the copy has reached a server.
+
+**Reason:** a table kept offline is held to the rules it will be held to online, and one validator judges the columns of a declared table and of `core.table`.
+
+**Tests:** `device/own-columns-live.test.ts › refuses on the device the columns the server refuses and queues nothing`.
+
+### `device/own-columns-unqueued`
+
+When a device refuses a write under `device/own-columns-checked` or `device/own-columns-unheld-type`, a device MUST save and queue nothing of the write.
+
+**Tests:** `device/own-columns-live.test.ts › refuses on the device the columns the server refuses and queues nothing`, `› refuses on the device columns naming a type its catalog does not hold, though the server takes them`.
+
+### `device/own-columns-unheld-type`
+
+If a write creates or updates an item of `core.table`, or of a type below it, with a column whose `type_constraints` names a type the device's catalog does not hold, then a device MUST refuse `validation` the write naming the column's `type_constraints`, whether or not the server holds the type.
+
+**Reason:** a device judges a write against the types its catalog holds, as it does every write, and cannot tell a type the server holds from one nobody registered.
+
+**Tests:** `device/own-columns-live.test.ts › refuses on the device columns naming a type its catalog does not hold, though the server takes them`.
+
+### `device/own-columns-taken`
+
+When a write creates an item of `core.table`, or of a type below it, with `columns` that the server takes under `tables/own-columns-taken` and whose `type_constraints` name only types the device's catalog holds, a device MUST take the write and queue it, whether or not the copy has reached a server.
+
+**Tests:** `device/own-columns-live.test.ts › takes on the device the columns the server takes and the server accepts the queued write`.
+
+### `device/own-columns-retype`
+
+When a write retypes an item that holds `columns` the server takes under `tables/own-columns-taken` to a type below `core.table` without naming `columns`, a device MUST take the write and queue it.
+
+**Reason:** the item a write leaves is judged, and its columns are the ones it already holds.
+
+**Tests:** `device/own-columns-live.test.ts › takes on the device a retype to a type below core.table that names no columns, keeping the columns the item holds`.
+
+### `device/catalog-core-table`
+
+A device MUST answer `core.table` as `GET /types/core.table` answers it, from its shipped catalog and after a hydration alike.
+
+**Tests:** `device/own-columns-live.test.ts › answers core.table as the server does, before and after a hydration`.
+
 ### `device/number-exact`
 
 If a write to an item, or to an edge or an item's extension, names a value, at any depth, that is a whole number written with digits other than the shortest decimal that reads back as the same IEEE 754 double, then a device MUST refuse `validation` the write with the field and the message `items/property-number-exact` gives, and queue nothing.
