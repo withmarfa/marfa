@@ -613,6 +613,27 @@ describe("a row line a restore refuses", () => {
     },
   );
 
+  const notObjects: [string, unknown][] = [
+    ["null", null],
+    ["a number", 5],
+    ["a string", "text"],
+    ["an array", [row("x")]],
+  ];
+
+  it.each(notObjects)(
+    "refuses a row line that is %s, naming its line, and writes nothing",
+    async (_label, line) => {
+      const bad = withRows("bad-line", (itemId) => [row(itemId), line]);
+      await refusedAt(bad.archive, bad.itemId, 2);
+
+      // The witness: the same rows without the line restore.
+      const { accepted } = await restoresWith("bad-line-witness", (itemId) => [
+        row(itemId),
+      ]);
+      expect(accepted.rows_imported).toBe(1);
+    },
+  );
+
   it("refuses a row over 64 KiB, naming its line", async () => {
     const wide = (length: number) => ({ values: { text: "x".repeat(length) } });
     const limit = 65_536 - JSON.stringify({ text: "" }).length;

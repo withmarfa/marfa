@@ -215,6 +215,10 @@ pub fn item(catalog: &Catalog, cap: usize, line: &Value, row: usize) -> Result<(
         type_id: None,
         row,
     };
+    if !line.is_object() {
+        let message = format!("Line {row} of items.ndjson.gz must be an object.");
+        return Err(unnamed.refused(None, Refusal::validation(message)));
+    }
     let Some(item) = line.get("item").and_then(Value::as_object) else {
         return Err(unnamed.invalid("item", "an object"));
     };
@@ -653,6 +657,25 @@ mod tests {
             writer_fault(&json!({ "kind": "key", "id": "k", "name": " x" })),
             Some("name")
         );
+    }
+
+    #[test]
+    fn a_line_that_is_no_object_is_refused_by_its_line_alone() {
+        let catalog = Catalog::shipped();
+        for value in [Value::Null, json!(5), json!("text"), json!([{}])] {
+            for refused in [
+                item(&catalog, CAP, &value, 4).unwrap_err(),
+                row(&value, 4).unwrap_err(),
+            ] {
+                let details = refused.refusal.details.as_ref().unwrap();
+                assert_eq!(refused.refusal.code, Code::ValidationError);
+                assert_eq!(details["line"], 4);
+                assert!(!details.contains_key("field"));
+                assert!(refused.field.is_none());
+            }
+            let skipped = edge(&catalog, CAP, &value, 4, |_| None).unwrap_err();
+            assert_eq!(skipped.skip.as_deref(), Some("malformed"));
+        }
     }
 
     #[test]

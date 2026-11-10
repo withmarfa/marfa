@@ -918,9 +918,17 @@ If a line of `rows.ndjson.gz` names an `item_id` that no line of `items.ndjson.g
 
 **Tests:** `compliance/table-rows-archive.test.ts › refuses a row naming an item the archive does not hold, naming its line, and writes nothing`.
 
+### `tables/restore-row-line`
+
+If a line of `rows.ndjson.gz` is not a JSON object, then the server MUST answer `400 validation_error` naming the line.
+
+**Reason:** a line that is not an object holds no field to name.
+
+**Tests:** `compliance/table-rows-archive.test.ts › refuses a row line that is %s, naming its line, and writes nothing`.
+
 ### `tables/restore-row-shape`
 
-If a line of `rows.ndjson.gz` is not an object holding a `table` that `tables/name-grammar` takes, an `id` that is a UUIDv7 in lowercase, an object of `values`, an `updated_at` that is an instant and, where it holds `refs`, an array of distinct columns that each hold an item ID in `values`, then the server MUST answer `400 validation_error` naming the line and the field.
+If a line of `rows.ndjson.gz` is an object that holds no `table` that `tables/name-grammar` takes, no `id` that is a UUIDv7 in lowercase, no object of `values`, no `updated_at` that is an instant or, where it holds `refs`, anything but an array of distinct columns that each hold an item ID in `values`, then the server MUST answer `400 validation_error` naming the line and the field.
 
 **Tests:** `compliance/table-rows-archive.test.ts › refuses a row line whose %s is malformed, naming its line and field, and writes nothing`.
 
