@@ -213,7 +213,7 @@ pub(crate) fn drop_item(conn: &Connection, item: &str) -> Result<()> {
     Ok(())
 }
 
-/// Every held row and page cursor, for a copy that missed events.
+/// Owes every table again, for a copy that missed events.
 pub(crate) fn owe_again(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "DELETE FROM table_rows;
@@ -1595,6 +1595,10 @@ mod tests {
         assert_eq!(left(&conn), 0, "a refill in place kept a purge's re-read");
         stage(&conn);
         super::let_go(&mut conn, "core.note", "t").unwrap();
-        assert_eq!(left(&conn), 0, "letting go of a table kept a purge's re-read");
+        assert_eq!(
+            left(&conn),
+            0,
+            "letting go of a table kept a purge's re-read"
+        );
     }
 }

@@ -4964,7 +4964,11 @@ mod tests {
         assert_eq!(left(&core), 1);
         let http = core.http.clone().unwrap();
         let _ = catch_up(&core, &http, MS(200), &AtomicBool::new(false), &mut false);
-        assert_eq!(left(&core), 0, "a catch-up kept a re-read no purge it takes made");
+        assert_eq!(
+            left(&core),
+            0,
+            "a catch-up kept a re-read no purge it takes made"
+        );
 
         server.on("/events", vec![held_open()]);
         staged(&core);
