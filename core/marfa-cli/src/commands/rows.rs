@@ -83,6 +83,27 @@ pub enum RowsCommand {
         #[arg(long)]
         filter: Option<String>,
     },
+    /// One page of the batches a table's change log holds, newest first, with
+    /// how many rows each changed and the batch it undid. Pass the answer's
+    /// `next_cursor` as `--cursor` for the next page.
+    Batches {
+        /// The item id.
+        item: String,
+        /// The table name.
+        table: String,
+        #[command(flatten)]
+        page: PageArgs,
+    },
+    /// Put back every row a batch changed as it was before the batch, all of
+    /// them or none, as a new batch. Undo an undo to redo it.
+    Undo {
+        /// The item id.
+        item: String,
+        /// The table name.
+        table: String,
+        /// The batch id, as a write or `rows batches` answers it.
+        batch: String,
+    },
 }
 
 #[derive(Debug, Default, Args)]
@@ -176,6 +197,16 @@ pub fn totals_request(item: &str, table: &str, filter: Option<&str>) -> Request 
         .query_opt("filter", filter.map(str::to_string))
 }
 
+pub fn batches_request(item: &str, table: &str, page: &PageArgs) -> Request {
+    Request::get(&["items", item, "tables", table, "batches"])
+        .query_opt("limit", page.limit.map(|limit| limit.to_string()))
+        .query_opt("cursor", page.cursor.clone())
+}
+
+pub fn undo_request(item: &str, table: &str, batch: &str) -> Request {
+    Request::post(&["items", item, "tables", table, "batches", batch, "undo"])
+}
+
 pub fn run(command: RowsCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let request = match &command {
         RowsCommand::List(args) => list_request(args),
@@ -199,6 +230,8 @@ pub fn run(command: RowsCommand, remote: &Remote, out: &Printer) -> Result<(), C
             table,
             filter,
         } => totals_request(item, table, filter.as_deref()),
+        RowsCommand::Batches { item, table, page } => batches_request(item, table, page),
+        RowsCommand::Undo { item, table, batch } => undo_request(item, table, batch),
     };
     out.value(&remote.json(&request)?)
 }

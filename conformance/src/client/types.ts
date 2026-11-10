@@ -962,6 +962,24 @@ export interface RowBatchAnswer {
   }[];
 }
 
+export interface RowUndoAnswer {
+  batch: string | null;
+  undoes: string;
+  last_activity_at: string;
+  results: {
+    id: string;
+    outcome: "created" | "replaced" | "deleted" | "unchanged";
+  }[];
+}
+
+/** One batch a table's change log holds. */
+export interface RowBatchEntry {
+  id: string;
+  at: string;
+  rows: number;
+  undoes: string | null;
+}
+
 export interface TableSummary {
   name: string;
   label: string;

@@ -203,6 +203,10 @@ stays because that thing is what it checks.
   build that ships a field on a type, below which a registered type declares the
   field in another shape, holds a conflict: every door and a restore refuse one,
   and no fault ships a build.
+- `compliance/type-standing-conflicts.test.ts` writes the stored fields of a
+  type below another. A build that ships a field, a status word or a thumbnail
+  above a registered type leaves it holding what its chain refuses; every door
+  refuses that, and no fault ships a build.
 - `compliance/stored-times.test.ts` reads every column that holds a time in
   every table, and rewrites one key's `expires_at` and the browser sessions'
   `expires_at` to values that do not read. The contract is about the form a
@@ -829,6 +833,22 @@ time to serve a page of 500, and the time of one listing and one search on the
 filled copy. It is a measurement, not a gate: it fails only when a hydration
 fails or brings fewer items than were seeded. Unset, the item count is small
 enough for a laptop; the nightly run sets 100,000.
+
+`pnpm scale tables --server <marfa-server> [--rows 1000000] [--pace 25000]` is a
+connector writing one very large table, measured from outside. It boots a
+release server of its own, and a second to restore into, registers a type that
+declares a table, writes the table in pages of 1,000 rows at `--pace` rows a
+second (`0` writes as fast as the server answers) while readers read the item,
+a page of rows, one row and the item's tables and a stream follows
+`rows.changed`, then times pages, a total, undo, an export, a restore and the
+purge of the item. Connector traffic uses the public API; restore uses the
+operator's private control socket. It also checks what came back, so a figure
+cannot pass on a wrong answer: every page walk reads each row once, in order,
+with the values written, and the stream carries exactly the batches written.
+Totals match the generated data, an undo leaves the rows it should, and the
+restored table matches the source. It prints each figure against its goal and
+writes `reports/scale/tables.json`. It is a measurement on request, not a
+nightly step, and it stops the servers it started by their process IDs.
 
 ## Architecture
 

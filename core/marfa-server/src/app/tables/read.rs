@@ -551,3 +551,62 @@ pub async fn totals(
     })
     .await
 }
+
+const BATCHES_SCOPE: &str = "row-batches";
+
+fn answered_batches(
+    read: &Reader<'_, '_>,
+    item_id: &str,
+    table: &str,
+    limit: Option<i64>,
+    cursor: Option<&str>,
+) -> Result<String> {
+    let host = items::readable_host(read, item_id)?;
+    let table = table_of(&read.catalog, &host.type_id, table)?;
+    let limit = limit_of(limit)?;
+    let scope = json!([BATCHES_SCOPE, host.id, table.name]).to_string();
+    let before = cursor
+        .map(|cursor| {
+            read.cursors
+                .open_at(&scope, cursor)
+                .ok()
+                .and_then(|(seq, _)| seq.parse::<i64>().ok())
+                .ok_or_else(|| invalid("cursor", "The cursor does not belong to this listing."))
+        })
+        .transpose()?;
+    let found = match store::table_seq(read.tx, host.seq, &table.name)? {
+        Some(seq) => store::batches(read.tx, seq, before, limit + 1)?,
+        None => Vec::new(),
+    };
+    let more = found.len() as i64 > limit;
+    let shown = &found[..found.len().min(limit as usize)];
+    let next = match shown.last().filter(|_| more) {
+        Some(last) => Value::String(read.cursors.issue_at(
+            &scope,
+            &last.seq.to_string(),
+            &last.id,
+        )?),
+        None => Value::Null,
+    };
+    let data: Vec<Value> = shown
+        .iter()
+        .map(|batch| {
+            json!({ "id": batch.id, "at": batch.at, "rows": batch.rows, "undoes": batch.undoes })
+        })
+        .collect();
+    printed(&json!({ "data": data, "next_cursor": next }))
+}
+
+pub async fn batches(
+    app: &App,
+    caller: &Caller,
+    item_id: String,
+    table: String,
+    limit: Option<i64>,
+    cursor: Option<String>,
+) -> Result<String> {
+    reading(app, caller, move |read| {
+        answered_batches(read, &item_id, &table, limit, cursor.as_deref())
+    })
+    .await
+}

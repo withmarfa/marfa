@@ -264,6 +264,7 @@ impl<'a, 'u, 'c> Restoring<'a, 'u, 'c> {
                 host: &run.host,
                 table: &run.table,
                 batch: &run.batch,
+                undoes: None,
                 at: &run.host.last_activity_at,
                 changed: &run.changed,
                 referenced: &referenced,
