@@ -175,17 +175,17 @@ pub(super) fn log_before(
 ) -> Result<()> {
     if held {
         tx.prepare_cached(
-            "INSERT INTO row_changes (batch, id, table_seq, before_batch, after_batch, refs, body) \
-             SELECT ?1, id, table_seq, batch, ?4, refs, body FROM table_rows \
+            "INSERT INTO row_changes (batch, id, before_batch, after_batch, refs, body) \
+             SELECT ?1, id, batch, ?4, refs, body FROM table_rows \
              WHERE table_seq = ?2 AND id = ?3",
         )?
         .execute(params![batch, table, id, after])?;
     } else {
         tx.prepare_cached(
-            "INSERT INTO row_changes (batch, id, table_seq, before_batch, after_batch, refs, body) \
-             VALUES (?1, ?2, ?3, NULL, ?4, NULL, NULL)",
+            "INSERT INTO row_changes (batch, id, before_batch, after_batch, refs, body) \
+             VALUES (?1, ?2, NULL, ?3, NULL, NULL)",
         )?
-        .execute(params![batch, id, table, after])?;
+        .execute(params![batch, id, after])?;
     }
     Ok(())
 }
@@ -417,8 +417,7 @@ pub(super) fn doom(tx: &Transaction<'_>, seq: i64) -> Result<bool> {
             "INSERT OR IGNORE INTO table_rows_purging (table_seq) \
              SELECT s.seq FROM table_summaries s WHERE s.item_seq = ?1 \
              AND (EXISTS (SELECT 1 FROM table_rows r WHERE r.table_seq = s.seq) \
-             OR EXISTS (SELECT 1 FROM row_batches b WHERE b.table_seq = s.seq) \
-             OR EXISTS (SELECT 1 FROM row_changes c WHERE c.table_seq = s.seq))",
+             OR EXISTS (SELECT 1 FROM row_batches b WHERE b.table_seq = s.seq))",
         )?
         .execute([seq])?
         > 0;
@@ -442,28 +441,45 @@ pub(super) fn remove_page(tx: &Transaction<'_>, limit: i64) -> Result<Option<Rem
     else {
         return Ok(None);
     };
-    let changes = tx
-        .prepare_cached(
-            "DELETE FROM row_changes WHERE (batch, id) IN \
-             (SELECT batch, id FROM row_changes WHERE table_seq = ?1 LIMIT ?2)",
-        )?
-        .execute(params![table, limit])? as i64;
-    if changes > 0 {
-        return Ok(Some(Removed {
-            changes,
-            ..Removed::default()
-        }));
+    let mut statement = tx.prepare_cached(
+        "SELECT seq, rows FROM row_batches WHERE table_seq = ?1 ORDER BY seq LIMIT ?2",
+    )?;
+    let oldest = statement
+        .query_map(params![table, limit], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut through = None;
+    let mut taken = 0;
+    for (seq, rows) in oldest {
+        if through.is_some() && taken + rows > limit {
+            break;
+        }
+        through = Some(seq);
+        taken += rows;
     }
-    let batches = tx
-        .prepare_cached(
-            "DELETE FROM row_batches WHERE seq IN \
-             (SELECT seq FROM row_batches WHERE table_seq = ?1 LIMIT ?2)",
-        )?
-        .execute(params![table, limit])? as i64;
-    if batches > 0 {
+    if let Some(through) = through {
+        // A batch goes only once its last change has, so no page leaves a change without it.
+        let changes = tx
+            .prepare_cached(
+                "DELETE FROM row_changes WHERE (batch, id) IN (SELECT c.batch, c.id \
+                 FROM row_batches b JOIN row_changes c ON c.batch = b.seq \
+                 WHERE b.table_seq = ?1 AND b.seq <= ?2 LIMIT ?3)",
+            )?
+            .execute(params![table, through, limit])? as i64;
+        if changes == limit {
+            return Ok(Some(Removed {
+                changes,
+                ..Removed::default()
+            }));
+        }
+        let batches = tx
+            .prepare_cached("DELETE FROM row_batches WHERE table_seq = ?1 AND seq <= ?2")?
+            .execute(params![table, through])? as i64;
         return Ok(Some(Removed {
             batches,
-            ..Removed::default()
+            changes,
+            rows: 0,
         }));
     }
     let rows = tx
@@ -482,8 +498,7 @@ pub(super) fn remove_page(tx: &Transaction<'_>, limit: i64) -> Result<Option<Rem
     }))
 }
 
-/// Changes whose batch is gone. A batch leaves with its changes, or after them with its table,
-/// so these sit below the oldest batch left.
+/// Changes below the oldest batch left, whose batch is therefore gone.
 pub(super) fn orphan_page(tx: &Transaction<'_>, limit: i64) -> Result<Option<Removed>> {
     let changes = tx
         .prepare_cached(
@@ -562,27 +577,41 @@ mod tests {
         .unwrap()
     }
 
-    #[test]
-    fn every_page_of_expiry_takes_a_batch_with_all_its_changes() {
-        let mut db = rusqlite::Connection::open_in_memory().unwrap();
+    fn logged(batches: &[(i64, i64, i64)]) -> rusqlite::Connection {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
         db.execute_batch(include_str!("../../db/migrations/0001_baseline.sql"))
             .unwrap();
-        let tx = db.transaction().unwrap();
-        for (batch, rows) in [(1, 600), (2, 600), (3, 900), (4, 50), (5, 50)] {
-            tx.execute(
-                "INSERT INTO row_batches (seq, id, table_seq, at, rows) VALUES (?1, ?1, 1, ?2, ?3)",
-                params![batch, OLD, rows],
+        for &(table, batch, rows) in batches {
+            db.execute(
+                "INSERT INTO row_batches (seq, id, table_seq, at, rows) VALUES (?1, ?1, ?2, ?3, ?4)",
+                params![batch, table, OLD, rows],
             )
             .unwrap();
             for row in 0..rows {
-                tx.execute(
-                    "INSERT INTO row_changes (batch, id, table_seq, after_batch) \
-                     VALUES (?1, ?2, 1, ?1)",
+                db.execute(
+                    "INSERT INTO row_changes (batch, id, after_batch) VALUES (?1, ?2, ?1)",
                     params![batch, format!("{row}")],
                 )
                 .unwrap();
             }
         }
+        db
+    }
+
+    fn count(tx: &Transaction<'_>, sql: &str) -> i64 {
+        tx.query_row(sql, [], |row| row.get(0)).unwrap()
+    }
+
+    #[test]
+    fn every_page_of_expiry_takes_a_batch_with_all_its_changes() {
+        let mut db = logged(&[
+            (1, 1, 600),
+            (1, 2, 600),
+            (1, 3, 900),
+            (1, 4, 50),
+            (1, 5, 50),
+        ]);
+        let tx = db.transaction().unwrap();
         // A kill lands between pages, so each page must leave no change without its batch.
         let mut pages = Vec::new();
         while let Some(page) = expire_page(&tx, CUTOFF, 1_000).unwrap() {
@@ -594,5 +623,37 @@ mod tests {
             orphan_page(&tx, 1_000).unwrap().map(|page| page.changes),
             None
         );
+    }
+
+    #[test]
+    fn every_page_of_a_purge_leaves_each_change_its_batch_and_ends_with_the_whole_log() {
+        let mut db = logged(&[
+            (1, 1, 600),
+            (1, 2, 2_500),
+            (2, 3, 10),
+            (1, 4, 50),
+            (1, 5, 50),
+        ]);
+        let tx = db.transaction().unwrap();
+        tx.execute("INSERT INTO table_rows_purging (table_seq) VALUES (1)", [])
+            .unwrap();
+        let mut pages = Vec::new();
+        while let Some(page) = remove_page(&tx, 1_000).unwrap() {
+            assert_eq!(orphans(&tx), 0);
+            pages.push((page.batches, page.changes));
+        }
+        assert_eq!(
+            pages,
+            [(1, 600), (0, 1_000), (0, 1_000), (1, 500), (2, 100), (0, 0)]
+        );
+        assert_eq!(
+            count(&tx, "SELECT count(*) FROM row_batches WHERE table_seq = 1"),
+            0
+        );
+        assert_eq!(
+            count(&tx, "SELECT count(*) FROM row_changes WHERE batch = 3"),
+            10
+        );
+        assert_eq!(count(&tx, "SELECT count(*) FROM row_changes"), 10);
     }
 }

@@ -723,22 +723,17 @@ async fn row_log_cleanup_takes_changes_whose_batch_is_gone_whatever_the_retentio
     let purged = ledger(&instance).await;
     let oldest = rows(&instance, &kept, 2).await;
     let standing = rows(&instance, &kept, 1).await;
-    let later = [
-        rows(&instance, &purged, 3).await,
-        rows(&instance, &purged, 4).await,
-    ];
+    rows(&instance, &purged, 3).await;
+    rows(&instance, &purged, 4).await;
     assert_eq!(instance.count(LOG), 4_000_010);
-    // Batches whose changes outlived them, the oldest of the log and two after a standing one.
     instance
-        .sql(format!(
-            "DELETE FROM row_batches WHERE id IN ('{oldest}', '{}', '{}')",
-            later[0], later[1]
-        ))
+        .sql(format!("DELETE FROM row_batches WHERE id = '{oldest}'"))
         .await;
     instance.store("row_log_retention_days", "0").await;
 
-    instance.run("table-row-cleanup").await;
-    assert_eq!(instance.count(LOG), 1_000_008);
+    let run = instance.run("table-row-cleanup").await;
+    assert_eq!(run["changes_removed"], 2, "{run}");
+    assert_eq!(instance.count(LOG), 3_000_008);
 
     instance
         .ok(Method::DELETE, &format!("/items/{purged}"), Value::Null)
@@ -748,10 +743,53 @@ async fn row_log_cleanup_takes_changes_whose_batch_is_gone_whatever_the_retentio
         .await;
     let run = instance.run("table-row-cleanup").await;
     assert_eq!(run["changes_removed"], 7, "{run}");
+    assert_eq!(run["batches_removed"], 2, "{run}");
     assert_eq!(instance.count(LOG), 1_000_001);
     let left = format!("SELECT count(*) FROM row_batches WHERE id = '{standing}'");
     assert_eq!(instance.count(&left), 1);
     assert_eq!(instance.count("SELECT count(*) FROM table_rows"), 3);
+}
+
+#[tokio::test]
+async fn a_purge_takes_the_whole_log_of_a_table_whose_rows_were_all_deleted() {
+    let instance = Instance::start(&[]).await;
+    let kept = ledger(&instance).await;
+    let purged = ledger(&instance).await;
+    rows(&instance, &kept, 1).await;
+    let path = format!("/items/{purged}/tables/lines/rows");
+    let written = instance
+        .ok(
+            Method::POST,
+            &path,
+            json!({ "operations": [
+                { "op": "put", "values": { "amount": 1 } },
+                { "op": "put", "values": { "amount": 2 } },
+            ] }),
+        )
+        .await;
+    let deletes: Vec<Value> = written["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| json!({ "op": "delete", "id": row["id"] }))
+        .collect();
+    instance
+        .ok(Method::POST, &path, json!({ "operations": deletes }))
+        .await;
+    assert_eq!(instance.count("SELECT count(*) FROM table_rows"), 1);
+    assert_eq!(instance.count(LOG), 3_000_005);
+
+    instance
+        .ok(Method::DELETE, &format!("/items/{purged}"), Value::Null)
+        .await;
+    instance
+        .ok(Method::POST, &format!("/items/{purged}/purge"), json!({}))
+        .await;
+    let run = instance.run("table-row-cleanup").await;
+    assert_eq!(run["batches_removed"], 2, "{run}");
+    assert_eq!(run["changes_removed"], 4, "{run}");
+    assert_eq!(instance.count(LOG), 1_000_001);
+    assert_eq!(instance.count("SELECT count(*) FROM table_rows_purging"), 0);
 }
 
 async fn expiring(instance: &Instance) -> &'static str {
