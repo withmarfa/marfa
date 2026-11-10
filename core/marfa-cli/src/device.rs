@@ -528,7 +528,7 @@ pub enum ItemsCommand {
         ids: Vec<String>,
     },
     /// The `[[links]]` in a text, in order and repeats included, each with
-    /// its name, heading and alias and where each sits in the text, counted
+    /// its name, heading or row (`#^row`) and alias and where each sits in the text, counted
     /// in UTF-16 code units. A link in code or a comment, an embed, and a
     /// `[[` followed by a line break or another `[[` before its `]]` are not
     /// links. Reads no copy.

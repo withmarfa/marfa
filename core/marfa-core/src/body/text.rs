@@ -937,7 +937,7 @@ mod tests {
             (
                 "[[Plan#^block\\|Label]]",
                 "Plan#^block|Label",
-                ("Plan".to_string(), some("^block"), some("Label")),
+                ("Plan".to_string(), None, some("Label")),
             ),
             (
                 "[[ Plan \\| Label ]]",
@@ -952,6 +952,11 @@ mod tests {
                 assert_eq!(parts[0].text, cell, "the text is as written");
                 assert_eq!(parts[0].target, target);
                 assert_eq!(shown(&parts[0]), read, "{body}");
+                assert_eq!(
+                    parts[0].row.as_ref().map(|row| row.text.as_str()),
+                    target.contains('^').then_some("block"),
+                    "{body}"
+                );
                 assert_eq!(parts[0].name.text, Typed::new(&parts[0].target).name);
             }
         }
