@@ -160,7 +160,7 @@ mod tests {
             .unwrap()
             .keys()
             .collect();
-        assert_eq!(columns, ["attachment", "author", "sent_at", "text"]);
+        assert_eq!(columns, ["author", "text", "sent_at", "attachment"]);
     }
 
     #[test]

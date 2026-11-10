@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import type { TypeSchema } from "./schema-types.js";
 import { validateTypeSchema } from "./schema-validation.js";
 import { ALL_TYPES, ALL_SYSTEM_TYPES } from "../generated/type-registry.js";
+import { setAsideTables } from "../scripts/shipped-tables.js";
 
 // -----------------------------------------------------------------------------
 // The guarantee: an in-tree JSON schema is a valid runtime submission, verbatim.
@@ -12,7 +13,9 @@ import { ALL_TYPES, ALL_SYSTEM_TYPES } from "../generated/type-registry.js";
 // a running server. The in-tree files are the natural thing to copy when
 // learning the format, so one the runtime would reshape or reject teaches the
 // wrong format. `validateTypeSchema` below is the same function `POST /types`
-// calls, which holds the two paths to one judgment.
+// calls, which holds the two paths to one judgment. A shipped type's `tables`
+// are the one exception: the Rust validator judges them, so they are set
+// aside here as the generator sets them aside.
 // -----------------------------------------------------------------------------
 
 const typesRoot = resolve(import.meta.dirname, "..");
@@ -51,8 +54,10 @@ const emitted = new Map<string, TypeSchema>(
   [...ALL_TYPES, ...ALL_SYSTEM_TYPES].map((s) => [s.id, s]),
 );
 
-const validate = (data: unknown) =>
-  validateTypeSchema(data, { resolveSchema: (id) => emitted.get(id) });
+const validate = (data: Record<string, unknown>) =>
+  validateTypeSchema(setAsideTables(data).rest, {
+    resolveSchema: (id) => emitted.get(id),
+  });
 
 describe("in-tree schemas pass the runtime validator verbatim", () => {
   it("finds every shipped schema on disk", () => {

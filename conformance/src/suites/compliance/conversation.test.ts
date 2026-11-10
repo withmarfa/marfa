@@ -118,9 +118,9 @@ describe("the type", () => {
       ],
     });
     expect(refused.status).toBe(400);
-    expect(
-      (await client.listRows(item.id, "messages")).data.data,
-    ).toHaveLength(0);
+    expect((await client.listRows(item.id, "messages")).data.data).toHaveLength(
+      0,
+    );
     const textless = await append(item.id, [
       {
         op: "put",
@@ -293,15 +293,17 @@ describe("pictures and files", () => {
     expect(refused.error?.error.details).toMatchObject({
       errors: [{ path: "operations.0.values.attachment" }],
     });
-    expect(
-      (await client.listRows(made.id, "messages")).data.data,
-    ).toHaveLength(0);
+    expect((await client.listRows(made.id, "messages")).data.data).toHaveLength(
+      0,
+    );
   });
 
   it("withholds the attachment of a message from a key that may not read files, and keeps the message", async () => {
     const made = await conversation("Private photos");
     const photo = await image();
-    const sent = await append(made.id, [message("look", { attachment: photo })]);
+    const sent = await append(made.id, [
+      message("look", { attachment: photo }),
+    ]);
     const id = sent.results[0]!.id;
     const key = await client.createKey({
       label: "conversation-reader",

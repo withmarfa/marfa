@@ -88,6 +88,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/connectors.test.ts",
   "src/suites/compliance/contact-lists.test.ts",
   "src/suites/compliance/control-socket.test.ts",
+  "src/suites/compliance/conversation.test.ts",
   "src/suites/compliance/copy-once-repeat.test.ts",
   "src/suites/compliance/copy-stream-races.test.ts",
   "src/suites/compliance/core-collection.test.ts",
