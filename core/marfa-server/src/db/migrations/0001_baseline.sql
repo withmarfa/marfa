@@ -200,7 +200,7 @@ CREATE TABLE IF NOT EXISTS row_changes (
     PRIMARY KEY (batch, id)
 ) STRICT, WITHOUT ROWID;
 
--- Tables of purged items whose rows `table-row-cleanup` has still to remove.
+-- Tables of purged items whose rows or log `table-row-cleanup` has still to remove.
 CREATE TABLE IF NOT EXISTS table_rows_purging (
     table_seq INTEGER PRIMARY KEY
 ) STRICT;

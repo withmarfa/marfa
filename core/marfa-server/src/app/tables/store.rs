@@ -387,13 +387,14 @@ pub(super) fn column_held(
     )?)
 }
 
-/// Forgets a purged item's summaries and leaves its rows for `table-row-cleanup`.
+/// Forgets a purged item's summaries and leaves its rows and their log for `table-row-cleanup`.
 pub(super) fn doom(tx: &Transaction<'_>, seq: i64) -> Result<bool> {
     let held = tx
         .prepare_cached(
             "INSERT OR IGNORE INTO table_rows_purging (table_seq) \
              SELECT s.seq FROM table_summaries s WHERE s.item_seq = ?1 \
-             AND EXISTS (SELECT 1 FROM table_rows r WHERE r.table_seq = s.seq)",
+             AND (EXISTS (SELECT 1 FROM table_rows r WHERE r.table_seq = s.seq) \
+             OR EXISTS (SELECT 1 FROM row_batches b WHERE b.table_seq = s.seq))",
         )?
         .execute([seq])?
         > 0;
