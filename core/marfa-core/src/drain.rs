@@ -1842,7 +1842,8 @@ fn failed(error: CoreError) -> Failed {
         | CoreError::StorageFull(_)
         | CoreError::CopyExpired { .. }
         | CoreError::StreamIncomplete { .. }
-        | CoreError::Store(_) => Failed::Fatal(error),
+        | CoreError::Store(_)
+        | CoreError::StoreBusy(_) => Failed::Fatal(error),
         CoreError::RenewalFailed(_) if !error.is_environmental() => Failed::Fatal(error),
         CoreError::Unauthorized { .. } => Failed::Unanswered(error),
         CoreError::Server { status, .. } if crate::error::environmental_status(status) => {

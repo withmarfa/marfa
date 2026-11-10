@@ -341,17 +341,24 @@ fn adopt(
 ) -> Result<Catalog> {
     let statuses = {
         let conn = core.conn()?;
-        context.same_copy(&conn)?;
-        let reads = match store::slice_query(&conn)? {
-            Some(query) => query.reads_status()?,
-            None => false,
-        };
-        let before = reads
-            .then(|| crate::catalog::load(&conn).map(|held| held.status_fields()))
-            .transpose()?;
-        if store::replace_catalog(&conn, catalog)?.is_changed() {
-            *changed = true;
-        }
+        let before = store::catalog_scope(&conn, |conn| {
+            context.same_copy(conn)?;
+            let reads = match store::slice_query(conn)? {
+                Some(query) => query.reads_status()?,
+                None => false,
+            };
+            let before = reads
+                .then(|| crate::catalog::load(conn).map(|held| held.status_fields()))
+                .transpose()?;
+            #[cfg(debug_assertions)]
+            crate::fault::gate("gate-catalog-adopt");
+            let replaced = store::replace_catalog(conn, catalog)?;
+            Ok((before, replaced))
+        })
+        .map(|(before, replaced)| {
+            *changed |= replaced.is_changed();
+            before
+        })?;
         let adopted = crate::catalog::load(&conn)?;
         (before, adopted)
     };
@@ -1064,7 +1071,9 @@ fn follow_paced(
                 }
                 Err(error) => return Err(error),
             };
-            same_instance(core, &instance, context.generation)?;
+            crate::busy::retrying(&core.conn, stop, || {
+                same_instance(core, &instance, context.generation)
+            })?;
             if reachable == Some(false) {
                 on_change(&Change {
                     event: ChangeEvent::ServerReachable,
@@ -1079,7 +1088,9 @@ fn follow_paced(
             owes_drain = false;
             reachable = Some(true);
             let mut moved = false;
-            let catalog = adopt(core, &context, &fetched, &mut moved);
+            let catalog = crate::busy::retrying(&core.conn, stop, || {
+                adopt(core, &context, &fetched, &mut moved)
+            });
             if moved {
                 on_change(&Change {
                     event: ChangeEvent::CatalogChanged,
@@ -1418,7 +1429,7 @@ fn read_stream(
             unsettled = unsettled.max(1);
             // A heartbeat at the head says the copy is still current.
             if live_confirmed {
-                mark_synced_while_live(core, context, pace, now, synced)?;
+                mark_synced_while_live(core, context, pace, now, synced, stop)?;
                 look.start_if_owed(now)?;
             }
             continue;
@@ -1463,7 +1474,7 @@ fn read_stream(
                 live_confirmed = reach::cursor(&report.cursor).is_some_and(|cursor| cursor >= live);
                 on_live(live_confirmed);
                 if live_confirmed {
-                    mark_synced_while_live(core, context, pace, now, synced)?;
+                    mark_synced_while_live(core, context, pace, now, synced, stop)?;
                     look.start_if_owed(now)?;
                 }
             }
@@ -1487,7 +1498,9 @@ fn read_stream(
                 }
                 // A failed read of a row entering the slice reopens the
                 // stream from before this event rather than ending.
-                let taken = match take(core, context, catalog, slice, &id, kind, &payload) {
+                let taken = match crate::busy::retrying(&core.conn, stop, || {
+                    take(core, context, catalog, slice, &id, kind, &payload)
+                }) {
                     Err(ref error) if crate::folder::copy_changed(error) => {
                         context.same_copy(&*core.conn()?)?;
                         // Pins changed during an awaited read. Replay this event
@@ -1520,7 +1533,7 @@ fn read_stream(
                 }
                 on_live(live_confirmed);
                 if live_confirmed {
-                    mark_synced_while_live(core, context, pace, now, synced)?;
+                    mark_synced_while_live(core, context, pace, now, synced, stop)?;
                 }
             }
         }
@@ -1539,9 +1552,11 @@ fn settle_following(
     report: &mut FollowReport,
     on_change: &mut dyn FnMut(&Change),
 ) -> Result<Option<Ended>> {
-    let settled = core
-        .http()
-        .and_then(|http| settle_beneath(core, context, http, catalog, slice, stop));
+    let settled = core.http().and_then(|http| {
+        crate::busy::retrying(&core.conn, stop, || {
+            settle_beneath(core, context, http, catalog, slice, stop)
+        })
+    });
     match settled {
         Ok(0) => Ok(None),
         Ok(_) => {
@@ -1576,12 +1591,13 @@ fn mark_synced_while_live(
     pace: &Pace,
     now: &dyn Fn() -> Instant,
     synced: &mut Option<Instant>,
+    stop: &AtomicBool,
 ) -> Result<()> {
     let at = now();
     if synced.is_some_and(|last| at.saturating_duration_since(last) < pace.synced_every) {
         return Ok(());
     }
-    mark_synced_if_same(core, context)?;
+    crate::busy::retrying(&core.conn, stop, || mark_synced_if_same(core, context))?;
     *synced = Some(at);
     Ok(())
 }

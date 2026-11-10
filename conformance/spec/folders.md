@@ -6234,6 +6234,18 @@ When a watch pass exhausts its pull attempts because the working copy keeps chan
 
 **Tests:** `device/folders-identity.test.ts › goes on watching where the copy keeps changing under its pull, and says so once`.
 
+### `folders/watch-store-busy-notice`
+
+If another program's writes to a folder's store keep a `folders watch` from writing to the store, then the CLI MUST report the condition once for each run of failures.
+
+**Tests:** `device/store-busy-live.test.ts › says once that another program kept the watch's follow from writing to the folder's store, goes on watching and takes the server's next change`, `› says once that another program kept a watch's pass from writing to the folder's store, goes on watching and sends the edit`.
+
+### `folders/watch-store-busy-retry`
+
+If another program's writes to a folder's store keep a folder watch from writing to the store, then a device MUST continue watching and make the write again from fresh reads.
+
+**Tests:** `device/store-busy-live.test.ts › says once that another program kept the watch's follow from writing to the folder's store, goes on watching and takes the server's next change`, `› says once that another program kept a watch's pass from writing to the folder's store, goes on watching and sends the edit`.
+
 ### `folders/pull-flagged-items`
 
 When a pull counts an item as `unwritten`, `outside`, `unsuited` or `absent`, a device MUST include the item's ID, intended path or retained file path, flag and reason in the pull report's `flagged` entries, using `retained` as the flag for a file it could not let go to another folder.

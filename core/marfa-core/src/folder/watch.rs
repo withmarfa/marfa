@@ -49,10 +49,11 @@ pub enum WatchEvent {
     },
     /// The filesystem reported an error; the watch goes on.
     WatcherFailed(String),
-    /// A hydration failed and is tried again after `wait`, which doubles
-    /// after each failure up to `RETRY_MOST`, or a pull met a copy changing
-    /// under it and the next pass, after `wait`, pulls again. Told once for
-    /// each run of failures.
+    /// A hydration, or the follow's write to a store kept busy, failed and
+    /// is tried again after `wait`, which doubles after each failure up to
+    /// `RETRY_MOST`; or a pass met a copy changing under its pull or a store
+    /// kept busy, and the next pass runs after `wait`. Told once for each run
+    /// of failures.
     Retrying { error: CoreError, wait: Duration },
     /// The server cannot be reached, for `Some` reason, or answers again,
     /// for `None`. Told only when it changes.
@@ -453,9 +454,12 @@ impl Folder {
             }
             match passed {
                 Err(WatchError::Core(error)) if hydrated_by_the_follow(&error) => {}
-                // The follow kept changing the copy under the pull; the next
-                // pass reads it again.
-                Err(WatchError::Core(error)) if super::copy_changed(&error) => {
+                // The follow kept changing the copy under the pull, or another
+                // program kept writing to the store; the next pass reads it
+                // again.
+                Err(WatchError::Core(error))
+                    if super::copy_changed(&error) || matches!(error, CoreError::StoreBusy(_)) =>
+                {
                     if let Some(event) = telling.unsettled(&error) {
                         tell(event).map_err(WatchError::Told)?;
                     }
@@ -876,7 +880,7 @@ fn follow(
             Ok(_) => break,
             Err(CoreError::Canceled) if ended.load(Ordering::SeqCst) => break,
             Err(CoreError::CopyExpired { .. }) => {}
-            Err(error) if error.is_environmental() => {
+            Err(error) if error.is_environmental() || matches!(error, CoreError::StoreBusy(_)) => {
                 let (wait, next) = retry_schedule(retry, &error);
                 if !said {
                     let _ = wakes.send(Wake::Retrying(error, wait));
@@ -1240,7 +1244,9 @@ fn stirred(
 struct Telling {
     standing: Option<Standing>,
     unreachable: bool,
-    unsettled: bool,
+    /// The code of the failure the pass before ended on, told once for each
+    /// run of passes it ends.
+    unsettled: Option<&'static str>,
     health_changed: bool,
     /// The last pass ran to its end and left nothing that time alone would
     /// move on.
@@ -1333,16 +1339,15 @@ impl Standing {
 }
 
 impl Telling {
-    /// Told once for each run of passes the copy changed under.
     fn unsettled(&mut self, error: &CoreError) -> Option<WatchEvent> {
-        (!std::mem::replace(&mut self.unsettled, true)).then(|| WatchEvent::Retrying {
+        (self.unsettled.replace(error.code()) != Some(error.code())).then(|| WatchEvent::Retrying {
             error: error.clone(),
             wait: TICK,
         })
     }
 
     fn settled(&mut self) {
-        self.unsettled = false;
+        self.unsettled = None;
     }
 
     fn reach(&mut self, lost: Option<String>) -> Option<WatchEvent> {
@@ -2527,6 +2532,28 @@ mod tests {
         assert!(telling.unsettled(&changed).is_none());
         telling.settled();
         assert!(telling.unsettled(&changed).is_some(), "a new run is told");
+    }
+
+    #[test]
+    fn a_store_kept_busy_is_told_once_for_each_run_and_apart_from_a_changing_copy() {
+        let mut telling = Telling::default();
+        let busy = CoreError::StoreBusy("database is locked".into());
+        let changed = crate::reach::Context::changed();
+        assert!(matches!(
+            telling.unsettled(&busy),
+            Some(WatchEvent::Retrying { error: CoreError::StoreBusy(_), wait }) if wait == TICK
+        ));
+        assert!(telling.unsettled(&busy).is_none());
+        assert!(
+            telling.unsettled(&changed).is_some(),
+            "another failure is told"
+        );
+        assert!(
+            telling.unsettled(&busy).is_some(),
+            "and busy again after it"
+        );
+        telling.settled();
+        assert!(telling.unsettled(&busy).is_some(), "a new run is told");
     }
 
     #[test]
