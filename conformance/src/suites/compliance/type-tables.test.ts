@@ -472,20 +472,22 @@ describe("tables down a chain of types", () => {
     expect(
       (await client.registerType(declared(child, extra, { parent }))).ok,
     ).toBe(true);
-    const res = await client.replaceType(
-      parent,
-      declared(
+    for (const gained of [
+      { extra: { columns: { other: { type: "string" } } } },
+      extra,
+    ]) {
+      const res = await client.replaceType(
         parent,
-        { extra: { columns: { other: { type: "string" } } } },
-        {},
-      ),
-    );
-    expect(res.status).toBe(400);
-    expect(res.error?.error.code).toBe("inheritance_violation");
-    expect(errorFields(res)).toEqual(["tables.extra"]);
+        declared(parent, gained, {}),
+      );
+      expect(res.status, JSON.stringify(gained)).toBe(400);
+      expect(res.error?.error.code).toBe("inheritance_violation");
+      expect(errorFields(res)).toEqual(["tables.extra"]);
+    }
+    expect((await client.getType(parent)).data).not.toHaveProperty("tables");
   });
 
-  it("refuses a replacement that gives a type a parent above which a subtype declares a table of the parent's differently", async () => {
+  async function chainOfThree(leafTables: Tables) {
     const top = typeId("top");
     expect((await client.registerType(declared(top, LINES))).ok).toBe(true);
     const middle = typeId("middle");
@@ -493,40 +495,65 @@ describe("tables down a chain of types", () => {
       (
         await client.registerType({
           id: middle,
+          label: "Middle",
           fields: { title: { type: "string" } },
         })
       ).ok,
     ).toBe(true);
     const leaf = `${middle}.leaf`;
-    expect(
-      (
-        await client.registerType(
-          declared(
-            leaf,
-            { lines: { columns: { other: { type: "string" } } } },
-            { parent: middle },
-          ),
-        )
-      ).ok,
-    ).toBe(true);
+    const made = await client.registerType(
+      declared(leaf, leafTables, { parent: middle }),
+    );
+    expect(made.ok, JSON.stringify(made.error)).toBe(true);
     const attached = {
       id: middle,
       parent: top,
+      label: "Attached",
       fields: { title: { type: "string" } },
     } as never;
-    const res = await client.replaceType(middle, attached);
+    return { top, middle, leaf, attached };
+  }
+
+  it("refuses a replacement that gives a type a parent above which a subtype declares a table of the parent's", async () => {
+    const differently = await chainOfThree({
+      lines: { columns: { other: { type: "string" } } },
+    });
+    const res = await client.replaceType(
+      differently.middle,
+      differently.attached,
+    );
     expect(res.status).toBe(400);
     expect(res.error?.error.code).toBe("inheritance_violation");
     expect(errorFields(res)).toEqual(["parent"]);
-    expect((await client.getType(middle)).data).not.toHaveProperty("parent");
+
+    const asRead = (await client.getType(differently.top)).data.tables;
+    const alike = await chainOfThree(asRead as Tables);
+    const same = await client.replaceType(alike.middle, alike.attached);
+    expect(same.status, JSON.stringify(same.data)).toBe(400);
+    expect(same.error?.error.code).toBe("inheritance_violation");
+    expect(errorFields(same)).toEqual(["parent"]);
 
     const agreeing = await client.replaceType(
-      leaf,
-      declared(leaf, extra, { parent: middle }),
+      differently.leaf,
+      declared(differently.leaf, extra, { parent: differently.middle }),
     );
     expect(agreeing.status, JSON.stringify(agreeing.error)).toBe(200);
-    const taken = await client.replaceType(middle, attached);
+    const taken = await client.replaceType(
+      differently.middle,
+      differently.attached,
+    );
     expect(taken.status, JSON.stringify(taken.error)).toBe(200);
+  });
+
+  it("changes nothing when it refuses a replacement for the parent it would give a type", async () => {
+    const { middle, attached } = await chainOfThree({
+      lines: { columns: { other: { type: "string" } } },
+    });
+    const res = await client.replaceType(middle, attached);
+    expect(res.status).toBe(400);
+    const held = (await client.getType(middle)).data;
+    expect(held).not.toHaveProperty("parent");
+    expect(held.label, "a refused replacement changed the type").toBe("Middle");
   });
 });
 

@@ -176,15 +176,23 @@ When a type declares a table exactly as `GET /types/{id}` answers it for a type 
 
 If a replacement of a type would give it a table of the name of one a type below it declares, then the server MUST answer `400 inheritance_violation` naming the table.
 
+**Reason:** a table is declared once down a chain, so a type below that declares it alike holds a second declaration a later change to the table would contradict.
+
 **Tests:** `compliance/type-tables.test.ts › refuses a parent that gains a table a subtype declares`.
 
 ### `tables/inherit-reparented`
 
-If a replacement of a type would give it a parent above which a type below it declares a table of the name of one a type above that parent declares, with any definition other than the one `GET /types/{id}` answers for that parent, then the server MUST answer `400 inheritance_violation` naming the type's `parent`, and change nothing.
+If a replacement of a type would give it a parent above which a type below it declares a table of the name of one a type above that parent declares, then the server MUST answer `400 inheritance_violation` naming the type's `parent`.
 
-**Reason:** a table is declared once down a chain, so attaching a type under an ancestor is judged against every type below it, as adding a table to it is (`tables/inherit-gained`).
+**Reason:** attaching a type under an ancestor is judged against every type below it, as adding a table to it is (`tables/inherit-gained`).
 
-**Tests:** `compliance/type-tables.test.ts › refuses a replacement that gives a type a parent above which a subtype declares a table of the parent's differently`.
+**Tests:** `compliance/type-tables.test.ts › refuses a replacement that gives a type a parent above which a subtype declares a table of the parent's`.
+
+### `tables/inherit-reparented-unchanged`
+
+When the server refuses a replacement under `tables/inherit-reparented`, the server MUST NOT change the type.
+
+**Tests:** `compliance/type-tables.test.ts › changes nothing when it refuses a replacement for the parent it would give a type`.
 
 ## Evolving a type's tables without schema.write
 
