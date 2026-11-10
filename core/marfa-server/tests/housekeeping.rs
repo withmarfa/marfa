@@ -575,6 +575,33 @@ async fn event_log_cleanup_keeps_an_old_entry_behind_a_newer_one() {
 }
 
 #[tokio::test]
+async fn event_log_cleanup_keeps_an_event_whose_stored_time_does_not_read_and_every_one_after() {
+    let instance = Instance::start(&[("MARFA_EVENT_LOG_RETENTION_HOURS", "2")]).await;
+    instance.note().await;
+    instance.note().await;
+    let held = instance.count("SELECT count(*) FROM event_log");
+    let first = instance.count("SELECT MIN(id) FROM event_log");
+    let at = |id: i64, value: &str| format!("UPDATE event_log SET at = '{value}' WHERE id = {id}");
+    // "0" sorts before any cutoff, so only reading the time keeps it.
+    instance.sql(at(first, "0")).await;
+    assert_eq!(instance.kept_unread("event-log-cleanup").await, 1);
+    assert_eq!(instance.count("SELECT count(*) FROM event_log"), held);
+
+    // The witness: the same event with an old time that reads is taken.
+    instance.sql(at(first, "2000-01-01T00:00:00.000Z")).await;
+    assert_eq!(instance.run("event-log-cleanup").await["deleted"], 1);
+
+    instance.note().await;
+    instance.note().await;
+    let damaged = instance.count("SELECT MIN(id) FROM event_log") + 1;
+    instance.sql(at(damaged, "0")).await;
+    instance.forward(3 * HOUR);
+    assert_eq!(instance.kept_unread("event-log-cleanup").await, 1);
+    assert_eq!(instance.count("SELECT MIN(id) FROM event_log"), damaged);
+    assert_eq!(instance.count("SELECT count(*) FROM event_log"), 2);
+}
+
+#[tokio::test]
 async fn credential_cleanup_takes_a_revoked_key_a_second_past_its_thirty_days() {
     let instance = Instance::start(&[]).await;
     let body = json!({ "label": "ended", "source": "ended", "permissions": [] });

@@ -457,7 +457,8 @@ async fn a_put_that_runs_out_of_time_aborts_its_multipart_upload() {
 }
 
 #[tokio::test]
-async fn failed_attempts_stay_recorded_until_past_retention_and_an_unreachable_store_adds_none() {
+async fn failed_attempts_stay_recorded_until_listings_omit_them_past_retention_and_an_unreachable_store_adds_none()
+ {
     let store = FakeS3::start().await;
     let instance = Instance::backing_up_to(&store).await;
     let recorded = || instance.count("SELECT count(*) FROM backups");
@@ -483,7 +484,35 @@ async fn failed_attempts_stay_recorded_until_past_retention_and_an_unreachable_s
     let (status, body) = instance.back_up().await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["removed"], 1, "{body}");
+    assert_eq!(recorded().await, 3);
+
+    instance.past_retention();
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(recorded().await, 1);
+}
+
+#[tokio::test]
+async fn the_only_good_backup_keeps_its_files_when_one_listing_omits_it_after_a_failed_attempt() {
+    let store = FakeS3::start().await;
+    let instance = Instance::backing_up_to(&store).await;
+    let (file, item) = instance.named_file("named only by the good backup ").await;
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    instance.unname(&item).await;
+
+    store.refuse_writes(BACKUPS);
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+
+    instance.past_retention();
+    store.omit_from_listings(BACKUPS, 1);
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(instance.held(&file).await);
+    let (status, body) = instance.drop_copy(&file).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "copy_held_by_backup", "{body}");
 }
 
 #[tokio::test]
