@@ -353,7 +353,7 @@ fn refuse_unkept_columns(
             Issue::new(
                 "parent",
                 "a parent under which every item's columns are ones a table takes",
-                format!("a parent at or under \"{OWN_TABLE_TYPE}\", while {count} items of \"{type_id}\" hold columns a table cannot take"),
+                format!("a parent at or under \"{OWN_TABLE_TYPE}\", while {count} item(s) of \"{type_id}\" hold columns a table cannot take"),
                 "An item there keeps its own table from its columns. Correct or remove those columns first.",
             )
         })
