@@ -2,14 +2,23 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
 import type { RowOperation, TestContext } from "../../client/types.js";
-import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
+import {
+  createTestContext,
+  trackItem,
+  trackKey,
+  cleanup,
+} from "../../utils/setup.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
+let apiUrl: string;
 
 beforeAll(async () => {
-  ({ ctx, client } = await createTestContext("compliance", "table-rows-reads"));
+  ({ ctx, client, apiUrl } = await createTestContext(
+    "compliance",
+    "table-rows-reads",
+  ));
 });
 
 afterAll(async () => {
@@ -336,5 +345,106 @@ describe("reading rows", () => {
         on: { max: null },
       },
     });
+  });
+
+  it("filters, sorts, totals and pages a withheld item id as no value", async () => {
+    counter += 1;
+    const hiddenType = `user.rows-reads-hidden-${counter}-${ctx.runId}`;
+    const shownType = `user.rows-reads-shown-${counter}-${ctx.runId}`;
+    const type = `user.rows-reads-links-${counter}-${ctx.runId}`;
+    for (const id of [hiddenType, shownType]) {
+      const made = await client.registerType({
+        id,
+        fields: { title: { type: "string" } },
+      } as never);
+      expect(made.status, JSON.stringify(made.error)).toBe(201);
+    }
+    const made = await client.registerType({
+      id: type,
+      fields: { title: { type: "string" } },
+      tables: {
+        links: {
+          columns: {
+            amount: { type: "number" },
+            about: { type: "item", adds_up: "count" },
+          },
+        },
+      },
+    } as never);
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    const itemOf = async (of: string) => {
+      const res = await client.createItem({
+        type: of,
+        properties: { title: of },
+      } as never);
+      expect(res.status, JSON.stringify(res.error)).toBe(201);
+      trackItem(ctx, res.data.item.id);
+      return res.data.item.id;
+    };
+    const hidden = await itemOf(hiddenType);
+    const shown = await itemOf(shownType);
+    const item = await itemOf(type);
+    const ids = [uuidv7(), uuidv7(), uuidv7()];
+    const written = await client.writeRows(item, "links", {
+      operations: [
+        { op: "put", id: ids[0], values: { amount: 1, about: hidden } },
+        { op: "put", id: ids[1], values: { amount: 2, about: shown } },
+        { op: "put", id: ids[2], values: { amount: 3 } },
+      ],
+    });
+    expect(written.status, JSON.stringify(written.error)).toBe(200);
+    const [withHidden, withShown, without] = ids as [string, string, string];
+    counter += 1;
+    const key = await client.createKey({
+      label: `rows-reads-${counter}`,
+      source: `${ctx.source}-reads-${counter}`,
+      type_permissions: { [type]: "read", [shownType]: "read" },
+    });
+    expect(key.ok, JSON.stringify(key.error)).toBe(true);
+    trackKey(ctx, key.data.id);
+    const reader = new MarfaClient({ baseUrl: apiUrl, apiKey: key.data.key });
+
+    const selected = async (as: MarfaClient, filter: string) =>
+      (await as.listRows(item, "links", { filter })).data.data.map((r) => r.id);
+    const named = `values.about eq "${hidden}"`;
+    expect(await selected(client, named)).toEqual([withHidden]);
+    expect(await selected(reader, named)).toEqual([]);
+    expect(await selected(client, "values.about exists")).toEqual([
+      withHidden,
+      withShown,
+    ]);
+    expect(await selected(reader, "values.about exists")).toEqual([withShown]);
+    expect(await selected(reader, "values.about not_exists")).toEqual([
+      withHidden,
+      without,
+    ]);
+
+    const totals = async (as: MarfaClient, filter?: string) =>
+      (await as.rowTotals(item, "links", filter)).data;
+    expect(await totals(client)).toMatchObject({ totals: { about: { count: 2 } } });
+    expect(await totals(reader)).toMatchObject({ totals: { about: { count: 1 } } });
+    expect(await totals(client, named)).toMatchObject({ row_count: 1 });
+    expect(await totals(reader, named)).toMatchObject({
+      row_count: 0,
+      totals: { about: { count: 0 } },
+    });
+
+    const paged = async (as: MarfaClient) => {
+      const seen: string[] = [];
+      let cursor: string | undefined;
+      do {
+        const res = await as.listRows(item, "links", {
+          sort: "values.about",
+          limit: 1,
+          cursor,
+        });
+        expect(res.status, JSON.stringify(res.error)).toBe(200);
+        seen.push(...res.data.data.map((r) => r.id));
+        cursor = res.data.next_cursor ?? undefined;
+      } while (cursor);
+      return seen;
+    };
+    expect(await paged(client)).toEqual([withHidden, withShown, without]);
+    expect(await paged(reader)).toEqual([withShown, withHidden, without]);
   });
 });

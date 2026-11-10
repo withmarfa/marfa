@@ -498,6 +498,52 @@ describe("writing rows", () => {
     expect(tables.data.data[0]?.row_count).toBe(1001);
   });
 
+  it("refuses a patch that would leave a row over 64 KiB", async () => {
+    const type = typeId("patched-wide");
+    expect(
+      (
+        await client.registerType({
+          id: type,
+          fields: { title: { type: "string" } },
+          tables: {
+            notes: {
+              columns: { one: { type: "string" }, two: { type: "string" } },
+            },
+          },
+        } as never)
+      ).status,
+    ).toBe(201);
+    const item = await itemOf(type);
+    const id = rowId();
+    const half = "x".repeat(40_000);
+    const first = await client.writeRows(item, "notes", {
+      operations: [{ op: "put", id, values: { one: half } }],
+    });
+    expect(first.status, JSON.stringify(first.error)).toBe(200);
+    const fits = "y".repeat(65_536 - JSON.stringify({ one: half, two: "" }).length);
+    const atLimit = await client.writeRows(item, "notes", {
+      operations: [{ op: "patch", id, values: { two: fits } }],
+    });
+    expect(atLimit.status, JSON.stringify(atLimit.error)).toBe(200);
+    const over = await client.writeRows(item, "notes", {
+      operations: [
+        { op: "put", values: { one: "small" } },
+        { op: "patch", id, values: { two: half } },
+      ],
+    });
+    expect(over.status).toBe(400);
+    expect(refusedAt(over)).toEqual({
+      code: "validation_error",
+      operation: 1,
+      paths: ["operations.1.values"],
+    });
+    expect((await client.getRow(item, "notes", id)).data.values).toEqual({
+      one: half,
+      two: fits,
+    });
+    expect(await rowsOf(item, "notes")).toHaveLength(1);
+  });
+
   it("answers table_not_found for a table the type does not declare", async () => {
     const item = await itemOf(await ledgerType());
     const write = await client.writeRows(item, "other", {

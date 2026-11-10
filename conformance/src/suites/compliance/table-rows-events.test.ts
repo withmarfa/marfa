@@ -379,6 +379,78 @@ describe("announcing rows", () => {
     }
   });
 
+  it("withholds an item id a row holds from a stream after its column is removed", async () => {
+    counter += 1;
+    const hiddenType = `user.rows-events-hidden-${counter}-${ctx.runId}`;
+    expect(
+      (
+        await client.registerType({
+          id: hiddenType,
+          fields: { title: { type: "string" } },
+        } as never)
+      ).status,
+    ).toBe(201);
+    const hidden = await itemOf(hiddenType);
+    const type = await tableType({ about: { type: "item" } });
+    const item = await itemOf(type);
+    const written = await client.writeRows(item, "steps", {
+      operations: [{ op: "put", values: { count: 1, about: hidden } }],
+    });
+    expect(written.status, JSON.stringify(written.error)).toBe(200);
+    const removed = await client.replaceType(
+      type,
+      {
+        id: type,
+        fields: { title: { type: "string" } },
+        tables: {
+          steps: {
+            columns: { count: { type: "integer" }, note: { type: "string" } },
+          },
+        },
+      },
+      true,
+    );
+    expect(removed.status, JSON.stringify(removed.error)).toBe(200);
+    const narrow = await tapStream(apiUrl, await keyFor({ [type]: "read" }));
+    const full = await tapStream(apiUrl, apiKey);
+    try {
+      for (const tap of [narrow, full]) {
+        await tap.until(
+          (seen) => seen.some((e) => e.event === "stream_live"),
+          "the stream going live",
+        );
+      }
+      const patched = await client.writeRows(item, "steps", {
+        operations: [
+          {
+            op: "patch",
+            id: written.data.results[0]!.id,
+            values: { count: 2 },
+          },
+        ],
+      });
+      expect(patched.status, JSON.stringify(patched.error)).toBe(200);
+      const whole = (
+        await full.until((seen) => seen.some(rowsFor(item)), "the full frame")
+      ).find(rowsFor(item))!.data as RowsFrame;
+      expect(whole.rows[0]?.values).toEqual({ count: 2, about: hidden });
+      const shown = (
+        await narrow.until(
+          (seen) => seen.some(rowsFor(item)),
+          "the narrow frame",
+        )
+      ).find(rowsFor(item))!.data as RowsFrame;
+      expect(shown.rows[0]).toMatchObject({
+        values: { count: 2 },
+        withheld: ["about"],
+      });
+      expect(JSON.stringify(shown)).not.toContain(hidden);
+    } finally {
+      await narrow.close();
+      await full.close();
+    }
+  });
+
   it("sends no rows.changed on a copy stream", async () => {
     const item = await itemOf(await tableType());
     const copy = await tapStream(apiUrl, apiKey, {

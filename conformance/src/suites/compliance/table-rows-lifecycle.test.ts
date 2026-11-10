@@ -10,6 +10,7 @@ import {
   createTestContext,
   getManagementClient,
   trackItem,
+  trackKey,
   cleanup,
 } from "../../utils/setup.js";
 
@@ -73,6 +74,20 @@ async function put(
   });
   expect(res.status, JSON.stringify(res.error)).toBe(200);
   return res.data;
+}
+
+async function narrowReader(
+  types: Record<string, string>,
+): Promise<MarfaClient> {
+  counter += 1;
+  const made = await client.createKey({
+    label: `table-rows-life-${counter}`,
+    source: `${ctx.source}-life-${counter}`,
+    type_permissions: types,
+  });
+  expect(made.ok, JSON.stringify(made.error)).toBe(true);
+  trackKey(ctx, made.data.id);
+  return new MarfaClient({ baseUrl: apiUrl, apiKey: made.data.key });
 }
 
 describe("activity", () => {
@@ -347,6 +362,85 @@ describe("rows and the life of an item", () => {
       expect(kept.data.tables?.lines.columns.amount.type).toBe("number");
     } finally {
       await schema.close();
+    }
+  });
+
+  it("withholds an item id a row holds after its column is removed or retyped, or its item is retyped", async () => {
+    const hiddenType = typeId("hidden");
+    expect(
+      (
+        await client.registerType({
+          id: hiddenType,
+          fields: { title: { type: "string" } },
+        } as never)
+      ).status,
+    ).toBe(201);
+    const hidden = (await itemOf(hiddenType, "hidden")).id;
+    const withItem = {
+      lines: {
+        columns: { amount: { type: "number" }, about: { type: "item" } },
+      },
+    };
+    const removed = await register(typeId("removed"), withItem);
+    const retyped = await register(typeId("retyped"), withItem);
+    const moving = await register(typeId("moving"), withItem);
+    const plain = await register(typeId("plain"), {
+      lines: {
+        columns: { amount: { type: "number" }, about: { type: "string" } },
+      },
+    });
+    const reader = await narrowReader({
+      [removed]: "read",
+      [retyped]: "read",
+      [moving]: "read",
+      [plain]: "read",
+    });
+    const holding = async (type: string) => {
+      const item = await itemOf(type);
+      const row = (await put(item.id, [{ amount: 1, about: hidden }]))
+        .results[0]!.id;
+      const before = await reader.getRow(item.id, "lines", row);
+      expect(before.data.withheld).toEqual(["about"]);
+      return { item, row };
+    };
+    const a = await holding(removed);
+    const b = await holding(retyped);
+    const c = await holding(moving);
+
+    const replaced = (type: string, columns: Record<string, unknown>) =>
+      client.replaceType(
+        type,
+        { id: type, fields: { title: { type: "string" } }, tables: { lines: { columns } } },
+        true,
+      );
+    expect(
+      (await replaced(removed, { amount: { type: "number" } })).status,
+    ).toBe(200);
+    expect(
+      (
+        await replaced(retyped, {
+          amount: { type: "number" },
+          about: { type: "string" },
+        })
+      ).status,
+    ).toBe(200);
+    const moved = await client.updateItem(c.item.id, {
+      type: plain,
+      retype: true,
+      version: c.item.version,
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+
+    for (const { item, row } of [a, b, c]) {
+      const one = (await reader.getRow(item.id, "lines", row)).data;
+      expect(one.values).toEqual({ amount: 1 });
+      expect(one.withheld).toEqual(["about"]);
+      const listed = (await reader.listRows(item.id, "lines")).data.data;
+      expect(listed[0]?.values).toEqual({ amount: 1 });
+      expect(JSON.stringify(listed)).not.toContain(hidden);
+      expect(
+        (await client.getRow(item.id, "lines", row)).data.values,
+      ).toEqual({ amount: 1, about: hidden });
     }
   });
 
