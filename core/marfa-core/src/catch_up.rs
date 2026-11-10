@@ -412,7 +412,8 @@ struct Taken {
 
 /// The connection is released before this returns, so a caller told of the
 /// change can read the row it names. A transaction another program's commit
-/// refuses is made again from its first read, without reading the row again.
+/// refuses is made again from its first read, without reading from the server
+/// again.
 #[allow(clippy::too_many_arguments)]
 fn take(
     core: &Core,
@@ -437,9 +438,9 @@ fn take(
         None => None,
     };
     let reread = match &payload.item {
-        Some(item) if kind == "item.purged" => {
-            Some(crate::tables::reread_naming(core, &operation, &item.id)?)
-        }
+        Some(item) if kind == "item.purged" => Some(crate::tables::reread_naming(
+            core, &operation, &item.id, stop,
+        )?),
         _ => None,
     };
     let rows_changed = |item: String| Change {
@@ -619,11 +620,8 @@ pub(crate) fn replay_build(
     stop: &AtomicBool,
     catalog_changed: &mut bool,
 ) -> Result<CatchUpReport> {
-    let (slice, cursor) = {
-        let conn = core.conn()?;
-        crate::tables::forget_reread(&conn)?;
-        start_build(&conn)?
-    };
+    crate::busy::transaction(core, context, stop, crate::tables::forget_reread)?;
+    let (slice, cursor) = start_build(&*core.conn()?)?;
     let catalog = ask_unless_stopped(stop, http, Http::catalog)?;
     refuse_if_stopped(stop)?;
     let mut catalog = adopt(core, context, &catalog, catalog_changed)?;
@@ -1524,13 +1522,10 @@ fn read_stream(
     let mut greatest = reach::cursor(&report.cursor).unwrap_or(0);
     // A settle a stop or a failure cut short is owed from before this stream.
     let mut unsettled = 1;
-    {
-        let mut conn = core.conn()?;
-        let tx = conn.transaction()?;
-        crate::tables::forget_reread(&tx)?;
-        crate::tables::reconcile_all(&tx)?;
-        tx.commit()?;
-    }
+    crate::busy::transaction(core, context, stop, |tx| {
+        crate::tables::forget_reread(tx)?;
+        crate::tables::reconcile_all(tx)
+    })?;
     let mut pass = crate::tables::Pass::default();
     let mut filling = pass.owes(&*core.conn()?, now())?;
     loop {
@@ -1559,7 +1554,7 @@ fn read_stream(
                 return Ok(Ended::Over);
             }
             Err(RecvTimeoutError::Timeout) if filling => {
-                match pass.step(core, context, now()) {
+                match pass.step(core, context, now(), stop) {
                     Ok(crate::tables::Step::Done) => filling = false,
                     Ok(crate::tables::Step::Moved) => {}
                     Ok(crate::tables::Step::Failed(failure)) => {

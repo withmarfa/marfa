@@ -20,12 +20,13 @@ import {
   withoutWriteLine,
   type HeldCommand,
 } from "../../device/cli-adapter.js";
-import type { Outcome } from "../../device/protocol.js";
+import type { Outcome, TableHold } from "../../device/protocol.js";
 import {
   cleanup,
   createTestContext,
   trackFolder,
   trackItem,
+  trackType,
 } from "../../utils/setup.js";
 import { requireBinary } from "./harness.js";
 
@@ -204,8 +205,11 @@ async function serverCreate(title: string, body: string): Promise<string> {
   return created.data.item.id;
 }
 
-/** A hydrated working copy of this run's notes. */
-async function hydratedDevice(label: string): Promise<CliDevice> {
+/** A hydrated working copy of this run's items of `types`. */
+async function hydratedDevice(
+  label: string,
+  types = ["core.note"],
+): Promise<CliDevice> {
   const store = newStore(label);
   bases.push(dirname(store));
   const device = new CliDevice({
@@ -214,7 +218,7 @@ async function hydratedDevice(label: string): Promise<CliDevice> {
     url: apiUrl,
     key: apiKey,
   });
-  value(await device.hydrate(["core.note"], "library"));
+  value(await device.hydrate(types, "library"));
   return device;
 }
 
@@ -405,4 +409,98 @@ it("ends the drain store_busy when another program writes to the store at every 
   expect(again.verdicts.map((entry) => entry.verdict)).toEqual(["accepted"]);
   await serverNote(title);
   expect(outsideValue(device.store)).toBe(String(reaches));
+});
+
+/** An item of a type of this run's own whose `steps` table holds `count` rows. */
+async function itemWithRows(
+  label: string,
+  count: number,
+): Promise<{ type: string; item: string }> {
+  const type = `user.busy-${label}-${ctx.runId}`;
+  const registered = await client.registerType({
+    id: type,
+    fields: { title: { type: "string" } },
+    tables: { steps: { columns: { count: { type: "integer" } } } },
+  } as never);
+  expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+  trackType(ctx, type);
+  const created = await client.createItem({
+    type,
+    source: ctx.source,
+    tier: "library",
+    properties: { title: "Steps" },
+  } as never);
+  expect(created.ok, JSON.stringify(created.error)).toBe(true);
+  const item = created.data.item.id;
+  trackItem(ctx, item);
+  for (let at = 0; at < count; at += 1000) {
+    const written = await client.writeRows(item, "steps", {
+      operations: Array.from(
+        { length: Math.min(1000, count - at) },
+        (_, row) => ({
+          op: "put",
+          values: { count: at + row },
+        }),
+      ),
+    } as never);
+    expect(written.status, JSON.stringify(written.error)).toBe(200);
+  }
+  return { type, item };
+}
+
+it("makes a fill's page write again from its reads when another program wrote to the store as the device held the page, and holds every row once", async () => {
+  const { type, item } = await itemWithRows("rows", 1_500);
+  const device = await hydratedDevice("busy-fill", [type]);
+  const gate = new Gate(dirname(device.store), "gate-table-page");
+  const holding = device.hold(
+    ["tables", "hold", type, "steps"],
+    "device",
+    gate.env,
+  );
+  held.push(holding);
+  await vi.waitFor(() => expect(gate.reached()).toBe(1), WAIT);
+  outsideWrite(device.store, 1);
+  gate.release(ALL);
+  await holding.exited();
+  expect(holding.exitCode(), holding.stderr).toBe(0);
+  // The first page twice, once refused and once made again, then the second.
+  expect(gate.reached()).toBe(3);
+  const hold = JSON.parse(holding.stdout) as TableHold;
+  expect(hold.fill).toEqual({
+    whole: 1,
+    online: 0,
+    unfilled: 0,
+    pages: 2,
+    rows: 1_500,
+    failed: 0,
+    failure: null,
+  });
+  const tables = value(await device.heldTables()).tables;
+  expect(tables.map((one) => [one.item, one.state, one.rows])).toEqual([
+    [item, "whole", 1_500],
+  ]);
+  const counts: unknown[] = [];
+  let cursor: string | null = null;
+  do {
+    const page = value(
+      await device.tableRead<{
+        data: { values: { count: number } }[];
+        next_cursor: string | null;
+      }>([
+        "list",
+        item,
+        "steps",
+        "--limit",
+        "1000",
+        ...(cursor === null ? [] : ["--cursor", cursor]),
+      ]),
+    );
+    expect(page.held).toBe(true);
+    counts.push(...page.data.map((row) => row.values.count));
+    cursor = page.next_cursor;
+  } while (cursor !== null);
+  expect([...counts].sort((a, b) => Number(a) - Number(b))).toEqual(
+    Array.from({ length: 1_500 }, (_, at) => at),
+  );
+  expect(outsideValue(device.store)).toBe("1");
 });

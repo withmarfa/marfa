@@ -1124,7 +1124,9 @@ impl Core {
         stop: &AtomicBool,
     ) -> Result<TableHold> {
         self.lock.refuse_unless_writer()?;
-        let was_held = tables::choose(&mut *self.conn()?, type_id, table)?;
+        let was_held = busy::retrying(&self.conn, stop, || {
+            tables::choose(&mut *self.conn()?, type_id, table)
+        })?;
         let fill = match self.try_claim_stream(Mover::CatchUp) {
             Ok(_streaming) if store::hydration_complete(&*self.conn()?)? => {
                 let context = reach::Context::capture(&*self.conn()?)?;
@@ -1146,7 +1148,9 @@ impl Core {
     /// Releases a choice, retaining tables held by other choices.
     pub fn let_go_table(&self, type_id: &str, table: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
-        tables::let_go(&mut *self.conn()?, type_id, table)
+        busy::retrying(&self.conn, &NEVER_STOPPED, || {
+            tables::let_go(&mut *self.conn()?, type_id, table)
+        })
     }
 
     pub fn held_tables(&self) -> Result<HeldTables> {

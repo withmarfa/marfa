@@ -153,7 +153,6 @@ fn drop_table(conn: &Connection, item: &str, table: &str) -> Result<()> {
     Ok(())
 }
 
-/// Empties the table and leaves it to be filled again from its first page.
 fn owe_table(conn: &Connection, item: &str, table: &str) -> Result<()> {
     empty_rows(conn, item, table)?;
     set_state(conn, item, table, OWED, None)
@@ -622,13 +621,19 @@ impl Pass {
         self.failed.get(key).is_some_and(|retry| retry.due > now)
     }
 
-    pub(crate) fn step(&mut self, core: &Core, context: &Context, now: Instant) -> Result<Step> {
+    pub(crate) fn step(
+        &mut self,
+        core: &Core,
+        context: &Context,
+        now: Instant,
+        stop: &AtomicBool,
+    ) -> Result<Step> {
         let Some(owed) = next_owed(&*core.conn()?, &|key| self.waiting(key, now))? else {
             self.failed.retain(|_, retry| retry.due > now);
             return Ok(Step::Done);
         };
         let key = (owed.item.clone(), owed.table.clone());
-        match advance(core, context, &owed, &mut self.report) {
+        match advance(core, context, &owed, &mut self.report, stop) {
             Ok(()) => {
                 self.failed.remove(&key);
                 Ok(Step::Moved)
@@ -659,8 +664,14 @@ impl Pass {
     }
 }
 
-/// Moves one table on, or drops it.
-fn advance(core: &Core, context: &Context, owed: &Owed, report: &mut FillReport) -> Result<()> {
+/// A write may run more than once, so `report` counts only what committed.
+fn advance(
+    core: &Core,
+    context: &Context,
+    owed: &Owed,
+    report: &mut FillReport,
+    stop: &AtomicBool,
+) -> Result<()> {
     let Owed {
         item,
         table,
@@ -670,18 +681,17 @@ fn advance(core: &Core, context: &Context, owed: &Owed, report: &mut FillReport)
     let (item, table) = (item.as_str(), table.as_str());
     let http = context.http(core.http()?);
     let still = |conn: &Connection| -> Result<bool> {
-        context.same_copy(conn)?;
         Ok(state_of(conn, item, table)? == Some((state.clone(), cursor.clone())))
     };
-    let gone = || -> Result<()> {
-        let mut conn = core.conn()?;
-        let tx = conn.transaction()?;
-        if still(&tx)? {
-            drop_table(&tx, item, table)?;
-        }
-        tx.commit()?;
-        Ok(())
+    let write = |change: &dyn Fn(&Connection) -> Result<()>| {
+        crate::busy::transaction(core, context, stop, |tx| {
+            if still(tx)? {
+                change(tx)?;
+            }
+            Ok(())
+        })
     };
+    let gone = || write(&|tx| drop_table(tx, item, table));
     if state == OWED {
         let listed = match http.item_tables(item) {
             Err(error) if is_gone(&error) => return gone(),
@@ -704,22 +714,28 @@ fn advance(core: &Core, context: &Context, owed: &Owed, report: &mut FillReport)
             .get("bytes")
             .and_then(Value::as_i64)
             .ok_or_else(invalid)?;
-        let mut conn = core.conn()?;
-        let tx = conn.transaction()?;
-        if still(&tx)? {
-            let next = if count > ROW_CAP || bytes > BYTE_CAP {
-                report.online += 1;
-                ONLINE
-            } else if count == 0 {
-                report.whole += 1;
-                WHOLE
-            } else {
-                FILLING
-            };
-            empty_rows(&tx, item, table)?;
-            set_state(&tx, item, table, next, None)?;
+        let next = if count > ROW_CAP || bytes > BYTE_CAP {
+            ONLINE
+        } else if count == 0 {
+            WHOLE
+        } else {
+            FILLING
+        };
+        let moved = crate::busy::transaction(core, context, stop, |tx| {
+            if !still(tx)? {
+                return Ok(false);
+            }
+            empty_rows(tx, item, table)?;
+            set_state(tx, item, table, next, None)?;
+            Ok(true)
+        })?;
+        if moved {
+            match next {
+                ONLINE => report.online += 1,
+                WHOLE => report.whole += 1,
+                _ => {}
+            }
         }
-        tx.commit()?;
         return Ok(());
     }
     let mut params = vec![("limit", FILL_PAGE)];
@@ -728,13 +744,7 @@ fn advance(core: &Core, context: &Context, owed: &Owed, report: &mut FillReport)
     }
     let page = match http.table_rows(item, table, &params) {
         Err(error) if cursor.is_some() && is_refused_cursor(&error) => {
-            let mut conn = core.conn()?;
-            let tx = conn.transaction()?;
-            if still(&tx)? {
-                owe_table(&tx, item, table)?;
-            }
-            tx.commit()?;
-            return Ok(());
+            return write(&|tx| owe_table(tx, item, table));
         }
         Err(error) if is_gone(&error) => return gone(),
         other => other?,
@@ -748,40 +758,48 @@ fn advance(core: &Core, context: &Context, owed: &Owed, report: &mut FillReport)
         Some(Value::String(next)) => Some(next.clone()),
         Some(_) => return Err(invalid()),
     };
-    let mut conn = core.conn()?;
-    let tx = conn.transaction()?;
-    if still(&tx)? {
-        for row in rows {
-            hold_answered(&tx, item, table, row)?;
+    let held = crate::busy::transaction(core, context, stop, |tx| {
+        if !still(tx)? {
+            return Ok(None);
         }
+        #[cfg(debug_assertions)]
+        crate::fault::gate("gate-table-page");
+        for row in rows {
+            hold_answered(tx, item, table, row)?;
+        }
+        Ok(Some(if past_cap(tx, item, table)? {
+            ONLINE
+        } else if let Some(next) = &next {
+            set_state(tx, item, table, FILLING, Some(next))?;
+            FILLING
+        } else {
+            set_state(tx, item, table, WHOLE, None)?;
+            WHOLE
+        }))
+    })?;
+    if let Some(held) = held {
         report.pages += 1;
         report.rows += rows.len() as u64;
-        if past_cap(&tx, item, table)? {
-            report.online += 1;
-        } else if let Some(next) = &next {
-            set_state(&tx, item, table, FILLING, Some(next))?;
-        } else {
-            set_state(&tx, item, table, WHOLE, None)?;
-            report.whole += 1;
+        match held {
+            ONLINE => report.online += 1,
+            WHOLE => report.whole += 1,
+            _ => {}
         }
     }
-    tx.commit()?;
     Ok(())
 }
 
 // The caller holds the stream, excluding events between a page's read and write.
 pub(crate) fn fill(core: &Core, context: &Context, stop: &AtomicBool) -> Result<FillReport> {
     let filled = || -> Result<FillReport> {
-        {
-            let mut conn = core.conn()?;
-            let tx = conn.transaction()?;
-            reconcile_all(&tx)?;
-            tx.commit()?;
-        }
+        crate::busy::transaction(core, context, stop, reconcile_all)?;
         let mut pass = Pass::default();
         loop {
             crate::catch_up::refuse_if_stopped(stop)?;
-            if matches!(pass.step(core, context, crate::clock::now())?, Step::Done) {
+            if matches!(
+                pass.step(core, context, crate::clock::now(), stop)?,
+                Step::Done
+            ) {
                 break;
             }
         }
@@ -954,8 +972,13 @@ pub(crate) struct Reread {
 /// The server withholds a purged item's id from a key that may not read every
 /// type, so the held rows naming `target` are read again, a page at a time,
 /// into `rows_reread`.
-pub(crate) fn reread_naming(core: &Core, context: &Context, target: &str) -> Result<Reread> {
-    forget_reread(&*core.conn()?)?;
+pub(crate) fn reread_naming(
+    core: &Core,
+    context: &Context,
+    target: &str,
+    stop: &AtomicBool,
+) -> Result<Reread> {
+    crate::busy::transaction(core, context, stop, forget_reread)?;
     let mut gone: Vec<(String, String)> = Vec::new();
     let mut failed: Vec<(String, String)> = Vec::new();
     let mut decided: HashSet<(String, String)> = HashSet::new();
@@ -1014,9 +1037,7 @@ pub(crate) fn reread_naming(core: &Core, context: &Context, target: &str) -> Res
                 }
                 Err(error) => return Err(error),
             }
-            let mut conn = core.conn()?;
-            let tx = conn.transaction()?;
-            {
+            crate::busy::transaction(core, context, stop, |tx| {
                 let mut staged = tx.prepare_cached(
                     "INSERT OR REPLACE INTO rows_reread (item_id, name, id, answer) VALUES (?1, ?2, ?3, ?4)",
                 )?;
@@ -1024,8 +1045,8 @@ pub(crate) fn reread_naming(core: &Core, context: &Context, target: &str) -> Res
                     let answer = rows.get(id).map(Value::to_string);
                     staged.execute(params![item, table, id, answer])?;
                 }
-            }
-            tx.commit()?;
+                Ok(())
+            })?;
         }
         after = last;
     }

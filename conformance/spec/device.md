@@ -3768,7 +3768,7 @@ If a held stream's write to the store fails because another program committed to
 
 **Reason:** SQLite refuses a write on a snapshot that another commit has passed (its busy-snapshot error, extended code 517), and no wait clears it: only a transaction that reads again can write.
 
-**Tests:** `device/store-busy-live.test.ts › makes a held stream's write again from fresh reads when another program wrote to the store after it read, and goes on following`.
+**Tests:** `device/store-busy-live.test.ts › makes a held stream's write again from fresh reads when another program wrote to the store after it read, and goes on following`, `› makes a fill's page write again from its reads when another program wrote to the store as the device held the page, and holds every row once`.
 
 ### `device/follow-store-busy-ends`
 
