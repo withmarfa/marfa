@@ -13,7 +13,7 @@ use super::{Table, not_found_row, table_of, tables_of};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::items::{self, Reader, reading};
-use crate::app::query::{Position, Secret, Sql, compared, property};
+use crate::app::query::{Position, Secret, Sql, compared, held_property, readable_types};
 use crate::app::refusal::{Refusal, Result};
 
 const FIRST_PAGE: i64 = 100;
@@ -36,11 +36,10 @@ fn invalid(field: &str, message: impl Into<String>) -> Refusal {
         .with_detail("errors", json!([{ "path": field, "message": message }]))
 }
 
-/// Each row's item columns, shown to a reader that may read the item they name.
+/// Each value written as an item's id, shown to a reader that may read the item.
 struct Shown<'a> {
     tx: &'a Transaction<'a>,
     caller: &'a Caller,
-    table: &'a Table,
     seen: HashMap<String, bool>,
 }
 
@@ -58,18 +57,13 @@ impl Shown<'_> {
     fn row(&mut self, held: Held) -> Result<Value> {
         let mut values = held.values;
         let mut withheld = Vec::new();
-        let columns: Vec<String> = self.table.item_columns().map(str::to_string).collect();
-        for column in columns {
-            let Some(id) = values
-                .get(&column)
-                .and_then(Value::as_str)
-                .map(str::to_string)
-            else {
-                continue;
+        for (column, id) in &held.refs {
+            let Some(id) = id.as_str() else {
+                return Err(Refusal::internal("a stored row does not read"));
             };
-            if !self.readable(&id)? {
-                values.remove(&column);
-                withheld.push(column);
+            if !self.readable(id)? {
+                values.remove(column);
+                withheld.push(column.clone());
             }
         }
         let mut row = json!({ "id": held.id, "values": values, "updated_at": held.updated_at });
@@ -77,6 +71,79 @@ impl Shown<'_> {
             row["withheld"] = json!(withheld);
         }
         Ok(row)
+    }
+}
+
+/// The SQL a row read selects, sorts and totals by, which reads a withheld value as absent.
+struct Withholding {
+    /// The types the reader may read, or `None` for every type.
+    readable: Option<Vec<String>>,
+}
+
+impl Withholding {
+    fn of(read: &Reader<'_, '_>) -> Result<Withholding> {
+        Ok(Withholding {
+            readable: readable_types(read.tx, &read.caller)?,
+        })
+    }
+
+    fn hidden(&self, column: &str) -> Sql {
+        let path = format!("$.{column}");
+        let mut sql = Sql::new("(r.refs IS NOT NULL AND json_extract(r.refs, ");
+        sql.bind(path.clone());
+        sql.push(") IS NOT NULL AND NOT EXISTS (SELECT 1 FROM items x WHERE x.id = json_extract(r.refs, ");
+        sql.bind(path);
+        sql.push(")");
+        if let Some(types) = &self.readable {
+            sql.push(" AND x.type IN (");
+            sql.list(types);
+            sql.push(")");
+        }
+        sql.push("))");
+        sql
+    }
+
+    fn masked(&self, column: &str, shown: &Sql) -> Sql {
+        let mut sql = Sql::new("CASE WHEN ");
+        sql.append(&self.hidden(column));
+        sql.push(" THEN NULL ELSE ");
+        sql.append(shown);
+        sql.push(" END");
+        sql
+    }
+
+    fn on_body(function: &str, column: &str) -> Sql {
+        let mut sql = Sql::new(&format!("{function}(r.body, "));
+        sql.bind(format!("$.{column}"));
+        sql.push(")");
+        sql
+    }
+
+    fn held(&self, column: &str) -> Sql {
+        self.masked(column, &Self::on_body("json_extract", column))
+    }
+
+    fn kind(&self, column: &str) -> Sql {
+        self.masked(column, &Self::on_body("json_type", column))
+    }
+
+    fn sort_key(&self, column: &str) -> Sql {
+        let text = property_sort_expression("r.body", "?");
+        let mut shown = Sql::new(&text);
+        shown.values = vec![Bound::Text(format!("$.{column}")); text.matches('?').count()];
+        self.masked(column, &shown)
+    }
+
+    /// A number the column holds, and nothing for any other kind of value.
+    fn number(&self, column: &str) -> Sql {
+        let mut sql = Sql::new("CASE WHEN ");
+        sql.append(&self.hidden(column));
+        sql.push(" THEN NULL WHEN ");
+        sql.append(&Self::on_body("json_type", column));
+        sql.push(" IN ('integer', 'real') THEN ");
+        sql.append(&Self::on_body("json_extract", column));
+        sql.push(" END");
+        sql
     }
 }
 
@@ -134,7 +201,7 @@ fn expression(filter: &str, table: &Table) -> Result<Expression> {
     Ok(expression)
 }
 
-fn conditions(sql: &mut Sql, expression: &Expression) -> Result<()> {
+fn conditions(sql: &mut Sql, expression: &Expression, withholding: &Withholding) -> Result<()> {
     sql.push(" AND (");
     for (at, condition) in expression.conditions.iter().enumerate() {
         if at > 0 {
@@ -142,7 +209,13 @@ fn conditions(sql: &mut Sql, expression: &Expression) -> Result<()> {
         }
         sql.push("(");
         match &condition.term {
-            Term::Property { name, op } => property(sql, "r.body", name, *op, &condition.value),
+            Term::Property { name, op } => held_property(
+                sql,
+                &withholding.held(name),
+                &withholding.kind(name),
+                *op,
+                &condition.value,
+            ),
             Term::System { column, compare } => {
                 let value = system_literal(column, *compare, &condition.value)
                     .map_err(|error| invalid("filter", error.message))?;
@@ -161,13 +234,15 @@ fn conditions(sql: &mut Sql, expression: &Expression) -> Result<()> {
     Ok(())
 }
 
-fn selection(host_seq: i64, table: &Table, filter: Option<&Expression>) -> Result<Sql> {
-    let mut sql = Sql::new(" FROM table_rows r WHERE r.item_seq = ");
-    sql.bind(host_seq);
-    sql.push(" AND r.table_name = ");
-    sql.bind(table.name.clone());
+fn selection(
+    table: Option<i64>,
+    filter: Option<&Expression>,
+    withholding: &Withholding,
+) -> Result<Sql> {
+    let mut sql = Sql::new(" FROM table_rows r WHERE r.table_seq = ");
+    sql.bind(table);
     if let Some(expression) = filter {
-        conditions(&mut sql, expression)?;
+        conditions(&mut sql, expression, withholding)?;
     }
     Ok(sql)
 }
@@ -196,20 +271,16 @@ impl Key {
         }
     }
 
-    fn expression(&self) -> Sql {
+    fn expression(&self, withholding: &Withholding) -> Sql {
         match self {
             Key::Id => Sql::new("NULL"),
             Key::Updated => Sql::new("r.updated_at"),
-            Key::Column(column) => {
-                let text = property_sort_expression("r.body", "?");
-                let mut sql = Sql::new(&text);
-                sql.values = vec![Bound::Text(format!("$.{column}")); text.matches('?').count()];
-                sql
-            }
+            Key::Column(column) => withholding.sort_key(column),
         }
     }
 }
 
+/// For `updated_at`, the bound comes first so the index serves the range.
 fn position_after(sql: &mut Sql, key: &Key, descending: bool, at: &Position) {
     let id = at.id.clone();
     let after = if descending { "<" } else { ">" };
@@ -223,12 +294,17 @@ fn position_after(sql: &mut Sql, key: &Key, descending: bool, at: &Position) {
             sql.push(" AND k IS NULL AND r.id > ");
             sql.bind(id);
         }
-        (key, value) => {
-            sql.push(" AND (");
-            if matches!(key, Key::Column(_)) {
-                sql.push("k IS NULL OR ");
-            }
-            sql.push(&format!("k {after} "));
+        (Key::Updated, value) => {
+            sql.push(&format!(" AND k {after}= "));
+            sql.bind(value.clone());
+            sql.push(&format!(" AND (k {after} "));
+            sql.bind(value);
+            sql.push(" OR r.id > ");
+            sql.bind(id);
+            sql.push(")");
+        }
+        (Key::Column(_), value) => {
+            sql.push(&format!(" AND (k IS NULL OR k {after} "));
             sql.bind(value.clone());
             sql.push(" OR (k = ");
             sql.bind(value);
@@ -298,10 +374,13 @@ fn answered_page(
         .as_deref()
         .map(|cursor| opened(&read.cursors, &scope, cursor))
         .transpose()?;
-    let mut sql = Sql::new("SELECT * FROM (SELECT r.id, r.updated_at, json(r.body), ");
-    sql.append(&key.expression());
+    let withholding = Withholding::of(read)?;
+    let seq = store::table_seq(read.tx, host.seq, &table.name)?;
+    let mut sql =
+        Sql::new("SELECT * FROM (SELECT r.id, r.updated_at, json(r.body), json(r.refs), ");
+    sql.append(&key.expression(&withholding));
     sql.push(" AS k");
-    sql.append(&selection(host.seq, &table, filter.as_ref())?);
+    sql.append(&selection(seq, filter.as_ref(), &withholding)?);
     sql.push(") r WHERE 1 = 1");
     if let Some(position) = &position {
         position_after(&mut sql, &key, asked.descending, position);
@@ -325,7 +404,6 @@ fn answered_page(
     let mut shown = Shown {
         tx: read.tx,
         caller: &read.caller,
-        table: &table,
         seen: HashMap::new(),
     };
     let data = found
@@ -358,12 +436,11 @@ pub async fn get(
     reading(app, caller, move |read| {
         let host = items::readable_host(read, &item_id)?;
         let table = table_of(&read.catalog, &host.type_id, &table)?;
-        let held =
-            store::row(read.tx, host.seq, &table.name, &row_id)?.ok_or_else(not_found_row)?;
+        let seq = store::table_seq(read.tx, host.seq, &table.name)?;
+        let held = store::row(read.tx, seq, &row_id)?.ok_or_else(not_found_row)?;
         let mut shown = Shown {
             tx: read.tx,
             caller: &read.caller,
-            table: &table,
             seen: HashMap::new(),
         };
         printed(&shown.row(held)?)
@@ -371,27 +448,34 @@ pub async fn get(
     .await
 }
 
-fn numeric(column: &str) -> String {
-    format!(
-        "CASE WHEN json_type(r.body, '$.{column}') IN ('integer', 'real') \
-         THEN json_extract(r.body, '$.{column}') END"
-    )
-}
-
 /// Datetimes compare by instant and return UTC.
-fn aggregate(kind: &str, way: &str, column: &str) -> String {
-    let held = format!("json_extract(r.body, '$.{column}')");
+fn aggregate(withholding: &Withholding, kind: &str, way: &str, column: &str) -> Sql {
+    let mut sql = Sql::new("");
+    let mut wrapped = |open: &str, inner: Sql, close: &str| {
+        sql.push(open);
+        sql.append(&inner);
+        sql.push(close);
+    };
     match (way, kind) {
-        ("count", _) => format!("COUNT({held})"),
-        ("sum", _) => format!("TOTAL({})", numeric(column)),
-        ("average", _) => format!("AVG({})", numeric(column)),
-        ("min" | "max", "date") => format!("{}({held})", way.to_uppercase()),
-        ("min" | "max", "datetime") => format!(
-            "strftime('%Y-%m-%dT%H:%M:%fZ', {}(julianday({held})))",
-            way.to_uppercase()
+        ("count", _) => wrapped("COUNT(", withholding.held(column), ")"),
+        ("sum", _) => wrapped("TOTAL(", withholding.number(column), ")"),
+        ("average", _) => wrapped("AVG(", withholding.number(column), ")"),
+        ("min", "date") => wrapped("MIN(", withholding.held(column), ")"),
+        ("max", "date") => wrapped("MAX(", withholding.held(column), ")"),
+        ("min", "datetime") => wrapped(
+            "strftime('%Y-%m-%dT%H:%M:%fZ', MIN(julianday(",
+            withholding.held(column),
+            ")))",
         ),
-        _ => format!("{}({})", way.to_uppercase(), numeric(column)),
+        ("max", "datetime") => wrapped(
+            "strftime('%Y-%m-%dT%H:%M:%fZ', MAX(julianday(",
+            withholding.held(column),
+            ")))",
+        ),
+        ("min", _) => wrapped("MIN(", withholding.number(column), ")"),
+        _ => wrapped("MAX(", withholding.number(column), ")"),
     }
+    sql
 }
 
 fn number(value: f64, integer: bool) -> Value {
@@ -421,7 +505,9 @@ fn answered_totals(
     let host = items::readable_host(read, item_id)?;
     let table = table_of(&read.catalog, &host.type_id, table)?;
     let filter = filter.map(|text| expression(text, &table)).transpose()?;
-    let selected = selection(host.seq, &table, filter.as_ref())?;
+    let withholding = Withholding::of(read)?;
+    let seq = store::table_seq(read.tx, host.seq, &table.name)?;
+    let selected = selection(seq, filter.as_ref(), &withholding)?;
     let adding: Vec<(String, String, String)> = table
         .columns
         .iter()
@@ -435,7 +521,7 @@ fn answered_totals(
     let mut sql = Sql::new("SELECT COUNT(*)");
     for (name, kind, way) in &adding {
         sql.push(", ");
-        sql.push(&aggregate(kind, way, name));
+        sql.append(&aggregate(&withholding, kind, way, name));
     }
     sql.append(&selected);
     let mut found = store::single(read.tx, &sql)?.into_iter();

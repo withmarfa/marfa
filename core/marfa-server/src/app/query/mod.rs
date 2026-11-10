@@ -14,7 +14,7 @@ mod sources;
 mod views;
 
 pub use compile::{Ask, Filter, States};
-pub(crate) use compile::{Sql, compared, judge_type, property};
+pub(crate) use compile::{Sql, compared, held_property, judge_type};
 pub use cursor::{Position, SECRET_KEY, Secret, refused as bad_cursor};
 pub(crate) use events::{Event, Recurrence, events, parents};
 pub(crate) use export::selected;
@@ -22,6 +22,7 @@ pub use listing::{By, Listing, list, stats};
 pub(crate) use matched::{count_of_exact_type, matched, of_exact_type};
 pub use order::Sort;
 pub(crate) use overview::{Listed, held};
+pub(crate) use reach::readable_types;
 pub use search::{Search, search};
 pub(crate) use sources::{carried, carries};
 pub use views::{VIEW_TYPE, ViewPage, view_items};

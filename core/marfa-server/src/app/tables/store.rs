@@ -11,6 +11,8 @@ pub(super) struct Held {
     pub id: String,
     pub updated_at: String,
     pub values: Map<String, Value>,
+    /// Each value written as an item's id, by column.
+    pub refs: Map<String, Value>,
     /// The values' length as the row write prints them, which the summary counts.
     pub bytes: i64,
 }
@@ -19,33 +21,68 @@ pub(super) fn printed_len(values: &Map<String, Value>) -> i64 {
     serde_json::to_string(values).map_or(0, |text| text.len() as i64)
 }
 
-fn values_of(text: &str) -> Result<Map<String, Value>> {
+fn object_of(text: &str) -> Result<Map<String, Value>> {
     match serde_json::from_str(text) {
         Ok(Value::Object(values)) => Ok(values),
         _ => Err(Refusal::internal("a stored row does not read")),
     }
 }
 
-fn held_of(row: &Row<'_>) -> rusqlite::Result<(String, String, String)> {
-    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+type Stored = (String, String, String, Option<String>);
+
+/// Reads `id, updated_at, json(body), json(refs)` from the start of a row.
+fn stored_of(row: &Row<'_>) -> rusqlite::Result<Stored> {
+    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
 }
 
-fn held((id, updated_at, text): (String, String, String)) -> Result<Held> {
-    let values = values_of(&text)?;
+fn held((id, updated_at, body, refs): Stored) -> Result<Held> {
+    let values = object_of(&body)?;
     Ok(Held {
         bytes: printed_len(&values),
         values,
+        refs: refs
+            .as_deref()
+            .map(object_of)
+            .transpose()?
+            .unwrap_or_default(),
         id,
         updated_at,
     })
 }
 
-pub(super) fn row(tx: &Transaction<'_>, seq: i64, table: &str, id: &str) -> Result<Option<Held>> {
+/// The key of item `seq`'s table `table`, once it has held a row.
+pub(super) fn table_seq(tx: &Transaction<'_>, seq: i64, table: &str) -> Result<Option<i64>> {
+    Ok(tx
+        .prepare_cached("SELECT seq FROM table_summaries WHERE item_seq = ?1 AND table_name = ?2")?
+        .query_row(params![seq, table], |row| row.get(0))
+        .optional()?)
+}
+
+/// The key of item `seq`'s table `table`, starting its summary where it has none.
+pub(super) fn open(
+    tx: &Transaction<'_>,
+    seq: i64,
+    table: &str,
+    batch: &str,
+    at: &str,
+) -> Result<i64> {
     tx.prepare_cached(
-        "SELECT id, updated_at, json(body) FROM table_rows \
-         WHERE item_seq = ?1 AND table_name = ?2 AND id = ?3",
+        "INSERT INTO table_summaries (item_seq, table_name, row_count, bytes, last_batch, changed_at) \
+         VALUES (?1, ?2, 0, 0, ?3, ?4) ON CONFLICT (item_seq, table_name) DO NOTHING",
     )?
-    .query_row(params![seq, table, id], held_of)
+    .execute(params![seq, table, batch, at])?;
+    table_seq(tx, seq, table)?.ok_or_else(|| Refusal::internal("a table summary did not land"))
+}
+
+pub(super) fn row(tx: &Transaction<'_>, table: Option<i64>, id: &str) -> Result<Option<Held>> {
+    let Some(table) = table else {
+        return Ok(None);
+    };
+    tx.prepare_cached(
+        "SELECT id, updated_at, json(body), json(refs) FROM table_rows \
+         WHERE table_seq = ?1 AND id = ?2",
+    )?
+    .query_row(params![table, id], stored_of)
     .optional()?
     .map(held)
     .transpose()
@@ -53,52 +90,50 @@ pub(super) fn row(tx: &Transaction<'_>, seq: i64, table: &str, id: &str) -> Resu
 
 pub(super) fn put(
     tx: &Transaction<'_>,
-    seq: i64,
-    table: &str,
+    table: i64,
     id: &str,
     at: &str,
-    text: &str,
+    body: &str,
+    refs: Option<&str>,
 ) -> Result<()> {
     tx.prepare_cached(
-        "INSERT INTO table_rows (item_seq, table_name, id, updated_at, body) \
-         VALUES (?1, ?2, ?3, ?4, jsonb(?5)) \
-         ON CONFLICT (item_seq, table_name, id) DO UPDATE SET updated_at = ?4, body = jsonb(?5)",
+        "INSERT INTO table_rows (table_seq, id, updated_at, refs, body) \
+         VALUES (?1, ?2, ?3, jsonb(?4), jsonb(?5)) \
+         ON CONFLICT (table_seq, id) DO UPDATE SET updated_at = ?3, refs = jsonb(?4), body = jsonb(?5)",
     )?
-    .execute(params![seq, table, id, at, text])?;
+    .execute(params![table, id, at, refs, body])?;
     Ok(())
 }
 
 /// The bytes the removed row held, or `None` where there was none.
-pub(super) fn delete(tx: &Transaction<'_>, seq: i64, table: &str, id: &str) -> Result<Option<i64>> {
+pub(super) fn delete(tx: &Transaction<'_>, table: Option<i64>, id: &str) -> Result<Option<i64>> {
+    let Some(table) = table else {
+        return Ok(None);
+    };
     let removed: Option<String> = tx
         .prepare_cached(
-            "DELETE FROM table_rows WHERE item_seq = ?1 AND table_name = ?2 AND id = ?3 \
-             RETURNING json(body)",
+            "DELETE FROM table_rows WHERE table_seq = ?1 AND id = ?2 RETURNING json(body)",
         )?
-        .query_row(params![seq, table, id], |row| row.get(0))
+        .query_row(params![table, id], |row| row.get(0))
         .optional()?;
     removed
-        .map(|text| Ok(printed_len(&values_of(&text)?)))
+        .map(|text| Ok(printed_len(&object_of(&text)?)))
         .transpose()
 }
 
-/// SQLite checks the inserted row before the conflict, so it never holds a negative change.
 pub(super) fn summarize(
     tx: &Transaction<'_>,
-    seq: i64,
-    table: &str,
+    table: i64,
     count: i64,
     bytes: i64,
     batch: &str,
     at: &str,
 ) -> Result<()> {
     tx.prepare_cached(
-        "INSERT INTO table_summaries (item_seq, table_name, row_count, bytes, last_batch, changed_at) \
-         VALUES (?1, ?2, MAX(?3, 0), MAX(?4, 0), ?5, ?6) \
-         ON CONFLICT (item_seq, table_name) DO UPDATE SET row_count = row_count + ?3, \
-         bytes = bytes + ?4, last_batch = ?5, changed_at = ?6",
+        "UPDATE table_summaries SET row_count = row_count + ?2, bytes = bytes + ?3, \
+         last_batch = ?4, changed_at = ?5 WHERE seq = ?1",
     )?
-    .execute(params![seq, table, count, bytes, batch, at])?;
+    .execute(params![table, count, bytes, batch, at])?;
     Ok(())
 }
 
@@ -127,16 +162,16 @@ pub(super) fn summaries(tx: &Transaction<'_>, seq: i64) -> Result<Vec<Summary>> 
     Ok(found.collect::<rusqlite::Result<_>>()?)
 }
 
-/// The rows `filter` selects, in the order `order` gives, as a page query asks.
+/// Rows as a page query selects them, each with its sort key.
 pub(super) fn page(tx: &Transaction<'_>, sql: &Sql) -> Result<Vec<(Held, Bound)>> {
     let mut statement = tx.prepare(&sql.text)?;
     let found = statement.query_map(params_from_iter(sql.values.iter()), |row| {
-        Ok((held_of(row)?, row.get::<_, Bound>(3)?))
+        Ok((stored_of(row)?, row.get::<_, Bound>(4)?))
     })?;
     found
         .map(|row| {
-            let (held_row, key) = row?;
-            Ok((held(held_row)?, key))
+            let (stored, key) = row?;
+            Ok((held(stored)?, key))
         })
         .collect()
 }
@@ -180,8 +215,10 @@ pub(super) fn column_held(
     column: &str,
 ) -> Result<bool> {
     Ok(tx.query_row(
-        "SELECT EXISTS (SELECT 1 FROM items i JOIN table_rows r ON r.item_seq = i.seq \
-         AND r.table_name = ?2 WHERE i.type = ?1 AND json_type(r.body, ?3) IS NOT NULL \
+        "SELECT EXISTS (SELECT 1 FROM items i \
+         JOIN table_summaries s ON s.item_seq = i.seq AND s.table_name = ?2 \
+         JOIN table_rows r ON r.table_seq = s.seq \
+         WHERE i.type = ?1 AND json_type(r.body, ?3) IS NOT NULL \
          AND json_type(r.body, ?3) <> 'null')",
         params![type_id, table, format!("$.{column}")],
         |row| row.get(0),
@@ -190,22 +227,23 @@ pub(super) fn column_held(
 
 /// Forgets a purged item's summaries and leaves its rows for `table-row-cleanup`.
 pub(super) fn doom(tx: &Transaction<'_>, seq: i64) -> Result<bool> {
+    let held = tx
+        .prepare_cached(
+            "INSERT OR IGNORE INTO table_rows_purging (table_seq) \
+             SELECT s.seq FROM table_summaries s WHERE s.item_seq = ?1 \
+             AND EXISTS (SELECT 1 FROM table_rows r WHERE r.table_seq = s.seq)",
+        )?
+        .execute([seq])?
+        > 0;
     tx.prepare_cached("DELETE FROM table_summaries WHERE item_seq = ?1")?
         .execute([seq])?;
-    let held: bool = tx
-        .prepare_cached("SELECT EXISTS (SELECT 1 FROM table_rows WHERE item_seq = ?1)")?
-        .query_row([seq], |row| row.get(0))?;
-    if held {
-        tx.prepare_cached("INSERT OR IGNORE INTO table_rows_purging (item_seq) VALUES (?1)")?
-            .execute([seq])?;
-    }
     Ok(held)
 }
 
-/// Removes up to `limit` rows of one purged item; `None` once no purged item has rows left.
+/// Removes up to `limit` rows of one purged table; `None` once no purged table has rows left.
 pub(super) fn remove_page(tx: &Transaction<'_>, limit: i64) -> Result<Option<i64>> {
-    let Some(seq) = tx
-        .prepare_cached("SELECT item_seq FROM table_rows_purging ORDER BY item_seq LIMIT 1")?
+    let Some(table) = tx
+        .prepare_cached("SELECT table_seq FROM table_rows_purging ORDER BY table_seq LIMIT 1")?
         .query_row([], |row| row.get::<_, i64>(0))
         .optional()?
     else {
@@ -213,13 +251,13 @@ pub(super) fn remove_page(tx: &Transaction<'_>, limit: i64) -> Result<Option<i64
     };
     let removed = tx
         .prepare_cached(
-            "DELETE FROM table_rows WHERE item_seq = ?1 AND (table_name, id) IN \
-             (SELECT table_name, id FROM table_rows WHERE item_seq = ?1 LIMIT ?2)",
+            "DELETE FROM table_rows WHERE table_seq = ?1 AND id IN \
+             (SELECT id FROM table_rows WHERE table_seq = ?1 LIMIT ?2)",
         )?
-        .execute(params![seq, limit])? as i64;
+        .execute(params![table, limit])? as i64;
     if removed < limit {
-        tx.prepare_cached("DELETE FROM table_rows_purging WHERE item_seq = ?1")?
-            .execute([seq])?;
+        tx.prepare_cached("DELETE FROM table_rows_purging WHERE table_seq = ?1")?
+            .execute([table])?;
     }
     Ok(Some(removed))
 }

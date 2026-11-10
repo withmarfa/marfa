@@ -93,9 +93,8 @@ CREATE TABLE IF NOT EXISTS edge_types (
 CREATE UNIQUE INDEX IF NOT EXISTS edge_types_reverse_name
     ON edge_types (reverse_name) WHERE reverse_name IS NOT NULL;
 
--- AUTOINCREMENT: a purged item's rows outlive it until housekeeping removes them, keyed by its seq.
 CREATE TABLE IF NOT EXISTS items (
-    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    seq INTEGER PRIMARY KEY,
     id TEXT NOT NULL UNIQUE,
     type TEXT NOT NULL,
     state TEXT NOT NULL CHECK (state IN ('active', 'archived', 'trashed', 'revoked')),
@@ -149,30 +148,34 @@ CREATE INDEX IF NOT EXISTS items_bin_age ON items (trashed_at)
     WHERE state = 'trashed';
 CREATE INDEX IF NOT EXISTS items_activity ON items (last_activity_at, id);
 
--- Keep values last so key reads stop before them.
-CREATE TABLE IF NOT EXISTS table_rows (
-    item_seq INTEGER NOT NULL,
-    table_name TEXT NOT NULL,
-    id TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    body BLOB NOT NULL,
-    PRIMARY KEY (item_seq, table_name, id)
-) STRICT, WITHOUT ROWID;
-
--- One per table of an item that has held a row, kept by the row write.
+-- One per table of an item that has held a row, kept by the row write. AUTOINCREMENT: a purged
+-- item's rows outlive its summary until housekeeping removes them, keyed by its seq.
 CREATE TABLE IF NOT EXISTS table_summaries (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
     item_seq INTEGER NOT NULL,
     table_name TEXT NOT NULL,
     row_count INTEGER NOT NULL CHECK (row_count >= 0),
     bytes INTEGER NOT NULL CHECK (bytes >= 0),
     last_batch TEXT NOT NULL,
     changed_at TEXT NOT NULL,
-    PRIMARY KEY (item_seq, table_name)
-) STRICT, WITHOUT ROWID;
+    UNIQUE (item_seq, table_name)
+) STRICT;
 
--- Purged items whose rows `table-row-cleanup` has still to remove.
+-- `refs` holds, by column, each value written as an item's id, withheld whatever the column
+-- becomes. Keep values last so key reads stop before them.
+CREATE TABLE IF NOT EXISTS table_rows (
+    table_seq INTEGER NOT NULL,
+    id TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    refs BLOB,
+    body BLOB NOT NULL,
+    PRIMARY KEY (table_seq, id)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS table_rows_updated ON table_rows (table_seq, updated_at);
+
+-- Tables of purged items whose rows `table-row-cleanup` has still to remove.
 CREATE TABLE IF NOT EXISTS table_rows_purging (
-    item_seq INTEGER PRIMARY KEY
+    table_seq INTEGER PRIMARY KEY
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS edges (

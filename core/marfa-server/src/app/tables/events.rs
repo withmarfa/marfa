@@ -30,7 +30,7 @@ pub(super) struct Announced<'a> {
 fn logged_rows(announced: &Announced<'_>) -> (Vec<Value>, bool) {
     let mut bytes = 0;
     for (_, change) in announced.changed {
-        if let Changed::Held(values) = change {
+        if let Changed::Held { values, .. } = change {
             bytes += serde_json::to_vec(values).map_or(usize::MAX, |text| text.len());
         }
     }
@@ -40,22 +40,21 @@ fn logged_rows(announced: &Announced<'_>) -> (Vec<Value>, bool) {
         .iter()
         .map(|(id, change)| match change {
             Changed::Deleted => json!({ "id": id, "deleted": true }),
-            Changed::Held(_) if !included => json!({ "id": id }),
-            Changed::Held(values) => {
+            Changed::Held { .. } if !included => json!({ "id": id }),
+            Changed::Held { values, refs } => {
                 let mut row = Map::new();
                 row.insert("id".into(), id.clone().into());
                 row.insert("values".into(), Value::Object(values.clone()));
-                let named: Map<String, Value> = announced
-                    .table
-                    .item_columns()
-                    .filter_map(|column| {
-                        let target = values.get(column)?.as_str()?;
+                let named: Map<String, Value> = refs
+                    .iter()
+                    .filter_map(|(column, target)| {
                         // An item no longer held reads as no type, which every reader is denied.
-                        let type_id = announced.referenced.get(target).cloned().flatten();
-                        Some((
-                            column.to_string(),
-                            type_id.map_or(Value::Null, Value::String),
-                        ))
+                        let type_id = announced
+                            .referenced
+                            .get(target.as_str()?)
+                            .cloned()
+                            .flatten();
+                        Some((column.clone(), type_id.map_or(Value::Null, Value::String)))
                     })
                     .collect();
                 if !named.is_empty() {

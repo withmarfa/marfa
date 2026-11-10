@@ -315,18 +315,25 @@ fn extract(source: &str, name: &str) -> Sql {
 }
 
 /// A condition on member `name` of the JSON object in the column `source`.
-pub(crate) fn property(sql: &mut Sql, source: &str, name: &str, op: Op, value: &Literal) {
-    let held = extract(source, name);
+fn property(sql: &mut Sql, source: &str, name: &str, op: Op, value: &Literal) {
+    let mut kind = Sql::new(&format!("json_type({source}, "));
+    kind.bind(format!("$.{name}"));
+    kind.push(")");
+    held_property(sql, &extract(source, name), &kind, op, value);
+}
+
+/// A condition on the value `held`, whose JSON type is `kind`.
+pub(crate) fn held_property(sql: &mut Sql, held: &Sql, kind: &Sql, op: Op, value: &Literal) {
     match op {
         Op::Compare(compare @ (Compare::Eq | Compare::Neq))
             if matches!(value, Literal::Number(_)) =>
         {
-            let mut number = Sql::new(&format!("CASE WHEN json_type({source}, "));
-            number.bind(format!("$.{name}"));
-            number.push(") IN ('integer', 'real') THEN CAST(");
-            number.append(&held);
+            let mut number = Sql::new("CASE WHEN ");
+            number.append(kind);
+            number.push(" IN ('integer', 'real') THEN CAST(");
+            number.append(held);
             number.push(" AS REAL) ELSE ");
-            number.append(&held);
+            number.append(held);
             number.push(" END");
             compared(sql, &number, compare, value);
         }
@@ -334,17 +341,17 @@ pub(crate) fn property(sql: &mut Sql, source: &str, name: &str, op: Op, value: &
             if matches!(value, Literal::Number(_)) =>
         {
             let mut number = Sql::new("CAST(");
-            number.append(&held);
+            number.append(held);
             number.push(" AS REAL)");
             compared(sql, &number, compare, value);
         }
-        Op::Compare(compare) => compared(sql, &held, compare, value),
+        Op::Compare(compare) => compared(sql, held, compare, value),
         Op::Exists => {
-            sql.append(&held);
+            sql.append(held);
             sql.push(" IS NOT NULL");
         }
         Op::NotExists => {
-            sql.append(&held);
+            sql.append(held);
             sql.push(" IS NULL");
         }
     }

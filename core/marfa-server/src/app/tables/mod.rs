@@ -99,17 +99,22 @@ fn values_of(index: usize, value: Option<&Value>) -> Result<Map<String, Value>> 
             "values is an object keyed by column.",
         ));
     };
-    let bytes = serde_json::to_vec(values).map_or(usize::MAX, |text| text.len());
-    if bytes > MAX_ROW_BYTES {
+    Ok(values.clone())
+}
+
+/// The row an operation leaves, as JSON, is at most [`MAX_ROW_BYTES`].
+fn refuse_wide(index: usize, values: &Map<String, Value>) -> Result<i64> {
+    let bytes = store::printed_len(values);
+    if bytes > MAX_ROW_BYTES as i64 {
         return Err(refused_at(
             index,
             "values",
             format!(
-                "A row holds at most {MAX_ROW_BYTES} bytes of values as JSON; this holds {bytes}."
+                "A row holds at most {MAX_ROW_BYTES} bytes of values as JSON; this operation leaves {bytes}."
             ),
         ));
     }
-    Ok(values.clone())
+    Ok(bytes)
 }
 
 const OP_FIELDS: [&str; 3] = ["op", "id", "values"];
@@ -245,8 +250,15 @@ impl Outcome {
 
 /// A row as a batch left it, for its event.
 pub(crate) enum Changed {
-    Held(Map<String, Value>),
+    Held {
+        values: Map<String, Value>,
+        refs: Map<String, Value>,
+    },
     Deleted,
+}
+
+fn refs_text(refs: &Map<String, Value>) -> Option<String> {
+    (!refs.is_empty()).then(|| Value::Object(refs.clone()).to_string())
 }
 
 struct Batch<'a, 'c> {
@@ -254,6 +266,9 @@ struct Batch<'a, 'c> {
     catalog: &'a Catalog,
     host: &'a Host,
     table: &'a Table,
+    /// Started once the batch first creates a row in a table that has never held one.
+    table_seq: Option<i64>,
+    batch_id: String,
     /// Each item a value names, as the writing key may see it: its type, or none.
     referenced: HashMap<String, Option<String>>,
     changed: Vec<(String, Changed)>,
@@ -326,17 +341,28 @@ impl Batch<'_, '_> {
         Ok(())
     }
 
+    /// Sets in `refs` each value `values` writes to an item column, and clears the rest it names.
+    fn mark_refs(&self, refs: &mut Map<String, Value>, values: &Map<String, Value>) {
+        for (column, value) in values {
+            refs.remove(column);
+            let declared = self
+                .table
+                .item_columns()
+                .any(|item_column| item_column == column);
+            if declared && value.is_string() {
+                refs.insert(column.clone(), value.clone());
+            }
+        }
+    }
+
     /// The type of each item a changed row names, also through a column the batch left alone.
     fn name_referenced(&mut self) -> Result<()> {
         let tx = self.unit.tx();
         for (_, change) in &self.changed {
-            let Changed::Held(values) = change else {
+            let Changed::Held { refs, .. } = change else {
                 continue;
             };
-            for column in self.table.item_columns() {
-                let Some(id) = values.get(column).and_then(Value::as_str) else {
-                    continue;
-                };
+            for id in refs.values().filter_map(Value::as_str) {
                 if !self.referenced.contains_key(id) {
                     self.referenced
                         .insert(id.to_string(), items::type_of(tx, id)?);
@@ -353,28 +379,52 @@ impl Batch<'_, '_> {
         }
     }
 
-    fn land(&mut self, index: usize, op: Op) -> Result<(String, Outcome)> {
-        let tx = self.unit.tx();
-        let (seq, table, at) = (
+    fn table_seq(&mut self) -> Result<i64> {
+        if let Some(seq) = self.table_seq {
+            return Ok(seq);
+        }
+        let seq = store::open(
+            self.unit.tx(),
             self.host.seq,
-            self.table.name.as_str(),
-            self.unit.at.as_str(),
-        );
+            &self.table.name,
+            &self.batch_id,
+            &self.unit.at,
+        )?;
+        self.table_seq = Some(seq);
+        Ok(seq)
+    }
+
+    fn land(&mut self, index: usize, op: Op) -> Result<(String, Outcome)> {
         if let Some(values) = op.values() {
             self.refuse_references(index, values)?;
         }
+        let tx = self.unit.tx();
         match op {
-            Op::Put { id, mut values } => {
-                self.refuse_values(index, &values, true)?;
+            Op::Put { id, values: sent } => {
+                self.refuse_values(index, &sent, true)?;
+                let mut refs = Map::new();
+                self.mark_refs(&mut refs, &sent);
+                let mut values = sent;
                 values.retain(|_, value| !value.is_null());
+                let printed = refuse_wide(index, &values)?;
                 let id = id.unwrap_or_else(|| Uuid::now_v7().to_string());
-                let held = store::row(tx, seq, table, &id)?;
-                if held.as_ref().is_some_and(|held| held.values == values) {
+                let held = store::row(tx, self.table_seq, &id)?;
+                if held
+                    .as_ref()
+                    .is_some_and(|held| held.values == values && held.refs == refs)
+                {
                     return Ok((id, Outcome::Unchanged));
                 }
-                let text = Value::Object(values.clone()).to_string();
-                store::put(tx, seq, table, &id, at, &text)?;
-                let printed = store::printed_len(&values);
+                let seq = self.table_seq()?;
+                let body = Value::Object(values.clone()).to_string();
+                store::put(
+                    tx,
+                    seq,
+                    &id,
+                    &self.unit.at,
+                    &body,
+                    refs_text(&refs).as_deref(),
+                )?;
                 let outcome = match &held {
                     Some(held) => {
                         self.bytes += printed - held.bytes;
@@ -386,16 +436,18 @@ impl Batch<'_, '_> {
                         Outcome::Created
                     }
                 };
-                self.note(&id, Changed::Held(values));
+                self.note(&id, Changed::Held { values, refs });
                 Ok((id, outcome))
             }
             Op::Patch { id, values } => {
                 self.refuse_values(index, &values, false)?;
-                let Some(held) = store::row(tx, seq, table, &id)? else {
+                let Some(held) = store::row(tx, self.table_seq, &id)? else {
                     return Err(not_found_row()
                         .with_detail("operation", index)
                         .with_detail("id", id.as_str()));
                 };
+                let mut refs = held.refs.clone();
+                self.mark_refs(&mut refs, &values);
                 let mut next = held.values.clone();
                 for (column, value) in values {
                     if value.is_null() {
@@ -404,16 +456,25 @@ impl Batch<'_, '_> {
                         next.insert(column, value);
                     }
                 }
-                if next == held.values {
+                if next == held.values && refs == held.refs {
                     return Ok((id, Outcome::Unchanged));
                 }
-                let text = Value::Object(next.clone()).to_string();
-                store::put(tx, seq, table, &id, at, &text)?;
-                self.bytes += store::printed_len(&next) - held.bytes;
-                self.note(&id, Changed::Held(next));
+                let printed = refuse_wide(index, &next)?;
+                let seq = self.table_seq()?;
+                let body = Value::Object(next.clone()).to_string();
+                store::put(
+                    tx,
+                    seq,
+                    &id,
+                    &self.unit.at,
+                    &body,
+                    refs_text(&refs).as_deref(),
+                )?;
+                self.bytes += printed - held.bytes;
+                self.note(&id, Changed::Held { values: next, refs });
                 Ok((id, Outcome::Patched))
             }
-            Op::Delete { id } => match store::delete(tx, seq, table, &id)? {
+            Op::Delete { id } => match store::delete(tx, self.table_seq, &id)? {
                 Some(bytes) => {
                     self.count -= 1;
                     self.bytes -= bytes;
@@ -444,6 +505,8 @@ pub async fn write(
             catalog: &catalog,
             host: &host,
             table: &table,
+            table_seq: store::table_seq(unit.tx(), host.seq, &table.name)?,
+            batch_id: Uuid::now_v7().to_string(),
             referenced: HashMap::new(),
             changed: Vec::new(),
             count: 0,
@@ -460,45 +523,41 @@ pub async fn write(
             count,
             bytes,
             referenced,
+            table_seq,
+            batch_id,
             ..
         } = batch;
-        let (batch_id, last_activity_at) = if changed.is_empty() {
-            (Value::Null, host.last_activity_at.clone())
-        } else {
-            let batch_id = Uuid::now_v7().to_string();
-            let at = unit.at.as_str();
-            store::summarize(
-                unit.tx(),
-                host.seq,
-                &table.name,
-                count,
-                bytes,
-                &batch_id,
-                at,
-            )?;
-            // The item's own write moves the backup counter, once for the batch.
-            items::mark_activity(unit.tx(), host.seq, at)?;
-            events::announce(
-                unit,
-                &events::Announced {
-                    host: &host,
-                    table: &table,
-                    batch: &batch_id,
-                    at,
-                    changed: &changed,
-                    referenced: &referenced,
-                },
-            )?;
-            unit.audit(
-                "item",
-                &host.id,
-                Some(json!({ "table": table.name, "batch": batch_id, "rows": changed.len() })),
-            )?;
-            (Value::String(batch_id), at.to_string())
+        let (Some(seq), false) = (table_seq, changed.is_empty()) else {
+            return Ok(json!({
+                "batch": null,
+                "last_activity_at": host.last_activity_at,
+                "results": results,
+            })
+            .to_string());
         };
+        let at = unit.at.as_str();
+        store::summarize(unit.tx(), seq, count, bytes, &batch_id, at)?;
+        // The item's own write moves the backup counter, once for the batch.
+        items::mark_activity(unit.tx(), host.seq, at)?;
+        events::announce(
+            unit,
+            &events::Announced {
+                host: &host,
+                table: &table,
+                batch: &batch_id,
+                at,
+                changed: &changed,
+                referenced: &referenced,
+            },
+        )?;
+        unit.audit(
+            "item",
+            &host.id,
+            Some(json!({ "table": table.name, "batch": batch_id, "rows": changed.len() })),
+        )?;
         Ok(json!({
             "batch": batch_id,
-            "last_activity_at": last_activity_at,
+            "last_activity_at": at,
             "results": results,
         })
         .to_string())
