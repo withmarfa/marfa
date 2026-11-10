@@ -652,10 +652,10 @@ marfa items create [OPTIONS] --type <TYPE>
 | `--state <STATE>` | The state to create it in. One of `active`, `archived`, `trashed`, `revoked`. |
 | `--occurred-at <TIME>` | The item's own time, RFC 3339. Defaults to now. |
 | `--source <SOURCE>` | The source to key and stamp it with: the key's own, or one it claims. Any other is refused. |
-| `--source-id <SOURCE_ID>` | The id this row has in the system it came from: the natural key. |
+| `--source-id <SOURCE_ID>` | The id this item has in the system it came from: the natural key. |
 | `--id <ID>` | The id to mint it under. Omitted, the server mints one. |
 | `--create-only` | Create only: where an item already holds the source and source id, or the id, the server writes nothing and answers `item_exists`. |
-| `--version <VERSION>` | The version this create is conditional on, where its natural key resolves a row the server already holds. |
+| `--version <VERSION>` | The version this create is conditional on, where its natural key resolves an item the server already holds. |
 | `--edges <JSON>` | Edges to write with it, as the JSON object the operation takes. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
@@ -682,7 +682,7 @@ marfa items update [OPTIONS] --version <VERSION> <ID>
 | `--retype` | Let the type change even where the target type is enforced. |
 | `--tier <TIER>` | The tier to move the item to. One of `library`, `feed`. |
 | `--occurred-at <TIME>` | The item's own time, RFC 3339. |
-| `--source-id <KEY>` | The natural key to move the row to. The server refuses one another item already holds. |
+| `--source-id <KEY>` | The natural key to move the item to. The server refuses one another item already holds. |
 | `--edges <JSON>` | Edges to write with it, as the JSON object the operation takes. |
 | `--conflict <CONFLICT>` | How a colliding write is settled: `auto` asks the server to resolve within its own transaction. One of `auto`, `manual`, `callback`. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
@@ -922,7 +922,7 @@ marfa items bulk [OPTIONS] --file <PATH>
 | `--mode <MODE>` | `upsert` or `create_only`. |
 | `--atomic` | Refuse the whole request if any entry is refused. |
 | `--no-fanout` | Do not deliver the writes to webhooks. |
-| `--retype` | Let entries change the type of the rows they land on. |
+| `--retype` | Let entries change the type of the items they land on. |
 
 ### marfa items bulk-get
 
@@ -1616,6 +1616,158 @@ marfa extensions delete [OPTIONS] <ID> <NAMESPACE>
 | --- | --- |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
+## tables
+
+The tables an item's type declares.
+
+### marfa tables
+
+```text
+marfa tables [OPTIONS] <COMMAND>
+```
+
+### marfa tables list
+
+The tables an item's type declares, with how many rows the item holds in each and when one last changed.
+
+```text
+marfa tables list [OPTIONS] <ITEM>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ITEM>` | The item id. |
+
+## rows
+
+The rows of an item's tables, and what a table adds up to.
+
+### marfa rows
+
+```text
+marfa rows [OPTIONS] <COMMAND>
+```
+
+### marfa rows list
+
+One page of a table's rows, by id unless a sort is given. Pass the answer's `next_cursor` as `--cursor` for the next page.
+
+```text
+marfa rows list [OPTIONS] <ITEM> <TABLE>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ITEM>` | The item id. |
+| `<TABLE>` | The table name. |
+
+| Option | Description |
+| --- | --- |
+| `--filter <FILTER>` | Only the rows this expression matches, in the server's filter grammar, where `values.<column>` names a column, and `id` and `updated_at` are the row's own. |
+| `--sort <FIELD>` | What to order by: `id`, `updated_at` or `values.<column>`. The server's default is `id`. |
+| `--direction <DIRECTION>` | `asc` or `desc`; the server's default is `asc`. One of `asc`, `desc`. |
+| `--limit <LIMIT>` | How many at most. |
+| `--cursor <CURSOR>` | The cursor the previous page answered with. |
+
+### marfa rows get
+
+One row of a table.
+
+```text
+marfa rows get [OPTIONS] <ITEM> <TABLE> <ROW>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ITEM>` | The item id. |
+| `<TABLE>` | The table name. |
+| `<ROW>` | The row id. |
+
+### marfa rows write
+
+Apply a batch of `put`, `patch` and `delete` operations to a table, all of them or none. The batch is a JSON object holding `operations`, up to 1000, applied in order.
+
+```text
+marfa rows write [OPTIONS] <ITEM> <TABLE>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ITEM>` | The item id. |
+| `<TABLE>` | The table name. |
+
+| Option | Description |
+| --- | --- |
+| `--file <PATH>` | A file holding the JSON body; `-` reads stdin. |
+| `--body <JSON>` | The JSON body inline. |
+
+### marfa rows put
+
+Write one whole row: create it, or replace the row `--id` names.
+
+```text
+marfa rows put [OPTIONS] --values <JSON> <ITEM> <TABLE>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ITEM>` | The item id. |
+| `<TABLE>` | The table name. |
+
+| Option | Description |
+| --- | --- |
+| `--id <ID>` | The row id to write; the server makes one when it is left out. |
+| `--values <JSON>` | The row's values as a JSON object, keyed by column. |
+
+### marfa rows patch
+
+Set the columns named on one row, leaving the others as they are. A `null` value clears a column.
+
+```text
+marfa rows patch [OPTIONS] --values <JSON> <ITEM> <TABLE> <ROW>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ITEM>` | The item id. |
+| `<TABLE>` | The table name. |
+| `<ROW>` | The row id. |
+
+| Option | Description |
+| --- | --- |
+| `--values <JSON>` | The values to set as a JSON object, keyed by column. |
+
+### marfa rows delete
+
+Delete one or more rows, all of them or none. A row that is not there is answered `absent`.
+
+```text
+marfa rows delete [OPTIONS] <ITEM> <TABLE> <ROWS>...
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ITEM>` | The item id. |
+| `<TABLE>` | The table name. |
+| `<ROWS>...` | One or more row ids. |
+
+### marfa rows totals
+
+How many rows a filter selects, and the total of each column that names `adds_up`.
+
+```text
+marfa rows totals [OPTIONS] <ITEM> <TABLE>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ITEM>` | The item id. |
+| `<TABLE>` | The table name. |
+
+| Option | Description |
+| --- | --- |
+| `--filter <FILTER>` | Only the rows this expression matches, in the server's filter grammar, where `values.<column>` names a column. Unset totals every row. |
+
 ## blobs
 
 Bytes stored by content hash, and the stores that hold them.
@@ -1741,7 +1893,7 @@ marfa keys create [OPTIONS] --label <LABEL> --source <SOURCE>
 | Option | Description |
 | --- | --- |
 | `--label <LABEL>` | What the key is for. |
-| `--source <SOURCE>` | The key's own source, which a row written under the key is keyed by and stamped with unless the write names one the key claims. |
+| `--source <SOURCE>` | The key's own source, which an item written under the key is keyed by and stamped with unless the write names one the key claims. |
 | `--permission <PERMISSION>` | A permission, repeatable. One of `schema.write`, `keys.mint`, `items.purge`, `webhooks.manage`, `config.manage`, `audit.read`, `grants.manage`, `instance.read`, `instance.maintain`, `connectors.manage`, `blobs.manage`, `keys.manage`. |
 | `--type-permission <PATTERN=LEVEL>` | A type pattern and its level, `core.note=write`, repeatable. |
 | `--extension-permission <NAMESPACE=LEVEL>` | An extension namespace and its level, `app.cursor=write`, repeatable. |
@@ -1749,7 +1901,7 @@ marfa keys create [OPTIONS] --label <LABEL> --source <SOURCE>
 | `--metadata-permission <NAME=LEVEL>` | A kind of registration and its level, `types=write` or `edge_types=write`, repeatable. |
 | `--profile-permission <FIELD=LEVEL>` | A profile field and its level, `email=read`, repeatable. |
 | `--enforcement-override <JSON>` | The enforcement override, as the JSON object the operation takes. |
-| `--claim <SOURCE>` | A source a write under the key may name, so its rows are keyed by it. Repeatable. |
+| `--claim <SOURCE>` | A source a write under the key may name, so its items are keyed by it. Repeatable. |
 | `--no-claims` | Claim no source besides the key's own, asked for out loud. On a mint naming no permission or map, naming the claims is naming what the key holds: it holds no map and no permission either. |
 | `--default-tier <DEFAULT_TIER>` | The tier a write under the key lands at when it names none. One of `library`, `feed`. |
 | `--expires-in <DURATION>` | Stop the key working this long from now: a whole number and a unit, `s`, `m`, `h`, `d` or `w`, such as `90m` or `7d`. Measured on this machine's clock. |
@@ -1799,7 +1951,7 @@ marfa keys update [OPTIONS] <ID>
 | `--no-edge-permissions` | Empty the edge permission map on this update. |
 | `--no-metadata-permissions` | Empty the metadata permission map on this update. |
 | `--no-profile-permissions` | Empty the profile permission map on this update. |
-| `--claim <SOURCE>` | A source a write under the key may name, so its rows are keyed by it. Repeatable. |
+| `--claim <SOURCE>` | A source a write under the key may name, so its items are keyed by it. Repeatable. |
 | `--no-claims` | Claim no source besides the key's own, asked for out loud. On a mint naming no permission or map, naming the claims is naming what the key holds: it holds no map and no permission either. |
 | `--default-tier <DEFAULT_TIER>` | The tier a write under the key lands at when it names none. One of `library`, `feed`. |
 | `--expires-in <DURATION>` | Stop the key working this long from now: a whole number and a unit, `s`, `m`, `h`, `d` or `w`, such as `90m` or `7d`. Measured on this machine's clock. |
@@ -2633,7 +2785,7 @@ marfa connectors state delete [OPTIONS] <ID>
 
 ### marfa connectors agreements
 
-A connector's records of what it and its vendor last agreed about rows. Its own key only.
+A connector's records of what it and its vendor last agreed about items. Its own key only.
 
 ```text
 marfa connectors agreements [OPTIONS] <COMMAND>
@@ -2659,7 +2811,7 @@ marfa connectors agreements write [OPTIONS] --process <PROCESS> <ID>
 
 ### marfa connectors agreements lookup
 
-The agreements of the rows named, each once, in the order first named.
+The agreements of the items named, each once, in the order first named.
 
 ```text
 marfa connectors agreements lookup [OPTIONS] <ID> <ITEMS>...
@@ -2721,7 +2873,7 @@ Replace the local copy with the declared types at one tier, or both.
 
 A hydration that stopped before it finished carries on from the page it had reached when run again for the same slice. It starts again from the first page, and says why, when another instance answers, the key's reach, the slice or the catalog has changed since, the server's event log no longer holds the point it started from or ends before it, or the server refuses the page cursor it kept.
 
-A copy whose cursor the server's event log no longer holds is filled again in place for the same slice, server and key: it keeps answering, marked stale, and takes writes to the rows it holds and new ones, which wait to be sent, until the hydration finishes and removes the rows the server no longer lists. Any other hydration empties the copy first. Until the copy is whole, a write to an edge is refused `hydration_incomplete`, since a page still to arrive could bring the server's edge in place of the one the write was made against.
+A copy whose cursor the server's event log no longer holds is filled again in place for the same slice, server and key: it keeps answering, marked stale, and takes writes to the items it holds and new ones, which wait to be sent, until the hydration finishes and removes the items the server no longer lists. Any other hydration empties the copy first. Until the copy is whole, a write to an edge is refused `hydration_incomplete`, since a page still to arrive could bring the server's edge in place of the one the write was made against.
 
 ```text
 marfa device hydrate [OPTIONS] --types <TYPE> --tier <TIER>
@@ -2738,7 +2890,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 ### marfa device pin
 
-Hold one row by id whatever the slice says of it, read now and kept current, even after it leaves the slice.
+Hold one item by id whatever the slice says of it, read now and kept current, even after it leaves the slice.
 
 ```text
 marfa device pin [OPTIONS] <ID>
@@ -2752,7 +2904,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 ### marfa device unpin
 
-Stop holding a row by id; one the slice does not take goes.
+Stop holding an item by id; one the slice does not take goes.
 
 ```text
 marfa device unpin [OPTIONS] <ID>
@@ -2826,7 +2978,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 The items and edges that changed in the copy since a cursor this command printed, and the cursor to pass next.
 
-Without `--since`, with a cursor from another store, from beyond what the copy recorded, from before a change to the types or from before a removed edge the copy no longer records, or where more than `--most` items or edges changed, it names none and answers `everything: true`: read the whole copy again. An item is named where its row, tags, edges, pin or a queued write to it changed; one whose body links read differently only because another item changed is not. Refused `hydration_incomplete` while a hydration is part way or the copy is stale. Take the cursor before reading what it covers, and keep the earlier cursor until that read succeeds.
+Without `--since`, with a cursor from another store, from beyond what the copy recorded, from before a change to the types or from before a removed edge the copy no longer records, or where more than `--most` items or edges changed, it names none and answers `everything: true`: read the whole copy again. An item is named where its own content, tags, edges, pin or a queued write to it changed; one whose body links read differently only because another item changed is not. Refused `hydration_incomplete` while a hydration is part way or the copy is stale. Take the cursor before reading what it covers, and keep the earlier cursor until that read succeeds.
 
 ```text
 marfa device changed [OPTIONS]
@@ -2853,7 +3005,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 List items, newest first unless sorted otherwise.
 
-Without `--view`, while a hydration fills the copy or after one was interrupted, the list holds the rows that have arrived and says it is partial. Once the server's event log no longer reaches the copy, and until a hydration has filled it again, the list holds the rows the copy holds and says it is stale. Each is said on standard error, and under --json as `completeness`, `partial`, `stale` or `complete`, beside `items`. With `--view`, a copy that is not whole is refused.
+Without `--view`, while a hydration fills the copy or after one was interrupted, the list holds the items that have arrived and says it is partial. Once the server's event log no longer reaches the copy, and until a hydration has filled it again, the list holds the items the copy holds and says it is stale. Each is said on standard error, and under --json as `completeness`, `partial`, `stale` or `complete`, beside `items`. With `--view`, a copy that is not whole is refused.
 
 ```text
 marfa device items list [OPTIONS]
@@ -2930,16 +3082,16 @@ marfa device items create [OPTIONS] --type <TYPE> --properties <JSON>
 | `--type <TYPE>` | The type the item is. |
 | `--properties <JSON>` | The properties, as a JSON object. |
 | `--tag <TAG>` | A tag, repeatable. Each is queued as a write of its own. |
-| `--tier <TIER>` | The tier to write it at; the default is the tier of the held row its natural key names, else the slice's tier, or the library from a slice of both or before a first hydration. A create carrying `--source-id` goes with that tier only where a lookup answers that no row on the server holds its natural key, and otherwise with none, which keeps a row's tier as it stands. One of `library`, `feed`. |
+| `--tier <TIER>` | The tier to write it at; the default is the tier of the held item its natural key names, else the slice's tier, or the library from a slice of both or before a first hydration. A create carrying `--source-id` goes with that tier only where a lookup answers that no item on the server holds its natural key, and otherwise with none, which keeps an item's tier as it stands. One of `library`, `feed`. |
 | `--state <STATE>` | The state to create it in; the default is active. One of `active`, `archived`, `trashed`, `revoked`. |
 | `--capture-latitude <DEGREES>` | Where it was captured: the latitude, in degrees. Needs `--capture-longitude`. |
 | `--capture-longitude <DEGREES>` | Where it was captured: the longitude, in degrees. Needs `--capture-latitude`. |
 | `--edges <JSON>` | Edges to make with it, as a JSON object of edge type to a list of target ids. Queued and sent as one write with the item: if the server refuses any, it makes none of them and the item stays in the queue as refused. |
 | `--source <SOURCE>` | The source to stamp it with. |
-| `--source-id <SOURCE_ID>` | The id this row has in the system it came from. |
+| `--source-id <SOURCE_ID>` | The id this item has in the system it came from. |
 | `--occurred-at <OCCURRED_AT>` | The item's own time, RFC 3339. Defaults to now. |
 | `--id <ID>` | The id to mint it under. Omitted, the device mints one. |
-| `--version <VERSION>` | The version this create is conditional on, where its natural key resolves a row the server already holds. |
+| `--version <VERSION>` | The version this create is conditional on, where its natural key resolves an item the server already holds. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
@@ -2960,7 +3112,7 @@ marfa device items update [OPTIONS] <ID>
 | `--properties <JSON>` | The properties to write, as a JSON object. Whole values. Required unless `--clear-property` is given. |
 | `--clear-property <NAME>` | A property to remove from the item, leaving every other as it is. Repeat it to remove more than one. |
 | `--version <VERSION>` | The version the edit was based on. Required: the device refuses an update that names no version, as the server does. |
-| `--source-id <KEY>` | The natural key to move the row to. The server refuses one another item already holds, so a rename does not take a name off a note. |
+| `--source-id <KEY>` | The natural key to move the item to. The server refuses one another item already holds, so a rename does not take a name off a note. |
 | `--as-read` | The version is one read before the version the copy holds now, and the server merges the edit against it rather than taking it as newer than what came in since. |
 | `--type <TYPE>` | The type to move the item to. The server holds its properties to the type it enters. |
 | `--tier <TIER>` | The tier to move the item to. One of `library`, `feed`. |
@@ -3348,7 +3500,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 Full-text search over the local copy, best match first.
 
-Without `--view`, while a hydration fills the copy or after one was interrupted, the search covers the rows that have arrived and says it is partial. Once the server's event log no longer reaches the copy, and until a hydration has filled it again, the search covers the rows the copy holds and says it is stale. Each is said on standard error, and under --json as `completeness`, `partial`, `stale` or `complete`, beside `hits`. With `--view`, a copy that is not whole is refused.
+Without `--view`, while a hydration fills the copy or after one was interrupted, the search covers the items that have arrived and says it is partial. Once the server's event log no longer reaches the copy, and until a hydration has filled it again, the search covers the items the copy holds and says it is stale. Each is said on standard error, and under --json as `completeness`, `partial`, `stale` or `complete`, beside `hits`. With `--view`, a copy that is not whole is refused.
 
 ```text
 marfa device search [OPTIONS] <QUERY>
@@ -3400,7 +3552,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 Clear the writes the server has answered.
 
-A queue nobody empties makes every later write slower. Blocked and dead rows stay, because a caller may still release them, and so does a refused write that carried content, until it is discarded.
+A queue nobody empties makes every later write slower. Blocked and dead writes stay, because a caller may still release them, and so does a refused write that carried content, until it is discarded.
 
 With `--id`, only the writes named are cleared, under the same rules, and every other answered write stays. An id that names no write, or one not answered, is ignored.
 
@@ -3418,7 +3570,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 Take a refused write out of the queue, with the content it carried.
 
-The one way a refused create, edit, metadata, extension or edge write leaves the queue. A write still waiting on it keeps it, but for a create refused onto a row its natural key names that no read has found: discarded, that create takes its row out of the copy, and the writes waiting on it are refused unsent, each kept with its content.
+The one way a refused create, edit, metadata, extension or edge write leaves the queue. A write still waiting on it keeps it, but for a create refused onto an item its natural key names that no read has found: discarded, that create takes its item out of the copy, and the writes waiting on it are refused unsent, each kept with its content.
 
 ```text
 marfa device discard [OPTIONS] <ID>
@@ -3470,7 +3622,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 What the local copy holds and where it came from.
 
-While a hydration fills the copy, the report also gives the rows its listings have brought, `items_listed` under --json, and the items the server counted for the slice when the hydration started, where it counted them, `items_expected`. Set the first against the second to show how far it has come; the item count also holds pinned rows and writes still waiting.
+While a hydration fills the copy, the report also gives the items its listings have brought, `items_listed` under --json, and the items the server counted for the slice when the hydration started, where it counted them, `items_expected`. Set the first against the second to show how far it has come; the item count also holds pinned items and writes still waiting.
 
 The hydration is `never`, `in_progress`, `complete`, `stale` or `expired`. A stale copy is one the server's event log no longer reaches: it answers reads marked stale and takes writes, but not to edges, until a hydration has filled it again in place, and stays stale while that hydration runs. An expired copy refuses reads and writes until a hydration, which empties it first.
 

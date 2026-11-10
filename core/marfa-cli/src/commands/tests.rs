@@ -577,6 +577,90 @@ fn an_extension_namespace_is_written_whole_and_must_be_an_object() {
 }
 
 #[test]
+fn tables_and_rows_are_reached_at_their_doors() {
+    assert_eq!(tables::list_request("i").path(), "/items/i/tables");
+    let list = rows::list_request(&rows::ListArgs {
+        item: "i".into(),
+        table: "lines".into(),
+        filter: Some("values.amount gt 3".into()),
+        sort: Some("values.amount".into()),
+        direction: Some(crate::values::SortDirection::Desc),
+        page: PageArgs {
+            limit: Some(5),
+            cursor: Some("c".into()),
+        },
+    });
+    assert_eq!(list.method, Method::Get);
+    assert_eq!(list.path(), "/items/i/tables/lines/rows");
+    for (key, value) in [
+        ("filter", "values.amount gt 3"),
+        ("sort", "values.amount"),
+        ("direction", "desc"),
+        ("limit", "5"),
+        ("cursor", "c"),
+    ] {
+        assert_eq!(query(&list, key).as_deref(), Some(value), "{key}");
+    }
+    let bare = rows::list_request(&rows::ListArgs {
+        item: "i".into(),
+        table: "lines".into(),
+        ..Default::default()
+    });
+    assert_eq!(query(&bare, "filter"), None);
+    assert_eq!(
+        rows::get_request("i", "lines", "r").path(),
+        "/items/i/tables/lines/rows/r"
+    );
+    let totals = rows::totals_request("i", "lines", Some("values.kind eq \"food\""));
+    assert_eq!(totals.path(), "/items/i/tables/lines/totals");
+    assert_eq!(
+        query(&totals, "filter").as_deref(),
+        Some("values.kind eq \"food\"")
+    );
+    assert_eq!(
+        query(&rows::totals_request("i", "lines", None), "filter"),
+        None
+    );
+}
+
+#[test]
+fn a_row_write_is_one_batch_of_operations() {
+    let batch = json!({ "operations": [{ "op": "delete", "id": "r" }] });
+    let written = rows::write_request("i", "lines", batch.clone()).unwrap();
+    assert_eq!(written.method, Method::Post);
+    assert_eq!(written.path(), "/items/i/tables/lines/rows");
+    assert_eq!(body(&written), &batch);
+    for bad in [json!([]), json!({}), json!({ "operations": 1 })] {
+        assert!(rows::write_request("i", "lines", bad).is_err());
+    }
+    let put = rows::put_request("i", "lines", Some("r"), r#"{"amount":1.5}"#).unwrap();
+    assert_eq!(
+        body(&put),
+        &json!({ "operations": [{ "op": "put", "id": "r", "values": { "amount": 1.5 } }] })
+    );
+    let made = rows::put_request("i", "lines", None, "{}").unwrap();
+    assert_eq!(
+        body(&made),
+        &json!({ "operations": [{ "op": "put", "values": {} }] })
+    );
+    let patch = rows::patch_request("i", "lines", "r", r#"{"memo":null}"#).unwrap();
+    assert_eq!(
+        body(&patch),
+        &json!({ "operations": [{ "op": "patch", "id": "r", "values": { "memo": null } }] })
+    );
+    let delete = rows::delete_request("i", "lines", &["a".into(), "b".into()]).unwrap();
+    assert_eq!(
+        body(&delete),
+        &json!({ "operations": [
+            { "op": "delete", "id": "a" },
+            { "op": "delete", "id": "b" },
+        ] })
+    );
+    assert!(rows::put_request("i", "lines", None, "[1]").is_err());
+    assert!(rows::patch_request("i", "lines", "r", "not json").is_err());
+}
+
+#[test]
 fn types_are_reached_at_their_doors_and_a_forced_delete_says_so() {
     assert_eq!(types::get_request("core.note").path(), "/types/core.note");
     assert_eq!(types::register_request(json!({})).method, Method::Post);

@@ -1,0 +1,204 @@
+use clap::{Args, Subcommand};
+use serde_json::{Value, json};
+
+use super::{BodySource, PageArgs, object};
+use crate::error::CliError;
+use crate::output::Printer;
+use crate::remote::Remote;
+use crate::remote::request::Request;
+use crate::values::SortDirection;
+
+#[derive(Debug, Subcommand)]
+pub enum RowsCommand {
+    /// One page of a table's rows, by id unless a sort is given. Pass the
+    /// answer's `next_cursor` as `--cursor` for the next page.
+    List(ListArgs),
+    /// One row of a table.
+    Get {
+        /// The item id.
+        item: String,
+        /// The table name.
+        table: String,
+        /// The row id.
+        row: String,
+    },
+    /// Apply a batch of `put`, `patch` and `delete` operations to a table,
+    /// all of them or none. The batch is a JSON object holding `operations`,
+    /// up to 1000, applied in order.
+    Write {
+        /// The item id.
+        item: String,
+        /// The table name.
+        table: String,
+        #[command(flatten)]
+        body: BodySource,
+    },
+    /// Write one whole row: create it, or replace the row `--id` names.
+    Put {
+        /// The item id.
+        item: String,
+        /// The table name.
+        table: String,
+        /// The row id to write; the server makes one when it is left out.
+        #[arg(long)]
+        id: Option<String>,
+        /// The row's values as a JSON object, keyed by column.
+        #[arg(long, value_name = "JSON")]
+        values: String,
+    },
+    /// Set the columns named on one row, leaving the others as they are.
+    /// A `null` value clears a column.
+    Patch {
+        /// The item id.
+        item: String,
+        /// The table name.
+        table: String,
+        /// The row id.
+        row: String,
+        /// The values to set as a JSON object, keyed by column.
+        #[arg(long, value_name = "JSON")]
+        values: String,
+    },
+    /// Delete one or more rows, all of them or none. A row that is not there
+    /// is answered `absent`.
+    Delete {
+        /// The item id.
+        item: String,
+        /// The table name.
+        table: String,
+        /// One or more row ids.
+        #[arg(required = true)]
+        rows: Vec<String>,
+    },
+    /// How many rows a filter selects, and the total of each column that
+    /// names `adds_up`.
+    Totals {
+        /// The item id.
+        item: String,
+        /// The table name.
+        table: String,
+        /// Only the rows this expression matches, in the server's filter
+        /// grammar, where `values.<column>` names a column. Unset totals
+        /// every row.
+        #[arg(long)]
+        filter: Option<String>,
+    },
+}
+
+#[derive(Debug, Default, Args)]
+pub struct ListArgs {
+    /// The item id.
+    pub item: String,
+    /// The table name.
+    pub table: String,
+    /// Only the rows this expression matches, in the server's filter grammar,
+    /// where `values.<column>` names a column, and `id` and `updated_at` are
+    /// the row's own.
+    #[arg(long)]
+    pub filter: Option<String>,
+    /// What to order by: `id`, `updated_at` or `values.<column>`. The server's
+    /// default is `id`.
+    #[arg(long, value_name = "FIELD")]
+    pub sort: Option<String>,
+    /// `asc` or `desc`; the server's default is `asc`.
+    #[arg(long)]
+    pub direction: Option<SortDirection>,
+    #[command(flatten)]
+    pub page: PageArgs,
+}
+
+pub fn list_request(args: &ListArgs) -> Request {
+    Request::get(&["items", &args.item, "tables", &args.table, "rows"])
+        .query_opt("filter", args.filter.clone())
+        .query_opt("sort", args.sort.clone())
+        .query_opt("direction", args.direction.map(SortDirection::as_str))
+        .query_opt("limit", args.page.limit.map(|limit| limit.to_string()))
+        .query_opt("cursor", args.page.cursor.clone())
+}
+
+pub fn get_request(item: &str, table: &str, row: &str) -> Request {
+    Request::get(&["items", item, "tables", table, "rows", row])
+}
+
+pub fn write_request(item: &str, table: &str, batch: Value) -> Result<Request, CliError> {
+    let Some(operations) = batch.get("operations").filter(|_| batch.is_object()) else {
+        return Err(CliError::Invalid(
+            "a batch is a JSON object holding `operations`, a list of put, patch and delete operations"
+                .into(),
+        ));
+    };
+    if !operations.is_array() {
+        return Err(CliError::Invalid("`operations` is a list".into()));
+    }
+    Ok(Request::post(&["items", item, "tables", table, "rows"]).json(batch))
+}
+
+fn one_operation(item: &str, table: &str, operation: Value) -> Result<Request, CliError> {
+    write_request(item, table, json!({ "operations": [operation] }))
+}
+
+pub fn put_request(
+    item: &str,
+    table: &str,
+    id: Option<&str>,
+    values: &str,
+) -> Result<Request, CliError> {
+    let mut operation = json!({ "op": "put", "values": object(values, "--values")? });
+    if let Some(id) = id {
+        operation["id"] = json!(id);
+    }
+    one_operation(item, table, operation)
+}
+
+pub fn patch_request(
+    item: &str,
+    table: &str,
+    row: &str,
+    values: &str,
+) -> Result<Request, CliError> {
+    one_operation(
+        item,
+        table,
+        json!({ "op": "patch", "id": row, "values": object(values, "--values")? }),
+    )
+}
+
+pub fn delete_request(item: &str, table: &str, rows: &[String]) -> Result<Request, CliError> {
+    let operations: Vec<Value> = rows
+        .iter()
+        .map(|row| json!({ "op": "delete", "id": row }))
+        .collect();
+    write_request(item, table, json!({ "operations": operations }))
+}
+
+pub fn totals_request(item: &str, table: &str, filter: Option<&str>) -> Request {
+    Request::get(&["items", item, "tables", table, "totals"])
+        .query_opt("filter", filter.map(str::to_string))
+}
+
+pub fn run(command: RowsCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
+    let request = match &command {
+        RowsCommand::List(args) => list_request(args),
+        RowsCommand::Get { item, table, row } => get_request(item, table, row),
+        RowsCommand::Write { item, table, body } => write_request(item, table, body.read()?)?,
+        RowsCommand::Put {
+            item,
+            table,
+            id,
+            values,
+        } => put_request(item, table, id.as_deref(), values)?,
+        RowsCommand::Patch {
+            item,
+            table,
+            row,
+            values,
+        } => patch_request(item, table, row, values)?,
+        RowsCommand::Delete { item, table, rows } => delete_request(item, table, rows)?,
+        RowsCommand::Totals {
+            item,
+            table,
+            filter,
+        } => totals_request(item, table, filter.as_deref()),
+    };
+    out.value(&remote.json(&request)?)
+}

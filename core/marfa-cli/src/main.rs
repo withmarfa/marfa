@@ -35,8 +35,8 @@ use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 use crate::commands::{
     apps, attention, audit, backups, blobs, config, connectors, docs, edge_types, edges, events,
     export, extensions, housekeeping, items, keys, login, logout, metadata, metrics, operations,
-    overview, owner, profile, restore, search, sign_ins, sources, status, types, views, webhooks,
-    whoami,
+    overview, owner, profile, restore, rows, search, sign_ins, sources, status, tables, types,
+    views, webhooks, whoami,
 };
 use crate::device::DeviceArgs;
 use crate::error::{CliError, DOCS_HINT, Exit, long_help_footer};
@@ -217,6 +217,16 @@ enum Command {
     Extensions {
         #[command(subcommand)]
         command: extensions::ExtensionsCommand,
+    },
+    /// The tables an item's type declares.
+    Tables {
+        #[command(subcommand)]
+        command: tables::TablesCommand,
+    },
+    /// The rows of an item's tables, and what a table adds up to.
+    Rows {
+        #[command(subcommand)]
+        command: rows::RowsCommand,
     },
     /// Bytes stored by content hash, and the stores that hold them.
     Blobs {
@@ -647,6 +657,8 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         Command::Search(args) => search::run(args, &remote()?, &out),
         Command::Metadata { command } => metadata::run(command, &remote()?, &out),
         Command::Extensions { command } => extensions::run(command, &remote()?, &out),
+        Command::Tables { command } => tables::run(command, &remote()?, &out),
+        Command::Rows { command } => rows::run(command, &remote()?, &out),
         Command::Blobs { command } => blobs::run(command, &remote()?, &out),
         Command::Keys {
             command: keys::KeysCommand::Forget,
