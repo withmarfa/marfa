@@ -1063,7 +1063,7 @@ mod tests {
                 .message
                 .contains("read only by the build that wrote it")
         );
-        let refused = manifest(br#"{"version":0,"format":"marfa-archive-v0","blobs":{"h":{"mime_type":null,"size_bytes":-1}}}"#).unwrap_err();
+        let refused = manifest(br#"{"version":0,"format":"marfa-archive-v0","item_count":0,"edge_count":0,"row_count":0,"blobs":{"h":{"mime_type":null,"size_bytes":-1}}}"#).unwrap_err();
         let paths: Vec<String> = refused.details.unwrap()["errors"]
             .as_array()
             .unwrap()
