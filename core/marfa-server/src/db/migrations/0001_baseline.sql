@@ -188,8 +188,7 @@ CREATE TABLE IF NOT EXISTS table_rows_reordering (
     after_id TEXT
 ) STRICT;
 
--- The searchable text of each row that holds some, by `row_search.seq`: column `c<n>` holds the
--- `n`th of the table's searchable columns in name order.
+-- Column c<n> holds the nth searchable column in name order; rowid is row_search.seq.
 CREATE VIRTUAL TABLE IF NOT EXISTS rows_fts USING fts5(
     c0, c1, c2, c3, c4, c5, c6, c7,
     tokenize = 'porter unicode61'

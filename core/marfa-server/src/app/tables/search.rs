@@ -8,13 +8,11 @@ use serde_json::{Map, Value};
 use super::store;
 use crate::app::refusal::Result;
 
-/// Where a search finds row hits: each match with its row, its table's summary and its item. The
-/// index keeps the rows of an item in the bin, which no search matches.
+// Binned rows stay indexed but cannot match.
 pub(crate) const HITS_FROM: &str = "rows_fts CROSS JOIN row_search m ON m.seq = rows_fts.rowid \
      CROSS JOIN table_summaries s ON s.seq = m.table_seq AND s.searched_by IS NOT NULL \
      CROSS JOIN items i ON i.seq = s.item_seq AND i.state <> 'trashed'";
 
-/// The columns a table's rows are searched by, in name order.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Searched(Vec<String>);
 
@@ -23,7 +21,6 @@ impl Searched {
         Searched(searchable_columns(columns))
     }
 
-    /// What a table summary records once every row's entry is by these columns.
     pub(crate) fn signature(&self) -> String {
         self.0.join(",")
     }
@@ -39,8 +36,7 @@ impl Searched {
         )
     }
 
-    /// The text each index column holds for a row, or `None` where the row holds none. A value
-    /// written as an item's id is never text.
+    // A value written as an item's ID stays excluded after its column is retyped.
     fn texts<'v>(
         &self,
         values: &'v Map<String, Value>,
@@ -83,7 +79,6 @@ fn unindex(tx: &Transaction<'_>, seq: i64) -> Result<()> {
     Ok(())
 }
 
-/// Makes the row's entry hold what `searched` reads from `values`.
 pub(super) fn index(
     tx: &Transaction<'_>,
     table: i64,
@@ -143,7 +138,6 @@ pub(super) fn forget(tx: &Transaction<'_>, table: i64, id: &str) -> Result<()> {
     }
 }
 
-/// A table's index as its summary and the rebuild queue hold it.
 pub(super) struct Indexing {
     pub table_seq: i64,
     pub table: String,
@@ -269,8 +263,6 @@ pub(super) fn reindex_page(tx: &Transaction<'_>, limit: i64) -> Result<Option<i6
     Ok(Some(taken))
 }
 
-/// A row hit's excerpt and the column it is drawn from: the searchable column whose excerpt marks
-/// the most words, the first by name where two tie.
 pub(crate) fn excerpt(
     tx: &Transaction<'_>,
     entry: i64,

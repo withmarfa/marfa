@@ -128,7 +128,6 @@ pub async fn cleanup(app: Arc<App>, run: Run) -> Result<Report> {
     Ok(tally.report(false))
 }
 
-/// How each table a type declares keys and searches its rows.
 fn declared(catalog: &Catalog, type_id: &str) -> BTreeMap<String, (Option<Order>, Searched)> {
     tables_of(catalog, type_id)
         .into_iter()
@@ -136,8 +135,7 @@ fn declared(catalog: &Catalog, type_id: &str) -> BTreeMap<String, (Option<Order>
         .collect()
 }
 
-/// Rewrites a table's keys now while the change has rewritten at most one page of rows in all, and
-/// leaves the rest to `table-row-cleanup`. `rewritten` is the rows rewritten so far.
+// The inline budget spans every table affected by the change.
 fn settle_order(
     tx: &Transaction<'_>,
     held: &Ordering,
@@ -161,7 +159,6 @@ fn settle_order(
     housekeeping::bring_forward(tx, CLEANUP_JOB, at)
 }
 
-/// As [`settle_order`], for the entries the row index holds.
 fn settle_index(
     tx: &Transaction<'_>,
     held: &Indexing,
@@ -211,7 +208,6 @@ fn settle(
     Ok(())
 }
 
-/// Brings the order keys and the index of the rows of items of `types` to what `after` declares.
 pub fn rekey_types(
     tx: &Transaction<'_>,
     before: &Catalog,
@@ -232,7 +228,6 @@ pub fn rekey_types(
     Ok(())
 }
 
-/// Brings the order keys and the index of item `seq`'s rows to what `type_id` declares.
 pub fn rekey_item(
     tx: &Transaction<'_>,
     catalog: &Catalog,

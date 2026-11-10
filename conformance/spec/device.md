@@ -7114,7 +7114,7 @@ The CLI MUST print, for `marfa types scaffold`, a definition that `marfa types r
 
 ## Search, matched as the server matches
 
-A local search matches, ranks and excerpts as the server's search does, so a query answers the same items online and offline. The server's halves are the `search-and-filters` rules of the same names. A local search matches items alone; the hits for rows come from the server's search (`tables/search-row-hit`).
+Local search covers items only. The rules below correspond to the `search-and-filters` rules of the same names. Table-row hits come from the server's search (`tables/search-row-hit`).
 
 ### `device/search-stem`
 

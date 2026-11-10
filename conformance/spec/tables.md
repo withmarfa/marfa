@@ -1558,7 +1558,7 @@ When a type change takes `searchable` from a column, changes its type, removes i
 
 When a type change marks a column `searchable` `true`, the server MUST match the rows of the tables it applies to by that column at the latest once `table-row-cleanup` has run.
 
-**Reason:** the server rebuilds the index of a table of up to 1,000 rows in the change itself, and of a larger table a page at a time, so the change never holds every other write behind it.
+**Reason:** a type change rebuilds at most 1,000 rows inline and leaves the remaining tables to paged background work, so other writes do not wait for all affected rows.
 
 **Tests:** `compliance/table-rows-search.test.ts › follows a change to what a table marks searchable, a column removed or retyped, and a table removed`, `› rebuilds a large table's index through table-row-cleanup, matching nothing by a withdrawn column meanwhile`.
 

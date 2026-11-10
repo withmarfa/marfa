@@ -172,7 +172,6 @@ impl Order {
         sql.push("i.id");
     }
 
-    /// This order with its relevance key read as `rank`.
     pub fn ranked_by(&self, rank: &str) -> Order {
         let mut order = self.clone();
         for key in &mut order.keys {
@@ -187,8 +186,7 @@ impl Order {
         self.order_by_named(sql, "i.id");
     }
 
-    /// As [`Order::order_by`], over a query whose keys are named by [`Order::columns`] and whose
-    /// item id is `id`.
+    /// Orders the aliases emitted by [`Order::columns`].
     pub fn order_by_named(&self, sql: &mut Sql, id: &str) {
         sql.push(" ORDER BY ");
         for (at, key) in self.keys.iter().enumerate() {

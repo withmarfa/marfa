@@ -1,5 +1,4 @@
-//! `GET /search`, over items and table rows. The match, the caller's reach and the item's
-//! narrowing are one query, so a hit outside the reach is never counted, ranked or answered.
+//! `GET /search` over items and table rows.
 
 use std::collections::HashMap;
 
@@ -31,7 +30,6 @@ pub struct Search {
     pub include: Vec<String>,
 }
 
-/// One source of hits: its matches joined to the item each answers, and what a hit names.
 struct Source {
     fts: &'static str,
     from: &'static str,
@@ -70,8 +68,6 @@ fn matched(
     Ok(())
 }
 
-/// The hits of items and of rows in one ranking: by the order's keys, then the item's id, the
-/// item's own hit before its rows, and its rows by table and id.
 pub(super) fn search_sql(
     reach: &Reach,
     ask: &Ask,
@@ -120,8 +116,6 @@ fn best_rank(
     Ok(statement.query_row(rusqlite::params_from_iter(&sql.values), |row| row.get(0))?)
 }
 
-/// A hit's score as a share of the best hit's. `bm25` weighs a word by how often it occurs in the
-/// whole index, readable or not, so its own figure would tell a caller about rows it may not read.
 fn relevance(rank: f64, top: Option<f64>) -> f64 {
     const PLACES: f64 = 1e9;
     match top {
@@ -157,7 +151,6 @@ fn snippets(read: &Reader<'_, '_>, expression: &str, seqs: &[i64]) -> Result<Has
     Ok(found.collect::<rusqlite::Result<_>>()?)
 }
 
-/// A hit as the ranking found it.
 struct Hit {
     seq: i64,
     rank: f64,
@@ -195,7 +188,6 @@ fn excerpt_field(raw: Option<&str>) -> String {
         .unwrap_or_default()
 }
 
-/// The `snippet_html` and `row` of a row hit.
 fn row_fields(read: &Reader<'_, '_>, expression: &str, row: &RowHit) -> Result<String> {
     let excerpt =
         tables::search::excerpt(read.tx, row.entry, &row.columns, expression, SNIPPET_TOKENS)?;
