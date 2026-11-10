@@ -410,7 +410,11 @@ describe("rows and the life of an item", () => {
     const replaced = (type: string, columns: Record<string, unknown>) =>
       client.replaceType(
         type,
-        { id: type, fields: { title: { type: "string" } }, tables: { lines: { columns } } },
+        {
+          id: type,
+          fields: { title: { type: "string" } },
+          tables: { lines: { columns } },
+        },
         true,
       );
     expect(
@@ -438,9 +442,10 @@ describe("rows and the life of an item", () => {
       const listed = (await reader.listRows(item.id, "lines")).data.data;
       expect(listed[0]?.values).toEqual({ amount: 1 });
       expect(JSON.stringify(listed)).not.toContain(hidden);
-      expect(
-        (await client.getRow(item.id, "lines", row)).data.values,
-      ).toEqual({ amount: 1, about: hidden });
+      expect((await client.getRow(item.id, "lines", row)).data.values).toEqual({
+        amount: 1,
+        about: hidden,
+      });
     }
   });
 

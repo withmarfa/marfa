@@ -421,8 +421,12 @@ describe("reading rows", () => {
 
     const totals = async (as: MarfaClient, filter?: string) =>
       (await as.rowTotals(item, "links", filter)).data;
-    expect(await totals(client)).toMatchObject({ totals: { about: { count: 2 } } });
-    expect(await totals(reader)).toMatchObject({ totals: { about: { count: 1 } } });
+    expect(await totals(client)).toMatchObject({
+      totals: { about: { count: 2 } },
+    });
+    expect(await totals(reader)).toMatchObject({
+      totals: { about: { count: 1 } },
+    });
     expect(await totals(client, named)).toMatchObject({ row_count: 1 });
     expect(await totals(reader, named)).toMatchObject({
       row_count: 0,

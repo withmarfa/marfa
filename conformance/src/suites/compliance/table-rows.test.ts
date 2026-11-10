@@ -168,11 +168,13 @@ describe("writing rows", () => {
     const first = await client.writeRows(item, "lines", batch);
     expect(first.data.results[0]?.outcome).toBe("created");
     expect(first.data.batch).toMatch(UUID);
+    const before = (await client.getRow(item, "lines", id)).data;
+    await new Promise((resolve) => setTimeout(resolve, 5));
     const again = await client.writeRows(item, "lines", batch);
     expect(again.status).toBe(200);
     expect(again.data.results).toEqual([{ id, outcome: "unchanged" }]);
     expect(again.data.batch).toBeNull();
-    expect(await rowsOf(item)).toHaveLength(1);
+    expect(await rowsOf(item)).toEqual([before]);
   });
 
   it("holds a column a put sends as null as one it leaves out", async () => {
@@ -207,10 +209,23 @@ describe("writing rows", () => {
       amount: 1,
       memo: "b",
     });
-    const same = await client.writeRows(item, "lines", {
-      operations: [{ op: "patch", id, values: { memo: "b" } }],
+  });
+
+  it("leaves a row a patch would not change as it is, answering unchanged", async () => {
+    const item = await itemOf(await ledgerType());
+    const id = rowId();
+    await client.writeRows(item, "lines", {
+      operations: [{ op: "put", id, values: { amount: 1, memo: "a" } }],
     });
+    const before = (await client.getRow(item, "lines", id)).data;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const same = await client.writeRows(item, "lines", {
+      operations: [{ op: "patch", id, values: { memo: "a", kind: null } }],
+    });
+    expect(same.status, JSON.stringify(same.error)).toBe(200);
     expect(same.data.results).toEqual([{ id, outcome: "unchanged" }]);
+    expect(same.data.batch).toBeNull();
+    expect((await client.getRow(item, "lines", id)).data).toEqual(before);
   });
 
   it("refuses a patch of a row the table does not hold, and writes nothing of its batch", async () => {
@@ -520,7 +535,9 @@ describe("writing rows", () => {
       operations: [{ op: "put", id, values: { one: half } }],
     });
     expect(first.status, JSON.stringify(first.error)).toBe(200);
-    const fits = "y".repeat(65_536 - JSON.stringify({ one: half, two: "" }).length);
+    const fits = "y".repeat(
+      65_536 - JSON.stringify({ one: half, two: "" }).length,
+    );
     const atLimit = await client.writeRows(item, "notes", {
       operations: [{ op: "patch", id, values: { two: fits } }],
     });

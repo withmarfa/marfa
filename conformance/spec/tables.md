@@ -280,9 +280,15 @@ When a caller sends `POST /items/{id}/tables/{table}/rows` with operations that 
 
 ### `tables/rows-put-create`
 
-When a `put` names no `id`, or an `id` no row of the table holds, the server MUST create the row with the values it sends and answer its outcome `created`.
+When a `put` names no `id`, or an `id` no row of the table holds, the server MUST create the row with the values it sends.
 
-**Tests:** `compliance/table-rows.test.ts › creates, replaces, patches and deletes rows in one batch, answering each in order`, `› keeps the id a client sends for a new row`.
+**Tests:** `compliance/table-rows.test.ts › keeps the id a client sends for a new row`.
+
+### `tables/rows-put-created`
+
+When a `put` creates a row, the server MUST answer its outcome `created`.
+
+**Tests:** `compliance/table-rows.test.ts › creates, replaces, patches and deletes rows in one batch, answering each in order`.
 
 ### `tables/rows-id-minted`
 
@@ -304,9 +310,15 @@ If an operation's `op` is not `put`, `patch` or `delete`, or a `patch` or `delet
 
 ### `tables/rows-put-replace`
 
-When a `put` names the `id` of a row the table holds, the server MUST replace the row's values with those it sends and answer its outcome `replaced`.
+When a `put` names the `id` of a row the table holds and sends values other than those it holds, the server MUST replace the row's values with those it sends.
 
 **Reason:** a `put` is the whole row, so a column it leaves out is cleared.
+
+**Tests:** `compliance/table-rows.test.ts › creates, replaces, patches and deletes rows in one batch, answering each in order`.
+
+### `tables/rows-put-replaced`
+
+When a `put` replaces a row's values, the server MUST answer its outcome `replaced`.
 
 **Tests:** `compliance/table-rows.test.ts › creates, replaces, patches and deletes rows in one batch, answering each in order`.
 
@@ -320,19 +332,49 @@ When a `put` sends `null` for a column, the server MUST hold the row without a v
 
 ### `tables/rows-put-repeat`
 
-When a `put` sends exactly the values the row it names holds, the server MUST leave the row as it is and answer its outcome `unchanged`.
+When a `put` sends exactly the values the row it names holds, the server MUST leave the row as it is, its `updated_at` included.
 
 **Reason:** a connector sends the same rows again after a lost answer, and the second send changes nothing and announces nothing.
 
 **Tests:** `compliance/table-rows.test.ts › takes a put sent twice as one row, the second unchanged`.
 
+### `tables/rows-put-unchanged`
+
+When a `put` leaves a row as it is, the server MUST answer its outcome `unchanged`.
+
+**Tests:** `compliance/table-rows.test.ts › takes a put sent twice as one row, the second unchanged`.
+
 ### `tables/rows-patch`
 
-When a `patch` names a row the table holds, the server MUST set each column it names, keep every column it does not name, and answer its outcome `patched`, or `unchanged` where every column it names already held that value.
+When a `patch` names a row the table holds, the server MUST set each column the `patch` names to the value it sends.
+
+**Tests:** `compliance/table-rows.test.ts › patches only the columns it names`.
+
+### `tables/rows-patch-keep`
+
+When a `patch` names a row the table holds, the server MUST keep each column the `patch` does not name as it is.
 
 **Reason:** two writers that change different columns of one row both land.
 
-**Tests:** `compliance/table-rows.test.ts › creates, replaces, patches and deletes rows in one batch, answering each in order`, `› patches only the columns it names`.
+**Tests:** `compliance/table-rows.test.ts › patches only the columns it names`.
+
+### `tables/rows-patch-patched`
+
+When a `patch` changes a row's values, the server MUST answer its outcome `patched`.
+
+**Tests:** `compliance/table-rows.test.ts › creates, replaces, patches and deletes rows in one batch, answering each in order`.
+
+### `tables/rows-patch-same`
+
+When every column a `patch` names already holds the value it sends, or holds no value where it sends `null`, the server MUST leave the row as it is, its `updated_at` included.
+
+**Tests:** `compliance/table-rows.test.ts › leaves a row a patch would not change as it is, answering unchanged`.
+
+### `tables/rows-patch-unchanged`
+
+When a `patch` leaves a row as it is, the server MUST answer its outcome `unchanged`.
+
+**Tests:** `compliance/table-rows.test.ts › leaves a row a patch would not change as it is, answering unchanged`.
 
 ### `tables/rows-patch-clear`
 
@@ -348,7 +390,13 @@ If a `patch` names a row the table does not hold, then the server MUST answer `4
 
 ### `tables/rows-delete`
 
-When a `delete` names a row the table holds, the server MUST remove the row and answer its outcome `deleted`.
+When a `delete` names a row the table holds, the server MUST remove the row.
+
+**Tests:** `compliance/table-rows.test.ts › creates, replaces, patches and deletes rows in one batch, answering each in order`.
+
+### `tables/rows-deleted`
+
+When a `delete` removes a row, the server MUST answer its outcome `deleted`.
 
 **Tests:** `compliance/table-rows.test.ts › creates, replaces, patches and deletes rows in one batch, answering each in order`.
 
@@ -368,9 +416,9 @@ When a batch names one row in more than one operation, the server MUST apply eac
 
 ### `tables/rows-all-or-none`
 
-If the server refuses any operation of a batch, then the server MUST write none of the batch.
+If the server refuses a batch, or any operation of it, then the server MUST write none of the batch.
 
-**Tests:** `compliance/table-rows.test.ts › refuses a patch of a row the table does not hold, and writes nothing of its batch`, `› writes nothing of a batch with one bad operation among many`.
+**Tests:** `compliance/table-rows.test.ts › refuses a patch of a row the table does not hold, and writes nothing of its batch`, `› writes nothing of a batch with one bad operation among many`, `› refuses a patch that would leave a row over 64 KiB`, `› reads rows as the item is read, and refuses a key with read but not write`, `› refuses to read or write the rows of an item in the bin`.
 
 ### `tables/rows-operations-required`
 
@@ -422,17 +470,23 @@ If a batch holds more than 1000 operations, then the server MUST answer `400 val
 
 ### `tables/rows-row-limit`
 
-If an operation's `values`, written as JSON, is longer than 65536 bytes, then the server MUST answer `400 validation_error` naming `operations.<index>.values`.
+If the values of the row an operation would leave, written as JSON, are longer than 65536 bytes (64 KiB), then the server MUST answer `400 validation_error` naming `operations.<index>.values`.
 
-**Reason:** a row is small; a long text belongs in a file item the row points at.
+**Reason:** a row is small; a long text belongs in a file item the row points at. A `patch` adds to what the row holds, so the limit holds for the row it leaves, not for what it sends.
 
-**Tests:** `compliance/table-rows.test.ts › refuses a row over 64 KiB and a batch over 1000 operations`.
+**Tests:** `compliance/table-rows.test.ts › refuses a row over 64 KiB and a batch over 1000 operations`, `› refuses a patch that would leave a row over 64 KiB`.
 
 ### `tables/rows-batch-answer`
 
-When a batch changes at least one row, the server MUST answer the batch's UUIDv7 in `batch`, and answer `batch` `null` when it changes none.
+When a batch changes at least one row, the server MUST answer the batch's UUIDv7 in `batch`.
 
 **Tests:** `compliance/table-rows.test.ts › takes a put sent twice as one row, the second unchanged`.
+
+### `tables/rows-batch-none`
+
+When a batch changes no row, the server MUST answer `batch` `null`.
+
+**Tests:** `compliance/table-rows.test.ts › takes a put sent twice as one row, the second unchanged`, `› acknowledges a delete of a row the table does not hold`.
 
 ### `tables/table-not-found`
 
@@ -452,7 +506,7 @@ If a key may not read an item, by its type or because no item holds the id, then
 
 ### `tables/rows-write-access`
 
-If a key that may read an item's type and not write it sends `POST /items/{id}/tables/{table}/rows`, then the server MUST answer `403 type_not_permitted` and write nothing.
+If a key that may read an item's type and not write it sends `POST /items/{id}/tables/{table}/rows`, then the server MUST answer `403 type_not_permitted`.
 
 **Tests:** `compliance/table-rows.test.ts › reads rows as the item is read, and refuses a key with read but not write`.
 
@@ -466,7 +520,7 @@ When a read under `/items/{id}/tables` names an item in the bin, the server MUST
 
 ### `tables/rows-bin-write`
 
-When `POST /items/{id}/tables/{table}/rows` names an item in the bin whose type the key may read, the server MUST answer `404 item_not_found` with `details` of exactly `{ "trashed": true }` and write nothing.
+When `POST /items/{id}/tables/{table}/rows` names an item in the bin whose type the key may read, the server MUST answer `404 item_not_found` with `details` of exactly `{ "trashed": true }`.
 
 **Tests:** `compliance/table-rows.test.ts › refuses to read or write the rows of an item in the bin`.
 
@@ -477,6 +531,22 @@ When a row holds in a column of type `item` the id of an item the reading key ma
 **Reason:** the row is the reader's to see, and the item it names is not.
 
 **Tests:** `compliance/table-rows.test.ts › withholds an item column's id from a key that may not read the item, and keeps the row`.
+
+### `tables/rows-item-origin`
+
+While a row holds a value that was written to a column of type `item`, the server MUST withhold it as the id of an item under `tables/rows-item-withheld` and `tables/rows-event-withheld`, whatever the item's type declares for the column since.
+
+**Reason:** a forced change that removes the column or changes its `type`, or a retype of the item, keeps the value, and never shows it to a key that may not read the item it names.
+
+**Tests:** `compliance/table-rows-lifecycle.test.ts › withholds an item id a row holds after its column is removed or retyped, or its item is retyped`, `compliance/table-rows-events.test.ts › withholds an item id a row holds from a stream after its column is removed`.
+
+### `tables/rows-withheld-reads`
+
+When the server withholds a row's value from the reading key, the server MUST select, sort and total the row, and continue a page after it, as though the row held no value for the column.
+
+**Reason:** a filter, an order, a total or a cursor that read the value would tell the key which item it names.
+
+**Tests:** `compliance/table-rows-reads.test.ts › filters, sorts, totals and pages a withheld item id as no value`.
 
 ## Reading rows
 
@@ -654,9 +724,15 @@ When `PUT /types/{id}` names `force=true`, the server MUST keep every row and va
 
 ### `tables/save-type-change-in-use`
 
-If a `marfa_save_type` call with `action` `change` would remove a table that holds rows, remove a column that holds a value, or change the `type` of a column that holds a value, then the server MUST answer a tool error with code `type_in_use` naming each in `details.tables`, as `<table>` or `<table>.<column>`, and change nothing.
+If a `marfa_save_type` call with `action` `change` would remove a table that holds rows, remove a column that holds a value, or change the `type` of a column that holds a value, then the server MUST answer a tool error with code `type_in_use` naming each in `details.tables`, as `<table>` or `<table>.<column>`.
 
 **Reason:** the tool takes no `force`, so it never removes what rows hold.
+
+**Tests:** `compliance/table-rows-lifecycle.test.ts › refuses a marfa_save_type change that removes what rows hold`.
+
+### `tables/save-type-change-kept`
+
+If the server refuses a `marfa_save_type` call under `tables/save-type-change-in-use`, then the server MUST leave the type as it was.
 
 **Tests:** `compliance/table-rows-lifecycle.test.ts › refuses a marfa_save_type change that removes what rows hold`.
 

@@ -409,10 +409,7 @@ impl Batch<'_, '_> {
                 let printed = refuse_wide(index, &values)?;
                 let id = id.unwrap_or_else(|| Uuid::now_v7().to_string());
                 let held = store::row(tx, self.table_seq, &id)?;
-                if held
-                    .as_ref()
-                    .is_some_and(|held| held.values == values && held.refs == refs)
-                {
+                if held.as_ref().is_some_and(|held| held.values == values) {
                     return Ok((id, Outcome::Unchanged));
                 }
                 let seq = self.table_seq()?;
@@ -456,7 +453,7 @@ impl Batch<'_, '_> {
                         next.insert(column, value);
                     }
                 }
-                if next == held.values && refs == held.refs {
+                if next == held.values {
                     return Ok((id, Outcome::Unchanged));
                 }
                 let printed = refuse_wide(index, &next)?;

@@ -6963,7 +6963,7 @@ export interface components {
              * @example 019a5b1e-7c41-7d2e-9f3a-5b8c2d4e6f70
              */
             id?: string;
-            /** @description The values, keyed by column, at most 65536 bytes as JSON. On a `patch`, `null` clears a column. A `delete` takes none. */
+            /** @description The values, keyed by column. The row an operation leaves holds at most 65536 bytes (64 KiB) of values as JSON. On a `patch`, `null` clears a column. A `delete` takes none. */
             values?: {
                 [key: string]: unknown;
             };
