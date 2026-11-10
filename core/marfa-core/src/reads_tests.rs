@@ -626,6 +626,120 @@ fn a_declared_table_may_not_change_one_a_type_above_it_declares() {
 }
 
 #[test]
+fn a_declared_type_may_not_give_an_inherited_field_another_shape_than_a_type_above_it() {
+    let core = Core::open_in_memory(None).unwrap();
+    let top = json!({"id": "app.acme.top", "fields": {"count": {"type": "integer"}}});
+    let middle = json!({"id": "app.acme.middle", "parent": "app.acme.top", "fields": {}});
+    let leaf = |fields: serde_json::Value| json!({"id": "app.acme.leaf", "parent": "app.acme.middle", "fields": fields});
+    for set in [
+        [
+            top.clone(),
+            middle.clone(),
+            leaf(json!({"count": {"type": "string"}})),
+        ],
+        [
+            leaf(json!({"count": {"type": "string"}})),
+            middle.clone(),
+            top.clone(),
+        ],
+    ] {
+        let refused = core.declare_types(&set).unwrap_err();
+        assert!(
+            matches!(&refused, CoreError::Invalid(message)
+                if message.contains("app.acme.leaf") && message.contains("count")),
+            "{refused:?}"
+        );
+    }
+    let shipped = core
+        .declare_types(&[json!({"id": "app.acme.note", "parent": "core.note",
+            "fields": {"title": {"type": "integer"}}})])
+        .unwrap_err();
+    assert!(
+        matches!(&shipped, CoreError::Invalid(message) if message.contains("title")),
+        "{shipped:?}"
+    );
+    assert!(core.declared_types().unwrap().is_empty());
+    core.declare_types(&[top, middle, leaf(json!({"count": {"type": "integer"}}))])
+        .unwrap();
+    assert_eq!(core.declared_types().unwrap().len(), 3);
+}
+
+#[test]
+fn a_declared_type_may_not_repeat_a_status_word_a_type_above_it_gives_or_hold_two_thumbnails() {
+    let core = Core::open_in_memory(None).unwrap();
+    let stage = |word: &str| json!({"type": "status", "status_values": [{"value": word, "group": "not_started"}]});
+    let top = json!({"id": "app.acme.top", "fields": {"stage": stage("open"),
+                                                      "picture": {"type": "thumbnail"}}});
+    let middle = json!({"id": "app.acme.middle", "parent": "app.acme.top", "fields": {}});
+    let leaf = |fields: serde_json::Value| json!({"id": "app.acme.leaf", "parent": "app.acme.middle", "fields": fields});
+    for (fields, named) in [
+        (json!({"stage": stage("open")}), "open"),
+        (json!({"preview": {"type": "thumbnail"}}), "preview"),
+    ] {
+        for set in [
+            [top.clone(), middle.clone(), leaf(fields.clone())],
+            [leaf(fields.clone()), middle.clone(), top.clone()],
+        ] {
+            let refused = core.declare_types(&set).unwrap_err();
+            assert!(
+                matches!(&refused, CoreError::Invalid(message)
+                    if message.contains("app.acme.leaf") && message.contains(named)),
+                "{refused:?}"
+            );
+        }
+    }
+    assert!(core.declared_types().unwrap().is_empty());
+    core.declare_types(&[
+        top,
+        middle,
+        leaf(json!({"stage": stage("closed"), "picture": {"type": "thumbnail"}})),
+    ])
+    .unwrap();
+    assert_eq!(core.declared_types().unwrap().len(), 3);
+}
+
+#[test]
+fn a_declared_set_judges_a_status_word_only_where_a_type_declares_it_again() {
+    let core = Core::open_in_memory(None).unwrap();
+    let stage = |words: &[&str]| {
+        let values: Vec<serde_json::Value> = words
+            .iter()
+            .map(|word| json!({"value": word, "group": "not_started"}))
+            .collect();
+        json!({"type": "status", "status_values": values})
+    };
+    let top = json!({"id": "app.acme.top", "fields": {"stage": stage(&["open"])}});
+    let middle = |words: &[&str]| {
+        json!({"id": "app.acme.middle", "parent": "app.acme.top",
+                                          "fields": {"stage": stage(words)}})
+    };
+    let leaf = |words: &[&str]| {
+        json!({"id": "app.acme.leaf", "parent": "app.acme.middle",
+                                        "fields": {"stage": stage(words)}})
+    };
+    let refused = core
+        .declare_types(&[top.clone(), middle(&["extra"]), leaf(&["open"])])
+        .unwrap_err();
+    assert!(
+        matches!(&refused, CoreError::Invalid(message)
+            if message.contains("app.acme.leaf") && message.contains("open")),
+        "{refused:?}"
+    );
+    let again = core
+        .declare_types(&[top.clone(), middle(&["extra"]), leaf(&["extra"])])
+        .unwrap_err();
+    assert!(
+        matches!(&again, CoreError::Invalid(message)
+            if message.contains("app.acme.leaf") && message.contains("extra")),
+        "{again:?}"
+    );
+    assert!(core.declared_types().unwrap().is_empty());
+    core.declare_types(&[top, middle(&["extra"]), leaf(&["later"])])
+        .unwrap();
+    assert_eq!(core.declared_types().unwrap().len(), 3);
+}
+
+#[test]
 fn a_declared_table_key_nothing_reads_is_refused() {
     let core = Core::open_in_memory(None).unwrap();
     let refused = core
