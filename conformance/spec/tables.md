@@ -250,7 +250,7 @@ The server MUST carry the `tables` a type declares in the `type` line of the arc
 
 When `POST /restore` reads a `type` line that declares tables, the server MUST register the type with them.
 
-**Tests:** `compliance/type-tables.test.ts › carries a type's tables in an archive and registers them when the archive is restored`.
+**Tests:** `compliance/type-tables.test.ts › carries a type's tables in an archive and registers them when the archive is restored`, `› restores a subtype whose type line restates a table of its parent (reversed: %s)`.
 
 ### `tables/save-type-register`
 

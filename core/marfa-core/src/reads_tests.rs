@@ -652,6 +652,23 @@ fn a_declared_subtype_restating_its_parent_s_table_with_the_defaults_written_dow
 }
 
 #[test]
+fn a_declared_parent_and_subtype_may_declare_one_table_alike_in_either_order() {
+    let memo = json!({"lines": {"columns": {"memo": {"type": "string"}}}});
+    let parent = json!({"id": "app.acme.ledger", "fields": {}, "tables": memo.clone()});
+    let child = json!({"id": "app.acme.child", "parent": "app.acme.ledger", "fields": {},
+                       "tables": memo});
+    for set in [
+        [parent.clone(), child.clone()],
+        [child.clone(), parent.clone()],
+    ] {
+        let core = Core::open_in_memory(None).unwrap();
+        core.declare_types(&set).unwrap();
+        let read = core.item_type("app.acme.child").unwrap();
+        assert_eq!(read.tables["lines"]["columns"]["memo"]["type"], "string");
+    }
+}
+
+#[test]
 fn a_declared_column_reads_back_as_the_kind_its_format_names() {
     let core = Core::open_in_memory(None).unwrap();
     core.declare_types(&[json!({"id": "app.acme.ledger", "fields": {},

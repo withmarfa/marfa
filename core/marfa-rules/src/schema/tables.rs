@@ -261,22 +261,32 @@ pub(super) fn judge_tables(
 /// Each entry keyed by the id of the type it belongs to.
 type ByType<T> = Vec<(String, T)>;
 
+/// `base` with `set` added, each row without the tables it restates; rows only `base` holds stay as stored.
+pub fn with_set_stored(base: &Registry, set: &[Obj]) -> Registry {
+    let declared = set
+        .iter()
+        .fold(base.clone(), |held, row| held.with(row.clone()));
+    set.iter().fold(base.clone(), |held, row| {
+        let mut row = row.clone();
+        if row.contains_key("tables") {
+            let inherited = text(&row, "parent")
+                .filter(|parent| !parent.is_empty() && Some(*parent) != text(&row, "id"))
+                .map(|parent| declared.inherited_tables(parent))
+                .unwrap_or_default();
+            let tables = stored_tables(row.get("tables"), &inherited);
+            row.insert("tables".into(), Value::Object(tables));
+        }
+        held.with(row)
+    })
+}
+
 /// Each type's tables as stored, the set judged as one, so a subtype may restate a parent declared beside it.
 pub fn declared_tables(
     types: &[Value],
     type_known: &dyn Fn(&str) -> bool,
 ) -> Result<ByType<Obj>, ByType<Issue>> {
-    let declared = Registry::new(types.iter().filter_map(|row| row.as_object().cloned()));
-    let stored = Registry::new(types.iter().filter_map(Value::as_object).map(|row| {
-        let mut row = row.clone();
-        let inherited = text(&row, "parent")
-            .filter(|parent| Some(*parent) != text(&row, "id"))
-            .map(|parent| declared.inherited_tables(parent))
-            .unwrap_or_default();
-        let tables = stored_tables(row.get("tables"), &inherited);
-        row.insert("tables".into(), Value::Object(tables));
-        row
-    }));
+    let set: Vec<Obj> = types.iter().filter_map(Value::as_object).cloned().collect();
+    let stored = with_set_stored(&Registry::default(), &set);
     let mut judged = Vec::new();
     let mut found = Vec::new();
     for definition in types.iter().filter_map(Value::as_object) {
@@ -556,7 +566,7 @@ pub(super) fn without_read_labels(submitted: &mut Obj, stored: Option<&Obj>, rea
 mod tests {
     use serde_json::{Value, json};
 
-    use super::super::{Issue, Registry, evolution_of, resolve, validate_type};
+    use super::super::{Issue, Registry, evolution_of, resolve, validate_type, with_set_stored};
 
     fn registry() -> Registry {
         Registry::new(
@@ -925,6 +935,35 @@ mod tests {
         )
         .unwrap_or_default();
         assert!(!stored.contains_key("tables"), "{stored:?}");
+    }
+
+    #[test]
+    fn a_set_may_restate_a_table_beside_its_parent_but_not_over_one_a_held_subtype_declares() {
+        let memo = json!({"lines": {"columns": {"memo": {"type": "string"}}}});
+        let parent = json!({"id": "user.ledger", "fields": {"title": {"type": "string"}},
+                            "tables": memo.clone()});
+        let child = json!({"id": "user.ledger_sub", "parent": "user.ledger", "fields": {},
+                           "tables": memo.clone()});
+        let rows = |set: &[&Value]| -> Vec<serde_json::Map<String, Value>> {
+            set.iter()
+                .filter_map(|row| row.as_object().cloned())
+                .collect()
+        };
+        for set in [rows(&[&parent, &child]), rows(&[&child, &parent])] {
+            let stored = with_set_stored(&Registry::default(), &set);
+            for row in &set {
+                let taken = validate_type(&Value::Object(row.clone()), &stored);
+                assert!(taken.is_ok(), "{:?}", taken.err());
+            }
+        }
+
+        let bare = json!({"id": "user.ledger", "fields": {"title": {"type": "string"}}});
+        let held = Registry::new(rows(&[&bare, &child]));
+        let stored = with_set_stored(&held, &rows(&[&parent]));
+        let found = validate_type(&parent, &stored).err().unwrap_or_default();
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].field, "tables.lines");
+        assert_eq!(found[0].code, Some("inheritance_violation"));
     }
 
     #[test]

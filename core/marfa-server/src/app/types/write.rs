@@ -1,7 +1,7 @@
 use marfa_rules::grammar;
 use marfa_rules::schema::{
     Obj, broken_compatible_dependents, descendant_depth, evolution_of, icon_issue, labelled,
-    parent_chain_fault, read_back_free, resolve, validate_type,
+    parent_chain_fault, read_back_free, resolve, validate_type, with_set_stored,
 };
 use rusqlite::{Transaction, params};
 use serde_json::{Value, json};
@@ -542,9 +542,7 @@ pub fn plan_restored(catalog: &Catalog, archived: &[Archived]) -> Result<Restori
         }
         raw.push(definition.clone());
     }
-    let registry = raw
-        .iter()
-        .fold(catalog.types.clone(), |held, row| held.with(row.clone()));
+    let registry = with_set_stored(&catalog.types, &raw);
     let mut plan = Restoring {
         fresh: Vec::new(),
         skipped: 0,

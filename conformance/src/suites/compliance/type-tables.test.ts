@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { ApiResponse, TestContext } from "../../client/types.js";
-import { archiveLines } from "../../utils/archive.js";
+import { archiveLines, editLineFile } from "../../utils/archive.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -846,6 +846,73 @@ describe("tables reach the other doors", () => {
           "lines",
         ]);
         expect(read.data.tables?.lines.columns.seen.adds_up).toBe("max");
+      } finally {
+        await source.stop();
+        await destination.stop();
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it.each([false, true])(
+    "restores a subtype whose type line restates a table of its parent (reversed: %s)",
+    async (reversed) => {
+      const source = await bootFreshServer("tables-restated-source");
+      const destination = await bootFreshServer("tables-restated-destination");
+      try {
+        const origin = new MarfaClient({
+          baseUrl: source.apiUrl,
+          apiKey: source.workingKey,
+        });
+        const parent = "user.tables_restated";
+        const child = "user.tables_restated_sub";
+        const memo = { lines: { columns: { memo: { type: "string" } } } };
+        for (const definition of [
+          declared(parent, memo),
+          declared(child, memo, { parent }),
+        ]) {
+          const made = await origin.registerType(definition);
+          expect(made.status, JSON.stringify(made.error)).toBe(201);
+        }
+        const exported = await origin.exportArchive({});
+        expect(exported.status).toBe(200);
+        const restating = editLineFile(exported.data, "instance", (text) => {
+          const lines = text
+            .trim()
+            .split("\n")
+            .map((line) => {
+              const row = JSON.parse(line) as { type?: Definition };
+              if (row.type?.id !== child) return line;
+              return JSON.stringify({
+                ...row,
+                type: { ...row.type, tables: memo },
+              });
+            });
+          return (reversed ? lines.reverse() : lines).join("\n") + "\n";
+        });
+        const carried = archiveLines<{
+          type?: { id: string; tables?: Tables };
+        }>(restating, "instance").find((l) => l.type?.id === child)?.type;
+        expect(carried?.tables).toEqual(memo);
+
+        const owner = new MarfaClient({
+          baseUrl: destination.apiUrl,
+          controlSocket: destination.controlSocket,
+        });
+        const restored = await owner.restoreArchive(restating);
+        expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+        expect(restored.data).toMatchObject({ types_registered: 2 });
+        const worker = new MarfaClient({
+          baseUrl: destination.apiUrl,
+          apiKey: destination.workingKey,
+        });
+        expect(
+          Object.keys((await worker.getType(child)).data.tables ?? {}),
+        ).toEqual(["lines"]);
+        const listed = (await worker.listTypes()).data.data.find(
+          (t) => t.id === child,
+        );
+        expect(listed).not.toHaveProperty("tables");
       } finally {
         await source.stop();
         await destination.stop();
