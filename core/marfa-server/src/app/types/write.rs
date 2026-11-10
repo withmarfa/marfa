@@ -297,7 +297,7 @@ async fn replacing(
                     return Err(Refusal::new(
                         Code::TypeInUse,
                         format!(
-                            "Rows hold {}, which this change removes. Remove those rows first, or replace with ?force=true to keep them as they are.",
+                            "Rows hold {}, which this change removes. Remove those rows first, or replace the type with force=true to keep them as they are.",
                             held.join(", ")
                         ),
                     )

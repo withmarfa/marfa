@@ -644,6 +644,14 @@ When `PUT /types/{id}` names `force=true`, the server MUST keep every row and va
 
 **Tests:** `compliance/table-rows-lifecycle.test.ts › refuses to remove a table or a column that holds rows unless forced, and keeps the rows when forced`.
 
+### `tables/save-type-change-in-use`
+
+If a `marfa_save_type` call with `action` `change` would remove a table that holds rows, remove a column that holds a value, or change the `type` of a column that holds a value, then the server MUST answer a tool error with code `type_in_use` naming each in `details.tables`, as `<table>` or `<table>.<column>`, and change nothing.
+
+**Reason:** the tool takes no `force`, so it never removes what rows hold.
+
+**Tests:** `compliance/table-rows-lifecycle.test.ts › refuses a marfa_save_type change that removes what rows hold`.
+
 ### `tables/delete-constrained`
 
 If `DELETE /types/{id}` without `force=true` names a type that a column's `type_constraints` names, then the server MUST answer `409 type_in_use` naming each such column in `details.columns`, as `<type>.<table>.<column>`.

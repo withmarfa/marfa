@@ -5,6 +5,7 @@ import type {
   RowOperation,
   TestContext,
 } from "../../client/types.js";
+import { callTool, connectMcp, toolError } from "../../utils/mcp.js";
 import {
   createTestContext,
   getManagementClient,
@@ -14,9 +15,11 @@ import {
 
 let client: MarfaClient;
 let ctx: TestContext;
+let apiUrl: string;
+let apiKey: string;
 
 beforeAll(async () => {
-  ({ ctx, client } = await createTestContext(
+  ({ ctx, client, apiUrl, apiKey } = await createTestContext(
     "compliance",
     "table-rows-lifecycle",
   ));
@@ -302,6 +305,44 @@ describe("rows and the life of an item", () => {
     expect(
       (await client.listRows(item.id, "notes")).data.data[0]?.values,
     ).toEqual({ text: "a note" });
+  });
+
+  it("refuses a marfa_save_type change that removes what rows hold", async () => {
+    const id = typeId("tool-change");
+    await register(id, {
+      lines: {
+        columns: { amount: { type: "number" }, memo: { type: "string" } },
+      },
+      notes: { columns: { text: { type: "string" } } },
+    });
+    const item = await itemOf(id);
+    await put(item.id, [{ amount: 1 }]);
+    await put(item.id, [{ text: "a note" }], "notes");
+    const schema = await connectMcp(apiUrl, apiKey, "2026-07-28", "/mcp/schema");
+    try {
+      const refused = toolError(
+        await callTool(schema, "marfa_save_type", {
+          action: "change",
+          id,
+          tables: {
+            lines: { columns: { amount: { type: "string" } } },
+            notes: null,
+          },
+        }),
+      );
+      expect(refused).toMatchObject({
+        code: "type_in_use",
+        details: { tables: ["lines.amount", "notes"] },
+      });
+      const kept = await client.getType(id);
+      expect(Object.keys(kept.data.tables ?? {}).sort()).toEqual([
+        "lines",
+        "notes",
+      ]);
+      expect(kept.data.tables?.lines.columns.amount.type).toBe("number");
+    } finally {
+      await schema.close();
+    }
   });
 
   it("refuses to delete a type a column constrains to unless forced", async () => {

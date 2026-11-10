@@ -261,9 +261,12 @@ impl Batch<'_, '_> {
             let Some(id) = values.get(column).and_then(Value::as_str) else {
                 continue;
             };
-            let found = items::row(tx, id)?
-                .filter(|item| item.state != "trashed" && self.unit.caller.may_read_type(&item.type_id))
-                .map(|item| item.type_id);
+            let found = match self.referenced.get(id) {
+                Some(known) => known.clone(),
+                None => items::row(tx, id)?
+                    .filter(|item| item.state != "trashed" && self.unit.caller.may_read_type(&item.type_id))
+                    .map(|item| item.type_id),
+            };
             let Some(type_id) = found else {
                 return Err(refused_at(
                     index,
