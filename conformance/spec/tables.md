@@ -628,6 +628,28 @@ If a `cursor` was not answered for the same item, table, `filter`, `sort` and `d
 
 **Tests:** `compliance/table-rows-reads.test.ts › pages a table's rows by id, continuing by a signed cursor`, `› refuses a cursor answered for the other direction`.
 
+### `tables/rows-cursor-size`
+
+When `GET /items/{id}/tables/{table}/rows` answers a `next_cursor`, the server MUST answer a cursor of at most 512 characters, however long the sort value of the last row it answers.
+
+**Reason:** a cursor travels in a URL and in a tool call, and a text column holds up to 64 KiB.
+
+**Tests:** `compliance/table-rows-reads.test.ts › keeps a cursor short however long the sort value is, and follows the row it names`.
+
+### `tables/rows-cursor-continues`
+
+When a caller continues a listing by a `cursor` that follows a row whose sort value is unchanged, the server MUST answer the rows that come after that row in the listing's order, skipping none and repeating none, whatever the length of that sort value.
+
+**Tests:** `compliance/table-rows-reads.test.ts › keeps a cursor short however long the sort value is, and follows the row it names`.
+
+### `tables/rows-cursor-moved`
+
+If a `cursor` follows a row whose sort value is a text of more than 128 bytes in UTF-8, and that row has been removed or holds another sort value since the cursor was answered, then the server MUST answer `400 validation_error` naming `cursor`.
+
+**Reason:** a cursor keeps a long sort value as a tag of it, so the page boundary is checked against the row as it is now, and a boundary that moved is refused rather than guessed.
+
+**Tests:** `compliance/table-rows-reads.test.ts › keeps a cursor short however long the sort value is, and follows the row it names`.
+
 ### `tables/rows-filter`
 
 When `GET /items/{id}/tables/{table}/rows` or `GET /items/{id}/tables/{table}/totals` names a `filter`, the server MUST select the rows it selects under the grammar of `search-and-filters/filter-doors`, reading `values.<column>` as a column and `id` and `updated_at` as the row's own.
@@ -726,19 +748,59 @@ When `marfa_read_rows` answers, the server MUST keep the answer's text within 40
 
 **Tests:** `compliance/table-rows-mcp.test.ts › stops a page at the answer budget and continues by next_cursor`.
 
+### `tables/mcp-read-cursor-size`
+
+When `marfa_read_rows` answers a `next_cursor`, the server MUST answer a cursor of at most 512 characters, however long the sort value of the last row it answers.
+
+**Reason:** a row may sort on a text of 64 KiB, and a cursor that carried it would be larger than the answer budget.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › keeps next_cursor short and exact when rows sort on a 54,000-character value`.
+
+### `tables/mcp-read-cursor-continues`
+
+When `marfa_read_rows` answers a `next_cursor`, the server MUST answer a cursor that continues exactly after the last row it answers, skipping none and repeating none, as `tables/rows-cursor-continues` states for the page door.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › keeps next_cursor short and exact when rows sort on a 54,000-character value`.
+
 ### `tables/mcp-read-stopped`
 
-If the rows a `marfa_read_rows` call selects do not all fit within 40,000 characters, then the server MUST answer fewer rows, a `next_cursor` that continues after the last row it answers, and a `hint` that says the answer stopped for its size and to pass `next_cursor` as `cursor`.
+If the rows a `marfa_read_rows` call selects do not all fit within 40,000 characters, and the first of them fits alone, then the server MUST answer fewer rows, ending with a `next_cursor` that continues after the last row it answers.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › stops a page at the answer budget and continues by next_cursor`.
+
+### `tables/mcp-read-stopped-hint`
+
+If a `marfa_read_rows` call answers fewer rows than it selected for the size of the answer, then the server MUST answer a `hint` that says the answer stopped early for its size and to pass `next_cursor` as `cursor`.
 
 **Tests:** `compliance/table-rows-mcp.test.ts › stops a page at the answer budget and continues by next_cursor`.
 
 ### `tables/mcp-read-cut`
 
-If one row does not fit within 40,000 characters, then the server MUST cut the longest text values of the row and name each in `cut` with the row's `id`, the `column` and the `next_offset` to read from.
+If the first row a `marfa_read_rows` call selects does not fit alone within 40,000 characters, then the server MUST answer that row alone with its longest text values cut, and name each cut value in `cut` with the row's `id`, the `column` and the `next_offset` to read from.
 
 **Reason:** a row may hold up to 64 KiB of values, more than one answer holds.
 
 **Tests:** `compliance/table-rows-mcp.test.ts › cuts the text of a row too long to fit and reads the rest by offset`.
+
+### `tables/mcp-read-cut-hint`
+
+If a `marfa_read_rows` call answers a cut row, then the server MUST answer a `hint` that names `next_offset` as where to read the rest.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › cuts the text of a row too long to fit and reads the rest by offset`.
+
+### `tables/mcp-read-cut-unstopped`
+
+If a `marfa_read_rows` call answers a cut row, then the server MUST NOT answer a `hint` that the answer stopped early.
+
+**Reason:** a cut row is read on by offset, and a stopped page by `next_cursor`, so one hint for both would send the agent the wrong way.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › cuts the text of a row too long to fit and reads the rest by offset`.
+
+### `tables/mcp-read-cut-cursor`
+
+If a `marfa_read_rows` call answers a cut row, then the server MUST answer `next_cursor` as the cursor that continues after that row, or `null` when no row follows it.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › cuts the text of a row too long to fit and reads the rest by offset`, `› keeps next_cursor short and exact when rows sort on a 54,000-character value`.
 
 ### `tables/mcp-read-column-part`
 
@@ -748,23 +810,41 @@ When `marfa_read_rows` names a `row`, a `column` and an `offset`, the server MUS
 
 ### `tables/mcp-write-rows`
 
-When `marfa_write_rows` names an item, a table and operations that all hold, the server MUST apply them as `POST /items/{id}/tables/{table}/rows` applies a batch, and answer that door's `batch`, `last_activity_at` and `results`.
+When `marfa_write_rows` names an item, a table and operations that all hold, the server MUST apply them as `POST /items/{id}/tables/{table}/rows` applies a batch.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › writes a batch through marfa_write_rows as the write door does`.
+
+### `tables/mcp-write-answer`
+
+When `marfa_write_rows` applies a batch, the server MUST answer the `batch`, `last_activity_at` and `results` that `POST /items/{id}/tables/{table}/rows` answers.
 
 **Tests:** `compliance/table-rows-mcp.test.ts › writes a batch through marfa_write_rows as the write door does`.
 
 ### `tables/mcp-write-refused`
 
-If a `marfa_write_rows` call names a batch that `POST /items/{id}/tables/{table}/rows` refuses, then the server MUST answer a tool error with the code and `details` that door answers, and write none of the batch.
+If a `marfa_write_rows` call names a batch that `POST /items/{id}/tables/{table}/rows` refuses, then the server MUST answer a tool error with the code, message and `details` that door answers, whether the batch is missing, null, an object, a string, a number or a list with a fault in it.
 
 **Reason:** the checks are the door's, including a column whose value the key may not read, which the door refuses `403 forbidden`.
 
-**Tests:** `compliance/table-rows-mcp.test.ts › refuses a batch as the write door does and writes none of it`.
+**Tests:** `compliance/table-rows-mcp.test.ts › refuses a batch as the write door does and writes none of it`, `› refuses a batch that is not a list as the write door does`.
+
+### `tables/mcp-write-refused-nothing`
+
+If a `marfa_write_rows` call names a batch that `POST /items/{id}/tables/{table}/rows` refuses, then the server MUST NOT write any operation of the batch.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › refuses a batch as the write door does and writes none of it`, `› refuses a batch that is not a list as the write door does`, `› refuses a column whose value the key may not read, as the write door does`.
 
 ### `tables/mcp-write-limit`
 
-If `operations` holds more than 200 operations, then the server MUST answer a tool error `validation_error` that names `operations`, and write none of them.
+If `operations` holds more than 200 operations, then the server MUST answer a tool error `validation_error` that names `operations`.
 
 **Reason:** the answer names every operation's outcome, and 200 of them fit within one answer.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › refuses a batch of more than 200 operations`.
+
+### `tables/mcp-write-limit-nothing`
+
+If `operations` holds more than 200 operations, then the server MUST NOT write any of them.
 
 **Tests:** `compliance/table-rows-mcp.test.ts › refuses a batch of more than 200 operations`.
 

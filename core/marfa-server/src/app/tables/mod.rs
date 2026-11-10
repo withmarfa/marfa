@@ -112,16 +112,17 @@ fn refuse_wide(index: usize, values: &Map<String, Value>) -> Result<i64> {
 
 const OP_FIELDS: [&str; 3] = ["op", "id", "values"];
 
-pub fn operations(sent: Option<&Value>) -> Result<Vec<Op>> {
+/// The batch a door sent, at most `most` operations long.
+pub fn operations(sent: Option<&Value>, most: usize) -> Result<Vec<Op>> {
     let Some(Value::Array(sent)) = sent else {
         return Err(whole_batch("operations is a list of operations."));
     };
     if sent.is_empty() {
         return Err(whole_batch("operations names at least one operation."));
     }
-    if sent.len() > MAX_OPERATIONS {
+    if sent.len() > most {
         return Err(whole_batch(&format!(
-            "A batch holds at most {MAX_OPERATIONS} operations; this holds {}.",
+            "A batch holds at most {most} operations; this holds {}.",
             sent.len()
         )));
     }

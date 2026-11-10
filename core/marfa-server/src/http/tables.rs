@@ -43,7 +43,7 @@ pub async fn write(
     query::only(&uri, &[])?;
     check_item_id(&id)?;
     let sent = body.object(&BATCH_FIELDS).await?;
-    let ops = tables::operations(sent.get("operations"))?;
+    let ops = tables::operations(sent.get("operations"), tables::MAX_OPERATIONS)?;
     let answer = tables::write(&app, &caller, id, table, ops).await?;
     Ok(text_answer(StatusCode::OK, answer))
 }

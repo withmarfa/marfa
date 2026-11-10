@@ -98,10 +98,10 @@ pub fn write_definition() -> Definition {
             "properties": {
                 "id": { "type": "string", "minLength": 1, "description": "The item's ID." },
                 "table": { "type": "string", "minLength": 1, "description": "The table's name." },
-                "operations": { "type": "array", "maxItems": MAX_OPERATIONS,
-                    "description": "Operations in order. `{ \"op\": \"put\", \"id\"?: <row id>, \"values\": { <column>: <value> } }` creates a row, with the id you give or a new one, or replaces the row of that id. `{ \"op\": \"patch\", \"id\": <row id>, \"values\": {...} }` sets the columns named and keeps the rest; a null clears one. `{ \"op\": \"delete\", \"id\": <row id> }` removes a row. A row id is a lowercase UUIDv7." },
+                "operations": {
+                    "description": "A list of 1 to 200 operations, in order. `{ \"op\": \"put\", \"id\"?: <row id>, \"values\": { <column>: <value> } }` creates a row, with the id you give or a new one, or replaces the row of that id. `{ \"op\": \"patch\", \"id\": <row id>, \"values\": {...} }` sets the columns named and keeps the rest; a null clears one. `{ \"op\": \"delete\", \"id\": <row id> }` removes a row. A row id is a lowercase UUIDv7." },
             },
-            "required": ["id", "table", "operations"],
+            "required": ["id", "table"],
             "additionalProperties": false,
         }),
         output: json!({
@@ -132,7 +132,7 @@ pub async fn write(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value
     let id = text(&arguments, "id").unwrap_or_default();
     item_id(&id)?;
     let table = text(&arguments, "table").unwrap_or_default();
-    let operations = tables::operations(arguments.get("operations"))?;
+    let operations = tables::operations(arguments.get("operations"), MAX_OPERATIONS)?;
     parsed(&tables::write(app, caller, id, table, operations).await?)
 }
 
@@ -468,9 +468,10 @@ mod tests {
             tool.description
                 .contains(&format!("at most {MAX_OPERATIONS} "))
         );
-        assert_eq!(
-            tool.input["properties"]["operations"]["maxItems"],
-            MAX_OPERATIONS
+        assert!(
+            tool.input["properties"]["operations"]["description"]
+                .as_str()
+                .is_some_and(|text| text.contains(&format!("1 to {MAX_OPERATIONS} ")))
         );
         let tool = read_definition();
         assert_eq!(tool.input["properties"]["limit"]["maximum"], MAX_LIMIT);

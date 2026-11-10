@@ -269,8 +269,9 @@ describe("marfa_read_rows", () => {
       expect(rows.length).toBeGreaterThan(0);
       expect(rows.length).toBeLessThan(60);
       expect(first.next_cursor).toEqual(expect.any(String));
-      expect(first.hint).toEqual(expect.stringContaining("size"));
+      expect(first.hint).toEqual(expect.stringContaining("stopped early"));
       expect(first.hint).toEqual(expect.stringContaining("next_cursor"));
+      expect(first).not.toHaveProperty("cut");
 
       const seen = rows.map((r) => r.id);
       let cursor = first.next_cursor as string | null;
@@ -283,7 +284,6 @@ describe("marfa_read_rows", () => {
     };
 
     expect(await walk()).toEqual([...ids].sort());
-    // A cursor that carries a long sort value takes room of its own.
     const sorted = (
       await client.listRows(item, "lines", {
         sort: "values.memo",
@@ -291,6 +291,51 @@ describe("marfa_read_rows", () => {
       })
     ).data.data.map((r) => r.id);
     expect(await walk("values.memo")).toEqual(sorted);
+  });
+
+  it("keeps next_cursor short and exact when rows sort on a 54,000-character value", async () => {
+    const { item } = await ledger();
+    const long = (tail: string) => `${"a".repeat(54_000 - tail.length)}${tail}`;
+    const ids = await put(
+      item,
+      ["0003", "0001", "0004", "0002"].map((tail) => ({
+        amount: 1,
+        memo: long(tail),
+      })),
+    );
+    for (const direction of ["asc", "desc"] as const) {
+      const whole = (
+        await client.listRows(item, "lines", {
+          sort: "values.memo",
+          direction,
+          limit: 1000,
+        })
+      ).data.data.map((r) => r.id);
+      expect([...whole].sort()).toEqual([...ids].sort());
+      const seen: string[] = [];
+      let cursor: string | undefined;
+      let pages = 0;
+      do {
+        const answered = await callTool(mcp, "marfa_read_rows", {
+          id: item,
+          table: "lines",
+          sort: "values.memo",
+          direction,
+          ...(cursor ? { cursor } : {}),
+        });
+        expect(answered.text.length).toBeLessThanOrEqual(BUDGET);
+        const read = toolResult(answered);
+        const rows = read.rows as { id: string }[];
+        expect(rows).toHaveLength(1);
+        seen.push(rows[0]!.id);
+        const next = read.next_cursor as string | null;
+        if (next) expect(next.length).toBeLessThanOrEqual(512);
+        cursor = next ?? undefined;
+        pages += 1;
+      } while (cursor);
+      expect(pages).toBe(4);
+      expect(seen).toEqual(whole);
+    }
   });
 
   it("cuts the text of a row too long to fit and reads the rest by offset", async () => {
@@ -311,6 +356,9 @@ describe("marfa_read_rows", () => {
       read.rows as { values: { amount: number; memo: string } }[]
     )[0];
     expect(shown?.values.amount).toBe(3);
+    expect(read.next_cursor).toBeNull();
+    expect(read.hint).toEqual(expect.stringContaining("next_offset"));
+    expect(read.hint).not.toEqual(expect.stringContaining("stopped early"));
     const cut = read.cut as {
       id: string;
       column: string;
@@ -472,6 +520,7 @@ describe("marfa_write_rows", () => {
         }),
       );
       expect(refused.code, label).toBe(door.error?.error.code);
+      expect(refused.message, label).toBe(door.error?.error.message);
       expect(refused.details, label).toEqual(door.error?.error.details);
     }
     for (const operations of [[], [{ op: "put", values: { amount: 1 } }, 7]]) {
@@ -499,6 +548,36 @@ describe("marfa_write_rows", () => {
 
     const rows = (await client.listRows(item, "lines")).data.data;
     expect(rows.map((r) => r.id)).toEqual([existing]);
+  });
+
+  it("refuses a batch that is not a list as the write door does", async () => {
+    const { item } = await ledger();
+    const shapes: [string, Record<string, unknown>][] = [
+      ["no operations", {}],
+      ["null", { operations: null }],
+      ["an object", { operations: { op: "put", values: { amount: 1 } } }],
+      ["a string", { operations: "put" }],
+      ["a number", { operations: 7 }],
+    ];
+    for (const [label, body] of shapes) {
+      const door = await client.writeRows(item, "lines", body as never);
+      expect(door.status, label).toBe(400);
+      expect(door.error?.error.details, label).toMatchObject({
+        field: "operations",
+        errors: [expect.objectContaining({ path: "operations" })],
+      });
+      const refused = toolError(
+        await callTool(mcp, "marfa_write_rows", {
+          id: item,
+          table: "lines",
+          ...body,
+        }),
+      );
+      expect(refused.code, label).toBe(door.error?.error.code);
+      expect(refused.message, label).toBe(door.error?.error.message);
+      expect(refused.details, label).toEqual(door.error?.error.details);
+    }
+    expect((await client.listRows(item, "lines")).data.data).toHaveLength(0);
   });
 
   async function withheldRow() {
@@ -598,6 +677,7 @@ describe("marfa_write_rows", () => {
     );
     expect(refused.code).toBe("validation_error");
     expect(refused.message).toEqual(expect.stringContaining("operations"));
+    expect(refused.details).toMatchObject({ field: "operations" });
     expect((await client.listRows(item, "lines")).data.data).toHaveLength(0);
 
     const accepted = toolResult(
