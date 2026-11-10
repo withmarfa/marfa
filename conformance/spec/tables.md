@@ -1476,7 +1476,7 @@ The server MUST NOT match a row of an item in the bin on `GET /search`, whatever
 
 ### `tables/search-row-rank`
 
-When `GET /search` names no `sort`, or `sort=relevance`, the server MUST rank a row hit by BM25 over its table's searchable columns at equal weight, in one ranking with the item hits.
+When `GET /search` names no `sort`, or `sort=relevance`, the server MUST rank a row hit by BM25 over its table's searchable columns at equal weight, with the rows of the items the credential may read as the corpus, in one ranking with the item hits.
 
 **Reason:** a row and an item that match a query are answered in the order of how well each matches, so a page never puts every item before every row.
 
@@ -1512,7 +1512,7 @@ The server MUST count each row hit as one of the 10,000 hits a search reads at m
 
 ### `tables/search-row-excerpt`
 
-The server MUST draw a row hit's `snippet_html` from the searchable column with the most matched words in its excerpt, the first by name where two tie, by the rules `search-and-filters/excerpt-words` to `search-and-filters/excerpt-markup` hold for an item's excerpt.
+The server MUST draw a row hit's `snippet_html` from the searchable column with the most matched words in its excerpt, counting each word of a matched phrase, the first by name where two tie, by the rules `search-and-filters/excerpt-words` to `search-and-filters/excerpt-markup` hold for an item's excerpt.
 
 **Tests:** `compliance/table-rows-search.test.ts › excerpts a row hit from its searchable column with the most matched words, marked and escaped`.
 
@@ -1548,11 +1548,19 @@ When `POST /restore` writes rows, the server MUST match each by its table's sear
 
 ### `tables/search-column-withdrawn`
 
-When a type change takes `searchable` from a column, changes its type, removes it or removes its table, the server MUST NOT match a row by that column's values from the change's answer on.
+When a type change takes `searchable` from a column, changes its type to one other than `string`, `email` or `url`, removes it or removes its table, the server MUST NOT match a row by that column's values from the change's answer on.
 
 **Reason:** a column a person has taken out of search is out of it at once, however many rows its table holds.
 
-**Tests:** `compliance/table-rows-search.test.ts › follows a change to what a table marks searchable, a column removed or retyped, and a table removed`, `› rebuilds a large table's index through table-row-cleanup, matching nothing by a withdrawn column meanwhile`.
+**Tests:** `compliance/table-rows-search.test.ts › follows a change to what a table marks searchable, a column removed, retyped within or away from text, and a table removed`, `› rebuilds a large table's index through table-row-cleanup, matching nothing by a withdrawn column meanwhile`.
+
+### `tables/search-column-retyped-text`
+
+When a type change changes a column's type between `string`, `email` and `url` and leaves it `searchable` `true`, the server MUST go on matching the rows of the tables it applies to by that column's values.
+
+**Reason:** the values are text under each of those types, so the column stays in search as its type still says.
+
+**Tests:** `compliance/table-rows-search.test.ts › follows a change to what a table marks searchable, a column removed, retyped within or away from text, and a table removed`.
 
 ### `tables/search-column-added`
 
@@ -1560,7 +1568,7 @@ When a type change marks a column `searchable` `true`, the server MUST match the
 
 **Reason:** a type change rebuilds at most 1,000 rows inline and leaves the remaining tables to paged background work, so other writes do not wait for all affected rows.
 
-**Tests:** `compliance/table-rows-search.test.ts › follows a change to what a table marks searchable, a column removed or retyped, and a table removed`, `› rebuilds a large table's index through table-row-cleanup, matching nothing by a withdrawn column meanwhile`.
+**Tests:** `compliance/table-rows-search.test.ts › follows a change to what a table marks searchable, a column removed, retyped within or away from text, and a table removed`, `› rebuilds a large table's index through table-row-cleanup, matching nothing by a withdrawn column meanwhile`.
 
 ### `tables/search-rebuilding`
 

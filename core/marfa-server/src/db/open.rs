@@ -260,14 +260,14 @@ fn prepare_writer(conn: &Connection, options: &Options) -> rusqlite::Result<()> 
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     conn.pragma_update(None, "foreign_keys", true)?;
     conn.pragma_update(None, "journal_size_limit", JOURNAL_SIZE_LIMIT)?;
-    Ok(())
+    super::rank::register(conn)
 }
 
 fn prepare_reader(conn: &Connection, options: &Options) -> rusqlite::Result<()> {
     conn.busy_timeout(options.write_wait)?;
     conn.pragma_update(None, "foreign_keys", true)?;
     conn.pragma_update(None, "query_only", true)?;
-    Ok(())
+    super::rank::register(conn)
 }
 
 /// Nothing is written until the judgment has passed.

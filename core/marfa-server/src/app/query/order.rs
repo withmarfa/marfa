@@ -33,7 +33,7 @@ pub fn property_key(name: &str) -> Sql {
     sql
 }
 
-/// The relevance key of a search over items, which [`Order::ranked_by`] reads from another index.
+/// The relevance key of a search, which [`Order::ranked_by`] replaces with each index's rank.
 const RELEVANCE: &str = "bm25(items_fts)";
 
 fn column(name: &str) -> Sql {
@@ -172,11 +172,11 @@ impl Order {
         sql.push("i.id");
     }
 
-    pub fn ranked_by(&self, rank: &str) -> Order {
+    pub fn ranked_by(&self, rank: &Sql) -> Order {
         let mut order = self.clone();
         for key in &mut order.keys {
             if key.expression.text == RELEVANCE {
-                key.expression = Sql::new(rank);
+                key.expression = rank.clone();
             }
         }
         order

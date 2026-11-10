@@ -14,6 +14,7 @@ pub struct Reach {
     open: Vec<String>,
     held: Vec<String>,
     sources: Vec<String>,
+    whole: bool,
 }
 
 const PRESENT_TYPES: &str = "WITH RECURSIVE present(name) AS (
@@ -39,9 +40,11 @@ impl Reach {
             open: Vec::new(),
             held: Vec::new(),
             sources: Vec::new(),
+            whole: true,
         };
         for type_id in present {
             if !caller.may_read_type(&type_id) {
+                reach.whole = false;
                 continue;
             }
             match caller.levers()?.listed_sources(&catalog.rules, &type_id) {
@@ -49,6 +52,7 @@ impl Reach {
                 Some(sources) => {
                     reach.sources = sources.to_vec();
                     reach.held.push(type_id);
+                    reach.whole = false;
                 }
             }
         }
@@ -57,6 +61,11 @@ impl Reach {
 
     pub fn is_empty(&self) -> bool {
         self.open.is_empty() && self.held.is_empty()
+    }
+
+    /// Whether every item in the database is within reach.
+    pub fn is_whole(&self) -> bool {
+        self.whole
     }
 
     pub fn narrowed(&self, keep: impl Fn(&str) -> bool) -> Reach {
@@ -71,6 +80,7 @@ impl Reach {
             open: kept(&self.open),
             held: kept(&self.held),
             sources: self.sources.clone(),
+            whole: false,
         }
     }
 
@@ -103,6 +113,7 @@ impl Reach {
             open: owned(open),
             held: owned(held),
             sources: owned(sources),
+            whole: false,
         }
     }
 }

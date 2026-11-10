@@ -13,6 +13,17 @@ pub(crate) const HITS_FROM: &str = "rows_fts CROSS JOIN row_search m ON m.seq = 
      CROSS JOIN table_summaries s ON s.seq = m.table_seq AND s.searched_by IS NOT NULL \
      CROSS JOIN items i ON i.seq = s.item_seq AND i.state <> 'trashed'";
 
+/// Every entry whose item is `i`, for a reach clause to narrow.
+pub(crate) const CORPUS_FROM: &str = "rows_fts_docsize d JOIN row_search m ON m.seq = d.id \
+     JOIN table_summaries s ON s.seq = m.table_seq JOIN items i ON i.seq = s.item_seq";
+
+/// Whether a purged item's entries are still indexed, which no reach covers.
+pub(crate) fn purge_pending(tx: &Transaction<'_>) -> Result<bool> {
+    Ok(tx
+        .prepare_cached("SELECT EXISTS (SELECT 1 FROM table_rows_purging)")?
+        .query_row([], |row| row.get(0))?)
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Searched(Vec<String>);
 
@@ -294,10 +305,50 @@ pub(crate) fn excerpt(
         else {
             continue;
         };
-        let marks = text.matches(MARK_OPEN).count();
-        if marks > 0 && best.as_ref().is_none_or(|(most, ..)| marks > *most) {
-            best = Some((marks, column.clone(), text));
+        let words = marked_words(&text);
+        if words > 0 && best.as_ref().is_none_or(|(most, ..)| words > *most) {
+            best = Some((words, column.clone(), text));
         }
     }
     Ok(best.map(|(_, column, text)| (column, text)))
+}
+
+/// One mark spans a whole phrase, so its words are counted, not the marks.
+fn marked_words(excerpt: &str) -> usize {
+    let (mut words, mut marked, mut in_word) = (0, false, false);
+    for character in excerpt.chars() {
+        match character {
+            MARK_OPEN => marked = true,
+            MARK_CLOSE => marked = false,
+            _ if character.is_alphanumeric() => {
+                if marked && !in_word {
+                    words += 1;
+                }
+                in_word = true;
+                continue;
+            }
+            _ => {}
+        }
+        in_word = false;
+    }
+    words
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_marked_phrase_counts_each_of_its_words() {
+        let mark = |text: &str| format!("{MARK_OPEN}{text}{MARK_CLOSE}");
+        assert_eq!(
+            marked_words(&format!("{} and more", mark("alpha-beta-delta"))),
+            3
+        );
+        assert_eq!(
+            marked_words(&format!("{} then {}", mark("gamma"), mark("gamma"))),
+            2
+        );
+        assert_eq!(marked_words("nothing marked"), 0);
+    }
 }

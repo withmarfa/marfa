@@ -1172,6 +1172,14 @@ The server MUST carry on each hit of `GET /search` a positive `relevance_score`,
 
 **Tests:** `compliance/search-matching.test.ts › scores a hit by its rank and gives the better hit the higher score`.
 
+### `search-and-filters/search-score-unreadable`
+
+The server MUST NOT let an item or a row that a credential may not read change the `relevance_score` or the order of a hit of `GET /search` that it answers that credential.
+
+**Reason:** BM25 weighs a word by how many entries of its corpus hold it and a text by the corpus's mean length, so a corpus wider than what the credential may read would tell it what the rest says.
+
+**Tests:** `compliance/table-rows-search.test.ts › scores and orders a key's hits by what it may read, whatever the items and rows it may not read hold`.
+
 ### `search-and-filters/search-cursor`
 
 When a client sends back the `next_cursor` of a page of `GET /search` with the same query, the server MUST continue the ranking, so that walking to `null` delivers every hit once.
@@ -1408,9 +1416,9 @@ When a type is registered, replaced, or deleted with `force`, the server MUST ma
 
 ### `search-and-filters/rank-bm25`
 
-When `GET /search` names no `sort`, or `sort=relevance`, the server MUST rank an item's own hit by BM25 over the `title`, `body`, `description`, `name`, extra properties and tags at equal weight.
+When `GET /search` names no `sort`, or `sort=relevance`, the server MUST rank an item's own hit by BM25 over the `title`, `body`, `description`, `name`, extra properties and tags at equal weight, with the items not in the bin that the credential may read as the corpus.
 
-**Reason:** a device ranks by the same measure (`device/rank-bm25`), so the two orders agree where they rank the same items.
+**Reason:** a device ranks by the same measure over the items it holds (`device/rank-bm25`), so a device that holds what its key may read orders as the server orders for that key.
 
 **Tests:** `compliance/search-matching.test.ts › $name: $query`, `› scores a hit by its rank and gives the better hit the higher score`.
 

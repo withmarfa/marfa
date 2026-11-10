@@ -269,6 +269,60 @@ describe("searching rows", () => {
     expect(new Set(worst.slice(0, 2))).toEqual(new Set(order.slice(2)));
   });
 
+  it("scores and orders a key's hits by what it may read, whatever the items and rows it may not read hold", async () => {
+    const [v, w] = [word(), word()];
+    const filler = (n: number) =>
+      Array.from({ length: n }, (_, at) => `pad${String(at)}`).join(" ");
+    const mine = await chatType();
+    const theirs = await chatType();
+    await chat(mine, { title: `${v} ${w}` });
+    await chat(mine, { title: "Long", body: `${v} ${w} ${w} ${filler(30)}` });
+    const host = await chat(mine, { title: "Host" });
+    await put(host, "messages", [
+      { text: `${v} ${w}` },
+      { text: `${v} ${v} ${w} ${filler(20)}` },
+      { subject: v, text: `${w} ${filler(5)}` },
+    ]);
+    const hidden = await chat(theirs, { title: "Hidden" });
+    const [secret] = await put(hidden, "messages", [{ text: `${w} once` }]);
+
+    counter += 1;
+    const made = await client.createKey({
+      label: `rows-search-score-${String(counter)}`,
+      source: `${ctx.source}-score-${String(counter)}`,
+      type_permissions: { [mine]: "read" },
+    });
+    expect(made.ok, JSON.stringify(made.error)).toBe(true);
+    trackKey(ctx, made.data.id);
+    const narrow = new MarfaClient({ baseUrl: apiUrl, apiKey: made.data.key });
+    const scored = async (on: MarfaClient) => {
+      const hits = (await search(`${v} ${w}`, {}, on)).data;
+      return keys(hits).map((key, at) => `${key} ${String(hits[at]!.relevance_score)}`);
+    };
+    const before = await scored(narrow);
+    expect(before).toHaveLength(5);
+    const visible = (lines: string[]) =>
+      lines.filter((line) =>
+        before.some((seen) => line.startsWith(seen.slice(0, seen.lastIndexOf(" ")))),
+      );
+    const ownerBefore = visible(await scored(client));
+
+    // Only what the narrow key may not read changes: words, lengths and counts.
+    await write(hidden, "messages", [
+      { op: "patch", id: secret!, values: { text: `${filler(40)} ${v}` } },
+    ]);
+    await put(
+      hidden,
+      "messages",
+      Array.from({ length: 30 }, (_, at) => ({ text: `${w} ${filler(at)}` })),
+    );
+    await chat(theirs, { title: `${w} ${w} ${v}`, body: filler(50) });
+
+    expect(await scored(narrow)).toEqual(before);
+    // The witness: a key that may read the change sees the same hits scored anew.
+    expect(visible(await scored(client))).not.toEqual(ownerBefore);
+  });
+
   it("orders a sorted search's row hits by their item's value and breaks ties by item, own hit first, then table and row id", async () => {
     const w = word();
     const type = await chatType();
@@ -398,6 +452,16 @@ describe("searching rows", () => {
     );
     expect(of(tied!)?.row?.column).toBe("subject");
     expect(of(tied!)?.snippet_html).toBe(`<mark>${w}</mark> first`);
+    // A phrase of three words outweighs two separate matches.
+    const [a, b, c, d] = [word(), word(), word(), word()];
+    const [phrased] = await put(item, "messages", [
+      { subject: `${a}-${b}-${c}`, text: `${d} then ${d}` },
+    ]);
+    const byPhrase = (await search(`${a}-${b}-${c} ${d}`)).data.find(
+      (hit) => hit.row?.id === phrased,
+    );
+    expect(byPhrase?.row?.column).toBe("subject");
+    expect(byPhrase?.snippet_html).toBe(`<mark>${a}-${b}-${c}</mark>`);
     const lengthy = await put(item, "messages", [
       { text: `${"lead ".repeat(40)}${w}${" tail".repeat(40)}` },
     ]);
@@ -451,7 +515,7 @@ describe("searching rows", () => {
     expect(keys((await search(third, { state: "any" })).data)).toEqual([]);
   });
 
-  it("follows a change to what a table marks searchable, a column removed or retyped, and a table removed", async () => {
+  it("follows a change to what a table marks searchable, a column removed, retyped within or away from text, and a table removed", async () => {
     const w = word();
     const type = await chatType();
     const item = await chat(type);
@@ -481,6 +545,15 @@ describe("searching rows", () => {
     await change(chatTables(withoutText));
     expect(await found()).toEqual([hits[1]]);
     await change(chatTables());
+    expect(await found()).toEqual(hits);
+    // Retyped to another text kind, the column stays searchable with its values.
+    await change(
+      chatTables({ ...MESSAGES, text: { type: "email", searchable: true } }),
+    );
+    expect(await found()).toEqual(hits);
+    await change(
+      chatTables({ ...MESSAGES, text: { type: "url", searchable: true } }),
+    );
     expect(await found()).toEqual(hits);
     await change(chatTables({ ...MESSAGES, text: { type: "number" } }));
     expect(await found()).toEqual([hits[1]]);
