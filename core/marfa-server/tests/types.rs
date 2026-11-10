@@ -522,7 +522,7 @@ fn refused_paths(reply: &Reply) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn a_type_declares_tables_and_every_door_reads_them_back() {
+async fn a_type_declares_tables_and_reads_lists_and_normalizes_them() {
     let instance = Instance::start().await;
     let created = instance.register(ledger(lines())).await;
     assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);

@@ -10,7 +10,7 @@ A type declares tables under `tables`, an object keyed by table name. A table ha
 
 When a caller registers a type that declares a table with columns, the server MUST answer the table and its columns on `GET /types/{id}`.
 
-**Tests:** `compliance/type-tables.test.ts › answers the tables a type declares on a read, a listing and a normalization`.
+**Tests:** `compliance/type-tables.test.ts › answers the tables a type declares on a read and a listing`.
 
 ### `tables/list`
 
@@ -18,7 +18,7 @@ When a type declares tables, the server MUST answer them on `GET /types` as the 
 
 **Reason:** the listing answers each type's own definition, as it does for fields.
 
-**Tests:** `compliance/type-tables.test.ts › answers the tables a type declares on a read, a listing and a normalization`, `› answers a subtype the tables of its parents and its own`.
+**Tests:** `compliance/type-tables.test.ts › answers the tables a type declares on a read and a listing`, `› answers a subtype the tables of its parents and its own`.
 
 ### `tables/none`
 
@@ -44,7 +44,7 @@ When a caller sends `POST /types/normalize` a type that declares a column withou
 
 The server MUST take a type that declares 32 tables, and a table that declares 64 columns.
 
-**Tests:** `compliance/type-tables.test.ts › takes 32 tables of 64 columns and refuses a 33rd table and a 65th column`.
+**Tests:** `compliance/type-tables.test.ts › takes 32 tables and a table of 64 columns, and refuses a 33rd table and a 65th column`.
 
 ### `tables/adds-up-kinds`
 
@@ -138,7 +138,7 @@ If a type declares more than 32 tables, or a table declares more than 64 columns
 
 **Reason:** a table is what an item holds many of, and a narrow one keeps a row small.
 
-**Tests:** `compliance/type-tables.test.ts › takes 32 tables of 64 columns and refuses a 33rd table and a 65th column`.
+**Tests:** `compliance/type-tables.test.ts › takes 32 tables and a table of 64 columns, and refuses a 33rd table and a 65th column`.
 
 ## Inheritance
 

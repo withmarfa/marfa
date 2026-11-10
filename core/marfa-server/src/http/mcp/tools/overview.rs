@@ -1,4 +1,4 @@
-//! `marfa_overview`: what the instance holds that the credential reaches, or one type's fields.
+//! `marfa_overview`: what the credential reaches, or one type's fields and tables.
 
 use std::sync::Arc;
 
@@ -15,12 +15,12 @@ pub fn definition() -> Definition {
     Definition {
         name: NAME,
         title: "Overview of this Marfa",
-        description: "Call first, before finding or saving anything. Without arguments, returns what this Marfa holds and what you may do: the item types with counts, edge types, the most used tags, views and folders. With `type`, returns that type's fields, which you need to save or update an item of it.",
+        description: "Call first, before finding or saving anything. Without arguments, returns what this Marfa holds and what you may do: the item types with counts, edge types, the most used tags, views and folders. With `type`, returns that type's fields and tables.",
         input: json!({
             "type": "object",
             "properties": {
                 "type": { "type": "string", "minLength": 1,
-                    "description": "A type's ID, such as `core.note`, to see its fields." },
+                    "description": "A type's ID, such as `core.note`, to see its fields and tables." },
             },
             "additionalProperties": false,
         }),

@@ -81,7 +81,7 @@ async function refused(
 }
 
 describe("a type declares tables", () => {
-  it("answers the tables a type declares on a read, a listing and a normalization", async () => {
+  it("answers the tables a type declares on a read and a listing", async () => {
     const id = typeId("read");
     const made = await client.registerType(declared(id, LINES));
     expect(made.status, JSON.stringify(made.error)).toBe(201);
@@ -368,7 +368,7 @@ describe("a table the server refuses", () => {
     );
   });
 
-  it("takes 32 tables of 64 columns and refuses a 33rd table and a 65th column", async () => {
+  it("takes 32 tables and a table of 64 columns, and refuses a 33rd table and a 65th column", async () => {
     const column = { type: "string" };
     const at = (n: number) =>
       Object.fromEntries(

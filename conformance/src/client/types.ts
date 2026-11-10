@@ -209,8 +209,7 @@ export interface TypeSchema {
   // ancestors for field inheritance and for edge-constraint matching.
   parent?: string;
   fields: Record<string, FieldDefinition>;
-  /** The tables the type declares, by name; `GET /types/{id}` adds those it
-   *  inherits. Absent when there are none. */
+  /** `GET /types/{id}` includes inherited tables; the listing includes only declared tables. */
   tables?: Record<string, TableDefinition>;
   /** Structural roles the type plays, its ancestors' included; absent when
    *  it plays none. */

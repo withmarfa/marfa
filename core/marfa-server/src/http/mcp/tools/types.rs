@@ -31,7 +31,7 @@ pub fn definition() -> Definition {
                 "tables": { "type": "object",
                     "description": "Tables by name, each with `columns` (a name to a `type`: string, number, integer, boolean, date, datetime, email, url, enum with `enum_values`, or item with `type_constraints`), and optional `label`, `description`, and per column `required`, `adds_up` (sum, average, min, max or count) and `searchable`. To change, a table named here replaces the one of that name, and null removes it." },
                 "parent": { "type": "string",
-                    "description": "A type to inherit fields from. Only to register." },
+                    "description": "A type to inherit fields and tables from. Only to register." },
             },
             "required": ["action", "id"],
             "additionalProperties": false,
