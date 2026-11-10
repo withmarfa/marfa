@@ -361,7 +361,7 @@ fn require_evolution(
     Err(Refusal::new(
         Code::Forbidden,
         format!(
-            "Changing {} requires schema.write. A credential holding metadata.types:write alone may add optional fields that no stored item holds a value under, add a table or an optional column, and change the type's label, plural, description, display hints and version, or a field's, table's or column's label and description.",
+            "Changing {} requires schema.write. A credential holding metadata.types:write alone may add optional fields that no stored item holds a value under, add a table or an optional column, name an order for a table that names none, and change the type's label, plural, description, display hints and version, or a field's, table's or column's label and description.",
             changes.join(", ")
         ),
     )
