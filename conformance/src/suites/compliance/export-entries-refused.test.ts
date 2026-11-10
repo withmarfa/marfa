@@ -19,7 +19,7 @@ let working: MarfaClient;
 let owner: MarfaClient;
 
 beforeAll(async () => {
-  server = await bootFreshServer("export-items-refused");
+  server = await bootFreshServer("export-entries-refused");
   working = new MarfaClient({
     baseUrl: server.apiUrl,
     apiKey: server.workingKey,
@@ -34,7 +34,7 @@ afterAll(async () => {
   await server?.stop();
 }, FRESH_SERVER_TIMEOUT_MS);
 
-const TYPE = "conformance.refused-row";
+const TYPE = "conformance.refused-item";
 
 async function archive(): Promise<Response> {
   return fetch(
@@ -44,7 +44,7 @@ async function archive(): Promise<Response> {
 }
 
 describe("an archive export of an item a restore would refuse", () => {
-  it("answers 409 naming the item, and exports once the item is corrected", async () => {
+  it("answers 409 naming the entry, and exports once the entry is corrected", async () => {
     const fields = {
       title: { type: "string" as const, required: true },
       starts_at: { type: "string" as const, format: "datetime" as const },
@@ -85,9 +85,9 @@ describe("an archive export of an item a restore would refuse", () => {
     expect(refused.headers.get("content-type")).toContain("application/json");
     expect(await refused.json()).toMatchObject({
       error: {
-        code: "export_items_unrestorable",
+        code: "export_entry_unrestorable",
         details: {
-          item: {
+          entry: {
             kind: "item",
             id,
             type: TYPE,

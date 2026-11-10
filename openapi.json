@@ -9374,7 +9374,7 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "export_items_unrestorable"
+                  "export_entry_unrestorable"
                 ],
                 "description": "A machine-readable code for the error. Use it in your logic."
               },
@@ -51054,7 +51054,7 @@
             }
           },
           "409": {
-            "description": "- `export_items_unrestorable`: with `format=archive`, a restore would refuse or skip an item or edge this instance holds, so no archive was sent. `details.item` names it by `kind`, `id`, `type` and `field`, with the `code` a restore refuses it with or the reason it skips it. Correct it or its type, then export again.",
+            "description": "- `export_entry_unrestorable`: with `format=archive`, a restore would refuse or skip an item or edge this instance holds, so no archive was sent. `details.entry` names it by `kind`, `id`, `type` and `field`, with the `code` a restore refuses it with or the reason it skips it. Correct it or its type, then export again.",
             "content": {
               "application/json": {
                 "schema": {

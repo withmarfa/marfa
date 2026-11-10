@@ -2158,13 +2158,13 @@ When `GET /export?format=archive` selects an edge with an end that is an item of
 
 **Tests:** `compliance/restore-edges-constraint-types.test.ts › keeps an edge whose source constraint names the deleted type, and still refuses a registered end the constraint does not admit`, `› keeps an edge whose target constraint names the deleted type`, `› judges a constraint that lists a registered and a deleted type by the endpoint: an end of the deleted type is kept, and an end of a registered type must be one the list names`.
 
-### `search-and-filters/archive-items-refused`
+### `search-and-filters/archive-entries-refused`
 
-If an item or an edge of the selection of `GET /export?format=archive` is one a restore would refuse or skip, then the server MUST answer `409 export_items_unrestorable` without sending archive bytes, with `details.item` naming it by its `kind`, `id`, `type` and `field` and the `code` that restore refuses it with or the reason restore skips it for.
+If an item or an edge of the selection of `GET /export?format=archive` is one a restore would refuse or skip, then the server MUST answer `409 export_entry_unrestorable` without sending archive bytes, with `details.entry` naming it by its `kind`, `id`, `type` and `field` and the `code` that restore refuses it with or the reason restore skips it for.
 
 **Reason:** the fault is in the instance's own data, such as an item that a type's replacement schema no longer accepts, so the owner needs the item named to correct it.
 
-**Tests:** `compliance/export-items-refused.test.ts › answers 409 naming the item, and exports once the item is corrected`.
+**Tests:** `compliance/export-entries-refused.test.ts › answers 409 naming the entry, and exports once the entry is corrected`.
 
 ### `search-and-filters/archive-spool-ended`
 

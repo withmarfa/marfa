@@ -42,8 +42,8 @@ pub struct Refused {
 }
 
 impl Refused {
-    /// The item or edge as an export's refusal names it in `details.item`.
-    pub fn item(&self) -> Value {
+    /// The item or edge as an export's refusal names it in `details.entry`.
+    pub fn entry(&self) -> Value {
         json!({
             "kind": self.kind.word(),
             "id": self.id,

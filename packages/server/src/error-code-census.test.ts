@@ -36,9 +36,9 @@ const UNPUBLISHED_DOORS: Record<string, string> = {
  */
 const REMOVED_FROM_CONTRACT: Record<string, string> = {
   export_unrestorable:
-    "an archive export now reads its selection once and answers `export_items_unrestorable`",
+    "an archive export now reads its selection once and answers `export_entry_unrestorable`",
   export_rows_unrestorable:
-    "an archive export that refuses an item or an edge answers `export_items_unrestorable`",
+    "an archive export that refuses an item or an edge answers `export_entry_unrestorable`",
 };
 
 /**
@@ -50,7 +50,7 @@ const RUST_SERVER_ONLY: Record<string, string> = {
   backup_not_found: "`POST /backups/{instance_id}/{name}/restore`",
   copy_held_by_backup:
     "`DELETE /blobs/{hash}/copies/{store}`, for a backed-up copy",
-  export_items_unrestorable:
+  export_entry_unrestorable:
     "`GET /export?format=archive`, for an item or an edge a restore would refuse",
   no_bucket: "the backup doors, `/backups`",
   too_many_connections: "any door, past the connection cap",
