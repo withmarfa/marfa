@@ -119,7 +119,7 @@ export interface CatchUpReport {
   /** Whether the catch-up changed the catalog the copy holds
    *  (`device/catch-up-catalog-told`). */
   catalog_changed: boolean;
-  /** The fill of the tables not yet whole (`tables/device-fill-when`). */
+  /** The fill of the tables not yet whole (`device/table-fill-when`). */
   tables: TableFill;
 }
 

@@ -585,7 +585,7 @@ pub(crate) enum Step {
 }
 
 /// The wait before a table whose read failed is read again, doubling with
-/// each failure in a row (`tables/device-fill-failed-again`).
+/// each failure in a row (`device/table-fill-failed-again`).
 pub(crate) const RETRY_FIRST: Duration = Duration::from_secs(30);
 pub(crate) const RETRY_MOST: Duration = Duration::from_secs(10 * 60);
 
