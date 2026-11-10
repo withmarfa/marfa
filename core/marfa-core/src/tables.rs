@@ -614,7 +614,6 @@ impl Pass {
         Ok(owes)
     }
 
-    /// Whether a failed table's wait has passed, so it may be owed again.
     pub(crate) fn retry_due(&self, now: Instant) -> bool {
         self.failed.values().any(|retry| retry.due <= now)
     }

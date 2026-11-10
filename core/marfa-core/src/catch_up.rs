@@ -1224,7 +1224,6 @@ struct Told<'a> {
     /// such as an event a stream could not take, so `server.reachable` waits
     /// until a stream takes an event or goes live.
     stalled: bool,
-    /// Called each time the follow is sure the server answers it.
     contact: &'a mut dyn FnMut(),
 }
 
