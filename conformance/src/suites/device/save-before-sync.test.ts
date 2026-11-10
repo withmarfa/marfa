@@ -292,7 +292,6 @@ describe("a copy no server has been named for", () => {
       if (!refused.ok) expect(refused.refusal.raw).toContain(named);
     }
     expect(value(await device.declaredTypes())).toEqual([]);
-    // The witness: a table whose columns can add up, with a subtype that restates it, is taken.
     value(
       await device.declareTypes([
         ledger(lines({ amount: { type: "number", adds_up: "sum" } })),

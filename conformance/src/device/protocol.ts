@@ -279,8 +279,7 @@ export interface ItemType {
   parent: string | null;
   version: number;
   fields: TypeField[];
-  /** Each table the type declares or inherits, by name, with the label a read
-   *  of it gives where it declares none. */
+  /** Declared and inherited tables, with resolved labels. */
   tables: Record<string, unknown>;
   title_field: string | null;
   body_field: string | null;

@@ -325,7 +325,6 @@ pub(super) fn validate_tables(
     }
 }
 
-/// A subtype may not declare a table that a type above this one declares otherwise.
 fn descendants_hold_inherited_tables(
     inherited: &[(String, String, Obj)],
     descendants: &[&Obj],
@@ -353,7 +352,7 @@ fn descendants_hold_inherited_tables(
     }
 }
 
-/// Each fault in the tables a set of types declares, with the id of the type that declares it. A table is judged against the tables of the types above and below it in the set.
+/// Table faults by declaring type, including conflicts within the declared set.
 pub fn declared_tables_issues(
     types: &[Value],
     type_known: &dyn Fn(&str) -> bool,

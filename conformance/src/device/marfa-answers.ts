@@ -154,8 +154,7 @@ export function wireType(
      *  list answers it (`types/list-declared-plural`). */
     plural?: string;
     fields?: Record<string, unknown>;
-    /** The tables the type declares, as the list answers them: its own, with
-     *  no label that its name makes. */
+    /** Declared tables, without inherited tables or generated labels. */
     tables?: Record<string, unknown>;
     /** Which fields collide how. What decides whether a resolution names a
      *  sibling (`queue-and-verdicts/success-conflicted`), so a scripted type without one

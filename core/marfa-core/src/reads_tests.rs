@@ -598,7 +598,6 @@ fn a_declared_table_is_judged_as_the_server_judges_it() {
         "{refused:?}"
     );
     assert!(core.declared_types().unwrap().is_empty());
-    // The witness: the same table with a column that can add up is taken.
     core.declare_types(&[ledger(
         json!({"amount": {"type": "number", "adds_up": "sum"}}),
     )])
@@ -622,7 +621,6 @@ fn a_declared_table_may_not_change_one_a_type_above_it_declares() {
         matches!(&refused, CoreError::Invalid(message) if message.contains("app.acme.base")),
         "{refused:?}"
     );
-    // The witness: restating the table as the type above declares it is taken.
     core.declare_types(&[base, child(json!({"a": {"type": "string"}}))])
         .unwrap();
 }
