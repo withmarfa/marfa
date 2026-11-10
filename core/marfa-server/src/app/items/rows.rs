@@ -10,7 +10,8 @@ use crate::app::refusal::Result;
 const ITEM: &str = "SELECT seq, id, type, state, tier, source, source_id, json(properties), \
      version, schema_version, occurred_at, created_at, updated_at, trashed_at, \
      capture_latitude, capture_longitude, link, trashed_by_kind, trashed_by_id, \
-     trashed_by_name, trashed_with, trashed_with_type, went_with_hosts FROM items";
+     trashed_by_name, trashed_with, trashed_with_type, went_with_hosts, last_activity_at \
+     FROM items";
 
 pub(super) struct Indexed {
     pub type_id: String,
@@ -95,6 +96,7 @@ fn item_of(row: &Row<'_>) -> rusqlite::Result<Item> {
         link: row.get(16)?,
         trashed_by: writer_of(row.get(17)?, row.get(18)?, row.get(19)?),
         mark: mark_of(row.get(20)?, row.get(21)?, row.get(22)?),
+        last_activity_at: row.get(23)?,
     })
 }
 
@@ -121,6 +123,15 @@ pub(super) fn by_seq(tx: &Transaction<'_>, seq: i64) -> Result<Option<Item>> {
 pub(super) fn by_id(tx: &Transaction<'_>, id: &str) -> Result<Option<Item>> {
     let mut statement = tx.prepare_cached(&format!("{ITEM} WHERE id = ?1"))?;
     Ok(statement.query_row([id], item_of).optional()?)
+}
+
+/// An item's type and whether it is in the bin, without reading its body.
+pub(super) fn type_by_id(tx: &Transaction<'_>, id: &str) -> Result<Option<(String, bool)>> {
+    let mut statement =
+        tx.prepare_cached("SELECT type, state = 'trashed' FROM items WHERE id = ?1")?;
+    Ok(statement
+        .query_row([id], |row| Ok((row.get(0)?, row.get(1)?)))
+        .optional()?)
 }
 
 pub(super) fn newest_of(
@@ -201,9 +212,9 @@ pub(super) fn insert(tx: &Transaction<'_>, row: &NewRow<'_>) -> Result<Item> {
         "INSERT INTO items (id, type, state, tier, source, source_id, properties, title_key, \
          version, schema_version, occurred_at, created_at, updated_at, trashed_at, \
          capture_latitude, capture_longitude, writer_kind, writer_id, writer_name, link, \
-         trashed_by_kind, trashed_by_id, trashed_by_name) \
+         trashed_by_kind, trashed_by_id, trashed_by_name, last_activity_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, jsonb(?7), ?8, 1, ?9, ?10, ?11, ?11, ?12, ?13, ?14, \
-         ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+         ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?11)",
     )?;
     statement.execute(params![
         row.id,
@@ -286,8 +297,8 @@ pub(super) fn advance(
     tx.prepare_cached(
         "UPDATE items SET type = ?2, tier = ?3, source_id = ?4, properties = jsonb(?5), \
          title_key = ?6, version = version + 1, schema_version = ?7, occurred_at = ?8, \
-         updated_at = ?9, writer_kind = ?10, writer_id = ?11, writer_name = ?12, link = ?13 \
-         WHERE seq = ?1",
+         updated_at = ?9, last_activity_at = MAX(last_activity_at, ?9), writer_kind = ?10, \
+         writer_id = ?11, writer_name = ?12, link = ?13 WHERE seq = ?1",
     )?
     .execute(params![
         item.seq,
@@ -328,8 +339,8 @@ pub(super) struct Moved<'a> {
 pub(super) fn move_state(tx: &Transaction<'_>, item: &Item, to: &Moved<'_>) -> Result<Item> {
     tx.prepare_cached(
         "UPDATE items SET state = ?2, trashed_at = ?3, trashed_by_kind = ?4, trashed_by_id = ?5, \
-         trashed_by_name = ?6, updated_at = ?7, trashed_with = ?8, trashed_with_type = ?9, \
-         went_with_hosts = ?10 WHERE seq = ?1",
+         trashed_by_name = ?6, updated_at = ?7, last_activity_at = MAX(last_activity_at, ?7), \
+         trashed_with = ?8, trashed_with_type = ?9, went_with_hosts = ?10 WHERE seq = ?1",
     )?
     .execute(params![
         item.seq,
@@ -453,6 +464,7 @@ pub(super) fn purge(tx: &Transaction<'_>, item: &Item, at: &str) -> Result<()> {
         [item.seq],
     )?;
     tx.execute("DELETE FROM item_versions WHERE item_seq = ?1", [item.seq])?;
+    crate::app::tables::doom(tx, item.seq, at)?;
     tx.execute("DELETE FROM items WHERE seq = ?1", [item.seq])?;
     Ok(())
 }
@@ -586,9 +598,18 @@ pub(super) fn set_link(tx: &Transaction<'_>, seq: i64, link: &str) -> Result<boo
     }
 }
 
+pub(super) fn mark_activity(tx: &Transaction<'_>, seq: i64, at: &str) -> Result<()> {
+    tx.prepare_cached(
+        "UPDATE items SET last_activity_at = MAX(last_activity_at, ?2) WHERE seq = ?1",
+    )?
+    .execute(params![seq, at])?;
+    Ok(())
+}
+
 pub(super) fn touch(tx: &Transaction<'_>, item: &Item, at: &str) -> Result<Item> {
     tx.execute(
-        "UPDATE items SET updated_at = ?2 WHERE seq = ?1",
+        "UPDATE items SET updated_at = ?2, last_activity_at = MAX(last_activity_at, ?2) \
+         WHERE seq = ?1",
         params![item.seq, at],
     )?;
     stored(tx, &item.id)
@@ -858,9 +879,9 @@ pub(super) fn insert_restored(
         "INSERT INTO items (id, type, state, tier, source, source_id, properties, title_key, \
          version, schema_version, occurred_at, created_at, updated_at, trashed_at, \
          capture_latitude, capture_longitude, writer_kind, writer_id, writer_name, link, \
-         trashed_by_kind, trashed_by_id, trashed_by_name, restored_at) \
+         trashed_by_kind, trashed_by_id, trashed_by_name, restored_at, last_activity_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, jsonb(?7), ?8, ?22, ?9, ?10, ?11, ?23, ?12, ?13, ?14, \
-         ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?24)",
+         ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?24, ?23)",
     )?;
     statement.execute(params![
         row.id,

@@ -21,6 +21,7 @@ pub struct Filter {
 pub enum Kind {
     Item,
     Edge,
+    Rows,
 }
 
 /// The columns of a logged event, which decide whether its payload is read.
@@ -61,20 +62,29 @@ impl Judge<'_> {
                 return None;
             }
             Kind::Edge
+        } else if entry.event_type == crate::app::tables::ROWS_CHANGED {
+            // A copy stream feeds a working copy, which holds no rows.
+            if self.filter.copy || !self.selects(entry) {
+                return None;
+            }
+            Kind::Rows
         } else {
-            if !self.filter.types.is_empty()
-                && !self
-                    .filter
-                    .types
-                    .iter()
-                    .any(|declared| self.rules.matches(declared, entry.type_id))
-            {
+            if !self.selects(entry) {
                 return None;
             }
             Kind::Item
         };
         (self.caller.may_read_type(entry.type_id) && (self.filter.copy || self.listed(entry)))
             .then_some(kind)
+    }
+
+    fn selects(&self, entry: &Head<'_>) -> bool {
+        self.filter.types.is_empty()
+            || self
+                .filter
+                .types
+                .iter()
+                .any(|declared| self.rules.matches(declared, entry.type_id))
     }
 
     fn listed(&self, entry: &Head<'_>) -> bool {
@@ -96,9 +106,21 @@ impl Judge<'_> {
         let Ok(Value::Object(mut body)) = serde_json::from_str(payload) else {
             return Ok(Judged::Unreadable);
         };
+        if kind == Kind::Rows {
+            return Ok(match crate::app::tables::judged_event(self.caller, body) {
+                Some(body) => {
+                    let mut data = Map::new();
+                    data.insert("event_type".into(), entry.event_type.into());
+                    data.extend(body);
+                    Judged::Shown(data)
+                }
+                None => Judged::Unreadable,
+            });
+        }
         let shown = match kind {
             Kind::Item => self.item(entry, &mut body)?,
             Kind::Edge => self.edge(entry, &body),
+            Kind::Rows => None,
         };
         Ok(match shown {
             Some(true) => {

@@ -406,7 +406,7 @@ pub struct CreateArgs {
     /// Any other is refused.
     #[arg(long)]
     pub source: Option<String>,
-    /// The id this row has in the system it came from: the natural key.
+    /// The id this item has in the system it came from: the natural key.
     #[arg(long)]
     pub source_id: Option<String>,
     /// The id to mint it under. Omitted, the server mints one.
@@ -417,7 +417,7 @@ pub struct CreateArgs {
     #[arg(long)]
     pub create_only: bool,
     /// The version this create is conditional on, where its natural key
-    /// resolves a row the server already holds.
+    /// resolves an item the server already holds.
     #[arg(long)]
     pub version: Option<i64>,
     /// Edges to write with it, as the JSON object the operation takes.
@@ -456,7 +456,7 @@ pub struct UpdateArgs {
     /// The item's own time, RFC 3339.
     #[arg(long, value_name = "TIME")]
     pub occurred_at: Option<String>,
-    /// The natural key to move the row to. The server refuses one another
+    /// The natural key to move the item to. The server refuses one another
     /// item already holds.
     #[arg(long, value_name = "KEY")]
     pub source_id: Option<String>,
@@ -537,7 +537,7 @@ pub struct BulkArgs {
     /// Do not deliver the writes to webhooks.
     #[arg(long)]
     pub no_fanout: bool,
-    /// Let entries change the type of the rows they land on.
+    /// Let entries change the type of the items they land on.
     #[arg(long)]
     pub retype: bool,
 }

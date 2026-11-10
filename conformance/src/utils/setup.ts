@@ -236,6 +236,7 @@ export function trackRegisteredTypes(
         tracked.createdBy = client;
         tracked.parent = schema.parent;
         tracked.compatibleWith = compatibilityTargets(schema.compatible_with);
+        tracked.constrainedTo = constraintTargets(schema.tables);
       } else {
         trackType(
           ctx,
@@ -244,6 +245,8 @@ export function trackRegisteredTypes(
           schema.parent,
           schema.compatible_with,
         );
+        const added = ctx.trackedTypes.find((t) => t.id === schema.id);
+        if (added) added.constrainedTo = constraintTargets(schema.tables);
       }
     }
     return response;
@@ -262,6 +265,7 @@ export function trackRegisteredTypes(
         tracked.compatibleWith = compatibilityTargets(
           response.data.type.compatible_with,
         );
+        tracked.constrainedTo = constraintTargets(response.data.type.tables);
       }
     }
     return response;
@@ -288,6 +292,24 @@ export function trackType(
     parent,
     compatibleWith: compatibilityTargets(compatibleWith),
   });
+}
+
+/** Every type a column of `tables` names in its `type_constraints`. */
+function constraintTargets(
+  tables?: Record<string, { columns?: Record<string, unknown> }>,
+): string[] | undefined {
+  const named = new Set<string>();
+  for (const table of Object.values(tables ?? {})) {
+    for (const column of Object.values(table.columns ?? {})) {
+      const targets = (column as { type_constraints?: unknown })
+        .type_constraints;
+      if (!Array.isArray(targets)) continue;
+      for (const target of targets) {
+        if (typeof target === "string") named.add(target);
+      }
+    }
+  }
+  return named.size > 0 ? [...named] : undefined;
 }
 
 function compatibilityTargets(
@@ -380,7 +402,8 @@ async function deleteAllByOwner(
  * Split tracked types into deletion levels, dependents first.
  *
  * `DELETE /types/{id}` answers 409 while another registered type declares
- * this one as its parent, or 422 while a compatibility claim depends on it.
+ * this one as its parent or names it in a column's `type_constraints`, or 422
+ * while a compatibility claim depends on it.
  * Deletes within a level are concurrent, so each dependent's level must
  * finish before its targets'. A cycle has no deletion order; attempt the
  * remaining items once so teardown reports refusals instead of hanging.
@@ -395,6 +418,9 @@ export function typeDeletionLevels(
     for (const type of remaining.values()) {
       if (type.parent) held.add(type.parent);
       for (const target of type.compatibleWith ?? []) held.add(target);
+      for (const target of type.constrainedTo ?? []) {
+        if (target !== type.id) held.add(target);
+      }
     }
     const level = [...remaining.values()].filter((type) => !held.has(type.id));
     if (level.length === 0) {

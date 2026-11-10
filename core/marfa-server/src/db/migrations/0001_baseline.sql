@@ -123,6 +123,8 @@ CREATE TABLE IF NOT EXISTS items (
     -- Set once an item leaves the bin, however it left, and never cleared: the
     -- `feed-expiry` job leaves such an item alone for good.
     restored_at TEXT,
+    -- The later of `updated_at` and the last change to the item's rows.
+    last_activity_at TEXT NOT NULL,
     -- Last, so a read of any other column stops short of a wide value.
     properties BLOB NOT NULL
 ) STRICT;
@@ -144,6 +146,37 @@ CREATE INDEX IF NOT EXISTS items_feed_window ON items (type, created_at, id)
     WHERE tier = 'feed' AND state = 'active' AND restored_at IS NULL;
 CREATE INDEX IF NOT EXISTS items_bin_age ON items (trashed_at)
     WHERE state = 'trashed';
+CREATE INDEX IF NOT EXISTS items_activity ON items (last_activity_at, id);
+
+-- One per table of an item that has held a row, kept by the row write. AUTOINCREMENT: a purged
+-- item's rows outlive its summary until housekeeping removes them, keyed by its seq.
+CREATE TABLE IF NOT EXISTS table_summaries (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_seq INTEGER NOT NULL,
+    table_name TEXT NOT NULL,
+    row_count INTEGER NOT NULL CHECK (row_count >= 0),
+    bytes INTEGER NOT NULL CHECK (bytes >= 0),
+    last_batch TEXT NOT NULL,
+    changed_at TEXT NOT NULL,
+    UNIQUE (item_seq, table_name)
+) STRICT;
+
+-- `refs` holds, by column, each value written as an item's id, withheld whatever the column
+-- becomes. Keep values last so key reads stop before them.
+CREATE TABLE IF NOT EXISTS table_rows (
+    table_seq INTEGER NOT NULL,
+    id TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    refs BLOB,
+    body BLOB NOT NULL,
+    PRIMARY KEY (table_seq, id)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS table_rows_updated ON table_rows (table_seq, updated_at);
+
+-- Tables of purged items whose rows `table-row-cleanup` has still to remove.
+CREATE TABLE IF NOT EXISTS table_rows_purging (
+    table_seq INTEGER PRIMARY KEY
+) STRICT;
 
 CREATE TABLE IF NOT EXISTS edges (
     seq INTEGER PRIMARY KEY,

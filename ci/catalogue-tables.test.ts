@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { catalogueTables } from "../conformance/scripts/catalogue-sources.js";
+import {
+  catalogueTables,
+  webhookEvents,
+} from "../conformance/scripts/catalogue-sources.js";
 import {
   CATALOGUES,
   CATALOGUE_CHAPTER,
@@ -12,7 +15,6 @@ import {
   ALL_TYPES,
 } from "../packages/types/src/index.js";
 import { PERMISSIONS } from "../packages/shared/src/scopes.js";
-import { WEBHOOK_EVENTS } from "../packages/server/src/routes/webhooks.js";
 
 const chapter = (name: (typeof CATALOGUES)[number]) =>
   readFileSync(
@@ -24,8 +26,8 @@ const chapter = (name: (typeof CATALOGUES)[number]) =>
  * The contract's catalogues are written from the server's own definitions by
  * `conformance/scripts/catalogue-tables.ts`: the shipped types and edge types
  * in `packages/types`, the permission list in `packages/shared` and the
- * event names in the server's webhook vocabulary and the stream's frame
- * schema. A definition added, removed or changed changes its table, so one
+ * event names in the webhook vocabulary and the stream's frame schema in
+ * `openapi.json`. A definition added, removed or changed changes its table, so one
  * that was not rewritten is stale in the contract. Compared as text, because
  * the table is text a reader sees.
  */
@@ -57,8 +59,9 @@ describe("the catalogues in the contract", () => {
     for (const name of PERMISSIONS) {
       expect(rows("permissions"), name).toContain(`| \`${name}\` `);
     }
-    expect(WEBHOOK_EVENTS.length).toBeGreaterThan(9);
-    for (const name of WEBHOOK_EVENTS) {
+    const events = webhookEvents();
+    expect(events.length).toBeGreaterThan(9);
+    for (const name of events) {
       expect(rows("event-types"), name).toContain(`| \`${name}\` `);
     }
   });

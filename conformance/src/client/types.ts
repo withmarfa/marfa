@@ -10,6 +10,8 @@ export interface MarfaItem {
   state: string; // Lifecycle state, such as "active", "archived", "trashed" or "revoked"
   created_at: string; // ISO 8601
   updated_at: string | null;
+  /** The later of the item's last write and its rows' last change. */
+  last_activity_at?: string;
   occurred_at: string | null; // When the item's content happened (nullable, defaults to created_at)
   tier?: "library" | "feed"; // Items are either curated library content or transient feed content. Optional — system.* items have no tier.
   version: number; // Revision number, starts at 1, increments on update
@@ -850,6 +852,8 @@ export interface TrackedResource {
   parent?: string;
   /** Compatibility targets must outlive the types that name them. */
   compatibleWith?: string[];
+  /** The types a column's `type_constraints` names, which outlive this type. */
+  constrainedTo?: string[];
 }
 
 export interface TestContext {
@@ -926,4 +930,46 @@ export interface OccurrencesResponse {
   }>;
   window: { from: string; to: string };
   scan: Record<string, number>;
+}
+
+/** One row of an item's table. */
+export interface TableRow {
+  id: string;
+  values: Record<string, unknown>;
+  updated_at: string;
+  /** The item columns whose id the reading key may not see. */
+  withheld?: string[];
+}
+
+export type RowOperation =
+  | { op: "put"; id?: string; values: Record<string, unknown> }
+  | { op: "patch"; id: string; values: Record<string, unknown> }
+  | { op: "delete"; id: string };
+
+export interface RowBatch {
+  operations: RowOperation[];
+}
+
+export interface RowBatchAnswer {
+  batch: string | null;
+  last_activity_at: string;
+  results: {
+    id: string;
+    outcome:
+      "created" | "replaced" | "patched" | "unchanged" | "deleted" | "absent";
+  }[];
+}
+
+export interface TableSummary {
+  name: string;
+  label: string;
+  row_count: number;
+  bytes: number;
+  last_batch: string | null;
+  changed_at: string | null;
+}
+
+export interface RowTotals {
+  row_count: number;
+  totals: Record<string, Record<string, number | string | null>>;
 }

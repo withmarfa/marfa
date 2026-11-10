@@ -83,7 +83,7 @@ pub enum ConnectorsCommand {
         command: StateCommand,
     },
     /// A connector's records of what it and its vendor last agreed about
-    /// rows. Its own key only.
+    /// items. Its own key only.
     Agreements {
         #[command(subcommand)]
         command: AgreementsCommand,
@@ -130,7 +130,7 @@ pub enum AgreementsCommand {
         #[command(flatten)]
         body: BodySource,
     },
-    /// The agreements of the rows named, each once, in the order first named.
+    /// The agreements of the items named, each once, in the order first named.
     Lookup {
         /// The connector id.
         id: String,

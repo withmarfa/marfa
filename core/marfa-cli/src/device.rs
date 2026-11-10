@@ -50,9 +50,9 @@ pub enum DeviceCommand {
     ///
     /// A copy whose cursor the server's event log no longer holds is filled
     /// again in place for the same slice, server and key: it keeps
-    /// answering, marked stale, and takes writes to the rows it holds and
+    /// answering, marked stale, and takes writes to the items it holds and
     /// new ones, which wait to be sent, until the hydration finishes and
-    /// removes the rows the server no longer lists. Any other hydration
+    /// removes the items the server no longer lists. Any other hydration
     /// empties the copy first. Until the copy is whole, a write to an edge is
     /// refused `hydration_incomplete`, since a page still to arrive could
     /// bring the server's edge in place of the one the write was made
@@ -82,13 +82,13 @@ pub enum DeviceCommand {
         #[arg(long)]
         in_place_only: bool,
     },
-    /// Hold one row by id whatever the slice says of it, read now and kept
+    /// Hold one item by id whatever the slice says of it, read now and kept
     /// current, even after it leaves the slice.
     Pin {
         /// The item id.
         id: String,
     },
-    /// Stop holding a row by id; one the slice does not take goes.
+    /// Stop holding an item by id; one the slice does not take goes.
     Unpin {
         /// The item id.
         id: String,
@@ -150,7 +150,7 @@ pub enum DeviceCommand {
     /// a removed edge the copy no longer records, or where more than
     /// `--most` items or edges changed, it names none and answers
     /// `everything: true`: read the whole copy again. An item is named where
-    /// its row, tags, edges, pin or a queued write to it changed; one whose
+    /// its own content, tags, edges, pin or a queued write to it changed; one whose
     /// body links read differently only because another item changed is
     /// not. Refused `hydration_incomplete` while a hydration is part way or
     /// the copy is stale. Take the cursor before reading what it covers, and
@@ -183,10 +183,10 @@ pub enum DeviceCommand {
     /// Full-text search over the local copy, best match first.
     ///
     /// Without `--view`, while a hydration fills the copy or after one was
-    /// interrupted, the search covers the rows that have arrived and says
+    /// interrupted, the search covers the items that have arrived and says
     /// it is partial. Once the server's event log no longer reaches the
     /// copy, and until a hydration has filled it again, the search covers
-    /// the rows the copy holds and says it is stale. Each is said on
+    /// the items the copy holds and says it is stale. Each is said on
     /// standard error, and under --json as `completeness`, `partial`,
     /// `stale` or `complete`, beside `hits`. With `--view`, a copy that is
     /// not whole is refused.
@@ -253,7 +253,7 @@ pub enum DeviceCommand {
     /// Clear the writes the server has answered.
     ///
     /// A queue nobody empties makes every later write slower. Blocked and
-    /// dead rows stay, because a caller may still release them, and so does
+    /// dead writes stay, because a caller may still release them, and so does
     /// a refused write that carried content, until it is discarded.
     ///
     /// With `--id`, only the writes named are cleared, under the same rules,
@@ -268,8 +268,8 @@ pub enum DeviceCommand {
     ///
     /// The one way a refused create, edit, metadata, extension or edge
     /// write leaves the queue. A write still waiting on it keeps it, but for
-    /// a create refused onto a row its natural key names that no read has
-    /// found: discarded, that create takes its row out of the copy, and the
+    /// a create refused onto an item its natural key names that no read has
+    /// found: discarded, that create takes its item out of the copy, and the
     /// writes waiting on it are refused unsent, each kept with its content.
     Discard {
         /// The refused write to discard.
@@ -309,11 +309,11 @@ pub enum DeviceCommand {
     },
     /// What the local copy holds and where it came from.
     ///
-    /// While a hydration fills the copy, the report also gives the rows its
+    /// While a hydration fills the copy, the report also gives the items its
     /// listings have brought, `items_listed` under --json, and the items the
     /// server counted for the slice when the hydration started, where it
     /// counted them, `items_expected`. Set the first against the second to
-    /// show how far it has come; the item count also holds pinned rows and
+    /// show how far it has come; the item count also holds pinned items and
     /// writes still waiting.
     ///
     /// The hydration is `never`, `in_progress`, `complete`, `stale` or
@@ -421,9 +421,9 @@ pub enum ItemsCommand {
     /// List items, newest first unless sorted otherwise.
     ///
     /// Without `--view`, while a hydration fills the copy or after one was
-    /// interrupted, the list holds the rows that have arrived and says it
+    /// interrupted, the list holds the items that have arrived and says it
     /// is partial. Once the server's event log no longer reaches the copy,
-    /// and until a hydration has filled it again, the list holds the rows
+    /// and until a hydration has filled it again, the list holds the items
     /// the copy holds and says it is stale. Each is said on standard error,
     /// and under --json as `completeness`, `partial`, `stale` or `complete`,
     /// beside `items`. With `--view`, a copy that is not whole is refused.
@@ -828,12 +828,12 @@ pub struct CreateArgs {
     /// A tag, repeatable. Each is queued as a write of its own.
     #[arg(long = "tag", value_name = "TAG")]
     pub tags: Vec<String>,
-    /// The tier to write it at; the default is the tier of the held row its
+    /// The tier to write it at; the default is the tier of the held item its
     /// natural key names, else the slice's tier, or the library from a slice
     /// of both or before a first hydration. A create carrying `--source-id`
-    /// goes with that tier only where a lookup answers that no row on the
-    /// server holds its natural key, and otherwise with none, which keeps a
-    /// row's tier as it stands.
+    /// goes with that tier only where a lookup answers that no item on the
+    /// server holds its natural key, and otherwise with none, which keeps an
+    /// item's tier as it stands.
     #[arg(long)]
     pub tier: Option<Tier>,
     /// The state to create it in; the default is active.
@@ -864,7 +864,7 @@ pub struct CreateArgs {
     /// The source to stamp it with.
     #[arg(long)]
     pub source: Option<String>,
-    /// The id this row has in the system it came from.
+    /// The id this item has in the system it came from.
     #[arg(long)]
     pub source_id: Option<String>,
     /// The item's own time, RFC 3339. Defaults to now.
@@ -874,7 +874,7 @@ pub struct CreateArgs {
     #[arg(long)]
     pub id: Option<String>,
     /// The version this create is conditional on, where its natural key
-    /// resolves a row the server already holds.
+    /// resolves an item the server already holds.
     #[arg(long)]
     pub version: Option<i64>,
 }
@@ -899,7 +899,7 @@ pub struct UpdateArgs {
     /// update that names no version, as the server does.
     #[arg(long)]
     pub version: Option<i64>,
-    /// The natural key to move the row to. The server refuses one another
+    /// The natural key to move the item to. The server refuses one another
     /// item already holds, so a rename does not take a name off a note.
     #[arg(long, value_name = "KEY")]
     pub source_id: Option<String>,
@@ -1099,7 +1099,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 }
                 if report.in_place {
                     line.push_str(
-                        "\nfilled the copy again over the rows it held, taking out the ones the server no longer has",
+                        "\nfilled the copy again over the items it held, taking out the ones the server no longer has",
                     );
                 }
                 if let Some(restart) = report.restarted {
@@ -2020,12 +2020,12 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
     .map(|()| Exit::Done)
 }
 
-/// Said only where a read of `read_only` moved rows, which no event counted.
+/// Said only where a read of `read_only` moved items, which no event counted.
 fn read_only_said(held: u64) -> String {
     if held == 0 {
         String::new()
     } else {
-        format!("; {held} row(s) took a new read_only")
+        format!("; {held} item(s) took a new read_only")
     }
 }
 

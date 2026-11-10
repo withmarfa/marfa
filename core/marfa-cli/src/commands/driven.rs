@@ -314,6 +314,7 @@ fn file_body(words: &[String]) -> &'static str {
     match words.iter().map(String::as_str).collect::<Vec<_>>()[..] {
         ["items", "bulk"] => r#"{"items":[]}"#,
         ["edges", "bulk"] => r#"{"edges":[]}"#,
+        ["rows", "write"] => r#"{"operations":[]}"#,
         ["connectors", "agreements", "write"] => r#"{"clear":[]}"#,
         ["types", "register"] | ["types", "normalize"] | ["edge-types", "register"] => {
             r#"{"id":"user.x"}"#
