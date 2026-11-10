@@ -1,14 +1,4 @@
-/**
- * The steps of the nightly scale benchmark (`benchmarks.yml`, job `scale`),
- * each run as `tsx scripts/scale/run.ts <step>` from the conformance folder
- * with `MARFA_SCALE_STATE` naming the booted server's state directory. The
- * `tables` step is not one of them: it boots servers of its own, and a run on
- * request measures a very large table (see `tables.ts`).
- *
- * A step records its figures whether or not they meet their ceilings and
- * ends normally; one that crashes ends non-zero and leaves what it had
- * recorded. `finish` merges and reports, and `judge` fails the night.
- */
+// Missed ceilings are recorded here; the judge step decides the nightly result.
 import { bulk } from "./bulk.js";
 import { device } from "./device.js";
 import { edges } from "./edges.js";

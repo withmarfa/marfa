@@ -139,9 +139,7 @@ export const CEILINGS: Record<string, CeilingEntry> = {
   parent_of_edges: recorded,
   about_edges: recorded,
 
-  // A connector writing one very large table (`scale tables`), and a reader
-  // beside it. The ceilings are the speed goals set for tables (#2836); the
-  // write rate has a floor, not a ceiling, so the step judges it itself.
+  // The tables step judges its write-rate floor outside this ceiling table.
   tables_write_rate: recorded,
   tables_write_page: recorded,
   tables_rows_written: recorded,

@@ -1,22 +1,3 @@
-/**
- * A connector writing one very large table, measured from outside.
- *
- *   pnpm scale tables --server <marfa-server> [--rows 1000000] [--pace 25000]
- *
- * It boots a release server of its own (and a second to restore into), then
- * does only what a connector with an API key does over HTTP: registers a type
- * that declares a table, creates an item, and writes the table in pages of
- * 1,000 rows at `--pace` rows a second (0 writes as fast as the server
- * answers). While it writes, readers read the item, a page of rows, one row
- * and the item's tables, and a stream follows `rows.changed`. After the write
- * it times pages by id, by `updated_at` and by a column, a total over about
- * 100,000 rows, undo of a 1,000-row batch, an export and a restore into the
- * second server, and the purge of the whole item while reads continue.
- *
- * It stops both servers by their process IDs and removes what it made, and
- * prints each figure against its goal. The figures go to
- * `reports/scale/tables.json` like any step's.
- */
 import { createWriteStream, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { statSync } from "node:fs";
 import { cpus, loadavg, tmpdir } from "node:os";
@@ -45,26 +26,18 @@ import {
 } from "./context.js";
 
 const TABLE = "readings";
-/** Between two polls of one reader, so a reader is a person and not a flood. */
+// Polling stays below the default limit of 4,000 requests per key per minute.
 const POLL_GAP_MS = 20;
-/** An order that is slow is walked for this long, not to the end of the table. */
 const ORDER_BUDGET_MS = 30_000;
 const TOTAL_RUNS = 30;
-/** A key each for the write's four readers and its stream, and the purge's two readers. */
 const READER_KEYS = 7;
-/** A write page slower than this is named in the report. */
 const STALL_MS = 500;
 const UNDO_REPEATS = 5;
 const PURGE_NUDGE_MS = 60_000;
 const PURGE_LIMIT_MS = 600_000;
-/** The row-write floor of the speed goals, in rows a second. */
 const WRITE_FLOOR = 20_000;
 
-/**
- * One request, once. A 429 is an answer to count as a failure, not to wait out:
- * the readers and the writer here are measured against the limiter that is on
- * by default.
- */
+// Retrying a rate-limit refusal would hide it from the measurement.
 async function send(
   method: "GET" | "POST" | "DELETE",
   path: string,
@@ -154,7 +127,6 @@ interface Reading {
   errors: number;
 }
 
-/** Polls each path in turn, one reader apiece, until stopped. A null path waits. */
 function startReaders(
   readers: Record<
     string,
@@ -189,7 +161,6 @@ function startReaders(
   };
 }
 
-/** The frames of `GET /events`, each stamped when it was read. */
 function followStream(connection: Connection, itemId: string) {
   const arrivals = new Map<string, number>();
   const live = { ms: Number.NaN };
@@ -237,7 +208,7 @@ function followStream(connection: Connection, itemId: string) {
           if (done) break;
         }
       } catch {
-        // The run closed the stream.
+        // Closing the subscription rejects a pending read.
       }
     })();
   })();
@@ -253,7 +224,6 @@ function followStream(connection: Connection, itemId: string) {
   };
 }
 
-/** Rows of the generated table: a sensor, a reading, a bucket and a note. */
 function rowOf(n: number, buckets: number) {
   const sensor = n % 64;
   return {
@@ -307,7 +277,6 @@ interface Walk {
   firsts: string[];
 }
 
-/** Reads pages one after another by cursor, timing each. The first page is not counted. */
 async function walk(
   connection: Connection,
   itemId: string,
@@ -455,7 +424,6 @@ export async function tables(): Promise<void> {
       `rows ${opts.rows}, pace ${opts.pace === 0 ? "unthrottled" : `${opts.pace} rows/s`}, pages of ${opts.page}`,
     );
 
-    // A connector registers the type its table belongs to, then its item.
     const type = "user.scale-readings";
     const registered = await send(
       "POST",
@@ -488,8 +456,7 @@ export async function tables(): Promise<void> {
       await mustOk("creating an item", made, 201);
       return (made.json() as { item: { id: string } }).item.id;
     };
-    // Each reader is a client of its own, with a key that may only read the
-    // type, as a person's app would be: one key's requests share one limit.
+    // Separate keys prevent one reader from using another reader's rate limit.
     let minted = 0;
     const readerKeys: Connection[] = [];
     for (let n = 0; n < READER_KEYS; n++) {
@@ -516,10 +483,8 @@ export async function tables(): Promise<void> {
     };
     const itemId = await makeItem("Readings");
     const tablePath = `/items/${itemId}/tables/${TABLE}`;
-    /** About 100,000 rows share a bucket, whatever the size of the table. */
     const buckets = Math.max(1, Math.round(opts.rows / 100_000));
 
-    // 1. The write, with readers beside it.
     const idPool: string[] = [];
     const acks = new Map<string, number>();
     const stream = followStream(reader(), itemId);
@@ -666,7 +631,6 @@ export async function tables(): Promise<void> {
         .join(" ")}`,
     );
 
-    // 2. Pages of 1,000 from the table at rest.
     const byId = await walk(connection, itemId, "", pages, true);
     add(
       distribution("tables_page_by_id", "ms", byId.times, {
@@ -721,8 +685,6 @@ export async function tables(): Promise<void> {
       recordedOnly("recorded"),
     );
 
-    // 3. Totals: of a table of 100,000 rows, and of 100,000 of the large
-    // table's rows picked three ways, since a total reads every row it adds up.
     const totals = async (
       path: string,
       filter: (run: number) => string,
@@ -816,7 +778,6 @@ export async function tables(): Promise<void> {
       await send("DELETE", `/items/${hundred}`, undefined, connection),
     );
 
-    // 4. Undo of a batch of 1,000 rows: of an insert, and of a patch.
     const undoInsert: number[] = [];
     const undoPatch: number[] = [];
     const patchTimes: number[] = [];
@@ -852,7 +813,6 @@ export async function tables(): Promise<void> {
         continue;
       }
       const undone = await undo(inserted.batch, undoInsert);
-      // Undoing the undo brings the rows back; undoing that removes them again.
       if (undone !== null) {
         const redone = await undo(undone, undoInsert);
         if (redone !== null) await undo(redone, undoInsert);
@@ -915,7 +875,6 @@ export async function tables(): Promise<void> {
       await send("GET", `${tablePath}/totals`, undefined, connection)
     ).text;
 
-    // 5. Export the item, then restore it into a second server.
     const exportStarted = performance.now();
     const exported = await fetch(
       `${connection.url}/export?format=archive&type=${encodeURIComponent(type)}`,
@@ -995,7 +954,6 @@ export async function tables(): Promise<void> {
         .join(" ")}`,
     );
 
-    // 6. Purge the whole item while reads of another item's table go on.
     const other = await makeItem("Other");
     const otherWrite = await send(
       "POST",
