@@ -5040,6 +5040,20 @@ A device MUST refuse `validation` a write to a type its app declared that misses
 
 **Tests:** `device/save-before-sync.test.ts › checks a write against the types the app declares, and holds an unknown one back`.
 
+### `device/own-columns-checked`
+
+If a write creates or updates an item of `core.table`, or of a type below it, with `columns` that the server refuses under `tables/own-columns-refused` or `tables/own-columns-required`, then a device MUST refuse `validation` the write naming the same paths, and queue nothing, whether or not the copy has reached a server.
+
+**Reason:** a table kept offline is held to the rules it will be held to online, and one validator judges the columns of a declared table and of `core.table`.
+
+**Tests:** `device/own-columns-live.test.ts › refuses on the device the columns the server refuses and queues nothing`.
+
+### `device/catalog-core-table`
+
+A device MUST answer `core.table` as `GET /types/core.table` answers it, from its shipped catalog and after a hydration alike.
+
+**Tests:** `device/own-columns-live.test.ts › answers core.table as the server does, before and after a hydration`.
+
 ### `device/number-exact`
 
 If a write to an item, or to an edge or an item's extension, names a value, at any depth, that is a whole number written with digits other than the shortest decimal that reads back as the same IEEE 754 double, then a device MUST refuse `validation` the write with the field and the message `items/property-number-exact` gives, and queue nothing.

@@ -7,6 +7,7 @@ use serde_json::{Map, Value, json};
 
 use crate::display::ItemDisplay;
 use crate::error::{Code, FieldError, RuleError, field_code};
+use crate::schema::{OWN_COLUMNS, OWN_TABLE_TYPE, judge_item_columns};
 use crate::wire::{WireEdgeType, WireType, label_from_id, label_from_name, plural_from_label};
 
 const TITLE_PROPERTY: &str = "title";
@@ -911,6 +912,9 @@ impl Catalog {
             fields.insert(name.as_str(), definition);
         }
         crate::validation::properties(&fields, properties, complete)?;
+        if written.contains_key(OWN_COLUMNS) && self.keeps_own_table(type_id) {
+            self.judge_own_columns(properties.get(OWN_COLUMNS))?;
+        }
         if complete {
             self.judge_schedule(type_id, properties)?;
         }
@@ -935,6 +939,34 @@ impl Catalog {
             )]));
         }
         Ok(())
+    }
+
+    /// Whether an item of `type_id` declares its own columns, in the `columns` property.
+    pub fn keeps_own_table(&self, type_id: &str) -> bool {
+        type_id == OWN_TABLE_TYPE || self.descends_from(type_id, OWN_TABLE_TYPE)
+    }
+
+    fn judge_own_columns(&self, columns: Option<&Value>) -> Result<(), RuleError> {
+        judge_item_columns(columns, &|id| self.known(id))
+            .map(drop)
+            .map_err(|issues| {
+                let message = issues
+                    .iter()
+                    .map(|issue| format!("{}: {}", issue.field, issue.message()))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                let fields = issues
+                    .iter()
+                    .map(|issue| {
+                        FieldError::new(
+                            issue.field.clone(),
+                            field_code::INVALID_VALUE,
+                            issue.message(),
+                        )
+                    })
+                    .collect();
+                RuleError::new(Code::InvalidProperties, message).with_fields(fields)
+            })
     }
 
     /// An event's schedule and a task's `recurrence` are judged on the item a write leaves.
@@ -1810,5 +1842,31 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(base.tables.len(), 1);
+    }
+    #[test]
+    fn an_item_of_core_table_or_below_is_judged_by_the_validator_a_declared_table_passes() {
+        let catalog = Catalog::from_wire(
+            &held(json!([
+                {"id": "core.table", "fields": {"columns": {"type": "object"}}},
+                {"id": "app.acme.ledger", "parent": "core.table", "fields": {}},
+                {"id": "core.note", "fields": {}}
+            ])),
+            None,
+        );
+        let good = json!({"columns": {"a": {"type": "item", "type_constraints": ["core.table"]}}});
+        let bad = json!({"columns": {"a": {"type": "money"}, "B": {"type": "string"}}});
+        let judge = |type_id: &str, properties: &Value| {
+            catalog.validate_properties(type_id, properties.as_object().unwrap(), true)
+        };
+        assert!(judge("core.table", &good).is_ok());
+        assert!(judge("app.acme.ledger", &good).is_ok());
+        let refused = judge("app.acme.ledger", &bad).unwrap_err();
+        let paths: Vec<&str> = refused.fields.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, ["columns.a.type", "columns.B"]);
+        assert!(
+            judge("core.note", &bad).is_ok(),
+            "a note's columns are a property like any other"
+        );
+        assert!(judge("core.table", &json!({"columns": {}})).is_err());
     }
 }

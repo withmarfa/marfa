@@ -8,6 +8,7 @@ use marfa_rules::conflict::{
     self, Detection, ItemFields, MergePolicy, Precondition, Stale, Strategy,
 };
 use marfa_rules::error::RuleError;
+use marfa_rules::schema::{OWN_COLUMNS, own_column_changes};
 use marfa_rules::{number, validation};
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
@@ -23,7 +24,7 @@ use super::{
     not_found, parsed, summary_of, title_key,
 };
 use crate::app::App;
-use crate::app::access::{Caller, Level};
+use crate::app::access::{Caller, Level, Permission};
 use crate::app::blobs::Hash;
 use crate::app::blobs::references::{self, Decided, Naming, Row as Referencing};
 use crate::app::catalog::{self, Catalog, Snapshot as Reading};
@@ -1639,7 +1640,44 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         rules
             .validate_merged(resulting, &result, true, &written)
             .map_err(|error| self.invalid(error, moved.then_some(resulting)))?;
+        self.refuse_column_changes(resulting, current, &result)?;
         Ok(rules.coerced_properties(resulting, &result))
+    }
+
+    /// Removing or reshaping a column, or requiring a new one, leaves rows that no longer fit, so only a schema writer may.
+    fn refuse_column_changes(
+        &self,
+        resulting: &str,
+        current: &Map<String, Value>,
+        result: &Map<String, Value>,
+    ) -> Result<()> {
+        if !self.catalog.rules.keeps_own_table(resulting)
+            || self.caller().holds(Permission::SchemaWrite)
+        {
+            return Ok(());
+        }
+        let columns = |properties: &Map<String, Value>| {
+            properties
+                .get(OWN_COLUMNS)
+                .and_then(Value::as_object)
+                .cloned()
+        };
+        let (Some(was), Some(is)) = (columns(current), columns(result)) else {
+            return Ok(());
+        };
+        let changes = own_column_changes(&was, &is);
+        if changes.is_empty() {
+            return Ok(());
+        }
+        Err(Refusal::new(
+            Code::Forbidden,
+            format!(
+                "Changing {} requires schema.write. A credential without it may add optional columns and change a column's label and description.",
+                changes.join(", ")
+            ),
+        )
+        .with_detail("required_scope", Permission::SchemaWrite.word())
+        .with_detail("changes", changes))
     }
 
     fn is_file(&self, type_id: &str) -> bool {

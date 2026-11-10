@@ -183,6 +183,20 @@ const coreNote: TypeSchema = {
   merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
+const coreTable: TypeSchema = {
+  id: "core.table",
+  label: "Table",
+  description: "A table you keep by hand, such as a budget, a reading log or a list of contacts, with the columns you choose.",
+  version: 0,
+  fields: {
+    title: { type: "string", description: "The name of the table.", required: true },
+    description: { type: "string", description: "What the table is for." },
+    columns: { type: "object", description: "The table's columns, by name. A column has a `type` and may have a `label`, `description`, `required`, `enum_values`, `format`, `maxLength`, `minimum`, `maximum`, `type_constraints`, `adds_up` and `searchable`, as a column a type declares does.", required: true },
+  },
+  display_hints: { title_field: "title", body_field: "description", icon: "lucide:table" },
+  merge_policy: { default: "last_writer_wins" },
+};
+
 const coreTask: TypeSchema = {
   id: "core.task",
   label: "Task",
@@ -626,6 +640,7 @@ export const ALL_TYPES: TypeSchema[] = [
   coreMedia,
   coreMessage,
   coreNote,
+  coreTable,
   coreTask,
   coreEntityPerson,
   coreEntityPlace,
@@ -723,6 +738,7 @@ export const ALL_TYPE_IDS = [
   "core.media.song",
   "core.message",
   "core.note",
+  "core.table",
   "core.task",
   "system.connection",
   "system.folder",
@@ -2434,6 +2450,30 @@ export const SHIPPED_TYPE_SHAPES = {
         "body": "keep_both_copies",
         "notes": "keep_both_copies"
       }
+    },
+    "version": 0
+  },
+  "core.table": {
+    "display_hints": {
+      "body_field": "description",
+      "icon": "lucide:table",
+      "title_field": "title"
+    },
+    "fields": {
+      "columns": {
+        "required": true,
+        "type": "object"
+      },
+      "description": {
+        "type": "string"
+      },
+      "title": {
+        "required": true,
+        "type": "string"
+      }
+    },
+    "merge_policy": {
+      "default": "last_writer_wins"
     },
     "version": 0
   },

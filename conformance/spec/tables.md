@@ -238,6 +238,84 @@ When a key holding `schema.write` sends `PUT /types/{id}` without `tables`, the 
 
 **Tests:** `compliance/type-tables.test.ts › lands every change for a key holding schema.write, and a replacement without tables removes them`.
 
+## A table a person keeps
+
+An item of `core.table`, or of a type below it, declares its own columns as item data, in its `columns` property, an object keyed by column name that a type's declared table holds in the same shape. The type declares no table. The item's columns are judged by the rules a declared table's columns are, so one validator serves both.
+
+### `tables/own-type`
+
+The server MUST ship `core.table`, with `title` and `columns` required, `description` optional, `columns` an object, and no `tables` of its own.
+
+**Reason:** the person defines the columns, so they are item data, never part of the type.
+
+**Tests:** `compliance/table-own-columns.test.ts › ships core.table with its columns as a required object and declares no table`.
+
+### `tables/own-columns-taken`
+
+When a caller creates or updates an item of `core.table`, or of a type below it, with `columns` that a table a type declares would take under `tables/declare`, `tables/adds-up-kinds`, `tables/item-column` and `tables/searchable-kinds`, the server MUST take the item and answer its `columns` as written.
+
+**Tests:** `compliance/table-own-columns.test.ts › takes the columns a declared table takes, on a create, an update and a subtype`.
+
+### `tables/own-columns-bounds`
+
+The server MUST take an item of `core.table` whose `columns` names 64 columns.
+
+**Tests:** `compliance/table-own-columns.test.ts › takes 64 columns and refuses a 65th`.
+
+### `tables/own-columns-refused`
+
+If a caller creates or updates an item of `core.table`, or of a type below it, with `columns` that break `tables/unknown-key`, `tables/name-grammar`, `tables/column-kind`, `tables/column-rules`, `tables/adds-up-refused`, `tables/searchable-refused`, `tables/item-unregistered`, `tables/item-values-refused` or `tables/too-many`, then the server MUST answer `400 invalid_properties` naming in `details.errors` the path of each fault under `columns`.
+
+**Tests:** `compliance/table-own-columns.test.ts › refuses the columns a declared table would refuse, naming each fault under columns`, `› takes 64 columns and refuses a 65th`.
+
+### `tables/own-columns-required`
+
+If a caller creates or updates an item of `core.table`, or of a type below it, so that its `columns` is missing, is not an object or names no column, then the server MUST answer `400 invalid_properties` naming `columns`.
+
+**Reason:** a table with no column holds no row (`tables/columns-required`).
+
+**Tests:** `compliance/table-own-columns.test.ts › refuses columns that are missing, cleared, empty, null or not an object`.
+
+### `tables/own-columns-unchanged`
+
+When the server refuses a write under `tables/own-columns-refused` or `tables/own-columns-required`, the server MUST NOT create or change the item.
+
+**Tests:** `compliance/table-own-columns.test.ts › refuses the columns a declared table would refuse, naming each fault under columns`, `› refuses columns that are missing, cleared, empty, null or not an object`.
+
+### `tables/own-evolve-free`
+
+When a key without `schema.write` that may write an item of `core.table` updates its `columns` so that they only add an optional column, change a column's `label` or `description`, or reorder the columns, the server MUST take the update.
+
+**Reason:** these change no stored row, as for a declared table (`tables/evolve-free`).
+
+**Tests:** `compliance/table-own-columns.test.ts › lands an added optional column, new labels and a new order for a key without schema.write`.
+
+### `tables/own-evolve-schema-change`
+
+If a key without `schema.write` that may write an item of `core.table` updates its `columns` so that they remove a column, change a column's `type` or another member `tables/own-evolve-free` does not name, or add a required column, then the server MUST answer `403 forbidden`.
+
+**Reason:** a changed or removed column leaves rows that no longer fit, and a required column leaves rows without a value (`tables/evolve-schema-change`).
+
+**Tests:** `compliance/table-own-columns.test.ts › refuses a removed column, a changed kind and a required column to a key without schema.write, listing each and changing nothing`.
+
+### `tables/own-evolve-refusal-scope`
+
+When the server refuses an update under `tables/own-evolve-schema-change`, the server MUST answer `details.required_scope` `schema.write`.
+
+**Tests:** `compliance/table-own-columns.test.ts › refuses a removed column, a changed kind and a required column to a key without schema.write, listing each and changing nothing`.
+
+### `tables/own-evolve-refusal-changes`
+
+When the server refuses an update under `tables/own-evolve-schema-change`, the server MUST answer `details.changes` listing, in sorted order, each column that needs `schema.write`, as `columns.<column>`.
+
+**Tests:** `compliance/table-own-columns.test.ts › refuses a removed column, a changed kind and a required column to a key without schema.write, listing each and changing nothing`.
+
+### `tables/own-evolve-schema-write`
+
+When a key holding `schema.write` updates the `columns` of an item of `core.table` that it may write, the server MUST NOT refuse the update under `tables/own-evolve-schema-change`.
+
+**Tests:** `compliance/table-own-columns.test.ts › lands a removed column, a changed kind and a required column for a key holding schema.write`.
+
 ## Archives and tools
 
 ### `tables/archive`

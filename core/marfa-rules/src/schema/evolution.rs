@@ -4,6 +4,7 @@ use std::collections::HashSet;
 
 use serde_json::Value;
 
+use super::tables::{OWN_COLUMNS, normalize_table};
 use super::{Obj, as_obj};
 
 const FREE_MEMBERS: [&str; 8] = [
@@ -43,6 +44,39 @@ fn column_shape_of(column: &Value) -> Value {
     shape
 }
 
+/// The columns of `was` that `is` removes, changes in shape or leaves out, and the required ones it adds, each named under `prefix`.
+fn column_changes(was: &Obj, is: &Obj, prefix: &str) -> Vec<String> {
+    let mut needs = Vec::new();
+    for (column, definition) in was {
+        if is
+            .get(column)
+            .is_none_or(|changed| column_shape_of(definition) != column_shape_of(changed))
+        {
+            needs.push(format!("{prefix}{column}"));
+        }
+    }
+    for (column, definition) in is {
+        if !was.contains_key(column) && definition.get("required") == Some(&Value::Bool(true)) {
+            needs.push(format!("{prefix}{column}"));
+        }
+    }
+    needs
+}
+
+/// The columns of an item of `core.table` only a schema writer may remove, change or require, as `columns.<name>`, sorted.
+pub fn own_column_changes(was: &Obj, is: &Obj) -> Vec<String> {
+    let stored = |columns: &Obj| {
+        let mut table = Obj::new();
+        table.insert(OWN_COLUMNS.into(), Value::Object(columns.clone()));
+        as_obj(normalize_table(&table).get(OWN_COLUMNS))
+            .cloned()
+            .unwrap_or_default()
+    };
+    let mut changes = column_changes(&stored(was), &stored(is), &format!("{OWN_COLUMNS}."));
+    changes.sort();
+    changes
+}
+
 /// The tables and columns only a schema writer may remove, change or require.
 fn table_changes(stored: &Obj, next: &Obj) -> Vec<String> {
     let before = as_obj(stored.get("tables")).cloned().unwrap_or_default();
@@ -54,20 +88,11 @@ fn table_changes(stored: &Obj, next: &Obj) -> Vec<String> {
             continue;
         };
         let columns = |table: &Value| as_obj(table.get("columns")).cloned().unwrap_or_default();
-        let (was, is) = (columns(table), columns(replaced));
-        for (column, definition) in &was {
-            if is
-                .get(column)
-                .is_none_or(|changed| column_shape_of(definition) != column_shape_of(changed))
-            {
-                needs.push(format!("tables.{name}.columns.{column}"));
-            }
-        }
-        for (column, definition) in &is {
-            if !was.contains_key(column) && definition.get("required") == Some(&Value::Bool(true)) {
-                needs.push(format!("tables.{name}.columns.{column}"));
-            }
-        }
+        needs.extend(column_changes(
+            &columns(table),
+            &columns(replaced),
+            &format!("tables.{name}.columns."),
+        ));
     }
     needs
 }
@@ -138,6 +163,24 @@ mod tests {
         assert_eq!(
             evolution_of(&stored, &changed).0,
             vec!["fields.x".to_string(), "fields.z".to_string()]
+        );
+    }
+    #[test]
+    fn an_item_s_columns_compare_as_stored_so_a_written_default_and_a_label_change_nothing() {
+        let held = obj(json!({"a": {"type": "string"}, "b": {"type": "number"}}));
+        let same = obj(json!({
+            "b": {"type": "number", "label": "B", "required": false, "searchable": false},
+            "a": {"type": "string", "description": "A."},
+            "c": {"type": "date"}
+        }));
+        assert!(own_column_changes(&held, &same).is_empty());
+        let changed = obj(json!({
+            "a": {"type": "string", "required": true},
+            "c": {"type": "date", "required": true}
+        }));
+        assert_eq!(
+            own_column_changes(&held, &changed),
+            ["columns.a", "columns.b", "columns.c"]
         );
     }
 }
