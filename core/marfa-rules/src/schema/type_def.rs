@@ -9,6 +9,7 @@ use super::compat::{
 };
 use super::field::{Shape, label_issue, normalize_field, validate_field_shape};
 use super::registry::Ancestry;
+use super::tables::{stored_tables, validate_tables};
 use super::{
     Issue, MAX_FEED_DAYS, MERGE_STRATEGIES, Obj, REFUSED_TYPE_KEYS, Registry, TYPE_ROLES, as_obj,
     describe, icon_issue, kind, names, number, positive_integer, required, text, unread_keys,
@@ -244,6 +245,16 @@ pub fn validate_type(input: &Value, registry: &Registry) -> Result<Obj, Vec<Issu
             &mut errors,
         );
     }
+    let inherited_tables = parent
+        .map(|p| registry.inherited_tables(p))
+        .unwrap_or_default();
+    validate_tables(
+        obj.get("tables"),
+        &inherited_tables,
+        &descendants,
+        &|held| registry.contains(held) || id == Some(held),
+        &mut errors,
+    );
     let visible: HashSet<&str> = fields
         .into_iter()
         .flat_map(|f| f.keys().map(String::as_str))
@@ -281,7 +292,15 @@ pub fn validate_type(input: &Value, registry: &Registry) -> Result<Obj, Vec<Issu
     if !errors.is_empty() {
         return Err(errors);
     }
-    Ok(stored_form(obj, fields, &required_names, &ancestry, parent))
+    let tables = stored_tables(obj.get("tables"), &inherited_tables);
+    Ok(stored_form(
+        obj,
+        fields,
+        &required_names,
+        &ancestry,
+        parent,
+        tables,
+    ))
 }
 
 fn stored_form(
@@ -290,6 +309,7 @@ fn stored_form(
     required_names: &[String],
     ancestry: &Ancestry,
     parent: Option<&str>,
+    tables: Obj,
 ) -> Obj {
     let mut normalized = Map::new();
     for (name, definition) in fields.into_iter().flatten() {
@@ -328,6 +348,9 @@ fn stored_form(
             .unwrap_or(json!(0)),
     );
     schema.insert("fields".into(), Value::Object(normalized));
+    if !tables.is_empty() {
+        schema.insert("tables".into(), Value::Object(tables));
+    }
     if let Some(plural) = obj
         .get("plural")
         .filter(|p| p.as_str().is_some_and(|s| !s.is_empty()))

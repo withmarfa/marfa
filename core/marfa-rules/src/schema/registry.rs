@@ -166,7 +166,7 @@ impl Registry {
     }
 
     /// Root first. A chain that loops or names a type this registry lacks ends there.
-    pub fn ancestry(&self, parent: &str) -> Ancestry {
+    fn chain_above(&self, parent: &str) -> Vec<&Obj> {
         let mut seen = HashSet::new();
         let mut chain: Vec<&Obj> = Vec::new();
         let mut cursor = Some(parent);
@@ -178,8 +178,14 @@ impl Registry {
             chain.push(row);
             cursor = text(row, "parent");
         }
+        chain.reverse();
+        chain
+    }
+
+    /// Root first. A chain that loops or names a type this registry lacks ends there.
+    pub fn ancestry(&self, parent: &str) -> Ancestry {
         let mut held = Ancestry::default();
-        for row in chain.into_iter().rev() {
+        for row in self.chain_above(parent) {
             let owner = text(row, "id").unwrap_or_default();
             for (name, own) in as_obj(row.get("fields")).into_iter().flatten() {
                 let above = held.get(name).map(|h| Value::Object(h.definition.clone()));
@@ -196,6 +202,21 @@ impl Registry {
             }
         }
         held
+    }
+
+    /// The tables the types from `parent` up declare, each with the type that declares it. A table is declared once down a chain, so a name appears once.
+    pub fn inherited_tables(&self, parent: &str) -> Vec<(String, String, Obj)> {
+        let mut found: Vec<(String, String, Obj)> = Vec::new();
+        for row in self.chain_above(parent) {
+            let owner = text(row, "id").unwrap_or_default();
+            for (name, table) in as_obj(row.get("tables")).into_iter().flatten() {
+                if let Value::Object(table) = table {
+                    found.retain(|(held, _, _)| held != name);
+                    found.push((name.clone(), owner.to_string(), table.clone()));
+                }
+            }
+        }
+        found
     }
 
     pub fn declared_between(&self, child: &Obj, top: &str, name: &str) -> bool {

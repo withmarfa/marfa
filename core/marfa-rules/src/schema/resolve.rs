@@ -4,6 +4,7 @@ use std::collections::HashSet;
 
 use serde_json::{Map, Value};
 
+use super::tables::{with_column_defaults, with_table_labels, without_read_labels};
 use super::{Obj, Registry, as_obj, text};
 use crate::catalog::merge_field_definition;
 use crate::wire::{label_from_id, label_from_name, plural_from_label};
@@ -63,7 +64,7 @@ pub fn labelled(mut schema: Obj) -> Obj {
     schema
 }
 
-fn label_member(definition: &mut Obj, name: &str) {
+pub(super) fn label_member(definition: &mut Obj, name: &str) {
     if !definition.get("label").is_some_and(Value::is_string) {
         definition.insert("label".into(), Value::String(label_from_name(name)));
     }
@@ -98,6 +99,9 @@ pub fn canonical(schema: Obj) -> Obj {
                 definition.entry("searchable").or_insert(Value::Bool(true));
             }
         }
+    }
+    if let Some(Value::Object(tables)) = schema.get_mut("tables") {
+        with_column_defaults(tables);
     }
     schema
 }
@@ -143,6 +147,16 @@ pub fn resolve(
         with_field_labels(&merged)
     };
 
+    let mut tables = Obj::new();
+    for row in &chain {
+        tables.extend(as_obj(row.get("tables")).cloned().unwrap_or_default());
+    }
+    let tables = if declared_only {
+        tables
+    } else {
+        with_table_labels(&tables)
+    };
+
     let mut hints = Obj::new();
     let mut version_policy = Obj::new();
     let mut retention = Obj::new();
@@ -181,6 +195,9 @@ pub fn resolve(
         own.get("version").cloned().unwrap_or(Value::from(0)),
     );
     out.insert("fields".into(), Value::Object(fields));
+    if !tables.is_empty() {
+        out.insert("tables".into(), Value::Object(tables));
+    }
     for key in ["parent", "compatible_with", "label"] {
         if let Some(value) = own.get(key) {
             out.insert(key.into(), value.clone());
@@ -276,6 +293,13 @@ pub fn read_back_free(
                 }
             }
         }
+    }
+    if let Some(Value::Object(tables)) = out.get_mut("tables") {
+        without_read_labels(
+            tables,
+            as_obj(stored.get("tables")),
+            as_obj(read.get("tables")),
+        );
     }
     if let Some(Value::Object(submitted_hints)) = out.get("display_hints").cloned() {
         let read_hints = as_obj(read.get("display_hints"));

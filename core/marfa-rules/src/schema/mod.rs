@@ -8,6 +8,7 @@ mod field;
 mod icons;
 mod registry;
 mod resolve;
+mod tables;
 mod type_def;
 mod unread;
 
@@ -29,8 +30,12 @@ pub use resolve::{
     ChainFault, MAX_RESOLUTION_DEPTH, canonical, chain, label_or_default, labelled, plural_of,
     read_back_free, resolve, roles_of, with_field_labels,
 };
+pub use tables::{
+    ADDS_UP, ITEM_KIND, MAX_COLUMNS_PER_TABLE, MAX_TABLES_PER_TYPE, normalize_table,
+    validate_columns,
+};
 pub use type_def::validate_type;
-pub use unread::{unread_edge_keys, unread_keys};
+pub use unread::{unread_column_keys, unread_edge_keys, unread_keys};
 
 pub type Obj = Map<String, Value>;
 

@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use super::{Issue, Obj, REFUSED_TYPE_KEYS, as_obj};
 
-const TYPE_KEYS: [&str; 15] = [
+const TYPE_KEYS: [&str; 16] = [
     "id",
     "parent",
     "label",
@@ -12,6 +12,7 @@ const TYPE_KEYS: [&str; 15] = [
     "description",
     "version",
     "fields",
+    "tables",
     "roles",
     "display_hints",
     "link_field",
@@ -47,6 +48,21 @@ const MEMBER_KEYS: [&str; 9] = [
     "maxLength",
     "minimum",
     "maximum",
+];
+const TABLE_KEYS: [&str; 3] = ["label", "description", "columns"];
+const COLUMN_KEYS: [&str; 12] = [
+    "type",
+    "label",
+    "description",
+    "required",
+    "enum_values",
+    "format",
+    "maxLength",
+    "minimum",
+    "maximum",
+    "type_constraints",
+    "adds_up",
+    "searchable",
 ];
 const HINT_KEYS: [&str; 4] = ["title_field", "body_field", "name_from_body", "icon"];
 const VERSION_KEYS: [&str; 4] = [
@@ -143,6 +159,17 @@ pub fn unread_keys(input: &Obj) -> Vec<Issue> {
             }
         }
     }
+    for (name, definition) in as_obj(input.get("tables")).into_iter().flatten() {
+        if let Value::Object(definition) = definition {
+            issues.extend(unread_of(
+                definition,
+                &format!("tables.{name}"),
+                &TABLE_KEYS,
+                "a table definition",
+                &[],
+            ));
+        }
+    }
     for (key, read) in [
         ("display_hints", &HINT_KEYS[..]),
         ("version_policy", &VERSION_KEYS[..]),
@@ -154,6 +181,11 @@ pub fn unread_keys(input: &Obj) -> Vec<Issue> {
         }
     }
     issues
+}
+
+/// The keys of one column definition at `path`.
+pub fn unread_column_keys(definition: &Obj, path: &str) -> Vec<Issue> {
+    unread_of(definition, path, &COLUMN_KEYS, "a column definition", &[])
 }
 
 pub fn unread_edge_keys(input: &Obj) -> Vec<Issue> {

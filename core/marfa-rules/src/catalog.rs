@@ -367,8 +367,8 @@ pub fn refuse_wordless_status(types: &[Value]) -> Result<(), RuleError> {
 /// The groups every status word belongs to one of.
 pub const STATUS_GROUPS: [&str; 4] = ["not_started", "in_progress", "completed", "canceled"];
 
-/// A lowercase letter, then up to 63 lowercase letters, digits and underscores.
-pub fn status_word(text: &str) -> bool {
+/// A lowercase letter, then up to 63 lowercase letters, digits and underscores: how a status word, a table and a column are named.
+pub fn api_name(text: &str) -> bool {
     let mut chars = text.chars();
     text.len() <= 64
         && chars.next().is_some_and(|first| first.is_ascii_lowercase())
@@ -405,7 +405,7 @@ pub fn status_declaration(kind: &str, definition: &Value) -> Option<String> {
                 "with the status word {entry}, which is not an object of exactly value and group"
             ));
         };
-        let Some(word) = pair["value"].as_str().filter(|word| status_word(word)) else {
+        let Some(word) = pair["value"].as_str().filter(|word| api_name(word)) else {
             return Some(format!(
                 "with the status word {}, which is not a lowercase letter then up to 63 lowercase letters, digits and underscores",
                 pair["value"]
