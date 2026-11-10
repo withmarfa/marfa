@@ -14,7 +14,7 @@ import { scriptHydration, scriptWrites, startHarness } from "./harness.js";
 import type { Harness } from "./harness.js";
 
 /**
- * A row or an edge this device removed stays out of the copy until the copy
+ * An item or an edge this device removed stays out of the copy until the copy
  * reads the event of that removal (`device/deleted-stays-gone`,
  * `device/deleted-edge-stays-gone`). An event older than the removal can
  * still be ahead of the cursor when the server accepts it, and applied as it
@@ -46,7 +46,7 @@ async function following(
   const started = await startHarness(label);
   scriptHydration(started.server, {
     head: "10",
-    rows: { "core.note": rows.map((item) => ({ item })) },
+    items: { "core.note": rows.map((item) => ({ item })) },
     edges: edges === undefined ? undefined : { references: edges },
     replay: () => {
       const last = events.frames.at(-1)?.id ?? "10";
@@ -62,7 +62,7 @@ async function following(
   return started;
 }
 
-/** Whether the copy holds the row, in the bin or out of it. */
+/** Whether the copy holds the item, in the bin or out of it. */
 async function holds(started: Harness, id: string): Promise<boolean> {
   if ((await started.device.get(id)).ok) return true;
   const trashed = await started.device.list({ state: "trashed" });
@@ -81,7 +81,7 @@ async function caughtUp(started: Harness): Promise<void> {
   expect(caught.ok, JSON.stringify(caught)).toBe(true);
 }
 
-describe("a row this device purged stays gone until the purge's event", () => {
+describe("an item this device purged stays gone until the purge's event", () => {
   const events = { frames: [] as SseFrame[] };
   const gone = (version: number, title: string) =>
     wireItem({
@@ -104,7 +104,7 @@ describe("a row this device purged stays gone until the purge's event", () => {
       events,
       [{ id: "drawn", source_id: STAYS, target_id: GONE }],
     );
-    // The witness: the copy holds the row in the bin, and an edge to it,
+    // The witness: the copy holds the item in the bin, and an edge to it,
     // before the purge.
     expect(await holds(started, GONE)).toBe(true);
     expect(await edgesFrom(started, STAYS)).toEqual(["drawn"]);
@@ -116,16 +116,16 @@ describe("a row this device purged stays gone until the purge's event", () => {
     return started;
   }
 
-  it("keeps the row out through an older event read after the purge", async () => {
+  it("keeps the item out through an older event read after the purge", async () => {
     harness = await purged("gone-older-event");
     // A change made before the purge, still ahead of the cursor when the
-    // purge was accepted, with a change to another row as the witness that
+    // purge was accepted, with a change to another item as the witness that
     // the catch-up applied what it read.
     events.frames = [
       copyItemEvent("11", "item.updated", gone(3, "before the purge")),
       copyItemEvent("12", "item.updated", stays(2)),
     ];
-    // A copy that lets the row back in reads it whole as it enters.
+    // A copy that lets the item back in reads it whole as it enters.
     harness.server.copyAnswer(
       "GET",
       `/items/${GONE}`,
@@ -134,13 +134,13 @@ describe("a row this device purged stays gone until the purge's event", () => {
     await caughtUp(harness);
     expect(
       await holds(harness, STAYS),
-      "the catch-up applied nothing, so nothing here is about the purged row",
+      "the catch-up applied nothing, so nothing here is about the purged item",
     ).toBe(true);
     const witness = await harness.device.get(STAYS);
     expect(witness.ok && witness.value.version).toBe(2);
     expect(
       await holds(harness, GONE),
-      "an event older than the purge put the purged row back",
+      "an event older than the purge put the purged item back",
     ).toBe(false);
 
     // A later command opens the copy again and still keeps it out.
@@ -148,7 +148,7 @@ describe("a row this device purged stays gone until the purge's event", () => {
     expect(await holds(harness, GONE)).toBe(false);
   });
 
-  it("keeps out an older event for an edge at either end of the row", async () => {
+  it("keeps out an older event for an edge at either end of the item", async () => {
     harness = await purged("gone-older-edge");
     const edge = (id: string, target: string, version: number) =>
       wireEdge({
@@ -163,14 +163,14 @@ describe("a row this device purged stays gone until the purge's event", () => {
       edgeEvent("12", "edge.created", edge("other", THIRD, 1)),
     ];
     await caughtUp(harness);
-    // The witness: an edge between two rows the copy holds was applied.
+    // The witness: an edge between two items the copy holds was applied.
     expect(
       await edgesFrom(harness, STAYS),
-      "an event older than the purge put back an edge to the purged row",
+      "an event older than the purge put back an edge to the purged item",
     ).toEqual(["other"]);
   });
 
-  it("shows a row made again under the id once the purge's event is read", async () => {
+  it("shows an item made again under the id once the purge's event is read", async () => {
     harness = await purged("gone-restored");
     events.frames = [
       copyItemEvent("11", "item.purged", gone(3, "before the purge")),
@@ -187,7 +187,7 @@ describe("a row this device purged stays gone until the purge's event", () => {
     await caughtUp(harness);
     expect(
       await holds(harness, GONE),
-      "a row made under the id after the purge's event stayed hidden",
+      "an item made under the id after the purge's event stayed hidden",
     ).toBe(true);
   });
 });

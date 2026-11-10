@@ -197,7 +197,7 @@ describe("item versioning", () => {
     expect(after.ok).toBe(true);
     expect(
       after.data.item.properties.title,
-      "the refused write reached the stored row, so the refusal was reported without being enforced",
+      "the refused write reached the stored item, so the refusal was reported without being enforced",
     ).toBe("Unversioned");
     expect(after.data.item.version, "a refused update moved the version").toBe(
       r.data.item.version,
@@ -225,7 +225,7 @@ describe("item versioning", () => {
     expect(body.requested_version).toBe(0);
     expect(
       body.current.id,
-      "the refusal did not name the row it is about in current.id",
+      "the refusal did not name the item it is about in current.id",
     ).toBe(r.data.item.id);
     expect(body.current.version).toBe(1);
     expect(body.current.properties.title).toBe("Conflict test");
@@ -260,7 +260,7 @@ describe("item versioning", () => {
     expect(body.error.status).toBe(409);
     expect(
       [body.current.id, body.ancestor.id],
-      "the refusal did not name the row in current.id and ancestor.id",
+      "the refusal did not name the item in current.id and ancestor.id",
     ).toEqual([r.data.item.id, r.data.item.id]);
     expect(body.current.version).toBe(2);
     expect(body.current.properties.title).toBe("Server title");
@@ -287,7 +287,7 @@ describe("item versioning", () => {
       {
         // Both writers move it, and a tier has two values, so they agree
         // on the destination. It is still a collision: the stale writer
-        // read a row the first has already moved, and a check that let the
+        // read an item the first has already moved, and a check that let the
         // agreement through would depend on how many values a field has.
         field: "tier",
         server: { tier: "feed" as const },
@@ -351,14 +351,14 @@ describe("item versioning", () => {
         atBase[snapshotField],
       );
 
-      // The row is the one the first writer left, not the stale writer's.
+      // The item is the one the first writer left, not the stale writer's.
       const after = await client.getItem(r.data.item.id);
       expect(after.ok, field).toBe(true);
       expect(after.data.item.version, field).toBe(2);
     }
   });
 
-  it("moves a row's tier on an update", async () => {
+  it("moves an item's tier on an update", async () => {
     const r = await client.createItem(
       createNote({ source: ctx.source, tier: "library" }),
     );
@@ -541,7 +541,7 @@ describe("item versioning", () => {
   it("refuses a stale move whose merged properties fall short of the type entered", async () => {
     // A bookmark requires nothing and may carry a title; a task requires
     // one. The title this write carries echoes the ancestor's value, so it
-    // is not applied, and the other writer removed it since: the row a
+    // is not applied, and the other writer removed it since: the item a
     // task would be left as has no title.
     const r = await client.createItem({
       type: "core.bookmark",
@@ -574,7 +574,7 @@ describe("item versioning", () => {
     expect(fetched.data.item.version).toBe(2);
   });
 
-  it("moves the type with retype alone, holding the row to the type entered", async () => {
+  it("moves the type with retype alone, holding the item to the type entered", async () => {
     const r = await client.createItem({
       type: "core.bookmark",
       source: ctx.source,
@@ -593,7 +593,7 @@ describe("item versioning", () => {
     expect(moved.data.item.version).toBe(2);
     expect(moved.data.item.properties.title).toBe("Kept");
 
-    // The witness: the same move on a row without the title the task
+    // The witness: the same move on an item without the title the task
     // requires is refused, and nothing moves.
     const bare = await client.createItem({
       type: "core.bookmark",
@@ -615,10 +615,10 @@ describe("item versioning", () => {
     expect(fetched.data.item.version).toBe(1);
   });
 
-  it("moves nothing when retype names the type the row already has", async () => {
-    // A corpus re-type sends `retype` to every row it means to move, rows
-    // already at the destination included. A move to the type a row has
-    // is not a move: the row is answered as it is, at its version, with
+  it("moves nothing when retype names the type the item already has", async () => {
+    // A corpus re-type sends `retype` to every item it means to move, items
+    // already at the destination included. A move to the type an item has
+    // is not a move: the item is answered as it is, at its version, with
     // no snapshot written.
     const r = await client.createItem(
       createNote({ source: ctx.source, properties: { body: "Staying" } }),
@@ -640,7 +640,7 @@ describe("item versioning", () => {
   });
 
   it("holds a stale write to the type only where it carries properties or a move", async () => {
-    // A type may gain a required field while rows that lack it stand. A
+    // A type may gain a required field while items that lack it stand. A
     // write that changes nothing a schema has an opinion about, a tier
     // alone here, lands at the current version without being judged, and
     // a stale one is judged the same way: what is applied is what is
@@ -678,7 +678,7 @@ describe("item versioning", () => {
       },
     });
     expect(gained.ok, JSON.stringify(gained.error)).toBe(true);
-    // The witness: the row no longer satisfies its type, and a write that
+    // The witness: the item no longer satisfies its type, and a write that
     // carries properties is held to it.
     const judged = await client.updateItem(r.data.item.id, {
       properties: { title: "Judged" },
@@ -751,7 +751,7 @@ describe("item versioning", () => {
     });
   });
 
-  it("refuses a retype naming the row's own type at a stale version, as any stale write that changes nothing", async () => {
+  it("refuses a retype naming the item's own type at a stale version, as any stale write that changes nothing", async () => {
     const r = await client.createItem(
       createNote({ source: ctx.source, properties: { body: "Staying" } }),
     );
@@ -775,10 +775,10 @@ describe("item versioning", () => {
     expect(fetched.data.item.version).toBe(2);
   });
 
-  it("refuses a stale move onto a row another writer moved since, naming type", async () => {
-    // Two writers reading one version and each moving the row somewhere
+  it("refuses a stale move onto an item another writer moved since, naming type", async () => {
+    // Two writers reading one version and each moving the item somewhere
     // else: the second cannot land over the first without silently
-    // undoing a move it never saw. A snapshot records the type the row
+    // undoing a move it never saw. A snapshot records the type the item
     // had, so the collision is visible whatever the write carries.
     const typeId = `user.third-${ctx.runId}`;
     const registered = await client.registerType({
@@ -813,7 +813,7 @@ describe("item versioning", () => {
 
     // With edges beside the move, so the refusal is seen to write nothing:
     // a door that refused the move and applied the edges would answer 409
-    // over a row it had changed.
+    // over an item it had changed.
     const second = await client.rawRequest<{ item: MarfaItem }>(
       `/items/${r.data.item.id}`,
       {
@@ -835,7 +835,7 @@ describe("item versioning", () => {
     };
     expect(envelope.conflicting_fields).toContain("type");
     // Both sides of the move, so the caller can see what it read and what
-    // the row has become.
+    // the item has become.
     expect(envelope.current?.type).toBe("core.bookmark");
     expect(envelope.ancestor?.type).toBe("core.note");
     const fetched = await client.getItem(r.data.item.id);
@@ -848,7 +848,7 @@ describe("item versioning", () => {
       edges.data.data.filter((edge) => edge.source_id === r.data.item.id),
     ).toHaveLength(0);
 
-    // A stale write that does not move the row still lands after the
+    // A stale write that does not move the item still lands after the
     // other writer's move: only a move collides with a move.
     const still = await client.updateItem(r.data.item.id, {
       properties: { title: "Still contested" },
@@ -864,7 +864,7 @@ describe("item versioning", () => {
     // A null on a field the type declares optional means "unset" under a
     // merge, so the field survives and no null is stored; on one the type
     // requires it is kept for the validation to refuse. On a move, the
-    // type that decides is the one the row enters. A note's body is
+    // type that decides is the one the item enters. A note's body is
     // required and a bookmark's is optional, so the null is dropped, the
     // body stays, and nothing is stored under the key as null.
     const r = await client.createItem(
@@ -911,7 +911,7 @@ describe("item versioning", () => {
     expect(fetched.data.item.properties).not.toHaveProperty("body");
   });
 
-  it("judges a stale write by its merged result, not by the body laid over the current row", async () => {
+  it("judges a stale write by its merged result, not by the body laid over the current item", async () => {
     // A field added and made required after the caller read: the other
     // writer set it, the caller's replace does not name it, and the
     // ancestor never had it, so the merge keeps the other writer's value
@@ -991,7 +991,7 @@ describe("item versioning", () => {
   });
 
   it("clears a field named like a prototype member as any other", async () => {
-    // A key a JavaScript object inherits has to be judged by what the row
+    // A key a JavaScript object inherits has to be judged by what the item
     // holds, not by what the language answers for every object.
     const r = await client.createItem(
       createNote({
@@ -1017,7 +1017,7 @@ describe("item versioning", () => {
     expect(stale.data.item.properties).toEqual({ body: "Advanced" });
 
     // And once it is gone, a second stale replace leaving it out is an
-    // echo, not a clear that collides with the first: the row no longer
+    // echo, not a clear that collides with the first: the item no longer
     // holds the key, whatever every object answers for the name.
     const echo = await client.updateItem(r.data.item.id, {
       properties: { body: "Body" },
@@ -1028,9 +1028,9 @@ describe("item versioning", () => {
     expect(echo.data.item.properties).toEqual({ body: "Advanced" });
   });
 
-  it("indexes a row under the type it entered on a stale move", async () => {
+  it("indexes an item under the type it entered on a stale move", async () => {
     // A field one type keeps out of search and the other does not: after
-    // a stale move the row is found by it, which only an index built for
+    // a stale move the item is found by it, which only an index built for
     // the type entered can answer.
     const quiet = `user.quiet-${ctx.runId}`;
     const loud = `user.loud-${ctx.runId}`;
@@ -1082,7 +1082,7 @@ describe("item versioning", () => {
 
   it("clears a field a stale replace leaves out, where nobody changed it since", async () => {
     // `versions/merge-replace-clear` applies a stale write's genuine changes over the
-    // current row. Under `properties_mode: replace` the body is the whole of
+    // current item. Under `properties_mode: replace` the body is the whole of
     // the caller's properties, so a field the ancestor had and the body
     // lacks is one of those changes: the caller cleared it.
     const r = await client.createItem(
@@ -1190,7 +1190,7 @@ describe("item versioning", () => {
     expect(body.error.status).toBe(409);
     expect(
       body.current.id,
-      "the refusal did not name the row it is about in current.id",
+      "the refusal did not name the item it is about in current.id",
     ).toBe(r.data.item.id);
     expect(body.current.version).toBe(2);
     expect(body.current.properties.title).toBe("Server title");
@@ -1208,7 +1208,7 @@ describe("item versioning", () => {
     expect(fresh.status).toBe(200);
   });
 
-  it("leaves the version, the row and the history where they were on an update that carries only edges or names the row's own type", async () => {
+  it("leaves the version, the item and the history where they were on an update that carries only edges or names the item's own type", async () => {
     const r = await client.createItem(
       createNote({
         source: ctx.source,
@@ -1277,7 +1277,7 @@ describe("item versioning", () => {
     expect(await history()).toEqual([1, 2]);
   });
 
-  it("answers an update that carries only edges or names the row's own type version_conflict with no ancestor, whichever version it names", async () => {
+  it("answers an update that carries only edges or names the item's own type version_conflict with no ancestor, whichever version it names", async () => {
     const r = await client.createItem(
       createNote({
         source: ctx.source,
@@ -1300,7 +1300,7 @@ describe("item versioning", () => {
 
     const shapes = {
       "edges only": { edges: { references: [target.data.item.id] } },
-      "retype to the row's own type": { type: "core.note", retype: true },
+      "retype to the item's own type": { type: "core.note", retype: true },
     };
     for (const [shape, body] of Object.entries(shapes)) {
       // The witness: the same shape naming a version no snapshot covers, and
@@ -1355,7 +1355,7 @@ describe("item versioning", () => {
     ).toEqual([1]);
   });
 
-  it("merges a stale write that collides on nothing, writes a snapshot of the row it merged over, and leaves the history as it was on one that collides", async () => {
+  it("merges a stale write that collides on nothing, writes a snapshot of the item it merged over, and leaves the history as it was on one that collides", async () => {
     const r = await client.createItem(
       createNote({
         source: ctx.source,
@@ -1384,7 +1384,7 @@ describe("item versioning", () => {
       body: "Original",
       notes: "Added by a stale writer",
     });
-    // The snapshot is of the row the write merged over, version 2, and not of
+    // The snapshot is of the item the write merged over, version 2, and not of
     // the version the writer named.
     const afterMerge = await history();
     expect(afterMerge.map((v) => v.version)).toEqual([1, 2]);
@@ -1544,8 +1544,8 @@ describe("item versioning", () => {
       "core.note",
     ]);
 
-    // Another writer moves the row, so the two sides are of different types
-    // and a stale write that does not move the row names neither in
+    // Another writer moves the item, so the two sides are of different types
+    // and a stale write that does not move the item names neither in
     // conflicting_fields.
     const moved = await client.updateItem(r.data.item.id, {
       type: "core.bookmark",
@@ -1577,7 +1577,7 @@ describe("item versioning", () => {
     ).toBe("core.bookmark");
   });
 
-  it("records the tier, own time, natural key and type the row had at each version", async () => {
+  it("records the tier, own time, natural key and type the item had at each version", async () => {
     const created = await client.createItem(
       createNote({
         source: ctx.source,
@@ -1630,12 +1630,12 @@ describe("item versioning", () => {
       [2, held(first.data.item)],
     ]);
     // The witness that the three differ between versions, so the equality
-    // above cannot be met by a server that stamps the current row's values.
+    // above cannot be met by a server that stamps the current item's values.
     expect(held(created.data.item)).not.toEqual(held(first.data.item));
     expect(held(first.data.item)).not.toEqual(held(second.data.item));
   });
 
-  it("names the field a merged result lacks when a stale write leaves the row short of its type", async () => {
+  it("names the field a merged result lacks when a stale write leaves the item short of its type", async () => {
     const r = await client.createItem(
       createMessage({
         source: ctx.source,
@@ -1651,7 +1651,7 @@ describe("item versioning", () => {
     expect(advanced.ok).toBe(true);
 
     // Nobody changed the sender since, so the replace's clear of it lands and
-    // the merged row has no sender, which a message requires.
+    // the merged item has no sender, which a message requires.
     const refused = await client.updateItem(r.data.item.id, {
       properties: { body: "Short" },
       properties_mode: "replace",
@@ -1696,7 +1696,7 @@ describe("item versioning", () => {
     expect(moveErrors?.map((e) => e.field)).toContain("title");
   });
 
-  it("writes a version for an update whose properties are empty or equal to the row's", async () => {
+  it("writes a version for an update whose properties are empty or equal to the item's", async () => {
     const r = await client.createItem(
       createNote({
         source: ctx.source,
@@ -1754,7 +1754,7 @@ describe("item versioning", () => {
 
     // The witnesses: 0 is a whole number of at least 0, so it passes the
     // check and is refused for naming no snapshot, and the same body at the
-    // row's version writes.
+    // item's version writes.
     const zero = await patch({ properties: { title: "x" }, version: 0 });
     expect(zero.status).toBe(409);
     expect(zero.error?.error.code).toBe("ancestor_unavailable");
@@ -1882,7 +1882,7 @@ describe("item versioning", () => {
     trackItem(ctx, id);
 
     const stamp = async (): Promise<number> => {
-      // A listing, since the read of one row does not answer a row in the bin.
+      // A listing, since the read of one item does not answer an item in the bin.
       const read = await client.listItems({ tags: [tag], state: "any" });
       expect(read.status).toBe(200);
       expect(read.data.data.map((item) => item.id)).toEqual([id]);
@@ -1931,7 +1931,7 @@ describe("item versioning", () => {
     );
   });
 
-  it("leaves the version and the history of a row a cascade trashed and restored as they were", async () => {
+  it("leaves the version and the history of an item a cascade trashed and restored as they were", async () => {
     const tag = `cascade-version-${ctx.runId}`;
     const make = async (): Promise<string> => {
       const r = await client.createItem(
@@ -1963,7 +1963,7 @@ describe("item versioning", () => {
     };
     expect((await client.deleteItem(parent)).ok).toBe(true);
     // The witness that the cascade took the child, so the version read here
-    // is of a row the trash reached.
+    // is of an item the trash reached.
     const trashed = await read("trashed");
     expect(trashed?.trashed_with).toBe(parent);
     expect(trashed?.version).toBe(2);

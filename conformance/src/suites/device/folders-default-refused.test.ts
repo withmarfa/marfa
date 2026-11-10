@@ -53,7 +53,7 @@ async function defaultsHarness(
       query: { types: ["core.note", "core.file"] },
       defaults: { edges: { "shelved-in": [beta] } },
     },
-    rows: {
+    items: {
       "core.note": [
         { item: titled(beta, "Beta") },
         { item: titled(shelf, "Shelf", "core.collection") },

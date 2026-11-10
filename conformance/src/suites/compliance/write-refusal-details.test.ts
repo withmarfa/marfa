@@ -327,7 +327,7 @@ describe("a refusal caused by a missing grant names it", () => {
     expect(upload.error?.error.code).toBe("type_not_permitted");
     expect(upload.error?.error.details?.grant).toBeUndefined();
 
-    // A row the key may not read is not a refusal at all: it is missing.
+    // An item the key may not read is not a refusal at all: it is missing.
     const blind = await keyWith("blind", {
       type_permissions: { "core.task": "write" },
     });

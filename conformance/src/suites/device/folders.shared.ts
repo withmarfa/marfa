@@ -18,7 +18,7 @@ import { ScriptedServer } from "../../device/scripted-server.js";
 import {
   FolderDoor,
   type DoorCreate,
-  type DoorRow,
+  type DoorItem,
 } from "../../device/folder-door.js";
 import type { FolderHarness } from "./harness.js";
 import type { DrainVerdict, QueuedWrite } from "../../device/protocol.js";
@@ -88,7 +88,7 @@ export function settingsFile(harness: FolderHarness): string {
 }
 
 /**
- * The folder door's change, as the server takes it at the version the row
+ * The folder door's change, as the server takes it at the version the item
  * is at: each named setting replaced whole. `answer` overrides, for a
  * refusal.
  */
@@ -174,17 +174,17 @@ export function scriptFolderWrites(
     /** The answer a create is given in place of the door's own, which it is
      *  handed: a gated one, say. */
     creating?: (answer: Answer, request: RecordedRequest) => Answer;
-    /** The answer the read of a row is given in place of the door's own,
+    /** The answer the read of an item is given in place of the door's own,
      *  which it is handed: a refusal under a reach that changed, say. */
     reading?: (answer: Answer, request: RecordedRequest) => Answer;
   } = {},
-): Map<string, DoorRow> {
-  // What the hydration served, so a write to one of those rows is answered
+): Map<string, DoorItem> {
+  // What the hydration served, so a write to one of those items is answered
   // with what the real server keeps rather than a default.
   const door = new FolderDoor(
-    Object.values(harness.rows)
+    Object.values(harness.items)
       .flat()
-      .map((row): [string, DoorRow] => {
+      .map((row): [string, DoorItem] => {
         const item = wireItem(row.item);
         return [
           row.item.id,
@@ -224,14 +224,14 @@ export function scriptFolderWrites(
         return answer;
       },
     ],
-    // Reconciliation reads the current server row after each settled write.
+    // Reconciliation reads the current server item after each settled write.
     read: [
       (request) => {
         const answer = door.read(request.pathname.split("/").at(-1) ?? "");
         return options.reading?.(answer, request) ?? answer;
       },
     ],
-    // The tags a row holds move as the tag doors are told.
+    // The tags an item holds move as the tag doors are told.
     tags: [
       (request) => {
         const standIn = options.tagging?.(request);
@@ -346,7 +346,7 @@ export class EdgeDoor {
    *  before a change the copy has since taken (`device.md`, What the real
    *  server cannot be made to produce). */
   readonly behind = new Map<string, WireEdgeOptions & { version: number }>();
-  /** Whether the item door holds a row, which an end moved to must be. */
+  /** Whether the item door holds an item, which an end moved to must be. */
   holds: (id: string) => boolean = () => true;
   private minted = 0;
 

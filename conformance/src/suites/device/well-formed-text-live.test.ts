@@ -75,7 +75,7 @@ async function post(body: string): Promise<Response> {
   });
 }
 
-it("refuses a surrogate escape with no partner and leaves a device able to hydrate and catch up over the row that is", async () => {
+it("refuses a surrogate escape with no partner and leaves a device able to hydrate and catch up over the item that is", async () => {
   const caughtUp = device(first);
   expect((await caughtUp.hydrate([type], "library")).ok).toBe(true);
 

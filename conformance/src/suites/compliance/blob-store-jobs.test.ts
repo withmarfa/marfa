@@ -403,11 +403,11 @@ describe("a property-update job that has not ended", () => {
         filter: matchesNothing(),
       });
       // The uploader included: the uploader holds the bytes already, and no
-      // row names them.
+      // item names them.
       expect(await readingDoors(working, hash)).toEqual(UNKNOWN);
       expect(await readingDoors(other, hash)).toEqual(UNKNOWN);
 
-      // The witness: a row naming the blob lends it through the same doors
+      // The witness: an item naming the blob lends it through the same doors
       // to the same two keys.
       const file = await working.createItem({
         type: "core.file",

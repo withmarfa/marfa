@@ -19,7 +19,7 @@ import { ScriptedServer } from "../../device/scripted-server.js";
 import {
   KEY,
   requireBinary,
-  scriptFolderRow,
+  scriptFolderItem,
   scriptHydration,
 } from "./harness.js";
 
@@ -98,7 +98,7 @@ async function machine(label: string): Promise<Machine> {
     folder: (below) => {
       const dir = join(home, below);
       mkdirSync(dir, { recursive: true });
-      const row = scriptFolderRow(server, SETTINGS);
+      const row = scriptFolderItem(server, SETTINGS);
       const folder = new CliFolder(dir, {
         binary: requireBinary(),
         url: server.url,

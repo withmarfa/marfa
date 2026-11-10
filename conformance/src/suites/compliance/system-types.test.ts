@@ -2,7 +2,7 @@
  * Conformance for what a credential may do with the internal `system.*` type
  * set, which under one permission model is: nothing.
  *
- * Every real `system.*` row is written by the server through the storage
+ * Every real `system.*` item is written by the server through the storage
  * layer, so the half that is assertable black-box is the refusal, asserted
  * from a credential holding write on every type.
  */
@@ -247,7 +247,7 @@ describe("system.* set", () => {
   it("serves no system.connection carrying a field the type no longer declares", async () => {
     // The other half of the same claim, and the half a schema cannot
     // make on its own: a field removed from the declaration can still be
-    // sitting in a stored row. Nothing over the wire creates a
+    // sitting in a stored item. Nothing over the wire creates a
     // `system.connection` — an OAuth grant is what writes one — so this
     // asserts over whatever the instance happens to hold and is vacuous
     // on a dataset with none. Vacuous and honest beats absent: the

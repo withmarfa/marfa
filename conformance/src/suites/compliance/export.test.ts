@@ -58,7 +58,7 @@ function parseNdjson(
 }
 
 /**
- * Every filter case seeds a row the filter must return and a row it must
+ * Every filter case seeds an item the filter must return and an item it must
  * exclude, and asserts both, because a loop over an empty export passes
  * whatever the filter did.
  */
@@ -277,7 +277,7 @@ describe("export", () => {
         .map((line) => JSON.parse(line) as { edge?: MarfaEdge })
         .flatMap((line) => (line.edge ? [line.edge.id] : []));
 
-    // Both endpoints are the same two readable items in both rows, so
+    // Both endpoints are the same two readable items in both items, so
     // what the export leaves out can only be the kind of relationship.
     const narrowResp = await client.createKey({
       label: "export-edge-scope-narrow",
@@ -328,7 +328,7 @@ describe("export", () => {
     ).not.toContain(hidden.data.edge.id);
 
     // The witness for both formats: the same export under a credential
-    // holding both kinds carries both rows, so the absences above are the
+    // holding both kinds carries both items, so the absences above are the
     // edge map.
     const wideExport = await client.exportItems({ source });
     expect(wideExport.ok, JSON.stringify(wideExport.error)).toBe(true);
@@ -337,7 +337,7 @@ describe("export", () => {
     expect(wideIds).toContain(hidden.data.edge.id);
   });
 
-  it("carries on each row only the extension namespaces the key may read, on both output formats", async () => {
+  it("carries on each item only the extension namespaces the key may read, on both output formats", async () => {
     const seen = `export-seen-${ctx.runId}`;
     const unseen = `export-unseen-${ctx.runId}`;
     const note = await client.createItem(createNote({ source: ctx.source }));
@@ -396,7 +396,7 @@ describe("export", () => {
     // `format` was `z.string()` under a description offering `ndjson` or
     // `archive`, an enumeration a reader takes as closed. `?format=bogus`
     // answered 200 with NDJSON and recorded `format: "bogus"` in the audit
-    // row: a caller who asked for an archive and mistyped it got a stream
+    // item: a caller who asked for an archive and mistyped it got a stream
     // named like a success. The reasoning is the door's own, twelve lines
     // from where it refuses an undeclared query key.
     //
@@ -469,7 +469,7 @@ function archiveItemIds(archive: Uint8Array): string[] {
   );
 }
 
-/** A key of its own under a source of its own, so a row count can be exact. */
+/** A key of its own under a source of its own, so an item count can be exact. */
 async function writerOfItsOwn(label: string): Promise<{
   writer: MarfaClient;
   source: string;
@@ -505,7 +505,7 @@ async function noteIn(
 }
 
 describe("the states an export carries", () => {
-  /** An active row, an archived one and a trashed one, under a source of its own. */
+  /** An active item, an archived one and a trashed one, under a source of its own. */
   async function oneOfEachState() {
     const { writer, source } = await writerOfItsOwn(
       `states-${String(Math.random()).slice(2, 8)}`,
@@ -520,7 +520,7 @@ describe("the states an export carries", () => {
 
   const idsOf = (raw: string) => parseNdjson(raw).map((l) => l.item.id);
 
-  it("carries every row it holds, the bin included, when it names state=any, on both formats", async () => {
+  it("carries every item it holds, the bin included, when it names state=any, on both formats", async () => {
     const { source, active, archived, trashed } = await oneOfEachState();
     const stream = await client.exportItems({ source, state: "any" });
     expect(stream.status).toBe(200);
@@ -534,7 +534,7 @@ describe("the states an export carries", () => {
     );
   });
 
-  it("carries only the rows in the bin when it names state=trashed, on both formats", async () => {
+  it("carries only the items in the bin when it names state=trashed, on both formats", async () => {
     const { source, active, archived, trashed } = await oneOfEachState();
     const stream = await client.exportItems({ source, state: "trashed" });
     expect(stream.status).toBe(200);
@@ -553,7 +553,7 @@ describe("the states an export carries", () => {
     ).toEqual([archived]);
   });
 
-  it("carries archived rows and leaves out the bin when an archive names no state", async () => {
+  it("carries archived items and leaves out the bin when an archive names no state", async () => {
     const { source, active, archived } = await oneOfEachState();
     const archive = await client.exportArchive({ source });
     expect(archive.status).toBe(200);
@@ -748,7 +748,7 @@ describe("the archive's contents", () => {
     expect(types.data.next_cursor).toBeNull();
     expect(edgeTypes.data.next_cursor).toBeNull();
 
-    // A selection that holds no row of the registered type, under a key that
+    // A selection that holds no item of the registered type, under a key that
     // reads one type only.
     const narrow = await client.createKey({
       label: "export-types-narrow",
@@ -823,7 +823,7 @@ describe("an archive is the selection as it stood when its headers arrived", () 
       (line) => line.item.id === id,
     )?.item.properties.title;
 
-  it("counts every row the archive holds in its manifest when the headers arrive", async () => {
+  it("counts every item the archive holds in its manifest when the headers arrive", async () => {
     const { writer, source } = await writerOfItsOwn("selection");
     const a = await noteIn(writer, source);
     const b = await noteIn(writer, source);
@@ -846,12 +846,12 @@ describe("an archive is the selection as it stood when its headers arrived", () 
     expect(manifest.edge_count).toBe(1);
     expect(archiveItemIds(archive).sort()).toEqual([a, b].sort());
     expect(archiveLines(archive, "edges")).toHaveLength(1);
-    // The witness: a later export carries the row the first one did not.
+    // The witness: a later export carries the item the first one did not.
     const later = await client.exportArchive({ source });
     expect(archiveItemIds(later.data)).toContain(writtenAfter);
   });
 
-  it("carries a row as it stood when the export read it, whatever is written to it after the headers", async () => {
+  it("carries an item as it stood when the export read it, whatever is written to it after the headers", async () => {
     const { writer, source } = await writerOfItsOwn("as-read");
     const id = await noteIn(writer, source, {
       properties: { title: "as read", body: "before" },

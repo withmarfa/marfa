@@ -13,12 +13,12 @@ import { createNote } from "../../generators/items.js";
  * it (`search-and-filters/export-state-default`). Three doors, two answers, and the
  * divergence is deliberate: a listing and a search answer what the reader
  * is working with, while the archive an export writes is what a restore
- * reads back, so dropping archived rows from it would lose them on the
+ * reads back, so dropping archived items from it would lose them on the
  * round trip.
  *
  * Every case asserts on which ids come back rather than on a count. A door
  * that lost its state predicate and a door that matched nothing both
- * produce a plausible number, and the active row is what says the query
+ * produce a plausible number, and the active item is what says the query
  * reached anything at all.
  */
 
@@ -29,7 +29,7 @@ let active: MarfaItem;
 let archived: MarfaItem;
 let trashed: MarfaItem;
 
-/** The three rows this file seeded, so a shared instance's other rows
+/** The three items this file seeded, so a shared instance's other items
  *  cannot answer for them. */
 let mine: Set<string>;
 
@@ -49,7 +49,7 @@ beforeAll(async () => {
     );
     expect(
       res.ok,
-      "the fixture cannot seed a row, so nothing below means anything",
+      "the fixture cannot seed an item, so nothing below means anything",
     ).toBe(true);
     trackItem(ctx, res.data.item.id);
     return res.data.item;
@@ -62,13 +62,13 @@ beforeAll(async () => {
   const toArchived = await client.transitionItem(archived.id, "archived");
   expect(
     toArchived.ok && toArchived.data.item.state === "archived",
-    "the fixture cannot put a row in the archive, so every case below is about two rows rather than three",
+    "the fixture cannot put an item in the archive, so every case below is about two items rather than three",
   ).toBe(true);
 
   const toTrashed = await client.deleteItem(trashed.id);
   expect(
     toTrashed.ok,
-    "the fixture cannot put a row in the bin, so nothing below distinguishes the bin from the archive",
+    "the fixture cannot put an item in the bin, so nothing below distinguishes the bin from the archive",
   ).toBe(true);
 
   mine = new Set([active.id, archived.id, trashed.id]);
@@ -78,7 +78,7 @@ afterAll(async () => {
   await cleanup(ctx);
 });
 
-/** Ids of this file's rows in a listing, in the order the door returned. */
+/** Ids of this file's items in a listing, in the order the door returned. */
 async function listed(
   filters: Parameters<MarfaClient["listItems"]>[0] = {},
 ): Promise<string[]> {
@@ -123,26 +123,26 @@ describe("the state a door answers when none is named", () => {
     const ids = await listed();
     expect(
       ids,
-      "a listing naming no state stopped answering live rows, so an unnarrowed read reports an empty instance",
+      "a listing naming no state stopped answering live items, so an unnarrowed read reports an empty instance",
     ).toContain(active.id);
     expect(
       ids,
-      "a listing naming no state answers archived rows, so a reader is handed rows they deliberately put away",
+      "a listing naming no state answers archived items, so a reader is handed items they deliberately put away",
     ).not.toContain(archived.id);
     expect(
       ids,
-      "a listing naming no state answers the bin, so a deleted row still reads as present",
+      "a listing naming no state answers the bin, so a deleted item still reads as present",
     ).not.toContain(trashed.id);
   });
 
-  it("a named state and the sentinel still reach every row", async () => {
+  it("a named state and the sentinel still reach every item", async () => {
     expect(
       await listed({ state: "archived" }),
-      "naming a state no longer reaches it, so the rows the default hides are unreachable",
+      "naming a state no longer reaches it, so the items the default hides are unreachable",
     ).toEqual([archived.id]);
     expect(
       await listed({ state: "trashed" }),
-      "naming the bin no longer reaches it, so a deleted row cannot be found in order to be restored",
+      "naming the bin no longer reaches it, so a deleted item cannot be found in order to be restored",
     ).toEqual([trashed.id]);
     // By identity rather than by length: a sentinel read as a plain state
     // value compares against the column, matches nothing, and leaves a
@@ -157,31 +157,31 @@ describe("the state a door answers when none is named", () => {
     const ids = await searched();
     expect(
       ids,
-      "a search naming no state stopped matching live rows, so the index answers nothing",
+      "a search naming no state stopped matching live items, so the index answers nothing",
     ).toContain(active.id);
     expect(
       ids,
-      "a search answers a row a listing hides, which is two answers to one question",
+      "a search answers an item a listing hides, which is two answers to one question",
     ).not.toContain(archived.id);
     expect(
       ids,
-      "a search answers the bin, so a deleted row is still findable and reads as present",
+      "a search answers the bin, so a deleted item is still findable and reads as present",
     ).not.toContain(trashed.id);
     expect(
       await searched({ state: "archived" }),
-      "naming a state no longer reaches it on the search door, so its rows are unreachable by any read",
+      "naming a state no longer reaches it on the search door, so its items are unreachable by any read",
     ).toEqual([archived.id]);
   });
 
-  it("a read by id answers an archived row and refuses one in the bin", async () => {
+  it("a read by id answers an archived item and refuses one in the bin", async () => {
     // The other half of what the default means. A listing narrows because
-    // the question has no subject; a read naming one row has one, and the
-    // archived row a listing hides is the row a caller is holding the id
+    // the question has no subject; a read naming one item has one, and the
+    // archived item a listing hides is the item a caller is holding the id
     // of. The bin is where the two doors agree.
     const filed = await client.getItem(archived.id);
     expect(
       filed.ok,
-      "an archived row is not readable by id, so putting a row in the archive makes it unreachable rather than quiet",
+      "an archived item is not readable by id, so putting an item in the archive makes it unreachable rather than quiet",
     ).toBe(true);
 
     const live = await client.getItem(active.id);
@@ -193,7 +193,7 @@ describe("the state a door answers when none is named", () => {
     const binned = await client.getItem(trashed.id);
     expect(
       binned.ok,
-      "a row in the bin is readable by id, so a delete hides a row from listings and leaves it addressable",
+      "an item in the bin is readable by id, so a delete hides an item from listings and leaves it addressable",
     ).toBe(false);
   });
 
@@ -208,21 +208,21 @@ describe("the state a door answers when none is named", () => {
       "the sentinel narrowed rather than widened, so it answers less than naming no state at all",
     ).toContain(active.id);
     // The one thing the sentinel cannot reach here, and it is the index
-    // rather than the query: a trashed row is removed from the index on
+    // rather than the query: a trashed item is removed from the index on
     // the write that trashes it, so no state value matches it.
     expect(
       ids,
-      "a row in the bin is matched by a search, so a deleted row is findable by text and the index holds rows the listing grammar cannot explain",
+      "an item in the bin is matched by a search, so a deleted item is findable by text and the index holds items the listing grammar cannot explain",
     ).not.toContain(trashed.id);
     expect(
       await searched({ state: "trashed" }),
-      "naming the bin on the search door matches a row, so the index and the listing disagree about what a delete removes",
+      "naming the bin on the search door matches an item, so the index and the listing disagree about what a delete removes",
     ).toEqual([]);
   });
 
-  it("a search does not reach a row born in the bin either", async () => {
-    // The case above puts its row in the bin with a delete, which is the one
-    // door that took a row back out of the index. A row created with its
+  it("a search does not reach an item born in the bin either", async () => {
+    // The case above puts its item in the bin with a delete, which is the one
+    // door that took an item back out of the index. An item created with its
     // state named never passes through that door, so it stayed indexed and
     // the sentinel answered it — the index holding what the grammar says no
     // search can reach.
@@ -239,17 +239,17 @@ describe("the state a door answers when none is named", () => {
     );
     expect(
       born.ok && born.data.item.state === "trashed",
-      "the fixture cannot create a row already in the bin, so this case says nothing about the door it exists for",
+      "the fixture cannot create an item already in the bin, so this case says nothing about the door it exists for",
     ).toBe(true);
     if (!born.ok) return;
     trackItem(ctx, born.data.item.id);
-    // Every read here narrows to `mine`, so a row absent from it cannot
+    // Every read here narrows to `mine`, so an item absent from it cannot
     // appear in a result whatever the server does — and the assertion below
     // would hold against a server that indexed the bin and answered it.
     mine.add(born.data.item.id);
 
     const widened = await searched({ state: "any" });
-    // The control: the same read reaches an ordinary row, so the absence
+    // The control: the same read reaches an ordinary item, so the absence
     // below is the bin rather than a search that matches nothing.
     expect(
       widened,
@@ -257,7 +257,7 @@ describe("the state a door answers when none is named", () => {
     ).toContain(active.id);
     expect(
       widened,
-      "a row created straight into the bin is matched by a search, so whether a deleted row is findable depends on which door put it there",
+      "an item created straight into the bin is matched by a search, so whether a deleted item is findable depends on which door put it there",
     ).not.toContain(born.data.item.id);
   });
 
@@ -283,19 +283,19 @@ describe("the state a door answers when none is named", () => {
     }
   });
 
-  it("an export that names no state carries archived rows", async () => {
+  it("an export that names no state carries archived items", async () => {
     const ids = await exported();
     expect(
       ids,
-      "an export naming no state stopped carrying live rows, so a backup is empty",
+      "an export naming no state stopped carrying live items, so a backup is empty",
     ).toContain(active.id);
     expect(
       ids,
-      "an export took the listing default, so a backup and the restore that reads it lose every archived row",
+      "an export took the listing default, so a backup and the restore that reads it lose every archived item",
     ).toContain(archived.id);
     expect(
       ids,
-      "an export carries the bin by default, so a restore resurrects deleted rows",
+      "an export carries the bin by default, so a restore resurrects deleted items",
     ).not.toContain(trashed.id);
   });
 });

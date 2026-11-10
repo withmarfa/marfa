@@ -279,7 +279,7 @@ describe("strict_mode lever", () => {
     ).toBe("unknown_property");
     expect(
       (await client.getItem(planted)).status,
-      "the refused archive wrote its row anyway",
+      "the refused archive wrote its item anyway",
     ).toBe(404);
 
     // The witness. The same archive without the property restores, so what
@@ -300,7 +300,7 @@ describe("strict_mode lever", () => {
     expect((await client.getItem(fine)).status).toBe(200);
   });
 
-  it("strict-on counts a restored row the instance already holds as a duplicate", async () => {
+  it("strict-on counts a restored item the instance already holds as a duplicate", async () => {
     await setConfig({});
     const held = uuidv7();
     const archive = itemsArchive([
@@ -330,7 +330,7 @@ describe("strict_mode lever", () => {
     // The door built for volume, reachable by any working key, writes
     // through a store whose validation runs loose whatever the lever says,
     // so the control `POST /items` enforces is one this door has to ask
-    // for itself, on both the rows a page creates and the rows it updates.
+    // for itself, on both the items a page creates and the items it updates.
     await setConfig({
       enforcement: { strict_mode: { types: ["core.note"] } },
     });
@@ -353,7 +353,7 @@ describe("strict_mode lever", () => {
     );
     expect(
       (await client.getItem(created)).status,
-      "the refused entry wrote its row anyway",
+      "the refused entry wrote its item anyway",
     ).toBe(404);
 
     // The witness for the create half: the same body without the
@@ -369,9 +369,9 @@ describe("strict_mode lever", () => {
     expect(acceptedCreate.data.counts.created).toBe(1);
     trackItem(ctx, created);
 
-    // And the update half of the same door, against the row just
-    // written. A door that refused an undeclared property on the rows it
-    // creates and took it on the rows it updates would be the defect
+    // And the update half of the same door, against the item just
+    // written. A door that refused an undeclared property on the items it
+    // creates and took it on the items it updates would be the defect
     // restated rather than closed.
     const refusedUpdate = await client.bulkItems({
       items: [
@@ -407,7 +407,7 @@ describe("strict_mode lever", () => {
   });
 
   it("strict-on rejects the same unknown property through the update door", async () => {
-    // An update door that validated loosely would let a row created under
+    // An update door that validated loosely would let an item created under
     // the lever be given the property it was refused at creation, one
     // request later.
     await setConfig({
@@ -453,7 +453,7 @@ describe("strict_mode lever", () => {
     // reads as a missing required field to a strict parse, and the update
     // doors would refuse an ordinary request under a message naming a
     // cause that is not the cause. The store still asks for the required
-    // fields, against the merged row, and answers in its own words.
+    // fields, against the merged item, and answers in its own words.
     await setConfig({
       enforcement: { strict_mode: { types: ["core.message"] } },
     });
@@ -480,7 +480,7 @@ describe("strict_mode lever", () => {
     ).toBe("the sender the type requires");
 
     // The same shape through the bulk door, which reaches this branch by
-    // resolving a row rather than by naming one.
+    // resolving an item rather than by naming one.
     const viaBulk = await client.bulkItems({
       items: [
         {
@@ -507,10 +507,10 @@ describe("strict_mode lever", () => {
     expect(stillRefused.error?.error.details?.code).toBe("unknown_property");
   });
 
-  it("strict-on refuses the same unknown property per row of a bulk update_properties job", async () => {
-    // The filter-in door reaches every row a filter matches with one patch,
-    // so it asks the lever per row, of the patch rather than of the merge,
-    // and refuses only the rows of a type the lever names.
+  it("strict-on refuses the same unknown property per item of a bulk update_properties job", async () => {
+    // The filter-in door reaches every item a filter matches with one patch,
+    // so it asks the lever per item, of the patch rather than of the merge,
+    // and refuses only the items of a type the lever names.
     await setConfig({
       enforcement: { strict_mode: { types: ["core.note"] } },
     });
@@ -522,7 +522,7 @@ describe("strict_mode lever", () => {
     });
     expect(note.ok, JSON.stringify(note.error)).toBe(true);
     trackItem(ctx, note.data.item.id);
-    // The witness: a row of a type the lever does not name, matched by the
+    // The witness: an item of a type the lever does not name, matched by the
     // same filter, takes the same patch, so what refuses the note is the
     // lever and not the job, the filter or the patch.
     const bookmark = await client.createItem({
@@ -544,18 +544,18 @@ describe("strict_mode lever", () => {
     expect(refused.errors?.[0]?.code).toBe("invalid_properties");
     expect(
       refused.errors?.[0]?.details?.code,
-      "the job refused the row for some reason of its own rather than the one the create door gives",
+      "the job refused the item for some reason of its own rather than the one the create door gives",
     ).toBe("unknown_property");
     expect(
       (await client.getItem(note.data.item.id)).data.item.properties,
-      "the refused row was written anyway",
+      "the refused item was written anyway",
     ).toEqual({ body: "before" });
     expect(
       (await client.getItem(bookmark.data.item.id)).data.item.properties
         .not_a_real_field,
     ).toBe("x");
 
-    // A patch naming only declared properties applies to every row.
+    // A patch naming only declared properties applies to every item.
     const accepted = await runBulkAction({
       action: "update_properties",
       patch: { title: "declared" },
@@ -591,7 +591,7 @@ describe("strict_mode lever", () => {
     trackItem(ctx, id);
     expect(
       (await client.getItem(id)).data.item.properties.not_a_real_field,
-      "the bulk door took the row and dropped the property, so the case above refuses something it never writes",
+      "the bulk door took the item and dropped the property, so the case above refuses something it never writes",
     ).toBe("x");
 
     const written = await client.getItem(id);
@@ -602,7 +602,7 @@ describe("strict_mode lever", () => {
     expect(patched.ok, JSON.stringify(patched.error)).toBe(true);
     expect(
       (await client.getItem(id)).data.item.properties.another_unreal_field,
-      "the update door took the row and dropped the property",
+      "the update door took the item and dropped the property",
     ).toBe("y");
   });
 
@@ -629,7 +629,7 @@ describe("strict_mode lever", () => {
     expect(read.status).toBe(200);
     expect(
       read.data.item.properties.not_a_real_field,
-      "the restore took the row and dropped the property, so the case above refuses something this door never writes",
+      "the restore took the item and dropped the property, so the case above refuses something this door never writes",
     ).toBe("x");
   });
 });
@@ -828,11 +828,11 @@ describe("source_allowlist lever", () => {
     };
     expect(
       await ownRows(),
-      "the rolled-back page left a row behind",
+      "the rolled-back page left an item behind",
     ).not.toContain(`${own}-atomic`);
 
     // The witness: the same entry under the key's own source, which the
-    // list names, lands, and the listing that found no rolled-back row
+    // list names, lands, and the listing that found no rolled-back item
     // finds it.
     const landed = await writer.bulkItems({
       items: [entry(own, `${own}-bulk`)],
@@ -844,7 +844,7 @@ describe("source_allowlist lever", () => {
     const relisted = await ownRows();
     expect(
       relisted,
-      "the listing does not surface a row the key wrote under its own source, so the absence above proves nothing",
+      "the listing does not surface an item the key wrote under its own source, so the absence above proves nothing",
     ).toContain(`${own}-bulk`);
     expect(relisted).not.toContain(`${own}-atomic`);
   });
@@ -897,8 +897,8 @@ describe("source_filter lever", () => {
   });
 
   /**
-   * The lever applies per row, on every read that returns a set, so covering
-   * `/items` alone proves nothing. Each surface below reaches rows by a
+   * The lever applies per item, on every read that returns a set, so covering
+   * `/items` alone proves nothing. Each surface below reaches items by a
    * different path: a different index, a stream, an aggregate. A filter
    * applied in the list handler rather than in the query layer passes
    * `/items` and fails these.
@@ -975,7 +975,7 @@ describe("source_filter lever", () => {
     expect(exported.data).toContain(shown.data.item.id);
 
     // Stats: an aggregate, keyed by lifecycle state. It returns counts
-    // rather than rows, so a filter applied while shaping a response instead
+    // rather than items, so a filter applied while shaping a response instead
     // of inside the query leaves this number unchanged while every other read
     // narrows. The filter admits one source, so at minimum the note written
     // by the other one stops counting.
@@ -983,8 +983,8 @@ describe("source_filter lever", () => {
     expect(statsAfter.ok).toBe(true);
     expect(statsAfter.data["active"] ?? 0).toBeLessThan(activeBefore);
 
-    // Tags: a tag counted over hidden rows would open to an empty listing, so
-    // the shared tag counts the one visible row and the other is not named.
+    // Tags: a tag counted over hidden items would open to an empty listing, so
+    // the shared tag counts the one visible item and the other is not named.
     const tagsAfter = await tagCounts();
     expect(tagsAfter[marker]).toBe(1);
     expect(tagsAfter[`${marker}-hidden-only`]).toBeUndefined();
@@ -1068,7 +1068,7 @@ describe("source_filter lever", () => {
    *
    * The lever narrows a result set; it is not an access-control gate, and the
    * id read is already fenced by the caller's type permissions. Quietly adding it
-   * here would turn a filtered-out row into a 404 for a caller holding its id,
+   * here would turn a filtered-out item into a 404 for a caller holding its id,
    * which reads as data loss rather than as a filter. Without a test the
    * exemption looks like an oversight and gets "fixed".
    */
@@ -1164,7 +1164,7 @@ describe("source_filter lever", () => {
     }
   });
 
-  it("answers a row the instance's source filter leaves out of listings, as a read by key", async () => {
+  it("answers an item the instance's source filter leaves out of listings, as a read by key", async () => {
     const hiddenSource = `${ctx.source}-lookup-hidden`;
     const hidden = await clientWithSource("lookup-hidden", hiddenSource);
     const sourceId = `lookup-filtered-${ctx.runId}`;
@@ -1194,7 +1194,7 @@ describe("source_filter lever", () => {
 
     try {
       await setConfig({});
-      // The witness: the row is listed before the filter, so its absence
+      // The witness: the item is listed before the filter, so its absence
       // from the listing below is the filter's doing.
       expect(await listed()).toEqual([id]);
 

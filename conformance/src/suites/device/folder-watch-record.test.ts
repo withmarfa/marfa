@@ -10,9 +10,9 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { dirname, join } from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { answers } from "../../device/marfa-answers.js";
-import { KEY, folderHarness, scriptFolderRow } from "./harness.js";
+import { KEY, folderHarness, scriptFolderItem } from "./harness.js";
 import type { HeldCommand } from "../../device/cli-adapter.js";
-import type { FolderHarness, FolderRow } from "./harness.js";
+import type { FolderHarness, FolderItem } from "./harness.js";
 import type { ScriptedServer } from "../../device/scripted-server.js";
 import type { FolderSettings } from "../../device/cli-adapter.js";
 import {
@@ -98,7 +98,7 @@ async function twoFolders(
   a: FolderHarness;
   b: FolderHarness;
   edges: EdgeDoor;
-  others: FolderRow[];
+  others: FolderItem[];
 }> {
   const edges = new EdgeDoor();
   const a = await folderHarness(`${label}-a`, {
@@ -107,9 +107,9 @@ async function twoFolders(
   });
   made.push(a);
   // Before the item doors, whose read would answer for any id.
-  const row = scriptFolderRow(a.server, tagged("b"));
+  const row = scriptFolderItem(a.server, tagged("b"));
   const others = (options.others ?? []).map((settings) =>
-    scriptFolderRow(a.server, settings),
+    scriptFolderItem(a.server, settings),
   );
   options.before?.(a.server);
   scriptFolderWrites(a, { edges });
@@ -250,7 +250,7 @@ describe("the record of folder watches", () => {
     const a = await folderHarness("record-hydrating", {
       hydrate: false,
       pagesHeldUntil: slow,
-      rows: {
+      items: {
         "core.note": [{ item: { id: "01a00000-0000-7000-8000-0000000000d1" } }],
       },
     });
@@ -294,7 +294,7 @@ describe("the record of folder watches", () => {
     const a = await folderHarness("record-hydration-failing", {
       hydrate: false,
       firstPageDropped: true,
-      rows: {
+      items: {
         "core.note": [{ item: { id: "01a00000-0000-7000-8000-0000000000d2" } }],
       },
     });

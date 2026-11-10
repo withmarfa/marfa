@@ -35,7 +35,7 @@ describe("folder title names and retried pulls", () => {
       "Plain.md",
     ];
     folder = await folderHarness("contract-c-names", {
-      rows: {
+      items: {
         "core.note": titles.map((title, index) => ({
           item: { id: id(index), properties: { title, body: "kept body\n" } },
         })),
@@ -64,7 +64,7 @@ describe("folder title names and retried pulls", () => {
     const long = `.${"x".repeat(32)}`;
     folder = await folderHarness("contract-c-extensions", {
       settings: { query: { types: ["core.file"] } },
-      rows: {
+      items: {
         "core.file": [short, long, ".png"].map((extension, index) => ({
           item: {
             id: id(index),
@@ -96,7 +96,7 @@ describe("folder title names and retried pulls", () => {
 
   it("counts files and placements from before a restarted pull exactly once", async () => {
     folder = await folderHarness("contract-c-retry", {
-      rows: {
+      items: {
         "core.note": ["first", "second"].map((title, index) => ({
           item: { id: id(index), properties: { title, body: "body\n" } },
         })),
@@ -128,7 +128,7 @@ describe("folder title names and retried pulls", () => {
 
   it("retries a changed copy three times in total and succeeds on the third stable read", async () => {
     folder = await folderHarness("contract-c-attempts", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {

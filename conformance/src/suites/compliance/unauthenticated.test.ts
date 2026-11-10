@@ -27,7 +27,7 @@ const OPEN_DOORS = new Set([
 
 /**
  * Nothing about these requests is well formed, which is the point. The
- * credential check runs ahead of the body check and the row lookup, so a
+ * credential check runs ahead of the body check and the item lookup, so a
  * bare request gets one answer whatever else is wrong with it: an id nothing
  * carries, a query key no door knows, and a body no parser accepts.
  */

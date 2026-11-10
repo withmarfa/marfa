@@ -93,8 +93,8 @@ export async function bindingHarness(
      */
     log?: Responder[];
     hydrate?: boolean;
-    /** The rows the hydration lists, by type. */
-    rows?: Parameters<typeof scriptHydration>[1]["rows"];
+    /** The items the hydration lists, by type. */
+    items?: Parameters<typeof scriptHydration>[1]["items"];
   } = {},
 ): Promise<Followed> {
   const started = await startBindingHarness(label);
@@ -105,7 +105,7 @@ export async function bindingHarness(
     scriptHydration(started.server, {
       head: options.head ?? "10",
       instance: options.instance,
-      rows: options.rows,
+      items: options.items,
     });
     options.setup?.(started);
     let next: Responder[] = options.streams ?? [HELD];
@@ -186,8 +186,8 @@ export async function untilReached(
 }
 
 /**
- * Takes every create, answering with the row it was sent, and answers a read
- * of each row it took. The answers `ahead` makes from the taking answer go
+ * Takes every create, answering with the item it was sent, and answers a read
+ * of each item it took. The answers `ahead` makes from the taking answer go
  * first, one per create.
  */
 export function takeCreates(
@@ -227,7 +227,7 @@ export function createsSent(server: BindingHarness["server"]): string[] {
     .map((request) => (JSON.parse(request.body) as { id: string }).id);
 }
 
-/** Queues a note for each title, and answers the ids of the rows made. */
+/** Queues a note for each title, and answers the ids of the items made. */
 export async function queueNotes(
   device: BindingDevice,
   ...titles: string[]

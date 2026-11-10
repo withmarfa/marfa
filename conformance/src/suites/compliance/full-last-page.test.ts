@@ -21,15 +21,15 @@ import { pageDoors, servedDocument } from "../../utils/openapi.js";
 import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
 
 /**
- * A page that holds the last row answers a null cursor, even when the rows
+ * A page that holds the last item answers a null cursor, even when the items
  * fill it exactly. Every door that takes a cursor is seeded with exactly
- * `LIMIT` rows and read at `LIMIT`. A door that decided "more follows" from a
- * full page rather than from a row past it would hand back a cursor to an
+ * `LIMIT` items and read at `LIMIT`. A door that decided "more follows" from a
+ * full page rather than from an item past it would hand back a cursor to an
  * empty page here, and nowhere else, because every other fixture seeds more
- * rows than it reads.
+ * items than it reads.
  *
- * Each door is also read one short of its rows first. That page must carry
- * a cursor, and following it must reach the last row: the witness that the
+ * Each door is also read one short of its items first. That page must carry
+ * a cursor, and following it must reach the last item: the witness that the
  * seed is what the door reads, so the null below is about the boundary and
  * not about a door that never answers a cursor.
  */
@@ -133,7 +133,7 @@ async function trashSummaryPage(): Promise<Read> {
   };
 }
 
-/** Seeds exactly `LIMIT` rows behind a door and returns how to read them. */
+/** Seeds exactly `LIMIT` items behind a door and returns how to read them. */
 const seeds: Record<string, () => Promise<Read>> = {
   "GET /folders": async () => {
     const server = await bootFreshServer("full-last-page-folders");
@@ -332,7 +332,7 @@ const seeds: Record<string, () => Promise<Read>> = {
       );
     }
     // The delivery is logged after the receiver answers, and the hook is
-    // retired once all are logged so no later write adds a row.
+    // retired once all are logged so no later write adds an item.
     let logged = 0;
     for (let attempt = 0; attempt < 40 && logged < LIMIT; attempt++) {
       logged = answered(await client.listWebhookDeliveries(hook.id)).data
@@ -418,7 +418,7 @@ describe("a full last page answers a null cursor", () => {
 
   const seededDoors = Object.keys(seeds);
   it.each(seededDoors)(
-    "%s answers null when the rows fill the page exactly",
+    "%s answers null when the items fill the page exactly",
     async (door) => {
       const read = await seeds[door]!();
 

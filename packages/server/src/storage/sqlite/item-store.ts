@@ -878,7 +878,7 @@ function restoreHoldsShape(type: string): boolean {
  * them, whatever shape its type has now and whether or not the type is
  * registered, even as a platform row the build retired, because a type may
  * gain a required field or be force-deleted while its rows stand
- * (`search-and-filters/restore-rows-shape-free`).
+ * (`search-and-filters/restore-items-shape-free`).
  */
 export function restoredItem(
   input: Pick<

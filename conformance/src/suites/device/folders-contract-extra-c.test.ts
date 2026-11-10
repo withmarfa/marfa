@@ -69,7 +69,7 @@ async function seed(
     (whole[edge.edge_type ?? "references"] ??= []).push(edge);
   const frames: SseFrame[] = [];
   folder = await folderHarness("extra-c", {
-    rows,
+    items: rows,
     edges: whole,
     settings,
     hydrate: false,

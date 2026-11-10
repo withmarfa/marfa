@@ -8,14 +8,14 @@ import type { DeviceUnderTest, Item } from "../../device/protocol.js";
 import { scriptHydration, startHarness, type Harness } from "./harness.js";
 
 /**
- * The bin as the copy holds it: a row the slice takes stays in the copy when
+ * The bin as the copy holds it: an item the slice takes stays in the copy when
  * it goes to the bin, by the device's own delete or by an event, and a local
- * list naming the bin answers those rows with the server away, newest binned
- * first. The copy stamps when its own delete binned a row, clears it on
- * restore, and holds the server's time once the server's row arrives
+ * list naming the bin answers those items with the server away, newest binned
+ * first. The copy stamps when its own delete binned an item, clears it on
+ * restore, and holds the server's time once the server's item arrives
  * (`device/bin-local-order`, `device/bin-local-stamp`,
  * `device/bin-local-restore`, `device/bin-local-server-time`). A purge takes
- * the row out, however late the copy hears of it.
+ * the item out, however late the copy hears of it.
  */
 
 let harness: Harness | undefined;
@@ -42,7 +42,7 @@ async function ids(
   return listed.ok ? listed.value.map((item) => item.id) : [];
 }
 
-/** Every row the copy holds, in every state, with its state. */
+/** Every item the copy holds, in every state, with its state. */
 async function held(
   device: DeviceUnderTest,
 ): Promise<Array<{ id: string; state: string }>> {
@@ -73,19 +73,19 @@ async function offline<T>(
   }
 }
 
-describe("a row the copy holds goes to the bin", () => {
-  it("holds a row the device puts in the bin, and lists it there with the server away", async () => {
+describe("an item the copy holds goes to the bin", () => {
+  it("holds an item the device puts in the bin, and lists it there with the server away", async () => {
     harness = await startHarness("bin-held-delete");
     scriptHydration(harness.server, {
       head: "10",
-      rows: {
+      items: {
         "core.note": [{ item: { id: "kept" } }, { item: { id: "other" } }],
       },
     });
     expect((await harness.device.hydrate(["core.note"], "library")).ok).toBe(
       true,
     );
-    // The witness: before the delete the bin holds nothing, so the row in
+    // The witness: before the delete the bin holds nothing, so the item in
     // it below is the delete's doing.
     expect(await ids(harness.device, { state: "trashed" })).toEqual([]);
 
@@ -98,19 +98,19 @@ describe("a row the copy holds goes to the bin", () => {
     );
     expect(
       binned,
-      "a row the device put in the bin left the copy, so a person cannot find it again offline",
+      "an item the device put in the bin left the copy, so a person cannot find it again offline",
     ).toEqual(["kept"]);
     expect(
       await ids(started.device, {}),
-      "a row in the bin is still answered as present",
+      "an item in the bin is still answered as present",
     ).toEqual(["other"]);
   });
 
-  it("holds a row an event puts in the bin, and lists it there with the server away", async () => {
+  it("holds an item an event puts in the bin, and lists it there with the server away", async () => {
     harness = await startHarness("bin-held-event");
     scriptHydration(harness.server, {
       head: "10",
-      rows: {
+      items: {
         "core.note": [{ item: { id: "row", updated_at: T0 } }],
       },
     });
@@ -135,11 +135,11 @@ describe("a row the copy holds goes to the bin", () => {
     const started = harness;
     expect(
       await offline(started, () => ids(started.device, { state: "trashed" })),
-      "a row the server put in the bin left the copy, so the bin offline misses it",
+      "an item the server put in the bin left the copy, so the bin offline misses it",
     ).toEqual(["row"]);
   });
 
-  it("orders the bin newest binned first, a row with no time at its updated_at", async () => {
+  it("orders the bin newest binned first, an item with no time at its updated_at", async () => {
     harness = await startHarness("bin-held-order");
     // Created in the opposite order to the one they went to the bin in, so a
     // list in creation order answers them reversed. `written-since` was
@@ -147,7 +147,7 @@ describe("a row the copy holds goes to the bin", () => {
     // first; `no-time` kept no time and stands at its `updated_at`.
     scriptHydration(harness.server, {
       head: "10",
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -194,7 +194,7 @@ describe("a row the copy holds goes to the bin", () => {
     const newest = ["last-binned", "middle-binned", "no-time", "written-since"];
     expect(
       await offline(started, () => ids(started.device, { state: "trashed" })),
-      "the bin was not answered newest first by the time each row went there",
+      "the bin was not answered newest first by the time each item went there",
     ).toEqual(newest);
     expect(
       await ids(started.device, { state: "trashed", direction: "asc" }),
@@ -207,19 +207,19 @@ describe("a row the copy holds goes to the bin", () => {
   });
 });
 
-/** Every row the copy holds, in every state, by id. */
+/** Every item the copy holds, in every state, by id. */
 async function rows(device: DeviceUnderTest): Promise<Map<string, Item>> {
   const listed = await device.list({ allStates: true });
   expect(listed.ok, JSON.stringify(listed)).toBe(true);
   return new Map(listed.ok ? listed.value.map((row) => [row.id, row]) : []);
 }
 
-describe("when a held row went to the bin", () => {
+describe("when a held item went to the bin", () => {
   it("records when the device put it there, leaving updated_at, clears it on restore, and takes a new time on a second delete", async () => {
     harness = await startHarness("bin-held-stamp");
     scriptHydration(harness.server, {
       head: "10",
-      rows: { "core.note": [{ item: { id: "kept", updated_at: T0 } }] },
+      items: { "core.note": [{ item: { id: "kept", updated_at: T0 } }] },
     });
     expect((await harness.device.hydrate(["core.note"], "library")).ok).toBe(
       true,
@@ -261,11 +261,11 @@ describe("when a held row went to the bin", () => {
     }
   });
 
-  it("holds the server's time in place of its own once the server's row arrives", async () => {
+  it("holds the server's time in place of its own once the server's item arrives", async () => {
     harness = await startHarness("bin-held-server-time");
     scriptHydration(harness.server, {
       head: "10",
-      rows: { "core.note": [{ item: { id: "row", updated_at: T0 } }] },
+      items: { "core.note": [{ item: { id: "row", updated_at: T0 } }] },
     });
     harness.server.copyAnswer(
       "GET",
@@ -306,12 +306,12 @@ describe("when a held row went to the bin", () => {
   });
 });
 
-describe("a row that goes to the bin and back before the copy hears", () => {
-  it("holds one row, in the state the last event gives", async () => {
+describe("an item that goes to the bin and back before the copy hears", () => {
+  it("holds one item, in the state the last event gives", async () => {
     harness = await startHarness("bin-held-restored");
     scriptHydration(harness.server, {
       head: "10",
-      rows: {
+      items: {
         "core.note": [
           { item: { id: "back", updated_at: T0 } },
           { item: { id: "gone-again", state: "trashed", updated_at: T0 } },
@@ -353,7 +353,7 @@ describe("a row that goes to the bin and back before the copy hears", () => {
 
     expect(
       await held(harness.device),
-      "a row that went to the bin and back is held twice, or in a state it left",
+      "an item that went to the bin and back is held twice, or in a state it left",
     ).toEqual([
       { id: "back", state: "active" },
       { id: "gone-again", state: "trashed" },
@@ -366,11 +366,11 @@ describe("a row that goes to the bin and back before the copy hears", () => {
 });
 
 describe("a purge the copy hears of late", () => {
-  it("drops a row purged while the copy was offline, at its next catch-up", async () => {
+  it("drops an item purged while the copy was offline, at its next catch-up", async () => {
     harness = await startHarness("bin-purged-offline");
     scriptHydration(harness.server, {
       head: "10",
-      rows: {
+      items: {
         "core.note": [
           { item: { id: "purged", state: "trashed" } },
           { item: { id: "stays", state: "trashed" } },
@@ -392,8 +392,8 @@ describe("a purge the copy hears of late", () => {
       true,
     );
 
-    // While the server is away the copy still answers the row from its bin:
-    // the witness that the row was held, and that only the event removes it.
+    // While the server is away the copy still answers the item from its bin:
+    // the witness that the item was held, and that only the event removes it.
     const started = harness;
     await started.server.offline();
     const missed = await started.device.catchUp();
@@ -406,7 +406,7 @@ describe("a purge the copy hears of late", () => {
     expect(caught.ok, JSON.stringify(caught)).toBe(true);
     expect(
       await held(started.device),
-      "a row the server purged is still held, so a person can still see and restore a row that no longer exists",
+      "an item the server purged is still held, so a person can still see and restore an item that no longer exists",
     ).toEqual([{ id: "stays", state: "trashed" }]);
   });
 });

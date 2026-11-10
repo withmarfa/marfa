@@ -131,7 +131,7 @@ it("hydrates both tiers, keeps a triage made offline through a restart and its d
   expect(caught.applied).toBeGreaterThan(0);
   expect(
     await shown(copy, [inbox, record]),
-    "a row moved to the feed elsewhere left a copy that holds both tiers",
+    "an item moved to the feed elsewhere left a copy that holds both tiers",
   ).toEqual({ [inbox]: "library", [record]: "feed" });
 
   // Hydrated again at one tier, the other goes, as from any changed slice.
@@ -192,7 +192,7 @@ it("creates offline at each tier in a slice of both, and the server holds each w
   expect(await shown(copy, Object.keys(expected))).toEqual(expected);
 });
 
-it("re-saves a feed row by its natural key in a slice of both without moving it", async () => {
+it("re-saves a feed item by its natural key in a slice of both without moving it", async () => {
   const key = `slice-tiers-${ctx.runId}`;
   const created = await client.createItem({
     type: "core.note",
@@ -217,7 +217,7 @@ it("re-saves a feed row by its natural key in a slice of both without moving it"
   );
   expect(
     value(await offline.get(queued.item_id ?? "")).tier,
-    "a re-save naming no tier was shown at another tier than the row its key names",
+    "a re-save naming no tier was shown at another tier than the item its key names",
   ).toBe("feed");
   const drained = value(await copy.drain());
   expect(drained.verdicts.map((verdict) => verdict.verdict)).toEqual([
@@ -228,13 +228,13 @@ it("re-saves a feed row by its natural key in a slice of both without moving it"
   expect(read.data.item.properties.body).toBe("synced again");
   expect(
     read.data.item.tier,
-    "a re-save naming no tier moved the row its key names out of the feed",
+    "a re-save naming no tier moved the item its key names out of the feed",
   ).toBe("feed");
   value(await copy.catchUp());
   expect((await shown(copy, [id]))[id]).toBe("feed");
 });
 
-it("re-saves a row moved to the feed by its natural key from a copy of the library without moving it", async () => {
+it("re-saves an item moved to the feed by its natural key from a copy of the library without moving it", async () => {
   const key = `slice-tiers-moved-${ctx.runId}`;
   const copy = device("slice-tiers-library-keyed");
   value(await copy.hydrate(["core.note"], "library"));
@@ -245,7 +245,7 @@ it("re-saves a row moved to the feed by its natural key from a copy of the libra
     properties: { title: "synced", body },
   });
 
-  // A new key: the server holds no row under it, so the create goes at the
+  // A new key: the server holds no item under it, so the create goes at the
   // library and the copy shows it there.
   const first = value(await copy.create(keyed("first")));
   expect(value(await copy.get(first.item_id ?? "")).tier).toBe("library");
@@ -290,9 +290,9 @@ it("re-saves a row moved to the feed by its natural key from a copy of the libra
   expect(read.data.item.properties.body).toBe("synced again");
   expect(
     read.data.item.tier,
-    "a re-save naming no tier from a copy of the library moved a row a person moved to the feed",
+    "a re-save naming no tier from a copy of the library moved an item a person moved to the feed",
   ).toBe("feed");
-  // Answered at the feed, the row leaves a copy of the library.
+  // Answered at the feed, the item leaves a copy of the library.
   value(await copy.catchUp());
   expect(await shown(copy, [id, again.item_id ?? ""])).toEqual({
     [id]: null,

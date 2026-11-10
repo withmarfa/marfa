@@ -9,7 +9,7 @@ import { createTestContext, cleanup, trackItem } from "../../utils/setup.js";
 import {
   MATCHING_CASES,
   MATCHING_FIELDS,
-  MATCHING_ROWS,
+  MATCHING_ITEMS,
   MARKUP_QUERY,
   MARKUP_SNIPPET,
   SNIPPET_QUERY,
@@ -21,7 +21,7 @@ import { requireBinary } from "./harness.js";
  * "Search, matched as the server matches"): the same corpus and the same
  * queries against the real server and the real binary, with the same hits and
  * the same excerpt. The order is held to the server's for a corpus whose
- * ranking does not turn on rows the device does not hold, which is the only
+ * ranking does not turn on items the device does not hold, which is the only
  * order a device holding a slice can promise (`device/rank-bm25`).
  */
 
@@ -40,7 +40,7 @@ function value<T>(result: Outcome<T>): T {
 
 function id(key: string): string {
   const found = ids.get(key);
-  if (!found) throw new Error(`no row ${key}`);
+  if (!found) throw new Error(`no item ${key}`);
   return found;
 }
 
@@ -53,7 +53,7 @@ beforeAll(async () => {
     fields: { ...MATCHING_FIELDS },
   });
   expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
-  for (const row of MATCHING_ROWS) {
+  for (const row of MATCHING_ITEMS) {
     const created = await client.createItem({
       type: typeId,
       source: ctx.source,
@@ -120,7 +120,7 @@ describe("a device matches as the server does", () => {
     expect(long[0]?.snippet.startsWith("...")).toBe(true);
   });
 
-  it("escapes the row's text in an excerpt as the server does", async () => {
+  it("escapes the item's text in an excerpt as the server does", async () => {
     const local = value(await device.search(MARKUP_QUERY, { type: typeId }));
     const remote = await served(MARKUP_QUERY);
     expect(local.map((hit) => [hit.item.id, hit.snippet])).toEqual([
@@ -131,7 +131,7 @@ describe("a device matches as the server does", () => {
     ]);
   });
 
-  it("holds a changed type's searchable fields against rows it already holds", async () => {
+  it("holds a changed type's searchable fields against items it already holds", async () => {
     // The witness: the field is not searchable and the word is not found.
     expect(
       value(await device.search("blimp", { type: typeId })).map(
@@ -144,11 +144,11 @@ describe("a device matches as the server does", () => {
       fields: { ...MATCHING_FIELDS, secret: { type: "string" } },
     });
     expect(updated.ok, JSON.stringify(updated.error)).toBe(true);
-    // The server indexed the rows it stored again.
+    // The server indexed the items it stored again.
     expect((await served("blimp")).map((hit) => hit.item.id).sort()).toEqual(
       [id("blimp"), id("hangar")].sort(),
     );
-    // The device takes the catalog the next time it hydrates, and indexes every row it holds again.
+    // The device takes the catalog the next time it hydrates, and indexes every item it holds again.
     value(await device.hydrate([typeId], "library"));
     expect(
       value(await device.search("blimp", { type: typeId }))

@@ -115,7 +115,7 @@ pub fn queued_one(write: &QueuedWrite, json: bool) -> Result<(), CliError> {
     if let Some(ahead) = &write.follows {
         writeln!(
             out,
-            "after {ahead}, the write ahead of it to the same row or edge"
+            "after {ahead}, the write ahead of it to the same item or edge"
         )?;
     }
     Ok(())

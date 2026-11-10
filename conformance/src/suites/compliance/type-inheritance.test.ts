@@ -12,7 +12,7 @@ beforeAll(async () => {
 
 // `createTestContext` wraps `registerType` so a successful registration is
 // tracked on the context, and `cleanup` owns removing it. A second delete loop
-// here would be a second owner for the same row: it deletes the type, then
+// here would be a second owner for the same item: it deletes the type, then
 // cleanup's delete answers not-found and reports a fixture it did not leak.
 afterAll(async () => {
   await cleanup(ctx);

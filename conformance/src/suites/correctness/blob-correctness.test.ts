@@ -54,7 +54,7 @@ function expectRefused(
   expect(fetched.bytes).not.toEqual(content);
 }
 
-/** This run's own bytes, so no earlier run's row names or types them. */
+/** This run's own bytes, so no earlier run's item names or types them. */
 function bytesOf(words: string): Uint8Array<ArrayBuffer> {
   return new TextEncoder().encode(`${words} ${ctx.runId}`);
 }

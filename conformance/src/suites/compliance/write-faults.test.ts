@@ -50,7 +50,7 @@ afterAll(async () => {
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 let serial = 0;
-/** A tag no other write of the file carries, so a case reads back only its own rows. */
+/** A tag no other write of the file carries, so a case reads back only its own items. */
 function tagged(label: string): string {
   serial += 1;
   return `${label}-${String(serial)}`;

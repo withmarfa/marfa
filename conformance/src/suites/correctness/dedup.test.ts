@@ -19,7 +19,7 @@ describe("deduplication", () => {
   it("duplicate (source, source_id) upserts onto the existing item (natural-key upsert)", async () => {
     // The natural-key idempotency contract a retry-safe write relies on: a
     // create naming a (source, source_id) that already exists upserts onto
-    // the existing row rather than refusing it.
+    // the existing item rather than refusing it.
     const dedupSourceId = `dedup-test-${generateId()}`;
 
     const r1 = await client.createItem(
@@ -48,7 +48,7 @@ describe("deduplication", () => {
     expect(r2.data.item.properties.body).toBe("second version");
   });
 
-  it("applies a create naming the id and the natural key of one row as an upsert onto it", async () => {
+  it("applies a create naming the id and the natural key of one item as an upsert onto it", async () => {
     const sourceId = `dedup-both-${generateId()}`;
     const id = generateId();
     const body = (text: string) =>
@@ -79,7 +79,7 @@ describe("deduplication", () => {
     expect(edited.status, JSON.stringify(edited.error)).toBe(200);
     expect(edited.data.item.properties.body).toBe("edited");
 
-    // The contrast: a repeat naming only the id is acknowledged with the row
+    // The contrast: a repeat naming only the id is acknowledged with the item
     // as it stands, and keeps the edit.
     const acknowledged = await client.createItem(
       createNote({
@@ -102,7 +102,7 @@ describe("deduplication", () => {
     expect(read.data.item.properties.body).toBe("sent");
   });
 
-  it("merges a natural-key upsert's properties over the row's, and keeps its tags unless it names them", async () => {
+  it("merges a natural-key upsert's properties over the item's, and keeps its tags unless it names them", async () => {
     const sourceId = `dedup-merge-${generateId()}`;
     const upsert = (properties: Record<string, unknown>, tags?: string[]) =>
       client.createItem(
@@ -140,7 +140,7 @@ describe("deduplication", () => {
     expect(read.data.item.properties).toEqual({ title: "kept", body: "new" });
   });
 
-  it("lands concurrent creates of one natural key on one row", async () => {
+  it("lands concurrent creates of one natural key on one item", async () => {
     // Two devices sharing a claim, or a connector retrying in parallel: every
     // send is answered as the upsert, and none is refused. Several rounds,
     // because one round of a few sends can be served in order by chance.
@@ -173,7 +173,7 @@ describe("deduplication", () => {
     }
   });
 
-  it("refuses a create naming an id that is not the row its natural key resolves", async () => {
+  it("refuses a create naming an id that is not the item its natural key resolves", async () => {
     const sourceId = `dedup-id-${generateId()}`;
     const first = await client.createItem(
       createNote({
@@ -196,7 +196,7 @@ describe("deduplication", () => {
     );
     expect(
       refused.status,
-      "a create naming one id and a key naming another row was written onto one of them",
+      "a create naming one id and a key naming another item was written onto one of them",
     ).toBe(400);
     expect(refused.error?.error.code).toBe("validation_error");
     expect(refused.error?.error.details).toMatchObject({
@@ -207,12 +207,12 @@ describe("deduplication", () => {
       source_id: sourceId,
     });
     const kept = await client.getItem(first.data.item.id);
-    expect(kept.data.item.version, "the refused create wrote to the row").toBe(
+    expect(kept.data.item.version, "the refused create wrote to the item").toBe(
       1,
     );
     expect((await client.getItem(other)).status).toBe(404);
 
-    // The witness: the same create naming no id lands on the row the key
+    // The witness: the same create naming no id lands on the item the key
     // resolves, so the refusal is about the id.
     const landed = await client.createItem(
       createNote({
@@ -259,10 +259,10 @@ describe("deduplication", () => {
     expect(r2.data.item.id).not.toBe(r1.data.item.id);
   });
 
-  it("refuses an upsert whose natural key lands on a row of another type", async () => {
+  it("refuses an upsert whose natural key lands on an item of another type", async () => {
     // The other half of the split `id_reused` made: here the caller named
-    // no id, resolved a row by `(source, source_id)`, and declared a type
-    // that row is not. The id was never in question and the declaration
+    // no id, resolved an item by `(source, source_id)`, and declared a type
+    // that item is not. The id was never in question and the declaration
     // is the mistake, so the code is `type_mismatch` rather than the one
     // a reused id gets.
     const sourceId = `dedup-retype-${generateId()}`;
@@ -283,7 +283,7 @@ describe("deduplication", () => {
 
     // The witness, and the half that says the refusal was about the type
     // rather than about the natural key: the same upsert declaring the
-    // row's own type lands on it.
+    // item's own type lands on it.
     const accepted = await client.createItem(
       createNote({
         source: ctx.source,
@@ -298,7 +298,7 @@ describe("deduplication", () => {
 
   it("refuses an update declaring a type the item is not", async () => {
     // The update door's half of the same rule, and the third place
-    // `type_mismatch` is answered. The path names the row, so the id was
+    // `type_mismatch` is answered. The path names the item, so the id was
     // never the caller's to get wrong; what disagrees is the declaration.
     const seed = await client.createItem(createNote({ source: ctx.source }));
     expect(seed.ok).toBe(true);
@@ -318,7 +318,7 @@ describe("deduplication", () => {
     expect(mismatched.status).toBe(409);
     expect(mismatched.error?.error.code).toBe("type_mismatch");
 
-    // The witness: the same update declaring the row's own type lands, so
+    // The witness: the same update declaring the item's own type lands, so
     // the refusal is the declaration rather than the shape of the write.
     const accepted = await client.rawRequest<unknown>(
       `/items/${seed.data.item.id}`,

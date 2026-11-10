@@ -28,7 +28,7 @@ impl Kind {
     }
 }
 
-/// A line a restore would refuse or skip: the row, the field, and what the restore answers.
+/// A line a restore would refuse or skip: the item or edge, the field, and what the restore answers.
 #[derive(Debug)]
 pub struct Refused {
     pub kind: Kind,
@@ -42,8 +42,8 @@ pub struct Refused {
 }
 
 impl Refused {
-    /// The row as an export's refusal names it in `details.row`.
-    pub fn row(&self) -> Value {
+    /// The item or edge as an export's refusal names it in `details.entry`.
+    pub fn entry(&self) -> Value {
         json!({
             "kind": self.kind.word(),
             "id": self.id,
@@ -66,7 +66,7 @@ impl At<'_> {
     fn refused(&self, field: Option<&str>, refusal: Refusal) -> Box<Refused> {
         let named = format!("{}_id", self.kind.word());
         let refusal = refusal
-            .with_detail("row", self.row)
+            .with_detail("line", self.row)
             .with_detail(&named, self.id.map(str::to_string));
         Box::new(Refused {
             kind: self.kind,

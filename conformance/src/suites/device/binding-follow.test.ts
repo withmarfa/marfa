@@ -56,7 +56,7 @@ describe("a follow through a binding, told what its caller was last told", () =>
     ).toBe(1);
     expect(
       told.changes[0],
-      "a change about the server named a row, or not the cursor held",
+      "a change about the server named an item, or not the cursor held",
     ).toEqual({ kind: "serverReachable", cursor: "10" });
     expect(await told.stop()).toBeNull();
 
@@ -266,7 +266,7 @@ describe("what a follow through a binding tells", () => {
     expect(kinds.filter((kind) => kind === "applied")).toHaveLength(1);
 
     // An event the stream applied is the only change that names an event, a
-    // row or an edge.
+    // item or an edge.
     for (const change of told) {
       if (change.kind === "applied") {
         expect(change).toEqual({
@@ -280,7 +280,7 @@ describe("what a follow through a binding tells", () => {
           Object.keys(change).filter((name) =>
             ["event", "itemId", "edgeId"].includes(name),
           ),
-          `a change of kind ${change.kind} named an event or a row`,
+          `a change of kind ${change.kind} named an event or an item`,
         ).toEqual([]);
       }
     }

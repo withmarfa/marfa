@@ -53,7 +53,7 @@ async function seed(body: string): Promise<string> {
  * 120000ms` — which `vitest.shared.ts` names as the one failure shape that
  * gets investigated as real before anyone thinks to check the clock, and
  * which says nothing about what the stream did carry. Bounded here, the same
- * silence is an assertion that names the frame, the row and every event that
+ * silence is an assertion that names the frame, the item and every event that
  * arrived instead.
  */
 const FRAME_BUDGET_MS = 15_000;
@@ -68,7 +68,7 @@ async function deliver(
 ) {
   // One predicate for both the wait and the pick. Waiting on name-and-id and
   // then returning the first frame of that name alone hands the caller a
-  // stranger's event whenever another row of the same kind is announced in
+  // stranger's event whenever another item of the same kind is announced in
   // the same window, and every assertion below reads as a server fault.
   const matches = (e: SseEvent): boolean => {
     const data = e.data as { item?: { id?: string }; edge?: { id?: string } };
@@ -259,7 +259,7 @@ describe("event stream contract", () => {
     expect(data.item.state).toBe("active");
   });
 
-  it("announces item.restored for a row the restore of its parent brings back", async ({
+  it("announces item.restored for an item the restore of its parent brings back", async ({
     signal,
   }) => {
     const parent = await seed("restored-parent");
@@ -284,7 +284,7 @@ describe("event stream contract", () => {
     expect(data.item.state).toBe("active");
   });
 
-  it("announces item.restored for a row a transition out of the bin brings back, at any depth", async ({
+  it("announces item.restored for an item a transition out of the bin brings back, at any depth", async ({
     signal,
   }) => {
     const parent = await seed("moved-parent");
@@ -529,7 +529,7 @@ describe("event stream contract", () => {
       });
       // Every edge the copy was given is announced, the inbound parent edge
       // among them and not only the link to its original, and none after the
-      // update of the row that gave its value up.
+      // update of the item that gave its value up.
       expect(order[0]).toBe("copy created");
       expect(order.at(-1)).toBe("original updated");
       expect(order.slice(1, -1).sort()).toEqual([
@@ -816,7 +816,7 @@ describe("event stream contract", () => {
     signal,
   }) => {
     // The witness that there is a log to replay: a cursor of zero carries
-    // the event of a row written before the stream opened, and an empty one
+    // the event of an item written before the stream opened, and an empty one
     // does not.
     const written = await seed("empty-cursor-history");
     const sees = (events: { data: unknown }[]): boolean =>

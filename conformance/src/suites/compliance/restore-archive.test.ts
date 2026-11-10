@@ -6,7 +6,7 @@
  * POST /restore, which is what proves the manifest contract
  * and blob-hash verification agree.
  *
- * The rest build their archive with `utils/archive.ts` instead: a row no
+ * The rest build their archive with `utils/archive.ts` instead: an item no
  * door writes, so no export carries it; a blob the instance does not hold
  * yet, which is what makes its restore the thing that puts the bytes there;
  * a format version no build of this contract writes; and a manifest
@@ -73,7 +73,7 @@ describe("restore", () => {
     // Seed with an explicit source_id so the re-import path hits the
     // (source, source_id) dedup branch — that's the bit that proves
     // archive → restore is genuinely round-tripping rather than
-    // silently creating net-new rows on the second hop.
+    // silently creating net-new items on the second hop.
     const sourceId = `archive-rt-${ctx.runId}`;
     const r = await client.createItem(
       createNote({ source: ctx.source, source_id: sourceId }),
@@ -82,7 +82,7 @@ describe("restore", () => {
     trackItem(ctx, r.data.item.id);
 
     // Fetch the archive the server produces, scoped to this file's own
-    // credential-stamped `source`, which keeps other files' rows out of it.
+    // credential-stamped `source`, which keeps other files' items out of it.
     const url = `${apiUrl}/export?source=${encodeURIComponent(ctx.source)}&format=archive`;
     const archiveRes = await fetch(url, {
       headers: { Authorization: `Bearer ${fileKey}` },
@@ -93,7 +93,7 @@ describe("restore", () => {
     expect(archiveBytes.byteLength).toBeGreaterThan(0);
 
     // Post it back. The archive holds only this file's source-scoped
-    // items; the seeded `(source, source_id)` pair matches the row
+    // items; the seeded `(source, source_id)` pair matches the item
     // already there, so it dedupes — that's the assertion proving
     // archive → restore rebuilds the same shape the export emitted.
     const restored = await owner.restoreArchive(archiveBytes);
@@ -207,8 +207,8 @@ describe("restore", () => {
 
   it("refuses an archive recording a state the type's lifecycle cannot produce, and writes nothing", async () => {
     // `revoked` is a state, and not one the canonical lifecycle reaches, so
-    // a note recorded in it is a row no door could have written. The whole
-    // archive is refused, the note ahead of the bad row included.
+    // a note recorded in it is an item no door could have written. The whole
+    // archive is refused, the note ahead of the bad item included.
     const fine = uuidv7();
     const impossible = uuidv7();
     const rows = (state: string) => [
@@ -234,11 +234,11 @@ describe("restore", () => {
     expect((await client.getItem(fine)).status).toBe(404);
     expect((await client.getItem(impossible)).status).toBe(404);
 
-    // A `system.*` row's lifecycle is `active | revoked`: `trashed` is a
-    // state, and not one it can be in. No door writes such a row, which is
+    // A `system.*` item's lifecycle is `active | revoked`: `trashed` is a
+    // state, and not one it can be in. No door writes such an item, which is
     // why an export never carries one and only a built archive can ask.
-    // The same row restored in `active` is not tried here: no door the
-    // referee holds could remove a system row it restored.
+    // The same item restored in `active` is not tried here: no door the
+    // referee holds could remove a system item it restored.
     const systemId = uuidv7();
     const systemRefused = await owner.restoreArchive(
       itemsArchive([
@@ -275,7 +275,7 @@ describe("restore", () => {
     expect(numeric.error?.error.details?.field).toBe("state");
     expect((await client.getItem(numbered)).status).toBe(404);
 
-    // The same two rows in states the lifecycle contains restore, each in
+    // The same two items in states the lifecycle contains restore, each in
     // the state the archive recorded.
     const restored = await owner.restoreArchive(itemsArchive(rows("active")));
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
@@ -287,7 +287,7 @@ describe("restore", () => {
   });
 
   it("refuses a manifest missing or mistyping a field the restore reads, naming the field, and writes nothing", async () => {
-    // Each archive carries a blob and a row naming it, so a manifest whose
+    // Each archive carries a blob and an item naming it, so a manifest whose
     // `blobs` the restore could not read is asked about the one blob entry
     // that reads it.
     const data = new Uint8Array(randomBytes(32));
@@ -356,7 +356,7 @@ describe("restore", () => {
       expect((await owner.downloadBlob(hash)).status).toBe(404);
     }
 
-    // The same archive under the manifest as built restores, row and blob.
+    // The same archive under the manifest as built restores, item and blob.
     const restored = await owner.restoreArchive(archive((m) => m));
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     trackItem(ctx, id);
@@ -375,7 +375,7 @@ describe("restore", () => {
           id,
           type: "core.note",
           source: ctx.source,
-          properties: { body: `an archived row at format ${version}` },
+          properties: { body: `an archived item at format ${version}` },
         },
       ]);
       const manifest = readEntry(zero, "manifest.json");
@@ -589,7 +589,7 @@ describe("an archive that lacks a member", () => {
       expect((await client.getItem(id)).status).toBe(404);
       expect((await owner.downloadBlob(hash)).status).toBe(404);
 
-      // The witness: the same archive with the member restores the row and
+      // The witness: the same archive with the member restores the item and
       // the blob that the refusal left unwritten.
       const restored = await owner.restoreArchive(archive);
       expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
@@ -676,7 +676,7 @@ describe("an archived item that no instance wrote", () => {
       expect(refused.error?.error.code, what).toBe(code);
       expect(refused.error?.error.message, what).toContain(id);
       expect(refused.error?.error.message, what).toContain(field);
-      // The row ahead of it is not written either.
+      // The item ahead of it is not written either.
       expect((await client.getItem(witness)).status, what).toBe(404);
       expect((await client.getItem(id)).status, what).toBe(404);
     }
@@ -695,7 +695,7 @@ describe("an archived item that no instance wrote", () => {
 
 describe("a body that is no archive", () => {
   /** An archive of one note that would restore, so a refusal can be told from
-   *  an empty restore by the row it did not write, and where its items file
+   *  an empty restore by the item it did not write, and where its items file
    *  sits in the tar, so a test can damage the middle of a compressed stream. */
   function oneNote(): {
     id: string;
@@ -723,7 +723,7 @@ describe("a body that is no archive", () => {
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("validation_error");
 
-    // The witness: an archive that carries no row is not an empty body.
+    // The witness: an archive that carries no item is not an empty body.
     const nothing = await owner.restoreArchive(itemsArchive([]));
     expect(nothing.ok, JSON.stringify(nothing.error)).toBe(true);
     expect(nothing.data).toMatchObject({ imported: 0, duplicates: 0 });
@@ -748,7 +748,7 @@ describe("a body that is no archive", () => {
       ],
     ];
 
-    // The witness: the whole archive restores and writes its row.
+    // The witness: the whole archive restores and writes its item.
     const restored = await owner.restoreArchive(whole.archive);
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     expect(restored.data.imported).toBe(1);
@@ -900,7 +900,7 @@ describe("what a restore answers", () => {
     });
     await expectMatchesSchema("POST", "/restore", 200, first.data);
 
-    // The same archive again, with an edge naming a row it does not carry and
+    // The same archive again, with an edge naming an item it does not carry and
     // one naming no kind of edge.
     const again = await owner.restoreArchive(
       rows.archive([
@@ -1105,7 +1105,7 @@ describe("what a restore answers", () => {
           id: fresh.id,
           type: fresh.type,
           source: ctx.source,
-          properties: { label: "a row of a type the archive registers" },
+          properties: { label: "an item of a type the archive registers" },
         },
       ]),
       "instance",
@@ -1322,7 +1322,7 @@ describe("a restore of an edge type's property formats", () => {
 });
 
 describe("a restore refused after it began", () => {
-  it("leaves no row, type, edge type, blob, event or audit record behind when a later row is refused", async () => {
+  it("leaves no item, type, edge type, blob, event or audit record behind when a later item is refused", async () => {
     const ids = {
       type: `user.restorerollback${ctx.runId}`,
       edgeType: `restorerollback.${ctx.runId}`,
@@ -1345,7 +1345,7 @@ describe("a restore refused after it began", () => {
             type: "core.event",
             source: ctx.source,
             properties: {
-              title: "the row that is refused",
+              title: "the item that is refused",
               starts_at: "2041-01-15T09:00:00.000Z",
               recurrence: [rule],
             },
@@ -1442,7 +1442,7 @@ describe("a restore refused after it began", () => {
     });
 
     // The witness: the same archive with a rule it can unfold restores every
-    // row, registration and blob, announces them and audits the type.
+    // item, registration and blob, announces them and audits the type.
     const taken = await owner.restoreArchive(
       archive("RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=28"),
     );
@@ -1628,7 +1628,7 @@ describe("lines an archive holds that no instance writes", () => {
     properties: { body: `line ${id}` },
   });
 
-  it("refuses an item line that holds no item, naming its row, and writes nothing", async () => {
+  it("refuses an item line that holds no item, naming its line, and writes nothing", async () => {
     const kept = uuidv7();
     const good = `${JSON.stringify({ item: note(kept), metadata: { tags: [], extensions: {} } })}\n`;
     for (const line of [
@@ -1645,7 +1645,7 @@ describe("lines an archive holds that no instance writes", () => {
       );
       expect(refused.status, JSON.stringify(refused.error)).toBe(400);
       expect(refused.error?.error.code).toBe("validation_error");
-      expect(refused.error?.error.details?.row).toBe(2);
+      expect(refused.error?.error.details?.line).toBe(2);
       expect((await client.getItem(kept)).status).toBe(404);
     }
 

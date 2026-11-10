@@ -69,7 +69,7 @@ async function link(
   trackEdge(ctx, made.data.edge.id);
 }
 
-/** The ids `GET /items` selects from this file's rows, in any state named. */
+/** The ids `GET /items` selects from this file's items, in any state named. */
 async function listed(filter: string, state?: string): Promise<string[]> {
   const r = await client.listItems({
     source: ctx.source,
@@ -199,7 +199,7 @@ function doors(): Door[] {
 }
 
 describe("every door that takes a filter", () => {
-  it("selects the same rows by one expression at each door", async () => {
+  it("selects the same items by one expression at each door", async () => {
     const chosen = await seed({ rank: `door-${marker}` });
     const passed = await seed({ rank: `other-${marker}` });
     const filter = `properties.rank eq "door-${marker}"`;
@@ -415,7 +415,7 @@ describe("a value in a filter", () => {
 });
 
 describe("the joins of a filter", () => {
-  it("selects by AND the rows every condition selects, and by OR the rows any selects", async () => {
+  it("selects by AND the items every condition selects, and by OR the items any selects", async () => {
     const both = await seed({ a: `a-${marker}`, b: `b-${marker}` });
     const onlyA = await seed({ a: `a-${marker}` });
     const onlyB = await seed({ b: `b-${marker}` });
@@ -561,7 +561,7 @@ describe("a comparison of text", () => {
     expect(await among("version neq 1", group)).toEqual([changed]);
   });
 
-  it("selects no row whose property is absent or null, with any operator that takes a value", async () => {
+  it("selects no item whose property is absent or null, with any operator that takes a value", async () => {
     const held = await seed({ rank: "held" });
     const absent = await seed({});
     const nulled = await seed({ rank: null });
@@ -578,7 +578,7 @@ describe("a comparison of text", () => {
     expect(await among('properties.rank starts_with "h"', group)).toEqual([
       held,
     ]);
-    // The witness: both are rows the presence test finds.
+    // The witness: both are items the presence test finds.
     expect(await among("properties.rank not_exists", group)).toEqual(
       sorted(absent, nulled),
     );
@@ -673,7 +673,7 @@ describe("contains and starts_with", () => {
       backslash,
     ]);
     // The witness: each is a wildcard to an engine that reads it as one, and
-    // the plain row would match it there.
+    // the plain item would match it there.
     expect(await among('properties.note contains "web"', group)).toEqual(
       sorted(underscore, plain),
     );
@@ -691,7 +691,7 @@ describe("a tags term", () => {
     expect(await among(`tags contains "${tag}"`, group)).toEqual([exact]);
   });
 
-  it("selects by exists the rows with a tag, and by not_exists the rows with none", async () => {
+  it("selects by exists the items with a tag, and by not_exists the items with none", async () => {
     const tagged = await seed({}, { tags: [`one-${marker}`] });
     const untagged = await seed({});
     const group = [tagged, untagged];
@@ -722,13 +722,13 @@ describe("an edge term and a backref term", () => {
     group = [anchor, otherAnchor, toAnchor, toOther, noEdge];
   });
 
-  it("selects by edge neq every row without that edge, a row with no edge of the type among them", async () => {
+  it("selects by edge neq every item without that edge, an item with no edge of the type among them", async () => {
     expect(await among(`edge[about] neq "${anchor}"`, group)).toEqual(
       sorted(anchor, otherAnchor, toOther, noEdge),
     );
   });
 
-  it("selects by edge exists the rows with an outbound edge of the type, and by not_exists the rows with none", async () => {
+  it("selects by edge exists the items with an outbound edge of the type, and by not_exists the items with none", async () => {
     expect(await among("edge[about] exists", group)).toEqual(
       sorted(toAnchor, toOther),
     );
@@ -737,7 +737,7 @@ describe("an edge term and a backref term", () => {
     );
   });
 
-  it("selects by backref eq the rows that an edge of the type from that item points at", async () => {
+  it("selects by backref eq the items that an edge of the type from that item points at", async () => {
     expect(await among(`backref[about] eq "${toAnchor}"`, group)).toEqual([
       anchor,
     ]);
@@ -749,13 +749,13 @@ describe("an edge term and a backref term", () => {
     expect(shorthand.data.data.map((item) => item.id)).toEqual([anchor]);
   });
 
-  it("selects by backref neq every row without that inbound edge, a row with no inbound edge of the type among them", async () => {
+  it("selects by backref neq every item without that inbound edge, an item with no inbound edge of the type among them", async () => {
     expect(await among(`backref[about] neq "${toAnchor}"`, group)).toEqual(
       sorted(otherAnchor, toAnchor, toOther, noEdge),
     );
   });
 
-  it("selects by backref exists the rows with an inbound edge of the type, and by not_exists the rows with none", async () => {
+  it("selects by backref exists the items with an inbound edge of the type, and by not_exists the items with none", async () => {
     expect(await among("backref[about] exists", group)).toEqual(
       sorted(anchor, otherAnchor),
     );
@@ -836,7 +836,7 @@ describe("a state term", () => {
   const trashedTerm = `state eq "trashed" AND ${inFile}`;
 
   it("meets the default state when no state is named, so state eq archived alone selects nothing", async () => {
-    // The witnesses: the row is there to select, under each door's own name.
+    // The witnesses: the item is there to select, under each door's own name.
     expect(await listed(inFile, "any")).toEqual(
       sorted(active, archived, trashed),
     );
@@ -850,7 +850,7 @@ describe("a state term", () => {
     expect(await listed(`state eq "active" AND ${inFile}`)).toEqual([active]);
   });
 
-  it("meets a named state, so the two must agree to select a row", async () => {
+  it("meets a named state, so the two must agree to select an item", async () => {
     expect(await listed(archivedTerm, "archived")).toEqual([archived]);
     expect(await listed(archivedTerm, "any")).toEqual([archived]);
     expect(await listed(archivedTerm, "active")).toEqual([]);
@@ -871,7 +871,7 @@ describe("a state term", () => {
     expect(counts).toMatchObject({ archived: 1 });
     expect(counts).not.toHaveProperty("active");
     expect(await counted(trashedTerm)).toEqual({ trashed: 1 });
-    // The witness: every row is counted without the term.
+    // The witness: every item is counted without the term.
     expect(await counted(inFile)).toMatchObject({
       active: 1,
       archived: 1,

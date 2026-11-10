@@ -5,7 +5,7 @@ import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
 import {
   MATCHING_CASES,
   MATCHING_FIELDS,
-  MATCHING_ROWS,
+  MATCHING_ITEMS,
   MARKUP_QUERY,
   MARKUP_SNIPPET,
   SNIPPET_QUERY,
@@ -30,7 +30,7 @@ beforeAll(async () => {
     fields: { ...MATCHING_FIELDS },
   });
   expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
-  for (const row of MATCHING_ROWS) {
+  for (const row of MATCHING_ITEMS) {
     const created = await client.createItem({
       type: typeId,
       source: ctx.source,
@@ -50,11 +50,11 @@ afterAll(async () => {
 
 function id(key: string): string {
   const found = ids.get(key);
-  if (!found) throw new Error(`no row ${key}`);
+  if (!found) throw new Error(`no item ${key}`);
   return found;
 }
 
-/** The answer a case expects, in its order: a group's rows by identifier. */
+/** The answer a case expects, in its order: a group's items by identifier. */
 function expected(groups: string[][]): string[] {
   return groups.flatMap((group) => group.map(id).sort());
 }
@@ -108,7 +108,7 @@ describe("search matching", () => {
     expect(hit?.snippet_html).toBe("A quiet <mark>landscape</mark>");
   });
 
-  it("escapes the row's text in an excerpt and marks only the match", async () => {
+  it("escapes the item's text in an excerpt and marks only the match", async () => {
     const result = await client.search(MARKUP_QUERY, {
       type: typeId,
       limit: 50,
@@ -164,7 +164,7 @@ describe("how a query is folded and split", () => {
   }
 
   it("folds case in the text and in the query", async () => {
-    // The witness: a word spelled as a row spells it finds that row, so the
+    // The witness: a word spelled as an item spells it finds that item, so the
     // other spellings are the folding's.
     for (const query of ["quokka", "QUOKKA", "QuOkKa"]) {
       expect(await found(query), query).toEqual(["lower", "upper"]);
@@ -195,7 +195,7 @@ describe("how a query is folded and split", () => {
   });
 
   it("matches nothing, without an error, for a query with no word in it", async () => {
-    // The witness: a word the rows hold is found, so the empty answers below
+    // The witness: a word the items hold is found, so the empty answers below
     // are the query's and not an empty type.
     expect(await found("quokka")).toHaveLength(2);
     for (const query of ["!!!", '""', "*", "---", "()", '" "', "\u2014"]) {

@@ -35,7 +35,7 @@ function names(
 }
 
 describe("a field's definition", () => {
-  // Each row is a body the grammar refuses, the member the refusal names, and
+  // Each item is a body the grammar refuses, the member the refusal names, and
   // the body with that one thing mended, which registers.
   const REFUSED: {
     what: string;
@@ -384,7 +384,7 @@ describe("an array field", () => {
     )?.errors?.map((e) => e.field);
   }
 
-  // Each row is a value the field refuses, with the position it names.
+  // Each item is a value the field refuses, with the position it names.
   const REFUSED: [string, Record<string, unknown>, string][] = [
     ["a string array with a number", { names: ["a", 42] }, "names.1"],
     ["a string array with an object", { names: [{ x: 1 }] }, "names.0"],

@@ -7,7 +7,7 @@
  * the property a backup exists for.
  *
  * Scoped to this file's credential-stamped `source` throughout, so other
- * files' rows never enter the archive.
+ * files' items never enter the archive.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -71,7 +71,7 @@ describe("export → purge → restore round trip", () => {
     expect(archive.ok).toBe(true);
     expect(archive.data.byteLength).toBeGreaterThan(0);
 
-    // Purge is a hard delete of a trashed row, so trash first.
+    // Purge is a hard delete of a trashed item, so trash first.
     const trashed = await client.deleteItem(itemId);
     expect(trashed.ok).toBe(true);
     const purged = await client.purgeItem(itemId);
@@ -209,7 +209,7 @@ describe("export → purge → restore round trip", () => {
 
     const restored = await owner.restoreArchive(archive.data);
     expect(restored.ok).toBe(true);
-    // The archive also carries this file's other rows, which earlier tests
+    // The archive also carries this file's other items, which earlier tests
     // left restored, so their edges come back as already present.
     expect(
       Object.keys(restored.data.edges_skipped_reasons).filter(

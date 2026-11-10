@@ -29,14 +29,14 @@ import {
 
 /**
  * What an archive does with an item's history: the snapshots an export carries
- * and the restore that writes them back. The rows that must be refused are
+ * and the restore that writes them back. The items that must be refused are
  * built by hand, because no export writes a snapshot whose date is no date.
  */
 let client: MarfaClient;
 let ownerClient: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
-/** A server that has never seen the rows, to restore into. */
+/** A server that has never seen the items, to restore into. */
 let fresh: FreshServer | undefined;
 let freshOwner: MarfaClient;
 let freshReader: MarfaClient;
@@ -205,7 +205,7 @@ describe("the history an archive carries", () => {
       const archive = await reader.exportArchive({ source: ctx.source });
       expect(archive.status).toBe(200);
       const line = itemLines(archive.data).find((l) => l.item.id === id);
-      expect(line, "the row is carried").toBeDefined();
+      expect(line, "the item is carried").toBeDefined();
       return line?.versions.map((v) => v.type);
     };
     // The witness: a key that may read both types is carried the snapshot.
@@ -233,7 +233,7 @@ describe("the history an archive carries", () => {
     const upHidden = await other.uploadBlob(hidden, "text/plain");
     expect(up.status, JSON.stringify(up.error)).toBe(201);
     expect(upHidden.status, JSON.stringify(upHidden.error)).toBe(201);
-    // A row naming the first lends it to the key that wrote the row.
+    // An item naming the first lends it to the key that wrote the item.
     const lender = await client.createItem({
       type: "core.file",
       source: ctx.source,
@@ -244,7 +244,7 @@ describe("the history an archive carries", () => {
     expect((await client.downloadBlob(up.data.hash)).status).toBe(200);
     expect((await client.downloadBlob(upHidden.data.hash)).status).toBe(404);
 
-    // Both digests are in the first snapshot and in no current row.
+    // Both digests are in the first snapshot and in no current item.
     const item = await note({
       body: `${up.data.hash} ${upHidden.data.hash}`,
     });
@@ -380,7 +380,7 @@ describe("the history a restore writes", () => {
     expect(await allVersions(freshReader, made.data.item.id)).toEqual(history);
   });
 
-  it("leaves an existing row, its tags, its extensions and its history alone when the archive's copy is a duplicate", async () => {
+  it("leaves an existing item, its tags, its extensions and its history alone when the archive's copy is a duplicate", async () => {
     const item = await note({ body: "as archived" });
     expect((await client.addTags(item.id, ["archived-tag"])).ok).toBe(true);
     expect(
@@ -390,7 +390,7 @@ describe("the history a restore writes", () => {
     await patch(item.id, { properties: { body: "second" } });
     const archive = await client.exportArchive({ source: ctx.source });
 
-    // The row moves on after the archive was taken.
+    // The item moves on after the archive was taken.
     await patch(item.id, { properties: { body: "third" } });
     expect((await client.addTags(item.id, ["later-tag"])).ok).toBe(true);
     expect(
@@ -430,7 +430,7 @@ function snapshot(
   };
 }
 
-/** One archive of two rows, the second carrying `versions` and a version 3. */
+/** One archive of two items, the second carrying `versions` and a version 3. */
 interface Rows {
   first: Record<string, unknown>;
   second: Record<string, unknown>;
@@ -451,14 +451,14 @@ function twoRows(edit: (rows: Rows) => void): {
       type: "core.note",
       source: ctx.source,
       version: 2,
-      properties: { body: "a valid row ahead of the other" },
+      properties: { body: "a valid item ahead of the other" },
     } as Record<string, unknown>,
     second: {
       id: second,
       type: "core.note",
       source: ctx.source,
       version: 3,
-      properties: { body: "the row under test" },
+      properties: { body: "the item under test" },
     } as Record<string, unknown>,
     firstVersions: [snapshot(first, 1)],
     secondVersions: [snapshot(second, 1), snapshot(second, 2)],
@@ -469,7 +469,7 @@ function twoRows(edit: (rows: Rows) => void): {
       id: first,
       type: "core.note",
       source: ctx.source,
-      properties: { body: "a placeholder the rows replace" },
+      properties: { body: "a placeholder the items replace" },
     },
   ]);
   const archive = editLineFile(
@@ -517,14 +517,14 @@ describe("an archive's dates and history, refused before anything is written", (
     ({ secondVersions }) => {
       secondVersions[1]!.id = secondVersions[0]!.id;
     },
-    "versions.1.id repeating one of the same row",
+    "versions.1.id repeating one of the same item",
   );
   add(
     "versions.0.id",
     ({ firstVersions, secondVersions }) => {
       secondVersions[0]!.id = firstVersions[0]!.id;
     },
-    "versions.0.id repeating one of another row",
+    "versions.0.id repeating one of another item",
   );
   add("versions.0.item_id", ({ secondVersions }) => {
     secondVersions[0]!.item_id = uuidv7();
@@ -555,7 +555,7 @@ describe("an archive's dates and history, refused before anything is written", (
     ({ secondVersions }) => {
       secondVersions[1]!.version = 1;
     },
-    "versions.1.version repeating one of the same row",
+    "versions.1.version repeating one of the same item",
   );
   add("versions.0.properties", ({ secondVersions }) => {
     secondVersions[0]!.properties = "text";
@@ -577,7 +577,7 @@ describe("an archive's dates and history, refused before anything is written", (
   });
 
   it.each(cases)(
-    "refuses a row whose %s is malformed, and writes the row ahead of it nowhere",
+    "refuses an item whose %s is malformed, and writes the item ahead of it nowhere",
     async (_label, path, edit) => {
       const bad = twoRows(edit);
       const refused = await ownerClient.restoreArchive(bad.archive);
@@ -588,7 +588,7 @@ describe("an archive's dates and history, refused before anything is written", (
       expect((await client.getItem(bad.first)).status).toBe(404);
       expect((await client.getItem(bad.second)).status).toBe(404);
 
-      // The witness: the same two rows with nothing malformed restore.
+      // The witness: the same two items with nothing malformed restore.
       const good = twoRows(() => undefined);
       const accepted = await ownerClient.restoreArchive(good.archive);
       expect(accepted.ok, JSON.stringify(accepted.error)).toBe(true);
@@ -598,13 +598,13 @@ describe("an archive's dates and history, refused before anything is written", (
     },
   );
 
-  it("refuses a malformed date or history even when the row is one the instance already holds", async () => {
+  it("refuses a malformed date or history even when the item is one the instance already holds", async () => {
     const good = twoRows(() => undefined);
     const accepted = await ownerClient.restoreArchive(good.archive);
     expect(accepted.ok, JSON.stringify(accepted.error)).toBe(true);
     trackItem(ctx, good.first);
     trackItem(ctx, good.second);
-    // Both rows exist now, so each would be counted a duplicate.
+    // Both items exist now, so each would be counted a duplicate.
     const again = await ownerClient.restoreArchive(good.archive);
     expect(again.ok, JSON.stringify(again.error)).toBe(true);
     expect(again.data).toMatchObject({ imported: 0, duplicates: 2 });
@@ -655,7 +655,7 @@ describe("an archive's dates and history, refused before anything is written", (
     };
 
     // The witness: with readable dates the edge is skipped for its missing
-    // endpoint, and the row ahead of it is written.
+    // endpoint, and the item ahead of it is written.
     const skipped = await ownerClient.restoreArchive(archive({}));
     expect(skipped.ok, JSON.stringify(skipped.error)).toBe(true);
     trackItem(ctx, first);
@@ -671,7 +671,7 @@ describe("an archive's dates and history, refused before anything is written", (
     }
   });
 
-  it("writes a row's dates in UTC to the millisecond", async () => {
+  it("writes an item's dates in UTC to the millisecond", async () => {
     const id = uuidv7();
     const archived = "2020-02-28T23:30:00+02:00";
     const { archive } = twoRows(({ first, firstVersions }) => {

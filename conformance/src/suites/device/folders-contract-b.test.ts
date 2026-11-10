@@ -68,7 +68,7 @@ async function departing(
 ) {
   const rows = Array.from({ length: 6 }, (_, n) => row(n));
   const made = await folderHarness(label, {
-    rows: { "core.note": rows },
+    items: { "core.note": rows },
     settings: { ...tight, query: { types: ["core.note"], state: ["active"] } },
     events: [
       copyReplay(
@@ -167,7 +167,7 @@ it.each(["trashed", "archived"] as const)(
 it("does not count a missing unmatched file as put back when restoring a removal", async () => {
   const rows = Array.from({ length: 6 }, (_, n) => row(n));
   harness = await folderHarness("contract-b-restore-filter", {
-    rows: { "core.note": rows },
+    items: { "core.note": rows },
     settings: {
       ...tight,
       query: { types: ["core.note"], filter: 'properties.status eq "ready"' },
@@ -213,7 +213,7 @@ it.each([
   "pauses only past both default removal thresholds ($missing of $total)",
   async ({ total, missing, paused }) => {
     harness = await folderHarness("contract-b-threshold", {
-      rows: { "core.note": Array.from({ length: total }, (_, n) => row(n)) },
+      items: { "core.note": Array.from({ length: total }, (_, n) => row(n)) },
     });
     expect((await harness.folder.pull()).ok).toBe(true);
     for (let n = 0; n < missing; n += 1)
@@ -232,7 +232,7 @@ it.each([
 
 it("reads status from disk and the held copy without contacting the server", async () => {
   harness = await folderHarness("contract-b-status-local", {
-    rows: { "core.note": [row(0)] },
+    items: { "core.note": [row(0)] },
   });
   expect((await harness.folder.pull()).ok).toBe(true);
   const before = harness.server.requests.length;
@@ -247,7 +247,7 @@ it("reads status from disk and the held copy without contacting the server", asy
 
 it("refuses restore while first sync waits and confirms without a server request", async () => {
   harness = await folderHarness("contract-b-first-confirm", {
-    rows: { "core.note": [row(0)] },
+    items: { "core.note": [row(0)] },
     confirm: false,
   });
   const before = harness.server.requests.length;
@@ -354,7 +354,7 @@ it.each(["CAFÉ.md", "Cafe\u0301.md"])(
   "does not send a placement for an equivalent rename to %s",
   async (name) => {
     harness = await folderHarness("contract-b-case-rename", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -431,7 +431,7 @@ it("does not scan a symlinked file or directory even when included", async () =>
 it("reports purged paused files without promising that restore can recover their items", async () => {
   const rows = Array.from({ length: 6 }, (_, n) => row(n));
   harness = await folderHarness("contract-b-purged-pause", {
-    rows: { "core.note": rows },
+    items: { "core.note": rows },
     settings: tight,
     events: [
       copyReplay(
@@ -493,11 +493,11 @@ it("applies include negation, ignore precedence and case-normalized patterns", a
 
 it("reports a bound file as unreached when settings exclude it", async () => {
   harness = await folderHarness("contract-b-unreached-status", {
-    rows: { "core.note": [row(0)] },
+    items: { "core.note": [row(0)] },
   });
   expect((await harness.folder.pull()).ok).toBe(true);
   const settingsPath = join(harness.dir, ".marfa", "folder.yaml");
-  // The bound file's row is pinned, and the hydration reads every pin from
+  // The bound file's item is pinned, and the hydration reads every pin from
   // the server before it lays its listings down.
   harness.server.copyAnswer("GET", `/items/${row(0).item.id}`, () =>
     answers.updated(wireItem(row(0).item)),
@@ -520,7 +520,7 @@ it("reports a bound file as unreached when settings exclude it", async () => {
 it("refuses a pull during first sync and uses the directory as it stands after confirmation", async () => {
   harness = await folderHarness("contract-b-first-current", {
     hydrate: false,
-    rows: { "core.note": [row(0)] },
+    items: { "core.note": [row(0)] },
     files: { "old.md": "old\n" },
     confirm: false,
   });
@@ -538,7 +538,7 @@ it("refuses a pull during first sync and uses the directory as it stands after c
 
 it("does not confirm a paused deletion for a file put back since the pause", async () => {
   harness = await folderHarness("contract-b-confirm-returned", {
-    rows: { "core.note": Array.from({ length: 6 }, (_, n) => row(n)) },
+    items: { "core.note": Array.from({ length: 6 }, (_, n) => row(n)) },
     settings: tight,
   });
   expect((await harness.folder.pull()).ok).toBe(true);
@@ -574,7 +574,7 @@ it.each(["include", "ignore"] as const)(
 it("refuses every parent component in a placement even when it climbs back inside", async () => {
   const rows = [row(0), row(1)];
   harness = await folderHarness("contract-b-parent-path", {
-    rows: { "core.note": rows },
+    items: { "core.note": rows },
     hydrate: false,
   });
   Object.assign(rows[0]!.item, {
@@ -606,7 +606,7 @@ it.each(["create", "edit"] as const)(
   "preserves a document after a request-too-large %s refusal",
   async (kind) => {
     harness = await folderHarness(`contract-b-size-refusal-${kind}`, {
-      rows: { "core.note": kind === "edit" ? [row(0)] : [] },
+      items: { "core.note": kind === "edit" ? [row(0)] : [] },
     });
     if (kind === "edit") expect((await harness.folder.pull()).ok).toBe(true);
     const path = join(harness.dir, kind === "edit" ? "Note 0.md" : "new.md");
@@ -702,7 +702,7 @@ it("warns at the exact JSON-encoded size boundary including escaped text", async
 
 it("keeps confirmed missing files unsure while another registered folder is unavailable", async () => {
   harness = await folderHarness("contract-b-confirm-unsure", {
-    rows: { "core.note": Array.from({ length: 6 }, (_, n) => row(n)) },
+    items: { "core.note": Array.from({ length: 6 }, (_, n) => row(n)) },
     settings: tight,
   });
   second = await folderHarness("contract-b-confirm-peer", {
@@ -773,7 +773,7 @@ async function fileHarness(label: string) {
   };
   const made = await folderHarness(label, {
     settings: { query: { types: ["core.file", "core.note"] } },
-    rows: { "core.file": [{ item }], "core.note": [row(1)] },
+    items: { "core.file": [{ item }], "core.note": [row(1)] },
     events: [
       copyReplay("3", [
         copyItemEvent(
@@ -948,7 +948,7 @@ it.each(["yes", "no"])(
   "asks before first sync at a terminal and obeys %s",
   async (answer) => {
     harness = await folderHarness("contract-b-terminal", {
-      rows: { "core.note": [row(0)] },
+      items: { "core.note": [row(0)] },
       confirm: false,
     });
     const args = [
@@ -1023,7 +1023,7 @@ finally:
 
 it("keeps first sync confirmed after a failed landing and after adding the folder again", async () => {
   harness = await folderHarness("contract-b-confirm-persist", {
-    rows: { "core.note": [row(0)] },
+    items: { "core.note": [row(0)] },
     confirm: false,
   });
   expect((await harness.folder.confirm()).ok).toBe(true);
@@ -1068,7 +1068,7 @@ it.each(restoredBodies)(
         query: { types: ["core.note"], state: ["active"] },
         removal_threshold: { files: 0, fraction: 0 },
       },
-      rows: { "core.note": [{ item: host }], "core.file": [{ item: file }] },
+      items: { "core.note": [{ item: host }], "core.file": [{ item: file }] },
       edges: {
         "attached-to": [
           {

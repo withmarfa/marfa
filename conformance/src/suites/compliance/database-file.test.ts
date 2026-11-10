@@ -383,7 +383,7 @@ describe("copying the data directory one file after another while the instance w
         return { image, before, after: writer.acknowledged.slice() };
       }
 
-      /** What a copy cannot answer of what it must, and a blob a copied row
+      /** What a copy cannot answer of what it must, and a blob a copied item
        *  names that the copy does not serve. `undefined` for a copy that
        *  does not start. */
       async function readBack(copy: {

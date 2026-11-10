@@ -29,7 +29,7 @@ const LIST_SAMPLES = Math.max(4, Math.round(readSamples / 3));
 /**
  * Write-shaped operations are an order of magnitude more expensive than reads
  * on a small target, so they are sampled more thinly. `create` keeps the full
- * count because its rows are the read and update targets for the rest of the
+ * count because its items are the read and update targets for the rest of the
  * file.
  */
 const UPDATE_SAMPLES = Math.max(3, Math.round(writeSamples / 2));
@@ -39,10 +39,10 @@ describe("CRUD micro-benchmarks", () => {
   let ctx: TestContext;
   let client: MarfaClient;
   const corpus = new Corpus({ seed: 7703 });
-  /** Rows created by the create benchmark, reused as read/update targets. */
+  /** Items created by the create benchmark, reused as read/update targets. */
   const created: string[] = [];
   /**
-   * The version each row was last seen at. The update door requires the
+   * The version each item was last seen at. The update door requires the
    * version the caller read, and the create benchmark is the read: holding it
    * here keeps the measured call one PATCH rather than a GET plus a PATCH,
    * which would make the update number describe two round trips.
@@ -199,7 +199,7 @@ describe("CRUD micro-benchmarks", () => {
   });
 
   it("measures delete", async () => {
-    // Deletes run against rows written for the purpose, so the read, update,
+    // Deletes run against items written for the purpose, so the read, update,
     // and transition targets above stay alive for the whole file.
     const doomed: string[] = [];
     for (let i = 0; i < MUTATION_SAMPLES; i++) {

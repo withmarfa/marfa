@@ -159,7 +159,7 @@ async function writeCase(): Promise<Written> {
 }
 
 function expectNarrowed(filtered: string[], witness: string[], w: Written) {
-  // The witness: every row and edge was producible on this stream.
+  // The witness: every item and edge was producible on this stream.
   expect(witness).toEqual(
     expect.arrayContaining([
       w.shownNote,
@@ -284,7 +284,7 @@ describe("the source filter on the event stream", () => {
     });
   });
 
-  it("still sends a row the filter hides on a copy stream, with listed false", async ({
+  it("still sends an item the filter hides on a copy stream, with listed false", async ({
     signal,
   }) => {
     await withStream(

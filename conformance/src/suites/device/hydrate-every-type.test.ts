@@ -39,7 +39,7 @@ describe("a slice of every type", () => {
   it("hydrates every type but system.* from the listing naming no type", async () => {
     harness = await startHarness("every-type");
     const { server, device } = harness;
-    scriptHydration(server, { head: "10", rows: ROWS });
+    scriptHydration(server, { head: "10", items: ROWS });
 
     const hydrated = await device.hydrate(["*"], "library");
     expect(hydrated.ok, JSON.stringify(hydrated)).toBe(true);
@@ -47,7 +47,7 @@ describe("a slice of every type", () => {
     expect(hydrated.value.types).toEqual(["*"]);
     expect(
       hydrated.value.items,
-      "the copy took a system row, or left a type out",
+      "the copy took a system item, or left a type out",
     ).toBe(2);
     for (const query of listings(harness)) {
       expect(
@@ -59,12 +59,12 @@ describe("a slice of every type", () => {
     expect((await device.get("b1")).ok).toBe(true);
     expect(
       (await device.get("s1")).ok,
-      "a slice of every type held a system row",
+      "a slice of every type held a system item",
     ).toBe(false);
     const status = await device.status();
     expect(status.ok && status.value.slice_types).toEqual(["*"]);
 
-    // The witness: the same rows named by type are read by their own
+    // The witness: the same items named by type are read by their own
     // listings.
     const named = await device.hydrate(
       ["core.note", "core.bookmark"],
@@ -80,7 +80,7 @@ describe("a slice of every type", () => {
   it("refuses the star beside a type that is not a system type before any request, and takes it said twice", async () => {
     harness = await startHarness("every-type-mixed");
     const { server, device } = harness;
-    scriptHydration(server, { head: "10", rows: ROWS });
+    scriptHydration(server, { head: "10", items: ROWS });
 
     for (const types of [
       ["*", "core.note"],
@@ -109,7 +109,7 @@ describe("a slice of every type", () => {
     scriptHydration(server, {
       head: "10",
       catalog: typeCatalog([wireType("system.folder", { parent: undefined })]),
-      rows: {
+      items: {
         ...ROWS,
         "system.folder": [{ item: { id: "f1", type: "system.folder" } }],
       },
@@ -126,10 +126,10 @@ describe("a slice of every type", () => {
     expect((await device.get("s1")).ok).toBe(false);
   });
 
-  it("takes no system row by event, but one that is pinned", async () => {
+  it("takes no system item by event, but one that is pinned", async () => {
     harness = await startHarness("every-type-no-system");
     const { server, device } = harness;
-    scriptHydration(server, { head: "10", rows: ROWS });
+    scriptHydration(server, { head: "10", items: ROWS });
     const settings = (version: number, title: string) =>
       wireItem({
         id: "settings",
@@ -161,7 +161,7 @@ describe("a slice of every type", () => {
 
     const caught = await device.catchUp();
     expect(caught.ok, JSON.stringify(caught)).toBe(true);
-    // The witness: the stream carried rows a slice of every type takes.
+    // The witness: the stream carried items a slice of every type takes.
     expect((await device.get("later")).ok).toBe(true);
     expect(
       (await device.get("feed")).ok,
@@ -170,7 +170,7 @@ describe("a slice of every type", () => {
     const held = await device.get("settings");
     expect(
       held.ok && held.value.properties.title,
-      "a pinned system row stopped taking its updates in a slice of every type",
+      "a pinned system item stopped taking its updates in a slice of every type",
     ).toBe("changed");
   });
 
@@ -181,7 +181,7 @@ describe("a slice of every type", () => {
       head: "10",
       pageSize: 1,
       drop: () => true,
-      rows: ROWS,
+      items: ROWS,
     });
     expect((await device.hydrate(["*"], "library")).ok).toBe(false);
     const filling = await device.status();
@@ -212,7 +212,7 @@ describe("a slice of every type", () => {
       head: "10",
       pageSize: 1,
       drop: () => true,
-      rows: ROWS,
+      items: ROWS,
     });
     expect((await device.hydrate(["*"], "library")).ok).toBe(false);
     const filling = await device.status();
@@ -229,7 +229,7 @@ describe("a slice of every type", () => {
       head: "10",
       pageSize: 1,
       drop: () => cut,
-      rows: ROWS,
+      items: ROWS,
     });
     expect((await device.hydrate(["*"], "library")).ok).toBe(false);
     const partial = await device.status();

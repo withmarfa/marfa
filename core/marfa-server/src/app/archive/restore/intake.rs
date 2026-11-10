@@ -207,7 +207,7 @@ impl Rows {
                 file.name()
             ))
             .with_detail("entry", file.name())
-            .with_detail("row", row)
+            .with_detail("line", row)
             .with_detail("pointer", pointer);
             return Err(match named {
                 Some((kind, id)) => {
@@ -219,7 +219,7 @@ impl Rows {
         let line: Value = serde_json::from_slice(text).map_err(|_| {
             invalid(format!("Line {row} of {} is not JSON.", file.name()))
                 .with_detail("entry", file.name())
-                .with_detail("row", row)
+                .with_detail("line", row)
         })?;
         match file {
             LineFile::Instance => self.instance_line(&line, row),
@@ -402,7 +402,7 @@ impl Rows {
                         "Item {} on line {row} of the archive: {field} must be unique in the archive.",
                         id.unwrap_or("with no id")
                     ))
-                    .with_detail("row", row)
+                    .with_detail("line", row)
                     .with_detail("item_id", id)
                     .with_detail("field", field));
                 }

@@ -17,11 +17,11 @@ import { Corpus } from "../../generators/corpus.js";
 
 /**
  * Full-text search latency across three selectivities: a token that matches
- * only this run's rows, a common word that matches whatever else is in the
+ * only this run's items, a common word that matches whatever else is in the
  * index, and a type-narrowed query.
  *
  * Selectivity is the axis that matters — an FTS implementation that scans
- * instead of using its index shows the difference between a one-row match and
+ * instead of using its index shows the difference between a one-item match and
  * a broad match as an order-of-magnitude latency gap. Absolute numbers depend
  * on how much content the dataset already holds, so the thresholds below are
  * sanity bounds and the printed distribution is the comparable artifact.
@@ -33,7 +33,7 @@ const SEARCH_P50_CEILING_MS = 3_000;
 /** The tail absorbs request queueing. */
 const SEARCH_P95_CEILING_MS = 6_000;
 
-/** A word from the corpus vocabulary, so it matches every seeded row broadly
+/** A word from the corpus vocabulary, so it matches every seeded item broadly
  *  rather than selectively. */
 const BROAD_TERM = "meeting";
 

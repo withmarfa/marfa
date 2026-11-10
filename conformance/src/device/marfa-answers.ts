@@ -22,17 +22,17 @@ export interface WireItemOptions {
   occurred_at?: string;
   created_at?: string;
   updated_at?: string;
-  /** When the row went to the bin; null where the fixture names none. */
+  /** When the item went to the bin; null where the fixture names none. */
   trashed_at?: string | null;
   /** Null leaves the field out, as a server from before it does. */
   read_only?: boolean | null;
-  /** The edges the server hydrates onto the row, keyed by edge type. */
+  /** The edges the server hydrates onto the item, keyed by edge type. */
   edges?: Record<string, unknown>;
 }
 
 const EPOCH = "2026-09-18T00:00:00.000Z";
 
-/** The source a served row carries where a fixture names none. */
+/** The source a served item carries where a fixture names none. */
 export const SERVED_SOURCE = "device-fixtures";
 
 export function wireItem(options: WireItemOptions): Record<string, unknown> {
@@ -58,12 +58,12 @@ export function wireItem(options: WireItemOptions): Record<string, unknown> {
     created_at: options.created_at ?? at,
     updated_at: options.updated_at ?? at,
     trashed_at: options.trashed_at ?? null,
-    // No connector registration holds a scripted row read only unless a
+    // No connector registration holds a scripted item read only unless a
     // fixture says so, and null stands for a server that leaves the field out.
     ...(options.read_only === null
       ? {}
       : { read_only: options.read_only ?? false }),
-    // Present and empty, which is what the server answers for a row with no
+    // Present and empty, which is what the server answers for an item with no
     // edges. Absent would be a different thing to a device, and this is the
     // shape every door that returns an item returns.
     edges: options.edges ?? {},
@@ -406,7 +406,7 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
 ];
 
 /**
- * A registered type declaring a thumbnail (`device/thumbnail-from-row`). A function of
+ * A registered type declaring a thumbnail (`device/thumbnail-from-item`). A function of
  * its id, because the fidelity comparison registers the same type on the
  * real server under an id of its own run.
  */
@@ -663,9 +663,9 @@ export function itemEvent(
   options: { tags?: string[] } = {},
 ): SseFrame {
   // The sidecar rides on every item frame, empty or not, so a device can learn
-  // that a row's tags were cleared. A frame without it is a shape the server
+  // that an item's tags were cleared. A frame without it is a shape the server
   // does not send.
-  // The frame publishes the stored row, and the stored row has no hydrated
+  // The frame publishes the stored item, and the stored item has no hydrated
   // edges: `edges` rides on the doors that were asked to include them and on
   // nothing else. Left on, a device could read a frame's edge block and find
   // nothing there in production.
@@ -903,9 +903,9 @@ export function certifiedRead(
 /**
  * What `POST /items/bulk-get` answers for ids whose reads by id answer
  * `reads`, in the order the request named them. The server resolves each id
- * as a read by id does, so a `200` gives the id's row and a `404` leaves the
+ * as a read by id does, so a `200` gives the id's item and a `404` leaves the
  * id out (`items/bulk-get` and `items/bulk-get-omits`), but for a `system.*`
- * row, which it leaves out unless `include` names `system`
+ * item, which it leaves out unless `include` names `system`
  * (`items/bulk-get-system`). Any other answer is the whole request's. Under a
  * reach the answer is certified only where every read was, and then
  * carries `listed` beside `items` (`reach/listed-bulk-get`).
@@ -1032,15 +1032,15 @@ export function heldLog(
  * does not is a device read that goes green here and meets nothing there.
  */
 export interface ConflictSnapshotBody {
-  /** The row: a create names a natural key and not an id, and learns from
-   *  this which row refused it (`queue-and-verdicts/landed-refused`). */
+  /** The item: a create names a natural key and not an id, and learns from
+   *  this which item refused it (`queue-and-verdicts/landed-refused`). */
   id: string;
   version: number;
   properties: Record<string, unknown>;
   tier: "library" | "feed";
   occurred_at: string;
   source_id: string | null;
-  /** The type the row had at this version: a stale move onto a row moved
+  /** The type the item had at this version: a stale move onto an item moved
    *  since collides on it, and the envelope shows both sides. */
   type: string;
 }
@@ -1085,16 +1085,16 @@ export const answers = {
     status: 200,
     body: withMetadata(item, tags),
   }),
-  /** A create whose natural key resolved a row the server holds: `200` and
-   *  that row, under its own id, as an update answers
+  /** A create whose natural key resolved an item the server holds: `200` and
+   *  that item, under its own id, as an update answers
    *  (`items/natural-key-upsert`). */
   upserted: (item: Record<string, unknown>, tags: string[] = []): Answer => ({
     kind: "json",
     status: 200,
     body: withMetadata(item, tags),
   }),
-  /** A create naming an `id` that is not the row its natural key resolves:
-   *  refused rather than written onto either row. */
+  /** A create naming an `id` that is not the item its natural key resolves:
+   *  refused rather than written onto either item. */
   idNotTheKeys: (
     requestedId: string,
     existingId: string,
@@ -1156,8 +1156,8 @@ export const answers = {
       merge_policy: mergePolicy,
     },
   }),
-  /** An update sent with `version_match: "exact"` at a version the row has
-   *  moved past: the row as it now stands, and nothing to merge against. */
+  /** An update sent with `version_match: "exact"` at a version the item has
+   *  moved past: the item as it now stands, and nothing to merge against. */
   staleVersion: (
     current: ConflictSnapshotBody,
     requestedVersion: number,
@@ -1287,7 +1287,7 @@ export const answers = {
       requested_version: requestedVersion,
     },
   }),
-  /** `POST /items/lookup`, answering the rows the keys it named hold. */
+  /** `POST /items/lookup`, answering the items the keys it named hold. */
   lookup: (items: Array<Record<string, unknown>>): Answer => ({
     kind: "json",
     status: 200,

@@ -241,7 +241,7 @@ export interface CliContext {
 
 /**
  * A key of this file's own, minted the way every other suite mints one, so
- * every row the scenarios write is attributable to this file and torn down
+ * every item the scenarios write is attributable to this file and torn down
  * with it.
  */
 export async function cliContext(file: string): Promise<CliContext> {

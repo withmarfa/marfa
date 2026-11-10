@@ -457,7 +457,7 @@ describe("a key whose type map reaches a type evolves it", () => {
     expect(refusal(removal)?.details?.changes).toEqual(["fields.legacy"]);
   });
 
-  it("refuses a field whose name a stored row holds, in any lifecycle state, and lands it for a key with schema.write", async () => {
+  it("refuses a field whose name a stored item holds, in any lifecycle state, and lands it for a key with schema.write", async () => {
     const ns = namespace("held");
     const id = `${ns}.entry`;
     const own = await connector(ns);
@@ -491,7 +491,7 @@ describe("a key whose type map reaches a type evolves it", () => {
     }
     expect(await fieldsOf(id)).not.toContain("held_0");
 
-    // The witnesses: a name no row holds lands, and a held one lands for a key
+    // The witnesses: a name no item holds lands, and a held one lands for a key
     // with schema.write.
     expect((await own.replaceType(id, withFields("fresh"))).status).toBe(200);
     const landed = await (
@@ -502,7 +502,7 @@ describe("a key whose type map reaches a type evolves it", () => {
     expect(landed.status, JSON.stringify(landed.error)).toBe(200);
   });
 
-  it("refuses a field whose name only a row of a subtype holds", async () => {
+  it("refuses a field whose name only an item of a subtype holds", async () => {
     const ns = namespace("subtype");
     const base = `${ns}.base`;
     const leaf = `${ns}.leaf`;
@@ -527,14 +527,14 @@ describe("a key whose type map reaches a type evolves it", () => {
     expect(refusal(refused)?.code).toBe("forbidden");
     expect(refusal(refused)?.details?.changes).toEqual(["fields.inherited"]);
 
-    // The witness: a name no row of either type holds lands.
+    // The witness: a name no item of either type holds lands.
     const landed = await own.replaceType(base, {
       fields: { title: { type: "string" }, fresh: { type: "string" } },
     });
     expect(landed.status, JSON.stringify(landed.error)).toBe(200);
   });
 
-  it("refuses bringing a removed field back, which would reshape the values rows still hold", async () => {
+  it("refuses bringing a removed field back, which would reshape the values items still hold", async () => {
     const ns = namespace("readd");
     const id = `${ns}.entry`;
     const own = await connector(ns);
@@ -566,7 +566,7 @@ describe("a key whose type map reaches a type evolves it", () => {
     expect(await fieldsOf(id)).not.toContain("secret");
   });
 
-  it("leaves a removed field's values readable and the row writable", async () => {
+  it("leaves a removed field's values readable and the item writable", async () => {
     const ns = namespace("kept");
     const id = `${ns}.entry`;
     const curated = await curator(ns);

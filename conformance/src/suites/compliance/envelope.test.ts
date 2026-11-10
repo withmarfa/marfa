@@ -20,7 +20,7 @@ import {
 import { uploadReferenced } from "../../utils/blobs.js";
 
 /**
- * Every list and every search answers one envelope: the rows under `data`
+ * Every list and every search answers one envelope: the items under `data`
  * and the cursor that continues them under `next_cursor`, `null` on the
  * last page. Three doors carry a sibling about the answer rather than the
  * page. Nothing else stands beside the two keys.
@@ -195,10 +195,10 @@ describe("one envelope for every list and search", () => {
     door.owner ? LOCAL : door.operator ? managementKey : apiKey;
 
   it("names thirty-one doors, every one the document publishes as a page", async () => {
-    // The derived set holds the rows to the document, so a door that starts
+    // The derived set holds the items to the document, so a door that starts
     // answering a page without a row here turns this red. The count holds
     // both to the number the specification states, so a new page added with
-    // a row beside it turns this red too.
+    // an item beside it turns this red too.
     expect(doors).toHaveLength(31);
     expect(doors.map((door) => `GET ${door.template}`).sort()).toEqual(
       pageDoors(await servedDocument()).sort(),

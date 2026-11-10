@@ -79,7 +79,7 @@ describe("an item that carries no source", () => {
     expect(await listed(await reader("unknown", ["unknown"]))).toEqual([
       sourceless,
     ]);
-    // The witness: a filter naming the other row's source lists that row only.
+    // The witness: a filter naming the other item's source lists that item only.
     expect(await listed(await reader("sourced", [ctx.source]))).toEqual([
       sourced,
     ]);

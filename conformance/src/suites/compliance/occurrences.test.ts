@@ -188,7 +188,7 @@ describe("occurrences", () => {
     const ids = r.data.data.map((o) => o.item.id);
     expect(ids).toContain(earlier);
     expect(ids).toContain(later);
-    // Positions rather than a sorted comparison: the later row was written
+    // Positions rather than a sorted comparison: the later item was written
     // first, so write order and start order disagree and only one of them can
     // produce this.
     expect(ids.indexOf(earlier)).toBeLessThan(ids.indexOf(later));

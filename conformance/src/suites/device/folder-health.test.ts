@@ -29,7 +29,7 @@ import {
   writeAnswers,
 } from "../../device/marfa-answers.js";
 import type { FolderSettings } from "../../device/cli-adapter.js";
-import type { DoorRow } from "../../device/folder-door.js";
+import type { DoorItem } from "../../device/folder-door.js";
 import {
   lastReport,
   scriptFolderWrites,
@@ -130,7 +130,7 @@ it("counts the removals a large removal holds on disk or from a pull as paused r
     },
   }));
   second = await folderHarness("health-paused-pull", {
-    rows: { "core.note": rows },
+    items: { "core.note": rows },
     settings: { ...tight, query: { types: ["core.note"], state: ["active"] } },
     events: [
       copyReplay(
@@ -159,7 +159,7 @@ it("counts the removals a large removal holds on disk or from a pull as paused r
 
 it("counts a file the server refused under refused", async () => {
   harness = await folderHarness("health-refused-file", {
-    rows: {
+    items: {
       "core.note": [
         {
           item: {
@@ -221,7 +221,7 @@ it("counts no problem for a file whose item is already in the bin", async () => 
   const id = "01a00000-0000-7000-8000-000000000201";
   const row = { item: { id, properties: { title: "Binned", body: "body\n" } } };
   harness = await folderHarness("health-gone-file", {
-    rows: { "core.note": [row] },
+    items: { "core.note": [row] },
     events: [
       copyReplay("2", [
         copyItemEvent(
@@ -280,7 +280,7 @@ it("counts what the last pull could not write as pending downloads and held file
     },
   }));
   harness = await folderHarness("health-pending-downloads", {
-    rows: { "core.note": rows },
+    items: { "core.note": rows },
   });
   scriptFolderWrites(harness);
   const pushed = await withFault("rename-new-unsupported=Blocked.md", () =>
@@ -413,7 +413,7 @@ it("counts no conflict for a tagged copy derived from an item when neither has a
   );
   harness = await folderHarness("health-conflict-neither", {
     settings: activeNotes,
-    rows: {
+    items: {
       "core.note": [
         {
           item: {
@@ -527,7 +527,7 @@ it("counts one settings_invalid while the settings file is refused", async () =>
 it("counts one settings_invalid while a pull cannot write the settings file, and none once it can", async () => {
   let changed: Record<string, unknown> = {};
   harness = await folderHarness("health-settings-unwritable", {
-    rows: {
+    items: {
       "core.note": [
         {
           item: {
@@ -597,7 +597,7 @@ it("counts one root_gone when another directory has taken the folder's place", a
 
 it("counts one root_gone when another directory has taken the folder's place as a pull writes", async () => {
   harness = await folderHarness("health-root-gone-pull", {
-    rows: {
+    items: {
       "core.note": [
         {
           item: {
@@ -858,7 +858,7 @@ it("refreshes the newest local observation above a restored backup sequence", as
 it("keeps dead file effects current until an accepted replacement, survives clear and restart, and restores them on release", async () => {
   const id = "01a00000-0000-7000-8000-00000000000a";
   harness = await folderHarness("health-dead-effects", {
-    rows: {
+    items: {
       "core.note": [
         {
           item: {
@@ -1016,7 +1016,7 @@ it.each(["replacement", "tag addition"] as const)(
   async (operation) => {
     const id = "01a00000-0000-7000-8000-00000000000a";
     harness = await folderHarness(`health-dead-metadata-${operation}`, {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -1029,7 +1029,7 @@ it.each(["replacement", "tag addition"] as const)(
       },
     });
     let broken = false;
-    let rows: Map<string, DoorRow>;
+    let rows: Map<string, DoorItem>;
     scriptFolderWrites(harness, {
       door: (door) => {
         rows = door.rows;

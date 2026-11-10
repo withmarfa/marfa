@@ -110,7 +110,7 @@ describe("the instance's archive from the terminal", () => {
     ]);
     expect(written.size_bytes).toBeGreaterThan(0);
 
-    // Every row in it is already here, so the restore counts duplicates
+    // Every item in it is already here, so the restore counts duplicates
     // rather than imports. That the counts come back at all is what says
     // the archive reached the door and was read.
     const socket = process.env.MARFA_CONTROL_SOCKET;

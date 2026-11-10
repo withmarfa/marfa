@@ -64,7 +64,7 @@ function sizeLabel(bytes: number): string {
 }
 
 /** Kilobytes per second at the median. One unit across three orders of
- *  magnitude of payload keeps the per-byte cost comparable between rows. */
+ *  magnitude of payload keeps the per-byte cost comparable between items. */
 function throughputNote(bytes: number, p50Ms: number): string {
   if (p50Ms <= 0) return "";
   return `${(bytes / 1024 / (p50Ms / 1000)).toFixed(0)} KB/s at p50`;

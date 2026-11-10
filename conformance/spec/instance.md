@@ -136,7 +136,7 @@ When a write names in `X-Marfa-Instance-Id` the instance's own `instance_id`, th
 
 If a write names in `X-Marfa-Instance-Id` a UUIDv7 other than the instance's own `instance_id`, then the server MUST answer `409 instance_changed`.
 
-**Reason:** another instance at the address the client knew holds none of the rows its copy was built from, so a write sent there would land on rows the client never read.
+**Reason:** another instance at the address the client knew holds none of the items its copy was built from, so a write sent there would land on items the client never read.
 
 **Tests:** `compliance/instance-header.test.ts › takes a write naming this instance, and refuses one naming another 409 instance_changed without writing it`, `› refuses another instance on every write operation the document publishes outside /auth`.
 
@@ -164,7 +164,7 @@ If a write names an `X-Marfa-Instance-Id` that is empty, repeated, or not one lo
 
 When a write names `X-Marfa-Instance-Id` and meets more than one of the answers this section gives it, the server MUST give the first in this order: no valid credential on an operation that requires one, `401`, or `400` before it to a body nested more than 64 levels or holding a surrogate escape with no partner; a header that is not one lowercase UUIDv7, `400`; another instance's id, `409 instance_changed`; then the answers it gives the same write without the header, a body nested more than 64 levels, a body holding a surrogate escape with no partner and an answer recorded under its `Idempotency-Key` among them.
 
-**Reason:** a write sent to another instance is refused for that alone, so the refusal says nothing about the body, the rows it names or the credential's reach there.
+**Reason:** a write sent to another instance is refused for that alone, so the refusal says nothing about the body, the items it names or the credential's reach there.
 
 **Tests:** `compliance/instance-header.test.ts › answers 401, or 400 to a body nested too deep, before it judges the header, and judges it before the write's own refusals`, `› keeps no refusal under an Idempotency-Key, and replays the first answer whatever instance the repeat names`, `› refuses another instance on a conditional read before it judges the read's reach`.
 
@@ -458,7 +458,7 @@ The server MUST cut each description and title in the `GET /overview` answer at 
 
 ## Backing up
 
-An owner has two backups of an instance. Where `S3_BUCKET` is set, the server backs itself up to that object store: on a schedule, and when the owner asks. Each backup is an archive, as `GET /export?format=archive` writes one, of every row and instance line, the trash included, and of no file's bytes, since the object store already keeps a copy of each file as an attached store. And an image of the data directory, such as a machine backup takes, holds everything the instance keeps: the database file, the log beside it that holds the writes not yet moved into the file, and the folder of blob files. Neither holds the setting `MARFA_KEY_SALT`, and a backup holds no credential, so sign-in, keys and apps are set up again after a backup is restored.
+An owner has two backups of an instance. Where `S3_BUCKET` is set, the server backs itself up to that object store: on a schedule, and when the owner asks. Each backup is an archive, as `GET /export?format=archive` writes one, of every item and instance line, the trash included, and of no file's bytes, since the object store already keeps a copy of each file as an attached store. And an image of the data directory, such as a machine backup takes, holds everything the instance keeps: the database file, the log beside it that holds the writes not yet moved into the file, and the folder of blob files. Neither holds the setting `MARFA_KEY_SALT`, and a backup holds no credential, so sign-in, keys and apps are set up again after a backup is restored.
 
 ### `instance/backup-object`
 
@@ -476,7 +476,7 @@ When the server takes a backup, the server MUST put in it the items, edges and i
 
 ### `instance/backup-no-file-bytes`
 
-When the server takes a backup, the server MUST name every file its rows name under the manifest's `missing_blobs`, and carry no file's bytes.
+When the server takes a backup, the server MUST name every file its items name under the manifest's `missing_blobs`, and carry no file's bytes.
 
 **Reason:** the object store already holds a copy of each file the instance has replicated, so a backup that carried them would put every file in the bucket again each time.
 
@@ -602,7 +602,7 @@ Where `S3_BUCKET` is not set, when the private local command sends `GET /backups
 
 When a key or an app's token sends `GET /backups`, `POST /backups` or `POST /backups/{instance_id}/{name}/restore`, the server MUST answer `403 forbidden`.
 
-**Reason:** a backup holds every row of the instance, which no grant of a key or an app covers.
+**Reason:** a backup holds every item of the instance, which no grant of a key or an app covers.
 
 **Tests:** `compliance/backups.test.ts › lists the backups newest first to the owner, and refuses a key at all three doors`.
 
@@ -1110,7 +1110,7 @@ While the server runs an archive export, an archive restore, an NDJSON export, a
 
 **Reason:** a long job that held up other requests would stop every request, `/health` included, for as long as it runs, and a container whose health check waits five seconds restarts a server that is working. The fixture checks the order of the answer and a later step of the job, which the server records, where a time would measure the machine. A restore also holds the write lock, which makes the write probe `degraded` and is not a held process.
 
-**Tests:** `compliance/long-job-health-restore.test.ts › is answered between the first and the last row of an archive restore`, `compliance/long-job-health.test.ts › is answered between two pages of an archive export`, `› is answered between two pages of an NDJSON export`, `› is answered between two chunks of a bulk action`, `› is answered between two pages of the blob orphan sweep`, `› is answered between two pages of version thinning`, `compliance/long-job-health-credentials.test.ts › is answered between two grants of the retirement of inactive grants`.
+**Tests:** `compliance/long-job-health-restore.test.ts › is answered between the first and the last line of an archive restore`, `compliance/long-job-health.test.ts › is answered between two pages of an archive export`, `› is answered between two pages of an NDJSON export`, `› is answered between two chunks of a bulk action`, `› is answered between two pages of the blob orphan sweep`, `› is answered between two pages of version thinning`, `compliance/long-job-health-credentials.test.ts › is answered between two grants of the retirement of inactive grants`.
 
 ## Open connections
 

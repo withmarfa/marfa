@@ -32,7 +32,7 @@ export type { ServerExit, StopSignal };
  * its shared server with.
  *
  * The run's server is shared by every file and lives for the whole run, so
- * a door whose answer is the instance's whole history, rather than rows a
+ * a door whose answer is the instance's whole history, rather than items a
  * file can isolate under its own key, cannot be asserted against it: the
  * first file to reach the door decides what every later one sees, and a
  * re-run against the same server sees the last run. A boot here buys a

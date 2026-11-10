@@ -18,10 +18,10 @@ afterEach(async () => {
 describe("a local read naming an empty list", () => {
   it("refuses an empty type or state list rather than reading the default", async () => {
     harness = await bindingHarness("binding-read-lists-empty", {
-      rows: { "core.note": [{ item: { id: "n1" } }] },
+      items: { "core.note": [{ item: { id: "n1" } }] },
     });
     const { device } = harness;
-    // The witness: the same calls with the key left out answer the row, so
+    // The witness: the same calls with the key left out answer the item, so
     // the refusals below are the empty lists and not a door that refuses.
     const listed = await device.call<{ items: BindingItem[] }>("list", {});
     expect(

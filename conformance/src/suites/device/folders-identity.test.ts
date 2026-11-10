@@ -251,7 +251,7 @@ describe("identity", () => {
     );
     expect((await harness.folder.push()).ok).toBe(true);
 
-    // After the scan, does the folder still know what each file is? A row
+    // After the scan, does the folder still know what each file is? An item
     // lost here is a file the next scan pushes as a second item.
     const scanned = await harness.folder.scan();
     expect(scanned.ok).toBe(true);
@@ -455,14 +455,14 @@ describe("identity", () => {
   it("keeps the id with the older of two unbound files that carry it", async () => {
     const held = "01a00000-0000-7000-8000-00000000000b";
     harness = await folderHarness("folder-copy-unbound", {
-      rows: {
+      items: {
         "core.note": [
           { item: { id: held, properties: { title: "Held", body: "held\n" } } },
         ],
       },
     });
     scriptFolderWrites(harness);
-    // The row is held and no file is bound to it yet: neither file is the
+    // The item is held and no file is bound to it yet: neither file is the
     // binding's.
     const bytes = `---\nmarfa_id: ${held}\ntitle: Held\n---\nheld\n`;
     put(harness, "z-older.md", bytes);
@@ -575,7 +575,7 @@ describe("identity", () => {
       "01a00000-0000-7000-8000-00000000000d",
     ];
     harness = await folderHarness("folder-id-checked-out", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -646,7 +646,7 @@ describe("identity", () => {
         query: { types: ["core.note", "core.file"] },
         defaults: { type: "core.note" },
       },
-      rows: {
+      items: {
         "core.file": [
           {
             item: {
@@ -758,7 +758,7 @@ describe("identity", () => {
     const x = "01a00000-0000-7000-8000-0000000002d1";
     const y = "01a00000-0000-7000-8000-0000000002d2";
     harness = await folderHarness("folder-path-taken", {
-      rows: {
+      items: {
         "core.note": [
           { item: { id: x, properties: { title: "ex", body: "x\n" } } },
           { item: { id: y, properties: { title: "why", body: "y\n" } } },
@@ -1003,9 +1003,9 @@ describe("identity", () => {
     expect(shape(harness)).toHaveLength(1);
   });
 
-  it("queues a file whose row the copy lost again once it changes, and says so", async () => {
+  it("queues a file whose item the copy lost again once it changes, and says so", async () => {
     harness = await folderHarness("folder-lost-row");
-    // The first create is refused and the drain forgets its row; everything
+    // The first create is refused and the drain forgets its item; everything
     // after answers by the server's rules.
     const door = new FolderDoor();
     scriptWrites(harness.server, {
@@ -1051,7 +1051,7 @@ describe("identity", () => {
     if (!pushed.ok) return;
     expect(
       [pushed.value.scan.created, pushed.value.scan.requeued],
-      "a file bound to a row the copy lost was not queued again once it changed",
+      "a file bound to an item the copy lost was not queued again once it changed",
     ).toEqual([1, 1]);
     expect(
       itemVerdicts(pushed.value.drain.verdicts).map((entry) => entry.verdict),
@@ -1071,7 +1071,7 @@ describe("identity", () => {
   });
 
   it("keeps a live file's binding when it takes a lost file's old name", async () => {
-    // A file bound to a row the copy lost moves off its name, and a live
+    // A file bound to an item the copy lost moves off its name, and a live
     // file moves onto that name, in one scan. The walk meets the live file
     // first and binds it there; queuing the lost file again must not then
     // take that binding away as the lost file's old one, or the live item is
@@ -1173,9 +1173,9 @@ describe("identity", () => {
     expect(again.ok && again.value.scan.created).toBe(0);
   });
 
-  it("queues a file whose row the copy lost again once it moves", async () => {
+  it("queues a file whose item the copy lost again once it moves", async () => {
     // A move is the person acting on the file, as an edit is, so a file
-    // bound to a row the copy lost is queued again when it moves, bytes
+    // bound to an item the copy lost is queued again when it moves, bytes
     // unchanged; left where it was, it is only reported.
     harness = await folderHarness("folder-lost-moved");
     const door = new FolderDoor();
@@ -1206,7 +1206,7 @@ describe("identity", () => {
 
   it("says in words when a file is bound to an item that is gone, once while watching", async () => {
     harness = await folderHarness("folder-lost-words");
-    // The one file's create is refused and its row read back as gone; any
+    // The one file's create is refused and its item read back as gone; any
     // other file's create is taken, so a file added later is a pass the
     // watcher is seen to run.
     const door = new FolderDoor();
@@ -1307,7 +1307,7 @@ describe("what a pull does with a file whose item stops matching", () => {
     const held = { ...departed, version };
     return folderHarness(label, {
       files,
-      rows: { "core.note": [{ item: held }] },
+      items: { "core.note": [{ item: held }] },
       events: [
         copyReplay("2", [
           copyItemEvent(
@@ -1341,14 +1341,14 @@ describe("what a pull does with a file whose item stops matching", () => {
     if (!second.ok) return;
     expect(
       second.value.removed,
-      "the item was trashed and its file stayed, bound and unmaintained, for the next scan to push back as an edit to a row the person cannot see",
+      "the item was trashed and its file stayed, bound and unmaintained, for the next scan to push back as an edit to an item the person cannot see",
     ).toBe(1);
     expect(second.value.kept).toBe(0);
     expect(existsSync(join(harness.dir, "going.md"))).toBe(false);
     const unpinned = await harness.folder.device().status();
     expect(
       unpinned.ok && unpinned.value.pinned,
-      "a file's row stayed pinned once its binding went",
+      "a file's item stayed pinned once its binding went",
     ).not.toContain(departed.id);
 
     // The journal was not involved and nothing was queued. A journaled
@@ -1553,7 +1553,7 @@ describe("what a pull does with a file whose item stops matching", () => {
           ...(options.state === undefined ? {} : { state: options.state }),
         },
       },
-      rows: { "core.note": [{ item: departed, tags: options.tags }] },
+      items: { "core.note": [{ item: departed, tags: options.tags }] },
       events: [edges.stream()],
     });
     scriptFolderWrites(harness, { edges });
@@ -1793,7 +1793,7 @@ describe("what a pull does with a file whose item stops matching", () => {
   it("removes the file of an item that leaves by state", async () => {
     harness = await folderHarness("folder-leaves-by-state", {
       settings: { query: { types: ["core.note"], state: ["active"] } },
-      rows: { "core.note": [{ item: departed }] },
+      items: { "core.note": [{ item: departed }] },
       events: [
         copyReplay("2", [
           copyItemEvent(
@@ -1918,7 +1918,7 @@ describe("what a pull does with a file whose item stops matching", () => {
     };
     harness = await folderHarness("folder-journaled-departure", {
       settings: { query: { types: ["core.note"], state: ["active"] } },
-      rows: { "core.note": [{ item: archived }, { item: trashed }] },
+      items: { "core.note": [{ item: archived }, { item: trashed }] },
       events: [
         copyReplay("3", [
           copyItemEvent(
@@ -2001,7 +2001,7 @@ describe("what a pull does with a file whose item stops matching", () => {
       properties: { title: "changed", body: "body\n" },
     };
     harness = await folderHarness("folder-journaled-revived", {
-      rows: { "core.note": [{ item }] },
+      items: { "core.note": [{ item }] },
       events: [
         copyReplay("2", [
           copyItemEvent(
@@ -2075,7 +2075,7 @@ describe("what a pull does with a file whose item stops matching", () => {
       properties: { title: "stepped", body: "body\n" },
     };
     harness = await folderHarness("folder-journaled-version-step", {
-      rows: { "core.note": [{ item }] },
+      items: { "core.note": [{ item }] },
       events: [
         copyReplay("2", [
           copyItemEvent("2", "item.updated", wireItem({ ...item, version: 2 })),
@@ -2118,7 +2118,7 @@ describe("what a pull does with a file whose item stops matching", () => {
   it("takes away a file put back after its delete was journaled, once its item leaves by state, and sends no delete", async () => {
     harness = await folderHarness("folder-put-back-departed", {
       settings: { query: { types: ["core.note"], state: ["active"] } },
-      rows: { "core.note": [{ item: departed }] },
+      items: { "core.note": [{ item: departed }] },
       events: [
         copyReplay("2", [
           copyItemEvent(
@@ -2155,7 +2155,7 @@ describe("what a pull does with a file whose item stops matching", () => {
   it("holds the file of an item that leaves by state where it cannot be read, and does not call it kept", async () => {
     harness = await folderHarness("folder-departed-unreadable", {
       settings: { query: { types: ["core.note"], state: ["active"] } },
-      rows: { "core.note": [{ item: departed }] },
+      items: { "core.note": [{ item: departed }] },
       events: [
         copyReplay("2", [
           copyItemEvent(
@@ -2201,7 +2201,7 @@ describe("what a pull does with a file whose item stops matching", () => {
       settings: {
         query: { types: ["core.note"], filter: 'tags contains "keep"' },
       },
-      rows: { "core.note": [{ item, tags: ["keep"] }] },
+      items: { "core.note": [{ item, tags: ["keep"] }] },
       events: [
         copyReplay("2", [
           copyItemEvent("2", "item.updated", wireItem(theirs), { tags: [] }),
@@ -2242,7 +2242,7 @@ describe("what a pull does with a file whose item stops matching", () => {
       settings: {
         query: { types: ["core.note"], filter: 'tags contains "keep"' },
       },
-      rows: { "core.note": [{ item: departed, tags: ["keep"] }] },
+      items: { "core.note": [{ item: departed, tags: ["keep"] }] },
       events: [
         copyReplay("2", [
           copyItemEvent("2", "metadata.changed", wireItem(departed), {
@@ -2278,7 +2278,7 @@ describe("what a pull does with a file whose item stops matching", () => {
   it("keeps the file of an item a narrowed query leaves out, flagged, and sends its edits to it", async () => {
     let changed: Record<string, unknown> = {};
     harness = await folderHarness("folder-narrowed-out", {
-      rows: { "core.note": [{ item: departed }] },
+      items: { "core.note": [{ item: departed }] },
       events: [
         (): Answer =>
           copyReplay("2", [copyItemEvent("2", "item.updated", changed)]),
@@ -2298,7 +2298,7 @@ describe("what a pull does with a file whose item stops matching", () => {
     expect(pushed.value.catch_up.hydrated).not.toBeNull();
     expect(
       pushed.value.pull?.unmatched,
-      "the copy let go of a bound file's row when the query narrowed, so the file is bound to nothing",
+      "the copy let go of a bound file's item when the query narrowed, so the file is bound to nothing",
     ).toBe(1);
     await editedReachesItsItem(harness, departed.id, id);
   });
@@ -2306,7 +2306,7 @@ describe("what a pull does with a file whose item stops matching", () => {
   it("keeps the file of an item retyped out of its query elsewhere, flagged, and sends its edits to it", async () => {
     const retyped = { ...departed, type: "core.bookmark", version: 2 };
     harness = await folderHarness("folder-retyped-out", {
-      rows: { "core.note": [{ item: departed }] },
+      items: { "core.note": [{ item: departed }] },
       events: [
         copyReplay("2", [
           copyItemEvent("2", "item.updated", wireItem(retyped)),
@@ -2330,14 +2330,14 @@ describe("what a pull does with a file whose item stops matching", () => {
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
     expect(
       pushed.ok && pushed.value.pull?.unmatched,
-      "the copy let go of a bound file's row retyped out of the query, so the file is bound to nothing",
+      "the copy let go of a bound file's item retyped out of the query, so the file is bound to nothing",
     ).toBe(1);
     await editedReachesItsItem(harness, departed.id, id);
   });
 
   it("keeps a file the folder never wrote whose create was refused, inside one push", async () => {
     // The scan binds the person's own bytes and queues the create; the
-    // server refuses it; the drain reads the row back, finds nothing and
+    // server refuses it; the drain reads the item back, finds nothing and
     // forgets it; the pull that ends the same push then meets a bound file
     // whose item the copy no longer holds.
     harness = await folderHarness("folder-refused-create");
@@ -2368,7 +2368,7 @@ describe("what a pull does with a file whose item stops matching", () => {
     // Still bound, so the next scan neither makes a second item of it nor
     // queues the refused create again, and it says so; the push's own report
     // is what said the create was refused, and an edit to the file queues it
-    // again (`folders/lost-row-edit-retried`).
+    // again (`folders/lost-item-edit-retried`).
     const before = sentCreates(harness).length;
     expect(before, "the create was never sent, so nothing was refused").toBe(1);
     const scanned = await harness.folder.scan();
@@ -2411,7 +2411,7 @@ describe("what a pull does with a file whose item is purged", () => {
   /** A folder holding one item, and a stream that purges it. */
   async function purge(label: string): Promise<FolderHarness> {
     return folderHarness(label, {
-      rows: { "core.note": [{ item: purged }] },
+      items: { "core.note": [{ item: purged }] },
       events: [
         copyReplay("2", [
           copyItemEvent(
@@ -2427,7 +2427,7 @@ describe("what a pull does with a file whose item is purged", () => {
   it("sends nothing to end the placement of a purged item, which the purge took with it", async () => {
     const edges = new EdgeDoor();
     harness = await folderHarness("folder-purged-placement", {
-      rows: { "core.note": [{ item: purged }] },
+      items: { "core.note": [{ item: purged }] },
       events: [edges.stream()],
     });
     scriptFolderWrites(harness, { edges });
@@ -2535,7 +2535,7 @@ describe("what a pull does with a file whose item is purged", () => {
         query: { types: ["core.note"] },
         removal_threshold: { files: 0, fraction: 0 },
       },
-      rows: { "core.note": [{ item: purged }] },
+      items: { "core.note": [{ item: purged }] },
       events: [edges.stream()],
     });
     scriptFolderWrites(harness, { edges });
@@ -2554,9 +2554,9 @@ describe("what a pull does with a file whose item is purged", () => {
     expect(paused.ok && paused.value.pull?.paused, JSON.stringify(paused)).toBe(
       1,
     );
-    // The server holds the row no more, so the new store's hydration brings
+    // The server holds the item no more, so the new store's hydration brings
     // nothing back.
-    harness.rows["core.note"]!.splice(0);
+    harness.items["core.note"]!.splice(0);
     // A column this build does not make, as in a store another build made.
     const db = new DatabaseSync(harness.folder.store);
     try {
@@ -2616,7 +2616,7 @@ describe("what a pull does with a file whose item is purged", () => {
     expect(read(harness, "going.md")).toContain("an edit the person made");
   });
 
-  it("writes no file for a row purged while the pull writes it, and reads the copy again", async () => {
+  it("writes no file for an item purged while the pull writes it, and reads the copy again", async () => {
     harness = await purge("folder-purged-mid-pull");
     scriptFolderWrites(harness);
     const pulled = await withFault(`purge-during-pull=${purged.id}`, () =>
@@ -2632,7 +2632,7 @@ describe("what a pull does with a file whose item is purged", () => {
     expect(pinned.ok && pinned.value.pinned).not.toContain(purged.id);
   });
 
-  it("places nothing for a row purged before its placement is queued, and takes its file away at the next pull", async () => {
+  it("places nothing for an item purged before its placement is queued, and takes its file away at the next pull", async () => {
     harness = await purge("folder-purged-before-placement");
     scriptFolderWrites(harness);
     const pulled = await withFault(`purge-before-placement=${purged.id}`, () =>
@@ -2640,14 +2640,14 @@ describe("what a pull does with a file whose item is purged", () => {
     );
     expect(
       pulled.ok,
-      `a placement of a row gone from the copy ended the pull: ${JSON.stringify(pulled)}`,
+      `a placement of an item gone from the copy ended the pull: ${JSON.stringify(pulled)}`,
     ).toBe(true);
     if (!pulled.ok) return;
     expect(pulled.value.placed).toBe(0);
     const queued = await harness.folder.device().queue();
     expect(
       queued.ok && queued.value.filter((row) => row.kind === "create_edge"),
-      "a placement was queued from a row the copy no longer holds",
+      "a placement was queued from an item the copy no longer holds",
     ).toEqual([]);
     // The file landed before the purge, and goes once the pull is run again.
     const next = await harness.folder.pull();
@@ -2703,7 +2703,7 @@ describe("what a pull does with a file whose item is purged", () => {
 
   it("counts what an attempt wrote before the copy changed under it", async () => {
     harness = await folderHarness("folder-copy-changed-after-a-write", {
-      rows: {
+      items: {
         "core.note": [
           { item: purged },
           {
@@ -2734,7 +2734,7 @@ describe("what a pull does with a file whose item is purged", () => {
   it("goes on watching where the copy keeps changing under its pull, and says so once", async () => {
     // No purge in the stream: the pull has a file to write at every pass.
     harness = await folderHarness("folder-copy-changing-watch", {
-      rows: { "core.note": [{ item: purged }] },
+      items: { "core.note": [{ item: purged }] },
     });
     scriptFolderWrites(harness);
     // The witness: a one-off pull meeting the same change says so and fails.
@@ -2771,7 +2771,7 @@ describe("what a folder never does to a person's text", () => {
   it("writes a file whole beside it and renames it over, so a failed write leaves the old one", async () => {
     const id = "01a00000-0000-7000-8000-00000000fa01";
     harness = await folderHarness("folder-write-whole", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -2830,7 +2830,7 @@ describe("what a folder never does to a person's text", () => {
   it("holds a document that is not UTF-8, and never sends or rewrites it", async () => {
     const id = "01a00000-0000-7000-8000-00000000fa11";
     harness = await folderHarness("folder-not-utf8", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -2938,7 +2938,7 @@ describe("what a folder never does to a person's text", () => {
       "01a00000-0000-7000-8000-00000000fa23",
     ];
     harness = await folderHarness("folder-root-gone", {
-      rows: {
+      items: {
         "core.note": ids.map((id, at) => ({
           item: {
             id,
@@ -3066,7 +3066,7 @@ describe("what a folder never does to a person's text", () => {
     const [toolBytes, laterBytes] = [1, 2].map((n) => Buffer.from([n, n, n]));
     harness = await folderHarness("folder-quarantine", {
       settings: { query: { types: ["core.file", "core.note"] } },
-      rows: {
+      items: {
         "core.file": [
           { item: fileItem(tool, "tool.bin", toolBytes, { executable: true }) },
           { item: fileItem(later, "later.bin", laterBytes) },
@@ -3322,7 +3322,7 @@ describe("what a folder never does to a person's text", () => {
   it("reports a settings file it cannot write, and goes on", async () => {
     let changed: Record<string, unknown> = {};
     harness = await folderHarness("folder-settings-unwritable", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -3395,7 +3395,7 @@ describe("what a folder never does to a person's text", () => {
   it("keeps a file that appears after an absent landing target was checked", async () => {
     const id = "01a00000-0000-7000-8000-00000000fa91";
     harness = await folderHarness("landing-no-replace", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -3439,7 +3439,7 @@ describe("what a folder never does to a person's text", () => {
   it("does not make its directory anew when it goes away during a pull", async () => {
     const id = "01a00000-0000-7000-8000-00000000fa61";
     harness = await folderHarness("folder-gone-mid-pull", {
-      rows: {
+      items: {
         "core.note": [
           { item: { id, properties: { title: "Late", body: "body\n" } } },
         ],
@@ -3478,7 +3478,7 @@ describe("what a folder never does to a person's text", () => {
       "01a00000-0000-7000-8000-00000000fa82",
     ];
     harness = await folderHarness("folder-root-replaced", {
-      rows: {
+      items: {
         "core.note": ids.map((id, at) => ({
           item: {
             id,
@@ -3600,7 +3600,7 @@ describe("what a folder never does to a person's text", () => {
     const kept = "01a00000-0000-7000-8000-00000000fa92";
     harness = await folderHarness("folder-last-look", {
       settings: { query: { types: ["core.note"], state: ["active"] } },
-      rows: {
+      items: {
         "core.note": [
           { item: going },
           {

@@ -138,7 +138,7 @@ If `POST /types` names `fields` and no `id`, then the server MUST answer `400 in
 
 If a type declares a field named `id`, `type`, `state`, `tier`, `properties`, `created_at`, `updated_at`, `occurred_at`, `source`, `source_id`, `version`, `schema_version`, `capture_latitude`, `capture_longitude`, `trashed_at`, `trashed_by_cascade` or `trashed_with`, then the server MUST answer `400 property_shadows_field` naming each such field.
 
-**Reason:** a row would carry two values under one key, with nothing to say which is authoritative.
+**Reason:** an item would carry two values under one key, with nothing to say which is authoritative.
 
 **Tests:** `compliance/types.test.ts › rejects type registration whose property name shadows a first-class Item field`, `› refuses each field named like one every item has`, `› refuses a replacement whose property name shadows a first-class Item field, as registration does`.
 
@@ -836,13 +836,13 @@ If a replacement would leave a type inheriting from the replaced type linking by
 
 If a write naming or changing a type's `link_field` finds two of the type's items, in any state, holding one value in it, then the server MUST answer `409 link_taken` with `details` naming the type and the field and no item.
 
-**Tests:** `compliance/links.test.ts › holds the rows a type already has to a link it gains`, `› holds the rows to a changed link at once`, `› refuses to register a link the rows a forced delete left share`.
+**Tests:** `compliance/links.test.ts › holds the items a type already has to a link it gains`, `› holds the items to a changed link at once`, `› refuses to register a link the items a forced delete left share`.
 
 ### `types/link-withdrawn`
 
 When a replacement withdraws a type's `link_field`, the server MUST stop holding the type's items to it.
 
-**Tests:** `compliance/links.test.ts › frees the rows and forgets the tombstones when a type withdraws its link`.
+**Tests:** `compliance/links.test.ts › frees the items and forgets the tombstones when a type withdraws its link`.
 
 ## Replacing a type
 
@@ -894,19 +894,19 @@ When a replacement adds a field, required or not, the server MUST leave every st
 
 **Reason:** the items meet the field at their next write of properties, under `items/property-invalid`.
 
-**Tests:** `compliance/type-registry.test.ts › keeps the rows a type already has as they are when it gains a field`.
+**Tests:** `compliance/type-registry.test.ts › keeps the items a type already has as they are when it gains a field`.
 
 ### `types/field-removed`
 
 When a replacement removes a field, the server MUST keep the value each item holds under its name and answer it on every read of the item.
 
-**Tests:** `compliance/type-evolution.test.ts › leaves a removed field's values readable and the row writable`.
+**Tests:** `compliance/type-evolution.test.ts › leaves a removed field's values readable and the item writable`.
 
 ### `types/field-removed-writable`
 
 When a replacement removes a field, the server MUST NOT refuse a later write of an item of the type for the value it holds under that name.
 
-**Tests:** `compliance/type-evolution.test.ts › leaves a removed field's values readable and the row writable`.
+**Tests:** `compliance/type-evolution.test.ts › leaves a removed field's values readable and the item writable`.
 
 ### `types/subtype-members`
 
@@ -932,7 +932,7 @@ If a key holding `metadata.types:write` and not `schema.write` sends `PUT /types
 
 **Reason:** a removal leaves the values items hold, so adding a field under a held name would give those values a shape.
 
-**Tests:** `compliance/type-evolution.test.ts › refuses a field whose name a stored row holds, in any lifecycle state, and lands it for a key with schema.write`, `› refuses a field whose name only a row of a subtype holds`, `› refuses bringing a removed field back, which would reshape the values rows still hold`.
+**Tests:** `compliance/type-evolution.test.ts › refuses a field whose name a stored item holds, in any lifecycle state, and lands it for a key with schema.write`, `› refuses a field whose name only an item of a subtype holds`, `› refuses bringing a removed field back, which would reshape the values items still hold`.
 
 ### `types/evolve-schema-change`
 
@@ -954,7 +954,7 @@ When the server refuses a replacement under `types/evolve-held-name` or `types/e
 
 When a key holding `schema.write` sends `PUT /types/{id}` for a type its map grants write on, the server MUST NOT refuse it under `types/evolve-held-name` or `types/evolve-schema-change`.
 
-**Tests:** `compliance/type-evolution.test.ts › refuses %s to a key without schema.write, naming it, and lands it for a key with schema.write`, `› refuses a field whose name a stored row holds, in any lifecycle state, and lands it for a key with schema.write`.
+**Tests:** `compliance/type-evolution.test.ts › refuses %s to a key without schema.write, naming it, and lands it for a key with schema.write`, `› refuses a field whose name a stored item holds, in any lifecycle state, and lands it for a key with schema.write`.
 
 ## Dependency permissions
 
@@ -1066,7 +1066,7 @@ If no item of the type remains once a type move's job has run, and `to` is no lo
 
 When a type move rewrites a folder or a view, the server MUST deliver its `item.updated` to the outbound webhooks it matches.
 
-**Reason:** a folder or a view is one row a person made, not one of the thousands of rows `items/bulk-fanout` holds back.
+**Reason:** a folder or a view is one item a person made, not one of the thousands of items `items/bulk-fanout` holds back.
 
 **Tests:** `compliance/type-move.test.ts › delivers the rewrite of a folder and of a view to a webhook`.
 
@@ -1132,7 +1132,7 @@ When a type move gives an item in the bin the type `to`, the server MUST decide 
 
 **Reason:** the marks follow the item they name, and a key that may read only `to` may read the item.
 
-**Tests:** `compliance/type-move.test.ts › names the new type for the rows a moved root took into the bin`.
+**Tests:** `compliance/type-move.test.ts › names the new type for the items a moved root took into the bin`.
 
 ### `types/move-grants`
 
@@ -1174,7 +1174,7 @@ If a key holding `schema.write` whose type map grants write on it sends `DELETE 
 
 When a key holding `schema.write` whose type map grants write on it sends `DELETE /types/{id}?force=true` for a type registered at run time that items hold or settings name but no other type names as parent or compatibility target, the server MUST remove the type and keep the items and the settings as they are.
 
-**Tests:** `compliance/type-registry.test.ts › force-deletes a type that has items`, `› refuses a write to a row a forced delete left, until its type is registered again`, `compliance/type-move.test.ts › force-deletes a type a folder names, and leaves the folder as it is`.
+**Tests:** `compliance/type-registry.test.ts › force-deletes a type that has items`, `› refuses a write to an item a forced delete left, until its type is registered again`, `compliance/type-move.test.ts › force-deletes a type a folder names, and leaves the folder as it is`.
 
 ### `types/delete-force-value`
 
@@ -1192,29 +1192,29 @@ If a key without `schema.write` sends `DELETE /types/{id}`, then the server MUST
 
 While a type is unregistered, if a write would set the properties, tier, time or natural key of an item of it, on `POST /items`, `PATCH /items/{id}`, a `POST /items/bulk` entry or a bulk action, then the server MUST refuse it `unknown_type`.
 
-**Tests:** `compliance/type-registry.test.ts › refuses a create of a type that was force-deleted under it`, `› refuses a write to a row a forced delete left, until its type is registered again`, `› refuses a bulk upsert and a bulk action onto a row a forced delete left`, `› refuses a change of tier or time to a row a forced delete left, singly and in bulk`.
+**Tests:** `compliance/type-registry.test.ts › refuses a create of a type that was force-deleted under it`, `› refuses a write to an item a forced delete left, until its type is registered again`, `› refuses a bulk upsert and a bulk action onto an item a forced delete left`, `› refuses a change of tier or time to an item a forced delete left, singly and in bulk`.
 
 ### `types/orphan-kept-writable`
 
 While a type is unregistered, the server MUST let an item of it have its tags, extensions and lifecycle state written.
 
-**Reason:** a row nothing can describe can still be put away.
+**Reason:** an item nothing can describe can still be put away.
 
-**Tests:** `compliance/type-registry.test.ts › keeps the tags, extensions and lifecycle of a row a forced delete left writable`, `compliance/restore-rows-shape.test.ts › restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`.
+**Tests:** `compliance/type-registry.test.ts › keeps the tags, extensions and lifecycle of an item a forced delete left writable`, `compliance/restore-items-shape.test.ts › restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`.
 
 ### `types/orphan-read`
 
 While a type is unregistered, the server MUST return its items from `GET /items/{id}`, `GET /items`, `GET /search`, `GET /items/{id}/versions` and `GET /items/{id}/edges`.
 
-**Reason:** a forced delete keeps the items (`types/delete-force`), and a row nothing can describe is still a row a person made. A row restored under an unregistered type is read the same way (`search-and-filters/restore-rows-orphan`).
+**Reason:** a forced delete keeps the items (`types/delete-force`), and an item nothing can describe is still an item a person made. An item restored under an unregistered type is read the same way (`search-and-filters/restore-items-orphan`).
 
-**Tests:** `compliance/restore-rows-shape.test.ts › restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`.
+**Tests:** `compliance/restore-items-shape.test.ts › restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`.
 
 ### `types/orphan-reregistered`
 
 When a type is registered again, the server MUST hold each later write to its items to the schema it is registered with.
 
-**Tests:** `compliance/type-registry.test.ts › refuses a write to a row a forced delete left, until its type is registered again`.
+**Tests:** `compliance/type-registry.test.ts › refuses a write to an item a forced delete left, until its type is registered again`.
 
 ### `types/delete-race`
 
@@ -1290,35 +1290,35 @@ If a key without `config.manage` sends `GET /config`, `PUT /config` or `PATCH /c
 
 Where the `enforcement.strict_mode` that holds for the writing key, its own override's if the override names one and else the instance's, names a type in `types`, the server MUST refuse a write of an item of exactly that type that names a property neither the type nor an ancestor declares, with `400 invalid_properties`.
 
-**Tests:** `compliance/schema-enforcement.test.ts › strict-on rejects unknown property with invalid_properties`, `› default-off accepts unknown property on core.note write`, `› holds strict mode and the source allow-list to the type named, not its subtypes`, `› strict-on rejects the same unknown property through the bulk door, on both halves of an upsert`, `› strict-on rejects the same unknown property through the update door`, `› strict-on refuses the same unknown property per row of a bulk update_properties job`.
+**Tests:** `compliance/schema-enforcement.test.ts › strict-on rejects unknown property with invalid_properties`, `› default-off accepts unknown property on core.note write`, `› holds strict mode and the source allow-list to the type named, not its subtypes`, `› strict-on rejects the same unknown property through the bulk door, on both halves of an upsert`, `› strict-on rejects the same unknown property through the update door`, `› strict-on refuses the same unknown property per item of a bulk update_properties job`.
 
 ### `types/strict-mode-code`
 
 When `enforcement.strict_mode` refuses a property that no type declares, the server MUST carry `details.code` of `unknown_property` beside the code `invalid_properties`.
 
-**Tests:** `compliance/schema-enforcement.test.ts › strict-on rejects the same unknown property through the update door`, `› strict-on rejects the same unknown property arriving through the restore door`, `› strict-on refuses the same unknown property per row of a bulk update_properties job`.
+**Tests:** `compliance/schema-enforcement.test.ts › strict-on rejects the same unknown property through the update door`, `› strict-on rejects the same unknown property arriving through the restore door`, `› strict-on refuses the same unknown property per item of a bulk update_properties job`.
 
 ### `types/strict-mode-declared`
 
-Where `enforcement.strict_mode` names the type of a row, the server MUST take a patch that names only declared properties, whatever else the type requires.
+Where `enforcement.strict_mode` names the type of an item, the server MUST take a patch that names only declared properties, whatever else the type requires.
 
-**Reason:** the lever refuses an undeclared property and nothing else. A missing required property is the store's refusal and carries the store's reason, so a lever that read a patch as a complete set would refuse an ordinary update under a message naming the wrong cause. The lever judges the properties the caller sent and not the merge they land in, because a merge would freeze every row that already carries an undeclared property from before the lever was set.
+**Reason:** the lever refuses an undeclared property and nothing else. A missing required property is the store's refusal and carries the store's reason, so a lever that read a patch as a complete set would refuse an ordinary update under a message naming the wrong cause. The lever judges the properties the caller sent and not the merge they land in, because a merge would freeze every item that already carries an undeclared property from before the lever was set.
 
 **Tests:** `compliance/schema-enforcement.test.ts › takes a patch naming only declared properties, whatever else the type requires`.
 
 ### `types/strict-mode-off`
 
-Where `enforcement.strict_mode` does not name the type of a row, the server MUST take a property that no type declares on `POST /items`, `POST /items/bulk` and `PATCH /items/{id}`, and serve it back.
+Where `enforcement.strict_mode` does not name the type of an item, the server MUST take a property that no type declares on `POST /items`, `POST /items/bulk` and `PATCH /items/{id}`, and serve it back.
 
 **Tests:** `compliance/schema-enforcement.test.ts › default-off accepts unknown property on core.note write`, `› default-off accepts through the bulk and update doors as it does through the create door`.
 
 ### `types/strict-mode-job`
 
-When a `POST /items/bulk-actions` job with `update_properties` writes a row, the server MUST ask `enforcement.strict_mode` as it stands then, for the credential that queued the job as that credential stands then.
+When a `POST /items/bulk-actions` job with `update_properties` writes an item, the server MUST ask `enforcement.strict_mode` as it stands then, for the credential that queued the job as that credential stands then.
 
 **Reason:** every other operation asks when it writes, so a lever set while a job waits holds for it. A job whose queuing credential is gone writes nothing more (`items/job-credential-lost`).
 
-**Tests:** `compliance/bulk-job-holds.test.ts › is asked of every row the job writes, as it stands then`, `› is asked for the credential as it stands then, so a key loosened while the job waits writes its rows`.
+**Tests:** `compliance/bulk-job-holds.test.ts › is asked of every item the job writes, as it stands then`, `› is asked for the credential as it stands then, so a key loosened while the job waits writes its items`.
 
 ### `types/source-allowlist`
 
@@ -1346,7 +1346,7 @@ The server MUST judge an item that carries no source, under a source filter, as 
 
 The server MUST NOT apply `enforcement.source_filter` to the item or edge a read by id names.
 
-**Reason:** the filter narrows what a key's reads return, not whether a key can fetch a row it names, so what that row carries is narrowed as any read narrows it (`edges/read-source-filter`).
+**Reason:** the filter narrows what a key's reads return, not whether a key can fetch an item it names, so what that item carries is narrowed as any read narrows it (`edges/read-source-filter`).
 
 **Tests:** `compliance/schema-enforcement.test.ts › does not narrow a read by id`, `compliance/reach.test.ts › certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`, `compliance/edge-source-filter.test.ts › answers an edge by id whose source item the filter hides`.
 
@@ -1442,7 +1442,7 @@ When an item of `core.entity` or a type under it is written with entries in `ema
 
 ### `types/connection`
 
-The server MUST ship `system.connection` with `kind` taking `app` alone, a description that names no connector, and none of `attached_device`, `feed_activity`, `last_error_at`, `last_sync_at`, `mapping_reapply_until`, `next_run_at`, `runtime_status`, `triggers`, `connector_id`, `credential_id`, `configuration`, `direction` and `mapping`, in its fields, its description or a row it serves.
+The server MUST ship `system.connection` with `kind` taking `app` alone, a description that names no connector, and none of `attached_device`, `feed_activity`, `last_error_at`, `last_sync_at`, `mapping_reapply_until`, `next_run_at`, `runtime_status`, `triggers`, `connector_id`, `credential_id`, `configuration`, `direction` and `mapping`, in its fields, its description or an item it serves.
 
 **Tests:** `compliance/system-types.test.ts › declares app as the only system.connection kind`, `› ships none of the system.connection fields no door accepts`, `› serves no system.connection carrying a field the type no longer declares`.
 

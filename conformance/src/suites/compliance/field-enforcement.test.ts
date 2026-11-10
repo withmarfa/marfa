@@ -26,7 +26,7 @@ describe("a source the key was not given", () => {
     });
     expect(
       refused.status,
-      "a body naming a source its key was never given was written, so any key can write rows that read as another's",
+      "a body naming a source its key was never given was written, so any key can write items that read as another's",
     ).toBe(403);
     expect(
       refused.error?.error.code,

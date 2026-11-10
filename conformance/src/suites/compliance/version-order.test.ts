@@ -88,7 +88,7 @@ async function note(
 
 /**
  * A note at version 2 holding one snapshot. Version 1 held the title
- * "first" and the body "first body"; the row's body has since moved on, so
+ * "first" and the body "first body"; the item's body has since moved on, so
  * a write naming version 1 that sets the body collides.
  */
 async function movedOn(): Promise<string> {
@@ -103,7 +103,7 @@ async function movedOn(): Promise<string> {
 
 /**
  * `movedOn` with a natural key, so a create naming that key lands on it. The
- * row is at version 2; version 1 held "first body" and the row now holds
+ * item is at version 2; version 1 held "first body" and the item now holds
  * "second body".
  */
 async function keyedMovedOn(): Promise<{ id: string; sourceId: string }> {
@@ -201,7 +201,7 @@ describe("a write that is not an update leaves the version where it was", () => 
 });
 
 describe("a refused update leaves the history as it was", () => {
-  it("leaves it after an update refused invalid_properties at the row's version, and writes a snapshot for the same update once valid", async () => {
+  it("leaves it after an update refused invalid_properties at the item's version, and writes a snapshot for the same update once valid", async () => {
     const id = await movedOn();
     expect(await versionsOf(id)).toEqual([1]);
 
@@ -601,7 +601,7 @@ describe("the order PATCH /items/{id} asks its refusals in", () => {
       });
       expect(registered.status, JSON.stringify(registered.error)).toBe(201);
     }
-    // Two rows of one shape: version 2 now, and version 1 held "first body".
+    // Two items of one shape: version 2 now, and version 1 held "first body".
     const twin = async (type: string): Promise<string> => {
       const created = await client.createItem({
         type,
@@ -628,7 +628,7 @@ describe("the order PATCH /items/{id} asks its refusals in", () => {
       ["a version no snapshot covers", collides, 999, "ancestor_unavailable"],
     ];
     for (const [label, write, version, code] of writes) {
-      // The witness: a row of a registered type is answered on its version.
+      // The witness: an item of a registered type is answered on its version.
       expectRefusal(
         await patch(liveId, { ...write, version }),
         409,
@@ -640,7 +640,7 @@ describe("the order PATCH /items/{id} asks its refusals in", () => {
       expect(refused.error?.error.details?.type, label).toBe(gone);
     }
 
-    // At the current version the row of a registered type takes the write.
+    // At the current version the item of a registered type takes the write.
     const current = { properties: { body: "third body" }, version: 2 };
     expect((await patch(liveId, current)).status).toBe(200);
     expectRefusal(await patch(goneId, current), 400, "unknown_type", "current");
@@ -652,7 +652,7 @@ describe("the order PATCH /items/{id} asks its refusals in", () => {
 
   it("answers a snapshot the key may not read as ancestor_unavailable before it looks for a collision", async () => {
     const id = await note();
-    // Snapshots 1 and 2 are a note's, 3 and 4 a task's, and the row is a
+    // Snapshots 1 and 2 are a note's, 3 and 4 a task's, and the item is a
     // note again at version 5.
     const writes = [
       { properties: { title: "a note" }, version: 1 },
@@ -778,7 +778,7 @@ describe("the last page of a version history", () => {
 
   it("answers next_cursor null when the page fills with the readable snapshots and only ones the key may not read follow", async () => {
     const id = await note();
-    // Snapshots 1 and 2 are a note's, 3 and 4 a task's, and the row is a
+    // Snapshots 1 and 2 are a note's, 3 and 4 a task's, and the item is a
     // note again.
     const writes = [
       { properties: { title: "a note" }, version: 1 },
@@ -956,7 +956,7 @@ describe("a bulk upsert entry that names a stale version", () => {
     expect(refusedRow.version).toBe(2);
     expect(refusedRow.properties.body).toBe("second body");
 
-    // The witness: the refused entry's write is taken at the version its row
+    // The witness: the refused entry's write is taken at the version its item
     // is at, so the refusal is about the stale version.
     const current = await client.bulkItems({
       atomic: false,

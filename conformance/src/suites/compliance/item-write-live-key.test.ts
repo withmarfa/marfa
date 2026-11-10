@@ -79,7 +79,7 @@ async function note(body: string) {
 interface Door {
   /** The audit action the write is held under, so no other write is held. */
   action: string;
-  /** Set the rows up as the working key, and answer the write. */
+  /** Set the items up as the working key, and answer the write. */
   prepare: (key: MarfaClient) => Promise<{
     send: () => Promise<ApiResponse<unknown>>;
     /** Whether the write is on the server now. */
@@ -91,7 +91,7 @@ const bodyOf = async (id: string): Promise<unknown> => {
   const read = await admin.getItem(id);
   return read.status === 200 ? read.data.item.properties.body : undefined;
 };
-/** Whether the bin holds the row, which is not readable by id. */
+/** Whether the bin holds the item, which is not readable by id. */
 const binned = async (id: string): Promise<boolean> => {
   const listed = await admin.listItems({ state: "trashed", limit: 100 });
   return listed.data.data.some((item) => item.id === id);

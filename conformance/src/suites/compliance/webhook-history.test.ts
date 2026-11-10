@@ -263,7 +263,7 @@ describe("an outbound delivery's history", () => {
 
       await run("audit-cleanup");
 
-      // The witness that the sweep reaches rows this old: the delivery of the
+      // The witness that the sweep reaches deliveries this old: the delivery of the
       // same age that had settled is gone, and the pending one is not.
       const remaining = await deliveries(id);
       expect(remaining.some((row) => row.id === delivered!.id)).toBe(false);
@@ -304,7 +304,7 @@ describe("an outbound delivery's history", () => {
           ? row
           : undefined;
       });
-      // The row still says when it began: a redelivery did not start it over.
+      // The delivery still says when it began: a redelivery did not start it over.
       expect(again.created_at).toBe(failed!.created_at);
 
       // The original instant is now past the retention, and the redelivery

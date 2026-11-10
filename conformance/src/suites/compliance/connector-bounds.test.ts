@@ -235,7 +235,7 @@ describe("the bulk cap on the agreements door", () => {
 });
 
 describe("a page of agreements", () => {
-  it("answers a short page with a cursor still to follow, over rows the key no longer reads", async () => {
+  it("answers a short page with a cursor still to follow, over items the key no longer reads", async () => {
     const source = `${ctx.source}-short-page`;
     const minted = await client.createKey({
       label: `${source}-key`,
@@ -288,8 +288,8 @@ describe("a page of agreements", () => {
       ).status,
     ).toBe(200);
 
-    // Two rows are scanned and at most one is readable, so the first page is
-    // short, and six rows are not two.
+    // Two items are scanned and at most one is readable, so the first page is
+    // short, and six items are not two.
     const first = await mine.client.listConnectorAgreements(mine.id, {
       limit: 2,
     });

@@ -19,7 +19,7 @@ import { clientsFor } from "../../utils/own-blob-server.js";
  * one: the server is booted with the largest reserve the setting takes, 2^40
  * bytes, so every body is one it cannot keep room beside. The same server is then booted again with no
  * reserve, and each request that was refused is sent again and lands. That
- * is the witness for the refusals: the bytes and the rows were producible,
+ * is the witness for the refusals: the bytes and the items were producible,
  * so their absence in between is the refusal's doing and not an upload or a
  * restore that cannot work on this server.
  *
@@ -104,7 +104,7 @@ describe("a reserve the volume cannot keep", () => {
     expect((await management.downloadBlob(hash)).status).toBe(404);
   });
 
-  it("refuses a restore 507 insufficient_storage, and writes no row, no type and no blob", async () => {
+  it("refuses a restore 507 insufficient_storage, and writes no item, no type and no blob", async () => {
     const refused = await ownerClient().restoreArchive(archive());
     expect(refused.status).toBe(507);
     expect(refused.error?.error.code).toBe("insufficient_storage");

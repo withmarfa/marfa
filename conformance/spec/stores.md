@@ -124,7 +124,7 @@ The copy record says which stores hold which blob.
 
 ### `stores/locations-listed`
 
-When a credential that may read a blob sends `GET /blobs/{hash}/copies`, the server MUST answer `200` with a row for each copy the copy record holds, each naming its `store_id` and `kind`, and carrying `detached`, `recorded_at` and `verified_at`.
+When a credential that may read a blob sends `GET /blobs/{hash}/copies`, the server MUST answer `200` with an entry for each copy the copy record holds, each naming its `store_id` and `kind`, and carrying `detached`, `recorded_at` and `verified_at`.
 
 **Reason:** which credentials may read a blob is `blobs/read-no-type`, `blobs/read-unreadable` and the rules about lending.
 
@@ -132,7 +132,7 @@ When a credential that may read a blob sends `GET /blobs/{hash}/copies`, the ser
 
 ### `stores/locations-oldest-first`
 
-When a credential that may read a blob sends `GET /blobs/{hash}/copies`, the server MUST answer its rows with the oldest `recorded_at` first.
+When a credential that may read a blob sends `GET /blobs/{hash}/copies`, the server MUST answer its entries with the oldest `recorded_at` first.
 
 **Tests:** `compliance/blob-rules.test.ts › replicates an upload on its own, each copy with its own recorded time`.
 
@@ -170,7 +170,7 @@ When a credential that may upload sends `POST /blobs` with bytes of which the co
 
 ### `stores/no-location`
 
-While the copy record holds no copy of a blob, the server MUST answer `GET /blobs/{hash}/copies` for it with `200` and no rows.
+While the copy record holds no copy of a blob, the server MUST answer `GET /blobs/{hash}/copies` for it with `200` and no entries.
 
 **Tests:** `compliance/blob-store-folders.test.ts › strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with none recorded`.
 
@@ -604,7 +604,7 @@ The `blob-orphans` housekeeping job reports before it deletes. The referee boots
 
 ### `stores/orphan-listing`
 
-When a caller authorized by `instance.read` or local authority sends `GET /blobs/orphans`, the server MUST answer `200` with the report, each row carrying a `hash`, `mime_type`, `size_bytes` and `reported_at`.
+When a caller authorized by `instance.read` or local authority sends `GET /blobs/orphans`, the server MUST answer `200` with the report, each entry carrying a `hash`, `mime_type`, `size_bytes` and `reported_at`.
 
 **Tests:** `compliance/blob-rules.test.ts › reports an unreferenced blob on one run and purges it on the next, never one an item names`.
 
@@ -618,7 +618,7 @@ When an `update_properties` job whose patch names a blob's digest is enqueued th
 
 ### `stores/orphan-listing-order`
 
-When a caller authorized by `instance.read` or local authority sends `GET /blobs/orphans`, the server MUST list the report's rows oldest `reported_at` first.
+When a caller authorized by `instance.read` or local authority sends `GET /blobs/orphans`, the server MUST list the report's entries oldest `reported_at` first.
 
 **Tests:** `compliance/blob-store-settings.test.ts › lists the orphan report oldest first`.
 

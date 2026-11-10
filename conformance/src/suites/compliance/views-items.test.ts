@@ -493,7 +493,7 @@ describe("the view's items door", () => {
     );
   });
 
-  it("lists the same flat page with a group that would hide and reorder rows as without one", async () => {
+  it("lists the same flat page with a group that would hide and reorder items as without one", async () => {
     const source = await freshSource();
     const shown = await note(source, "A", {}, { tags: ["shown"] });
     const hidden = await note(source, "B", {}, { tags: ["hidden"] });

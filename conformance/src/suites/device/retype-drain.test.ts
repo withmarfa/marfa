@@ -33,7 +33,7 @@ async function hydrated(label: string): Promise<Harness> {
   scriptHydration(started.server, {
     head: "10",
     catalog: () => typeCatalog([wireType(TASK, { parent: "core.note" })]),
-    rows: {
+    items: {
       "core.note": [
         { item: { id: RETYPED } },
         { item: { id: BEHIND } },

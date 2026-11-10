@@ -27,7 +27,7 @@ import type { SyncCapabilities } from "./capabilities.js";
  *
  * The acknowledged repeat in `acknowledged.test.ts` is the other mechanism for
  * a resent write, and the two are easy to confuse: one collapses a retry by a
- * header the caller invents, the other by the row id the caller already
+ * header the caller invents, the other by the item id the caller already
  * minted.
  *
  * **A key is minted per mutation, so it names one request and not a slot.**
@@ -42,13 +42,13 @@ import type { SyncCapabilities } from "./capabilities.js";
  * This is the rule that makes an offline queue safe to drain. A client that
  * sends a create and loses the response has no way to know whether the write
  * landed; its only options are to retry, or to drop the user's work. It
- * retries, and without a key on the server every retry is a new row — which is
+ * retries, and without a key on the server every retry is a new item — which is
  * the single most common way an offline client corrupts a library, because it
  * happens on exactly the flaky connection that made the queue necessary.
  *
  * The keyed answer has to be the *stored result*, not merely a success. A
  * server that answered a repeat by performing the write again would keep one
- * row and still step the version twice, and a client reconciling against its
+ * item and still step the version twice, and a client reconciling against its
  * own pending mutation would see a version it cannot account for.
  */
 
@@ -75,7 +75,7 @@ interface ItemEnvelope {
 }
 
 describe("idempotency keys", () => {
-  it("answers a repeated create with the first result rather than a second row", async () => {
+  it("answers a repeated create with the first result rather than a second item", async () => {
     requireRule(caps, "idempotencyKeys");
     const key = `sync-create-${randomUUID()}`;
 
@@ -111,13 +111,13 @@ describe("idempotency keys", () => {
 
     expect(
       repeat.data.item.id,
-      "a retry under the same key created a second row, which is a duplicate the user never asked for",
+      "a retry under the same key created a second item, which is a duplicate the user never asked for",
     ).toBe(first.data.item.id);
 
-    // The id above already rules out a second row, because a create carrying
+    // The id above already rules out a second item, because a create carrying
     // no id of its own mints a fresh one every time it executes. This rules
-    // out the other re-run: the write applied a second time onto the row it
-    // had just made, which keeps one row and steps the version twice, and
+    // out the other re-run: the write applied a second time onto the item it
+    // had just made, which keeps one item and steps the version twice, and
     // leaves a client reconciling its own pending write facing a version it
     // cannot account for.
     expect(
@@ -126,7 +126,7 @@ describe("idempotency keys", () => {
     ).toBe(first.data.item.version);
 
     // What the client is actually told. Everything above is inferred from
-    // the row — the same id, the same version — which a client can only
+    // the item — the same id, the same version — which a client can only
     // check by holding the first response and comparing. `Idempotency-
     // Replayed` is the server saying it directly, and it is what lets a
     // client that lost the first response know which of the two it has.
@@ -145,7 +145,7 @@ describe("idempotency keys", () => {
     ).toBe("true");
 
     // The control. A different key against the same content has to produce a
-    // different row, or the collapse above was content dedupe rather than the
+    // different item, or the collapse above was content dedupe rather than the
     // key being honored, and this test would pass on a server with no keys.
     const other = await client.rawRequest<ItemEnvelope>("/items", {
       method: "POST",
@@ -160,7 +160,7 @@ describe("idempotency keys", () => {
     trackItem(ctx, other.data.item.id);
     expect(
       other.data.item.id,
-      "two creates under different keys collapsed into one row, so the earlier collapse says nothing about idempotency keys",
+      "two creates under different keys collapsed into one item, so the earlier collapse says nothing about idempotency keys",
     ).not.toBe(first.data.item.id);
     // A write carrying a key it has never seen is still a write, so the
     // absence above is a property of the outcome rather than of the first
@@ -296,7 +296,7 @@ describe("idempotency keys", () => {
     trackItem(ctx, first.data.item.id);
 
     // The same key, a different write. Serving this would hand the caller a
-    // 201 naming a row that holds someone else's content, and the write it
+    // 201 naming an item that holds someone else's content, and the write it
     // believes it made would never have happened — the exact silent loss the
     // key exists to prevent, arriving from the other side.
     const reused = await client.rawRequest<ItemEnvelope>("/items", {
@@ -323,7 +323,7 @@ describe("idempotency keys", () => {
     expect(original.ok).toBe(true);
     expect(
       original.data.item.properties.body,
-      "the refusal reached the stored row and changed it, so the key protected nothing",
+      "the refusal reached the stored item and changed it, so the key protected nothing",
     ).toBe("reuse-original");
   });
 
@@ -389,7 +389,7 @@ describe("idempotency keys", () => {
     // The content, not only the count. A version is a cheap thing to get
     // right by accident — a server that swallowed the retry without applying
     // anything, or applied it twice onto a merged value, lands on this same
-    // number — so a version assertion on its own passes on a row whose
+    // number — so a version assertion on its own passes on an item whose
     // content the retry corrupted.
     expect(
       after.data.item.properties.body,
@@ -457,7 +457,7 @@ describe("idempotency keys", () => {
       `a resent edge create was refused: ${JSON.stringify(repeat.error)}`,
     ).toBe(true);
 
-    // The row first, so a server that announced a replay without performing
+    // The item first, so a server that announced a replay without performing
     // one still fails here.
     expect(
       repeat.data.edge.id,
@@ -496,7 +496,7 @@ describe("idempotency keys", () => {
       `a delete was refused: ${JSON.stringify(first.error)}`,
     ).toBe(true);
 
-    // Without the key this is the shape that answers 404: the row is
+    // Without the key this is the shape that answers 404: the item is
     // already gone, so the second attempt has nothing to delete. The
     // replayed success is the whole point, and the marker is what tells a
     // client which of the two it received.
@@ -654,24 +654,24 @@ describe("idempotency keys", () => {
 });
 
 /**
- * The natural key is the other way a write lands on a row that already
+ * The natural key is the other way a write lands on an item that already
  * exists, and unlike an idempotency key it is not a retry marker: a create
  * naming a `(source, source_id)` the server already holds is an upsert, and
- * the caller may or may not have read the row it is about to overwrite.
+ * the caller may or may not have read the item it is about to overwrite.
  *
  * A `version` is how it says which. Sent, the upsert is conditional and
  * answers exactly what the update door answers; omitted, it stays
- * unconditional, because a caller creating a row it has never seen has no
+ * unconditional, because a caller creating an item it has never seen has no
  * version to name. Without that, a client draining a queue of creates against
- * a library another device has been editing overwrites every row it touches,
+ * a library another device has been editing overwrites every item it touches,
  * and the door that enforces the version on `PATCH` is walked straight around
  * by a `POST`.
  */
-describe("a create that resolves an existing row", () => {
+describe("a create that resolves an existing item", () => {
   it("a bulk entry naming a stale version is refused, and rolls the page back or not as atomic says", async () => {
     // The same walk-around as the create door, through the door a draining
     // queue is most likely to use. What the batch must not do is fail
-    // whole: ninety-nine good rows should not be lost to one stale entry,
+    // whole: ninety-nine good items should not be lost to one stale entry,
     // so the refusal is that entry's own outcome.
     const staleId = `bulk-version-${randomUUID()}`;
     const freshId = `bulk-version-fresh-${randomUUID()}`;
@@ -684,7 +684,7 @@ describe("a create that resolves an existing row", () => {
     });
     expect(
       seed.ok,
-      `could not seed the row to upsert onto: ${JSON.stringify(seed.error)}`,
+      `could not seed the item to upsert onto: ${JSON.stringify(seed.error)}`,
     ).toBe(true);
     trackItem(ctx, seed.data.item.id);
     const staleVersion = seed.data.item.version;
@@ -705,7 +705,7 @@ describe("a create that resolves an existing row", () => {
         source: ctx.source,
         source_id: freshId,
         // A whole note rather than a title alone: this entry is a create,
-        // so it has no stored row to merge a required field in from.
+        // so it has no stored item to merge a required field in from.
         properties: { title: "the entry beside it", body: "its body" },
       },
       {
@@ -739,7 +739,7 @@ describe("a create that resolves an existing row", () => {
 
     // With the page non-atomic the refusal is that entry's own outcome and
     // the rest of the batch lands, which is what a draining queue needs:
-    // ninety-nine good rows are not lost to one stale one.
+    // ninety-nine good items are not lost to one stale one.
     const perEntry = await client.bulkItems({ items: entries, atomic: false });
     expect(
       perEntry.ok,
@@ -763,7 +763,7 @@ describe("a create that resolves an existing row", () => {
     expect(read.data.item.properties.title).toBe("moved on");
   });
 
-  it("a create naming a stale version on an existing row is refused", async () => {
+  it("a create naming a stale version on an existing item is refused", async () => {
     const sourceId = `upsert-version-${randomUUID()}`;
 
     const seed = await client.createItem({
@@ -774,7 +774,7 @@ describe("a create that resolves an existing row", () => {
     });
     expect(
       seed.ok,
-      `could not seed the row to upsert onto: ${JSON.stringify(seed.error)}`,
+      `could not seed the item to upsert onto: ${JSON.stringify(seed.error)}`,
     ).toBe(true);
     const id = seed.data.item.id;
     trackItem(ctx, id);
@@ -791,7 +791,7 @@ describe("a create that resolves an existing row", () => {
     ).toBe(true);
     expect(advanced.data.item.version).toBeGreaterThan(staleVersion);
 
-    // The same natural key, so this resolves the row above rather than making
+    // The same natural key, so this resolves the item above rather than making
     // a second one, and the version the queued client last read. It collides
     // on `title` deliberately: a stale write whose fields do not collide is
     // merged rather than refused, so changing anything else would assert the
@@ -805,7 +805,7 @@ describe("a create that resolves an existing row", () => {
     });
     expect(
       refused.status,
-      `a create naming a stale version on an existing row was not refused 409: ${JSON.stringify(refused.error ?? refused.data)}`,
+      `a create naming a stale version on an existing item was not refused 409: ${JSON.stringify(refused.error ?? refused.data)}`,
     ).toBe(409);
     expect(refused.error?.error.code).toBe("version_conflict");
 
@@ -816,10 +816,10 @@ describe("a create that resolves an existing row", () => {
     const body = refused.error as unknown as ConflictResponse;
     expect(body.error.status).toBe(409);
     // The request named a key and not an id, so the envelope is the only
-    // place a queued client learns which row refused it.
+    // place a queued client learns which item refused it.
     expect(
       body.current.id,
-      "the refusal did not name the row the natural key resolved in current.id",
+      "the refusal did not name the item the natural key resolved in current.id",
     ).toBe(id);
     expect(body.current.version).toBe(advanced.data.item.version);
     expect(body.current.properties.title).toBe("moved on");
@@ -835,18 +835,18 @@ describe("a create that resolves an existing row", () => {
     expect(after.ok).toBe(true);
     expect(
       after.data.item.properties.title,
-      "the refused upsert reached the stored row, so the condition was reported without being enforced",
+      "the refused upsert reached the stored item, so the condition was reported without being enforced",
     ).toBe("moved on");
     expect(
       after.data.item.properties.body,
-      "the refused upsert replaced the row's properties wholesale",
+      "the refused upsert replaced the item's properties wholesale",
     ).toBe("original body");
     expect(after.data.item.version, "a refused upsert moved the version").toBe(
       advanced.data.item.version,
     );
 
-    // And it stayed one row: a server that sidestepped the condition by
-    // writing a second row under the same natural key would pass everything
+    // And it stayed one item: a server that sidestepped the condition by
+    // writing a second item under the same natural key would pass everything
     // above while leaving the library with a duplicate.
     //
     // `next_cursor` is checked first because the count below is only a count of
@@ -856,15 +856,15 @@ describe("a create that resolves an existing row", () => {
     expect(listed.ok).toBe(true);
     expect(
       listed.data.next_cursor,
-      "the listing was truncated, so a duplicate row could be sitting on a page this assertion never read",
+      "the listing was truncated, so a duplicate item could be sitting on a page this assertion never read",
     ).toBeNull();
     expect(
       listed.data.data.filter((item) => item.source_id === sourceId).length,
-      "the refused upsert wrote a second row under the same natural key",
+      "the refused upsert wrote a second item under the same natural key",
     ).toBe(1);
   });
 
-  it("a create naming a stale version on an existing row merges where nothing collides", async () => {
+  it("a create naming a stale version on an existing item merges where nothing collides", async () => {
     const sourceId = `upsert-merge-${randomUUID()}`;
     const seed = await client.createItem({
       type: "core.note",
@@ -908,11 +908,11 @@ describe("a create that resolves an existing row", () => {
     ).toHaveLength(1);
   });
 
-  it("takes a create's version of zero as the claim that there is no row", async () => {
+  it("takes a create's version of zero as the claim that there is no item", async () => {
     // Zero is the version a device sends when its copy holds nothing under
-    // the natural key, and the server never mints it, so no row can ever
+    // the natural key, and the server never mints it, so no item can ever
     // carry it. That makes it usable as a precondition and as nothing else:
-    // on an empty key it creates, and on a key that already names a row it
+    // on an empty key it creates, and on a key that already names an item it
     // is a stale version like any other.
     const emptyKey = `version-zero-${randomUUID()}`;
     const created = await client.createItem({
@@ -940,13 +940,13 @@ describe("a create that resolves an existing row", () => {
     });
     expect(refused.status).toBe(409);
     expect(refused.error?.error.code).toBe("ancestor_unavailable");
-    // Named by the row, because the create named only the key: a device
-    // that read nothing has to learn which row is there before it can hold
+    // Named by the item, because the create named only the key: a device
+    // that read nothing has to learn which item is there before it can hold
     // it rather than a second copy of it (`queue-and-verdicts/landed-refused`).
     const envelope = refused.error as unknown as AncestorUnavailableResponse;
     expect(
       envelope.current.id,
-      "the refusal did not name the row the natural key resolved in current.id",
+      "the refusal did not name the item the natural key resolved in current.id",
     ).toBe(created.data.item.id);
     expect(envelope.current.version).toBe(1);
 
@@ -956,7 +956,7 @@ describe("a create that resolves an existing row", () => {
     expect(after.data.item.version).toBe(1);
   });
 
-  it("takes a bulk entry's version of zero as the claim that there is no row, in both modes", async () => {
+  it("takes a bulk entry's version of zero as the claim that there is no item, in both modes", async () => {
     const entry = (sourceId: string, title: string, version = 0) => ({
       type: "core.note",
       source: ctx.source,
@@ -980,7 +980,7 @@ describe("a create that resolves an existing row", () => {
     }
 
     // Zero is no more than one of the versions a create may name where no
-    // row resolves: the row it makes is at 1 whatever it was handed.
+    // item resolves: the item it makes is at 1 whatever it was handed.
     const handed = `bulk-handed-${randomUUID()}`;
     const five = await client.bulkItems([entry(handed, "handed five", 5)]);
     expect(five.status).toBe(200);
@@ -989,7 +989,7 @@ describe("a create that resolves an existing row", () => {
     const fiveRead = await client.getItem(five.data.results[0]?.id ?? "");
     expect(fiveRead.data.item.version).toBe(1);
 
-    // A key that names a live row is a version no snapshot covers.
+    // A key that names a live item is a version no snapshot covers.
     const held = `bulk-zero-held-${randomUUID()}`;
     const seed = await client.createItem({
       type: "core.note",

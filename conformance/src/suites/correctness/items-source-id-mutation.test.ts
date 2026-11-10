@@ -19,9 +19,9 @@ afterAll(async () => {
 });
 
 describe("PATCH /items/:id source_id mutation", () => {
-  it("refuses a move onto a natural key another row already holds", async () => {
-    // The natural key is unique per source, so moving one row onto
-    // another's key would leave two rows a connector's next re-sync cannot
+  it("refuses a move onto a natural key another item already holds", async () => {
+    // The natural key is unique per source, so moving one item onto
+    // another's key would leave two items a connector's next re-sync cannot
     // tell apart. Refused rather than merged, and with its own code: a
     // caller retrying a rename needs to know the target is taken rather
     // than that its version was stale.
@@ -47,7 +47,7 @@ describe("PATCH /items/:id source_id mutation", () => {
     expect(collided.status).toBe(409);
     expect(collided.error?.error.code).toBe("source_id_conflict");
 
-    // Nothing moved: both rows still answer under the keys they had.
+    // Nothing moved: both items still answer under the keys they had.
     const after = await client.getItem(moving.data.item.id);
     expect(after.ok).toBe(true);
     expect(after.data.item.source_id).toBe(movingSourceId);
@@ -64,8 +64,8 @@ describe("PATCH /items/:id source_id mutation", () => {
     expect(free.status).toBe(200);
   });
 
-  it("refuses a move onto the natural key of a row in the bin", async () => {
-    // The unique index counts a row in the bin, so its key is taken, and
+  it("refuses a move onto the natural key of an item in the bin", async () => {
+    // The unique index counts an item in the bin, so its key is taken, and
     // the move is a conflict rather than a failure at the index.
     const heldSourceId = `binned-${generateId()}`;
     const holder = await client.createItem(
@@ -80,7 +80,7 @@ describe("PATCH /items/:id source_id mutation", () => {
     trackItem(ctx, moving.data.item.id);
 
     // The witness: the same move onto the live holder is the refusal this
-    // case expects, so the binned one is held to what a live row gets.
+    // case expects, so the binned one is held to what a live item gets.
     const live = await client.updateItem(moving.data.item.id, {
       source_id: heldSourceId,
       version: moving.data.item.version,

@@ -64,7 +64,7 @@ interface World {
   /** Sends one body and answers the delivery it made. */
   deliver(body: string, headers?: string[]): Promise<string>;
   /** Sends a body of `size` bytes, kept under `label`, and answers the
-   *  delivery it made with the row as it is stored. */
+   *  delivery it made with the record as it is stored. */
   deliverSized(label: string, size: number): Promise<InboundDeliveryRow>;
   /** For each delivery kept, by body, the body of the delivery it repeats and
    *  how that one was handled. */
@@ -78,7 +78,7 @@ interface World {
 }
 
 /** A registration and an address of its own, removed with its deliveries
- *  when the test is done, so no test's rows reach the next one's pass. */
+ *  when the test is done, so no test's records reach the next one's pass. */
 async function world(duplicateHeader?: string): Promise<World> {
   serial += 1;
   const label = `retention-${String(serial)}`;

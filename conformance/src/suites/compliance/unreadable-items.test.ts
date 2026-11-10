@@ -155,12 +155,12 @@ describe("an item the key cannot read answers as a missing one", () => {
     method: string;
     path: (id: string) => string;
     body?: (id: string) => unknown;
-    /** Which unreadable row the door is asked of. */
+    /** Which unreadable item the door is asked of. */
     unreadable?: () => string;
-    /** A row the key may reach there, and what the door answers for it. */
+    /** An item the key may reach there, and what the door answers for it. */
     witness: () => Promise<string>;
     served: number;
-    /** What an id no row holds answers there, if not `404 item_not_found`. */
+    /** What an id no item holds answers there, if not `404 item_not_found`. */
     absent?: (seen: Seen) => void;
   }
 
@@ -291,7 +291,7 @@ describe("an item the key cannot read answers as a missing one", () => {
       served: 200,
     },
     {
-      name: "POST /items/{id}/purge, of a live row",
+      name: "POST /items/{id}/purge, of a live item",
       method: "POST",
       path: (id) => `/items/${id}/purge`,
       witness: live,
@@ -589,7 +589,7 @@ describe("an item the key cannot read answers as a missing one", () => {
     expect((await ask(key, "GET", `/items/${task}`)).status).toBe(200);
   });
 
-  it("a key reaching no type is refused a single row, whatever the id names", async () => {
+  it("a key reaching no type is refused a single item, whatever the id names", async () => {
     const operator = process.env.MARFA_MANAGEMENT_KEY;
     if (!operator) throw new Error("MARFA_MANAGEMENT_KEY is required");
     const missing = generateId();
@@ -598,7 +598,7 @@ describe("an item the key cannot read answers as a missing one", () => {
     const entry = (source: string) => ({
       edges: [{ source_id: source, target_id: task, edge_type: "about" }],
     });
-    // Each door, asked of a row that exists and of an id nothing holds, and
+    // Each door, asked of an item that exists and of an id nothing holds, and
     // what a key reaching one type is answered there.
     type Reached = [
       string,
@@ -798,7 +798,7 @@ describe("an item the key cannot read answers as a missing one", () => {
       return (r.body as { data: { id: string }[] }).data.map((row) => row.id);
     };
 
-    // The witnesses: the owner reads the edge from the row the key cannot
+    // The witnesses: the owner reads the edge from the item the key cannot
     // read, so the key's lack of an answer is its own.
     expect(await stats(apiKey, hiddenTerm)).toEqual({ active: 1 });
     expect(await viewItems(apiKey, hiddenTerm)).toEqual([pointedByHidden]);
@@ -829,7 +829,7 @@ describe("an item the key cannot read answers as a missing one", () => {
     ).toContain(pointer);
   });
 
-  it("replays a hidden row's 404 under its Idempotency-Key, as it replays a missing id's", async () => {
+  it("replays a hidden item's 404 under its Idempotency-Key, as it replays a missing id's", async () => {
     const replayed = async (id: string): Promise<[Seen, Seen]> => {
       const headers = {
         Authorization: `Bearer ${key}`,

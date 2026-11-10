@@ -24,7 +24,7 @@ import { expectMatchesSchema } from "../../utils/openapi.js";
  * unrevoked key's own, so two keys writing under their own sources never
  * present one natural key: the same file in one folder on two machines
  * would be two items. A claim is how they share one. Every claim here is
- * built from this file's own source, so the rows it writes stay the file's.
+ * built from this file's own source, so the items it writes stay the file's.
  */
 
 let client: MarfaClient;
@@ -80,7 +80,7 @@ async function claimingKey(
 }
 
 describe("a write naming a source", () => {
-  it("writes under a source the key claims, and the row carries it", async () => {
+  it("writes under a source the key claims, and the item carries it", async () => {
     const writer = await claimingKey("writer", [folder]);
     const written = await writer.client.createItem(
       createNote({ source: folder, source_id: `claimed-${ctx.runId}` }),
@@ -92,19 +92,19 @@ describe("a write naming a source", () => {
     trackItem(ctx, written.data.item.id);
     expect(
       written.data.item.source,
-      "the row does not carry the source the write named, so its natural key is the credential's and no other key can share it",
+      "the item does not carry the source the write named, so its natural key is the credential's and no other key can share it",
     ).toBe(folder);
     const read = await client.getItem(written.data.item.id);
-    expect(read.ok, "the row the create answered cannot be read back").toBe(
+    expect(read.ok, "the item the create answered cannot be read back").toBe(
       true,
     );
     expect(
       read.data.item.source,
-      "the stored row does not carry the source the create answered with",
+      "the stored item does not carry the source the create answered with",
     ).toBe(folder);
 
     // The witness. The same key naming no source writes under its own, so
-    // the row above carries the claim because the write named it.
+    // the item above carries the claim because the write named it.
     const own = await writer.client.createItem(createNote());
     expect(own.status, "a create naming no source was not written").toBe(201);
     trackItem(ctx, own.data.item.id);
@@ -122,7 +122,7 @@ describe("a write naming a source", () => {
     );
     expect(
       refused.status,
-      "a create naming a source its key does not claim was accepted, so any key can write rows that read as another's",
+      "a create naming a source its key does not claim was accepted, so any key can write items that read as another's",
     ).toBe(403);
     expect(
       refused.error?.error.code,
@@ -135,15 +135,15 @@ describe("a write naming a source", () => {
     await expectMatchesSchema("POST", "/items", 403, refused.error);
 
     // Nothing was written under the source, and the proof is a key that
-    // may write there: the same natural key is a new row for it, where a
-    // row the refusal left behind would have answered an upsert.
+    // may write there: the same natural key is a new item for it, where a
+    // item the refusal left behind would have answered an upsert.
     const claimer = await claimingKey("stranger-witness", [folder]);
     const fresh = await claimer.client.createItem(
       createNote({ source: folder, source_id: sourceId }),
     );
     expect(
       fresh.status,
-      "the refused create left a row under the source it was refused, which a key claiming the source has now written over",
+      "the refused create left an item under the source it was refused, which a key claiming the source has now written over",
     ).toBe(201);
     trackItem(ctx, fresh.data.item.id);
 
@@ -160,7 +160,7 @@ describe("a write naming a source", () => {
     expect(own.data.item.source).toBe(stranger.source);
   });
 
-  it("upserts onto one row from two keys claiming one source", async () => {
+  it("upserts onto one item from two keys claiming one source", async () => {
     const first = await claimingKey("first-machine", [folder]);
     const second = await claimingKey("second-machine", [folder]);
     const sourceId = `shared-${ctx.runId}`;
@@ -187,11 +187,11 @@ describe("a write naming a source", () => {
     );
     expect(
       upserted.status,
-      "the second key's create under the shared source made a row of its own, so one file on two machines is two items",
+      "the second key's create under the shared source made an item of its own, so one file on two machines is two items",
     ).toBe(200);
     expect(
       upserted.data.item.id,
-      "the second key's create landed on another row than the first key's",
+      "the second key's create landed on another item than the first key's",
     ).toBe(created.data.item.id);
     expect(
       upserted.data.item.version,
@@ -199,27 +199,27 @@ describe("a write naming a source", () => {
     ).toBe(created.data.item.version + 1);
     expect(
       upserted.data.item.properties.body,
-      "the upsert answered the row without the second key's properties",
+      "the upsert answered the item without the second key's properties",
     ).toBe("written on the second machine");
 
     // The witness. The same `source_id` under the second key's own source is
-    // another natural key and a new row, so what joined the two writes above
+    // another natural key and a new item, so what joined the two writes above
     // is the source they share.
     const apart = await second.client.createItem(
       createNote({ source_id: sourceId }),
     );
     expect(
       apart.status,
-      "the same source_id under the key's own source was not a new row",
+      "the same source_id under the key's own source was not a new item",
     ).toBe(201);
     trackItem(ctx, apart.data.item.id);
     expect(
       apart.data.item.id,
-      "a write under the key's own source landed on the shared row, so the upsert above is not the claim's doing",
+      "a write under the key's own source landed on the shared item, so the upsert above is not the claim's doing",
     ).not.toBe(created.data.item.id);
   });
 
-  it("lands a bulk entry naming a claim on the claim's row, not on its own source's", async () => {
+  it("lands a bulk entry naming a claim on the claim's item, not on its own source's", async () => {
     const first = await claimingKey("bulk-first", [folder]);
     const second = await claimingKey("bulk-second", [folder]);
     const sourceId = `bulk-shared-${ctx.runId}`;
@@ -239,7 +239,7 @@ describe("a write naming a source", () => {
 
     // The same `source_id` under the second key's own source, written first,
     // so a page that looked the pair up under the credential's own source
-    // rather than the one its entry names has a row to land on.
+    // rather than the one its entry names has an item to land on.
     const own = await second.client.createItem(
       createNote({
         source_id: sourceId,
@@ -269,36 +269,36 @@ describe("a write naming a source", () => {
     ).toBe(200);
     expect(
       page.data.results[0]?.outcome,
-      "the second key's entry under the shared source made a row of its own, so one file on two machines is two items",
+      "the second key's entry under the shared source made an item of its own, so one file on two machines is two items",
     ).toBe("updated");
     expect(
       page.data.results[0]?.id,
-      "the entry naming the claim landed on another row than the one the first key wrote under it",
+      "the entry naming the claim landed on another item than the one the first key wrote under it",
     ).toBe(claimed.data.item.id);
 
     const shared = await client.getItem(claimed.data.item.id);
-    expect(shared.ok, "the shared row cannot be read back").toBe(true);
+    expect(shared.ok, "the shared item cannot be read back").toBe(true);
     expect(
       shared.data.item.properties.body,
-      "the shared row does not carry the second key's entry",
+      "the shared item does not carry the second key's entry",
     ).toBe("written by the second key");
     expect(
       shared.data.item.version,
-      "the entry did not advance the shared row's version",
+      "the entry did not advance the shared item's version",
     ).toBe(claimed.data.item.version + 1);
     const untouched = await client.getItem(own.data.item.id);
     expect(
       untouched.ok,
-      "the row under the key's own source cannot be read",
+      "the item under the key's own source cannot be read",
     ).toBe(true);
     expect(
       untouched.data.item.version,
-      "the entry naming the claim also wrote to the row under the key's own source",
+      "the entry naming the claim also wrote to the item under the key's own source",
     ).toBe(own.data.item.version);
 
-    // The witness. The same entry naming no source lands on the row under
-    // the key's own source, so that row was there to be landed on and the
-    // entry above reached the shared row because it named the claim.
+    // The witness. The same entry naming no source lands on the item under
+    // the key's own source, so that item was there to be landed on and the
+    // entry above reached the shared item because it named the claim.
     const ownPage = await second.client.bulkItems({
       items: [
         {
@@ -314,13 +314,13 @@ describe("a write naming a source", () => {
     ).toBe(200);
     expect(
       ownPage.data.results[0],
-      "an entry naming no source did not land on the row under the key's own source",
+      "an entry naming no source did not land on the item under the key's own source",
     ).toMatchObject({ outcome: "updated", id: own.data.item.id });
   });
 
-  it("gates a bulk entry resolving a trashed row on the row's type, and names no id", async () => {
+  it("gates a bulk entry resolving a trashed item on the item's type, and names no id", async () => {
     // A key writing bookmarks and notes under the shared source, and one
-    // writing notes alone under it: the second reaches the first's rows
+    // writing notes alone under it: the second reaches the first's items
     // through the source they share, whatever their types.
     const minted = await owner.createKey({
       label: "trashed-writer",
@@ -354,8 +354,8 @@ describe("a write naming a source", () => {
     const trashed = await both.deleteItem(created.data.item.id);
     expect(trashed.ok, "the bookmark could not be trashed").toBe(true);
 
-    // The witness. The key that may write the row's type, declaring it, is
-    // acknowledged with the row's id, so an id is what this entry discloses
+    // The witness. The key that may write the item's type, declaring it, is
+    // acknowledged with the item's id, so an id is what this entry discloses
     // when its gates pass.
     const acknowledged = await both.bulkItems({
       atomic: false,
@@ -370,11 +370,11 @@ describe("a write naming a source", () => {
     });
     expect(
       acknowledged.status,
-      `a page resolving the trashed row was refused: ${JSON.stringify(acknowledged.error)}`,
+      `a page resolving the trashed item was refused: ${JSON.stringify(acknowledged.error)}`,
     ).toBe(200);
     expect(
       acknowledged.data.results[0],
-      "an entry resolving a trashed row its key may write was not acknowledged with the row's id",
+      "an entry resolving a trashed item its key may write was not acknowledged with the item's id",
     ).toMatchObject({
       outcome: "skipped",
       reason: "trashed",
@@ -400,7 +400,7 @@ describe("a write naming a source", () => {
     const refused = unwritable.data.results[0];
     expect(
       refused?.outcome,
-      "an entry resolving a trashed row of a type its key may not write was not refused",
+      "an entry resolving a trashed item of a type its key may not write was not refused",
     ).toBe("errored");
     expect(
       refused?.error?.code,
@@ -408,15 +408,15 @@ describe("a write naming a source", () => {
     ).toBe("type_not_permitted");
     expect(
       JSON.stringify(refused),
-      "the refusal names the trashed row's id to a key that may not write its type",
+      "the refusal names the trashed item's id to a key that may not write its type",
     ).not.toContain(created.data.item.id);
     expect(
       JSON.stringify(refused),
-      "the refusal names the type of a row its key may not read",
+      "the refusal names the type of an item its key may not read",
     ).not.toContain("core.bookmark");
     // Its witness is below: the same entry from the key that may write the
-    // trashed row is refused on this same path too, and that refusal names
-    // the row, its id in `details.item_id` and its type in
+    // trashed item is refused on this same path too, and that refusal names
+    // the item, its id in `details.item_id` and its type in
     // `details.actual_type`.
 
     const mismatched = await both.bulkItems({ atomic: false, items: [entry] });
@@ -427,27 +427,27 @@ describe("a write naming a source", () => {
     const declared = mismatched.data.results[0];
     expect(
       declared?.outcome,
-      "an entry declaring another type than the trashed row's was acknowledged",
+      "an entry declaring another type than the trashed item's was acknowledged",
     ).toBe("errored");
     expect(
       declared?.error?.code,
-      "the refusal is not the one a declared type the row is not answers",
+      "the refusal is not the one a declared type the item is not answers",
     ).toBe("type_mismatch");
     expect(
       declared?.error?.details?.actual_type,
-      "the declared type was not held to the trashed row's own",
+      "the declared type was not held to the trashed item's own",
     ).toBe("core.bookmark");
     expect(
       declared?.error?.details?.item_id,
-      "the refusal to the key that may write the trashed row does not name it, so nothing shows this path can carry an id at all",
+      "the refusal to the key that may write the trashed item does not name it, so nothing shows this path can carry an id at all",
     ).toBe(created.data.item.id);
   });
 
-  it("tells a key its natural key is taken, and nothing of a row it may not read", async () => {
+  it("tells a key its natural key is taken, and nothing of an item it may not read", async () => {
     // A key writing bookmarks under the shared source, one reading them, and
     // one holding notes alone: the last reaches the bookmark through the
     // source they share, and may learn that its key is taken and nothing
-    // else, not the row's id, its type or any property.
+    // else, not the item's id, its type or any property.
     const mint = async (
       label: string,
       type_permissions: Record<string, string>,
@@ -493,7 +493,7 @@ describe("a write naming a source", () => {
     const binnedId = await row(binned);
     expect((await writer.deleteItem(binnedId)).ok).toBe(true);
 
-    // Nothing in the answer names the row: not its id, its type, nor a
+    // Nothing in the answer names the item: not its id, its type, nor a
     // property it holds.
     const disclosed = (answer: unknown): string[] => {
       const text = JSON.stringify(answer);
@@ -513,7 +513,7 @@ describe("a write naming a source", () => {
       ...(version === undefined ? {} : { version }),
     });
 
-    // The witness: the key that may write the row is told which row its
+    // The witness: the key that may write the item is told which item its
     // key names, by id and snapshot, in the conditional create's refusal.
     const named = await writer.rawRequest("/items", {
       method: "POST",
@@ -526,9 +526,9 @@ describe("a write naming a source", () => {
 
     // The single create, live and trashed, with and without a version.
     for (const [label, body] of [
-      ["a keyed create onto a live row", note(live)],
-      ["a conditional keyed create onto a live row", note(live, 0)],
-      ["a keyed create onto a trashed row", note(binned)],
+      ["a keyed create onto a live item", note(live)],
+      ["a conditional keyed create onto a live item", note(live, 0)],
+      ["a keyed create onto a trashed item", note(binned)],
     ] as const) {
       const refused = await notesOnly.rawRequest("/items", {
         method: "POST",
@@ -536,11 +536,11 @@ describe("a write naming a source", () => {
       });
       expect(
         [refused.status, refused.error?.error.code],
-        `${label} was not refused for the row's type`,
+        `${label} was not refused for the item's type`,
       ).toEqual([403, "type_not_permitted"]);
       expect(
         disclosed(refused.error),
-        `${label} told a key that may not read the row about it`,
+        `${label} told a key that may not read the item about it`,
       ).toEqual([]);
     }
 
@@ -556,7 +556,7 @@ describe("a write naming a source", () => {
     }
     expect(
       disclosed(upserted.data.results),
-      "an upsert entry refused for the row's type named the row",
+      "an upsert entry refused for the item's type named the item",
     ).toEqual([]);
 
     const createOnly = await notesOnly.bulkItems({
@@ -574,10 +574,10 @@ describe("a write naming a source", () => {
     ]);
     expect(
       disclosed(createOnly.data.results),
-      "a create_only entry named a row its key may not read",
+      "a create_only entry named an item its key may not read",
     ).toEqual([]);
 
-    // The witness for the type: a key that may read the row's type but not
+    // The witness for the type: a key that may read the item's type but not
     // write it is refused naming the type, so its absence above is the gate
     // and not a message that never names one.
     const readerRefused = await reader.rawRequest("/items", {
@@ -588,7 +588,7 @@ describe("a write naming a source", () => {
     expect(JSON.stringify(readerRefused.error)).toContain("core.bookmark");
     expect(JSON.stringify(readerRefused.error)).not.toContain(liveId);
 
-    // The witness for the bulk half: a key that may read the row's type is
+    // The witness for the bulk half: a key that may read the item's type is
     // told its id, so the absence above is the gate and not a door that
     // names no id to anyone.
     const readable = await reader.bulkItems({
@@ -603,7 +603,7 @@ describe("a write naming a source", () => {
     });
   });
 
-  it("refuses a create naming another id than the row its natural key resolves, to a key that may not read the row, without naming it", async () => {
+  it("refuses a create naming another id than the item its natural key resolves, to a key that may not read the item, without naming it", async () => {
     const mint = async (
       label: string,
       type_permissions: Record<string, string>,
@@ -662,9 +662,9 @@ describe("a write naming a source", () => {
     }
     expect((await client.getItem(fresh)).status).toBe(404);
 
-    // The witness: a key that may write the row's type is told which row the
+    // The witness: a key that may write the item's type is told which item the
     // key names, so the silence above is the gate and not a door that names
-    // no row to anyone.
+    // no item to anyone.
     const named = await writer.rawRequest("/items", {
       method: "POST",
       body: { ...body, type: "core.bookmark", properties: secret },
@@ -776,7 +776,7 @@ describe("a write naming a source", () => {
     const listed = own.data.data.map((row) => row.source_id);
     expect(
       listed,
-      "the listing does not surface a row the key wrote under its own source, so the absence below proves nothing",
+      "the listing does not surface an item the key wrote under its own source, so the absence below proves nothing",
     ).toContain(ownId);
     expect(
       listed,
@@ -793,7 +793,7 @@ describe("a write naming a source", () => {
         properties: { title: "original", body: "original body" },
       }),
     );
-    expect(seeded.status, "the row a stale entry needs was not written").toBe(
+    expect(seeded.status, "the item a stale entry needs was not written").toBe(
       201,
     );
     trackItem(ctx, seeded.data.item.id);
@@ -801,7 +801,7 @@ describe("a write naming a source", () => {
       properties: { title: "moved on" },
       version: seeded.data.item.version,
     });
-    expect(advanced.status, "the row could not be moved past its seed").toBe(
+    expect(advanced.status, "the item could not be moved past its seed").toBe(
       200,
     );
     const stale = {
@@ -826,7 +826,7 @@ describe("a write naming a source", () => {
     expect(alone.error?.error.details?.index).toBe(0);
 
     // Behind it, an entry naming a source the key does not claim. What each
-    // entry names is judged across the page before any entry meets its row,
+    // entry names is judged across the page before any entry meets its item,
     // so the page is refused for the second entry, and at its status.
     const unclaimed = await writer.client.bulkItems({
       items: [
@@ -887,7 +887,7 @@ describe("a write naming a source", () => {
     ).toBe(1);
   });
 
-  it("keeps a row's source where its create put it", async () => {
+  it("keeps an item's source where its create put it", async () => {
     const writer = await claimingKey("keeper", [folder]);
     const created = await writer.client.createItem(
       createNote({ source: folder }),
@@ -911,11 +911,11 @@ describe("a write naming a source", () => {
     );
     expect(
       moved.status,
-      "an update naming a source was accepted, so a row can leave the natural key it was written under",
+      "an update naming a source was accepted, so an item can leave the natural key it was written under",
     ).toBe(400);
     expect(moved.error?.error.code).toBe("validation_error");
 
-    // The witness. The same update without the source lands, and the row
+    // The witness. The same update without the source lands, and the item
     // keeps the source its create put there.
     const patched = await writer.client.updateItem(created.data.item.id, {
       properties: { title: "moved" },
@@ -927,7 +927,7 @@ describe("a write naming a source", () => {
     ).toBe(200);
     expect(
       patched.data.item.source,
-      "an update moved the row off the source its create put it under",
+      "an update moved the item off the source its create put it under",
     ).toBe(folder);
   });
 
@@ -974,7 +974,7 @@ describe("a write naming a source", () => {
     expect(own.data.item.source_id).toBe(`nk-moved-${ctx.runId}`);
   });
 
-  it("stops a narrowed key writing under a source it no longer claims, and leaves its rows there editable", async () => {
+  it("stops a narrowed key writing under a source it no longer claims, and leaves its items there editable", async () => {
     const writer = await claimingKey("narrowed", [folder]);
     const sourceId = `narrowed-${ctx.runId}`;
 
@@ -997,7 +997,7 @@ describe("a write naming a source", () => {
     );
     expect(
       refusedCreate.status,
-      "a key narrowed off a source still created a row under it",
+      "a key narrowed off a source still created an item under it",
     ).toBe(403);
     expect(refusedCreate.error?.error.code).toBe("forbidden");
     expect(
@@ -1014,32 +1014,32 @@ describe("a write naming a source", () => {
     );
     expect(
       refusedUpsert.status,
-      "a key narrowed off a source still upserted onto a row under it by its natural key",
+      "a key narrowed off a source still upserted onto an item under it by its natural key",
     ).toBe(403);
     expect(refusedUpsert.error?.error.code).toBe("forbidden");
     expect(refusedUpsert.error?.error.details?.source).toBe(folder);
     const unchanged = await client.getItem(created.data.item.id);
-    expect(unchanged.ok, "the row under the source cannot be read").toBe(true);
+    expect(unchanged.ok, "the item under the source cannot be read").toBe(true);
     expect(
       unchanged.data.item.version,
-      "the refused upsert wrote to the row",
+      "the refused upsert wrote to the item",
     ).toBe(created.data.item.version);
 
     // Nothing was written by the refused create either: a key still
-    // claiming the source makes a new row under the same natural key, where
-    // a row the refusal left behind would have answered an upsert.
+    // claiming the source makes a new item under the same natural key, where
+    // an item the refusal left behind would have answered an upsert.
     const claimer = await claimingKey("narrowed-witness", [folder]);
     const fresh = await claimer.client.createItem(
       createNote({ source: folder, source_id: `${sourceId}-after` }),
     );
     expect(
       fresh.status,
-      "the refused create left a row under the source, which a key claiming it has now written over",
+      "the refused create left an item under the source, which a key claiming it has now written over",
     ).toBe(201);
     trackItem(ctx, fresh.data.item.id);
 
-    // An update by id names no source, and the row's never moves, so the
-    // claim is not asked: the row the key wrote under the source stays its
+    // An update by id names no source, and the item's never moves, so the
+    // claim is not asked: the item the key wrote under the source stays its
     // to edit while its type map reaches it.
     const patched = await writer.client.updateItem(created.data.item.id, {
       properties: { title: "edited after the narrowing" },
@@ -1047,7 +1047,7 @@ describe("a write naming a source", () => {
     });
     expect(
       patched.status,
-      `an update by id was refused a row under a source its key no longer claims: ${JSON.stringify(patched.error)}`,
+      `an update by id was refused an item under a source its key no longer claims: ${JSON.stringify(patched.error)}`,
     ).toBe(200);
     expect(patched.data.item.source).toBe(folder);
     expect(patched.data.item.version).toBe(created.data.item.version + 1);
@@ -1219,11 +1219,11 @@ describe("a key's claims", () => {
     const claimer = await claimingKey("taken-claimer", [taken]);
 
     // This file's key claims nothing, so naming the claimed source as a new
-    // key's own would hand that key every row written under it.
+    // key's own would hand that key every item written under it.
     const refused = await client.createKey({ label: "taken", source: taken });
     expect(
       refused.status,
-      "a key took as its own a source another key claims, and with it every row written under that source",
+      "a key took as its own a source another key claims, and with it every item written under that source",
     ).toBe(403);
     expect(refused.error?.error.code).toBe("forbidden");
     expect(
@@ -1244,7 +1244,7 @@ describe("a key's claims", () => {
     trackKey(ctx, granted.data.id);
 
     // The source is now another key's own, and the key claiming it still
-    // writes under it: a row's source does not name the key that wrote it.
+    // writes under it: an item's source does not name the key that wrote it.
     const written = await claimer.client.createItem(
       createNote({ source: taken }),
     );
@@ -1310,7 +1310,7 @@ describe("a key's claims", () => {
       });
       expect(
         refused.status,
-        `the owner granted ${reserved}, so a key's rows can read as an app's`,
+        `the owner granted ${reserved}, so a key's items can read as an app's`,
       ).toBe(400);
       expect(refused.error?.error.code).toBe("validation_error");
       const own = await owner.createKey({

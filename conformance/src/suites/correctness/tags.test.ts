@@ -82,7 +82,7 @@ describe("tags", () => {
     expect(ids).not.toContain(r2.data.item.id);
   });
 
-  it("narrows the listing, the stats, the search and the bulk action to the rows that carry every tag named", async () => {
+  it("narrows the listing, the stats, the search and the bulk action to the items that carry every tag named", async () => {
     const word = `tagsboth${ctx.runId}`;
     const red = `red-${ctx.runId}`;
     const blue = `blue-${ctx.runId}`;
@@ -114,8 +114,8 @@ describe("tags", () => {
         .sort();
     };
 
-    // One tag answers the two rows that carry it, so the pair below narrows
-    // by the second tag and not by a tag the rows lack.
+    // One tag answers the two items that carry it, so the pair below narrows
+    // by the second tag and not by a tag the items lack.
     expect(
       await ids(`/items?${scope}&tags=${encodeURIComponent(red)}`),
     ).toEqual([both, onlyRed].sort());

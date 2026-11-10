@@ -679,7 +679,7 @@ describe("conditional working-copy reaches", () => {
     }
   });
 
-  it("answers a system row to a bulk read under a reach only when include names system", async () => {
+  it("answers a system item to a bulk read under a reach only when include names system", async () => {
     const view = await fetch(`${server.apiUrl}/views`, {
       method: "POST",
       headers: {
