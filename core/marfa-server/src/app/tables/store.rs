@@ -590,6 +590,9 @@ mod tests {
             pages.push((page.batches, page.changes));
         }
         assert_eq!(pages, [(1, 600), (1, 600), (3, 1_000)]);
-        assert_eq!(orphan_page(&tx, 1_000).unwrap().map(|page| page.changes), None);
+        assert_eq!(
+            orphan_page(&tx, 1_000).unwrap().map(|page| page.changes),
+            None
+        );
     }
 }
