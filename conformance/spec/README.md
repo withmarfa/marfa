@@ -17,6 +17,7 @@ The contract has two halves.
 - `views.md`: views, the saved lists of items written as `system.view`, their query, sort and group, the operations that create, change and delete them, and the one that lists their items.
 - `types.md`: the type registry, its grammar, inheritance, enforcement levers and a type's link.
 - `tables.md`: the tables a type declares, their columns and how a column totals, down a chain of types, through evolution and into an archive.
+- `conversations.md`: the shipped type `core.conversation`, its `messages` table, appending and reading the latest messages, and listing conversations by their latest message.
 - `edges.md`: edges, edge types, hydration and traversal.
 - `versions.md`: versions, snapshots, the 409 envelopes and server-side merge.
 - `reach.md`: the copy stream, conditional reads, and the reach that certifies what a working copy holds.

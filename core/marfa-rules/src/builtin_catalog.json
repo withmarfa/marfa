@@ -100,6 +100,55 @@
    "plural": "Collections"
   },
   {
+   "id": "core.conversation",
+   "label": "Conversation",
+   "description": "A conversation, such as a chat with a person or an assistant. Its messages are the rows of its messages table.",
+   "version": 0,
+   "fields": {
+    "title": {
+     "type": "string",
+     "description": "The conversation's name."
+    }
+   },
+   "tables": {
+    "messages": {
+     "description": "The messages of the conversation, in the order they were appended.",
+     "columns": {
+      "author": {
+       "type": "string",
+       "description": "Who wrote the message, such as a name, a handle or `assistant`.",
+       "required": true
+      },
+      "text": {
+       "type": "string",
+       "description": "What the message says. A message may have no text and only an attachment.",
+       "searchable": true
+      },
+      "sent_at": {
+       "type": "datetime",
+       "description": "When the message was sent.",
+       "required": true
+      },
+      "attachment": {
+       "type": "item",
+       "description": "A picture or other file the message carries.",
+       "type_constraints": [
+        "core.file"
+       ]
+      }
+     }
+    }
+   },
+   "display_hints": {
+    "title_field": "title",
+    "icon": "lucide:messages-square"
+   },
+   "merge_policy": {
+    "default": "last_writer_wins"
+   },
+   "plural": "Conversations"
+  },
+  {
    "id": "core.entity",
    "label": "Entity",
    "description": "Someone or something with a name, such as a person, company, band, team, charity, brand, school or place.",

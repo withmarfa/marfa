@@ -18,6 +18,7 @@ import {
   validateTypeSchema,
 } from "../src/schema-validation.js";
 import { mergeFieldDefinition } from "../src/status.js";
+import { setAsideTables } from "./shipped-tables.js";
 
 const typesRoot = resolve(import.meta.dirname, "..");
 const coreDir = join(typesRoot, "core");
@@ -157,7 +158,8 @@ function resolveMergePolicy(schema: TypeSchema): TypeSchema["merge_policy"] {
 function buildFamily(raws: RawSchema[]): TypeSchema[] {
   const built: TypeSchema[] = [];
   for (const raw of byAncestry(raws)) {
-    const result = validateTypeSchema(raw.data, {
+    const { rest, tables } = setAsideTables(raw.data);
+    const result = validateTypeSchema(rest, {
       resolveSchema: (id) => registry.get(id),
     });
     if (!result.success) {
@@ -170,6 +172,7 @@ function buildFamily(raws: RawSchema[]): TypeSchema[] {
       ...result.data,
       fields: {},
     };
+    if (tables) schema.tables = tables;
     registry.set(schema.id, schema);
     schema.fields = resolveFields(result.data);
     const mergePolicy = resolveMergePolicy(result.data);
@@ -261,6 +264,9 @@ function emitSchema(schema: TypeSchema, lines: string[]): void {
     lines.push(`    ${name}: ${fieldLiteral(def)},`);
   }
   lines.push("  },");
+  if (schema.tables) {
+    lines.push(`  tables: ${JSON.stringify(schema.tables)},`);
+  }
   if (schema.display_hints) {
     const parts: string[] = [];
     if (schema.display_hints.title_field) {
@@ -387,7 +393,13 @@ const PROSE_KEYS = new Set([
  * can be called `description` or `label`, so these keys are kept whatever
  * they read, and only the definitions under them lose their prose.
  */
-const NAMED_MAPS = new Set(["fields", "property_schema", "items_fields"]);
+const NAMED_MAPS = new Set([
+  "fields",
+  "property_schema",
+  "items_fields",
+  "tables",
+  "columns",
+]);
 
 function namedMap(value: unknown): unknown {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
