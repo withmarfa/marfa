@@ -27,6 +27,47 @@ pub fn named(_fault: &str) -> Option<String> {
     None
 }
 
+/// A nonnumeric release file releases every reach of the fixture's gate.
+#[cfg(debug_assertions)]
+pub fn gate(fault: &str) {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    static REACHED: Mutex<Option<HashMap<String, u64>>> = Mutex::new(None);
+    let Some(path) = named(fault).filter(|path| !path.is_empty()) else {
+        return;
+    };
+    let reach = {
+        let mut reached = REACHED
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let count = reached
+            .get_or_insert_with(HashMap::new)
+            .entry(fault.to_string())
+            .or_default();
+        *count += 1;
+        *count
+    };
+    std::fs::write(format!("{path}.ready"), reach.to_string()).expect("write the gate's reach");
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while std::fs::read_to_string(format!("{path}.release"))
+        .ok()
+        .is_none_or(|released| {
+            released
+                .trim()
+                .parse::<u64>()
+                .is_ok_and(|through| through < reach)
+        })
+    {
+        assert!(
+            Instant::now() < deadline,
+            "the gate {fault} was not released"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 /// Holds an armed point until `release`, counting it only while observing.
 /// The name is evaluated only while a fixture has enabled a hook.
 #[cfg(debug_assertions)]

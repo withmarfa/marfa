@@ -69,6 +69,9 @@ pub enum CoreError {
     StorageFull(String),
     #[error("store: {0}")]
     Store(String),
+    /// Store contention that a fresh transaction may clear.
+    #[error("the store is busy with another program's write: {0}")]
+    StoreBusy(String),
     #[error("{origin} answered {status}, a redirect to {}", location.as_deref().unwrap_or("nowhere it named"))]
     Redirected {
         origin: String,
@@ -215,6 +218,7 @@ codes! {
     Unnamed: CoreError::Unnamed { .. } => "unnamed_answer",
     Decoding: CoreError::Decoding(_) => "decoding",
     Store: CoreError::Store(_) => "store",
+    StoreBusy: CoreError::StoreBusy(_) => "store_busy",
     StorageFull: CoreError::StorageFull(_) => "storage_full",
     SignedOut: CoreError::SignedOut { .. } => "signed_out",
     NoKeychain: CoreError::NoKeychain(_) => "no_keychain",
@@ -435,10 +439,10 @@ fn copy_expired(reason: &str) -> String {
 
 impl From<rusqlite::Error> for CoreError {
     fn from(error: rusqlite::Error) -> Self {
-        if error.sqlite_error_code() == Some(rusqlite::ErrorCode::DiskFull) {
-            CoreError::StorageFull(error.to_string())
-        } else {
-            CoreError::Store(error.to_string())
+        match error.sqlite_error_code() {
+            Some(rusqlite::ErrorCode::DiskFull) => CoreError::StorageFull(error.to_string()),
+            Some(rusqlite::ErrorCode::DatabaseBusy) => CoreError::StoreBusy(error.to_string()),
+            _ => CoreError::Store(error.to_string()),
         }
     }
 }

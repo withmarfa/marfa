@@ -566,6 +566,15 @@ fn tell(
             ));
             Ok(())
         }
+        WatchEvent::Retrying {
+            error: error @ CoreError::StoreBusy(_),
+            wait,
+        } => {
+            say.note(&format!(
+                "another program kept writing to the folder's store while the watch wrote to it ({error}); the watch goes on and tries again in {wait:?}"
+            ));
+            Ok(())
+        }
         WatchEvent::Retrying { error, wait } => {
             say.note(&format!(
                 "could not hydrate ({error}); trying again in {wait:?}, and after each failure \
