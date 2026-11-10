@@ -948,57 +948,35 @@ pub(crate) fn take_reread(conn: &Connection, reread: &Reread) -> Result<Vec<(Str
             changed.push((item.clone(), table.clone()));
         }
     }
-    struct Table {
-        item: String,
-        table: String,
-        holds: bool,
-        changed: bool,
-    }
-    let finish = |conn: &Connection, done: Option<Table>, changed: &mut Vec<(String, String)>| {
-        if let Some(done) = done.filter(|done| done.holds) {
-            if past_cap(conn, &done.item, &done.table)? || done.changed {
-                changed.push((done.item, done.table));
-            }
-        }
-        Ok::<_, CoreError>(())
+    let staged: Vec<(String, String)> = {
+        let mut query = conn.prepare("SELECT DISTINCT item_id, name FROM rows_reread")?;
+        query
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?
     };
-    {
-        let mut query = conn.prepare(
-            "SELECT item_id, name, id, answer FROM rows_reread ORDER BY item_id, name, id",
-        )?;
-        let mut rows = query.query([])?;
-        let mut at: Option<Table> = None;
-        while let Some(row) = rows.next()? {
-            let (item, table, id, answer): (String, String, String, Option<String>) =
-                (row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?);
-            let current = match at.take() {
-                Some(current) if current.item == item && current.table == table => current,
-                done => {
-                    finish(conn, done, &mut changed)?;
-                    Table {
-                        holds: holds_rows(conn, &item, &table)?,
-                        item,
-                        table,
-                        changed: false,
-                    }
-                }
-            };
-            let mut current = current;
-            if current.holds {
-                current.changed |= match answer {
-                    Some(answer) => hold_answered(
-                        conn,
-                        &current.item,
-                        &current.table,
-                        &serde_json::from_str(&answer)?,
-                    )?,
-                    None => delete_row(conn, &current.item, &current.table, &id)?,
-                };
-            }
-            at = Some(current);
+    let mut read = conn.prepare(
+        "SELECT id, answer FROM rows_reread WHERE item_id = ?1 AND name = ?2 ORDER BY id",
+    )?;
+    for (item, table) in staged {
+        if !holds_rows(conn, &item, &table)? {
+            continue;
         }
-        finish(conn, at, &mut changed)?;
+        let mut moved = false;
+        let mut rows = read.query(params![item, table])?;
+        while let Some(row) = rows.next()? {
+            let id: String = row.get(0)?;
+            moved |= match row.get::<_, Option<String>>(1)? {
+                Some(answer) => {
+                    hold_answered(conn, &item, &table, &serde_json::from_str(&answer)?)?
+                }
+                None => delete_row(conn, &item, &table, &id)?,
+            };
+        }
+        if past_cap(conn, &item, &table)? || moved {
+            changed.push((item, table));
+        }
     }
+    drop(read);
     conn.execute("DELETE FROM rows_reread", [])?;
     Ok(changed)
 }

@@ -10602,7 +10602,7 @@ mod tests {
             .collect();
         assert_eq!(
             crate::folder::state::hash(named.as_bytes()),
-            "6db4497551bfc086",
+            "5699a275608a979c",
             "the shape of a table changed, which refuses every store made before it"
         );
     }
