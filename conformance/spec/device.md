@@ -5048,6 +5048,12 @@ If a write creates or updates an item of `core.table`, or of a type below it, wi
 
 **Tests:** `device/own-columns-live.test.ts › refuses on the device the columns the server refuses and queues nothing`.
 
+### `device/own-columns-taken`
+
+When a write creates an item of `core.table`, or of a type below it, with `columns` that the server takes under `tables/own-columns-taken`, a device MUST take the write and queue it, whether or not the copy has reached a server.
+
+**Tests:** `device/own-columns-live.test.ts › takes on the device the columns the server takes and the server accepts the queued write`.
+
 ### `device/catalog-core-table`
 
 A device MUST answer `core.table` as `GET /types/core.table` answers it, from its shipped catalog and after a hydration alike.
