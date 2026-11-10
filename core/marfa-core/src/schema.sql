@@ -156,6 +156,16 @@ CREATE TRIGGER IF NOT EXISTS table_rows_refs_gone AFTER DELETE ON table_rows BEG
    WHERE item_id = OLD.item_id AND name = OLD.name AND row_id = OLD.id;
 END;
 
+-- The rows a purge reads again, kept on disk until the purge event applies
+-- them. `answer` is NULL where the server no longer holds the row.
+CREATE TABLE IF NOT EXISTS rows_reread (
+  item_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  id TEXT NOT NULL,
+  answer TEXT,
+  PRIMARY KEY (item_id, name, id)
+) WITHOUT ROWID;
+
 -- Keyed by rowid = items.seq: an FTS5 column cannot be indexed for a lookup,
 -- so deleting by an item_id column would scan the whole index per write.
 -- The columns and the tokenizer are the server's, so a query matches the same

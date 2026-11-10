@@ -366,7 +366,7 @@ fn answered_page(
     table: &str,
     asked: &Page,
 ) -> Result<String> {
-    if read.faults().fail(FAIL_TABLE_ROWS_PAGE, None) {
+    if read.faults().fail(FAIL_TABLE_ROWS_PAGE, Some(table)) {
         return Err(Refusal::internal("the read of a page of rows failed"));
     }
     let host = items::readable_host(read, item_id)?;

@@ -15,6 +15,10 @@ pub struct TableFill {
     pub unfilled: i64,
     pub pages: i64,
     pub rows: i64,
+    /// Tables whose read failed, each left to the next pass.
+    pub failed: i64,
+    /// The last of them, and why.
+    pub failure: Option<String>,
 }
 
 impl From<marfa_core::FillReport> for TableFill {
@@ -25,6 +29,8 @@ impl From<marfa_core::FillReport> for TableFill {
             unfilled: count(fill.unfilled),
             pages: count(fill.pages),
             rows: count(fill.rows),
+            failed: count(fill.failed),
+            failure: fill.failure,
         }
     }
 }
@@ -99,7 +105,8 @@ impl MarfaCore {
         })
     }
 
-    /// Holds matching tables and fills them when no stream operation is active.
+    /// Holds matching tables and fills them, or leaves them to the follow or
+    /// catch-up that holds the stream.
     #[napi(
         ts_return_type = "Promise<{ type: string; table: string; was_held: boolean; fill: TableFill | null }>"
     )]

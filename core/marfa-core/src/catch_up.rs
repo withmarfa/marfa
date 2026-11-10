@@ -262,6 +262,8 @@ pub struct FollowReport {
     /// Counts failed reads of a row entering the slice as well as failed asks
     /// for a stream.
     pub failed_opens: u64,
+    /// Tables whose read failed, each left to the next stream.
+    pub tables_failed: u64,
     pub last_failure: Option<String>,
 }
 
@@ -393,6 +395,13 @@ fn open(http: &Http, cursor: &str, bound: Duration) -> Result<Receiver<io::Resul
     Ok(frames)
 }
 
+/// What one event changed: its own change, and the tables a purge's re-read
+/// changed.
+struct Taken {
+    change: Option<Change>,
+    rows: Vec<Change>,
+}
+
 /// The connection is released before this returns, so a caller told of the
 /// change can read the row it names.
 fn take(
@@ -403,7 +412,7 @@ fn take(
     id: &str,
     kind: &str,
     payload: &EventPayload,
-) -> Result<Option<Change>> {
+) -> Result<Taken> {
     // A held stream spans ordinary pin changes. Snapshot pins for this event's
     // awaited reads, while retaining the stream's copy and authority guard.
     let operation = {
@@ -416,9 +425,17 @@ fn take(
         Some(rows) => crate::tables::rows_to_read(core, &operation, rows)?,
         None => None,
     };
-    let refreshed = match &payload.item {
-        Some(item) if kind == "item.purged" => crate::tables::naming(core, &operation, &item.id)?,
-        _ => Vec::new(),
+    let reread = match &payload.item {
+        Some(item) if kind == "item.purged" => {
+            Some(crate::tables::reread_naming(core, &operation, &item.id)?)
+        }
+        _ => None,
+    };
+    let rows_changed = |item: String| Change {
+        event: ChangeEvent::Applied(crate::tables::ROWS_CHANGED.into()),
+        item_id: Some(item),
+        edge_id: None,
+        cursor: id.to_string(),
     };
     let mut conn = core.conn()?;
     let tx = conn.transaction()?;
@@ -428,12 +445,10 @@ fn take(
         let applied = crate::tables::apply(&tx, rows, read_rows.as_ref())?;
         store::meta_set(&tx, store::META_EVENT_CURSOR, id)?;
         tx.commit()?;
-        return Ok(applied.then(|| Change {
-            event: ChangeEvent::Applied(kind.to_string()),
-            item_id: Some(rows.item.id.clone()),
-            edge_id: None,
-            cursor: id.to_string(),
-        }));
+        return Ok(Taken {
+            change: applied.then(|| rows_changed(rows.item.id.clone())),
+            rows: Vec::new(),
+        });
     }
     // Judged outside the transaction: a row held or pinned since is taken
     // as any held row is, and judged again once taken.
@@ -462,17 +477,26 @@ fn take(
     if let Some(item) = &payload.item {
         crate::tables::reconcile_item(&tx, &item.id)?;
     }
-    crate::tables::take_refreshed(&tx, &refreshed)?;
+    let reread = match &reread {
+        Some(reread) => crate::tables::take_reread(&tx, reread)?,
+        None => Vec::new(),
+    };
     // The last id applied, never the highest seen: where an event is not
     // applied, a high-water mark would step over it forever.
     store::meta_set(&tx, store::META_EVENT_CURSOR, id)?;
     tx.commit()?;
-    Ok(applied.then(|| Change {
-        event: ChangeEvent::Applied(kind.to_string()),
-        item_id: payload.item.as_ref().map(|item| item.id.clone()),
-        edge_id: payload.edge.as_ref().map(|edge| edge.id.clone()),
-        cursor: id.to_string(),
-    }))
+    Ok(Taken {
+        change: applied.then(|| Change {
+            event: ChangeEvent::Applied(kind.to_string()),
+            item_id: payload.item.as_ref().map(|item| item.id.clone()),
+            edge_id: payload.edge.as_ref().map(|edge| edge.id.clone()),
+            cursor: id.to_string(),
+        }),
+        rows: reread
+            .into_iter()
+            .map(|(item, _)| rows_changed(item))
+            .collect(),
+    })
 }
 
 /// Frames the filter or the credential withheld are never sent, so the
@@ -692,7 +716,10 @@ pub(crate) fn replay_build(
                             refuse_if_stopped(stop)?;
                             catalog = adopt(core, context, &refreshed_catalog, catalog_changed)?;
                         }
-                        if take(core, context, &catalog, &slice, &id, kind, &payload)?.is_some() {
+                        if take(core, context, &catalog, &slice, &id, kind, &payload)?
+                            .change
+                            .is_some()
+                        {
                             report.applied += 1;
                         } else {
                             report.skipped += 1;
@@ -1414,10 +1441,14 @@ fn read_stream(
         crate::tables::reconcile_all(&tx)?;
         tx.commit()?;
     }
-    let mut filling = crate::tables::owes(&*core.conn()?)?;
+    let mut pass = crate::tables::Pass::default();
+    let mut filling = pass.owes(&*core.conn()?)?;
     loop {
         if stop.load(Ordering::Relaxed) {
             return Ok(Ended::Stopped);
+        }
+        if core.tables_owed.swap(false, Ordering::SeqCst) {
+            filling = pass.owes(&*core.conn()?)?;
         }
         recovery.tell(&report.cursor, on_change);
         look.tell(report, on_change)?;
@@ -1438,8 +1469,13 @@ fn read_stream(
                 return Ok(Ended::Over);
             }
             Err(RecvTimeoutError::Timeout) if filling => {
-                match crate::tables::fill_step(core, context) {
-                    Ok(more) => filling = more,
+                match pass.step(core, context) {
+                    Ok(crate::tables::Step::Done) => filling = false,
+                    Ok(crate::tables::Step::Moved) => {}
+                    Ok(crate::tables::Step::Failed(failure)) => {
+                        report.tables_failed += 1;
+                        report.last_failure = Some(failure);
+                    }
                     Err(error) if error.is_environmental() => {
                         report.failed_opens += 1;
                         report.last_failure = Some(error.to_string());
@@ -1550,15 +1586,18 @@ fn read_stream(
                     }
                     other => other?,
                 };
-                match taken {
+                match &taken.change {
                     Some(change) => {
                         report.applied += 1;
-                        on_change(&change);
+                        on_change(change);
                     }
                     None => report.skipped += 1,
                 }
+                for change in &taken.rows {
+                    on_change(change);
+                }
                 report.cursor = id;
-                filling = crate::tables::owes(&*core.conn()?)?;
+                filling = pass.owes(&*core.conn()?)?;
                 unsettled += usize::from(may_owe(kind));
                 if unsettled >= SETTLE_EVERY {
                     unsettled = 0;

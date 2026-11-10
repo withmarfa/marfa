@@ -194,9 +194,9 @@ When two access tokens of one app that hold the same scopes open a copy stream, 
 
 ### `reach/moves-type-reach`
 
-When a key's read reach over item types narrows, the server MUST give the key a different reach.
+When a key's read reach over item types narrows or widens, the server MUST give the key a different reach.
 
-**Tests:** `compliance/reach.test.ts › refuses stale HTTP and resume proofs before resource lookup after retype or read narrowing`.
+**Tests:** `compliance/reach.test.ts › refuses stale HTTP and resume proofs before resource lookup after retype, read narrowing or read widening`.
 
 ### `reach/moves-edge-reach`
 
@@ -246,7 +246,7 @@ When `PATCH /items/{id}` or a `POST /items/bulk` entry moves an item to another 
 
 **Reason:** the item may leave or enter what a key reads, which no event the key reads announces.
 
-**Tests:** `compliance/reach.test.ts › refuses stale HTTP and resume proofs before resource lookup after retype or read narrowing`, `› ends an open copy stream with a no-id detail-free terminal after a structural change`, `› changes the reach when a bulk write retypes an item, and keeps it when the type is unchanged`, `compliance/reach-order.test.ts › changes the reach for a PATCH that moves the item to another type and writes properties, and keeps it for one that writes properties alone`.
+**Tests:** `compliance/reach.test.ts › refuses stale HTTP and resume proofs before resource lookup after retype, read narrowing or read widening`, `› ends an open copy stream with a no-id detail-free terminal after a structural change`, `› changes the reach when a bulk write retypes an item, and keeps it when the type is unchanged`, `compliance/reach-order.test.ts › changes the reach for a PATCH that moves the item to another type and writes properties, and keeps it for one that writes properties alone`.
 
 ### `reach/keeps-same-type`
 
@@ -300,7 +300,7 @@ When the server answers a write that changes the reach, the server MUST already 
 
 **Reason:** a working copy that read data after the write under the earlier reach would adopt data the reach no longer covers.
 
-**Tests:** `compliance/reach.test.ts › refuses stale HTTP and resume proofs before resource lookup after retype or read narrowing`.
+**Tests:** `compliance/reach.test.ts › refuses stale HTTP and resume proofs before resource lookup after retype, read narrowing or read widening`.
 
 ### `reach/keeps-on-rollback`
 
@@ -316,7 +316,7 @@ A conditional read is one of `GET /items`, `GET /items/{id}`, `GET /items/{id}/e
 
 When a credential sends a conditional read whose header equals its current reach and the read answers `2xx`, the server MUST carry `X-Marfa-Reach` on the answer with that value.
 
-**Tests:** `compliance/reach.test.ts › walks conditional metadata pages to explicit null and certifies every supported read door`, `› refuses stale HTTP and resume proofs before resource lookup after retype or read narrowing`, `› certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`, `› certifies the table doors a copy fills from, and an absent item or table, and refuses them under an earlier reach`.
+**Tests:** `compliance/reach.test.ts › walks conditional metadata pages to explicit null and certifies every supported read door`, `› refuses stale HTTP and resume proofs before resource lookup after retype, read narrowing or read widening`, `› certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`, `› certifies the table doors a copy fills from, and an absent item or table, and refuses them under an earlier reach`.
 
 ### `reach/conditional-no-store`
 
@@ -380,7 +380,7 @@ When a `GET` other than `GET /events`, or a `POST /items/bulk-get` whose body is
 
 **Reason:** a stale reach is refused before the query, the credential's reach or the resource is judged, so that the refusal says nothing about them.
 
-**Tests:** `compliance/reach.test.ts › answers 400 outside the supported doors before asking who is calling, and 401 first on an unsupported door inside them`, `› answers 409 before a validation 400 and before a resource 403 under a stale reach`, `› refuses stale HTTP and resume proofs before resource lookup after retype or read narrowing`, `compliance/reach-order.test.ts › answers 400 to a malformed copy of a stale reach, and 409 to the stale reach itself`, `› answers 400 to an item page that asks for no metadata, though its reach is stale`, `› answers 401, then 400 to a malformed reach, then 409 to a stale one before it checks the ids or asks whether the key reaches any type`.
+**Tests:** `compliance/reach.test.ts › answers 400 outside the supported doors before asking who is calling, and 401 first on an unsupported door inside them`, `› answers 409 before a validation 400 and before a resource 403 under a stale reach`, `› refuses stale HTTP and resume proofs before resource lookup after retype, read narrowing or read widening`, `compliance/reach-order.test.ts › answers 400 to a malformed copy of a stale reach, and 409 to the stale reach itself`, `› answers 400 to an item page that asks for no metadata, though its reach is stale`, `› answers 401, then 400 to a malformed reach, then 409 to a stale one before it checks the ids or asks whether the key reaches any type`.
 
 ### `reach/conditional-coherent`
 
@@ -502,13 +502,13 @@ When `POST /items`, `POST /edges`, `POST /folders` or `POST /views` creates an i
 
 If a conditional read names an `X-Marfa-Reach` of the right form that differs from the credential's current reach, then the server MUST answer `409 reach_changed`.
 
-**Tests:** `compliance/reach.test.ts › rejects every alternate copy grammar before starting a stream`, `› classifies source-excluded direct items and neighbors without admitting them to a listed page`, `› refuses stale HTTP and resume proofs before resource lookup after retype or read narrowing`, `› answers 409 to a reach minted for another credential, on every door and on resume`, `› certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`, `› certifies the table doors a copy fills from, and an absent item or table, and refuses them under an earlier reach`.
+**Tests:** `compliance/reach.test.ts › rejects every alternate copy grammar before starting a stream`, `› classifies source-excluded direct items and neighbors without admitting them to a listed page`, `› refuses stale HTTP and resume proofs before resource lookup after retype, read narrowing or read widening`, `› answers 409 to a reach minted for another credential, on every door and on resume`, `› certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`, `› certifies the table doors a copy fills from, and an absent item or table, and refuses them under an earlier reach`.
 
 ### `reach/changed-resume`
 
 If a copy-stream request resumes under an `X-Marfa-Reach` of the right form that differs from the credential's current reach, then the server MUST answer `409 reach_changed` as an HTTP answer and not as a stream.
 
-**Tests:** `compliance/reach.test.ts › rejects every alternate copy grammar before starting a stream`, `› refuses stale HTTP and resume proofs before resource lookup after retype or read narrowing`, `› answers 409 to a reach minted for another credential, on every door and on resume`.
+**Tests:** `compliance/reach.test.ts › rejects every alternate copy grammar before starting a stream`, `› refuses stale HTTP and resume proofs before resource lookup after retype, read narrowing or read widening`, `› answers 409 to a reach minted for another credential, on every door and on resume`.
 
 ### `reach/changed-body`
 
@@ -516,13 +516,13 @@ When the server answers `409 reach_changed`, the server MUST send exactly the bo
 
 **Reason:** the body names no policy and no resource, so a key learns nothing about what it may no longer read.
 
-**Tests:** `compliance/reach.test.ts › rejects every alternate copy grammar before starting a stream`, `› refuses stale HTTP and resume proofs before resource lookup after retype or read narrowing`, `› answers 409 to a reach minted for another credential, on every door and on resume`.
+**Tests:** `compliance/reach.test.ts › rejects every alternate copy grammar before starting a stream`, `› refuses stale HTTP and resume proofs before resource lookup after retype, read narrowing or read widening`, `› answers 409 to a reach minted for another credential, on every door and on resume`.
 
 ### `reach/changed-uncertified`
 
 When the server answers `409 reach_changed`, the server MUST NOT carry `X-Marfa-Reach` on the answer.
 
-**Tests:** `compliance/reach.test.ts › refuses stale HTTP and resume proofs before resource lookup after retype or read narrowing`, `› answers 409 to a reach minted for another credential, on every door and on resume`.
+**Tests:** `compliance/reach.test.ts › refuses stale HTTP and resume proofs before resource lookup after retype, read narrowing or read widening`, `› answers 409 to a reach minted for another credential, on every door and on resume`.
 
 ### `reach/terminal-frame`
 

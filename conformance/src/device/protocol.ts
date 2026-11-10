@@ -130,6 +130,9 @@ export interface TableFill {
   unfilled: number;
   pages: number;
   rows: number;
+  /** Tables whose read failed, each left to the next pass. */
+  failed: number;
+  failure: string | null;
 }
 
 /** `marfa device tables hold`: the choice, and the fill it ran, if any. */

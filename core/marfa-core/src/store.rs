@@ -4207,6 +4207,7 @@ pub fn clear_slice(conn: &Connection) -> Result<(), CoreError> {
          DELETE FROM beneath_reach;
          DELETE FROM table_rows;
          DELETE FROM item_tables;
+         DELETE FROM rows_reread;
          DELETE FROM meta WHERE key LIKE 'item_listed/%' OR key LIKE 'item_early/%' OR key LIKE 'edge_brought/%';",
     )?;
     Ok(())

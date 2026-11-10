@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
+import { BindingDevice } from "../../device/binding-adapter.js";
 import { CliDevice, newStore } from "../../device/cli-adapter.js";
 import type { HeldTables, Outcome } from "../../device/protocol.js";
 import {
@@ -15,7 +16,7 @@ import {
 } from "../../utils/moved-clock.js";
 import { clientsFor, everythingClient } from "../../utils/own-blob-server.js";
 import { tapStream } from "../../utils/stream-tap.js";
-import { requireBinary } from "./harness.js";
+import { requireBinary, requireModule } from "./harness.js";
 
 /**
  * The tables a working copy holds (`tables.md`, "Tables a device holds" and
@@ -31,6 +32,7 @@ let working: MarfaClient;
 let operator: MarfaClient;
 let minter: MarfaClient;
 let counter = 0;
+const bindings: BindingDevice[] = [];
 
 beforeAll(async () => {
   server = await bootFreshServer("device-tables", QUIET_SCHEDULE);
@@ -40,6 +42,7 @@ beforeAll(async () => {
 }, FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
+  for (const binding of bindings) await binding.close();
   await server.stop();
 }, FRESH_SERVER_TIMEOUT_MS);
 
@@ -195,11 +198,44 @@ async function hydrated(
   return device;
 }
 
+/** A device driven through the binding, which can hold a table while it follows. */
+async function hydratedBinding(
+  types: string[],
+  label: string,
+  key = server.workingKey,
+): Promise<BindingDevice> {
+  counter += 1;
+  const device = await BindingDevice.start({
+    module: requireModule(),
+    store: newStore(`tables-${label}-${String(counter)}`),
+    url: server.apiUrl,
+    key,
+  });
+  bindings.push(device);
+  value(await device.hydrate(types, "library"));
+  return device;
+}
+
+async function until(
+  check: () => Promise<boolean> | boolean,
+  what: string,
+): Promise<void> {
+  const started = Date.now();
+  while (!(await check())) {
+    if (Date.now() - started > 20_000) throw new Error(`never: ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
 function stateOf(
   held: HeldTables,
   item: string,
+  name?: string,
 ): HeldTables["tables"][number] | undefined {
-  return held.tables.find((table) => table.item === item);
+  return held.tables.find(
+    (table) =>
+      table.item === item && (name === undefined || table.table === name),
+  );
 }
 
 async function keyFor(
@@ -310,6 +346,8 @@ describe("how a device fills a table", () => {
       unfilled: 0,
       pages: 3,
       rows: 2500,
+      failed: 0,
+      failure: null,
     });
     const expected = await serverRows(item);
 
@@ -347,10 +385,11 @@ describe("how a device fills a table", () => {
     const device = await hydrated([type], "resume");
     await server.setFault("fail:table-rows-page=2");
     try {
-      const cut = await device.holdTable(type, "steps");
-      expect(cut.ok, "the second page failed, so the fill did not finish").toBe(
-        false,
-      );
+      const cut = value(await device.holdTable(type, "steps"));
+      expect(
+        cut.fill,
+        "the second page failed, so the fill did not finish",
+      ).toMatchObject({ whole: 0, unfilled: 1, pages: 1, failed: 1 });
     } finally {
       await server.clearFault();
     }
@@ -373,6 +412,8 @@ describe("how a device fills a table", () => {
       unfilled: 0,
       pages: 3,
       rows: 2500,
+      failed: 0,
+      failure: null,
     });
     expect(stateOf(value(await device.heldTables()), item)?.rows).toBe(3500);
     expect((await deviceRows(device, item)).rows).toEqual(
@@ -398,7 +439,10 @@ describe("how a device fills a table", () => {
     const device = await hydrated([type], "narrowed", own.key);
     await server.setFault("fail:table-rows-page=2");
     try {
-      expect((await device.holdTable(type, "steps")).ok).toBe(false);
+      expect(value(await device.holdTable(type, "steps")).fill).toMatchObject({
+        unfilled: 1,
+        failed: 1,
+      });
     } finally {
       await server.clearFault();
     }
@@ -488,6 +532,91 @@ describe("how a device fills a table", () => {
       await follow.stop();
     }
   }, 300_000);
+
+  it("fills a table held while a follow holds the stream, with no event to wake the follow", async () => {
+    const type = await tableType();
+    const item = await itemOf(type);
+    await filled(item, 1500);
+    const device = await hydratedBinding([type], "held-following");
+    const follow = await device.follow();
+    try {
+      const seen = await itemOf(type);
+      await until(
+        () =>
+          follow.changes.some(
+            (change) => change.kind === "applied" && change.itemId === seen,
+          ),
+        "the follow applying an event",
+      );
+      const held = value(
+        await device.call<{ fill: unknown }>("holdTable", type, "steps"),
+      );
+      expect(held.fill, "the follow holds the stream").toBeNull();
+      await until(async () => {
+        const tables = value(await device.call<HeldTables>("heldTables"));
+        const state = stateOf(tables, item);
+        return state?.state === "whole" && state.rows === 1500;
+      }, "the follow filling the table");
+    } finally {
+      expect(await follow.stop()).toBeNull();
+    }
+  });
+
+  it("fills every other table, and ends no catch-up or follow, while one table's page read keeps failing", async () => {
+    const type = await tableType({ broken: STEPS, steps: STEPS });
+    const item = await itemOf(type);
+    await write(item, [{ op: "put", values: { count: 1 } }], "broken");
+    await filled(item, 2);
+    const device = await hydrated([type], "one-failing");
+    await server.setFault("fail:table-rows-page=broken@always");
+    try {
+      const broken = value(await device.holdTable(type, "broken"));
+      expect(broken.fill).toMatchObject({ whole: 0, unfilled: 1, failed: 1 });
+      expect(broken.fill?.failure).toContain("broken");
+      const steps = value(await device.holdTable(type, "steps"));
+      expect(steps.fill).toMatchObject({
+        whole: 1,
+        unfilled: 1,
+        rows: 2,
+        failed: 1,
+      });
+      expect(value(await device.catchUp()).tables).toMatchObject({
+        unfilled: 1,
+        failed: 1,
+      });
+
+      const follow = device.holdFollow(60);
+      const reader = device.reopen({ reader: true });
+      try {
+        const later = await itemOf(type);
+        await write(later, [{ op: "put", values: { count: 1 } }], "broken");
+        await filled(later, 3);
+        await until(async () => {
+          const state = stateOf(
+            value(await reader.heldTables()),
+            later,
+            "steps",
+          );
+          return state?.state === "whole" && state.rows === 3;
+        }, "the follow filling the later item's steps past its broken table");
+      } finally {
+        await follow.stop();
+      }
+      expect(
+        stateOf(value(await device.heldTables()), item, "broken"),
+      ).toMatchObject({
+        state: "filling",
+        rows: 0,
+      });
+    } finally {
+      await server.clearFault();
+    }
+    expect(value(await device.fillTables())).toMatchObject({
+      whole: 2,
+      unfilled: 0,
+      failed: 0,
+    });
+  });
 });
 
 describe("applying rows.changed", () => {
@@ -679,6 +808,44 @@ describe("applying rows.changed", () => {
     const every = await serverRows(item);
     expect(every.find((row) => row.values.count === 1)?.values.ref).toBe(named);
     expect((await deviceRows(everyDevice, item)).rows).toEqual(every);
+  });
+
+  it("tells a follow rows.changed for each table that reading rows again after a purge changes", async () => {
+    const type = await tableType({ steps: NAMED });
+    const item = await itemOf(type);
+    const unchanged = await itemOf(type);
+    const named = await note("purged while followed");
+    await write(item, [{ op: "put", values: { count: 1, ref: named } }]);
+    await write(unchanged, [{ op: "put", values: { count: 2 } }]);
+    const narrow = await keyFor({ [type]: "read", "core.note": "read" });
+    const device = await hydratedBinding([type], "purge-told", narrow.key);
+    value(await device.call("holdTable", type, "steps"));
+    const follow = await device.follow();
+    try {
+      await purge(named);
+      await until(
+        () =>
+          follow.changes.some(
+            (change) =>
+              change.kind === "applied" &&
+              change.event === "rows.changed" &&
+              change.itemId === item,
+          ),
+        "rows.changed told for the item whose row names the purged note",
+      );
+      const page = value(
+        await device.call<Page & { held: boolean }>("tableRows", item, "steps"),
+      );
+      expect(page.held).toBe(true);
+      expect(page.data[0]?.withheld).toEqual(["ref"]);
+      expect(
+        follow.changes.filter(
+          (change) => change.kind === "applied" && change.itemId === unchanged,
+        ),
+      ).toEqual([]);
+    } finally {
+      expect(await follow.stop()).toBeNull();
+    }
   });
 
   it("carries on past a rows.changed without values whose item is purged before it reads the rows", async () => {

@@ -1259,9 +1259,10 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             }
             output::line_of(&report, json, || {
                 let failed = match (&report.last_failure, report.failed_opens) {
-                    (Some(reason), count) => {
-                        format!("; {count} stream(s) could not be opened, last: {reason}")
-                    }
+                    (Some(reason), count) => format!(
+                        "; {count} stream(s) could not be opened and {} table read(s) failed, last: {reason}",
+                        report.tables_failed
+                    ),
                     (None, _) => String::new(),
                 };
                 let cursor = if report.cursor.is_empty() {
@@ -2574,8 +2575,12 @@ impl Store {
 }
 
 fn fill_line(fill: &marfa_core::FillReport) -> String {
+    let failed = match &fill.failure {
+        Some(reason) => format!("; {} table read(s) failed, last: {reason}", fill.failed),
+        None => String::new(),
+    };
     format!(
-        "{} table(s) whole, {} read from the server, {} still to fill; {} page(s), {} row(s)",
+        "{} table(s) whole, {} read from the server, {} still to fill; {} page(s), {} row(s){failed}",
         fill.whole, fill.online, fill.unfilled, fill.pages, fill.rows
     )
 }

@@ -309,6 +309,9 @@ pub struct Core {
     renewals: Arc<Mutex<Vec<(String, String)>>>,
     /// Before when a `VACUUM` that was refused or failed is not tried again.
     reclaim_held_until: Mutex<Option<std::time::Instant>>,
+    /// Raised by a table held while another call held the stream; a follow
+    /// looks at it each time it waits for a frame.
+    tables_owed: AtomicBool,
 }
 
 const DEFAULT_CATCH_UP_IDLE: Duration = Duration::from_secs(3);
@@ -618,6 +621,7 @@ impl Core {
             watch: watch::Watch::new(),
             renewals: Arc::default(),
             reclaim_held_until: Mutex::default(),
+            tables_owed: AtomicBool::new(false),
         })
     }
 
@@ -725,6 +729,7 @@ impl Core {
             watch: watch::Watch::new(),
             renewals,
             reclaim_held_until: Mutex::default(),
+            tables_owed: AtomicBool::new(false),
         })
     }
 
@@ -1096,7 +1101,8 @@ impl Core {
         Ok(pinned)
     }
 
-    /// Holds matching tables and fills them when no stream operation is active.
+    /// Holds matching tables and fills them, or leaves them to the follow or
+    /// catch-up that holds the stream.
     pub fn hold_table(&self, type_id: &str, table: &str) -> Result<TableHold> {
         self.hold_table_until(type_id, table, &NEVER_STOPPED)
     }
@@ -1114,7 +1120,10 @@ impl Core {
                 let context = reach::Context::capture(&*self.conn()?)?;
                 Some(tables::fill(self, &context, stop)?)
             }
-            _ => None,
+            _ => {
+                self.tables_owed.store(true, Ordering::SeqCst);
+                None
+            }
         };
         Ok(TableHold {
             type_id: type_id.into(),

@@ -904,7 +904,7 @@ describe("conditional working-copy reaches", () => {
     }
   });
 
-  it("refuses stale HTTP and resume proofs before resource lookup after retype or read narrowing", async () => {
+  it("refuses stale HTTP and resume proofs before resource lookup after retype, read narrowing or read widening", async () => {
     const row = await seed("retype witness");
     const target = await seed("retype edge target");
     const edge = await client.createEdge({
@@ -994,6 +994,21 @@ describe("conditional working-copy reaches", () => {
     expect(
       (await request(`/items/${note.id}`, undefined, key.key)).status,
     ).toBe(403);
+    const narrowed = await bootstrap(key.key);
+    expect(narrowed.reach).not.toBe(before.reach);
+    expect(
+      (
+        await owner.updateKey(key.id, {
+          type_permissions: { "core.note": "read", "core.task": "read" },
+        })
+      ).ok,
+    ).toBe(true);
+    const widened = await moves(narrowed, key.key);
+    expect(widened.reach).not.toBe(before.reach);
+    certified(
+      await request(`/items/${note.id}`, widened.reach, key.key),
+      widened.reach,
+    );
   });
 
   it("certifies matching resource absence without certifying generic validation or authentication failures", async () => {

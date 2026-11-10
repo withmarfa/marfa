@@ -24,6 +24,11 @@ pub const BYTE_CAP: i64 = 67_108_864;
 const FILL_PAGE: &str = "1000";
 const FIRST_PAGE: i64 = 100;
 const MAX_PAGE: i64 = 1000;
+/// The server's most conditions in one filter.
+const OR_TERMS: usize = 10;
+/// Held rows a read by id range may pass over: far cheaper than another request.
+const SPAN_GAP: i64 = 100;
+const REREAD_PAGE: i64 = 1000;
 
 const OWED: &str = "owed";
 const FILLING: &str = "filling";
@@ -37,10 +42,14 @@ pub struct FillReport {
     pub whole: u64,
     /// Tables the pass found past the cap, which are read from the server.
     pub online: u64,
-    /// Tables the pass left still to fill.
+    /// Tables the pass left still to fill, the failed among them.
     pub unfilled: u64,
     pub pages: u64,
     pub rows: u64,
+    /// Tables whose read failed, each left to the next pass.
+    pub failed: u64,
+    /// The last of them, and why.
+    pub failure: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -156,7 +165,7 @@ fn empty_rows(conn: &Connection, item: &str, table: &str) -> Result<()> {
     Ok(())
 }
 
-fn delete_row(conn: &Connection, item: &str, table: &str, id: &str) -> Result<()> {
+fn delete_row(conn: &Connection, item: &str, table: &str, id: &str) -> Result<bool> {
     let held: Option<i64> = conn
         .query_row(
             "DELETE FROM table_rows WHERE item_id = ?1 AND name = ?2 AND id = ?3
@@ -171,7 +180,7 @@ fn delete_row(conn: &Connection, item: &str, table: &str, id: &str) -> Result<()
             params![item, table, bytes],
         )?;
     }
-    Ok(())
+    Ok(held.is_some())
 }
 
 fn set_state(
@@ -351,18 +360,6 @@ pub(crate) fn held(conn: &Connection) -> Result<HeldTables> {
     Ok(HeldTables { choices, tables })
 }
 
-pub(crate) fn owes(conn: &Connection) -> Result<bool> {
-    Ok(conn
-        .query_row(
-            "SELECT 1 FROM item_tables t JOIN items i ON i.id = t.item_id
-              WHERE t.state IN ('owed', 'filling') AND i.state <> 'trashed' LIMIT 1",
-            [],
-            |_| Ok(()),
-        )
-        .optional()?
-        .is_some())
-}
-
 fn state_of(
     conn: &Connection,
     item: &str,
@@ -396,7 +393,7 @@ fn hold_row(
     values: &Map<String, Value>,
     withheld: &[String],
     updated_at: &str,
-) -> Result<()> {
+) -> Result<bool> {
     let mut values = values.clone();
     for column in withheld {
         values.remove(column);
@@ -411,13 +408,21 @@ fn hold_row(
         .map(str::to_string)
         .collect();
     let body = printed(&Value::Object(values))?;
-    let before: Option<i64> = conn
+    let held: Option<(String, Option<String>, String)> = conn
         .prepare_cached(
-            "SELECT length(CAST(body AS BLOB)) FROM table_rows
+            "SELECT body, withheld, updated_at FROM table_rows
               WHERE item_id = ?1 AND name = ?2 AND id = ?3",
         )?
-        .query_row(params![item, table, id], |row| row.get(0))
+        .query_row(params![item, table, id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
         .optional()?;
+    if held.as_ref().is_some_and(|(was, was_withheld, was_at)| {
+        *was == body && *was_withheld == withheld && was_at == updated_at
+    }) {
+        return Ok(false);
+    }
+    let before = held.map(|(was, _, _)| was.len() as i64);
     conn.prepare_cached(
         "INSERT INTO table_rows (item_id, name, id, body, withheld, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)
@@ -446,10 +451,10 @@ fn hold_row(
     for target in &targets {
         named.execute(params![item, table, id, target])?;
     }
-    Ok(())
+    Ok(true)
 }
 
-fn hold_answered(conn: &Connection, item: &str, table: &str, row: &Value) -> Result<String> {
+fn hold_answered(conn: &Connection, item: &str, table: &str, row: &Value) -> Result<bool> {
     let id = row.get("id").and_then(Value::as_str).ok_or_else(invalid)?;
     let values = row
         .get("values")
@@ -460,8 +465,7 @@ fn hold_answered(conn: &Connection, item: &str, table: &str, row: &Value) -> Res
         .and_then(Value::as_str)
         .ok_or_else(invalid)?;
     let withheld = withheld_of(row)?;
-    hold_row(conn, item, table, id, values, &withheld, updated_at)?;
-    Ok(id.to_string())
+    hold_row(conn, item, table, id, values, &withheld, updated_at)
 }
 
 fn withheld_of(row: &Value) -> Result<Vec<String>> {
@@ -506,52 +510,103 @@ struct Owed {
     cursor: Option<String>,
 }
 
-fn next_owed(conn: &Connection) -> Result<Option<Owed>> {
-    Ok(conn
-        .query_row(
-            "SELECT t.item_id, t.name, t.state, t.cursor FROM item_tables t JOIN items i ON i.id = t.item_id
-              WHERE t.state IN ('owed', 'filling') AND i.state <> 'trashed'
-              ORDER BY t.item_id, t.name LIMIT 1",
-            [],
-            |row| {
-                Ok(Owed {
-                    item: row.get(0)?,
-                    table: row.get(1)?,
-                    state: row.get(2)?,
-                    cursor: row.get(3)?,
-                })
-            },
-        )
-        .optional()?)
+fn next_owed(conn: &Connection, failed: &HashSet<(String, String)>) -> Result<Option<Owed>> {
+    let mut query = conn.prepare_cached(
+        "SELECT t.item_id, t.name, t.state, t.cursor FROM item_tables t JOIN items i ON i.id = t.item_id
+          WHERE t.state IN ('owed', 'filling') AND i.state <> 'trashed'
+          ORDER BY t.item_id, t.name",
+    )?;
+    let mut rows = query.query([])?;
+    while let Some(row) = rows.next()? {
+        let key: (String, String) = (row.get(0)?, row.get(1)?);
+        if failed.contains(&key) {
+            continue;
+        }
+        return Ok(Some(Owed {
+            item: key.0,
+            table: key.1,
+            state: row.get(2)?,
+            cursor: row.get(3)?,
+        }));
+    }
+    Ok(None)
 }
 
-/// Each step moves one table on, or drops it, so a pass ends once no table is owed.
-fn step(core: &Core, context: &Context, report: &mut FillReport) -> Result<bool> {
-    let Some(Owed {
+/// An answer about the one table, which leaves the others to fill.
+fn fails_one_table(error: &CoreError) -> bool {
+    matches!(
+        error,
+        CoreError::Server { .. }
+            | CoreError::NotFound { .. }
+            | CoreError::Forbidden { .. }
+            | CoreError::Validation { .. }
+            | CoreError::UnknownType { .. }
+            | CoreError::Decoding(_)
+    )
+}
+
+pub(crate) enum Step {
+    Done,
+    Moved,
+    Failed(String),
+}
+
+/// One pass over the tables not yet whole, in which a table whose read fails
+/// is not asked for again.
+#[derive(Default)]
+pub(crate) struct Pass {
+    failed: HashSet<(String, String)>,
+    report: FillReport,
+}
+
+impl Pass {
+    pub(crate) fn owes(&self, conn: &Connection) -> Result<bool> {
+        Ok(next_owed(conn, &self.failed)?.is_some())
+    }
+
+    pub(crate) fn step(&mut self, core: &Core, context: &Context) -> Result<Step> {
+        let Some(owed) = next_owed(&*core.conn()?, &self.failed)? else {
+            return Ok(Step::Done);
+        };
+        match advance(core, context, &owed, &mut self.report) {
+            Ok(()) => Ok(Step::Moved),
+            Err(error) if fails_one_table(&error) => {
+                let failure = format!("the table {} of {}: {error}", owed.table, owed.item);
+                self.report.failed += 1;
+                self.report.failure = Some(failure.clone());
+                self.failed.insert((owed.item, owed.table));
+                Ok(Step::Failed(failure))
+            }
+            Err(error) => Err(error),
+        }
+    }
+}
+
+/// Moves one table on, or drops it.
+fn advance(core: &Core, context: &Context, owed: &Owed, report: &mut FillReport) -> Result<()> {
+    let Owed {
         item,
         table,
         state,
         cursor,
-    }) = next_owed(&*core.conn()?)?
-    else {
-        return Ok(false);
-    };
+    } = owed;
+    let (item, table) = (item.as_str(), table.as_str());
     let http = context.http(core.http()?);
     let still = |conn: &Connection| -> Result<bool> {
         context.same_copy(conn)?;
-        Ok(state_of(conn, &item, &table)? == Some((state.clone(), cursor.clone())))
+        Ok(state_of(conn, item, table)? == Some((state.clone(), cursor.clone())))
     };
-    let gone = || -> Result<bool> {
+    let gone = || -> Result<()> {
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;
         if still(&tx)? {
-            drop_table(&tx, &item, &table)?;
+            drop_table(&tx, item, table)?;
         }
         tx.commit()?;
-        Ok(true)
+        Ok(())
     };
     if state == OWED {
-        let listed = match http.item_tables(&item) {
+        let listed = match http.item_tables(item) {
             Err(error) if is_gone(&error) => return gone(),
             other => other?,
         };
@@ -560,7 +615,7 @@ fn step(core: &Core, context: &Context, report: &mut FillReport) -> Result<bool>
             .and_then(Value::as_array)
             .ok_or_else(invalid)?
             .iter()
-            .find(|summary| summary.get("name").and_then(Value::as_str) == Some(table.as_str()));
+            .find(|summary| summary.get("name").and_then(Value::as_str) == Some(table));
         let Some(summary) = summary else {
             return gone();
         };
@@ -584,26 +639,26 @@ fn step(core: &Core, context: &Context, report: &mut FillReport) -> Result<bool>
             } else {
                 FILLING
             };
-            empty_rows(&tx, &item, &table)?;
-            set_state(&tx, &item, &table, next, None)?;
+            empty_rows(&tx, item, table)?;
+            set_state(&tx, item, table, next, None)?;
         }
         tx.commit()?;
-        return Ok(true);
+        return Ok(());
     }
     let mut params = vec![("limit", FILL_PAGE)];
-    if let Some(cursor) = &cursor {
+    if let Some(cursor) = cursor {
         params.push(("cursor", cursor.as_str()));
     }
-    let page = match http.table_rows(&item, &table, &params) {
+    let page = match http.table_rows(item, table, &params) {
         Err(error) if cursor.is_some() && is_refused_cursor(&error) => {
             let mut conn = core.conn()?;
             let tx = conn.transaction()?;
             if still(&tx)? {
-                empty_rows(&tx, &item, &table)?;
-                set_state(&tx, &item, &table, OWED, None)?;
+                empty_rows(&tx, item, table)?;
+                set_state(&tx, item, table, OWED, None)?;
             }
             tx.commit()?;
-            return Ok(true);
+            return Ok(());
         }
         Err(error) if is_gone(&error) => return gone(),
         other => other?,
@@ -621,21 +676,21 @@ fn step(core: &Core, context: &Context, report: &mut FillReport) -> Result<bool>
     let tx = conn.transaction()?;
     if still(&tx)? {
         for row in rows {
-            hold_answered(&tx, &item, &table, row)?;
+            hold_answered(&tx, item, table, row)?;
         }
         report.pages += 1;
         report.rows += rows.len() as u64;
-        if past_cap(&tx, &item, &table)? {
+        if past_cap(&tx, item, table)? {
             report.online += 1;
         } else if let Some(next) = &next {
-            set_state(&tx, &item, &table, FILLING, Some(next))?;
+            set_state(&tx, item, table, FILLING, Some(next))?;
         } else {
-            set_state(&tx, &item, &table, WHOLE, None)?;
+            set_state(&tx, item, table, WHOLE, None)?;
             report.whole += 1;
         }
     }
     tx.commit()?;
-    Ok(true)
+    Ok(())
 }
 
 // The caller holds the stream, excluding events between a page's read and write.
@@ -647,14 +702,14 @@ pub(crate) fn fill(core: &Core, context: &Context, stop: &AtomicBool) -> Result<
             reconcile_all(&tx)?;
             tx.commit()?;
         }
-        let mut report = FillReport::default();
+        let mut pass = Pass::default();
         loop {
             crate::catch_up::refuse_if_stopped(stop)?;
-            if !step(core, context, &mut report)? {
+            if matches!(pass.step(core, context)?, Step::Done) {
                 break;
             }
         }
-        report.unfilled = core
+        pass.report.unfilled = core
             .conn()?
             .query_row(
                 "SELECT COUNT(*) FROM item_tables WHERE state IN ('owed', 'filling')",
@@ -662,13 +717,9 @@ pub(crate) fn fill(core: &Core, context: &Context, stop: &AtomicBool) -> Result<
                 |row| row.get::<_, i64>(0),
             )?
             .max(0) as u64;
-        Ok(report)
+        Ok(pass.report)
     };
     filled().map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))
-}
-
-pub(crate) fn fill_step(core: &Core, context: &Context) -> Result<bool> {
-    step(core, context, &mut FillReport::default())
 }
 
 /// What the server holds of rows the device asked for by id.
@@ -677,42 +728,103 @@ pub(crate) enum Named {
     Gone,
 }
 
-fn read_named(http: &Http, item: &str, table: &str, ids: &[&str]) -> Result<Named> {
+#[derive(Debug, PartialEq, Eq)]
+enum Read {
+    Span(String, String),
+    Ids(Vec<String>),
+}
+
+/// Reads ids close together in the copy as one id range, and the rest by id,
+/// so the cost follows the ids asked, not the rows between them.
+fn plan(ids: &[String], gap: &mut dyn FnMut(&str, &str) -> Result<i64>) -> Result<Vec<Read>> {
+    let mut reads = Vec::new();
+    let mut singles = Vec::new();
+    let mut start = 0;
+    for end in 1..=ids.len() {
+        if end < ids.len() && gap(&ids[end - 1], &ids[end])? <= SPAN_GAP {
+            continue;
+        }
+        if end - start > 1 {
+            reads.push(Read::Span(ids[start].clone(), ids[end - 1].clone()));
+        } else {
+            singles.push(ids[start].clone());
+        }
+        start = end;
+    }
+    reads.extend(singles.chunks(OR_TERMS).map(|ids| Read::Ids(ids.to_vec())));
+    Ok(reads)
+}
+
+fn filter_of(read: &Read) -> Result<String> {
+    let quoted = |id: &str| serde_json::to_string(id).map_err(CoreError::from);
+    Ok(match read {
+        Read::Span(first, last) => {
+            format!("id gte {} AND id lte {}", quoted(first)?, quoted(last)?)
+        }
+        Read::Ids(ids) => ids
+            .iter()
+            .map(|id| Ok(format!("id eq {}", quoted(id)?)))
+            .collect::<Result<Vec<_>>>()?
+            .join(" OR "),
+    })
+}
+
+/// Hands `found` each asked row the server holds; false where the server
+/// certifies the item or the table gone.
+fn read_named(
+    core: &Core,
+    http: &Http,
+    item: &str,
+    table: &str,
+    ids: &[String],
+    found: &mut dyn FnMut(String, Value),
+) -> Result<bool> {
     let mut ids = ids.to_vec();
     ids.sort_unstable();
-    let mut found = HashMap::new();
-    let (Some(first), Some(last)) = (ids.first(), ids.last()) else {
-        return Ok(Named::Rows(found));
+    ids.dedup();
+    let reads = {
+        let conn = core.conn()?;
+        let mut between = conn.prepare_cached(
+            "SELECT COUNT(*) FROM (SELECT 1 FROM table_rows
+              WHERE item_id = ?1 AND name = ?2 AND id > ?3 AND id < ?4 LIMIT ?5)",
+        )?;
+        plan(&ids, &mut |after, before| {
+            Ok(
+                between.query_row(params![item, table, after, before, SPAN_GAP + 1], |row| {
+                    row.get(0)
+                })?,
+            )
+        })?
     };
-    let quoted = |id: &str| serde_json::to_string(id).map_err(CoreError::from);
-    let filter = format!("id gte {} AND id lte {}", quoted(first)?, quoted(last)?);
-    let wanted: HashSet<&str> = ids.iter().copied().collect();
-    let mut cursor: Option<String> = None;
-    loop {
-        let mut params = vec![("limit", FILL_PAGE), ("filter", filter.as_str())];
-        if let Some(cursor) = &cursor {
-            params.push(("cursor", cursor.as_str()));
-        }
-        let page = match http.table_rows(item, table, &params) {
-            Err(error) if is_gone(&error) => return Ok(Named::Gone),
-            other => other?,
-        };
-        for row in page
-            .get("data")
-            .and_then(Value::as_array)
-            .ok_or_else(invalid)?
-        {
-            let id = row.get("id").and_then(Value::as_str).ok_or_else(invalid)?;
-            if wanted.contains(id) {
-                found.insert(id.to_string(), row.clone());
+    let wanted: HashSet<&str> = ids.iter().map(String::as_str).collect();
+    for read in &reads {
+        let filter = filter_of(read)?;
+        let mut cursor: Option<String> = None;
+        loop {
+            let mut params = vec![("limit", FILL_PAGE), ("filter", filter.as_str())];
+            if let Some(cursor) = &cursor {
+                params.push(("cursor", cursor.as_str()));
+            }
+            let page = match http.table_rows(item, table, &params) {
+                Err(error) if is_gone(&error) => return Ok(false),
+                other => other?,
+            };
+            let Some(Value::Array(rows)) = page.get("data") else {
+                return Err(invalid());
+            };
+            for row in rows {
+                let id = row.get("id").and_then(Value::as_str).ok_or_else(invalid)?;
+                if wanted.contains(id) {
+                    found(id.to_string(), row.clone());
+                }
+            }
+            match page.get("next_cursor") {
+                Some(Value::String(next)) => cursor = Some(next.clone()),
+                _ => break,
             }
         }
-        match page.get("next_cursor") {
-            Some(Value::String(next)) => cursor = Some(next.clone()),
-            _ => break,
-        }
     }
-    Ok(Named::Rows(found))
+    Ok(true)
 }
 
 fn holds_rows(conn: &Connection, item: &str, table: &str) -> Result<bool> {
@@ -729,90 +841,166 @@ pub(crate) fn rows_to_read(
     if event.values_included || !holds_rows(&*core.conn()?, &event.item.id, &event.table)? {
         return Ok(None);
     }
-    let ids: Vec<&str> = event
+    let ids: Vec<String> = event
         .rows
         .iter()
         .filter(|row| !row.deleted)
-        .map(|row| row.id.as_str())
+        .map(|row| row.id.clone())
         .collect();
-    read_named(
+    let mut rows = HashMap::new();
+    let held = read_named(
+        core,
         &context.http(core.http()?),
         &event.item.id,
         &event.table,
         &ids,
-    )
-    .map(Some)
+        &mut |id, row| {
+            rows.insert(id, row);
+        },
+    )?;
+    Ok(Some(if held { Named::Rows(rows) } else { Named::Gone }))
 }
 
-pub(crate) struct Refresh {
-    item: String,
-    table: String,
-    ids: Vec<String>,
-    read: Named,
+/// The tables a purge's re-read found gone; the rows it read wait in `rows_reread`.
+pub(crate) struct Reread {
+    gone: Vec<(String, String)>,
 }
 
-/// The server withholds a purged item's id from a key that may not read every type, so
-/// the held rows naming `target` are read again.
-pub(crate) fn naming(core: &Core, context: &Context, target: &str) -> Result<Vec<Refresh>> {
-    let named: Vec<(String, String, String)> = {
-        let conn = core.conn()?;
-        let mut query = conn.prepare(
-            "SELECT r.item_id, r.name, r.row_id FROM row_refs r
-               JOIN item_tables t ON t.item_id = r.item_id AND t.name = r.name
-              WHERE r.target = ?1 AND r.item_id <> ?1 AND t.state IN ('filling', 'whole')
-              ORDER BY r.item_id, r.name, r.row_id",
-        )?;
-        query
-            .query_map([target], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
-            .collect::<rusqlite::Result<_>>()?
-    };
-    let mut tables: Vec<(String, String, Vec<String>)> = Vec::new();
-    for (item, table, id) in named {
-        match tables.last_mut() {
-            Some((at, name, ids)) if *at == item && *name == table => ids.push(id),
-            _ => tables.push((item, table, vec![id])),
-        }
-    }
-    if tables.is_empty() {
-        return Ok(Vec::new());
-    }
-    let http = context.http(core.http()?);
-    tables
-        .into_iter()
-        .map(|(item, table, ids)| {
-            let asked: Vec<&str> = ids.iter().map(String::as_str).collect();
-            let read = read_named(&http, &item, &table, &asked)?;
-            Ok(Refresh {
-                item,
-                table,
-                ids,
-                read,
-            })
-        })
-        .collect()
-}
-
-pub(crate) fn take_refreshed(conn: &Connection, refreshed: &[Refresh]) -> Result<()> {
-    for refresh in refreshed {
-        let (item, table) = (refresh.item.as_str(), refresh.table.as_str());
-        if !holds_rows(conn, item, table)? {
-            continue;
-        }
-        let Named::Rows(read) = &refresh.read else {
-            drop_table(conn, item, table)?;
-            continue;
+/// The server withholds a purged item's id from a key that may not read every
+/// type, so the held rows naming `target` are read again, a page at a time,
+/// into `rows_reread`.
+pub(crate) fn reread_naming(core: &Core, context: &Context, target: &str) -> Result<Reread> {
+    core.conn()?.execute("DELETE FROM rows_reread", [])?;
+    let mut gone: Vec<(String, String)> = Vec::new();
+    let mut after = (String::new(), String::new(), String::new());
+    let mut http = None;
+    loop {
+        let named: Vec<(String, String, String)> = {
+            let conn = core.conn()?;
+            let mut query = conn.prepare_cached(
+                "SELECT r.item_id, r.name, r.row_id FROM row_refs r
+                   JOIN item_tables t ON t.item_id = r.item_id AND t.name = r.name
+                  WHERE r.target = ?1 AND r.item_id <> ?1 AND t.state IN ('filling', 'whole')
+                    AND (r.item_id, r.name, r.row_id) > (?2, ?3, ?4)
+                  ORDER BY r.item_id, r.name, r.row_id LIMIT ?5",
+            )?;
+            query
+                .query_map(
+                    params![target, after.0, after.1, after.2, REREAD_PAGE],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )?
+                .collect::<rusqlite::Result<_>>()?
         };
-        for id in &refresh.ids {
-            match read.get(id) {
-                Some(answered) => {
-                    hold_answered(conn, item, table, answered)?;
-                }
-                None => delete_row(conn, item, table, id)?,
+        let Some(last) = named.last().cloned() else {
+            break;
+        };
+        let http = match &http {
+            Some(http) => http,
+            None => http.insert(context.http(core.http()?)),
+        };
+        let mut tables: Vec<(String, String, Vec<String>)> = Vec::new();
+        for (item, table, id) in named {
+            match tables.last_mut() {
+                Some((at, name, ids)) if *at == item && *name == table => ids.push(id),
+                _ => tables.push((item, table, vec![id])),
             }
         }
-        past_cap(conn, item, table)?;
+        for (item, table, ids) in tables {
+            if gone
+                .last()
+                .is_some_and(|(at, name)| *at == item && *name == table)
+            {
+                continue;
+            }
+            let mut rows = HashMap::new();
+            let held = read_named(core, http, &item, &table, &ids, &mut |id, row| {
+                rows.insert(id, row);
+            })?;
+            if !held {
+                gone.push((item, table));
+                continue;
+            }
+            let mut conn = core.conn()?;
+            let tx = conn.transaction()?;
+            {
+                let mut staged = tx.prepare_cached(
+                    "INSERT OR REPLACE INTO rows_reread (item_id, name, id, answer) VALUES (?1, ?2, ?3, ?4)",
+                )?;
+                for id in &ids {
+                    let answer = rows.get(id).map(Value::to_string);
+                    staged.execute(params![item, table, id, answer])?;
+                }
+            }
+            tx.commit()?;
+        }
+        after = last;
     }
-    Ok(())
+    Ok(Reread { gone })
+}
+
+/// Applies a purge's re-read in the purge event's transaction, answering the
+/// tables it changed.
+pub(crate) fn take_reread(conn: &Connection, reread: &Reread) -> Result<Vec<(String, String)>> {
+    let mut changed: Vec<(String, String)> = Vec::new();
+    for (item, table) in &reread.gone {
+        if holds_rows(conn, item, table)? {
+            drop_table(conn, item, table)?;
+            changed.push((item.clone(), table.clone()));
+        }
+    }
+    struct Table {
+        item: String,
+        table: String,
+        holds: bool,
+        changed: bool,
+    }
+    let finish = |conn: &Connection, done: Option<Table>, changed: &mut Vec<(String, String)>| {
+        if let Some(done) = done.filter(|done| done.holds) {
+            if past_cap(conn, &done.item, &done.table)? || done.changed {
+                changed.push((done.item, done.table));
+            }
+        }
+        Ok::<_, CoreError>(())
+    };
+    {
+        let mut query = conn.prepare(
+            "SELECT item_id, name, id, answer FROM rows_reread ORDER BY item_id, name, id",
+        )?;
+        let mut rows = query.query([])?;
+        let mut at: Option<Table> = None;
+        while let Some(row) = rows.next()? {
+            let (item, table, id, answer): (String, String, String, Option<String>) =
+                (row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?);
+            let current = match at.take() {
+                Some(current) if current.item == item && current.table == table => current,
+                done => {
+                    finish(conn, done, &mut changed)?;
+                    Table {
+                        holds: holds_rows(conn, &item, &table)?,
+                        item,
+                        table,
+                        changed: false,
+                    }
+                }
+            };
+            let mut current = current;
+            if current.holds {
+                current.changed |= match answer {
+                    Some(answer) => hold_answered(
+                        conn,
+                        &current.item,
+                        &current.table,
+                        &serde_json::from_str(&answer)?,
+                    )?,
+                    None => delete_row(conn, &current.item, &current.table, &id)?,
+                };
+            }
+            at = Some(current);
+        }
+        finish(conn, at, &mut changed)?;
+    }
+    conn.execute("DELETE FROM rows_reread", [])?;
+    Ok(changed)
 }
 
 /// Applies `rows.changed` in the transaction that moves the cursor past it.
@@ -865,11 +1053,9 @@ pub(crate) fn apply(conn: &Connection, event: &RowsEvent, read: Option<&Named>) 
             return Ok(true);
         };
         match read.get(&row.id) {
-            Some(answered) => {
-                hold_answered(conn, item, table, answered)?;
-            }
+            Some(answered) => hold_answered(conn, item, table, answered)?,
             None => delete_row(conn, item, table, &row.id)?,
-        }
+        };
     }
     past_cap(conn, item, table)?;
     Ok(true)
@@ -1312,4 +1498,40 @@ pub(crate) fn totals(core: &Core, item: &str, table: &str, filter: Option<&str>)
         core.http()?.table_totals(item, table, &params)?,
         false,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{OR_TERMS, Read, SPAN_GAP, filter_of, plan};
+
+    fn ids(count: usize) -> Vec<String> {
+        (0..count).map(|at| format!("{at:04}")).collect()
+    }
+
+    #[test]
+    fn reads_ids_far_apart_by_id_and_ids_close_together_as_one_range() {
+        let far = plan(&ids(2), &mut |_, _| Ok(99_998)).unwrap();
+        assert_eq!(far, vec![Read::Ids(ids(2))]);
+        let close = plan(&ids(500), &mut |_, _| Ok(SPAN_GAP)).unwrap();
+        assert_eq!(close, vec![Read::Span("0000".into(), "0499".into())]);
+        let scattered = plan(&ids(25), &mut |_, _| Ok(SPAN_GAP + 1)).unwrap();
+        assert_eq!(scattered.len(), 25_usize.div_ceil(OR_TERMS));
+        assert!(plan(&[], &mut |_, _| unreachable!()).unwrap().is_empty());
+        let mixed = ["a", "b", "c", "x"].map(String::from);
+        let read = plan(&mixed, &mut |_, before| {
+            Ok(if before == "x" { 500 } else { 0 })
+        })
+        .unwrap();
+        assert_eq!(
+            read,
+            vec![
+                Read::Span("a".into(), "c".into()),
+                Read::Ids(vec!["x".into()])
+            ]
+        );
+        assert_eq!(
+            filter_of(&Read::Ids(vec!["a".into(), "b".into()])).unwrap(),
+            r#"id eq "a" OR id eq "b""#
+        );
+    }
 }

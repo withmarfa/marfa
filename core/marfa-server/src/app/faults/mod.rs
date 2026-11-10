@@ -55,7 +55,7 @@ macro_rules! point_list {
         HOLD_BLOB_PURGE = Hold "blob-orphans:purge" None;
         FAIL_HEALTH_WRITE = Fail "health-write" Nth;
         FAIL_EXPORT_READ = Fail "export-read" Nth;
-        FAIL_TABLE_ROWS_PAGE = Fail "table-rows-page" Nth;
+        FAIL_TABLE_ROWS_PAGE = Fail "table-rows-page" Write;
         HOLD_DISK_PROBE = Hold "disk-probe" None;
         HOLD_METRICS = Hold "metrics" None;
         FAIL_JOB_ROW = Fail "job-row" Nth;
