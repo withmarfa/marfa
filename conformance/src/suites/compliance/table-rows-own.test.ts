@@ -8,6 +8,12 @@ import {
   trackKey,
   trackType,
 } from "../../utils/setup.js";
+import {
+  callTool,
+  connectMcp,
+  toolResult,
+  type McpConnection,
+} from "../../utils/mcp.js";
 import type { SseEvent } from "../../utils/sse.js";
 import { tapStream } from "../../utils/stream-tap.js";
 
@@ -15,15 +21,18 @@ let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
 let apiKey: string;
+let mcp: McpConnection;
 
 beforeAll(async () => {
   ({ ctx, client, apiUrl, apiKey } = await createTestContext(
     "compliance",
     "table-rows-own",
   ));
+  mcp = await connectMcp(apiUrl, apiKey);
 });
 
 afterAll(async () => {
+  await mcp?.close();
   await cleanup(ctx);
 });
 
@@ -698,5 +707,106 @@ describe("an item that keeps a table, and the types around it", () => {
       refused.error?.error.details as { errors: { field: string }[] }
     ).errors.map((e) => e.field);
     expect(fields).toEqual(["parent"]);
+  });
+});
+
+describe("the table an item keeps, through undo and MCP", () => {
+  const rowsOf = async (item: string) => {
+    const listed = await client.listRows(item, "table", { limit: 1000 });
+    expect(listed.status, JSON.stringify(listed.error)).toBe(200);
+    return Object.fromEntries(
+      listed.data.data.map((row) => [row.id, row.values]),
+    );
+  };
+
+  it("undoes and redoes a batch on the table an item keeps, and lists its batches", async () => {
+    const own = await tableItem();
+    const seeded = await put(own.id, [{ name: "a", amount: 1 }]);
+    const [kept] = seeded.results.map((r) => r.id);
+    const before = await rowsOf(own.id);
+    const changed = await client.writeRows(own.id, "table", {
+      operations: [
+        { op: "patch", id: kept!, values: { amount: 2 } },
+        { op: "put", values: { name: "b", amount: 3 } },
+      ],
+    });
+    expect(changed.status, JSON.stringify(changed.error)).toBe(200);
+    const batch = changed.data.batch!;
+    expect(Object.keys(await rowsOf(own.id))).toHaveLength(2);
+    const held = await client.listBatches(own.id, "table");
+    expect(held.status, JSON.stringify(held.error)).toBe(200);
+    expect(held.data.data.map((entry) => entry.id)).toEqual([
+      batch,
+      seeded.batch,
+    ]);
+
+    const undone = await client.undoBatch(own.id, "table", batch);
+    expect(undone.status, JSON.stringify(undone.error)).toBe(200);
+    expect(undone.data.undoes).toBe(batch);
+    expect(await rowsOf(own.id)).toEqual(before);
+
+    const redone = await client.undoBatch(own.id, "table", undone.data.batch!);
+    expect(redone.status, JSON.stringify(redone.error)).toBe(200);
+    expect(Object.keys(await rowsOf(own.id))).toHaveLength(2);
+
+    const listed = await client.listBatches(own.id, "table");
+    expect(listed.status, JSON.stringify(listed.error)).toBe(200);
+    expect(listed.data.data.map((entry) => entry.undoes)).toEqual([
+      undone.data.batch,
+      batch,
+      null,
+    ]);
+
+    const elsewhere = await client.undoBatch(own.id, "lines", batch);
+    expect(elsewhere.status).toBe(404);
+    expect(elsewhere.error?.error.code).toBe("table_not_found");
+  });
+
+  it("lists the table an item keeps with marfa_get, and reads and writes its rows through MCP", async () => {
+    const own = await tableItem();
+    const plain = await client.createItem({
+      type: "core.note",
+      properties: { body: "plain" },
+    });
+    trackItem(ctx, plain.data.item.id);
+    const written = toolResult(
+      await callTool(mcp, "marfa_write_rows", {
+        id: own.id,
+        table: "table",
+        operations: [
+          { op: "put", values: { name: "a", amount: 4 } },
+          { op: "put", values: { name: "b", amount: 5 } },
+        ],
+      }),
+    );
+    expect(written.batch).toEqual(expect.any(String));
+    expect(Object.keys(await rowsOf(own.id))).toHaveLength(2);
+
+    const read = toolResult(
+      await callTool(mcp, "marfa_read_rows", {
+        id: own.id,
+        table: "table",
+        filter: "values.amount gt 4",
+        totals: true,
+      }),
+    );
+    expect(read.rows).toMatchObject([{ values: { name: "b", amount: 5 } }]);
+    expect(read.totals).toMatchObject({ amount: { sum: 5 } });
+
+    const got = toolResult(
+      await callTool(mcp, "marfa_get", { ids: [own.id, plain.data.item.id] }),
+    );
+    const items = got.items as { id: string; tables?: unknown }[];
+    expect(items.find((i) => i.id === own.id)?.tables).toEqual([
+      {
+        name: "table",
+        label: "Table",
+        columns: ["name", "amount", "paid"],
+        row_count: 2,
+      },
+    ]);
+    expect(items.find((i) => i.id === plain.data.item.id)).not.toHaveProperty(
+      "tables",
+    );
   });
 });

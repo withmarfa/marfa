@@ -102,10 +102,17 @@ export const ALL_TOOLS = [
   "marfa_find",
   "marfa_get",
   "marfa_overview",
+  "marfa_read_rows",
   "marfa_update",
+  "marfa_write_rows",
 ];
 
-export const READ_TOOLS = ["marfa_find", "marfa_get", "marfa_overview"];
+export const READ_TOOLS = [
+  "marfa_find",
+  "marfa_get",
+  "marfa_overview",
+  "marfa_read_rows",
+];
 
 /** The tools `/mcp/schema` adds for a credential that may use each. */
 export const SCHEMA_TOOLS = [

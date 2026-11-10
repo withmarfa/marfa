@@ -268,7 +268,7 @@ impl Exit {
                 "the command line or the profile file was wrong, or named no store or server"
             }
             Exit::Environment => {
-                "the environment failed (unreachable, timed out, a 5xx, a 408, a 425, a 429, an answer naming no contract, full local storage, a docs site that cannot be read, a new build installed under `folders watch --exit-on-new-build`); try again"
+                "the environment failed (unreachable, timed out, a 5xx, a 408, a 425, a 429, an answer naming no contract, full local storage, a working copy another program was writing to, a docs site that cannot be read, a new build installed under `folders watch --exit-on-new-build`); try again"
             }
             Exit::Local => {
                 "the working copy or the queue refused under the device rules, the keychain cannot be used (locked, missing, unreadable, or none on this system), or the core stopped on a fault of its own"
@@ -398,6 +398,7 @@ impl CliError {
                 CoreError::Unauthorized { .. } | CoreError::SignedOut { .. } => Exit::Credential,
                 CoreError::Io(_)
                 | CoreError::StorageFull(_)
+                | CoreError::StoreBusy(_)
                 | CoreError::NoRoom { .. }
                 | CoreError::RateLimited { .. }
                 | CoreError::Server { .. }
@@ -780,6 +781,11 @@ mod tests {
                 Exit::Local,
             ),
             (CoreError::Store("malformed".into()), "store", Exit::Local),
+            (
+                CoreError::StoreBusy("database is locked".into()),
+                "store_busy",
+                Exit::Environment,
+            ),
         ] {
             let error = CliError::from(core);
             assert_eq!(error.code(), code);

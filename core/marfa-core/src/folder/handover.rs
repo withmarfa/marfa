@@ -6,7 +6,7 @@
 
 use std::path::Path;
 use std::time::Duration;
-#[cfg(any(debug_assertions, test))]
+#[cfg(test)]
 use std::time::Instant;
 
 use crate::Result;
@@ -129,19 +129,18 @@ pub(crate) fn hold_if_asked() {
     #[cfg(debug_assertions)]
     crate::fault::hold(|| "folder-handed-over");
     #[cfg(debug_assertions)]
-    if let Some(gate) = crate::fault::named("gate-handed-folder") {
-        std::fs::write(format!("{gate}.ready"), b"").expect("write handover gate readiness");
-        let deadline = Instant::now() + Duration::from_secs(60);
-        while !Path::new(&format!("{gate}.release")).exists() {
-            assert!(Instant::now() < deadline, "handover gate was not released");
-            std::thread::sleep(POLL);
-        }
-    }
+    crate::fault::gate("gate-handed-folder");
     if let Some(millis) =
         crate::fault::named("hold-handed-folder").and_then(|millis| millis.parse::<u64>().ok())
     {
         std::thread::sleep(Duration::from_millis(millis));
     }
+}
+
+/// Lets fixtures alter a handed-over store before it opens.
+pub(crate) fn hold_before_store() {
+    #[cfg(debug_assertions)]
+    crate::fault::gate("gate-asked-store");
 }
 
 /// Whether a command waits for the folder whose state is in `state`.

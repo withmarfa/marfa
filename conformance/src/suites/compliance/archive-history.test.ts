@@ -503,6 +503,9 @@ describe("an archive's dates and history, refused before anything is written", (
   add("updated_at", ({ second }) => {
     second.updated_at = invalidInstant;
   });
+  add("last_activity_at", ({ second }) => {
+    second.last_activity_at = invalidInstant;
+  });
   add("versions", (rows) => {
     rows.secondVersions = "none" as never;
   });

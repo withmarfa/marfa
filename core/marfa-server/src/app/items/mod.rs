@@ -362,6 +362,11 @@ pub(crate) fn readable_host(read: &Reader<'_, '_>, id: &str) -> Result<Host> {
     Ok(read.row(id)?.host())
 }
 
+/// The item holding `id`, whatever its state, for a restore writing its rows.
+pub(crate) fn host_of(tx: &Transaction<'_>, id: &str) -> Result<Option<Host>> {
+    Ok(rows::by_id(tx, id)?.map(Item::host))
+}
+
 /// A row batch is activity on its item, which moves nothing else on it.
 pub(crate) fn mark_activity(tx: &Transaction<'_>, seq: i64, at: &str) -> Result<()> {
     rows::mark_activity(tx, seq, at)

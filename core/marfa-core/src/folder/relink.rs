@@ -277,7 +277,9 @@ pub(super) fn unsettled(conn: &Connection) -> Result<HashSet<String>> {
 fn contain<T>(result: Result<T>, report: &mut PullReport) -> Result<Option<T>> {
     match result {
         Ok(value) => Ok(Some(value)),
-        Err(error @ (CoreError::StorageFull(_) | CoreError::Store(_))) => Err(error),
+        Err(
+            error @ (CoreError::StorageFull(_) | CoreError::Store(_) | CoreError::StoreBusy(_)),
+        ) => Err(error),
         Err(error) => {
             crate::telemetry::unrelinked!(&error);
             report.unrelinked += 1;

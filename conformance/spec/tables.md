@@ -1,6 +1,6 @@
 # Tables
 
-What a type declares about the tables an item of it can hold: their names, their columns and how a column totals. A table holds rows, and a row is never an item. A column's value rules and totals apply to rows once they exist; this chapter holds only the declaration.
+What a type declares about the tables an item of it can hold: their names, their columns and how a column totals. A table holds rows, and a row is never an item. This chapter also holds how rows are written, read, announced and undone.
 
 ## Declaring tables
 
@@ -636,7 +636,7 @@ When a batch changes no row, the server MUST answer `batch` `null`.
 
 If a door under `/items/{id}/tables/{table}` names a table that the item's type does not declare and the item does not keep under `tables/own-table-listed`, then the server MUST answer `404 table_not_found`.
 
-**Tests:** `compliance/table-rows.test.ts › answers table_not_found for a table the type does not declare`, `compliance/table-rows-own.test.ts › answers table_not_found for a table other than the one the item keeps`.
+**Tests:** `compliance/table-rows.test.ts › answers table_not_found for a table the type does not declare`, `compliance/table-rows-own.test.ts › answers table_not_found for a table other than the one the item keeps`, `compliance/table-rows-undo.test.ts › answers table_not_found for an undo once a forced change removed the table`.
 
 ## Who may read and write rows
 
@@ -750,6 +750,28 @@ If a `cursor` was not answered for the same item, table, `filter`, `sort` and `d
 
 **Tests:** `compliance/table-rows-reads.test.ts › pages a table's rows by id, continuing by a signed cursor`, `› refuses a cursor answered for the other direction`.
 
+### `tables/rows-cursor-size`
+
+When `GET /items/{id}/tables/{table}/rows` answers a `next_cursor`, the server MUST answer a cursor of at most 512 characters, however long the sort value of the last row it answers.
+
+**Reason:** a cursor travels in a URL and in a tool call, and a text column holds up to 64 KiB.
+
+**Tests:** `compliance/table-rows-reads.test.ts › keeps a cursor short however long the sort value is, and follows the row it names`.
+
+### `tables/rows-cursor-continues`
+
+When a caller continues a listing by a `cursor` that follows a row whose sort value is unchanged, the server MUST answer the rows that come after that row in the listing's order, skipping none and repeating none, whatever the length of that sort value.
+
+**Tests:** `compliance/table-rows-reads.test.ts › keeps a cursor short however long the sort value is, and follows the row it names`, `› pages rows that share a long sort value without skipping or repeating one`.
+
+### `tables/rows-cursor-moved`
+
+If a `cursor` follows a row whose sort value is a text of more than 128 bytes in UTF-8, and that row has been removed or holds another sort value since the cursor was answered, then the server MUST answer `400 validation_error` naming `cursor`.
+
+**Reason:** a cursor keeps a long sort value as a tag of it, so the page boundary is checked against the row as it is now, and a boundary that moved is refused rather than guessed.
+
+**Tests:** `compliance/table-rows-reads.test.ts › keeps a cursor short however long the sort value is, and follows the row it names`.
+
 ### `tables/rows-filter`
 
 When `GET /items/{id}/tables/{table}/rows` or `GET /items/{id}/tables/{table}/totals` names a `filter`, the server MUST select the rows it selects under the grammar of `search-and-filters/filter-doors`, reading `values.<column>` as a column and `id` and `updated_at` as the row's own.
@@ -799,6 +821,174 @@ The server MUST answer `sum` as the sum of the column's values, `average` as the
 When no row the `filter` selects holds a value for a column that names `adds_up`, the server MUST answer its `sum` and `count` as `0`, and its `average`, `min` and `max` as `null`.
 
 **Tests:** `compliance/table-rows-reads.test.ts › totals nothing as zero or null`.
+
+## Rows through MCP
+
+`marfa_read_rows` reads an item's rows and `marfa_write_rows` writes them, each for one item and one table named in `id` and `table`, with the credential's own access: the doors under the item decide, so a refusal below is the one that door answers, carried as a tool error. `marfa_get` lists an item's tables without their rows.
+
+### `tables/mcp-read-rows`
+
+When `marfa_read_rows` names an item and a table, the server MUST answer as `rows` the first rows `GET /items/{id}/tables/{table}/rows` answers for the same `filter`, `sort`, `direction` and `cursor`, in that door's order, and as `next_cursor` the cursor that continues after the last of them, or `null` when no row follows.
+
+**Reason:** an agent reads rows with the expressions and the order a client of the API uses, and a prefix of the door's page, not a different page, is what a size limit leaves.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › reads rows as the page door does, by filter, sort and cursor`.
+
+### `tables/mcp-read-limit`
+
+When `marfa_read_rows` names a `limit` from 1 to 1000, the server MUST answer at most that many rows, and 50 where it names none.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › reads rows as the page door does, by filter, sort and cursor`.
+
+### `tables/mcp-read-refused`
+
+If a `marfa_read_rows` call names what `GET /items/{id}/tables/{table}/rows` refuses, then the server MUST answer a tool error with the code that door answers.
+
+**Reason:** an item the credential may not read, a table the type does not declare, and a `filter`, `sort`, `direction`, `cursor` or `limit` the door refuses are refused the same way through either door.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › refuses a read as the page door does`.
+
+### `tables/mcp-read-totals`
+
+When `marfa_read_rows` names `totals` `true`, the server MUST answer `row_count` and `totals` as `GET /items/{id}/tables/{table}/totals` answers them for the same `filter`.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › answers totals only when asked`.
+
+### `tables/mcp-read-totals-unasked`
+
+While a `marfa_read_rows` call names no `totals` or `totals` `false`, the server MUST NOT answer `row_count` or `totals`.
+
+**Reason:** a total over a large table costs the server a pass over its rows, which a call that did not ask for it does not pay.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › answers totals only when asked`.
+
+### `tables/mcp-read-budget`
+
+When `marfa_read_rows` answers, the server MUST keep the answer's text within 40,000 characters.
+
+**Reason:** a client cuts or drops a tool answer past its own limit, and the agent loses what the answer held.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › stops a page at the answer budget and continues by next_cursor`.
+
+### `tables/mcp-read-cursor-size`
+
+When `marfa_read_rows` answers a `next_cursor`, the server MUST answer a cursor of at most 512 characters, however long the sort value of the last row it answers.
+
+**Reason:** a row may sort on a text of 64 KiB, and a cursor that carried it would be larger than the answer budget.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › keeps next_cursor short and exact when rows sort on a 54,000-character value`.
+
+### `tables/mcp-read-cursor-continues`
+
+When `marfa_read_rows` answers a `next_cursor`, the server MUST answer a cursor that continues exactly after the last row it answers, skipping none and repeating none, as `tables/rows-cursor-continues` states for the page door.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › keeps next_cursor short and exact when rows sort on a 54,000-character value`.
+
+### `tables/mcp-read-stopped`
+
+If the rows a `marfa_read_rows` call selects do not all fit within 40,000 characters, and the first of them fits alone, then the server MUST answer fewer rows, ending with a `next_cursor` that continues after the last row it answers.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › stops a page at the answer budget and continues by next_cursor`.
+
+### `tables/mcp-read-stopped-hint`
+
+If a `marfa_read_rows` call answers fewer rows than it selected for the size of the answer, then the server MUST answer a `hint` that says the answer stopped early for its size and to pass `next_cursor` as `cursor`.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › stops a page at the answer budget and continues by next_cursor`.
+
+### `tables/mcp-read-cut`
+
+If the first row a `marfa_read_rows` call selects does not fit alone within 40,000 characters, then the server MUST answer that row alone with its longest text values cut, and name each cut value in `cut` with the row's `id`, the `column` and the `next_offset` to read from.
+
+**Reason:** a row may hold up to 64 KiB of values, more than one answer holds.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › cuts the text of a row too long to fit and reads the rest by offset`.
+
+### `tables/mcp-read-cut-hint`
+
+If a `marfa_read_rows` call answers a cut row, then the server MUST answer a `hint` that names `next_offset` as where to read the rest.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › cuts the text of a row too long to fit and reads the rest by offset`.
+
+### `tables/mcp-read-cut-unstopped`
+
+If a `marfa_read_rows` call answers a cut row, then the server MUST NOT answer a `hint` that the answer stopped early.
+
+**Reason:** a cut row is read on by offset, and a stopped page by `next_cursor`, so one hint for both would send the agent the wrong way.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › cuts the text of a row too long to fit and reads the rest by offset`.
+
+### `tables/mcp-read-cut-cursor`
+
+If a `marfa_read_rows` call answers a cut row, then the server MUST answer `next_cursor` as the cursor that continues after that row, or `null` when no row follows it.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › cuts the text of a row too long to fit and reads the rest by offset`, `› keeps next_cursor short and exact when rows sort on a 54,000-character value`.
+
+### `tables/mcp-read-column-part`
+
+When `marfa_read_rows` names a `row`, a `column` and an `offset`, the server MUST answer the column's text of that row from that offset, with the `next_offset` to read from, or `null` when nothing is left.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › cuts the text of a row too long to fit and reads the rest by offset`.
+
+### `tables/mcp-write-rows`
+
+When `marfa_write_rows` names an item, a table and operations that all hold, the server MUST apply them as `POST /items/{id}/tables/{table}/rows` applies a batch.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › writes a batch through marfa_write_rows as the write door does`.
+
+### `tables/mcp-write-answer`
+
+When `marfa_write_rows` applies a batch, the server MUST answer the `batch`, `last_activity_at` and `results` that `POST /items/{id}/tables/{table}/rows` answers.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › writes a batch through marfa_write_rows as the write door does`.
+
+### `tables/mcp-write-refused`
+
+If a `marfa_write_rows` call names a batch that `POST /items/{id}/tables/{table}/rows` refuses, then the server MUST answer a tool error with the code, message and `details` that door answers, whether the batch is missing, null, an object, a string, a number or a list with a fault in it.
+
+**Reason:** the checks are the door's, including a column whose value the key may not read, which the door refuses `403 forbidden`.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › refuses a batch as the write door does and writes none of it`, `› refuses a batch that is not a list as the write door does`.
+
+### `tables/mcp-write-refused-nothing`
+
+If a `marfa_write_rows` call names a batch that `POST /items/{id}/tables/{table}/rows` refuses, then the server MUST NOT write any operation of the batch.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › refuses a batch as the write door does and writes none of it`, `› refuses a batch that is not a list as the write door does`, `› refuses a column whose value the key may not read, as the write door does`.
+
+### `tables/mcp-write-limit`
+
+If `operations` holds more than 200 operations, then the server MUST answer a tool error `validation_error` that names `operations`.
+
+**Reason:** the answer names every operation's outcome, and 200 of them fit within one answer.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › refuses a batch of more than 200 operations`.
+
+### `tables/mcp-write-limit-nothing`
+
+If `operations` holds more than 200 operations, then the server MUST NOT write any of them.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › refuses a batch of more than 200 operations`.
+
+### `tables/mcp-get-tables`
+
+When `marfa_get` reads an item whose type declares tables, the server MUST answer under `tables` each table with its `name`, `label`, the names of its `columns` and its `row_count`, and no row.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › lists an item's tables with marfa_get and answers no row`.
+
+### `tables/mcp-get-no-tables`
+
+When `marfa_get` reads an item whose type declares no table, the server MUST NOT answer `tables` for it.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › leaves tables out of an item whose type declares none`.
+
+### `tables/mcp-get-columns-cut`
+
+If the items `marfa_get` reads do not fit within 40,000 characters once every field is cut, then the server MUST leave the `columns` out of the tables it lists before it leaves out an item.
+
+**Reason:** a type holds up to 32 tables of 64 columns, and a table's name and `row_count` serve the agent where its columns do not fit.
+
+**Tests:** `compliance/table-rows-mcp.test.ts › leaves the columns out of the listed tables before it leaves out an item`.
 
 ## Activity
 
@@ -871,6 +1061,166 @@ While a stream is a copy stream, the server MUST NOT send it `rows.changed`.
 **Reason:** a copy stream feeds a device's working copy, which holds no rows.
 
 **Tests:** `compliance/table-rows-events.test.ts › sends no rows.changed on a copy stream`.
+
+## The change log and undo
+
+A table keeps a change log: each batch that changed at least one of its rows, with each row as it stood before the batch, for `row_log_retention_days`. An undo is itself a batch, so undoing an undo redoes the batch it undid. A row stands as a batch left it while no later batch has changed it, or every later batch that did has been undone, newest first; a row the batch deleted stands as it left it while the table holds no row with its id. The doors are `POST /items/{id}/tables/{table}/batches/{batch}/undo` and `GET /items/{id}/tables/{table}/batches`.
+
+### `tables/undo`
+
+When a caller sends `POST /items/{id}/tables/{table}/batches/{batch}/undo` and every row the batch changed stands as the batch left it or as it was before the batch, the server MUST leave each of those rows as it was before the batch.
+
+**Reason:** a person takes back a write whole, one batch at a time, from the newest.
+
+**Tests:** `compliance/table-rows-undo.test.ts › undoes a batch, putting back rows it replaced, patched and deleted and removing rows it created`, `› undoes a batch where a later batch left a row as it was before the batch`, `› undoes a run of batches newest first, and redoes them oldest first`, `› undoes an earlier batch once a later batch that left its rows as it found them is undone`.
+
+### `tables/undo-answer`
+
+When an undo changes at least one row, the server MUST answer `200` with the undo's own UUIDv7 in `batch`, the batch it undid in `undoes`, the item's `last_activity_at`, and in `results` each row the undone batch changed, by `id` ascending, with its `outcome`.
+
+**Tests:** `compliance/table-rows-undo.test.ts › answers each row of the undone batch in id order with its outcome, and moves last_activity_at`.
+
+### `tables/undo-outcomes`
+
+The server MUST answer the `outcome` of a row in an undo as `created` where it puts back a row the batch deleted, `replaced` where it puts back values the batch changed, `deleted` where it removes a row the batch created, and `unchanged` where the row already stands as it was before the batch.
+
+**Tests:** `compliance/table-rows-undo.test.ts › answers each row of the undone batch in id order with its outcome, and moves last_activity_at`, `› undoes a batch where a later batch left a row as it was before the batch`.
+
+### `tables/undo-nothing`
+
+When every row an undone batch changed already stands as it was before the batch, the server MUST answer `batch` `null`.
+
+**Reason:** an undo sent again after a lost answer changes nothing.
+
+**Tests:** `compliance/table-rows-undo.test.ts › answers batch null for an undo sent again, changing nothing`.
+
+### `tables/undo-redo`
+
+When the batch an undo names is itself an undo, the server MUST undo it as any batch, leaving each row as the batch that undo undid left it.
+
+**Reason:** redo is the undo of an undo, so one door and one log serve both.
+
+**Tests:** `compliance/table-rows-undo.test.ts › redoes a batch by undoing its undo, and undoes it again`, `› undoes a run of batches newest first, and redoes them oldest first`.
+
+### `tables/undo-conflict`
+
+If a row the undone batch changed stands neither as the batch left it nor as it was before the batch, then the server MUST answer `409 undo_conflict` naming each such row by `id` in `details.rows`.
+
+**Reason:** a later batch changed the row, and an undo over it would drop that work. Undoing the later batches first, newest first, clears the way.
+
+**Tests:** `compliance/table-rows-undo.test.ts › refuses an undo where a later batch changed a row, naming the rows, and changes nothing`, `› takes a row the batch deleted as standing while the table holds no row with its id`.
+
+### `tables/undo-all-or-none`
+
+If the server refuses an undo, then the server MUST change none of the rows of the batch it names.
+
+**Tests:** `compliance/table-rows-undo.test.ts › refuses an undo where a later batch changed a row, naming the rows, and changes nothing`, `› refuses an undo of a row holding a value the key may not read, and removes a created row holding one`, `› refuses an undo to a key that may not read a value a row held before or after the batch, whatever the row holds now`.
+
+### `tables/undo-values-kept`
+
+When an undo puts back a row's values, the server MUST put them back as they were before the batch, whatever the table's columns declare since.
+
+**Reason:** an undo recovers what a person had, as `tables/change-forced` keeps values the declaration no longer takes.
+
+**Tests:** `compliance/table-rows-undo.test.ts › puts back values in a column the type has since removed`.
+
+### `tables/undo-not-found`
+
+If an undo names a batch that the change log of the item's table does not hold, then the server MUST answer `404 batch_not_found`.
+
+**Reason:** a batch of another table, an id no batch has and a batch past `row_log_retention_days` read alike.
+
+**Tests:** `compliance/table-rows-undo.test.ts › answers batch_not_found for a batch of another table or item, and an id no batch has`, `compliance/table-rows-retention.test.ts › removes the batches older than row_log_retention_days at the next table-row-cleanup run, and keeps the newer`, `compliance/table-rows-archive.test.ts › logs no batch for the rows a restore writes, so an undo of its last_batch answers batch_not_found`.
+
+### `tables/undo-write-access`
+
+If a key that may read an item's type and not write it sends an undo, then the server MUST answer `403 type_not_permitted`.
+
+**Tests:** `compliance/table-rows-undo.test.ts › refuses an undo by a key that may read and not write, and on an item in the bin, and undoes once the item is back`.
+
+### `tables/undo-bin`
+
+When an undo names an item in the bin whose type the key may read, the server MUST answer `404 item_not_found` with `details` of exactly `{ "trashed": true }`.
+
+**Tests:** `compliance/table-rows-undo.test.ts › refuses an undo by a key that may read and not write, and on an item in the bin, and undoes once the item is back`.
+
+### `tables/undo-restored`
+
+When an item has come back from the bin, the server MUST undo a batch of its tables that the change log holds.
+
+**Reason:** the bin keeps an item's rows, and their change log with them.
+
+**Tests:** `compliance/table-rows-undo.test.ts › refuses an undo by a key that may read and not write, and on an item in the bin, and undoes once the item is back`.
+
+### `tables/undo-withheld`
+
+If an undo names a batch that changed a row it did not create, and the row holds now, held before the batch or held after it a value the server would withhold from the undoing key on a read of the row, then the server MUST answer `403 forbidden` with `details.row` naming the row and `details.column` naming the column, whatever else it would answer for the row.
+
+**Reason:** whether an undo puts a row back, finds it unchanged or refuses it as changed since turns on the values it compares, so an answer that differed would tell the key which item a withheld value names. A put back or replaced value is also a reference the key cannot see, which `tables/rows-withheld-write` refuses to a write. A row the batch created is removed or left by whether it is there alone (`tables/undo-withheld-delete`).
+
+**Tests:** `compliance/table-rows-undo.test.ts › refuses an undo of a row holding a value the key may not read, and removes a created row holding one`, `› refuses an undo to a key that may not read a value a row held before or after the batch, whatever the row holds now`.
+
+### `tables/undo-withheld-delete`
+
+When an undo removes a row the undone batch created, the server MUST remove it whatever value it holds that the server would withhold from the undoing key.
+
+**Reason:** removing the row leaves alone the item its value names, as `tables/rows-withheld-delete` allows a delete.
+
+**Tests:** `compliance/table-rows-undo.test.ts › refuses an undo of a row holding a value the key may not read, and removes a created row holding one`.
+
+### `tables/undo-event`
+
+When an undo changes at least one row, the server MUST announce one `rows.changed` with the fields `tables/rows-event` names, and the batch it undid in `undoes`.
+
+**Reason:** a device applies an undo as any batch, and an app can show which write it took back.
+
+**Tests:** `compliance/table-rows-undo.test.ts › announces one rows.changed for an undo naming the batch it undid, and nothing for an undo that changes nothing`.
+
+### `tables/undo-event-none`
+
+When an undo changes no row, the server MUST NOT announce `rows.changed`.
+
+**Tests:** `compliance/table-rows-undo.test.ts › announces one rows.changed for an undo naming the batch it undid, and nothing for an undo that changes nothing`.
+
+### `tables/batches-list`
+
+When a caller that may read an item sends `GET /items/{id}/tables/{table}/batches`, the server MUST answer in `data` the batches the table's change log holds, newest first, each with its `id`, `at`, `rows`, the number of rows it changed, and `undoes`, the batch it undid or `null`.
+
+**Reason:** a person finds the write to take back, such as the one that deleted a row last week, from when it was made and how much it changed.
+
+**Tests:** `compliance/table-rows-undo.test.ts › lists the table's batches newest first, with the rows each changed and what it undid`.
+
+### `tables/batches-page`
+
+When a caller sends `GET /items/{id}/tables/{table}/batches`, the server MUST answer at most `limit` batches, 100 where it names none, with a `next_cursor` that continues the page while more remain.
+
+**Tests:** `compliance/table-rows-undo.test.ts › pages the batches by a signed cursor, and refuses a limit or cursor it did not answer`.
+
+### `tables/batches-limit`
+
+If a listing of batches names a `limit` that is not a whole number from 1 to 1000, then the server MUST answer `400 validation_error` naming `limit`.
+
+**Tests:** `compliance/table-rows-undo.test.ts › pages the batches by a signed cursor, and refuses a limit or cursor it did not answer`.
+
+### `tables/batches-cursor`
+
+If a listing of batches names a `cursor` that was not answered for the same item and table, then the server MUST answer `400 validation_error` naming `cursor`.
+
+**Tests:** `compliance/table-rows-undo.test.ts › pages the batches by a signed cursor, and refuses a limit or cursor it did not answer`.
+
+### `tables/log-retention`
+
+Where `row_log_retention_days` is positive, when the `table-row-cleanup` job runs, the server MUST remove from each table's change log every batch made more than that many days before, up to the oldest batch whose stored time does not read.
+
+**Reason:** the log is for taking back recent writes, not a history, and an old batch could no longer be undone over what came after it anyway.
+
+**Tests:** `compliance/table-rows-retention.test.ts › removes the batches older than row_log_retention_days at the next table-row-cleanup run, and keeps the newer`, `› keeps a batch whose stored time does not read and every batch after it, and removes the older batches before it`.
+
+### `tables/log-retention-zero`
+
+Where `row_log_retention_days` is 0, the server MUST NOT remove a batch from a change log by its age.
+
+**Tests:** `compliance/table-rows-retention.test.ts › keeps every batch while row_log_retention_days is 0, however far the clock moves`.
 
 ## Rows and the life of an item
 
@@ -1033,3 +1383,221 @@ If `PUT /types/{id}` without `force=true` would leave an item that holds rows in
 **Reason:** taking a type away from `core.table` hides the rows its items keep, as removing a table a type declares does (`tables/change-in-use`).
 
 **Tests:** `compliance/table-rows-own.test.ts › refuses a replacement that takes a type away from core.table while its items hold rows in the table they keep, unless forced`, `› refuses a replacement that judges rows an item keeps by a table its type declares in their place, unless the column types agree`.
+
+### `tables/own-rows-undo`
+
+When a caller sends `POST /items/{id}/tables/table/batches/{batch}/undo` for an item of `core.table`, or of a type below it, the server MUST undo the batch as `tables/undo` does for a table a type declares, and answer as `tables/undo-answer` does.
+
+**Tests:** `compliance/table-rows-own.test.ts › undoes and redoes a batch on the table an item keeps, and lists its batches`.
+
+### `tables/own-rows-batches`
+
+When a caller that may read an item of `core.table`, or of a type below it, sends `GET /items/{id}/tables/table/batches`, the server MUST answer the batches the table's change log holds as `tables/batches-list` does.
+
+**Tests:** `compliance/table-rows-own.test.ts › undoes and redoes a batch on the table an item keeps, and lists its batches`.
+
+### `tables/own-mcp-get-tables`
+
+When `marfa_get` reads an item of `core.table`, or of a type below it, the server MUST answer under `tables` the table named `table`, as `tables/mcp-get-tables` answers a declared one, with the names of the item's `columns`.
+
+**Tests:** `compliance/table-rows-own.test.ts › lists the table an item keeps with marfa_get, and reads and writes its rows through MCP`.
+
+### `tables/own-mcp-rows`
+
+When `marfa_read_rows` or `marfa_write_rows` names an item of `core.table`, or of a type below it, and the table `table`, the server MUST read or write the rows as `tables/mcp-read-rows` and `tables/mcp-write-rows` state, judged by the item's `columns`.
+
+**Tests:** `compliance/table-rows-own.test.ts › lists the table an item keeps with marfa_get, and reads and writes its rows through MCP`.
+
+### `tables/own-archive-rows`
+
+When `GET /export?format=archive` carries an item of `core.table`, or of a type below it, that holds rows, the server MUST carry in `rows.ndjson.gz` one line for each row, with `table` `table`, as `tables/archive-rows` states.
+
+**Tests:** `compliance/table-own-restore.test.ts › exports and restores the rows of an item of core.table, as unlogged rows that a later write can undo`.
+
+### `tables/own-restore-rows`
+
+When `POST /restore` writes an item of `core.table`, or of a type below it, the server MUST write each of its rows that `rows.ndjson.gz` holds, as `tables/restore-rows` states, and answer the table on `GET /items/{id}/tables` with the `row_count` and `bytes` of the rows written.
+
+**Tests:** `compliance/table-own-restore.test.ts › exports and restores the rows of an item of core.table, as unlogged rows that a later write can undo`.
+
+### `tables/own-restore-rows-unlogged`
+
+When `POST /restore` writes the rows of the table an item of `core.table`, or of a type below it, keeps, the server MUST add no batch to the table's change log, as `tables/restore-rows-unlogged` states.
+
+**Tests:** `compliance/table-own-restore.test.ts › exports and restores the rows of an item of core.table, as unlogged rows that a later write can undo`.
+
+### `tables/own-restore-rows-undo`
+
+When an undo names a batch that changed a row `POST /restore` wrote to the table an item of `core.table`, or of a type below it, keeps, the server MUST put the row back as the restore wrote it, as `tables/restore-rows-undo` states.
+
+**Tests:** `compliance/table-own-restore.test.ts › exports and restores the rows of an item of core.table, as unlogged rows that a later write can undo`.
+
+## Rows in an archive
+
+An archive carries rows in `rows.ndjson.gz`, one line per row. A line is `{ "item_id", "table", "id", "values", "refs"?, "updated_at" }`.
+
+### `tables/archive-rows`
+
+When `GET /export?format=archive` carries an item, the server MUST carry in `rows.ndjson.gz` one line for each row the item holds, in every table that holds a row.
+
+**Reason:** a forced change keeps the rows of a table a type no longer declares (`tables/change-forced`), and a backup is the same archive, so a table the type does not declare now is carried too.
+
+**Tests:** `compliance/table-rows-archive.test.ts › carries each row of a carried item in rows.ndjson.gz, in table and id order, and counts them in row_count`, `› carries a row of a table its type no longer declares, and a value its column no longer takes, and restores both as held`.
+
+### `tables/archive-row-line`
+
+The server MUST write each line of `rows.ndjson.gz` as an object holding the row's `item_id`, `table`, `id`, `values` and `updated_at`.
+
+**Reason:** this is all a row holds. A row has no version, records no time it was created, and carries no batch, because the change log stays out of an archive and a restored batch would name nothing the instance records.
+
+**Tests:** `compliance/table-rows-archive.test.ts › carries a row's item_id, table, id, values and updated_at, and in refs the columns written as an item's id`.
+
+### `tables/archive-row-refs`
+
+When a row holds a value written to a column of type `item` (`tables/rows-item-origin`), the server MUST name that column in the line's `refs`, and leave `refs` out of a line that names none.
+
+**Reason:** a value is withheld by how it was written and not by what its column is now, so a restore needs the mark to keep withholding it.
+
+**Tests:** `compliance/table-rows-archive.test.ts › carries a row's item_id, table, id, values and updated_at, and in refs the columns written as an item's id`.
+
+### `tables/archive-rows-order`
+
+The server MUST write the lines of `rows.ndjson.gz` in ascending order of `item_id`, then `table`, then `id`.
+
+**Reason:** comparing adjacent lines detects repeated or out-of-order rows without holding a table's IDs.
+
+**Tests:** `compliance/table-rows-archive.test.ts › carries each row of a carried item in rows.ndjson.gz, in table and id order, and counts them in row_count`.
+
+### `tables/archive-row-withheld`
+
+When the credential requesting `GET /export?format=archive` may not read a row's value under `tables/rows-item-withheld`, the server MUST carry the row without that value and without naming its column in `refs`.
+
+**Reason:** an archive holds only what its credential may read, as a read of the row does.
+
+**Tests:** `compliance/table-rows-archive.test.ts › leaves out of an archive a value the exporting key may not read, and its mark`.
+
+### `tables/archive-rows-shape-free`
+
+When `GET /export?format=archive` carries a row of a table its item's type does not declare, or a value its column does not take, the server MUST NOT refuse the export for it.
+
+**Reason:** a forced change leaves such rows (`tables/change-forced`), and an instance that held one could not be backed up.
+
+**Tests:** `compliance/table-rows-archive.test.ts › carries a row of a table its type no longer declares, and a value its column no longer takes, and restores both as held`.
+
+### `tables/restore-rows`
+
+When `POST /restore` writes an item, the server MUST write each row that `rows.ndjson.gz` holds for it, with its `table`, `id`, `values` and `updated_at` as the line holds them.
+
+**Tests:** `compliance/table-rows-archive.test.ts › restores each row with its values, refs and updated_at, and the tables' row counts and bytes`.
+
+### `tables/restore-rows-refs`
+
+When `POST /restore` writes a row, the server MUST withhold under `tables/rows-item-origin` each value whose column the line names in `refs`.
+
+**Tests:** `compliance/table-rows-archive.test.ts › restores each row with its values, refs and updated_at, and the tables' row counts and bytes`.
+
+### `tables/restore-rows-shape-free`
+
+When `POST /restore` writes a row, the server MUST NOT refuse it because its item's type does not declare its table, its values name a column the table does not declare, or a value is not one its column takes.
+
+**Reason:** the archive holds rows as the instance it came from held them, and an export carries such rows (`tables/archive-rows-shape-free`).
+
+**Tests:** `compliance/table-rows-archive.test.ts › carries a row of a table its type no longer declares, and a value its column no longer takes, and restores both as held`.
+
+### `tables/restore-rows-summary`
+
+When `POST /restore` writes rows to a table its item's type declares, the server MUST answer that table on `GET /items/{id}/tables` with the `row_count` and `bytes` of the rows written.
+
+**Tests:** `compliance/table-rows-archive.test.ts › restores each row with its values, refs and updated_at, and the tables' row counts and bytes`.
+
+### `tables/restore-rows-event`
+
+When `POST /restore` writes the rows of a table, the server MUST announce them in `rows.changed` events of at most 1000 rows each, each with a batch of its own.
+
+**Reason:** a restored table reaches a device the way a written one does, in batches no larger than a write takes (`tables/rows-batch-limit`).
+
+**Tests:** `compliance/table-rows-archive.test.ts › announces restored rows in rows.changed of at most 1000 rows`.
+
+### `tables/restore-rows-unlogged`
+
+When `POST /restore` writes the rows of a table, the server MUST NOT add a batch to the table's change log.
+
+**Reason:** no one on the instance wrote the rows, so there is no write to take back. The batches a restore announces, and the table's `last_batch` after it, name no batch the log holds, and an undo of one answers `tables/undo-not-found`.
+
+**Tests:** `compliance/table-rows-archive.test.ts › logs no batch for the rows a restore writes, so an undo of its last_batch answers batch_not_found`.
+
+### `tables/restore-rows-undo`
+
+When an undo names a batch that changed a row `POST /restore` wrote, the server MUST put the row back as the restore wrote it.
+
+**Reason:** a restored row stands as no logged batch left it, so a later write over it is undone, and redone, as over any row.
+
+**Tests:** `compliance/table-rows-archive.test.ts › undoes a write over restored rows, putting each back as the restore wrote it`.
+
+### `tables/restore-rows-counts`
+
+When `POST /restore` succeeds, the server MUST answer in `rows_imported` the number of rows it wrote, and in `rows_skipped` the number of rows of items it counted as duplicates.
+
+**Tests:** `compliance/table-rows-archive.test.ts › restores each row with its values, refs and updated_at, and the tables' row counts and bytes`, `› leaves the rows of an item counted as a duplicate as they are, counting the archive's in rows_skipped`.
+
+### `tables/restore-rows-duplicate`
+
+When `POST /restore` counts an item as a duplicate, the server MUST leave the rows the instance holds for it as they are and write none of the archive's.
+
+**Reason:** a restore replaces nothing the instance holds (`search-and-filters/restore-duplicate-kept`).
+
+**Tests:** `compliance/table-rows-archive.test.ts › leaves the rows of an item counted as a duplicate as they are, counting the archive's in rows_skipped`.
+
+### `tables/restore-last-activity`
+
+When `POST /restore` writes an item, the server MUST answer as its `last_activity_at` the later of the `last_activity_at` and the `updated_at` the archive records.
+
+**Reason:** a conversation restored keeps its place in a list by latest activity (`tables/last-activity-sort`), and a restored row is not new activity.
+
+**Tests:** `compliance/table-rows-archive.test.ts › keeps an item's last_activity_at through a restore`.
+
+### `tables/restore-row-item`
+
+If a line of `rows.ndjson.gz` names an `item_id` that no line of `items.ndjson.gz` holds, then the server MUST answer `400 validation_error` naming the line and `item_id`.
+
+**Reason:** a row belongs to its item, and an archive carries the item with it.
+
+**Tests:** `compliance/table-rows-archive.test.ts › refuses a row naming an item the archive does not hold, naming its line, and writes nothing`.
+
+### `tables/restore-row-line`
+
+If a line of `rows.ndjson.gz` is not a JSON object, then the server MUST answer `400 validation_error` naming the line.
+
+**Reason:** a line that is not an object holds no field to name.
+
+**Tests:** `compliance/table-rows-archive.test.ts › refuses a row line that is %s, naming its line, and writes nothing`.
+
+### `tables/restore-row-shape`
+
+If a line of `rows.ndjson.gz` is an object that holds no `table` that `tables/name-grammar` takes, no `id` that is a UUIDv7 in lowercase, no object of `values`, no `updated_at` that is an instant or, where it holds `refs`, anything but an array of distinct columns that each hold an item ID in `values`, then the server MUST answer `400 validation_error` naming the line and the field.
+
+**Tests:** `compliance/table-rows-archive.test.ts › refuses a row line whose %s is malformed, naming its line and field, and writes nothing`.
+
+### `tables/restore-row-limit`
+
+If the `values` of a line of `rows.ndjson.gz`, written as JSON, are longer than 65536 bytes, then the server MUST answer `400 validation_error` naming the line and `values`.
+
+**Reason:** no write leaves a row past `tables/rows-row-limit`.
+
+**Tests:** `compliance/table-rows-archive.test.ts › refuses a row over 64 KiB, naming its line`.
+
+### `tables/restore-rows-order`
+
+If a line of `rows.ndjson.gz` does not come after the line before it in the order `tables/archive-rows-order` states, then the server MUST answer `400 validation_error` naming the line.
+
+**Reason:** an export never writes repeated or out-of-order rows. This check does not detect a missing line; `search-and-filters/restore-line-counts` checks the counts.
+
+**Tests:** `compliance/table-rows-archive.test.ts › refuses a row out of order or repeated, naming its line`.
+
+### `tables/backup-rows-change`
+
+The server MUST count a batch that changes rows as a change a backup holds.
+
+**Reason:** a scheduled run skips a backup when nothing it holds has changed (`instance/backup-unchanged`), and rows change without their item.
+
+**Tests:** `compliance/backups.test.ts › takes a scheduled backup after a batch changes rows, and skips one when nothing changed`.

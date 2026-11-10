@@ -85,6 +85,63 @@ describe("a restore of an item that keeps a table", () => {
     3 * FRESH_SERVER_TIMEOUT_MS,
   );
 
+  it("exports and restores the rows of an item of core.table, as unlogged rows that a later write can undo", async () => {
+    const source = working(origin);
+    const columns = {
+      name: { type: "string" },
+      amount: { type: "number", adds_up: "sum" },
+    };
+    const made = await source.createItem({
+      type: "core.table",
+      properties: { title: "Ledger", columns },
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    const id = made.data.item.id;
+    const written = await source.writeRows(id, "table", {
+      operations: [
+        { op: "put", values: { name: "rent", amount: 900 } },
+        { op: "put", values: { name: "tea", amount: 4 } },
+      ],
+    });
+    expect(written.status, JSON.stringify(written.error)).toBe(200);
+    const rowsOf = async (on: MarfaClient) => {
+      const listed = await on.listRows(id, "table", { limit: 1000 });
+      expect(listed.status, JSON.stringify(listed.error)).toBe(200);
+      return listed.data.data;
+    };
+    const sent = await rowsOf(source);
+    expect(sent).toHaveLength(2);
+
+    const exported = await archiveOf(source);
+    expect(readLineFile(exported, "rows")).toContain(id);
+    const restored = await owner(destination).restoreArchive(exported);
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    expect(restored.data).toMatchObject({ rows_imported: 2, rows_skipped: 0 });
+
+    const target = working(destination);
+    expect(await rowsOf(target)).toEqual(sent);
+    const summary = (await target.listTables(id)).data.data;
+    expect(summary).toMatchObject([
+      { name: "table", row_count: 2, changed_at: expect.any(String) },
+    ]);
+    expect((await target.rowTotals(id, "table")).data.totals).toEqual({
+      amount: { sum: 904 },
+    });
+
+    const unlogged = summary[0]!.last_batch!;
+    const refused = await target.undoBatch(id, "table", unlogged);
+    expect(refused.status, JSON.stringify(refused.data)).toBe(404);
+    expect(refused.error?.error.code).toBe("batch_not_found");
+
+    const changed = await target.writeRows(id, "table", {
+      operations: [{ op: "patch", id: sent[0]!.id, values: { amount: 1 } }],
+    });
+    expect(changed.status, JSON.stringify(changed.error)).toBe(200);
+    const undone = await target.undoBatch(id, "table", changed.data.batch!);
+    expect(undone.status, JSON.stringify(undone.error)).toBe(200);
+    expect(await rowsOf(target)).toEqual(sent);
+  });
+
   it("exports and restores an item of core.table whose column names a type deleted with force", async () => {
     const source = working(origin);
     const target = "user.gone";

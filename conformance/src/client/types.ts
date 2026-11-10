@@ -814,6 +814,8 @@ export interface RestoreArchiveResponse {
   connector_states_skipped: number;
   connector_agreements_added: number;
   connector_agreements_skipped: number;
+  rows_imported: number;
+  rows_skipped: number;
   set_up_again: string;
 }
 
@@ -958,6 +960,24 @@ export interface RowBatchAnswer {
     outcome:
       "created" | "replaced" | "patched" | "unchanged" | "deleted" | "absent";
   }[];
+}
+
+export interface RowUndoAnswer {
+  batch: string | null;
+  undoes: string;
+  last_activity_at: string;
+  results: {
+    id: string;
+    outcome: "created" | "replaced" | "deleted" | "unchanged";
+  }[];
+}
+
+/** One batch a table's change log holds. */
+export interface RowBatchEntry {
+  id: string;
+  at: string;
+  rows: number;
+  undoes: string | null;
 }
 
 export interface TableSummary {

@@ -185,17 +185,23 @@ impl Context {
     pub(crate) fn expire(&self, core: &Core, reason: &str) -> Result<CoreError> {
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;
-        if self.generation == revision(&tx, GENERATION)? {
+        let expired = self.expire_in(&tx, reason)?;
+        tx.commit()?;
+        Ok(expired)
+    }
+
+    pub(crate) fn expire_in(&self, tx: &Connection, reason: &str) -> Result<CoreError> {
+        if self.generation == revision(tx, GENERATION)? {
             // A first fill, or a fill that cleared the copy, holds a piece of
             // the slice, which no refill in place can make whole.
             let in_place = crate::catch_up::divergence(reason)
                 == Some(crate::model::HydrateRestart::HeadAgedOut)
-                && (!self.building || store::refilling(&tx)?);
-            let cursor = store::meta_get(&tx, store::META_EVENT_CURSOR)?;
-            expire(&tx)?;
+                && (!self.building || store::refilling(tx)?);
+            let cursor = store::meta_get(tx, store::META_EVENT_CURSOR)?;
+            expire(tx)?;
             if in_place && let Some(cursor) = cursor {
                 store::meta_set(
-                    &tx,
+                    tx,
                     store::META_REFILL,
                     &serde_json::to_string(&store::Refill {
                         instance: self.instance.clone(),
@@ -205,7 +211,6 @@ impl Context {
                 )?;
             }
         }
-        tx.commit()?;
         Ok(CoreError::CopyExpired {
             reason: reason.into(),
         })

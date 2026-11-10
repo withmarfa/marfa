@@ -1,6 +1,6 @@
 # MCP
 
-The MCP endpoint, `/mcp`, serves Marfa's tools to an agent over Streamable HTTP. A request carries an API key or an app's access token as a Bearer credential, and every tool call is a call to the API with that credential, so the API's own rules for the credential hold for it. The tools are `marfa_overview`, `marfa_find`, `marfa_get`, `marfa_create`, `marfa_update` and `marfa_delete`.
+The MCP endpoint, `/mcp`, serves Marfa's tools to an agent over Streamable HTTP. A request carries an API key or an app's access token as a Bearer credential, and every tool call is a call to the API with that credential, so the API's own rules for the credential hold for it. The tools are `marfa_overview`, `marfa_find`, `marfa_get`, `marfa_read_rows`, `marfa_create`, `marfa_update`, `marfa_write_rows` and `marfa_delete`.
 
 Two more endpoints serve the same tools and a group of their own. `/mcp/schema` adds `marfa_save_type`, `marfa_save_view`, `marfa_move_items`, `marfa_bulk_save`, `marfa_search_docs`, `marfa_sources` and `marfa_name_source`, for shaping what the instance holds. `/mcp/admin` adds `marfa_health`, `marfa_audit`, `marfa_keys`, `marfa_manage_key`, `marfa_revoke_key`, `marfa_webhooks` and `marfa_manage_webhook`, for running it. Unless a statement names an endpoint, it holds at all three.
 
@@ -44,17 +44,17 @@ When a client calls `subscriptions/listen` on `/mcp`, the server MUST answer in 
 
 ### `mcp/tools-for-writer`
 
-While a credential's type map grants `write` on at least one type, the server MUST list `marfa_overview`, `marfa_find`, `marfa_get`, `marfa_create`, `marfa_update` and `marfa_delete` to it.
+While a credential's type map grants `write` on at least one type, the server MUST list `marfa_overview`, `marfa_find`, `marfa_get`, `marfa_read_rows`, `marfa_create`, `marfa_update`, `marfa_write_rows` and `marfa_delete` to it.
 
-**Tests:** `compliance/mcp.test.ts › lists the six tools to a credential that writes a type`.
+**Tests:** `compliance/mcp.test.ts › lists the eight tools to a credential that writes a type`.
 
 ### `mcp/tools-for-reader`
 
-While a credential's type map grants `read` on at least one type and `write` on none, the server MUST list only `marfa_overview`, `marfa_find` and `marfa_get` to it.
+While a credential's type map grants `read` on at least one type and `write` on none, the server MUST list only `marfa_overview`, `marfa_find`, `marfa_get` and `marfa_read_rows` to it.
 
 **Reason:** a tool the credential can never use costs the agent's context and invites calls that fail.
 
-**Tests:** `compliance/mcp.test.ts › lists only marfa_overview, marfa_find and marfa_get to a credential that only reads`.
+**Tests:** `compliance/mcp.test.ts › lists only marfa_overview, marfa_find, marfa_get and marfa_read_rows to a credential that only reads`.
 
 ### `mcp/tools-for-no-type`
 
@@ -70,7 +70,7 @@ When a credential calls `/mcp/schema`, the server MUST list to it the tools `/mc
 
 **Reason:** a tool the credential can never use costs the agent's context and invites calls that fail.
 
-**Tests:** `compliance/mcp.test.ts › lists the six tools and every schema tool at /mcp/schema to a credential that may use each`, `› lists only the read tools and the schema tools every credential gets at /mcp/schema to a credential that only reads`, `› lists each schema tool at /mcp/schema to a credential that holds only the one thing it needs`.
+**Tests:** `compliance/mcp.test.ts › lists the eight tools and every schema tool at /mcp/schema to a credential that may use each`, `› lists only the read tools and the schema tools every credential gets at /mcp/schema to a credential that only reads`, `› lists each schema tool at /mcp/schema to a credential that holds only the one thing it needs`.
 
 ### `mcp/tools-for-admin`
 
@@ -84,7 +84,7 @@ The server MUST NOT list at any MCP endpoint a tool that purges items, exports t
 
 **Reason:** each of these can lose what the owner keeps or lock the owner out, and the owner does them from the command line, not through an agent.
 
-**Tests:** `compliance/mcp.test.ts › lists every admin tool at /mcp/admin to a credential that holds every permission and reaches no type`, `› lists the six tools and every schema tool at /mcp/schema to a credential that may use each`.
+**Tests:** `compliance/mcp.test.ts › lists every admin tool at /mcp/admin to a credential that holds every permission and reaches no type`, `› lists the eight tools and every schema tool at /mcp/schema to a credential that may use each`.
 
 ### `mcp/open-world-hint`
 
@@ -110,7 +110,7 @@ When a tool call writes, the server MUST record on the write's audit entry the c
 
 **Reason:** a tool call reaches the API inside the server, so without this the entry would name the server's own address, or its proxy's, and could not be told from a write the credential made directly.
 
-**Tests:** `compliance/mcp-scripted.test.ts › records a tool call's write with the caller's address and marks it as made through MCP`.
+**Tests:** `compliance/mcp-scripted.test.ts › records a tool call's write with the caller's address and marks it as made through MCP`, `compliance/table-rows-mcp.test.ts › records a rows write made through MCP with the caller's key and address and via mcp`.
 
 ## Reading items
 

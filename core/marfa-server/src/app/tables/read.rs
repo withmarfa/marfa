@@ -17,6 +17,8 @@ use crate::app::refusal::{Refusal, Result};
 const FIRST_PAGE: i64 = 100;
 pub const MAX_PAGE: i64 = 1000;
 const ROWS_SCOPE: &str = "rows";
+/// A sort key longer than this many bytes rides in a cursor as a tag, and its row is read again.
+const KEY_BYTES: usize = 128;
 
 #[derive(Debug, Default)]
 pub struct Page {
@@ -356,7 +358,70 @@ fn scope(item: &str, table: &str, asked: &Page) -> String {
 fn opened(cursors: &Secret, scope: &str, cursor: &str) -> Result<Position> {
     let refused = || invalid("cursor", "The cursor does not belong to this listing.");
     let payload = cursors.open(scope, cursor).map_err(|_| refused())?;
-    Position::from_payload(&payload, 1).map_err(|_| refused())
+    Position::from_payload(&payload, 2).map_err(|_| refused())
+}
+
+fn tag_of(cursors: &Secret, scope: &str, key: &Bound) -> Result<String> {
+    let text = match key {
+        Bound::Null | Bound::Blob(_) => "n".to_string(),
+        Bound::Integer(number) => format!("i{number}"),
+        Bound::Real(number) => format!("r{}", number.to_bits()),
+        Bound::Text(text) => format!("t{text}"),
+    };
+    cursors.keyed(scope, &text)
+}
+
+/// A cursor holds the last row's id and its sort key, or for a long text key the key's tag.
+fn issued(cursors: &Secret, scope: &str, id: &str, key: &Bound) -> Result<String> {
+    let keys = match key {
+        Bound::Text(text) if text.len() > KEY_BYTES => {
+            vec![Bound::Null, Bound::Text(tag_of(cursors, scope, key)?)]
+        }
+        key => vec![key.clone(), Bound::Null],
+    };
+    let position = Position {
+        keys,
+        id: id.to_string(),
+    };
+    cursors.issue(scope, &position.payload())
+}
+
+/// A position that holds a tag takes its sort key from its row as it is now, if the row still has that key.
+fn resumed(
+    read: &Reader<'_, '_>,
+    table: Option<i64>,
+    key: &Key,
+    withholding: &Withholding,
+    scope: &str,
+    position: Position,
+) -> Result<Position> {
+    let Some(Bound::Text(tag)) = position.keys.get(1) else {
+        return Ok(position);
+    };
+    let moved = || {
+        invalid(
+            "cursor",
+            "The row this cursor follows has changed or been removed. List again from the start.",
+        )
+    };
+    let table = table.ok_or_else(moved)?;
+    let mut sql = Sql::new("SELECT ");
+    sql.append(&key.expression(withholding));
+    sql.push(" FROM table_rows r WHERE r.table_seq = ");
+    sql.bind(table);
+    sql.push(" AND r.id = ");
+    sql.bind(position.id.clone());
+    let current = store::single(read.tx, &sql)?
+        .into_iter()
+        .next()
+        .ok_or_else(moved)?;
+    if &tag_of(&read.cursors, scope, &current)? != tag {
+        return Err(moved());
+    }
+    Ok(Position {
+        keys: vec![current],
+        id: position.id,
+    })
 }
 
 fn answered_page(
@@ -382,6 +447,9 @@ fn answered_page(
         .transpose()?;
     let withholding = Withholding::of(read)?;
     let seq = store::table_seq(read.tx, host.seq, &table.name)?;
+    let position = position
+        .map(|at| resumed(read, seq, &key, &withholding, &scope, at))
+        .transpose()?;
     let mut sql =
         Sql::new("SELECT * FROM (SELECT r.id, r.updated_at, json(r.body), json(r.refs), ");
     sql.append(&key.expression(&withholding));
@@ -403,13 +471,7 @@ fn answered_page(
     let more = found.len() as i64 > limit;
     found.truncate(limit as usize);
     let next = match found.last().filter(|_| more) {
-        Some((row, key)) => {
-            let position = Position {
-                keys: vec![key.clone()],
-                id: row.id.clone(),
-            };
-            Value::String(read.cursors.issue(&scope, &position.payload())?)
-        }
+        Some((row, key)) => Value::String(issued(&read.cursors, &scope, &row.id, key)?),
         None => Value::Null,
     };
     let mut shown = Shown::of(read);
@@ -548,6 +610,65 @@ pub async fn totals(
 ) -> Result<String> {
     reading(app, caller, move |read| {
         answered_totals(read, &item_id, &table, filter.as_deref())
+    })
+    .await
+}
+
+const BATCHES_SCOPE: &str = "row-batches";
+
+fn answered_batches(
+    read: &Reader<'_, '_>,
+    item_id: &str,
+    table: &str,
+    limit: Option<i64>,
+    cursor: Option<&str>,
+) -> Result<String> {
+    let host = items::readable_host(read, item_id)?;
+    let table = table_of(&read.catalog, &host, table)?;
+    let limit = limit_of(limit)?;
+    let scope = json!([BATCHES_SCOPE, host.id, table.name]).to_string();
+    let before = cursor
+        .map(|cursor| {
+            read.cursors
+                .open_at(&scope, cursor)
+                .ok()
+                .and_then(|(seq, _)| seq.parse::<i64>().ok())
+                .ok_or_else(|| invalid("cursor", "The cursor does not belong to this listing."))
+        })
+        .transpose()?;
+    let found = match store::table_seq(read.tx, host.seq, &table.name)? {
+        Some(seq) => store::batches(read.tx, seq, before, limit + 1)?,
+        None => Vec::new(),
+    };
+    let more = found.len() as i64 > limit;
+    let shown = &found[..found.len().min(limit as usize)];
+    let next = match shown.last().filter(|_| more) {
+        Some(last) => Value::String(read.cursors.issue_at(
+            &scope,
+            &last.seq.to_string(),
+            &last.id,
+        )?),
+        None => Value::Null,
+    };
+    let data: Vec<Value> = shown
+        .iter()
+        .map(|batch| {
+            json!({ "id": batch.id, "at": batch.at, "rows": batch.rows, "undoes": batch.undoes })
+        })
+        .collect();
+    printed(&json!({ "data": data, "next_cursor": next }))
+}
+
+pub async fn batches(
+    app: &App,
+    caller: &Caller,
+    item_id: String,
+    table: String,
+    limit: Option<i64>,
+    cursor: Option<String>,
+) -> Result<String> {
+    reading(app, caller, move |read| {
+        answered_batches(read, &item_id, &table, limit, cursor.as_deref())
     })
     .await
 }

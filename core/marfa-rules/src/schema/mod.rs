@@ -35,7 +35,7 @@ pub use tables::{
     OWN_TABLE_TYPE, chain_tables, declared_tables, item_tables, judge_item_columns,
     keeps_own_table, normalize_table, validate_columns, with_set_stored, with_table_labels,
 };
-pub use type_def::{validate_restored_type, validate_type};
+pub use type_def::{declared_conflicts, validate_restored_type, validate_type};
 pub use unread::{unread_edge_keys, unread_keys};
 
 pub type Obj = Map<String, Value>;

@@ -67,6 +67,7 @@ function fixture() {
       lineFile("instance", readLineFile(base, "instance") ?? ""),
       lineFile("items", readLineFile(base, "items") ?? ""),
       lineFile("edges", JSON.stringify({ edge }) + "\n"),
+      lineFile("rows", ""),
       { name: `blobs/${hash}`, body: data },
     ]);
   };

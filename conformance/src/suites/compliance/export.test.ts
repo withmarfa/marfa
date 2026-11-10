@@ -590,13 +590,14 @@ describe("the archive's contents", () => {
 
     const archive = await archiveOf(source);
     const entries = listEntries(archive).map((e) => e.name);
-    expect(entries.slice(0, 4)).toEqual([
+    expect(entries.slice(0, 5)).toEqual([
       "manifest.json",
       "instance.ndjson.gz",
       "items.ndjson.gz",
       "edges.ndjson.gz",
+      "rows.ndjson.gz",
     ]);
-    expect(entries.slice(4)).toEqual([`blobs/${upload.data.hash}`]);
+    expect(entries.slice(5)).toEqual([`blobs/${upload.data.hash}`]);
 
     const manifest = JSON.parse(
       readEntry(archive, "manifest.json") ?? "{}",
@@ -607,6 +608,7 @@ describe("the archive's contents", () => {
       format: "marfa-archive-v0",
       item_count: 3,
       edge_count: 1,
+      row_count: 0,
       blob_count: 1,
       type_count: typeLines.filter((l) => "type" in l).length,
       edge_type_count: typeLines.filter((l) => "edge_type" in l).length,
@@ -704,10 +706,11 @@ describe("the archive's contents", () => {
         "instance.ndjson.gz",
         "items.ndjson.gz",
         "edges.ndjson.gz",
+        "rows.ndjson.gz",
       ]);
       const everything = [
         readEntry(archive.data, "manifest.json"),
-        ...(["instance", "items", "edges"] as const).map((name) =>
+        ...(["instance", "items", "edges", "rows"] as const).map((name) =>
           readLineFile(archive.data, name),
         ),
       ].join("\n");

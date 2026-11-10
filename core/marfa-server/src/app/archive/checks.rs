@@ -21,6 +21,7 @@ const STATES: [&str; 4] = ["active", "archived", "trashed", "revoked"];
 pub enum Kind {
     Item,
     Edge,
+    Row,
 }
 
 impl Kind {
@@ -28,6 +29,7 @@ impl Kind {
         match self {
             Kind::Item => "item",
             Kind::Edge => "edge",
+            Kind::Row => "row",
         }
     }
 }
@@ -217,6 +219,10 @@ pub fn item(catalog: &Catalog, cap: usize, line: &Value, row: usize) -> Result<(
         type_id: None,
         row,
     };
+    if !line.is_object() {
+        let message = format!("Line {row} of items.ndjson.gz must be an object.");
+        return Err(unnamed.refused(None, Refusal::validation(message)));
+    }
     let Some(item) = line.get("item").and_then(Value::as_object) else {
         return Err(unnamed.invalid("item", "an object"));
     };
@@ -237,7 +243,12 @@ pub fn item(catalog: &Catalog, cap: usize, line: &Value, row: usize) -> Result<(
     let Some(type_id) = type_id.filter(|type_id| is_type_id(type_id)) else {
         return Err(at.invalid("type", "a type identifier"));
     };
-    for field in ["created_at", "updated_at", "occurred_at"] {
+    for field in [
+        "created_at",
+        "updated_at",
+        "occurred_at",
+        "last_activity_at",
+    ] {
         if item.get(field).is_some_and(|value| !is_instant(value)) {
             return Err(at.invalid(field, "an instant"));
         }
@@ -418,6 +429,97 @@ fn history(
     Ok(())
 }
 
+/// A row line's place in the order `rows.ndjson.gz` holds: its item, its table and its id.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RowKey {
+    pub item_id: String,
+    pub table: String,
+    pub id: String,
+}
+
+fn is_id(text: &str) -> bool {
+    marfa_rules::validation::id("id", text).is_ok()
+}
+
+/// Judges a `rows.ndjson.gz` line as a restore would, and answers its place in the file.
+pub fn row(line: &Value, row: usize) -> Result<RowKey, Box<Refused>> {
+    let unnamed = At {
+        kind: Kind::Row,
+        id: None,
+        type_id: None,
+        row,
+    };
+    let Some(object) = line.as_object() else {
+        let message = format!("Line {row} of rows.ndjson.gz must be an object.");
+        return Err(unnamed.refused(None, Refusal::validation(message)));
+    };
+    let id = text(object, "id");
+    let at = At {
+        kind: Kind::Row,
+        id,
+        type_id: None,
+        row,
+    };
+    let refused = |field: &str, expected: &str| {
+        let mut refused = at.invalid(field, expected);
+        refused.refusal = refused
+            .refusal
+            .with_detail("item_id", text(object, "item_id").map(str::to_string));
+        refused
+    };
+    let Some(item_id) = text(object, "item_id").filter(|held| is_id(held)) else {
+        return Err(refused("item_id", "an item ID"));
+    };
+    let Some(table) = text(object, "table").filter(|held| marfa_rules::catalog::api_name(held))
+    else {
+        return Err(refused("table", "a table name"));
+    };
+    let Some(id) = id.filter(|held| is_id(held)) else {
+        return Err(refused("id", "a UUIDv7 in lowercase"));
+    };
+    let Some(values) = object.get("values").and_then(Value::as_object) else {
+        return Err(refused("values", "an object"));
+    };
+    if !object.get("updated_at").is_some_and(is_instant) {
+        return Err(refused("updated_at", "an instant"));
+    }
+    if let Some(refs) = object.get("refs") {
+        let Some(columns) = refs.as_array() else {
+            return Err(refused("refs", "an array of columns"));
+        };
+        let mut seen = std::collections::HashSet::new();
+        for column in columns {
+            let named = column.as_str().filter(|column| seen.insert(*column));
+            if !named.is_some_and(|column| {
+                values
+                    .get(column)
+                    .and_then(Value::as_str)
+                    .is_some_and(is_id)
+            }) {
+                return Err(refused(
+                    "refs",
+                    "an array of distinct columns that each hold an item ID",
+                ));
+            }
+        }
+    }
+    let bytes = serde_json::to_string(values).map_or(usize::MAX, |text| text.len());
+    if bytes > crate::app::tables::MAX_ROW_BYTES {
+        return Err(refused(
+            "values",
+            &format!(
+                "at most {} bytes as JSON, and holds {bytes}",
+                crate::app::tables::MAX_ROW_BYTES
+            ),
+        ));
+    }
+    Ok(RowKey {
+        item_id: item_id.to_string(),
+        table: table.to_string(),
+        id: id.to_string(),
+    })
+}
+
 /// An edge's end, as a restore finds it once the archive's items are written.
 pub struct End<'a> {
     pub type_id: &'a str,
@@ -567,6 +669,25 @@ mod tests {
             writer_fault(&json!({ "kind": "key", "id": "k", "name": " x" })),
             Some("name")
         );
+    }
+
+    #[test]
+    fn a_line_that_is_no_object_is_refused_by_its_line_alone() {
+        let catalog = Catalog::shipped();
+        for value in [Value::Null, json!(5), json!("text"), json!([{}])] {
+            for refused in [
+                item(&catalog, CAP, &value, 4).unwrap_err(),
+                row(&value, 4).unwrap_err(),
+            ] {
+                let details = refused.refusal.details.as_ref().unwrap();
+                assert_eq!(refused.refusal.code, Code::ValidationError);
+                assert_eq!(details["line"], 4);
+                assert!(!details.contains_key("field"));
+                assert!(refused.field.is_none());
+            }
+            let skipped = edge(&catalog, CAP, &value, 4, |_| None).unwrap_err();
+            assert_eq!(skipped.skip.as_deref(), Some("malformed"));
+        }
     }
 
     #[test]

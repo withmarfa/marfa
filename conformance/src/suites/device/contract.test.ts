@@ -1043,6 +1043,8 @@ const invocations: Record<string, () => string[]> = {
   "rows get": () => [ID, "lines", ID],
   "rows write": () => ["--body", '{"operations":[]}', ID, "lines"],
   "rows totals": () => [ID, "lines"],
+  "rows batches": () => [ID, "lines"],
+  "rows undo": () => [ID, "lines", ID],
   "types replace": () => ["--body", '{"id":"user.t"}', "user.t"],
   "types delete": () => ["user.t"],
   "types move": () => ["user.t", "user.u"],

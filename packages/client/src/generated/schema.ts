@@ -712,6 +712,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/items/{id}/tables/{table}/batches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List table batches
+         * @description Returns the batches the table's change log holds, newest first, so you can find one to undo. The log keeps a batch for `row_log_retention_days`.
+         */
+        get: operations["listTableBatches"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/items/{id}/tables/{table}/batches/{batch}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo a table batch
+         * @description Puts back every row a batch changed as it was before the batch, as a new batch, all or none. Undo an undo to redo it. Sends one `rows.changed` event that names the undone batch in `undoes`.
+         */
+        post: operations["undoTableBatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/edges": {
         parameters: {
             query?: never;
@@ -5881,6 +5921,8 @@ export interface components {
             event_log_retention_hours?: number;
             /** @description Days an item stays in the trash before Marfa purges it. `0` keeps them with no age limit. Absent: the server's default applies. */
             trash_retention_days?: number;
+            /** @description Days a table keeps a batch in its change log, so you can undo it. `0` keeps them with no age limit. Absent: the server's default applies. */
+            row_log_retention_days?: number;
             /** @description Days Marfa keeps inbound webhook deliveries a connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies. */
             inbound_handled_retention_days?: number;
             /** @description Days Marfa keeps inbound webhook deliveries no connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies. */
@@ -7022,6 +7064,8 @@ export interface components {
             table: string;
             /** @description The ID of the batch. */
             batch: string;
+            /** @description Present when the batch is an undo: the ID of the batch it undid. */
+            undoes?: string;
             /** @description The item's `last_activity_at` after the batch, in UTC. */
             last_activity_at: string;
             /**
@@ -7107,6 +7151,92 @@ export interface components {
             delivery_id: string;
             /** @description When Marfa sent this attempt, in UTC. */
             delivered_at: string;
+        };
+        /** @description An error response. */
+        BatchNotFoundOrItemNotFoundOrTableNotFoundRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "batch_not_found" | "item_not_found" | "table_not_found";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description An error response. */
+        UndoConflictRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "undo_conflict";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description A batch a table's change log holds. */
+        RowBatchEntry: {
+            /**
+             * @description The ID of the batch.
+             * @example 019a5b1e-8b22-7c4d-9e5f-6a7b8c9d0e1f
+             */
+            id: string;
+            /**
+             * @description When the batch was made, in UTC.
+             * @example 2026-10-03T09:30:00.000Z
+             */
+            at: string;
+            /** @description How many rows the batch changed. */
+            rows: number;
+            /** @description The ID of the batch this one undid, or `null` when it's not an undo. */
+            undoes: string | null;
+        };
+        /** @description The batches a table's change log holds, newest first. */
+        RowBatchPage: {
+            /** @description Each batch, newest first. */
+            data: components["schemas"]["RowBatchEntry"][];
+            /** @description Pass this as `cursor` to get the next page. `null` when there are no more. */
+            next_cursor: string | null;
+        };
+        /** @description What an undo did. */
+        RowUndoResult: {
+            /**
+             * @description The ID of the undo's own batch, or `null` when every row already stood as it was before the undone batch. Undo this batch to redo the one it undid.
+             * @example 019a5b1e-9c33-7e5f-8a6b-7c8d9e0f1a2b
+             */
+            batch: string | null;
+            /**
+             * @description The ID of the batch you undid.
+             * @example 019a5b1e-8b22-7c4d-9e5f-6a7b8c9d0e1f
+             */
+            undoes: string;
+            /**
+             * @description The item's `last_activity_at` after the undo, in UTC.
+             * @example 2026-10-03T09:31:00.000Z
+             */
+            last_activity_at: string;
+            /** @description One entry per row the undone batch changed, by ID. */
+            results: {
+                /** @description The ID of the row. */
+                id: string;
+                /**
+                 * @description `created` when the undo put back a row the batch deleted, `replaced` when it put back values the batch changed, `deleted` when it removed a row the batch created, and `unchanged` when the row already stood as it was before the batch.
+                 * @enum {string}
+                 */
+                outcome: "created" | "replaced" | "deleted" | "unchanged";
+            }[];
         };
     };
     responses: never;
@@ -13818,6 +13948,313 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+        };
+    };
+    listTableBatches: {
+        parameters: {
+            query?: {
+                /** @description The maximum number of results to return. */
+                limit?: number;
+                /** @description The `next_cursor` from the previous page. Leave it out to get the first page. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description The ID of the item. */
+                id: string;
+                /** @description The name of the table. */
+                table: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Returns a page of batches, newest first. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "id": "019a5b1e-9c33-7e5f-8a6b-7c8d9e0f1a2b",
+                     *           "at": "2026-10-03T09:31:00.000Z",
+                     *           "rows": 2,
+                     *           "undoes": "019a5b1e-8b22-7c4d-9e5f-6a7b8c9d0e1f"
+                     *         },
+                     *         {
+                     *           "id": "019a5b1e-8b22-7c4d-9e5f-6a7b8c9d0e1f",
+                     *           "at": "2026-10-03T09:30:00.000Z",
+                     *           "rows": 2,
+                     *           "undoes": null
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
+                    "application/json": components["schemas"]["RowBatchPage"];
+                };
+            };
+            /**
+             * @description - `invalid_id`: the ID is not a valid item ID.
+             *     - `validation_error`: a query parameter is unknown, `limit` is out of range, or `cursor` isn't from this listing.
+             */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description - `type_not_permitted`: your credential reaches no type. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
+                };
+            };
+            /**
+             * @description - `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read.
+             *     - `table_not_found`: the item's type declares no table of this name.
+             */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemNotFoundOrTableNotFoundRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+        };
+    };
+    undoTableBatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The ID of the item. */
+                id: string;
+                /** @description The name of the table. */
+                table: string;
+                /** @description The ID of the batch. */
+                batch: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Returns the undo's batch ID and what it did to each row. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "batch": "019a5b1e-9c33-7e5f-8a6b-7c8d9e0f1a2b",
+                     *       "undoes": "019a5b1e-8b22-7c4d-9e5f-6a7b8c9d0e1f",
+                     *       "last_activity_at": "2026-10-03T09:31:00.000Z",
+                     *       "results": [
+                     *         {
+                     *           "id": "019a5b1e-7c41-7d2e-9f3a-5b8c2d4e6f70",
+                     *           "outcome": "replaced"
+                     *         },
+                     *         {
+                     *           "id": "019a5b1e-7c41-7d2e-9f3a-5b8c2d4e6f72",
+                     *           "outcome": "deleted"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["RowUndoResult"];
+                };
+            };
+            /**
+             * @description - `invalid_id`: the ID is not a valid item ID.
+             *     - `validation_error`: a query parameter is unknown.
+             */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /**
+             * @description - `type_not_permitted`: you can't write the item's type, or your credential reaches no type.
+             *     - `forbidden`: a row the batch changed, other than one it created, names an item you can't read in a column, now, before the batch or after it. `details.row` names the row and `details.column` the column.
+             */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForbiddenOrTypeNotPermittedRefusal"];
+                };
+            };
+            /**
+             * @description - `item_not_found`: no item has this ID, the item is in the trash (`details.trashed` is `true` if you can read its type), or its type is one you can't read.
+             *     - `batch_not_found`: the table's change log holds no batch with this ID. It may be older than `row_log_retention_days`.
+             *     - `table_not_found`: the item's type declares no table of this name.
+             */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchNotFoundOrItemNotFoundOrTableNotFoundRefusal"];
+                };
+            };
+            /** @description `undo_conflict`: a later batch changed rows the undo would put back. `details.rows` names them. Undo the later batches first, newest first. */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UndoConflictRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
                 };
             };
         };
@@ -27871,6 +28308,8 @@ export interface operations {
                     event_log_retention_hours?: number;
                     /** @description Days an item stays in the trash before Marfa purges it. `0` keeps them with no age limit. Absent: the server's default applies. */
                     trash_retention_days?: number;
+                    /** @description Days a table keeps a batch in its change log, so you can undo it. `0` keeps them with no age limit. Absent: the server's default applies. */
+                    row_log_retention_days?: number;
                     /** @description Days Marfa keeps inbound webhook deliveries a connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies. */
                     inbound_handled_retention_days?: number;
                     /** @description Days Marfa keeps inbound webhook deliveries no connector has marked handled. `0` keeps them with no age limit. Absent: the server's default applies. */
@@ -28060,6 +28499,8 @@ export interface operations {
                     event_log_retention_hours?: number | null;
                     /** @description Days an item stays in the trash before Marfa purges it. `0` keeps them with no age limit. `null` removes it, so the server's default applies. */
                     trash_retention_days?: number | null;
+                    /** @description Days a table keeps a batch in its change log, so you can undo it. `0` keeps them with no age limit. `null` removes it, so the server's default applies. */
+                    row_log_retention_days?: number | null;
                     /** @description Days Marfa keeps inbound webhook deliveries a connector has marked handled. `0` keeps them with no age limit. `null` removes it, so the server's default applies. */
                     inbound_handled_retention_days?: number | null;
                     /** @description Days Marfa keeps inbound webhook deliveries no connector has marked handled. `0` keeps them with no age limit. `null` removes it, so the server's default applies. */
@@ -29248,7 +29689,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        /** @description The archive file, as `GET /export?format=archive` returned it, with its `manifest.json`, `instance.ndjson.gz`, `items.ndjson.gz` and `edges.ndjson.gz`. Only the build that wrote an archive is sure to read it. */
+        /** @description The archive file, as `GET /export?format=archive` returned it, with its `manifest.json`, `instance.ndjson.gz`, `items.ndjson.gz`, `edges.ndjson.gz` and `rows.ndjson.gz`. Only the build that wrote an archive is sure to read it. */
         requestBody: {
             content: {
                 "application/x-tar": Blob | ArrayBuffer | ArrayBufferView | ReadableStream<Uint8Array>;
@@ -29316,6 +29757,10 @@ export interface operations {
                         connector_agreements_added: number;
                         /** @description How many connector agreements Marfa skipped because the instance holds no such item or already holds an agreement for it. */
                         connector_agreements_skipped: number;
+                        /** @description How many table rows Marfa wrote. */
+                        rows_imported: number;
+                        /** @description How many table rows Marfa skipped because their item was counted as a duplicate. */
+                        rows_skipped: number;
                         /** @description A sentence saying that an archive holds no sign-in, keys, apps or webhooks, so you set them up again on this instance. */
                         set_up_again: string;
                     };
@@ -29787,6 +30232,10 @@ export interface operations {
                         connector_agreements_added: number;
                         /** @description How many connector agreements Marfa skipped because the instance holds no such item or already holds an agreement for it. */
                         connector_agreements_skipped: number;
+                        /** @description How many table rows Marfa wrote. */
+                        rows_imported: number;
+                        /** @description How many table rows Marfa skipped because their item was counted as a duplicate. */
+                        rows_skipped: number;
                         /** @description A sentence saying that an archive holds no sign-in, keys, apps or webhooks, so you set them up again on this instance. */
                         set_up_again: string;
                         /** @description The backup Marfa restored. */
