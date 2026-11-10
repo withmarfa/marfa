@@ -187,7 +187,6 @@ fn cut_fields(items: &[Value], limit: usize) -> (Vec<Value>, Vec<Value>) {
     (fitted, cut)
 }
 
-/// An item with each listed table's column names left out.
 fn without_columns(item: &Value) -> Value {
     let mut item = item.clone();
     if let Some(Value::Array(tables)) = item.get_mut("tables") {
@@ -200,7 +199,6 @@ fn without_columns(item: &Value) -> Value {
     item
 }
 
-/// Cuts fields, then leaves out the tables' column names, then omits trailing items until the answer fits.
 fn fit_to_budget(items: Vec<Value>, not_found: &[String], budget: usize) -> Value {
     let fits = |answer: &Value| json_length(answer) <= budget;
     let mut answer = answer_of(&items, not_found, &NOTHING_LEFT);
@@ -355,7 +353,6 @@ async fn field_part(
     }))
 }
 
-/// Lists each item's tables, by name, with their column names and row counts and none of the rows.
 async fn list_tables(app: &Arc<App>, caller: &Caller, shown: &mut [Value]) -> Result<(), Stop> {
     let mut declared: HashMap<String, Map<String, Value>> = HashMap::new();
     for item in shown.iter_mut() {

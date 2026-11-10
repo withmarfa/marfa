@@ -41,7 +41,7 @@ pub fn read_definition() -> Definition {
                 "cursor": { "type": "string", "minLength": 1,
                     "description": "next_cursor from the previous answer, for the next page." },
                 "filter": { "type": "string", "minLength": 1,
-                    "description": "Which rows, such as`values.amount gt 10`, `values.memo contains \"tea\" AND values.amount lte 50`, `values.memo exists` or `id eq \"<row id>\"`. A column is `values.<column>`; `id` and `updated_at` are the row's own." },
+                    "description": "Which rows, such as `values.amount gt 10`, `values.memo contains \"tea\" AND values.amount lte 50`, `values.memo exists` or `id eq \"<row id>\"`. A column is `values.<column>`; `id` and `updated_at` are the row's own." },
                 "sort": { "type": "string", "minLength": 1,
                     "description": "`id`, `updated_at` or `values.<column>`. `id` when left out." },
                 "direction": { "type": "string", "enum": ["asc", "desc"] },
@@ -220,7 +220,6 @@ fn answer_of(
     Value::Object(answer)
 }
 
-/// Cuts the longest text values of one row until the answer fits.
 fn cut_row(asked: &Asked, row: &Value, next: Option<&str>, totals: Option<&Value>) -> Value {
     let uncut = answer_of(
         asked,
