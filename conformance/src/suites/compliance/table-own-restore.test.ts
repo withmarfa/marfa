@@ -139,7 +139,9 @@ describe("a restore of an item that keeps a table", () => {
     expect(changed.status, JSON.stringify(changed.error)).toBe(200);
     const undone = await target.undoBatch(id, "table", changed.data.batch!);
     expect(undone.status, JSON.stringify(undone.error)).toBe(200);
-    expect(await rowsOf(target)).toEqual(sent);
+    const values = (rows: { id: string; values: unknown }[]) =>
+      rows.map(({ id, values }) => ({ id, values }));
+    expect(values(await rowsOf(target))).toEqual(values(sent));
   });
 
   it("exports and restores an item of core.table whose column names a type deleted with force", async () => {

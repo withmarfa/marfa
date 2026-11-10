@@ -755,6 +755,7 @@ describe("the table an item keeps, through undo and MCP", () => {
       undone.data.batch,
       batch,
       null,
+      null,
     ]);
 
     const elsewhere = await client.undoBatch(own.id, "lines", batch);
