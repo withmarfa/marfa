@@ -193,6 +193,11 @@ fn item_doors(app: Arc<App>) -> Routes {
         )
         .route("/items/{id}/tables/{table}/rows/{row}", get(tables::row))
         .route("/items/{id}/tables/{table}/totals", get(tables::totals))
+        .route("/items/{id}/tables/{table}/batches", get(tables::batches))
+        .route(
+            "/items/{id}/tables/{table}/batches/{batch}/undo",
+            post(tables::undo),
+        )
         .route("/items/{id}/edges", get(edges::outbound))
         .route("/items/{id}/backrefs", get(edges::backrefs))
         .route(

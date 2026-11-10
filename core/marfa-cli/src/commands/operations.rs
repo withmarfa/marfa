@@ -56,6 +56,8 @@ pub const OPERATIONS: &[Operation] = &[
     reached("getTableRow", "rows get"),
     reached("writeTableRows", "rows write"),
     reached("getTableTotals", "rows totals"),
+    reached("listTableBatches", "rows batches"),
+    reached("undoTableBatch", "rows undo"),
     reached("listItemEdges", "items edges"),
     reached("listItemBackrefs", "items backrefs"),
     reached("listEdges", "edges list"),

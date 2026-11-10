@@ -64,6 +64,7 @@ codes! {
     TypeNotPermitted = "type_not_permitted", 403;
     ApiKeyNotFound = "api_key_not_found", 404;
     BackupNotFound = "backup_not_found", 404;
+    BatchNotFound = "batch_not_found", 404;
     BlobCopyNotFound = "blob_copy_not_found", 404;
     BlobNotFound = "blob_not_found", 404;
     BulkJobNotFound = "bulk_job_not_found", 404;
@@ -110,6 +111,7 @@ codes! {
     TypeInUse = "type_in_use", 409;
     TypeMismatch = "type_mismatch", 409;
     TypeMoveBlocked = "type_move_blocked", 409;
+    UndoConflict = "undo_conflict", 409;
     VersionConflict = "version_conflict", 409;
     RequestTooLarge = "request_too_large", 413;
     RangeNotSatisfiable = "range_not_satisfiable", 416;
