@@ -7,7 +7,7 @@ use rusqlite::types::Value as Bound;
 use serde_json::{Map, Value, json};
 
 use super::store::{self, Held};
-use super::{Sight, Table, not_found_row, table_of, tables_of};
+use super::{Sight, Table, not_found_row, table_of, tables_of_host};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::items::{self, Reader, reading};
@@ -158,7 +158,7 @@ pub async fn list(app: &App, caller: &Caller, item_id: String) -> Result<String>
     reading(app, caller, move |read| {
         let host = items::readable_host(read, &item_id)?;
         let held = store::summaries(read.tx, host.seq)?;
-        let data: Vec<Value> = tables_of(&read.catalog, &host.type_id)
+        let data: Vec<Value> = tables_of_host(&read.catalog, &host)?
             .into_iter()
             .map(
                 |table| match held.iter().find(|summary| summary.table == table.name) {
@@ -366,7 +366,7 @@ fn answered_page(
     asked: &Page,
 ) -> Result<String> {
     let host = items::readable_host(read, item_id)?;
-    let table = table_of(&read.catalog, &host.type_id, table)?;
+    let table = table_of(&read.catalog, &host, table)?;
     let limit = limit_of(asked.limit)?;
     let filter = asked
         .filter
@@ -442,7 +442,7 @@ pub async fn get(
 ) -> Result<String> {
     reading(app, caller, move |read| {
         let host = items::readable_host(read, &item_id)?;
-        let table = table_of(&read.catalog, &host.type_id, &table)?;
+        let table = table_of(&read.catalog, &host, &table)?;
         let seq = store::table_seq(read.tx, host.seq, &table.name)?;
         let held = store::row(read.tx, seq, &row_id)?.ok_or_else(not_found_row)?;
         printed(&Shown::of(read).row(held)?)
@@ -505,7 +505,7 @@ fn answered_totals(
     filter: Option<&str>,
 ) -> Result<String> {
     let host = items::readable_host(read, item_id)?;
-    let table = table_of(&read.catalog, &host.type_id, table)?;
+    let table = table_of(&read.catalog, &host, table)?;
     let filter = filter.map(|text| expression(text, &table)).transpose()?;
     let withholding = Withholding::of(read)?;
     let seq = store::table_seq(read.tx, host.seq, &table.name)?;

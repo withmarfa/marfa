@@ -406,7 +406,7 @@ pub async fn delete(app: &App, caller: &Caller, id: String, force: bool) -> Resu
         let held = items::count_of_type(unit.tx(), &id)?;
         let settings = super::moving::naming(unit.tx(), caller, &id)?;
         let named = settings.as_array().is_some_and(|named| !named.is_empty());
-        let columns = crate::app::tables::constraining_columns(&catalog, &id);
+        let columns = crate::app::tables::constraining_columns(unit.tx(), &catalog, caller, &id)?;
         if (held > 0 || named || !columns.is_empty()) && !force {
             return Err(Refusal::new(
                 Code::TypeInUse,

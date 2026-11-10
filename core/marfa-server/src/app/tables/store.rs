@@ -225,6 +225,29 @@ pub(super) fn column_held(
     )?)
 }
 
+/// The items of `types` whose own columns name `type_id` in `type_constraints`, as item, type and column.
+pub(super) fn own_columns_naming(
+    tx: &Transaction<'_>,
+    types: &[&str],
+    type_id: &str,
+) -> Result<Vec<(String, String, String)>> {
+    if types.is_empty() {
+        return Ok(Vec::new());
+    }
+    let marks = vec!["?"; types.len()].join(", ");
+    let sql = format!(
+        "SELECT i.id, i.type, c.key FROM items i, json_each(i.properties, '$.columns') c, \
+         json_each(c.value, '$.type_constraints') t \
+         WHERE i.type IN ({marks}) AND t.value = ?"
+    );
+    let mut statement = tx.prepare(&sql)?;
+    let bound = types.iter().copied().chain([type_id]);
+    let found = statement.query_map(rusqlite::params_from_iter(bound), |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+    })?;
+    Ok(found.collect::<rusqlite::Result<_>>()?)
+}
+
 /// Forgets a purged item's summaries and leaves its rows for `table-row-cleanup`.
 pub(super) fn doom(tx: &Transaction<'_>, seq: i64) -> Result<bool> {
     let held = tx

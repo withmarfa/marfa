@@ -3,7 +3,7 @@
 use serde_json::{Map, Value, json};
 
 use super::field::{label_issue, normalize_field, validate_member, vocabulary};
-use super::resolve::label_member;
+use super::resolve::{chain, label_member};
 use super::unread::{unread_column_keys, unread_table_keys};
 use super::{Issue, Obj, Registry, as_obj, describe, kind, names, text};
 use crate::catalog::api_name;
@@ -269,6 +269,7 @@ pub(super) fn judge_tables(
         definition.get("tables"),
         &inherited,
         &descendants,
+        keeps_own_table(definition, registry),
         type_known,
         &mut errors,
     );
@@ -326,10 +327,20 @@ pub fn declared_tables(
     }
 }
 
+/// Whether items of the type declare their own table: it is [`OWN_TABLE_TYPE`] or descends from it.
+fn keeps_own_table(definition: &Obj, registry: &Registry) -> bool {
+    text(definition, "id") == Some(OWN_TABLE_TYPE)
+        || text(definition, "parent")
+            .filter(|parent| !parent.is_empty())
+            .and_then(|parent| chain(registry, parent).ok())
+            .is_some_and(|chain| chain.iter().any(|row| text(row, "id") == Some(OWN_TABLE_TYPE)))
+}
+
 fn validate_tables(
     raw: Option<&Value>,
     inherited: &[(String, String, Obj)],
     descendants: &[&Obj],
+    own_table: bool,
     type_known: &dyn Fn(&str) -> bool,
     errors: &mut Vec<Issue>,
 ) {
@@ -355,6 +366,14 @@ fn validate_tables(
     for (name, definition) in tables {
         let path = format!("tables.{name}");
         errors.extend(name_issue(&path, name, "table"));
+        if own_table && name == OWN_TABLE {
+            errors.push(Issue::new(
+                path.clone(),
+                format!("a table named other than \"{OWN_TABLE}\""),
+                format!("a table named \"{OWN_TABLE}\""),
+                format!("An item of \"{OWN_TABLE_TYPE}\" keeps its own table under that name. Name this one differently."),
+            ));
+        }
         let Some(table) = definition.as_object() else {
             errors.push(Issue::new(
                 path.clone(),

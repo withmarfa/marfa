@@ -7,6 +7,7 @@ mod store;
 
 use std::collections::HashMap;
 
+use marfa_rules::schema::{OWN_COLUMNS, OWN_TABLE, normalize_table, with_table_labels};
 use marfa_rules::validation;
 use rusqlite::Transaction;
 use serde_json::{Map, Value, json};
@@ -171,7 +172,7 @@ pub(crate) fn not_found_row() -> Refusal {
     Refusal::new(Code::RowNotFound, "The table holds no row with this id.")
 }
 
-/// A table as the item's type declares it, inherited or its own, with its label and defaults.
+/// A table of an item, with its label: one its type declares, inherited or its own, or the item's own.
 pub(crate) struct Table {
     pub name: String,
     pub label: String,
@@ -211,8 +212,46 @@ pub(crate) fn tables_of(catalog: &Catalog, type_id: &str) -> Vec<Table> {
     found
 }
 
-pub(crate) fn table_of(catalog: &Catalog, type_id: &str, name: &str) -> Result<Table> {
-    tables_of(catalog, type_id)
+/// The table an item of `core.table` keeps, whose columns are its `columns` property.
+fn own_table(host: &Host) -> Result<Table> {
+    let unread = || Refusal::internal("a stored item's columns do not read");
+    let properties: Value = serde_json::from_str(&host.properties).map_err(|_| unread())?;
+    let Some(columns) = properties.get(OWN_COLUMNS) else {
+        return Err(unread());
+    };
+    let mut raw = Map::new();
+    raw.insert(OWN_COLUMNS.into(), columns.clone());
+    let mut stored = Map::new();
+    stored.insert(OWN_TABLE.into(), Value::Object(normalize_table(&raw)));
+    let labelled = with_table_labels(&stored);
+    let table = labelled.get(OWN_TABLE).ok_or_else(unread)?;
+    Ok(Table {
+        name: OWN_TABLE.to_string(),
+        label: table
+            .get("label")
+            .and_then(Value::as_str)
+            .ok_or_else(unread)?
+            .to_string(),
+        columns: table
+            .get(OWN_COLUMNS)
+            .and_then(Value::as_object)
+            .ok_or_else(unread)?
+            .clone(),
+    })
+}
+
+/// The tables of an item: those its type declares, and its own where it keeps one.
+pub(crate) fn tables_of_host(catalog: &Catalog, host: &Host) -> Result<Vec<Table>> {
+    let mut found = tables_of(catalog, &host.type_id);
+    if catalog.rules.keeps_own_table(&host.type_id) {
+        found.push(own_table(host)?);
+        found.sort_by(|a, b| a.name.cmp(&b.name));
+    }
+    Ok(found)
+}
+
+pub(crate) fn table_of(catalog: &Catalog, host: &Host, name: &str) -> Result<Table> {
+    tables_of_host(catalog, host)?
         .into_iter()
         .find(|table| table.name == name)
         .ok_or_else(|| not_found_table(name))
@@ -589,7 +628,7 @@ pub async fn write(
     app.write(caller, "rows.write", move |unit| {
         let catalog = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
         let host = items::writable_host(unit, &catalog, &item_id)?;
-        let table = table_of(&catalog, &host.type_id, &table)?;
+        let table = table_of(&catalog, &host, &table)?;
         let mut batch = Batch {
             unit,
             catalog: &catalog,

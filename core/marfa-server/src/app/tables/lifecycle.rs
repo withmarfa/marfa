@@ -3,12 +3,14 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use marfa_rules::schema::OWN_TABLE;
 use rusqlite::Transaction;
 use serde_json::{Value, json};
 
 use super::store;
 use super::tables_of;
 use crate::app::App;
+use crate::app::access::Caller;
 use crate::app::catalog::Catalog;
 use crate::app::housekeeping::{self, Report, Run};
 use crate::app::refusal::{Code, Refusal, Result};
@@ -59,10 +61,13 @@ fn blocked(tables: Vec<String>) -> Refusal {
 }
 
 fn undeclared(catalog: &Catalog, to: &str, held: Vec<String>) -> Vec<String> {
-    let declared: Vec<String> = tables_of(catalog, to)
+    let mut declared: Vec<String> = tables_of(catalog, to)
         .into_iter()
         .map(|table| table.name)
         .collect();
+    if catalog.rules.keeps_own_table(to) {
+        declared.push(OWN_TABLE.to_string());
+    }
     held.into_iter()
         .filter(|name| !declared.contains(name))
         .collect()
@@ -143,8 +148,14 @@ fn after_tables(
         .unwrap_or_default()
 }
 
-/// Names referring columns as `<type>.<table>.<column>`.
-pub fn constraining_columns(catalog: &Catalog, type_id: &str) -> Vec<String> {
+/// Names referring columns as `<type>.<table>.<column>`, and those an item of `core.table` declares as
+/// `<item>.table.<column>`, or `<type>.table.<column>` where the caller may not read the item's type.
+pub fn constraining_columns(
+    tx: &Transaction<'_>,
+    catalog: &Catalog,
+    caller: &Caller,
+    type_id: &str,
+) -> Result<Vec<String>> {
     let mut found = Vec::new();
     for (owner, definition) in catalog.types.rows() {
         if owner == type_id {
@@ -170,6 +181,20 @@ pub fn constraining_columns(catalog: &Catalog, type_id: &str) -> Vec<String> {
             }
         }
     }
+    let keepers: Vec<&str> = catalog
+        .types
+        .ids()
+        .into_iter()
+        .filter(|id| catalog.rules.keeps_own_table(id))
+        .collect();
+    for (id, item_type, column) in store::own_columns_naming(tx, &keepers, type_id)? {
+        let holder = if caller.may_read_type(&item_type) {
+            id
+        } else {
+            item_type
+        };
+        found.push(format!("{holder}.{OWN_TABLE}.{column}"));
+    }
     found.sort();
-    found
+    Ok(found)
 }

@@ -590,9 +590,9 @@ When a batch changes no row, the server MUST answer `batch` `null`.
 
 ### `tables/table-not-found`
 
-If a door under `/items/{id}/tables/{table}` names a table the item's type does not declare, then the server MUST answer `404 table_not_found`.
+If a door under `/items/{id}/tables/{table}` names a table that the item's type does not declare and the item does not keep under `tables/own-table-listed`, then the server MUST answer `404 table_not_found`.
 
-**Tests:** `compliance/table-rows.test.ts › answers table_not_found for a table the type does not declare`.
+**Tests:** `compliance/table-rows.test.ts › answers table_not_found for a table the type does not declare`, `compliance/table-rows-own.test.ts › answers table_not_found for a table other than the one the item keeps`.
 
 ## Who may read and write rows
 
@@ -840,11 +840,11 @@ When the server purges an item, the server MUST remove its rows through the `tab
 
 ### `tables/move-refused`
 
-If `POST /types/{id}/move` or a retype of an item would leave an item in a type that does not declare a table the item holds rows in, then the server MUST answer `409 type_move_blocked` naming those tables in `details.tables`.
+If `POST /types/{id}/move` or a retype of an item would leave an item in a type that neither declares nor keeps under `tables/own-table-listed` a table the item holds rows in, then the server MUST answer `409 type_move_blocked` naming those tables in `details.tables`.
 
 **Reason:** a move never drops what a person made.
 
-**Tests:** `compliance/table-rows-lifecycle.test.ts › refuses a type move and a retype whose target does not declare the tables an item holds`.
+**Tests:** `compliance/table-rows-lifecycle.test.ts › refuses a type move and a retype whose target does not declare the tables an item holds`, `compliance/table-rows-own.test.ts › refuses a retype of an item holding rows to a type that keeps no table, and takes one to a type that does`.
 
 ### `tables/change-in-use`
 
@@ -879,3 +879,77 @@ If the server refuses a `marfa_save_type` call under `tables/save-type-change-in
 If `DELETE /types/{id}` without `force=true` names a type that a column's `type_constraints` names, then the server MUST answer `409 type_in_use` naming each such column in `details.columns`, as `<type>.<table>.<column>`.
 
 **Tests:** `compliance/table-rows-lifecycle.test.ts › refuses to delete a type a column constrains to unless forced`.
+
+## Rows of a table a person keeps
+
+An item of `core.table`, or of a type below it, keeps one table of its own, named `table`, whose columns are the item's `columns` property. Every row door under `/items/{id}/tables/table` works for it as for a table a type declares, with those columns.
+
+### `tables/own-table-listed`
+
+When a caller that may read an item of `core.table`, or of a type below it, sends `GET /items/{id}/tables`, the server MUST answer in `data` a table named `table`, labelled `Table`, with its `row_count`, `bytes`, `last_batch` and `changed_at`.
+
+**Tests:** `compliance/table-rows-own.test.ts › lists the table an item keeps, with what it holds`.
+
+### `tables/own-rows-write`
+
+When a caller that may write an item of `core.table`, or of a type below it, sends `POST /items/{id}/tables/table/rows` with operations that all hold under the item's `columns`, the server MUST answer `200` with `results` as `tables/rows-write` answers.
+
+**Tests:** `compliance/table-rows-own.test.ts › writes rows against the item's columns, answering each operation in order`.
+
+### `tables/own-rows-refused`
+
+If an operation of `POST /items/{id}/tables/table/rows` on an item of `core.table`, or of a type below it, sends a value that breaks the item's `columns`, then the server MUST answer `400 validation_error` naming `operations.<index>.values.<column>`, and write no row of the batch.
+
+**Tests:** `compliance/table-rows-own.test.ts › refuses a value the item's columns do not take, and writes nothing`.
+
+### `tables/own-rows-read`
+
+When a caller that may read an item of `core.table`, or of a type below it, sends `GET /items/{id}/tables/table/rows` or `GET /items/{id}/tables/table/rows/{row}`, the server MUST answer the rows the item holds, filtered and sorted by the item's `columns`.
+
+**Tests:** `compliance/table-rows-own.test.ts › reads, filters and sorts rows by the item's columns`.
+
+### `tables/own-rows-totals`
+
+When a caller sends `GET /items/{id}/tables/table/totals` for an item of `core.table`, or of a type below it, the server MUST answer in `totals`, for each column of the item's `columns` that names `adds_up`, its total as `tables/totals` answers.
+
+**Tests:** `compliance/table-rows-own.test.ts › totals the columns the item says add up`.
+
+### `tables/own-rows-event`
+
+When a batch changes at least one row of an item of `core.table`, or of a type below it, the server MUST announce one `rows.changed` naming the `table` `table`, as `tables/rows-event` announces.
+
+**Tests:** `compliance/table-rows-own.test.ts › announces a rows.changed for a batch on the table an item keeps`.
+
+### `tables/own-rows-withheld`
+
+When a row of an item of `core.table`, or of a type below it, holds in a column of type `item` the id of an item the reading key may not read, the server MUST answer the row as `tables/rows-item-withheld` does, and announce it as `tables/rows-event-withheld` does.
+
+**Tests:** `compliance/table-rows-own.test.ts › withholds an item column's id from a key that may not read the item, in a read and an event`.
+
+### `tables/own-rows-follow`
+
+When a caller updates the `columns` of an item of `core.table`, or of a type below it, the server MUST judge the next row batch on the item by the updated columns.
+
+**Tests:** `compliance/table-rows-own.test.ts › judges rows by the columns as last updated`.
+
+### `tables/own-rows-kept`
+
+When a key holding `schema.write` removes a column from an item of `core.table`, or of a type below it, or changes a column's `type`, the server MUST keep every row and value the item holds, as `tables/change-forced` does for a type.
+
+**Reason:** a change to the columns never drops what a person made, and a retyped or removed `item` column keeps being withheld from a key that may not read the item it names (`tables/rows-item-origin`).
+
+**Tests:** `compliance/table-rows-own.test.ts › keeps every row and value when a column is removed or retyped, and keeps withholding an item id`.
+
+### `tables/own-delete-constrained`
+
+If `DELETE /types/{id}` without `force=true` names a type that a column of an item of `core.table`, or of a type below it, names in `type_constraints`, then the server MUST answer `409 type_in_use` naming each such column in `details.columns`, as `<item>.table.<column>`, or as `<type>.table.<column>` where the caller may not read the item's type.
+
+**Tests:** `compliance/table-rows-own.test.ts › refuses to delete a type an item's column constrains to unless forced`.
+
+### `tables/own-name-reserved`
+
+If `POST /types` or `PUT /types/{id}` gives a type that is `core.table` or is below it a table named `table`, then the server MUST answer `400 invalid_schema` naming `tables.table`.
+
+**Reason:** an item of such a type keeps its own table under that name.
+
+**Tests:** `compliance/table-rows-own.test.ts › refuses a type below core.table that declares a table named table`.
