@@ -1509,7 +1509,7 @@ describe("the scripted answers match the server's", () => {
     expectFidelity(
       "a row of a type the key does not hold, read by id",
       { status: unread.status, body: unread.error },
-      answers.itemNotFound(note.data.item.id),
+      answers.itemNotFound(),
       { same: ["error.code", "error.message"] },
     );
     const left = await narrowed.rawRequest("/items/bulk-get", {
@@ -1523,7 +1523,7 @@ describe("the scripted answers match the server's", () => {
     expectFidelity(
       "a row of a type the key does not hold, in a bulk read by id",
       { status: left.status, body: left.data },
-      bulkGetOf([answers.itemNotFound(note.data.item.id)], {
+      bulkGetOf([answers.itemNotFound()], {
         withReach: false,
         system: true,
       }),
@@ -2384,6 +2384,7 @@ describe("the scripted answers match the server's", () => {
       {
         same: [
           "row.id",
+          "row.plural",
           "row.display_hints.title_field",
           "row.display_hints.body_field",
           "row.provenance.origin",
@@ -2412,6 +2413,7 @@ describe("the scripted answers match the server's", () => {
         {
           same: [
             "row.id",
+            "row.plural",
             "row.display_hints.title_field",
             "row.display_hints.body_field",
             "row.display_hints.name_from_body",
@@ -3502,7 +3504,7 @@ it("matches copy marker tuples and conditional listing proofs", async (context) 
     bulkGetOf(
       [
         certifiedRead(answers.updated(wireItem({ id: seeded.id }))),
-        certifiedRead(answers.itemNotFound(gone)),
+        certifiedRead(answers.itemNotFound()),
       ],
       { withReach: true, system: true },
     ),

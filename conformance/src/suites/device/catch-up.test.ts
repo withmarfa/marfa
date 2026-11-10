@@ -3387,7 +3387,7 @@ describe("catch-up keeps the copy to its slice", () => {
       "GET",
       "/items/settings",
       answers.updated(wireItem({ id: "settings", type: "core.bookmark" })),
-      answers.itemNotFound("settings"),
+      answers.itemNotFound(),
     );
 
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
@@ -4575,7 +4575,7 @@ describe("a pin, and the rows it holds", () => {
         "core.note": [{ item: { id: "gone" } }, { item: { id: "stays" } }],
       },
     });
-    server.copyAnswer("GET", "/items/gone", answers.itemNotFound("gone"));
+    server.copyAnswer("GET", "/items/gone", answers.itemNotFound());
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     // The witness: the slice holds the row before the pin.
     expect((await device.get("gone")).ok).toBe(true);

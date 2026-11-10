@@ -1152,11 +1152,11 @@ describe("the server did not take the write", () => {
     }
     scriptWrites(harness.server, {
       update: [
-        refusal(404, "item_not_found", "Item binned not found", {
+        refusal(404, "item_not_found", "Item not found", {
           trashed: true,
         }),
         // The witness: the same refusal naming no bin is not one.
-        refusal(404, "item_not_found", "Item gone not found"),
+        refusal(404, "item_not_found", "Item not found"),
       ],
       read: [refusal(404, "item_not_found", "not found")],
     });
@@ -1384,7 +1384,7 @@ describe("a verdict is reported, not acted on", () => {
                 }),
               ),
             ]
-          : [answers.itemNotFound(id)],
+          : [answers.itemNotFound()],
         update: [
           answers.updated(
             wireItem({

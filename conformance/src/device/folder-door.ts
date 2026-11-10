@@ -330,7 +330,7 @@ export class FolderDoor {
     // update, as it is not to a read (`keys-and-oauth/unreadable-as-missing`).
     const before = this.rows.get(id);
     if (!this.shows(before)) {
-      return answers.itemNotFound(id);
+      return answers.itemNotFound();
     }
     const sentProperties = this.properties(
       sent.type ?? before.type,
@@ -489,7 +489,7 @@ export class FolderDoor {
     const row = this.rows.get(id);
     return this.shows(row)
       ? answers.updated(this.wire(id), row.tags ?? [])
-      : answers.itemNotFound(id);
+      : answers.itemNotFound();
   }
 
   /** A move to another lifecycle state, which takes no version step. */

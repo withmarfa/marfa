@@ -169,7 +169,7 @@ class Door {
       const standIn = this.reading?.(id);
       if (standIn !== undefined) return standIn;
       const item = this.items.get(id);
-      if (item === undefined) return answers.itemNotFound(id);
+      if (item === undefined) return answers.itemNotFound();
       return answers.updated({ ...item, edges: this.edgesFrom(id) });
     });
     server.copyAnswer("GET", /^\/edges\/[^/]+$/, (request) => {

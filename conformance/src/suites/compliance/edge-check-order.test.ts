@@ -1029,6 +1029,49 @@ describe("the order PATCH /edges/{id} asks its refusals in", () => {
   });
 });
 
+describe("the order an item write asks its inline edges in", () => {
+  it("answers an unregistered edge type in an item write before it looks for the target", async () => {
+    const unregistered = `mock.inline-unknown.${ctx.runId}`;
+    const missing = generateId();
+    const edges = { [unregistered]: [missing] };
+
+    const created = await client.createItem(
+      createNote({ source: ctx.source, edges }),
+    );
+    expect(created.status).toBe(404);
+    expect(created.error?.error.code).toBe("edge_type_not_found");
+
+    const item = await note();
+    const updated = await client.updateItem(item, { version: 1, edges });
+    expect(updated.status).toBe(404);
+    expect(updated.error?.error.code).toBe("edge_type_not_found");
+
+    const bulk = await client.bulkItems({
+      atomic: false,
+      items: [createNote({ source: ctx.source, edges })],
+    });
+    expect(bulk.status).toBe(200);
+    expect(bulk.data.results[0]).toMatchObject({
+      outcome: "errored",
+      error: { code: "edge_type_not_found" },
+    });
+
+    // The witness: a registered type with the same missing target is the target's refusal.
+    const known = { about: [missing] };
+    const witnessed = await client.createItem(
+      createNote({ source: ctx.source, edges: known }),
+    );
+    expect(witnessed.status).toBe(404);
+    expect(witnessed.error?.error.code).toBe("item_not_found");
+    const witnessedUpdate = await client.updateItem(item, {
+      version: 1,
+      edges: known,
+    });
+    expect(witnessedUpdate.status).toBe(404);
+    expect(witnessedUpdate.error?.error.code).toBe("item_not_found");
+  });
+});
+
 describe("the order POST /edges/bulk asks its gates and its ends in", () => {
   it("answers an entry's end the key cannot read as a refused edge type when the key cannot write it, and as missing when it can", async () => {
     const hidden = await bookmark();

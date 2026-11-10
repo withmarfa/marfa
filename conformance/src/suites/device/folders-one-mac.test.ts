@@ -2992,11 +2992,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
         "core.note": [note(shown, "Shown"), note(unseen, "Unseen")],
       },
       (server) => {
-        server.copyAnswer(
-          "GET",
-          `/items/${unseen}`,
-          answers.itemNotFound(unseen),
-        );
+        server.copyAnswer("GET", `/items/${unseen}`, answers.itemNotFound());
       },
     );
     expect((await a.folder.pull()).ok).toBe(true);

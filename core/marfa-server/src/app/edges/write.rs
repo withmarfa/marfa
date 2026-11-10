@@ -1041,6 +1041,11 @@ pub(crate) fn inline_gates(writing: &Writing<'_, '_, '_>, inline: &Inline) -> Re
             }
         }
     }
+    for (edge_type, targets) in inline {
+        if !targets.is_empty() && writing.catalog.edge_kind(edge_type).is_none() {
+            return Err(unknown_kind(edge_type));
+        }
+    }
     for (_, targets) in inline {
         for target in targets {
             let readable = items::row(writing.tx(), target)?

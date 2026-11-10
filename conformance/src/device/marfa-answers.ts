@@ -277,6 +277,7 @@ const FILE_FIELDS = {
  */
 export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
   wireType("core.note", {
+    plural: "Notes",
     bodyField: "body",
     icon: "lucide:sticky-note",
     // The four the deployment seeds `core.note` with. Mirrored rather than
@@ -303,6 +304,7 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
   }),
   // A body kept in a property other than `body`, as `core.event`'s is.
   wireType("core.event", {
+    plural: "Events",
     bodyField: "description",
     icon: "lucide:calendar",
     fields: {
@@ -324,6 +326,7 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
   }),
   // No title of its own, and a body that does not name it.
   wireType("core.highlight", {
+    plural: "Highlights",
     titleField: null,
     bodyField: "text",
     nameFromBody: false,
@@ -386,6 +389,7 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
     mergePolicy: { fields: {}, default: "last_writer_wins" },
   }),
   wireType("core.bookmark", {
+    plural: "Bookmarks",
     icon: "lucide:bookmark",
     titleField: "title",
     bodyField: "body",
@@ -1209,8 +1213,7 @@ export const answers = {
     ),
   /** An item read by id that the server does not hold, or holds of a type
    *  the key may not read (`keys-and-oauth/unreadable-as-missing`). */
-  itemNotFound: (id: string): Answer =>
-    refusal(404, "item_not_found", `Item ${id} not found`),
+  itemNotFound: (): Answer => refusal(404, "item_not_found", "Item not found"),
   /** An edge end a move names that the server does not hold (`edges/move-end-missing`). */
   edgeEndNotFound: (end: "source" | "target", id: string): Answer =>
     refusal(404, "item_not_found", `Edge ${end} item not found: ${id}`),
