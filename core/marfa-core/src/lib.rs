@@ -1238,7 +1238,8 @@ impl Core {
     ///
     /// `told_unreachable` says the caller was last told `server.unreachable`
     /// by a follow before this one, so this one says `server.reachable` when
-    /// it has its first stream (`device/follow-told-reachable`).
+    /// a stream first takes an event or goes live, and nothing before
+    /// (`device/follow-told-reachable`).
     ///
     /// Each time it says `server.reachable` with work queued for a drain,
     /// it drains once, on a thread of its own so the stream is read

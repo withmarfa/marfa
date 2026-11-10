@@ -596,8 +596,9 @@ follows.
   callback and that they can succeed outside it.
 - **`toldUnreachable`.** `follow` and `watch` take it as an optional last
   argument. It says the caller was last told `serverUnreachable` by an earlier
-  one, so the first stream is told `serverReachable` and `serverUnreachable`
-  is not told again before.
+  one. A `follow` then tells `serverReachable` when a stream first takes an
+  event or goes live, and a `watch` when the listener joins a held stream that
+  is taking events; neither tells `serverUnreachable` again before.
 - **Holds.** The engine reaches named points, and a fixture arms one so that
   the engine waits there until the fixture releases it. `testHooks.hold(point)`
   arms a point, `testHooks.release(point)` lets go of what waits at it and

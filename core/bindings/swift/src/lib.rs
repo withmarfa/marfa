@@ -2315,10 +2315,10 @@ impl Core {
     /// the server nothing, until a hydration completes; an expired copy is
     /// refused. `told_unreachable` says the app was last told
     /// `ServerUnreachable` by a follow before this one, so this one tells
-    /// `ServerReachable` when it has its first stream. Each time it tells
-    /// `ServerReachable` with work queued for a drain, it drains once, after
-    /// any drain under way, and tells `QueueDrained` or `QueueNotDrained`;
-    /// `ended` follows that drain's end.
+    /// `ServerReachable` when a stream first takes an event or goes live.
+    /// Each time it tells `ServerReachable` with work queued for a drain, it
+    /// drains once, after any drain under way, and tells `QueueDrained` or
+    /// `QueueNotDrained`; `ended` follows that drain's end.
     pub fn follow(
         self: Arc<Self>,
         told_unreachable: bool,

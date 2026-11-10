@@ -3818,7 +3818,7 @@ When a held stream is had again after the device told `server.unreachable` under
 
 ### `device/follow-take-unreachable`
 
-If a held stream sends an event that a device cannot apply for a reason that clears on its own, such as a read the event needs failing, then a device MUST tell its caller `server.unreachable` once, with why and naming no item and no edge, however many attempts follow.
+If a held stream sends an event that a device cannot apply for a reason that clears on its own, such as a read of an item the event brings into the copy failing, other than a read `tables/device-read-failed` covers, then a device MUST tell its caller `server.unreachable` once, with why and naming no item and no edge, however many attempts follow.
 
 **Reason:** the stream opens each time, so an app told nothing would show a copy that has stopped moving as current.
 
@@ -3840,17 +3840,17 @@ When a held stream is had at once, a device MUST tell its caller neither `server
 
 ### `device/follow-told-reachable`
 
-When a held stream is had at once, and its caller says it was last told `server.unreachable` by an earlier held stream, a device MUST tell the caller `server.reachable`.
+When a held stream first takes an event or reaches its live marker, and its caller says it was last told `server.unreachable` by an earlier held stream, a device MUST tell the caller `server.reachable` once, before the change the event made.
 
-**Reason:** a caller restarts its follow around a catch-up, a hydration or a new key, and a new follow that said nothing would leave it believing the server still gone.
+**Reason:** a caller restarts its follow around a catch-up, a hydration or a new key, and a new follow that said nothing would leave it believing the server still gone. A stream had is not enough: the caller may have been told for an event the device still cannot take (`device/follow-take-unreachable`), and a follow restarted then would tell it the server came back and was lost again.
 
-**Tests:** `device/binding-follow.test.ts › tells its caller the server is reachable when its first stream is had at once, where the caller was last told it was not`.
+**Tests:** `device/binding-follow.test.ts › tells its caller the server is reachable when its first stream goes live, where the caller was last told it was not`, `› tells a caller last told the server was unreachable nothing while an event cannot be applied, and that the server is reachable once it is`.
 
 ### `device/follow-told-not-again`
 
 If a held stream cannot be had for a reason that clears on its own, and its caller says it was last told `server.unreachable` by an earlier held stream, then a device MUST NOT tell the caller `server.unreachable` again.
 
-**Tests:** `device/binding-follow.test.ts › does not tell its caller the server is unreachable again where it was last told so, and tells it the server is reachable when a stream is had`.
+**Tests:** `device/binding-follow.test.ts › does not tell its caller the server is unreachable again where it was last told so, and tells it the server is reachable when a stream goes live`.
 
 ### `device/follow-change-kinds`
 

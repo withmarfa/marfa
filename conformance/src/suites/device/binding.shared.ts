@@ -7,6 +7,7 @@ import {
   answers,
   connected,
   copyItemEvent,
+  copyLiveReplay,
   copyStreamCursor,
   refusal,
   wireItem,
@@ -29,6 +30,9 @@ import {
 
 /** A stream the server holds open and says nothing on. */
 export const HELD: Answer = { kind: "sse", frames: [connected], hold: true };
+
+/** A stream the server holds open once it has said the copy at `10` is live. */
+export const LIVE: Answer = copyLiveReplay("10", []);
 
 /**
  * A stream the server holds open, saying what `feed` is given to say. It

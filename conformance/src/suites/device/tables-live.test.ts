@@ -617,6 +617,72 @@ describe("how a device fills a table", () => {
       failed: 0,
     });
   });
+
+  it("fills a table again on the same stream once a read that failed for it is answered, after 30 seconds and then twice as long", async () => {
+    const type = await tableType({ steps: STEPS, other: STEPS });
+    const item = await itemOf(type);
+    await write(item, [{ op: "put", values: { count: 1 } }]);
+    const device = await hydratedBinding([type], "fill-again");
+    value(await device.call("holdTable", type, "other"));
+    const failures = () => device.hooks.reached("table-fill-failed");
+    const held = async (table: string) =>
+      stateOf(value(await device.call<HeldTables>("heldTables")), item, table);
+    let others = 0;
+    // A row of `other` each time, so the stream has a frame to read after the
+    // clock moves and is never silent for as long as the clock moved.
+    const pass = async (ms: number) => {
+      await device.clock.advance(ms);
+      others += 1;
+      await write(item, [{ op: "put", values: { count: others } }], "other");
+      await until(
+        async () => (await held("other"))?.rows === others,
+        "the follow applying the row of other",
+      );
+    };
+    await device.clock.manual();
+    await server.setFault("fail:table-rows-page=steps@always");
+    const follow = await device.follow();
+    try {
+      await until(
+        async () => (await device.hooks.reached("follow-stream-had")) === 1,
+        "the follow having its stream",
+      );
+      expect(
+        value(await device.call<{ fill: unknown }>("holdTable", type, "steps"))
+          .fill,
+        "the follow holds the stream",
+      ).toBeNull();
+      await until(
+        async () => (await failures()) === 1,
+        "the stream's fill reading steps",
+      );
+      await pass(30_000);
+      await until(
+        async () => (await failures()) === 2,
+        "the stream reading steps again 30 seconds after it failed",
+      );
+      await pass(30_000);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(
+        await failures(),
+        "the stream read steps again before twice the wait had passed",
+      ).toBe(2);
+      await server.clearFault();
+      await pass(30_000);
+      await until(async () => {
+        const steps = await held("steps");
+        return steps?.state === "whole" && steps.rows === 1;
+      }, "the stream filling steps once its read was answered");
+      expect(
+        await device.hooks.reached("follow-stream-had"),
+        "the table was filled by a stream opened again, not the one whose read failed",
+      ).toBe(1);
+    } finally {
+      expect(await follow.stop()).toBeNull();
+      await server.clearFault();
+      await device.clock.manual(false);
+    }
+  });
 });
 
 describe("applying rows.changed", () => {

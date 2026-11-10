@@ -4,6 +4,7 @@ import type { BindingHarness } from "./harness.js";
 import {
   BUSY,
   HELD,
+  LIVE,
   bindingHarness,
   createsSent,
   nextWait,
@@ -14,6 +15,7 @@ import {
   untilTold,
 } from "./binding.shared.js";
 import {
+  answers,
   catchupTooOld,
   connected,
   copyHeadRead,
@@ -43,8 +45,10 @@ afterEach(async () => {
 });
 
 describe("a follow through a binding, told what its caller was last told", () => {
-  it("tells its caller the server is reachable when its first stream is had at once, where the caller was last told it was not", async () => {
-    harness = await bindingHarness("binding-told-reachable");
+  it("tells its caller the server is reachable when its first stream goes live, where the caller was last told it was not", async () => {
+    harness = await bindingHarness("binding-told-reachable", {
+      streams: [LIVE],
+    });
     const { server, device } = harness;
 
     const before = streamsAsked(server).length;
@@ -76,11 +80,11 @@ describe("a follow through a binding, told what its caller was last told", () =>
     ).toEqual([]);
   });
 
-  it("does not tell its caller the server is unreachable again where it was last told so, and tells it the server is reachable when a stream is had", async () => {
+  it("does not tell its caller the server is unreachable again where it was last told so, and tells it the server is reachable when a stream goes live", async () => {
     const followed = await bindingHarness("binding-told-not-again");
     harness = followed;
     const { server, device, events } = followed;
-    events.set(BUSY, BUSY, HELD);
+    events.set(BUSY, BUSY, LIVE);
     await device.clock.manual();
 
     const before = streamsAsked(server).length;
@@ -112,6 +116,62 @@ describe("a follow through a binding, told what its caller was last told", () =>
       "a follow that could not reach the server did not tell a caller that had not been told so",
     );
     expect(await fresh.stop()).toBeNull();
+  });
+
+  it("tells a caller last told the server was unreachable nothing while an event cannot be applied, and that the server is reachable once it is", async () => {
+    const entered = wireItem({ id: "entered", version: 3 });
+    const followed = await bindingHarness("binding-told-stalled", {
+      streams: [
+        {
+          kind: "sse",
+          hold: true,
+          frames: [
+            connected,
+            copyStreamCursor("11"),
+            copyItemEvent("11", "item.updated", entered),
+          ],
+        },
+      ],
+    });
+    harness = followed;
+    const { server, device } = followed;
+    let read: Answer = BUSY;
+    server.copyAnswer("GET", "/items/entered", () => read);
+    const reads = () =>
+      server.requests.filter((request) => request.pathname === "/items/entered")
+        .length;
+    await device.clock.manual();
+
+    // The witness: a caller that was not told is told the event cannot be
+    // applied.
+    const fresh = await device.follow();
+    await untilTold(
+      fresh,
+      ["serverUnreachable"],
+      "an event the server would not let the device apply was told as nothing",
+    );
+    expect(await fresh.stop()).toBeNull();
+
+    const before = streamsAsked(server).length;
+    const told = await device.follow({ toldUnreachable: true });
+    expect(await nextWait(device)).toBe(1_000);
+    await device.clock.advance(1_000);
+    expect(await nextWait(device)).toBe(2_000);
+    expect(streamsAsked(server).length - before).toBe(2);
+    expect(reads(), "the event was not tried on each stream").toBe(3);
+    expect(
+      told.kinds,
+      "a caller last told the server was lost was told it was back while the event still could not be applied",
+    ).toEqual([]);
+
+    read = answers.updated({ ...entered, edges: {} });
+    await device.clock.advance(2_000);
+    await untilTold(
+      told,
+      ["serverReachable", "applied"],
+      "the event was applied without telling the caller the server was back, once, before it",
+    );
+    expect(await told.stop()).toBeNull();
   });
 });
 
@@ -232,7 +292,7 @@ describe("what a follow through a binding tells", () => {
     // A caller last told the server was lost, with a write the server will
     // not take from it.
     await queueNotes(device, "second");
-    events.set(HELD);
+    events.set(LIVE);
     const back = await device.follow({ toldUnreachable: true });
     await untilTold(
       back,
@@ -301,7 +361,9 @@ describe("what a follow through a binding tells", () => {
 
 describe("a drain a held stream starts when its server is back", () => {
   it("starts the held stream's drain only after the drain its caller started has ended, and drains nothing where that drain left no work", async () => {
-    const followed = await bindingHarness("binding-drain-one-nothing");
+    const followed = await bindingHarness("binding-drain-one-nothing", {
+      streams: [LIVE],
+    });
     harness = followed;
     const { server, device } = followed;
     const [queued] = await queueNotes(device, "the caller's");
@@ -345,7 +407,9 @@ describe("a drain a held stream starts when its server is back", () => {
   });
 
   it("drains what the caller's drain left once it has ended, each write sent once", async () => {
-    const followed = await bindingHarness("binding-drain-one-remaining");
+    const followed = await bindingHarness("binding-drain-one-remaining", {
+      streams: [LIVE],
+    });
     harness = followed;
     const { server, device } = followed;
     const [first] = await queueNotes(device, "the caller's");

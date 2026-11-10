@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicBool;
+use std::time::{Duration, Instant};
 
 use marfa_rules::catalog::Catalog;
 use marfa_rules::filter::{Expression, Term, parse_rows};
@@ -540,7 +541,10 @@ struct Owed {
     cursor: Option<String>,
 }
 
-fn next_owed(conn: &Connection, failed: &HashSet<(String, String)>) -> Result<Option<Owed>> {
+fn next_owed(
+    conn: &Connection,
+    waiting: &impl Fn(&(String, String)) -> bool,
+) -> Result<Option<Owed>> {
     let mut query = conn.prepare_cached(
         "SELECT t.item_id, t.name, t.state, t.cursor FROM item_tables t JOIN items i ON i.id = t.item_id
           WHERE t.state IN ('owed', 'filling') AND i.state <> 'trashed'
@@ -549,7 +553,7 @@ fn next_owed(conn: &Connection, failed: &HashSet<(String, String)>) -> Result<Op
     let mut rows = query.query([])?;
     while let Some(row) = rows.next()? {
         let key: (String, String) = (row.get(0)?, row.get(1)?);
-        if failed.contains(&key) {
+        if waiting(&key) {
             continue;
         }
         return Ok(Some(Owed {
@@ -581,30 +585,74 @@ pub(crate) enum Step {
     Failed(String),
 }
 
+/// The wait before a table whose read failed is read again, doubling with
+/// each failure in a row (`tables/device-fill-failed-again`).
+pub(crate) const RETRY_FIRST: Duration = Duration::from_secs(30);
+pub(crate) const RETRY_MOST: Duration = Duration::from_secs(10 * 60);
+
+struct Retry {
+    wait: Duration,
+    due: Instant,
+}
+
 /// One pass over the tables not yet whole, in which a table whose read fails
-/// is not asked for again.
+/// is not asked for again until its wait has passed.
 #[derive(Default)]
 pub(crate) struct Pass {
-    failed: HashSet<(String, String)>,
+    failed: HashMap<(String, String), Retry>,
     report: FillReport,
 }
 
 impl Pass {
-    pub(crate) fn owes(&self, conn: &Connection) -> Result<bool> {
-        Ok(next_owed(conn, &self.failed)?.is_some())
+    /// Whether a table is owed that may be read now. Forgets the failures
+    /// whose wait has passed when none of them is still owed.
+    pub(crate) fn owes(&mut self, conn: &Connection, now: Instant) -> Result<bool> {
+        let owes = next_owed(conn, &|key| self.waiting(key, now))?.is_some();
+        if !owes {
+            self.failed.retain(|_, retry| retry.due > now);
+        }
+        Ok(owes)
     }
 
-    pub(crate) fn step(&mut self, core: &Core, context: &Context) -> Result<Step> {
-        let Some(owed) = next_owed(&*core.conn()?, &self.failed)? else {
+    /// Whether a failed table's wait has passed, so it may be owed again.
+    pub(crate) fn retry_due(&self, now: Instant) -> bool {
+        self.failed.values().any(|retry| retry.due <= now)
+    }
+
+    fn waiting(&self, key: &(String, String), now: Instant) -> bool {
+        self.failed.get(key).is_some_and(|retry| retry.due > now)
+    }
+
+    pub(crate) fn step(&mut self, core: &Core, context: &Context, now: Instant) -> Result<Step> {
+        let Some(owed) = next_owed(&*core.conn()?, &|key| self.waiting(key, now))? else {
+            self.failed.retain(|_, retry| retry.due > now);
             return Ok(Step::Done);
         };
+        let key = (owed.item.clone(), owed.table.clone());
         match advance(core, context, &owed, &mut self.report) {
-            Ok(()) => Ok(Step::Moved),
+            Ok(()) => {
+                self.failed.remove(&key);
+                Ok(Step::Moved)
+            }
             Err(error) if fails_one_table(&error) => {
                 let failure = format!("the table {} of {}: {error}", owed.table, owed.item);
-                self.report.failed += 1;
                 self.report.failure = Some(failure.clone());
-                self.failed.insert((owed.item, owed.table));
+                let wait = match self.failed.get(&key) {
+                    Some(retry) => (retry.wait * 2).min(RETRY_MOST),
+                    None => {
+                        self.report.failed += 1;
+                        RETRY_FIRST
+                    }
+                };
+                self.failed.insert(
+                    key,
+                    Retry {
+                        wait,
+                        due: now.checked_add(wait).unwrap_or(now),
+                    },
+                );
+                #[cfg(debug_assertions)]
+                crate::fault::hold(|| "table-fill-failed");
                 Ok(Step::Failed(failure))
             }
             Err(error) => Err(error),
@@ -734,7 +782,7 @@ pub(crate) fn fill(core: &Core, context: &Context, stop: &AtomicBool) -> Result<
         let mut pass = Pass::default();
         loop {
             crate::catch_up::refuse_if_stopped(stop)?;
-            if matches!(pass.step(core, context)?, Step::Done) {
+            if matches!(pass.step(core, context, crate::clock::now())?, Step::Done) {
                 break;
             }
         }

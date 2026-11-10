@@ -2262,8 +2262,9 @@ impl MarfaCore {
     /// `queueNotDrained`; `onEnd` follows that drain's end.
     ///
     /// `toldUnreachable` says the caller was last told `serverUnreachable` by
-    /// an earlier follow: this one tells `serverReachable` when it has its
-    /// first stream, and does not tell `serverUnreachable` again before.
+    /// an earlier follow: this one tells `serverReachable` when a stream first
+    /// takes an event or goes live, and does not tell `serverUnreachable` again
+    /// before.
     #[napi(
         ts_args_type = "onChange: (change: Change) => void, onEnd: (error: (Error & { code: string }) | null) => void, toldUnreachable?: boolean"
     )]

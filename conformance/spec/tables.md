@@ -1200,7 +1200,7 @@ When a catch-up has applied the events it read, when a follow has no frame waiti
 
 ### `tables/device-fill-failed`
 
-If the server answers a read a device makes to fill one table with an error about that read, such as a `5xx` answer or a refusal, then a device MUST leave the table unfilled for the rest of that fill and go on to fill its other tables.
+If the server answers a read a device makes to fill one table with an error about that read, such as a `5xx` answer or a refusal, then a device MUST go on to fill its other tables before it reads that table again.
 
 **Reason:** one table whose read keeps failing would otherwise hold back every table after it.
 
@@ -1211,6 +1211,14 @@ If the server answers a read a device makes to fill one table with an error abou
 When a device has left a table unfilled under `tables/device-fill-failed`, a device MUST go on with the catch-up or the follow whose fill it was.
 
 **Tests:** `device/tables-live.test.ts › fills every other table, and ends no catch-up or follow, while one table's page read keeps failing`.
+
+### `tables/device-fill-failed-again`
+
+While a device holds a stream open, when it has left a table unfilled under `tables/device-fill-failed`, a device MUST read the table again on that stream once a wait has passed that starts at 30 seconds and doubles after each failure in a row, up to 10 minutes.
+
+**Reason:** a short `5xx` would otherwise leave the table read from the server rather than the copy until the stream ends, which can be hours, and a read that keeps failing would cost a request each time the stream is idle.
+
+**Tests:** `device/tables-live.test.ts › fills a table again on the same stream once a read that failed for it is answered, after 30 seconds and then twice as long`.
 
 ### `tables/device-fill-reach`
 
@@ -1322,7 +1330,7 @@ When a device has removed a table's rows under `tables/device-read-gone` while i
 
 ### `tables/device-read-failed`
 
-If the server answers a read a device makes of the rows a `rows.changed` names, or of rows again under `tables/device-named-purged`, with an error about that read, such as a `5xx` answer or a refusal, then a device MUST remove the rows it holds of that table and fill it again from its first page.
+If the server answers a read a device makes of the rows a `rows.changed` names, or of rows again under `tables/device-named-purged`, with an error under the contract other than `401`, `429` or one `tables/device-read-gone` covers, such as a `5xx` answer or a `403` refusal, then a device MUST remove the rows it holds of that table and fill it again from its first page.
 
 **Reason:** the rows it holds may be stale, or hold a value its key may no longer read, and a read that keeps failing would otherwise hold back every event after it. A fill that fails leaves the table unfilled under `tables/device-fill-failed`.
 
