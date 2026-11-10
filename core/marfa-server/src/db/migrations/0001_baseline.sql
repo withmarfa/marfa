@@ -158,6 +158,8 @@ CREATE TABLE IF NOT EXISTS table_summaries (
     bytes INTEGER NOT NULL CHECK (bytes >= 0),
     last_batch TEXT NOT NULL,
     changed_at TEXT NOT NULL,
+    -- The `<kind>:<column>` every row's `ord` is the key of; NULL while none or while it is rebuilt.
+    ordered_by TEXT,
     UNIQUE (item_seq, table_name)
 ) STRICT;
 
@@ -167,6 +169,7 @@ CREATE TABLE IF NOT EXISTS table_rows (
     table_seq INTEGER NOT NULL,
     id TEXT NOT NULL,
     updated_at TEXT NOT NULL,
+    ord ANY,
     -- Undo restores the prior mark so earlier batches remain undoable.
     batch INTEGER NOT NULL,
     refs BLOB,
@@ -174,6 +177,14 @@ CREATE TABLE IF NOT EXISTS table_rows (
     PRIMARY KEY (table_seq, id)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS table_rows_updated ON table_rows (table_seq, updated_at);
+CREATE INDEX IF NOT EXISTS table_rows_ordered ON table_rows (table_seq, ord) WHERE ord IS NOT NULL;
+
+-- Tables whose `ord` `table-row-cleanup` brings to `target` (NULL clears it), a page at a time.
+CREATE TABLE IF NOT EXISTS table_rows_reordering (
+    table_seq INTEGER PRIMARY KEY,
+    target TEXT,
+    after_id TEXT
+) STRICT;
 
 -- Never reuse a sequence, so a change left without its batch never joins a new one.
 CREATE TABLE IF NOT EXISTS row_batches (

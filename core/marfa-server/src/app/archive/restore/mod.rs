@@ -303,7 +303,7 @@ impl App {
                                 agreements.skip("already_set");
                             }
                         }
-                        let mut restoring = tables::archive::Restoring::new(unit);
+                        let mut restoring = tables::archive::Restoring::new(unit, &catalog);
                         for (row, line) in lines(&spools[3])?.enumerate() {
                             let line = line?;
                             let key = checks::row(&line, row + 1).map_err(|refused| refused.refusal)?;

@@ -17,6 +17,9 @@ pub const ITEM_KIND: &str = "item";
 /// How a column's values total: `count` is the rows that hold a value.
 pub const ADDS_UP: [&str; 5] = ["sum", "average", "min", "max", "count"];
 
+/// The kinds of column a table may name as its `order`.
+pub const ORDER_KINDS: [&str; 4] = ["datetime", "number", "integer", "string"];
+
 const TEXT_KINDS: [&str; 3] = ["string", "email", "url"];
 const ITEM_COLUMN_REFUSES: [&str; 5] = ["enum_values", "format", "maxLength", "minimum", "maximum"];
 const NAME_RULE: &str =
@@ -359,6 +362,7 @@ fn validate_tables(
             type_known,
             errors,
         );
+        validate_order(table, &path, errors);
         if let Some((_, owner, held)) = inherited.iter().find(|(held, _, _)| held == name)
             && !restates(name, table, held)
         {
@@ -385,6 +389,46 @@ fn validate_tables(
             );
         }
     }
+}
+
+fn validate_order(table: &Obj, path: &str, errors: &mut Vec<Issue>) {
+    let Some(order) = table.get("order") else {
+        return;
+    };
+    let columns = as_obj(table.get("columns"));
+    let named = order
+        .as_str()
+        .and_then(|name| Some((name, columns?.get(name)?.as_object()?)));
+    let held_kind = named.and_then(|(_, column)| held_kind(column));
+    if held_kind
+        .as_deref()
+        .is_some_and(|held| ORDER_KINDS.contains(&held))
+    {
+        return;
+    }
+    errors.push(Issue::new(
+        format!("{path}.order"),
+        format!("the name of one of the table's {} columns", names(&ORDER_KINDS)),
+        match (named, held_kind) {
+            (Some((name, _)), Some(held)) => format!("\"{name}\", a {held} column"),
+            _ => describe(Some(order)),
+        },
+        "order names the column whose order the server keeps for the rows, such as the time each was sent.",
+    ));
+}
+
+fn held_kind(column: &Obj) -> Option<String> {
+    kind(&normalize_field(column, None)).map(str::to_string)
+}
+
+/// The column a table keeps its rows in order by, with the column's kind.
+pub fn order_of(table: &Obj) -> Option<(String, String)> {
+    let name = text(table, "order")?;
+    let column = as_obj(table.get("columns"))?.get(name)?.as_object()?;
+    let held = held_kind(column)?;
+    ORDER_KINDS
+        .contains(&held.as_str())
+        .then(|| (name.to_string(), held))
 }
 
 fn declares(definition: &Obj, table: &str) -> bool {
@@ -452,6 +496,9 @@ pub fn normalize_table(raw: &Obj) -> Obj {
         ))
     });
     out.insert("columns".into(), Value::Object(columns.collect()));
+    if let Some(order) = raw.get("order").filter(|order| order.is_string()) {
+        out.insert("order".into(), order.clone());
+    }
     out
 }
 
@@ -615,6 +662,69 @@ mod tests {
                 "seen": {"type": "date"}
             }})
         );
+    }
+
+    #[test]
+    fn a_table_orders_by_one_of_its_datetime_number_integer_or_string_columns() {
+        let columns = json!({
+            "at": {"type": "datetime"}, "n": {"type": "number"},
+            "i": {"type": "integer"}, "s": {"type": "string"}, "d": {"type": "date"},
+            "b": {"type": "boolean"}, "e": {"type": "email"}, "r": {"type": "item"}
+        });
+        let ordered = |order: Value| {
+            json!({"id": "user.ledger", "fields": {"title": {"type": "string"}},
+                   "tables": {"lines": {"columns": columns.clone(), "order": order}}})
+        };
+        for taken in ["at", "n", "i", "s"] {
+            let stored = judged(ordered(json!(taken)))
+                .map_err(|e| format!("{e:?}"))
+                .unwrap_or_else(|e| panic!("{taken}: {e}"));
+            assert_eq!(stored["tables"]["lines"]["order"], json!(taken));
+            let table = stored["tables"]["lines"]
+                .as_object()
+                .cloned()
+                .unwrap_or_default();
+            assert_eq!(
+                super::order_of(&table).map(|(name, _)| name),
+                Some(taken.to_string())
+            );
+        }
+        for refused in [
+            json!("d"),
+            json!("b"),
+            json!("e"),
+            json!("r"),
+            json!("gone"),
+            json!(3),
+        ] {
+            assert_eq!(
+                fields_of(ordered(refused.clone())),
+                vec!["tables.lines.order".to_string()],
+                "{refused}"
+            );
+        }
+    }
+
+    #[test]
+    fn changing_or_removing_an_order_needs_a_schema_writer_and_adding_one_does_not() {
+        let table = |order: Option<&str>| {
+            let mut table = json!({"columns": {"a": {"type": "number"}, "b": {"type": "number"}}});
+            if let Some(order) = order {
+                table["order"] = json!(order);
+            }
+            json!({"id": "user.a", "tables": {"t": table}})
+                .as_object()
+                .cloned()
+                .unwrap_or_default()
+        };
+        let needs = |from, to| evolution_of(&table(from), &table(to)).0;
+        assert!(needs(None, Some("a")).is_empty());
+        assert_eq!(
+            needs(Some("a"), Some("b")),
+            vec!["tables.t.order".to_string()]
+        );
+        assert_eq!(needs(Some("a"), None), vec!["tables.t.order".to_string()]);
+        assert!(needs(Some("a"), Some("a")).is_empty());
     }
 
     #[test]

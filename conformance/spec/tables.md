@@ -4,7 +4,7 @@ What a type declares about the tables an item of it can hold: their names, their
 
 ## Declaring tables
 
-A type declares tables under `tables`, an object keyed by table name. A table has an optional `label` and `description`, and `columns`, an object keyed by column name. A column has a `type` and optionally a `label`, `description`, `required`, `enum_values`, `format`, `maxLength`, `minimum`, `maximum`, `type_constraints`, `adds_up` and `searchable`. A column's `type` is `string`, `email`, `url`, `enum`, `boolean`, `integer`, `number`, `date`, `datetime` or `item`, a column of type `item` holding the ID of an item.
+A type declares tables under `tables`, an object keyed by table name. A table has an optional `label`, `description` and `order`, and `columns`, an object keyed by column name. A column has a `type` and optionally a `label`, `description`, `required`, `enum_values`, `format`, `maxLength`, `minimum`, `maximum`, `type_constraints`, `adds_up` and `searchable`. A column's `type` is `string`, `email`, `url`, `enum`, `boolean`, `integer`, `number`, `date`, `datetime` or `item`, a column of type `item` holding the ID of an item.
 
 ### `tables/declare`
 
@@ -74,6 +74,14 @@ The server MUST take `searchable` `true` on a `string`, `email` or `url` column.
 
 **Tests:** `compliance/type-tables.test.ts › refuses searchable on a column that holds no text, and takes it on one that does`.
 
+### `tables/order`
+
+The server MUST take a table that names in `order` one of its own columns of type `datetime`, `number`, `integer` or `string`, required or not.
+
+**Reason:** the server keeps a table's rows in the order of its `order` column, so a page sorted by that column reads only the rows it answers. The column need not be required: a row written before the column was added has no value, and sorts last under `tables/rows-sort`.
+
+**Tests:** `compliance/type-tables.test.ts › takes an order naming a datetime, number, integer or string column, required or not`.
+
 ## Refusing a declaration
 
 Each refusal below answers `400 invalid_schema` with `details.errors` naming the path of each fault, and registers or changes nothing.
@@ -127,6 +135,12 @@ If a column names a `searchable` that is not `true` or `false`, or `true` on a c
 **Reason:** search indexes text.
 
 **Tests:** `compliance/type-tables.test.ts › refuses searchable on a column that holds no text, and takes it on one that does`.
+
+### `tables/order-refused`
+
+If a table names an `order` that is not the name of one of its columns of type `datetime`, `number`, `integer` or `string`, then the server MUST answer `400 invalid_schema` naming the table's `order`.
+
+**Tests:** `compliance/type-tables.test.ts › refuses an order that names no column of the table, or a column of another type`.
 
 ### `tables/item-unregistered`
 
@@ -198,31 +212,31 @@ When the server refuses a replacement under `tables/inherit-reparented`, the ser
 
 ### `tables/evolve-free`
 
-When a key holding `metadata.types:write`, without `schema.write`, sends `PUT /types/{id}` for a type registered at run time its map grants write on, the server MUST take a replacement that only adds a table, adds an optional column to a table, or changes a table's or a column's `label` or `description`.
+When a key holding `metadata.types:write`, without `schema.write`, sends `PUT /types/{id}` for a type registered at run time its map grants write on, the server MUST take a replacement that only adds a table, adds an optional column to a table, names an `order` for a table that names none, or changes a table's or a column's `label` or `description`.
 
-**Reason:** each release of a connector adds tables and columns, and these change no stored row.
+**Reason:** each release of a connector adds tables and columns, and these change no stored row. A new `order` changes only how fast a sorted page is read.
 
-**Tests:** `compliance/type-tables.test.ts › lands a table, an optional column and new labels for a key holding metadata.types:write alone`.
+**Tests:** `compliance/type-tables.test.ts › lands a table, an optional column, an order and new labels for a key holding metadata.types:write alone`.
 
 ### `tables/evolve-schema-change`
 
-If a key holding `metadata.types:write` and not `schema.write` sends `PUT /types/{id}` for a type registered at run time its map grants write on, removing a table or a column, changing a column's `type` or another member `tables/evolve-free` does not name, or adding a required column to a table the type already declares, then the server MUST answer `403 forbidden`.
+If a key holding `metadata.types:write` and not `schema.write` sends `PUT /types/{id}` for a type registered at run time its map grants write on, removing a table or a column, changing a column's `type` or another member `tables/evolve-free` does not name, adding a required column to a table the type already declares, or changing or removing a table's `order`, then the server MUST answer `403 forbidden`.
 
-**Reason:** a changed or removed column leaves rows that no longer fit, and a required column leaves rows without a value.
+**Reason:** a changed or removed column leaves rows that no longer fit, a required column leaves rows without a value, and a changed `order` changes which sorted page is fast for every app that reads the table.
 
-**Tests:** `compliance/type-tables.test.ts › refuses a column's changed kind, a required column, a removed column and a removed table to a key without schema.write, listing each`.
+**Tests:** `compliance/type-tables.test.ts › refuses a column's changed kind, a required column, a removed column, a removed table and a changed or removed order to a key without schema.write, listing each`.
 
 ### `tables/evolve-refusal-scope`
 
 When the server refuses a replacement under `tables/evolve-schema-change`, the server MUST answer `details.required_scope` `schema.write`.
 
-**Tests:** `compliance/type-tables.test.ts › refuses a column's changed kind, a required column, a removed column and a removed table to a key without schema.write, listing each`.
+**Tests:** `compliance/type-tables.test.ts › refuses a column's changed kind, a required column, a removed column, a removed table and a changed or removed order to a key without schema.write, listing each`.
 
 ### `tables/evolve-refusal-changes`
 
-When the server refuses a replacement under `tables/evolve-schema-change`, the server MUST answer `details.changes` listing, in sorted order, each change that needs `schema.write`, a table as `tables.<name>` and a column as `tables.<name>.columns.<column>`.
+When the server refuses a replacement under `tables/evolve-schema-change`, the server MUST answer `details.changes` listing, in sorted order, each change that needs `schema.write`, a table as `tables.<name>`, a column as `tables.<name>.columns.<column>` and an order as `tables.<name>.order`.
 
-**Tests:** `compliance/type-tables.test.ts › refuses a column's changed kind, a required column, a removed column and a removed table to a key without schema.write, listing each`.
+**Tests:** `compliance/type-tables.test.ts › refuses a column's changed kind, a required column, a removed column, a removed table and a changed or removed order to a key without schema.write, listing each`.
 
 ### `tables/evolve-schema-write`
 
@@ -624,9 +638,11 @@ If `limit` is not a whole number from 1 to 1000, then the server MUST answer `40
 
 ### `tables/rows-cursor`
 
-If a `cursor` was not answered for the same item, table, `filter`, `sort` and `direction`, then the server MUST answer `400 validation_error` naming `cursor`.
+If a `cursor` was not answered for the same item, table, `filter`, `sort`, `direction` and, when `sort` names a column, the same `type` of that column, then the server MUST answer `400 validation_error` naming `cursor`.
 
-**Tests:** `compliance/table-rows-reads.test.ts › pages a table's rows by id, continuing by a signed cursor`, `› refuses a cursor answered for the other direction`.
+**Reason:** a position read as one kind of value cannot continue a page read as another, and a page that continued from it would end the walk with rows unread.
+
+**Tests:** `compliance/table-rows-reads.test.ts › pages a table's rows by id, continuing by a signed cursor`, `› refuses a cursor answered for the other direction`, `› refuses a cursor answered before the sorted column changed type`.
 
 ### `tables/rows-cursor-size`
 
@@ -668,7 +684,63 @@ If a row `filter` names a column the table does not declare, or a field other th
 
 When `GET /items/{id}/tables/{table}/rows` names `sort` as `id`, `updated_at` or `values.<column>` and `direction` as `asc` or `desc`, the server MUST answer the rows in that order, a row without the column last in either direction and a tie by `id` ascending.
 
-**Tests:** `compliance/table-rows-reads.test.ts › sorts rows on a column, rows without it last`.
+**Tests:** `compliance/table-rows-reads.test.ts › sorts rows on a column, rows without it last`, `compliance/conversation.test.ts › pages the messages by sent_at in either direction, a tie by id`.
+
+### `tables/rows-sort-instant`
+
+When a page of rows is sorted by a `datetime` column, the server MUST order the values by their instant, a calendar date as midnight UTC.
+
+**Reason:** rows written from places with different offsets sort by when they happened, not by how the time was written.
+
+**Tests:** `compliance/table-rows-reads.test.ts › sorts a datetime column by its instant, whatever the offset`.
+
+### `tables/rows-sort-kind`
+
+When a page of rows is sorted by a `datetime`, `number`, `integer` or `string` column, the server MUST sort a value of another type as though the row held no value for the column.
+
+**Reason:** a type changed with `force=true` keeps the values its rows held, which may no longer be of the column's type.
+
+**Tests:** `compliance/table-rows-reads.test.ts › sorts a value a forced change left of another type as no value`.
+
+### `tables/rows-order-item-id`
+
+When a page of rows is sorted by a table's `order` column, the server MUST sort a value written as an item's ID as though the row held no value for the column, for every reader.
+
+**Reason:** the order is kept once for every reader, and a key that may not read the item must not learn where its ID sorts. Such a value is left only by a column changed from `item` with `force=true`.
+
+**Tests:** `compliance/table-rows-reads.test.ts › sorts an item id a forced change left in the order column as no value`.
+
+### `tables/order-changed`
+
+When a type's change names another column as a table's `order`, removes its `order` or changes the type of its `order` column, the server MUST answer each page of the table's rows from then on in the order `tables/rows-sort` states.
+
+**Reason:** the server rewrites the order it keeps for a large table a page at a time, in `table-row-cleanup`, and a page read meanwhile is still sorted right.
+
+**Tests:** `compliance/table-rows-reads.test.ts › sorts by a new order at once, while table-row-cleanup rewrites the kept order of a large table`, `› rewrites the kept order of many small tables mostly in table-row-cleanup, sorting every page right meanwhile`.
+
+### `tables/order-change-bounded`
+
+When a change to a type moves the order the server keeps for the rows of its items' tables, the server MUST rewrite at most 1000 rows in the write of that change and leave the rest to `table-row-cleanup`.
+
+**Reason:** a type can have any number of items with any number of tables, and one write that rewrote them all would hold every other write.
+
+**Tests:** `compliance/table-rows-reads.test.ts › rewrites the kept order of many small tables mostly in table-row-cleanup, sorting every page right meanwhile`.
+
+### `tables/order-undo`
+
+When an undo puts back or removes rows of a table that names an `order`, the server MUST answer each page of the table's rows sorted by the column the table names as its `order` when the undo is made, in the order `tables/rows-sort` states.
+
+**Reason:** an undo writes rows as any batch does, so a type's change to the `order` between a batch and its undo sorts the rows the undo puts back by the new `order`.
+
+**Tests:** `compliance/table-rows-undo.test.ts › puts back and removes the rows of an ordered table in its order, also after its order names another column`, `compliance/table-rows-archive.test.ts › undoes a write over restored rows, putting each back as the restore wrote it`.
+
+### `tables/order-restored`
+
+When `POST /restore` writes the rows of a table that names an `order`, the server MUST answer each page of the table's rows sorted by that column in the order `tables/rows-sort` states from the restore's answer on.
+
+**Reason:** the server keeps each restored row in the table's order as it writes the row, so the first read after a restore is as fast as any later one.
+
+**Tests:** `compliance/table-rows-archive.test.ts › restores a conversation's latest messages in sent_at order straight after the restore`.
 
 ### `tables/rows-get`
 
@@ -710,7 +782,7 @@ When `marfa_read_rows` names an item and a table, the server MUST answer as `row
 
 **Reason:** an agent reads rows with the expressions and the order a client of the API uses, and a prefix of the door's page, not a different page, is what a size limit leaves.
 
-**Tests:** `compliance/table-rows-mcp.test.ts › reads rows as the page door does, by filter, sort and cursor`.
+**Tests:** `compliance/table-rows-mcp.test.ts › reads rows as the page door does, by filter, sort and cursor`, `› reads a table's order column as the page door does, in either direction`.
 
 ### `tables/mcp-read-limit`
 

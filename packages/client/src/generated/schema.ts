@@ -6936,6 +6936,8 @@ export interface components {
             columns: {
                 [key: string]: components["schemas"]["ColumnDefinition"];
             };
+            /** @description The name of a `datetime`, `number`, `integer` or `string` column whose order the server keeps for the rows, so a page sorted by it reads only the rows it answers. Changing or removing it needs `schema.write`. */
+            order?: string;
         } & {
             [key: string]: unknown;
         };
@@ -13227,7 +13229,7 @@ export interface operations {
                 cursor?: string;
                 /** @description Only return rows that match this expression, in the item filter grammar, where `values.<column>` names a column and `id` and `updated_at` are the row's own. */
                 filter?: string;
-                /** @description What to sort by: `id`, `updated_at` or `values.<column>`. Defaults to `id`. */
+                /** @description What to sort by: `id`, `updated_at` or `values.<column>`. Defaults to `id`. A page sorted by the table's `order` column reads only the rows it answers; a page sorted by another column reads every row. */
                 sort?: string;
                 /** @description The order of the sort: `asc` or `desc`. */
                 direction?: "asc" | "desc";
