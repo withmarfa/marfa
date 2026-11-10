@@ -88,6 +88,12 @@ impl Map {
         }
     }
 
+    /// A type registered later reads too.
+    pub(super) fn reads_every_name(&self) -> bool {
+        self.exact("*").is_some_and(|level| level >= Level::Read)
+            && self.patterns().all(|(_, level)| level >= Level::Read)
+    }
+
     fn reads(&self, axis: Axis, name: &str) -> bool {
         axis.level(self, name) >= Level::Read
     }
@@ -348,6 +354,15 @@ mod tests {
         let withheld = json!({ "*": "read", "CORE.MEDIA.*": "none" });
         let held = Axis::Type.from_body(&withheld).unwrap();
         assert_eq!(Axis::Type.level(&held, "core.media.photo"), Level::Read);
+    }
+
+    #[test]
+    fn every_name_reads_only_under_a_reading_wildcard_that_nothing_narrows() {
+        assert!(map(json!({ "*": "read" })).reads_every_name());
+        assert!(map(json!({ "*": "write", "core.note": "read" })).reads_every_name());
+        assert!(!map(json!({ "*": "write", "core.media.*": "none" })).reads_every_name());
+        assert!(!map(json!({ "core.note": "write" })).reads_every_name());
+        assert!(!map(json!({})).reads_every_name());
     }
 
     #[test]

@@ -276,11 +276,13 @@ pub fn properties(
     refuse(Code::InvalidProperties, faults)
 }
 
-/// Checks column values; resolving item references belongs to the caller.
+/// Checks column values; resolving item references belongs to the caller. A `kept` column holds
+/// a value the row keeps without `values` naming it.
 pub fn row_values(
     columns: &Map<String, Value>,
     values: &Map<String, Value>,
     complete: bool,
+    kept: &[String],
 ) -> Result<(), RuleError> {
     let mut faults: Vec<_> = values
         .keys()
@@ -296,7 +298,7 @@ pub fn row_values(
     for (name, definition) in columns {
         let required = definition.get("required").and_then(Value::as_bool) == Some(true);
         let value = match values.get(name) {
-            None if complete && required => {
+            None if complete && required && !kept.contains(name) => {
                 faults.push(fault(
                     name,
                     field_code::REQUIRED,

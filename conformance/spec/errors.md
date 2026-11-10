@@ -484,11 +484,11 @@ When a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: true` is rol
 
 ### `errors/grant-absent`
 
-If a `403` is not caused by a grant that the key could be given, such as the reserved `system.*` fence, a key whose type map reaches no type, a reserved extension namespace or a blob upload by a key whose map grants write on no type, or is the refusal of a natural key that resolves an item of a type the key may not read (`items/natural-key-unreadable`), then the server MUST NOT carry `details.grant`.
+If a `403` is not caused by a grant that the key could be given, such as the reserved `system.*` fence, a key whose type map reaches no type, a reserved extension namespace or a blob upload by a key whose map grants write on no type, or is the refusal of a natural key that resolves an item of a type the key may not read (`items/natural-key-unreadable`) or of a row write that names a value the key may not see (`tables/rows-withheld-write`), then the server MUST NOT carry `details.grant`.
 
-**Reason:** where no grant could let the request through, a grant named would send the client to ask for one that cannot be had. Where the natural key resolves an item the key may not read, a grant named would disclose the item's type.
+**Reason:** where no grant could let the request through, a grant named would send the client to ask for one that cannot be had. Where the natural key resolves an item the key may not read, or a row names one, a grant named would disclose the item's type.
 
-**Tests:** `compliance/write-refusal-details.test.ts › names no grant where no grant would open the door`, `compliance/claimed-sources.test.ts › tells a key its natural key is taken, and nothing of a row it may not read`.
+**Tests:** `compliance/write-refusal-details.test.ts › names no grant where no grant would open the door`, `compliance/claimed-sources.test.ts › tells a key its natural key is taken, and nothing of a row it may not read`, `compliance/table-rows.test.ts › refuses a put or patch naming a column whose value the key may not read, and writes nothing of its batch`.
 
 ## An item in the bin, or no item at all
 

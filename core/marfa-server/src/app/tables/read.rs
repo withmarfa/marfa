@@ -1,7 +1,5 @@
 //! Row reads share their item's access check and snapshot.
 
-use std::collections::HashMap;
-
 use marfa_rules::filter::{Expression, Term, parse_rows, system_literal};
 use marfa_rules::query::property_sort_expression;
 use rusqlite::Transaction;
@@ -9,7 +7,7 @@ use rusqlite::types::Value as Bound;
 use serde_json::{Map, Value, json};
 
 use super::store::{self, Held};
-use super::{Table, not_found_row, table_of, tables_of};
+use super::{Sight, Table, not_found_row, table_of, tables_of};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::items::{self, Reader, reading};
@@ -36,35 +34,27 @@ fn invalid(field: &str, message: impl Into<String>) -> Refusal {
         .with_detail("errors", json!([{ "path": field, "message": message }]))
 }
 
-/// Each value written as an item's id, shown to a reader that may read the item.
+/// Each row as the reader may see it.
 struct Shown<'a> {
     tx: &'a Transaction<'a>,
     caller: &'a Caller,
-    seen: HashMap<String, bool>,
+    sight: Sight,
 }
 
-impl Shown<'_> {
-    fn readable(&mut self, id: &str) -> Result<bool> {
-        if let Some(known) = self.seen.get(id) {
-            return Ok(*known);
+impl<'a> Shown<'a> {
+    fn of(read: &'a Reader<'_, '_>) -> Shown<'a> {
+        Shown {
+            tx: read.tx,
+            caller: &read.caller,
+            sight: Sight::of(&read.caller),
         }
-        let readable =
-            items::type_of(self.tx, id)?.is_some_and(|type_id| self.caller.may_read_type(&type_id));
-        self.seen.insert(id.to_string(), readable);
-        Ok(readable)
     }
 
     fn row(&mut self, held: Held) -> Result<Value> {
         let mut values = held.values;
-        let mut withheld = Vec::new();
-        for (column, id) in &held.refs {
-            let Some(id) = id.as_str() else {
-                return Err(Refusal::internal("a stored row does not read"));
-            };
-            if !self.readable(id)? {
-                values.remove(column);
-                withheld.push(column.clone());
-            }
+        let withheld = self.sight.withheld(self.tx, self.caller, &held.refs)?;
+        for column in &withheld {
+            values.remove(column);
         }
         let mut row = json!({ "id": held.id, "values": values, "updated_at": held.updated_at });
         if !withheld.is_empty() {
@@ -76,18 +66,28 @@ impl Shown<'_> {
 
 /// The SQL a row read selects, sorts and totals by, which reads a withheld value as absent.
 struct Withholding {
-    /// The types the reader may read, or `None` for every type.
+    /// Whether the reader may read every type, which shows it an id no item holds.
+    every: bool,
+    /// The types the reader may read, or `None` for every type an item holds.
     readable: Option<Vec<String>>,
 }
 
 impl Withholding {
     fn of(read: &Reader<'_, '_>) -> Result<Withholding> {
+        let every = read.caller.may_read_every_type();
         Ok(Withholding {
-            readable: readable_types(read.tx, &read.caller)?,
+            every,
+            readable: match every {
+                true => None,
+                false => readable_types(read.tx, &read.caller)?,
+            },
         })
     }
 
     fn hidden(&self, column: &str) -> Sql {
+        if self.every {
+            return Sql::new("0");
+        }
         let path = format!("$.{column}");
         let mut sql = Sql::new("(r.refs IS NOT NULL AND json_extract(r.refs, ");
         sql.bind(path.clone());
@@ -412,11 +412,7 @@ fn answered_page(
         }
         None => Value::Null,
     };
-    let mut shown = Shown {
-        tx: read.tx,
-        caller: &read.caller,
-        seen: HashMap::new(),
-    };
+    let mut shown = Shown::of(read);
     let data = found
         .into_iter()
         .map(|(row, _)| shown.row(row))
@@ -449,12 +445,7 @@ pub async fn get(
         let table = table_of(&read.catalog, &host.type_id, &table)?;
         let seq = store::table_seq(read.tx, host.seq, &table.name)?;
         let held = store::row(read.tx, seq, &row_id)?.ok_or_else(not_found_row)?;
-        let mut shown = Shown {
-            tx: read.tx,
-            caller: &read.caller,
-            seen: HashMap::new(),
-        };
-        printed(&shown.row(held)?)
+        printed(&Shown::of(read).row(held)?)
     })
     .await
 }

@@ -48,7 +48,7 @@ fn logged_rows(announced: &Announced<'_>) -> (Vec<Value>, bool) {
                 let named: Map<String, Value> = refs
                     .iter()
                     .filter_map(|(column, target)| {
-                        // An item no longer held reads as no type, which every reader is denied.
+                        // An item no longer held reads as no type.
                         let type_id = announced
                             .referenced
                             .get(target.as_str()?)
@@ -111,10 +111,11 @@ pub fn judged(caller: &Caller, mut body: Map<String, Value>) -> Option<Map<Strin
         let mut withheld = Vec::new();
         if let Some(Value::Object(values)) = row.get_mut("values") {
             for (column, type_id) in named {
-                if !type_id
-                    .as_str()
-                    .is_some_and(|type_id| caller.may_read_type(type_id))
-                {
+                let sees = match type_id.as_str() {
+                    Some(type_id) => caller.may_read_type(type_id),
+                    None => caller.may_read_every_type(),
+                };
+                if !sees {
                     values.remove(&column);
                     withheld.push(Value::String(column));
                 }

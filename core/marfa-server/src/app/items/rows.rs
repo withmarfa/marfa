@@ -125,6 +125,15 @@ pub(super) fn by_id(tx: &Transaction<'_>, id: &str) -> Result<Option<Item>> {
     Ok(statement.query_row([id], item_of).optional()?)
 }
 
+/// An item's type and whether it is in the bin, without reading its body.
+pub(super) fn type_by_id(tx: &Transaction<'_>, id: &str) -> Result<Option<(String, bool)>> {
+    let mut statement =
+        tx.prepare_cached("SELECT type, state = 'trashed' FROM items WHERE id = ?1")?;
+    Ok(statement
+        .query_row([id], |row| Ok((row.get(0)?, row.get(1)?)))
+        .optional()?)
+}
+
 pub(super) fn newest_of(
     tx: &Transaction<'_>,
     type_id: &str,

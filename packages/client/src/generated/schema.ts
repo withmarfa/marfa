@@ -6963,7 +6963,7 @@ export interface components {
              * @example 019a5b1e-7c41-7d2e-9f3a-5b8c2d4e6f70
              */
             id?: string;
-            /** @description The values, keyed by column. The row an operation leaves holds at most 65536 bytes (64 KiB) of values as JSON. On a `patch`, `null` clears a column. A `delete` takes none. */
+            /** @description The values, keyed by column. The row an operation leaves holds at most 65536 bytes (64 KiB) of values as JSON. On a `patch`, `null` clears a column. A `put` keeps each value that names an item you can't read. A `delete` takes none. */
             values?: {
                 [key: string]: unknown;
             };
@@ -13335,7 +13335,10 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `type_not_permitted`: you can't write the item's type, or your credential reaches no type. */
+            /**
+             * @description - `type_not_permitted`: you can't write the item's type, or your credential reaches no type.
+             *     - `forbidden`: a `put` or `patch` names a column whose value names an item you can't read. `details.operation` names the operation and `details.column` the column.
+             */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13344,7 +13347,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
+                    "application/json": components["schemas"]["ForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
             /**

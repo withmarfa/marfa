@@ -501,7 +501,12 @@ pub(crate) fn row(tx: &Transaction<'_>, id: &str) -> Result<Option<Item>> {
 }
 
 pub fn type_of(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {
-    Ok(rows::by_id(tx, id)?.map(|row| row.type_id))
+    Ok(rows::type_by_id(tx, id)?.map(|(type_id, _)| type_id))
+}
+
+/// The type of the item outside the bin that holds `id`.
+pub fn live_type_of(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {
+    Ok(rows::type_by_id(tx, id)?.and_then(|(type_id, trashed)| (!trashed).then_some(type_id)))
 }
 
 pub fn mark_type(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {

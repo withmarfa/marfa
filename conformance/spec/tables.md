@@ -308,11 +308,25 @@ If an operation's `op` is not `put`, `patch` or `delete`, or a `patch` or `delet
 
 **Tests:** `compliance/table-rows.test.ts › refuses a row id that is not a UUID and an operation it does not know`.
 
+### `tables/rows-op-member-refused`
+
+If an operation names a member other than `op`, `id` and `values`, or a `delete` names `values`, then the server MUST answer `400 validation_error` naming `operations.<index>.<member>`.
+
+**Reason:** a member the server would not read, such as a `version`, asks for something the write would not do.
+
+**Tests:** `compliance/table-rows.test.ts › refuses an operation with a member it does not take, or a delete that sends values`.
+
+### `tables/rows-values-refused`
+
+If a `put` or `patch` sends no `values`, or `values` that is not an object, then the server MUST answer `400 validation_error` naming `operations.<index>.values`.
+
+**Tests:** `compliance/table-rows.test.ts › refuses a put or patch whose values is missing or not an object`.
+
 ### `tables/rows-put-replace`
 
-When a `put` names the `id` of a row the table holds and sends values other than those it holds, the server MUST replace the row's values with those it sends.
+When a `put` names the `id` of a row the table holds and sends values other than those it holds, the server MUST replace the row's values with those it sends and those `tables/rows-withheld-put-kept` keeps.
 
-**Reason:** a `put` is the whole row, so a column it leaves out is cleared.
+**Reason:** a `put` is the whole row, so a column it leaves out is cleared, unless the writing key may not see its value.
 
 **Tests:** `compliance/table-rows.test.ts › creates, replaces, patches and deletes rows in one batch, answering each in order`.
 
@@ -332,11 +346,11 @@ When a `put` sends `null` for a column, the server MUST hold the row without a v
 
 ### `tables/rows-put-repeat`
 
-When a `put` sends exactly the values the row it names holds, the server MUST leave the row as it is, its `updated_at` included.
+When the values a `put` would leave in the row it names are exactly those the row holds, the server MUST leave the row as it is, its `updated_at` included.
 
 **Reason:** a connector sends the same rows again after a lost answer, and the second send changes nothing and announces nothing.
 
-**Tests:** `compliance/table-rows.test.ts › takes a put sent twice as one row, the second unchanged`.
+**Tests:** `compliance/table-rows.test.ts › takes a put sent twice as one row, the second unchanged`, `› keeps a value the key may not read in each column a put leaves out`.
 
 ### `tables/rows-put-unchanged`
 
@@ -418,7 +432,7 @@ When a batch names one row in more than one operation, the server MUST apply eac
 
 If the server refuses a batch, or any operation of it, then the server MUST write none of the batch.
 
-**Tests:** `compliance/table-rows.test.ts › refuses a patch of a row the table does not hold, and writes nothing of its batch`, `› writes nothing of a batch with one bad operation among many`, `› refuses a patch that would leave a row over 64 KiB`, `› reads rows as the item is read, and refuses a key with read but not write`, `› refuses to read or write the rows of an item in the bin`.
+**Tests:** `compliance/table-rows.test.ts › refuses a patch of a row the table does not hold, and writes nothing of its batch`, `› writes nothing of a batch with one bad operation among many`, `› refuses a patch that would leave a row over 64 KiB`, `› reads rows as the item is read, and refuses a key with read but not write`, `› refuses to read or write the rows of an item in the bin`, `› refuses a put or patch naming a column whose value the key may not read, and writes nothing of its batch`.
 
 ### `tables/rows-operations-required`
 
@@ -442,9 +456,9 @@ If a value breaks a rule its column states, in its `type`, `enum_values`, `forma
 
 ### `tables/rows-required`
 
-If a `put` leaves out a column the table declares `required`, or a `patch` sends `null` for one, then the server MUST answer `400 validation_error` naming `operations.<index>.values.<column>`.
+If a `put` leaves out a column the table declares `required` that `tables/rows-withheld-put-kept` does not keep, or a `patch` sends `null` for one, then the server MUST answer `400 validation_error` naming `operations.<index>.values.<column>`.
 
-**Tests:** `compliance/table-rows.test.ts › refuses a value of the wrong kind, a missing required column and an unknown column, naming each`.
+**Tests:** `compliance/table-rows.test.ts › refuses a value of the wrong kind, a missing required column and an unknown column, naming each`, `› keeps a value the key may not read in each column a put leaves out`.
 
 ### `tables/rows-item-missing`
 
@@ -540,6 +554,38 @@ While a row holds a value that was written to a column of type `item`, the serve
 
 **Tests:** `compliance/table-rows-lifecycle.test.ts › withholds an item id a row holds after its column is removed or retyped, or its item is retyped`, `compliance/table-rows-events.test.ts › withholds an item id a row holds from a stream after its column is removed`.
 
+### `tables/rows-item-gone`
+
+While a row holds in a column of type `item` the id of an item no longer held, the server MUST withhold the id under `tables/rows-item-withheld` and `tables/rows-event-withheld` only from a key that may not read every type, a key that may read every type being one whose `type_permissions` grant read on `*` and narrow no type below it.
+
+**Reason:** a purge leaves the id in the rows that name the item, and only a key that may read every type could have read whatever item it named.
+
+**Tests:** `compliance/table-rows-lifecycle.test.ts › shows the id of a purged item to a key that reads every type, and withholds it from any other`, `compliance/table-rows-events.test.ts › sends a purged item's id to a stream that reads every type, and withholds it from any other`.
+
+### `tables/rows-withheld-write`
+
+If a `put` or `patch` names in `values` a column whose value the server would withhold from the writing key on a read of the row, then the server MUST answer `403 forbidden` with `details.operation` naming the operation and `details.column` naming the column.
+
+**Reason:** a write that compared the value, or replaced it, would tell the key which item the value names or remove a reference it cannot see; the refusal tells it only what `withheld` on a read already shows.
+
+**Tests:** `compliance/table-rows.test.ts › refuses a put or patch naming a column whose value the key may not read, and writes nothing of its batch`, `compliance/table-rows-lifecycle.test.ts › refuses a write naming an item id the key may not read after its column is retyped, whatever value it sends`.
+
+### `tables/rows-withheld-put-kept`
+
+When a `put` replaces a row, the server MUST keep in the row each value it would withhold from the writing key on a read of the row.
+
+**Reason:** a key that reads a row, edits what it sees and puts it back leaves the reference it could not see as it was.
+
+**Tests:** `compliance/table-rows.test.ts › keeps a value the key may not read in each column a put leaves out`.
+
+### `tables/rows-withheld-delete`
+
+When a key that may write an item's type sends a `delete` of a row holding a value the server would withhold from the key on a read of the row, the server MUST delete the row.
+
+**Reason:** the key may write the table; what it may not see is the item the value names, which the delete leaves alone.
+
+**Tests:** `compliance/table-rows.test.ts › deletes a row holding a value the key may not read`.
+
 ### `tables/rows-withheld-reads`
 
 When the server withholds a row's value from the reading key, the server MUST select, sort and total the row, and continue a page after it, as though the row held no value for the column.
@@ -570,9 +616,9 @@ If `limit` is not a whole number from 1 to 1000, then the server MUST answer `40
 
 ### `tables/rows-cursor`
 
-If a `cursor` was not answered for the same item, table, `filter` and `sort`, then the server MUST answer `400 validation_error` naming `cursor`.
+If a `cursor` was not answered for the same item, table, `filter`, `sort` and `direction`, then the server MUST answer `400 validation_error` naming `cursor`.
 
-**Tests:** `compliance/table-rows-reads.test.ts › pages a table's rows by id, continuing by a signed cursor`.
+**Tests:** `compliance/table-rows-reads.test.ts › pages a table's rows by id, continuing by a signed cursor`, `› refuses a cursor answered for the other direction`.
 
 ### `tables/rows-filter`
 
@@ -614,9 +660,15 @@ When a caller sends `GET /items/{id}/tables/{table}/totals`, the server MUST ans
 
 ### `tables/totals-meaning`
 
-The server MUST answer `sum` as the sum of the column's values, `average` as their mean, `min` and `max` as the smallest and largest, a `datetime` compared and answered as its instant in UTC, and `count` as how many rows hold a value, answering `sum` and `count` as `0`, and `average`, `min` and `max` as `null`, over rows that hold none.
+The server MUST answer `sum` as the sum of the column's values, `average` as their mean, `min` and `max` as the smallest and largest, a `datetime` compared and answered as its instant in UTC, and `count` as how many rows hold a value.
 
-**Tests:** `compliance/table-rows-reads.test.ts › totals each column that adds up, over the rows a filter selects`, `› totals nothing as zero or null`.
+**Tests:** `compliance/table-rows-reads.test.ts › totals each column that adds up, over the rows a filter selects`.
+
+### `tables/totals-empty`
+
+When no row the `filter` selects holds a value for a column that names `adds_up`, the server MUST answer its `sum` and `count` as `0`, and its `average`, `min` and `max` as `null`.
+
+**Tests:** `compliance/table-rows-reads.test.ts › totals nothing as zero or null`.
 
 ## Activity
 
@@ -668,7 +720,7 @@ When the rows a batch changed hold more than 65536 bytes of values, the server M
 
 If a key may not read an item's type, or a stream's source filter hides the item, then the server MUST NOT send that key's stream or webhook the item's `rows.changed`.
 
-**Tests:** `compliance/table-rows-events.test.ts › announces one rows.changed per batch to a stream and a webhook`.
+**Tests:** `compliance/table-rows-events.test.ts › announces one rows.changed per batch to a stream and a webhook`, `› sends no rows.changed to a stream whose source filter hides the item`.
 
 ### `tables/rows-event-type-filter`
 

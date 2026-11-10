@@ -8,6 +8,7 @@ mod store;
 use std::collections::HashMap;
 
 use marfa_rules::validation;
+use rusqlite::Transaction;
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
@@ -17,6 +18,7 @@ use super::catalog::{self, Catalog, Snapshot};
 use super::items::{self, Host};
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
+use store::Held;
 
 pub use events::{ROWS_CHANGED, judged as judged_event};
 pub use lifecycle::{
@@ -42,15 +44,6 @@ pub enum Op {
     Delete {
         id: String,
     },
-}
-
-impl Op {
-    fn values(&self) -> Option<&Map<String, Value>> {
-        match self {
-            Op::Put { values, .. } | Op::Patch { values, .. } => Some(values),
-            Op::Delete { .. } => None,
-        }
-    }
 }
 
 fn refused_at(index: usize, path: &str, message: impl Into<String>) -> Refusal {
@@ -257,6 +250,53 @@ pub(crate) enum Changed {
     Deleted,
 }
 
+/// Which values written as an item's id a caller may see: an id no item holds only by a caller
+/// that may read every type.
+pub(crate) struct Sight {
+    every: bool,
+    seen: HashMap<String, bool>,
+}
+
+impl Sight {
+    pub(crate) fn of(caller: &Caller) -> Sight {
+        Sight {
+            every: caller.may_read_every_type(),
+            seen: HashMap::new(),
+        }
+    }
+
+    fn sees(&mut self, tx: &Transaction<'_>, caller: &Caller, id: &str) -> Result<bool> {
+        if self.every {
+            return Ok(true);
+        }
+        if let Some(known) = self.seen.get(id) {
+            return Ok(*known);
+        }
+        let sees = items::type_of(tx, id)?.is_some_and(|type_id| caller.may_read_type(&type_id));
+        self.seen.insert(id.to_string(), sees);
+        Ok(sees)
+    }
+
+    /// The columns of `refs` whose value the caller may not see.
+    pub(crate) fn withheld(
+        &mut self,
+        tx: &Transaction<'_>,
+        caller: &Caller,
+        refs: &Map<String, Value>,
+    ) -> Result<Vec<String>> {
+        let mut withheld = Vec::new();
+        for (column, id) in refs {
+            let Some(id) = id.as_str() else {
+                return Err(Refusal::internal("a stored row does not read"));
+            };
+            if !self.sees(tx, caller, id)? {
+                withheld.push(column.clone());
+            }
+        }
+        Ok(withheld)
+    }
+}
+
 fn refs_text(refs: &Map<String, Value>) -> Option<String> {
     (!refs.is_empty()).then(|| Value::Object(refs.clone()).to_string())
 }
@@ -271,19 +311,45 @@ struct Batch<'a, 'c> {
     batch_id: String,
     /// The type of each item a value names, or `None` where no item holds the id.
     referenced: HashMap<String, Option<String>>,
+    sight: Sight,
     changed: Vec<(String, Changed)>,
     count: i64,
     bytes: i64,
 }
 
 impl Batch<'_, '_> {
+    /// A put or patch leaves alone each column whose value the writing key may not see, which it
+    /// answers.
+    fn refuse_withheld(
+        &mut self,
+        index: usize,
+        held: &Held,
+        named: &Map<String, Value>,
+    ) -> Result<Vec<String>> {
+        let withheld = self
+            .sight
+            .withheld(self.unit.tx(), &self.unit.caller, &held.refs)?;
+        match withheld.iter().find(|column| named.contains_key(column.as_str())) {
+            Some(column) => Err(Refusal::new(
+                Code::Forbidden,
+                format!(
+                    "The column \"{column}\" names an item this key may not read, so the key may not write it."
+                ),
+            )
+            .with_detail("operation", index)
+            .with_detail("column", column.as_str())),
+            None => Ok(withheld),
+        }
+    }
+
     fn refuse_values(
         &self,
         index: usize,
         values: &Map<String, Value>,
         complete: bool,
+        kept: &[String],
     ) -> Result<()> {
-        validation::row_values(&self.table.columns, values, complete).map_err(|error| {
+        validation::row_values(&self.table.columns, values, complete, kept).map_err(|error| {
             match error.fields.first() {
                 Some(field) => refused_at(
                     index,
@@ -304,11 +370,8 @@ impl Batch<'_, '_> {
             };
             let found = match self.referenced.get(id) {
                 Some(known) => known.clone(),
-                None => items::row(tx, id)?
-                    .filter(|item| {
-                        item.state != "trashed" && self.unit.caller.may_read_type(&item.type_id)
-                    })
-                    .map(|item| item.type_id),
+                None => items::live_type_of(tx, id)?
+                    .filter(|type_id| self.unit.caller.may_read_type(type_id)),
             };
             let Some(type_id) = found else {
                 return Err(refused_at(
@@ -395,20 +458,32 @@ impl Batch<'_, '_> {
     }
 
     fn land(&mut self, index: usize, op: Op) -> Result<(String, Outcome)> {
-        if let Some(values) = op.values() {
-            self.refuse_references(index, values)?;
-        }
         let tx = self.unit.tx();
         match op {
             Op::Put { id, values: sent } => {
-                self.refuse_values(index, &sent, true)?;
+                let id = id.unwrap_or_else(|| Uuid::now_v7().to_string());
+                let held = store::row(tx, self.table_seq, &id)?;
+                let kept = match &held {
+                    Some(held) => self.refuse_withheld(index, held, &sent)?,
+                    None => Vec::new(),
+                };
+                self.refuse_references(index, &sent)?;
+                self.refuse_values(index, &sent, true, &kept)?;
                 let mut refs = Map::new();
                 self.mark_refs(&mut refs, &sent);
                 let mut values = sent;
                 values.retain(|_, value| !value.is_null());
+                if let Some(held) = &held {
+                    for column in &kept {
+                        if let Some(value) = held.values.get(column) {
+                            values.insert(column.clone(), value.clone());
+                        }
+                        if let Some(target) = held.refs.get(column) {
+                            refs.insert(column.clone(), target.clone());
+                        }
+                    }
+                }
                 let printed = refuse_wide(index, &values)?;
-                let id = id.unwrap_or_else(|| Uuid::now_v7().to_string());
-                let held = store::row(tx, self.table_seq, &id)?;
                 if held.as_ref().is_some_and(|held| held.values == values) {
                     return Ok((id, Outcome::Unchanged));
                 }
@@ -437,12 +512,14 @@ impl Batch<'_, '_> {
                 Ok((id, outcome))
             }
             Op::Patch { id, values } => {
-                self.refuse_values(index, &values, false)?;
                 let Some(held) = store::row(tx, self.table_seq, &id)? else {
                     return Err(not_found_row()
                         .with_detail("operation", index)
                         .with_detail("id", id.as_str()));
                 };
+                self.refuse_withheld(index, &held, &values)?;
+                self.refuse_references(index, &values)?;
+                self.refuse_values(index, &values, false, &[])?;
                 let mut refs = held.refs.clone();
                 self.mark_refs(&mut refs, &values);
                 let mut next = held.values.clone();
@@ -505,6 +582,7 @@ pub async fn write(
             table_seq: store::table_seq(unit.tx(), host.seq, &table.name)?,
             batch_id: Uuid::now_v7().to_string(),
             referenced: HashMap::new(),
+            sight: Sight::of(&unit.caller),
             changed: Vec::new(),
             count: 0,
             bytes: 0,

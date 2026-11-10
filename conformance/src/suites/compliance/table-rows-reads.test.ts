@@ -166,6 +166,38 @@ describe("reading rows", () => {
     ).toHaveLength(25);
   });
 
+  it("refuses a cursor answered for the other direction", async () => {
+    const { item } = await spendingItem();
+    await put(
+      item,
+      Array.from({ length: 5 }, (_, n) => ({ amount: n })),
+    );
+    for (const direction of ["asc", "desc"] as const) {
+      const first = await client.listRows(item, "spend", {
+        limit: 2,
+        sort: "values.amount",
+        direction,
+      });
+      expect(first.data.next_cursor).toEqual(expect.any(String));
+      const same = await client.listRows(item, "spend", {
+        limit: 2,
+        sort: "values.amount",
+        direction,
+        cursor: first.data.next_cursor!,
+      });
+      expect(same.status, JSON.stringify(same.error)).toBe(200);
+      const res = await client.listRows(item, "spend", {
+        limit: 2,
+        sort: "values.amount",
+        direction: direction === "asc" ? "desc" : "asc",
+        cursor: first.data.next_cursor!,
+      });
+      expect(res.status).toBe(400);
+      expect(res.error?.error.code).toBe("validation_error");
+      expect(res.error?.error.details).toMatchObject({ field: "cursor" });
+    }
+  });
+
   it("filters rows on columns with the item filter grammar", async () => {
     const { item } = await spendingItem();
     const written = await put(item, [

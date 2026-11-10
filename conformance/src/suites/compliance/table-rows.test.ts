@@ -344,6 +344,73 @@ describe("writing rows", () => {
     expect(await rowsOf(item)).toEqual([]);
   });
 
+  it("refuses an operation with a member it does not take, or a delete that sends values", async () => {
+    const item = await itemOf(await ledgerType());
+    const id = rowId();
+    const stray = await client.writeRows(item, "lines", {
+      operations: [
+        { op: "put", id, values: { amount: 1 } },
+        { op: "put", values: { amount: 2 }, version: 3 },
+      ],
+    } as never);
+    expect(stray.status).toBe(400);
+    expect(refusedAt(stray)).toMatchObject({
+      code: "validation_error",
+      operation: 1,
+      paths: ["operations.1.version"],
+    });
+    const deleteValues = await client.writeRows(item, "lines", {
+      operations: [
+        { op: "put", id, values: { amount: 1 } },
+        { op: "delete", id, values: { amount: 1 } },
+      ],
+    } as never);
+    expect(deleteValues.status).toBe(400);
+    expect(refusedAt(deleteValues)).toMatchObject({
+      code: "validation_error",
+      operation: 1,
+      paths: ["operations.1.values"],
+    });
+    expect(await rowsOf(item)).toEqual([]);
+
+    const plain = await client.writeRows(item, "lines", {
+      operations: [
+        { op: "put", id, values: { amount: 1 } },
+        { op: "delete", id },
+      ],
+    });
+    expect(plain.status, JSON.stringify(plain.error)).toBe(200);
+  });
+
+  it("refuses a put or patch whose values is missing or not an object", async () => {
+    const item = await itemOf(await ledgerType());
+    const id = rowId();
+    await client.writeRows(item, "lines", {
+      operations: [{ op: "put", id, values: { amount: 1 } }],
+    });
+    for (const sent of [
+      { op: "put" },
+      { op: "put", values: [1] },
+      { op: "put", values: "amount" },
+      { op: "patch", id },
+      { op: "patch", id, values: null },
+      { op: "patch", id, values: [{ amount: 2 }] },
+    ]) {
+      const res = await client.writeRows(item, "lines", {
+        operations: [{ op: "patch", id, values: { amount: 9 } }, sent],
+      } as never);
+      expect(res.status, JSON.stringify(sent)).toBe(400);
+      expect(refusedAt(res), JSON.stringify(sent)).toMatchObject({
+        code: "validation_error",
+        operation: 1,
+        paths: ["operations.1.values"],
+      });
+    }
+    expect((await client.getRow(item, "lines", id)).data.values).toEqual({
+      amount: 1,
+    });
+  });
+
   it("refuses a value of the wrong kind, a missing required column and an unknown column, naming each", async () => {
     const item = await itemOf(await ledgerType());
     const id = rowId();
@@ -706,5 +773,131 @@ describe("who may read and write rows", () => {
       amount: 2,
       about: shownNote.data.item.id,
     });
+  });
+
+  async function withheldRow(about: Record<string, unknown> = {}) {
+    const hiddenType = typeId("private");
+    expect(
+      (
+        await client.registerType({
+          id: hiddenType,
+          fields: { title: { type: "string" } },
+        } as never)
+      ).status,
+    ).toBe(201);
+    const hidden = await itemOf(hiddenType);
+    const shown = await client.createItem({
+      type: "core.note",
+      properties: { title: "Shown" },
+    } as never);
+    trackItem(ctx, shown.data.item.id);
+    const type = await ledgerType({ about: { type: "item", ...about } });
+    const item = await itemOf(type);
+    const row = rowId();
+    const written = await client.writeRows(item, "lines", {
+      operations: [
+        { op: "put", id: row, values: { amount: 1, about: hidden } },
+      ],
+    });
+    expect(written.status, JSON.stringify(written.error)).toBe(200);
+    const writer = await narrowClient({ [type]: "write", "core.note": "read" });
+    const seen = await writer.getRow(item, "lines", row);
+    expect(seen.data.withheld).toEqual(["about"]);
+    return { item, row, hidden, note: shown.data.item.id, writer };
+  }
+
+  it("refuses a put or patch naming a column whose value the key may not read, and writes nothing of its batch", async () => {
+    const { item, row, hidden, note, writer } = await withheldRow();
+    const fresh = rowId();
+    const naming: RowOperation[] = [
+      { op: "patch", id: row, values: { about: note } },
+      { op: "patch", id: row, values: { about: null } },
+      { op: "patch", id: row, values: { about: hidden } },
+      { op: "put", id: row, values: { amount: 1, about: note } },
+      { op: "put", id: row, values: { amount: 1, about: null } },
+    ];
+    for (const op of naming) {
+      const res = await writer.writeRows(item, "lines", {
+        operations: [{ op: "put", id: fresh, values: { amount: 2 } }, op],
+      });
+      expect(res.status, JSON.stringify(op)).toBe(403);
+      expect(res.error?.error).toMatchObject({
+        code: "forbidden",
+        details: { operation: 1, column: "about" },
+      });
+      expect(res.error?.error.details).not.toHaveProperty("grant");
+      expect(JSON.stringify(res.error)).not.toContain(hidden);
+    }
+    expect((await client.getRow(item, "lines", row)).data.values).toEqual({
+      amount: 1,
+      about: hidden,
+    });
+    expect((await client.getRow(item, "lines", fresh)).status).toBe(404);
+
+    const other = await writer.writeRows(item, "lines", {
+      operations: [{ op: "patch", id: row, values: { amount: 4 } }],
+    });
+    expect(other.data.results[0]?.outcome).toBe("patched");
+    const owner = await client.writeRows(item, "lines", {
+      operations: [{ op: "patch", id: row, values: { about: note } }],
+    });
+    expect(owner.data.results[0]?.outcome).toBe("patched");
+    const now = await writer.writeRows(item, "lines", {
+      operations: [{ op: "patch", id: row, values: { about: null } }],
+    });
+    expect(now.data.results[0]?.outcome).toBe("patched");
+  });
+
+  it("keeps a value the key may not read in each column a put leaves out", async () => {
+    const { item, row, hidden, writer } = await withheldRow({ required: true });
+    const read = (await writer.getRow(item, "lines", row)).data;
+    const same = await writer.writeRows(item, "lines", {
+      operations: [{ op: "put", id: row, values: read.values }],
+    });
+    expect(same.status, JSON.stringify(same.error)).toBe(200);
+    expect(same.data.results[0]?.outcome).toBe("unchanged");
+    expect(same.data.batch).toBeNull();
+
+    const edited = await writer.writeRows(item, "lines", {
+      operations: [
+        { op: "put", id: row, values: { amount: 7, memo: "kept" } },
+      ],
+    });
+    expect(edited.status, JSON.stringify(edited.error)).toBe(200);
+    expect(edited.data.results[0]?.outcome).toBe("replaced");
+    expect((await client.getRow(item, "lines", row)).data.values).toEqual({
+      amount: 7,
+      memo: "kept",
+      about: hidden,
+    });
+    const cleared = await writer.writeRows(item, "lines", {
+      operations: [{ op: "put", id: row, values: { amount: 7 } }],
+    });
+    expect(cleared.data.results[0]?.outcome).toBe("replaced");
+    expect((await client.getRow(item, "lines", row)).data.values).toEqual({
+      amount: 7,
+      about: hidden,
+    });
+    const after = (await writer.getRow(item, "lines", row)).data;
+    expect(after.values).toEqual({ amount: 7 });
+    expect(after.withheld).toEqual(["about"]);
+
+    const owner = await client.writeRows(item, "lines", {
+      operations: [{ op: "put", id: row, values: { amount: 7 } }],
+    });
+    expect(owner.status).toBe(400);
+    expect(refusedAt(owner).paths).toEqual(["operations.0.values.about"]);
+  });
+
+  it("deletes a row holding a value the key may not read", async () => {
+    const { item, row, writer } = await withheldRow();
+    const res = await writer.writeRows(item, "lines", {
+      operations: [{ op: "delete", id: row }],
+    });
+    expect(res.status, JSON.stringify(res.error)).toBe(200);
+    expect(res.data.results[0]?.outcome).toBe("deleted");
+    const gone = await client.getRow(item, "lines", row);
+    expect(gone.status).toBe(404);
+    expect(gone.error?.error.code).toBe("row_not_found");
   });
 });

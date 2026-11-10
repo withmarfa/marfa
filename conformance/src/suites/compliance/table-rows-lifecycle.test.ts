@@ -449,6 +449,105 @@ describe("rows and the life of an item", () => {
     }
   });
 
+  it("refuses a write naming an item id the key may not read after its column is retyped, whatever value it sends", async () => {
+    const hiddenType = typeId("hidden-write");
+    expect(
+      (
+        await client.registerType({
+          id: hiddenType,
+          fields: { title: { type: "string" } },
+        } as never)
+      ).status,
+    ).toBe(201);
+    const hidden = (await itemOf(hiddenType, "hidden")).id;
+    const type = await register(typeId("retyped-write"), {
+      lines: {
+        columns: { amount: { type: "number" }, about: { type: "item" } },
+      },
+    });
+    const item = await itemOf(type);
+    const row = (await put(item.id, [{ amount: 1, about: hidden }])).results[0]!
+      .id;
+    const retyped = await client.replaceType(
+      type,
+      {
+        id: type,
+        fields: { title: { type: "string" } },
+        tables: {
+          lines: {
+            columns: { amount: { type: "number" }, about: { type: "string" } },
+          },
+        },
+      },
+      true,
+    );
+    expect(retyped.status, JSON.stringify(retyped.error)).toBe(200);
+    const writer = await narrowReader({ [type]: "write" });
+    for (const about of [hidden, "a guess"]) {
+      for (const op of [
+        { op: "patch", id: row, values: { about } },
+        { op: "put", id: row, values: { amount: 1, about } },
+      ] as RowOperation[]) {
+        const res = await writer.writeRows(item.id, "lines", {
+          operations: [op],
+        });
+        expect(res.status, JSON.stringify(op)).toBe(403);
+        expect(res.error?.error).toMatchObject({
+          code: "forbidden",
+          details: { operation: 0, column: "about" },
+        });
+      }
+    }
+    expect((await client.getRow(item.id, "lines", row)).data.values).toEqual({
+      amount: 1,
+      about: hidden,
+    });
+    const owner = await client.writeRows(item.id, "lines", {
+      operations: [{ op: "patch", id: row, values: { about: hidden } }],
+    });
+    expect(owner.data.results[0]?.outcome).toBe("unchanged");
+  });
+
+  it("shows the id of a purged item to a key that reads every type, and withholds it from any other", async () => {
+    const type = await register(typeId("purged-ref"), {
+      lines: {
+        columns: { amount: { type: "number" }, about: { type: "item" } },
+      },
+    });
+    const item = await itemOf(type);
+    const note = await client.createItem({
+      type: "core.note",
+      properties: { title: "to purge" },
+    } as never);
+    expect(note.status, JSON.stringify(note.error)).toBe(201);
+    const gone = note.data.item.id;
+    const row = (await put(item.id, [{ amount: 1, about: gone }])).results[0]!
+      .id;
+    const reader = await narrowReader({ [type]: "read", "core.note": "read" });
+    expect((await reader.getRow(item.id, "lines", row)).data.values).toEqual({
+      amount: 1,
+      about: gone,
+    });
+    expect((await client.deleteItem(gone)).status).toBe(200);
+    expect((await client.purgeItem(gone)).status).toBe(200);
+
+    const filter = `values.about eq "${gone}"`;
+    const owned = await client.getRow(item.id, "lines", row);
+    expect(owned.data.values).toEqual({ amount: 1, about: gone });
+    expect(owned.data).not.toHaveProperty("withheld");
+    expect(
+      (await client.listRows(item.id, "lines", { filter })).data.data.map(
+        (r) => r.id,
+      ),
+    ).toEqual([row]);
+    const read = await reader.getRow(item.id, "lines", row);
+    expect(read.data.values).toEqual({ amount: 1 });
+    expect(read.data.withheld).toEqual(["about"]);
+    expect(
+      (await reader.listRows(item.id, "lines", { filter })).data.data,
+    ).toEqual([]);
+  });
+
   it("refuses to delete a type a column constrains to unless forced", async () => {
     const target = typeId("target");
     expect(
