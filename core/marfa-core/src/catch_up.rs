@@ -332,38 +332,44 @@ fn pinned_row(core: &Core, payload: &EventPayload) -> Result<bool> {
 
 /// Written only where it differs from the one held, so a reader told of every
 /// save is not told of this. `changed` is set once a changed catalog is
-/// committed, before it is read back, so a caller learns of it even where
-/// the read fails. A slice whose query reads a type's status field holds
-/// the rows the old field admitted, and no event says which the new one
-/// does, so a change to the fields ends the copy `catalog_changed`
-/// (`device/catch-up-query-catalog`).
+/// committed. A slice whose query reads a type's status field holds the rows
+/// the old field admitted, and no event says which the new one does, so a
+/// change to the fields ends the copy `catalog_changed`
+/// (`device/catch-up-query-catalog`). The expiry commits with the catalog, so
+/// a retry never finds the new catalog held and the copy left standing.
 fn adopt(
     core: &Core,
     context: &Context,
     catalog: &WireCatalog,
     changed: &mut bool,
 ) -> Result<Catalog> {
-    let statuses = {
-        let conn = core.conn()?;
-        context.same_copy(&conn)?;
-        let reads = match store::slice_query(&conn)? {
-            Some(query) => query.reads_status()?,
-            None => false,
-        };
-        let before = reads
-            .then(|| crate::catalog::load(&conn).map(|held| held.status_fields()))
-            .transpose()?;
-        if store::replace_catalog(&conn, catalog)?.is_changed() {
-            *changed = true;
-        }
-        let adopted = crate::catalog::load(&conn)?;
-        (before, adopted)
+    let mut conn = core.conn()?;
+    let tx = conn.transaction()?;
+    context.same_copy(&tx)?;
+    let reads = match store::slice_query(&tx)? {
+        Some(query) => query.reads_status()?,
+        None => false,
     };
-    match statuses {
-        (Some(before), adopted) if before != adopted.status_fields() => {
-            Err(context.expire(core, crate::model::HydrateRestart::CatalogChanged.as_str())?)
+    let before = reads
+        .then(|| crate::catalog::load(&tx).map(|held| held.status_fields()))
+        .transpose()?;
+    #[cfg(debug_assertions)]
+    crate::fault::gate("gate-catalog-adopt");
+    let replaced = store::replace_catalog(&tx, catalog)?;
+    let adopted = crate::catalog::load(&tx)?;
+    let expired = match before {
+        Some(before) if before != adopted.status_fields() => {
+            #[cfg(debug_assertions)]
+            crate::fault::hold(|| format!("catalog-adopt-expiring:{core:p}"));
+            Some(context.expire_in(&tx, crate::model::HydrateRestart::CatalogChanged.as_str())?)
         }
-        (_, adopted) => Ok(adopted),
+        _ => None,
+    };
+    tx.commit()?;
+    *changed |= replaced.is_changed();
+    match expired {
+        Some(expired) => Err(expired),
+        None => Ok(adopted),
     }
 }
 
@@ -405,7 +411,9 @@ struct Taken {
 }
 
 /// The connection is released before this returns, so a caller told of the
-/// change can read the row it names.
+/// change can read the row it names. A transaction another program's commit
+/// refuses is made again from its first read, without reading the row again.
+#[allow(clippy::too_many_arguments)]
 fn take(
     core: &Core,
     context: &Context,
@@ -414,6 +422,7 @@ fn take(
     id: &str,
     kind: &str,
     payload: &EventPayload,
+    stop: &AtomicBool,
 ) -> Result<Taken> {
     // A held stream spans ordinary pin changes. Snapshot pins for this event's
     // awaited reads, while retaining the stream's copy and authority guard.
@@ -439,65 +448,68 @@ fn take(
         edge_id: None,
         cursor: id.to_string(),
     };
-    let mut conn = core.conn()?;
-    let tx = conn.transaction()?;
-    operation.check(&tx)?;
-    reach::cursor(id).ok_or_else(reach::invalid)?;
-    if let Some(rows) = &payload.rows {
-        let applied = crate::tables::apply(&tx, rows, read_rows.as_ref())?;
+    crate::busy::retrying(&core.conn, stop, || {
+        let mut conn = core.conn()?;
+        let tx = conn.transaction()?;
+        operation.check(&tx)?;
+        reach::cursor(id).ok_or_else(reach::invalid)?;
+        if let Some(rows) = &payload.rows {
+            let applied = crate::tables::apply(&tx, rows, read_rows.as_ref())?;
+            store::meta_set(&tx, store::META_EVENT_CURSOR, id)?;
+            tx.commit()?;
+            return Ok(Taken {
+                change: applied.then(|| rows_changed(rows.item.id.clone())),
+                rows: Vec::new(),
+            });
+        }
+        // Judged outside the transaction: a row held or pinned since is taken
+        // as any held row is, and judged again once taken.
+        let outside = entering.outside
+            && match &payload.item {
+                Some(item) => !store::item_held(&tx, &item.id)? && !store::pinned(&tx, &item.id)?,
+                None => false,
+            };
+        if ITEM_CHANGES.contains(&kind) || kind == "item.purged" {
+            let listed = payload.listed.ok_or_else(reach::invalid)?;
+            let item = payload.item.as_ref().ok_or_else(reach::invalid)?;
+            // A row the copy does not take keeps no mark, so the marks grow
+            // with the rows held, not with the events.
+            if outside {
+                reach::forget_listed(&tx, &item.id)?;
+            } else {
+                reach::set_listed(&tx, &item.id, listed)?;
+            }
+        }
+        let applied =
+            !outside && apply(&tx, catalog, slice, kind, payload, entering.tags.as_deref())?;
+        if applied {
+            for edge in &entering.edges {
+                store::take_server_edge(&tx, edge)?;
+            }
+        }
+        if let Some(item) = &payload.item {
+            crate::tables::reconcile_item(&tx, &item.id)?;
+        }
+        let reread = match &reread {
+            Some(reread) => crate::tables::take_reread(&tx, reread)?,
+            None => Vec::new(),
+        };
+        // The last id applied, never the highest seen: where an event is not
+        // applied, a high-water mark would step over it forever.
         store::meta_set(&tx, store::META_EVENT_CURSOR, id)?;
         tx.commit()?;
-        return Ok(Taken {
-            change: applied.then(|| rows_changed(rows.item.id.clone())),
-            rows: Vec::new(),
-        });
-    }
-    // Judged outside the transaction: a row held or pinned since is taken
-    // as any held row is, and judged again once taken.
-    let outside = entering.outside
-        && match &payload.item {
-            Some(item) => !store::item_held(&tx, &item.id)? && !store::pinned(&tx, &item.id)?,
-            None => false,
-        };
-    if ITEM_CHANGES.contains(&kind) || kind == "item.purged" {
-        let listed = payload.listed.ok_or_else(reach::invalid)?;
-        let item = payload.item.as_ref().ok_or_else(reach::invalid)?;
-        // A row the copy does not take keeps no mark, so the marks grow with
-        // the rows held, not with the events.
-        if outside {
-            reach::forget_listed(&tx, &item.id)?;
-        } else {
-            reach::set_listed(&tx, &item.id, listed)?;
-        }
-    }
-    let applied = !outside && apply(&tx, catalog, slice, kind, payload, entering.tags.as_deref())?;
-    if applied {
-        for edge in &entering.edges {
-            store::take_server_edge(&tx, edge)?;
-        }
-    }
-    if let Some(item) = &payload.item {
-        crate::tables::reconcile_item(&tx, &item.id)?;
-    }
-    let reread = match &reread {
-        Some(reread) => crate::tables::take_reread(&tx, reread)?,
-        None => Vec::new(),
-    };
-    // The last id applied, never the highest seen: where an event is not
-    // applied, a high-water mark would step over it forever.
-    store::meta_set(&tx, store::META_EVENT_CURSOR, id)?;
-    tx.commit()?;
-    Ok(Taken {
-        change: applied.then(|| Change {
-            event: ChangeEvent::Applied(kind.to_string()),
-            item_id: payload.item.as_ref().map(|item| item.id.clone()),
-            edge_id: payload.edge.as_ref().map(|edge| edge.id.clone()),
-            cursor: id.to_string(),
-        }),
-        rows: reread
-            .into_iter()
-            .map(|(item, _)| rows_changed(item))
-            .collect(),
+        Ok(Taken {
+            change: applied.then(|| Change {
+                event: ChangeEvent::Applied(kind.to_string()),
+                item_id: payload.item.as_ref().map(|item| item.id.clone()),
+                edge_id: payload.edge.as_ref().map(|edge| edge.id.clone()),
+                cursor: id.to_string(),
+            }),
+            rows: reread
+                .into_iter()
+                .map(|(item, _)| rows_changed(item))
+                .collect(),
+        })
     })
 }
 
@@ -695,8 +707,15 @@ pub(crate) fn replay_build(
                         {
                             report.cursor = cursor;
                         }
-                        report.applied +=
-                            settle_beneath(core, context, http, &catalog, &slice, stop)?;
+                        settle_beneath(
+                            core,
+                            context,
+                            http,
+                            &catalog,
+                            &slice,
+                            stop,
+                            &mut report.applied,
+                        )?;
                         reached_head = true;
                         break;
                     }
@@ -722,7 +741,7 @@ pub(crate) fn replay_build(
                             refuse_if_stopped(stop)?;
                             catalog = adopt(core, context, &refreshed_catalog, catalog_changed)?;
                         }
-                        if take(core, context, &catalog, &slice, &id, kind, &payload)?
+                        if take(core, context, &catalog, &slice, &id, kind, &payload, stop)?
                             .change
                             .is_some()
                         {
@@ -734,8 +753,15 @@ pub(crate) fn replay_build(
                         unsettled += usize::from(may_owe(kind));
                         if unsettled >= SETTLE_EVERY {
                             unsettled = 0;
-                            report.applied +=
-                                settle_beneath(core, context, http, &catalog, &slice, stop)?;
+                            settle_beneath(
+                                core,
+                                context,
+                                http,
+                                &catalog,
+                                &slice,
+                                stop,
+                                &mut report.applied,
+                            )?;
                         }
                     }
                 }
@@ -1118,7 +1144,9 @@ fn follow_paced(
                     return Err(error);
                 }
             };
-            same_instance(core, &instance, context.generation)?;
+            crate::busy::retrying(&core.conn, stop, || {
+                same_instance(core, &instance, context.generation)
+            })?;
             #[cfg(debug_assertions)]
             crate::fault::hold(|| "follow-stream-had");
             if !told.stalled {
@@ -1129,7 +1157,9 @@ fn follow_paced(
             }
             owes_drain = false;
             let mut moved = false;
-            let catalog = adopt(core, &context, &fetched, &mut moved);
+            let catalog = crate::busy::retrying(&core.conn, stop, || {
+                adopt(core, &context, &fetched, &mut moved)
+            });
             if moved {
                 on_change(&Change {
                     event: ChangeEvent::CatalogChanged,
@@ -1563,7 +1593,7 @@ fn read_stream(
             unsettled = unsettled.max(1);
             // A heartbeat at the head says the copy is still current.
             if live_confirmed {
-                mark_synced_while_live(core, context, pace, now, synced)?;
+                mark_synced_while_live(core, context, pace, now, synced, stop)?;
                 look.start_if_owed(now)?;
             }
             continue;
@@ -1609,7 +1639,7 @@ fn read_stream(
                 told.unstalled(&report.cursor, recovery, on_change);
                 on_live(live_confirmed);
                 if live_confirmed {
-                    mark_synced_while_live(core, context, pace, now, synced)?;
+                    mark_synced_while_live(core, context, pace, now, synced, stop)?;
                     look.start_if_owed(now)?;
                 }
             }
@@ -1633,7 +1663,7 @@ fn read_stream(
                 }
                 // A read that fails for a reason that clears reopens the
                 // stream from before this event rather than ending.
-                let taken = match take(core, context, catalog, slice, &id, kind, &payload) {
+                let taken = match take(core, context, catalog, slice, &id, kind, &payload, stop) {
                     Err(ref error) if crate::folder::copy_changed(error) => {
                         context.same_copy(&*core.conn()?)?;
                         // Pins changed during an awaited read. Replay this event
@@ -1671,7 +1701,7 @@ fn read_stream(
                 }
                 on_live(live_confirmed);
                 if live_confirmed {
-                    mark_synced_while_live(core, context, pace, now, synced)?;
+                    mark_synced_while_live(core, context, pace, now, synced, stop)?;
                 }
             }
         }
@@ -1679,8 +1709,9 @@ fn read_stream(
 }
 
 /// Settles the slice's `beneath` for a follow, telling a settle that changed
-/// the rows held as an edge change. A failure ends the stream; the settle
-/// stays owed, so the next stream makes it.
+/// the rows held as an edge change, a settle that failed after a page
+/// committed included. A failure ends the stream; the settle stays owed, so
+/// the next stream makes it.
 fn settle_following(
     core: &Core,
     context: &Context,
@@ -1690,21 +1721,21 @@ fn settle_following(
     report: &mut FollowReport,
     on_change: &mut dyn FnMut(&Change),
 ) -> Result<Option<Ended>> {
+    let mut changed = 0;
     let settled = core
         .http()
-        .and_then(|http| settle_beneath(core, context, http, catalog, slice, stop));
+        .and_then(|http| settle_beneath(core, context, http, catalog, slice, stop, &mut changed));
+    if changed > 0 {
+        report.applied += 1;
+        on_change(&Change {
+            event: ChangeEvent::Applied("edge.updated".into()),
+            item_id: None,
+            edge_id: None,
+            cursor: report.cursor.clone(),
+        });
+    }
     match settled {
-        Ok(0) => Ok(None),
-        Ok(_) => {
-            report.applied += 1;
-            on_change(&Change {
-                event: ChangeEvent::Applied("edge.updated".into()),
-                item_id: None,
-                edge_id: None,
-                cursor: report.cursor.clone(),
-            });
-            Ok(None)
-        }
+        Ok(()) => Ok(None),
         Err(CoreError::Canceled) if stop.load(Ordering::Relaxed) => Ok(Some(Ended::Stopped)),
         Err(ref error) if crate::folder::copy_changed(error) => {
             context.same_copy(&*core.conn()?)?;
@@ -1727,12 +1758,13 @@ fn mark_synced_while_live(
     pace: &Pace,
     now: &dyn Fn() -> Instant,
     synced: &mut Option<Instant>,
+    stop: &AtomicBool,
 ) -> Result<()> {
     let at = now();
     if synced.is_some_and(|last| at.saturating_duration_since(last) < pace.synced_every) {
         return Ok(());
     }
-    mark_synced_if_same(core, context)?;
+    crate::busy::retrying(&core.conn, stop, || mark_synced_if_same(core, context))?;
     *synced = Some(at);
     Ok(())
 }
@@ -1946,7 +1978,8 @@ const SETTLE_PAGE: usize = 500;
 /// settle stopped or failed part way keeps what it wrote and the next settle
 /// does the rest. `stop` is looked at before each page and request. The
 /// count of changes is cleared only where no change was made while the
-/// settle ran. Answers how many rows it held or let go of.
+/// settle ran. Adds to `changed` each row it held or let go of, as its page
+/// commits, so a caller learns of them even where a later page fails.
 fn settle_beneath(
     core: &Core,
     context: &Context,
@@ -1954,24 +1987,25 @@ fn settle_beneath(
     catalog: &Catalog,
     slice: &Slice,
     stop: &AtomicBool,
-) -> Result<u64> {
+    changed: &mut u64,
+) -> Result<()> {
     let Some(root) = slice
         .query
         .as_ref()
         .and_then(|query| query.beneath.as_deref())
     else {
-        return Ok(0);
+        return Ok(());
     };
     let http = &context.http(http);
     let (owed, whole, leaving, entering) = {
         let conn = core.conn()?;
         context.same_copy(&conn)?;
         let Some(owed) = store::meta_get(&conn, store::META_BENEATH_SETTLE)? else {
-            return Ok(0);
+            return Ok(());
         };
         // The edges are not yet whole while a hydration lists them.
         if crate::hydrate::listing(&conn)? {
-            return Ok(0);
+            return Ok(());
         }
         let whole = store::meta_get(&conn, store::META_BENEATH_WHOLE)?.is_some();
         let reach = crate::slice::beneath_ids(&conn, root)?;
@@ -1993,36 +2027,37 @@ fn settle_beneath(
         entering.sort();
         (owed, whole, leaving, entering)
     };
-    let mut changed = 0;
     for page in leaving.chunks(SETTLE_PAGE) {
         refuse_if_stopped(stop)?;
-        let mut conn = core.conn()?;
-        let tx = conn.transaction()?;
-        context.same_copy(&tx)?;
-        store::leave_beneath_reach(&tx, page)?;
-        for id in page {
-            if store::item_held(&tx, id)? && store::let_go_unless_kept(&tx, catalog, id)? {
-                changed += 1;
+        *changed += crate::busy::transaction(core, context, stop, |tx| {
+            store::leave_beneath_reach(tx, page)?;
+            let mut let_go = 0;
+            for id in page {
+                if store::item_held(tx, id)? && store::let_go_unless_kept(tx, catalog, id)? {
+                    let_go += 1;
+                }
             }
-        }
-        tx.commit()?;
+            Ok(let_go)
+        })?;
     }
     let mut unread = Vec::new();
     for page in entering.chunks(SETTLE_PAGE) {
         refuse_if_stopped(stop)?;
-        let mut conn = core.conn()?;
-        let tx = conn.transaction()?;
-        context.same_copy(&tx)?;
-        let mut held = Vec::new();
-        for id in page {
-            if holds_answered(&tx, id)? || store::removed(&tx, Subject::Item, id)? {
-                held.push(id.clone());
-            } else {
-                unread.push(id.clone());
+        unread.extend(crate::busy::transaction(core, context, stop, |tx| {
+            let mut held = Vec::new();
+            let mut unheld = Vec::new();
+            for id in page {
+                if holds_answered(tx, id)? || store::removed(tx, Subject::Item, id)? {
+                    held.push(id.clone());
+                } else {
+                    unheld.push(id.clone());
+                }
             }
-        }
-        store::enter_beneath_reach(&tx, &held)?;
-        tx.commit()?;
+            #[cfg(debug_assertions)]
+            crate::fault::hold(|| format!("settle-entering:{core:p}"));
+            store::enter_beneath_reach(tx, &held)?;
+            Ok(unheld)
+        })?);
     }
     let mut left_out = Vec::new();
     for ids in unread.chunks(crate::http::BULK_GET_LIMIT) {
@@ -2040,7 +2075,7 @@ fn settle_beneath(
             .filter(|id| answered.contains(id.as_str()))
             .cloned()
             .collect();
-        changed += hold_beneath(core, context, http, catalog, slice, stop, &rows, &answered)?;
+        *changed += hold_beneath(core, context, http, catalog, slice, stop, &rows, &answered)?;
     }
     if !left_out.is_empty() {
         let wanted: HashSet<&str> = left_out.iter().map(String::as_str).collect();
@@ -2057,27 +2092,25 @@ fn settle_beneath(
                 .cloned()
                 .collect();
             let reached: Vec<String> = rows.iter().map(|row| row.item.id.clone()).collect();
-            changed += hold_beneath(core, context, http, catalog, slice, stop, &rows, &reached)?;
+            *changed += hold_beneath(core, context, http, catalog, slice, stop, &rows, &reached)?;
             Ok(())
         })?;
         // An id neither read answered names no row the key may read, and
         // stays reached and unheld until a change says otherwise.
-        let mut conn = core.conn()?;
-        let tx = conn.transaction()?;
-        context.same_copy(&tx)?;
-        store::enter_beneath_reach(&tx, &left_out)?;
-        tx.commit()?;
+        crate::busy::transaction(core, context, stop, |tx| {
+            store::enter_beneath_reach(tx, &left_out)
+        })?;
     }
-    let conn = core.conn()?;
-    context.same_copy(&conn)?;
-    if whole {
-        store::meta_delete(&conn, store::META_BENEATH_WHOLE)?;
-    }
-    conn.execute(
-        "DELETE FROM meta WHERE key = ?1 AND value = ?2",
-        [store::META_BENEATH_SETTLE, owed.as_str()],
-    )?;
-    Ok(changed)
+    crate::busy::transaction(core, context, stop, |tx| {
+        if whole {
+            store::meta_delete(tx, store::META_BENEATH_WHOLE)?;
+        }
+        tx.execute(
+            "DELETE FROM meta WHERE key = ?1 AND value = ?2",
+            [store::META_BENEATH_SETTLE, owed.as_str()],
+        )?;
+        Ok(())
+    })
 }
 
 /// `settle_beneath` once a hydration has listed the edges: the slice, its
@@ -2092,8 +2125,7 @@ pub(crate) fn settle_listed(
         let conn = core.conn()?;
         (start_build(&conn)?.0, crate::catalog::load(&conn)?)
     };
-    settle_beneath(core, context, http, &catalog, &slice, stop)?;
-    Ok(())
+    settle_beneath(core, context, http, &catalog, &slice, stop, &mut 0)
 }
 
 /// Whether the copy holds the row as the server last answered it: a refill
@@ -2128,42 +2160,40 @@ fn hold_beneath(
             takes.push((row, edges));
         }
     }
-    let mut conn = core.conn()?;
-    let tx = conn.transaction()?;
-    context.same_copy(&tx)?;
-    store::enter_beneath_reach(&tx, reached)?;
-    let mut entered = Vec::new();
-    for (row, _) in &takes {
-        let id = &row.item.id;
-        if entered.contains(id)
-            || holds_answered(&tx, id)?
-            || store::removed(&tx, Subject::Item, id)?
-        {
-            continue;
-        }
-        crate::hydrate::hold_row(&tx, catalog, row, &[])?;
-        entered.push(id.clone());
-    }
-    for (row, edges) in &takes {
-        if !entered.contains(&row.item.id) {
-            continue;
-        }
-        for edge in edges {
-            if !store::removed(&tx, Subject::Edge, &edge.id)?
-                && !store::removed(&tx, Subject::Item, &edge.target_id)?
+    crate::busy::transaction(core, context, stop, |tx| {
+        store::enter_beneath_reach(tx, reached)?;
+        let mut entered = Vec::new();
+        for (row, _) in &takes {
+            let id = &row.item.id;
+            if entered.contains(id)
+                || holds_answered(tx, id)?
+                || store::removed(tx, Subject::Item, id)?
             {
-                store::take_server_edge(&tx, edge)?;
+                continue;
+            }
+            crate::hydrate::hold_row(tx, catalog, row, &[])?;
+            entered.push(id.clone());
+        }
+        for (row, edges) in &takes {
+            if !entered.contains(&row.item.id) {
+                continue;
+            }
+            for edge in edges {
+                if !store::removed(tx, Subject::Edge, &edge.id)?
+                    && !store::removed(tx, Subject::Item, &edge.target_id)?
+                {
+                    store::take_server_edge(tx, edge)?;
+                }
             }
         }
-    }
-    let mut kept = 0;
-    for id in &entered {
-        if !store::let_go_unless_kept(&tx, catalog, id)? {
-            kept += 1;
+        let mut kept = 0;
+        for id in &entered {
+            if !store::let_go_unless_kept(tx, catalog, id)? {
+                kept += 1;
+            }
         }
-    }
-    tx.commit()?;
-    Ok(kept)
+        Ok(kept)
+    })
 }
 
 /// `read_tags` stands in for the tags of a frame that carries none.
@@ -2357,6 +2387,140 @@ mod tests {
             .unwrap();
         }
         (dir, Arc::new(core))
+    }
+
+    #[cfg(debug_assertions)]
+    fn status_catalog(group: &str) -> WireCatalog {
+        WireCatalog {
+            types: vec![
+                serde_json::from_value(serde_json::json!({
+                    "id": NOTE,
+                    "fields": {"stage": {"type": "status", "status_values": [
+                        {"value": "doing", "group": group}
+                    ]}}
+                }))
+                .unwrap(),
+            ],
+            edge_types: vec![],
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_catalog_that_moves_the_slice_commits_with_the_expiry_it_owes() {
+        let server = Scripted::start();
+        let (dir, core) = hydrated(&server);
+        {
+            let conn = core.conn().unwrap();
+            store::replace_catalog(&conn, &status_catalog("in_progress")).unwrap();
+            store::meta_set(
+                &conn,
+                store::META_SLICE_QUERY,
+                r#"{"filter":"status_group eq \"in_progress\""}"#,
+            )
+            .unwrap();
+        }
+        let context = Context::capture(&core.conn().unwrap()).unwrap();
+        let held_version = store::catalog_version(&core.conn().unwrap()).unwrap();
+        let point = format!("catalog-adopt-expiring:{:p}", &*core);
+        crate::fault::arm(&point);
+        let worker = Arc::clone(&core);
+        let run = thread::spawn(move || {
+            let mut changed = false;
+            let adopted = crate::busy::retrying(&worker.conn, &AtomicBool::new(false), || {
+                adopt(&worker, &context, &status_catalog("done"), &mut changed)
+            });
+            (adopted, changed)
+        });
+        wait_until("the adoption never reached its expiry", || {
+            crate::fault::waiting(&point) > 0
+        });
+        let other = rusqlite::Connection::open(dir.path().join("core.sqlite")).unwrap();
+        other.busy_timeout(Duration::ZERO).unwrap();
+        assert_eq!(
+            store::catalog_version(&other).unwrap(),
+            held_version,
+            "the new catalog was committed before the expiry it owes"
+        );
+        let refused = store::meta_set(&other, "another-program", "1");
+        assert!(
+            matches!(refused, Err(CoreError::StoreBusy(_))),
+            "another program's commit landed between the catalog and its expiry: {refused:?}"
+        );
+        crate::fault::release(&point);
+        let (adopted, changed) = run.join().unwrap();
+        assert!(
+            matches!(&adopted, Err(CoreError::CopyExpired { reason }) if reason == "catalog_changed"),
+            "{adopted:?}"
+        );
+        assert!(changed);
+        assert!(reach::expired(&other).unwrap());
+        assert_ne!(store::catalog_version(&other).unwrap(), held_version);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_settle_tells_the_rows_a_page_let_go_of_when_a_later_page_is_refused_busy() {
+        let server = Scripted::start();
+        let (dir, core) = hydrated(&server);
+        {
+            let conn = core.conn().unwrap();
+            let catalog = crate::catalog::load(&conn).unwrap();
+            for id in ["root", "leaving"] {
+                store::put_server_item(
+                    &conn,
+                    &store::testing::note(id, id, "body", "2026-01-01T00:00:00Z"),
+                    Some(&[]),
+                    &catalog,
+                )
+                .unwrap();
+            }
+            store::meta_set(&conn, store::META_SLICE_QUERY, r#"{"beneath":"root"}"#).unwrap();
+            store::enter_beneath_reach(&conn, &["leaving".into()]).unwrap();
+            store::meta_set(&conn, store::META_BENEATH_SETTLE, "1").unwrap();
+        }
+        let context = Context::capture(&core.conn().unwrap()).unwrap();
+        let (slice, _) = start(&core).unwrap();
+        let catalog = crate::catalog::load(&core.conn().unwrap()).unwrap();
+        let point = format!("settle-entering:{:p}", &*core);
+        crate::fault::arm(&point);
+        let worker = Arc::clone(&core);
+        let run = thread::spawn(move || {
+            let mut report = FollowReport::default();
+            let mut changes = Vec::new();
+            let ended = settle_following(
+                &worker,
+                &context,
+                &catalog,
+                &slice,
+                &AtomicBool::new(false),
+                &mut report,
+                &mut |change| changes.push(change.clone()),
+            );
+            (ended, report, changes)
+        });
+        wait_until("the settle never reached its entering page", || {
+            crate::fault::waiting(&point) > 0
+        });
+        let other = rusqlite::Connection::open(dir.path().join("core.sqlite")).unwrap();
+        assert!(
+            !store::item_held(&other, "leaving").unwrap(),
+            "the leaving page did not commit"
+        );
+        store::meta_set(&other, "another-program", "1").unwrap();
+        crate::fault::release(&point);
+        let (ended, report, changes) = run.join().unwrap();
+        assert_eq!(ended.unwrap(), None);
+        assert_eq!(report.applied, 1, "{changes:?}");
+        assert!(
+            matches!(&changes[..], [Change { event: ChangeEvent::Applied(kind), .. }] if kind == "edge.updated"),
+            "{changes:?}"
+        );
+        assert!(
+            store::meta_get(&other, store::META_BENEATH_SETTLE)
+                .unwrap()
+                .is_none()
+        );
     }
 
     struct Run {

@@ -1,5 +1,6 @@
 //! Row writes share one transaction per batch.
 
+pub mod archive;
 mod events;
 mod lifecycle;
 mod read;
@@ -300,7 +301,7 @@ impl Sight {
     }
 }
 
-fn refs_text(refs: &Map<String, Value>) -> Option<String> {
+pub(crate) fn refs_text(refs: &Map<String, Value>) -> Option<String> {
     (!refs.is_empty()).then(|| Value::Object(refs.clone()).to_string())
 }
 
@@ -655,12 +656,13 @@ impl Batch<'_, '_> {
             unit,
             &events::Announced {
                 host,
-                table: self.table,
+                table: &self.table.name,
                 batch: &self.batch_id,
                 undoes: self.undoes.as_deref(),
                 at,
                 changed: &self.changed,
                 referenced: &self.referenced,
+                ids_only: false,
             },
         )?;
         let mut audited = json!({

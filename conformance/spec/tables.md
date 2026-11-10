@@ -1008,7 +1008,7 @@ If an undo names a batch that the change log of the item's table does not hold, 
 
 **Reason:** a batch of another table, an id no batch has and a batch past `row_log_retention_days` read alike.
 
-**Tests:** `compliance/table-rows-undo.test.ts › answers batch_not_found for a batch of another table or item, and an id no batch has`, `compliance/table-rows-retention.test.ts › removes the batches older than row_log_retention_days at the next table-row-cleanup run, and keeps the newer`.
+**Tests:** `compliance/table-rows-undo.test.ts › answers batch_not_found for a batch of another table or item, and an id no batch has`, `compliance/table-rows-retention.test.ts › removes the batches older than row_log_retention_days at the next table-row-cleanup run, and keeps the newer`, `compliance/table-rows-archive.test.ts › logs no batch for the rows a restore writes, so an undo of its last_batch answers batch_not_found`.
 
 ### `tables/undo-write-access`
 
@@ -1397,3 +1397,173 @@ While an item a device holds a table of is in the bin, a device MUST answer a re
 **Reason:** the server answers the rows of an item in the bin as it answers the item (`tables/rows-bin-read`), and the device keeps the rows it holds, or fills the table again, for when the item comes back.
 
 **Tests:** `device/tables-live.test.ts › answers the table of an item in the bin from the server, and from the copy once it is back`.
+
+## Rows in an archive
+
+An archive carries rows in `rows.ndjson.gz`, one line per row. A line is `{ "item_id", "table", "id", "values", "refs"?, "updated_at" }`.
+
+### `tables/archive-rows`
+
+When `GET /export?format=archive` carries an item, the server MUST carry in `rows.ndjson.gz` one line for each row the item holds, in every table that holds a row.
+
+**Reason:** a forced change keeps the rows of a table a type no longer declares (`tables/change-forced`), and a backup is the same archive, so a table the type does not declare now is carried too.
+
+**Tests:** `compliance/table-rows-archive.test.ts › carries each row of a carried item in rows.ndjson.gz, in table and id order, and counts them in row_count`, `› carries a row of a table its type no longer declares, and a value its column no longer takes, and restores both as held`.
+
+### `tables/archive-row-line`
+
+The server MUST write each line of `rows.ndjson.gz` as an object holding the row's `item_id`, `table`, `id`, `values` and `updated_at`.
+
+**Reason:** this is all a row holds. A row has no version, records no time it was created, and carries no batch, because the change log stays out of an archive and a restored batch would name nothing the instance records.
+
+**Tests:** `compliance/table-rows-archive.test.ts › carries a row's item_id, table, id, values and updated_at, and in refs the columns written as an item's id`.
+
+### `tables/archive-row-refs`
+
+When a row holds a value written to a column of type `item` (`tables/rows-item-origin`), the server MUST name that column in the line's `refs`, and leave `refs` out of a line that names none.
+
+**Reason:** a value is withheld by how it was written and not by what its column is now, so a restore needs the mark to keep withholding it.
+
+**Tests:** `compliance/table-rows-archive.test.ts › carries a row's item_id, table, id, values and updated_at, and in refs the columns written as an item's id`.
+
+### `tables/archive-rows-order`
+
+The server MUST write the lines of `rows.ndjson.gz` in ascending order of `item_id`, then `table`, then `id`.
+
+**Reason:** comparing adjacent lines detects repeated or out-of-order rows without holding a table's IDs.
+
+**Tests:** `compliance/table-rows-archive.test.ts › carries each row of a carried item in rows.ndjson.gz, in table and id order, and counts them in row_count`.
+
+### `tables/archive-row-withheld`
+
+When the credential requesting `GET /export?format=archive` may not read a row's value under `tables/rows-item-withheld`, the server MUST carry the row without that value and without naming its column in `refs`.
+
+**Reason:** an archive holds only what its credential may read, as a read of the row does.
+
+**Tests:** `compliance/table-rows-archive.test.ts › leaves out of an archive a value the exporting key may not read, and its mark`.
+
+### `tables/archive-rows-shape-free`
+
+When `GET /export?format=archive` carries a row of a table its item's type does not declare, or a value its column does not take, the server MUST NOT refuse the export for it.
+
+**Reason:** a forced change leaves such rows (`tables/change-forced`), and an instance that held one could not be backed up.
+
+**Tests:** `compliance/table-rows-archive.test.ts › carries a row of a table its type no longer declares, and a value its column no longer takes, and restores both as held`.
+
+### `tables/restore-rows`
+
+When `POST /restore` writes an item, the server MUST write each row that `rows.ndjson.gz` holds for it, with its `table`, `id`, `values` and `updated_at` as the line holds them.
+
+**Tests:** `compliance/table-rows-archive.test.ts › restores each row with its values, refs and updated_at, and the tables' row counts and bytes`.
+
+### `tables/restore-rows-refs`
+
+When `POST /restore` writes a row, the server MUST withhold under `tables/rows-item-origin` each value whose column the line names in `refs`.
+
+**Tests:** `compliance/table-rows-archive.test.ts › restores each row with its values, refs and updated_at, and the tables' row counts and bytes`.
+
+### `tables/restore-rows-shape-free`
+
+When `POST /restore` writes a row, the server MUST NOT refuse it because its item's type does not declare its table, its values name a column the table does not declare, or a value is not one its column takes.
+
+**Reason:** the archive holds rows as the instance it came from held them, and an export carries such rows (`tables/archive-rows-shape-free`).
+
+**Tests:** `compliance/table-rows-archive.test.ts › carries a row of a table its type no longer declares, and a value its column no longer takes, and restores both as held`.
+
+### `tables/restore-rows-summary`
+
+When `POST /restore` writes rows to a table its item's type declares, the server MUST answer that table on `GET /items/{id}/tables` with the `row_count` and `bytes` of the rows written.
+
+**Tests:** `compliance/table-rows-archive.test.ts › restores each row with its values, refs and updated_at, and the tables' row counts and bytes`.
+
+### `tables/restore-rows-event`
+
+When `POST /restore` writes the rows of a table, the server MUST announce them in `rows.changed` events of at most 1000 rows each, each with a batch of its own.
+
+**Reason:** a restored table reaches a device the way a written one does, in batches no larger than a write takes (`tables/rows-batch-limit`).
+
+**Tests:** `compliance/table-rows-archive.test.ts › announces restored rows in rows.changed of at most 1000 rows`.
+
+### `tables/restore-rows-unlogged`
+
+When `POST /restore` writes the rows of a table, the server MUST NOT add a batch to the table's change log.
+
+**Reason:** no one on the instance wrote the rows, so there is no write to take back. The batches a restore announces, and the table's `last_batch` after it, name no batch the log holds, and an undo of one answers `tables/undo-not-found`.
+
+**Tests:** `compliance/table-rows-archive.test.ts › logs no batch for the rows a restore writes, so an undo of its last_batch answers batch_not_found`.
+
+### `tables/restore-rows-undo`
+
+When an undo names a batch that changed a row `POST /restore` wrote, the server MUST put the row back as the restore wrote it.
+
+**Reason:** a restored row stands as no logged batch left it, so a later write over it is undone, and redone, as over any row.
+
+**Tests:** `compliance/table-rows-archive.test.ts › undoes a write over restored rows, putting each back as the restore wrote it`.
+
+### `tables/restore-rows-counts`
+
+When `POST /restore` succeeds, the server MUST answer in `rows_imported` the number of rows it wrote, and in `rows_skipped` the number of rows of items it counted as duplicates.
+
+**Tests:** `compliance/table-rows-archive.test.ts › restores each row with its values, refs and updated_at, and the tables' row counts and bytes`, `› leaves the rows of an item counted as a duplicate as they are, counting the archive's in rows_skipped`.
+
+### `tables/restore-rows-duplicate`
+
+When `POST /restore` counts an item as a duplicate, the server MUST leave the rows the instance holds for it as they are and write none of the archive's.
+
+**Reason:** a restore replaces nothing the instance holds (`search-and-filters/restore-duplicate-kept`).
+
+**Tests:** `compliance/table-rows-archive.test.ts › leaves the rows of an item counted as a duplicate as they are, counting the archive's in rows_skipped`.
+
+### `tables/restore-last-activity`
+
+When `POST /restore` writes an item, the server MUST answer as its `last_activity_at` the later of the `last_activity_at` and the `updated_at` the archive records.
+
+**Reason:** a conversation restored keeps its place in a list by latest activity (`tables/last-activity-sort`), and a restored row is not new activity.
+
+**Tests:** `compliance/table-rows-archive.test.ts › keeps an item's last_activity_at through a restore`.
+
+### `tables/restore-row-item`
+
+If a line of `rows.ndjson.gz` names an `item_id` that no line of `items.ndjson.gz` holds, then the server MUST answer `400 validation_error` naming the line and `item_id`.
+
+**Reason:** a row belongs to its item, and an archive carries the item with it.
+
+**Tests:** `compliance/table-rows-archive.test.ts › refuses a row naming an item the archive does not hold, naming its line, and writes nothing`.
+
+### `tables/restore-row-line`
+
+If a line of `rows.ndjson.gz` is not a JSON object, then the server MUST answer `400 validation_error` naming the line.
+
+**Reason:** a line that is not an object holds no field to name.
+
+**Tests:** `compliance/table-rows-archive.test.ts › refuses a row line that is %s, naming its line, and writes nothing`.
+
+### `tables/restore-row-shape`
+
+If a line of `rows.ndjson.gz` is an object that holds no `table` that `tables/name-grammar` takes, no `id` that is a UUIDv7 in lowercase, no object of `values`, no `updated_at` that is an instant or, where it holds `refs`, anything but an array of distinct columns that each hold an item ID in `values`, then the server MUST answer `400 validation_error` naming the line and the field.
+
+**Tests:** `compliance/table-rows-archive.test.ts › refuses a row line whose %s is malformed, naming its line and field, and writes nothing`.
+
+### `tables/restore-row-limit`
+
+If the `values` of a line of `rows.ndjson.gz`, written as JSON, are longer than 65536 bytes, then the server MUST answer `400 validation_error` naming the line and `values`.
+
+**Reason:** no write leaves a row past `tables/rows-row-limit`.
+
+**Tests:** `compliance/table-rows-archive.test.ts › refuses a row over 64 KiB, naming its line`.
+
+### `tables/restore-rows-order`
+
+If a line of `rows.ndjson.gz` does not come after the line before it in the order `tables/archive-rows-order` states, then the server MUST answer `400 validation_error` naming the line.
+
+**Reason:** an export never writes repeated or out-of-order rows. This check does not detect a missing line; `search-and-filters/restore-line-counts` checks the counts.
+
+**Tests:** `compliance/table-rows-archive.test.ts › refuses a row out of order or repeated, naming its line`.
+
+### `tables/backup-rows-change`
+
+The server MUST count a batch that changes rows as a change a backup holds.
+
+**Reason:** a scheduled run skips a backup when nothing it holds has changed (`instance/backup-unchanged`), and rows change without their item.
+
+**Tests:** `compliance/backups.test.ts › takes a scheduled backup after a batch changes rows, and skips one when nothing changed`.

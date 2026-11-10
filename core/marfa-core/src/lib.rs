@@ -2,6 +2,7 @@
 mod attachment_tests;
 mod blob;
 mod body;
+mod busy;
 mod catalog;
 mod catch_up;
 /// Public so a debug build's binding can move the clock it waits by.
@@ -2107,6 +2108,8 @@ impl Core {
         if !store::item_held(&tx, id)? {
             store::refuse_unless_held(completeness)?;
         }
+        #[cfg(debug_assertions)]
+        fault::gate("gate-local-update");
         let queued = queue_update(&tx, &catalog, id, edit, &[], based)?;
         if body == Body::Read
             && let Some(before) = before
@@ -3593,6 +3596,7 @@ fn kept_miss(error: &CoreError) -> Option<(file_cache::NotHeldReason, bool)> {
         | CoreError::Redirected { .. }
         | CoreError::Io(_)
         | CoreError::Store(_)
+        | CoreError::StoreBusy(_)
         | CoreError::Invalid(_) => (Why::Failed, false),
         _ => return None,
     })

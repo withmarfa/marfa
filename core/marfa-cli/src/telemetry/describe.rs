@@ -88,6 +88,7 @@ fn core_error(error: &CoreError) -> &'static str {
         CoreError::NoKeychain(_) => "the system's credential storage is unavailable",
         CoreError::StorageFull(_) => "local storage is full",
         CoreError::Store(_) => "the local working copy reported a fault",
+        CoreError::StoreBusy(_) => "another program was writing to the local working copy",
         CoreError::Redirected { .. } => {
             "the server answered with a redirect, which is not followed"
         }

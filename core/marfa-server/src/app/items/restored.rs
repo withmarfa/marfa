@@ -147,6 +147,9 @@ pub fn restore(
     }
     let created_at = instant(item.get("created_at"), "created_at")?.unwrap_or(unit.at.clone());
     let updated_at = instant(item.get("updated_at"), "updated_at")?.unwrap_or(created_at.clone());
+    let last_activity_at = instant(item.get("last_activity_at"), "last_activity_at")?
+        .filter(|at| *at > updated_at)
+        .unwrap_or_else(|| updated_at.clone());
     let occurred_at =
         instant(item.get("occurred_at"), "occurred_at")?.unwrap_or(created_at.clone());
     let trashed_at = instant(item.get("trashed_at"), "trashed_at")?;
@@ -193,6 +196,7 @@ pub fn restore(
         &Restoring {
             version: item.get("version").and_then(Value::as_i64).unwrap_or(1),
             updated_at: &updated_at,
+            last_activity_at: &last_activity_at,
             restored_at: restored_at.as_deref(),
         },
     )?;

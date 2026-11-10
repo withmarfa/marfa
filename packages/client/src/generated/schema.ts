@@ -29725,7 +29725,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        /** @description The archive file, as `GET /export?format=archive` returned it, with its `manifest.json`, `instance.ndjson.gz`, `items.ndjson.gz` and `edges.ndjson.gz`. Only the build that wrote an archive is sure to read it. */
+        /** @description The archive file, as `GET /export?format=archive` returned it, with its `manifest.json`, `instance.ndjson.gz`, `items.ndjson.gz`, `edges.ndjson.gz` and `rows.ndjson.gz`. Only the build that wrote an archive is sure to read it. */
         requestBody: {
             content: {
                 "application/x-tar": Blob | ArrayBuffer | ArrayBufferView | ReadableStream<Uint8Array>;
@@ -29793,6 +29793,10 @@ export interface operations {
                         connector_agreements_added: number;
                         /** @description How many connector agreements Marfa skipped because the instance holds no such item or already holds an agreement for it. */
                         connector_agreements_skipped: number;
+                        /** @description How many table rows Marfa wrote. */
+                        rows_imported: number;
+                        /** @description How many table rows Marfa skipped because their item was counted as a duplicate. */
+                        rows_skipped: number;
                         /** @description A sentence saying that an archive holds no sign-in, keys, apps or webhooks, so you set them up again on this instance. */
                         set_up_again: string;
                     };
@@ -30264,6 +30268,10 @@ export interface operations {
                         connector_agreements_added: number;
                         /** @description How many connector agreements Marfa skipped because the instance holds no such item or already holds an agreement for it. */
                         connector_agreements_skipped: number;
+                        /** @description How many table rows Marfa wrote. */
+                        rows_imported: number;
+                        /** @description How many table rows Marfa skipped because their item was counted as a duplicate. */
+                        rows_skipped: number;
                         /** @description A sentence saying that an archive holds no sign-in, keys, apps or webhooks, so you set them up again on this instance. */
                         set_up_again: string;
                         /** @description The backup Marfa restored. */

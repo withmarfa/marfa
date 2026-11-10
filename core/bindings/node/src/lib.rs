@@ -1526,6 +1526,7 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
         | E::Network(message)
         | E::Decoding(message)
         | E::Store(message)
+        | E::StoreBusy(message)
         | E::StorageFull(message)
         | E::NoKeychain(message)
         | E::Invalid(message)
@@ -1645,6 +1646,7 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
         | E::Network(_)
         | E::Decoding(_)
         | E::Store(_)
+        | E::StoreBusy(_)
         | E::StorageFull(_)
         | E::NoKeychain(_)
         | E::NoServer
@@ -3676,6 +3678,7 @@ mod tests {
         use marfa_core::CoreError as E;
         for (cause, code) in [
             (E::StorageFull("full".into()), "storage_full"),
+            (E::StoreBusy("database is locked".into()), "store_busy"),
             (
                 E::SignedOut {
                     origin: "https://marfa.example".into(),

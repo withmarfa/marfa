@@ -3,7 +3,7 @@
 pub mod intake;
 mod untar;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::io::{BufRead, BufReader};
 use std::sync::Arc;
 
@@ -23,7 +23,7 @@ use crate::app::edges::write::Writing;
 use crate::app::faults::{HOLD_RESTORE_COMMIT, HOLD_RESTORE_ITEM};
 use crate::app::items::restored::{self, Restored};
 use crate::app::refusal::{Code, Refusal, Result};
-use crate::app::{connectors, edge_types, sources, stored, types};
+use crate::app::{connectors, edge_types, sources, stored, tables, types};
 use intake::{Intake, Received};
 
 /// What every answer says of what an archive does not hold.
@@ -96,6 +96,10 @@ impl Counted {
         self.skipped += 1;
         *self.reasons.entry(reason.to_string()).or_default() += 1;
     }
+}
+
+fn bits(id: &str) -> Option<u128> {
+    uuid::Uuid::parse_str(id).ok().map(|held| held.as_u128())
 }
 
 /// Lines of a spooled line file, in order.
@@ -247,12 +251,18 @@ impl App {
                         blobs::record(tx, &copies, replicates, &unit.caller.credential_handle(), &unit.at)?;
                         let held = restored::held_snapshots(tx, snapshots.each())?;
                         let (mut imported, mut duplicates) = (0usize, 0usize);
+                        let mut written: HashSet<u128> = HashSet::new();
                         for (row, line) in lines(&spools[1])?.enumerate() {
                             let line = line?;
                             checks::item(&catalog, cap, &line, row + 1).map_err(|refused| refused.refusal)?;
                             faults.hold_writing(HOLD_RESTORE_ITEM);
                             match restored::restore(unit, &catalog, &line, &held)? {
-                                Restored::Written => imported += 1,
+                                Restored::Written => {
+                                    imported += 1;
+                                    if let Some(id) = line.pointer("/item/id").and_then(Value::as_str).and_then(bits) {
+                                        written.insert(id);
+                                    }
+                                }
                                 Restored::Duplicate => duplicates += 1,
                             }
                             if (row + 1) % SETTLE_EVERY == 0 {
@@ -293,6 +303,14 @@ impl App {
                                 agreements.skip("already_set");
                             }
                         }
+                        let mut restoring = tables::archive::Restoring::new(unit);
+                        for (row, line) in lines(&spools[3])?.enumerate() {
+                            let line = line?;
+                            let key = checks::row(&line, row + 1).map_err(|refused| refused.refusal)?;
+                            let holds = bits(&key.item_id).is_some_and(|id| written.contains(&id));
+                            restoring.row(&line, key, holds)?;
+                        }
+                        let (rows_imported, rows_skipped) = restoring.finish()?;
                         let answer = json!({
                             "imported": imported,
                             "duplicates": duplicates,
@@ -317,6 +335,8 @@ impl App {
                             "connector_states_skipped": states.skipped,
                             "connector_agreements_added": agreements.added,
                             "connector_agreements_skipped": agreements.skipped,
+                            "rows_imported": rows_imported,
+                            "rows_skipped": rows_skipped,
                         });
                         unit.audit_set("restore_archive", Some(answer.clone()))?;
                         let staged = (settings_added > 0)
@@ -327,6 +347,7 @@ impl App {
                             held_ms = began.elapsed().as_millis() as u64,
                             imported,
                             edges = edges.added,
+                            rows = rows_imported,
                             "A restore wrote its archive"
                         );
                         Ok((answer, staged))

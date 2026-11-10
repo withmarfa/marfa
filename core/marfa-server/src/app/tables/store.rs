@@ -372,6 +372,74 @@ pub(super) fn single(tx: &Transaction<'_>, sql: &Sql) -> Result<Vec<Bound>> {
     Ok(found.unwrap_or_default())
 }
 
+/// A table holding rows, with its item, in the order an archive carries them.
+pub(super) struct Carried {
+    pub table_seq: i64,
+    pub item_seq: i64,
+    pub item_id: String,
+    pub type_id: String,
+    pub source: String,
+    pub table: String,
+}
+
+/// Each table holding a row, ordered by its item's id and then its name, as one statement reads them.
+pub(super) fn carried_tables(
+    tx: &Transaction<'_>,
+    mut each: impl FnMut(Carried) -> Result<()>,
+) -> Result<()> {
+    let mut statement = tx.prepare(
+        "SELECT s.seq, i.seq, i.id, i.type, i.source, s.table_name FROM items i \
+         JOIN table_summaries s ON s.item_seq = i.seq WHERE s.row_count > 0 \
+         ORDER BY i.id, s.table_name",
+    )?;
+    let mut found = statement.query([])?;
+    while let Some(row) = found.next()? {
+        each(Carried {
+            table_seq: row.get(0)?,
+            item_seq: row.get(1)?,
+            item_id: row.get(2)?,
+            type_id: row.get(3)?,
+            source: row.get(4)?,
+            table: row.get(5)?,
+        })?;
+    }
+    Ok(())
+}
+
+pub(super) fn rows_after(
+    tx: &Transaction<'_>,
+    table: i64,
+    after: &str,
+    limit: i64,
+) -> Result<Vec<Held>> {
+    let mut statement = tx.prepare_cached(
+        "SELECT id, updated_at, json(body), json(refs) FROM table_rows \
+         WHERE table_seq = ?1 AND id > ?2 ORDER BY id LIMIT ?3",
+    )?;
+    let found = statement.query_map(params![table, after, limit], stored_of)?;
+    found.map(|row| held(row?)).collect()
+}
+
+/// The mark of a row no logged batch left: `row_batches` numbers its batches from 1.
+pub(super) const UNLOGGED: i64 = 0;
+
+/// Writes a restored row as the archive holds it, marked [`UNLOGGED`].
+pub(super) fn insert(
+    tx: &Transaction<'_>,
+    table: i64,
+    id: &str,
+    updated_at: &str,
+    body: &str,
+    refs: Option<&str>,
+) -> Result<()> {
+    tx.prepare_cached(
+        "INSERT INTO table_rows (table_seq, id, updated_at, batch, refs, body) \
+         VALUES (?1, ?2, ?3, ?4, jsonb(?5), jsonb(?6))",
+    )?
+    .execute(params![table, id, updated_at, UNLOGGED, refs, body])?;
+    Ok(())
+}
+
 /// The tables of item `seq` that hold a row.
 pub(super) fn held_tables(tx: &Transaction<'_>, seq: i64) -> Result<Vec<String>> {
     let mut statement = tx.prepare_cached(

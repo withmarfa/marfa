@@ -1400,6 +1400,9 @@ pub enum MarfaError {
     Store {
         message: String,
     },
+    StoreBusy {
+        message: String,
+    },
     Redirected {
         origin: String,
         status: u16,
@@ -1528,6 +1531,7 @@ impl MarfaError {
             | MarfaError::Unnamed { message, .. }
             | MarfaError::Decoding { message }
             | MarfaError::Store { message }
+            | MarfaError::StoreBusy { message }
             | MarfaError::Redirected { message, .. }
             | MarfaError::StorageFull { message }
             | MarfaError::SignedOut { message, .. }
@@ -1571,6 +1575,7 @@ impl MarfaError {
             MarfaError::Unnamed { .. } => marfa_core::CoreErrorKind::Unnamed,
             MarfaError::Decoding { .. } => marfa_core::CoreErrorKind::Decoding,
             MarfaError::Store { .. } => marfa_core::CoreErrorKind::Store,
+            MarfaError::StoreBusy { .. } => marfa_core::CoreErrorKind::StoreBusy,
             MarfaError::StorageFull { .. } => marfa_core::CoreErrorKind::StorageFull,
             MarfaError::SignedOut { .. } => marfa_core::CoreErrorKind::SignedOut,
             MarfaError::NoKeychain { .. } => marfa_core::CoreErrorKind::NoKeychain,
@@ -1639,6 +1644,7 @@ impl From<marfa_core::CoreError> for MarfaError {
             E::Unnamed { status, .. } => MarfaError::Unnamed { status, message },
             E::Decoding(_) => MarfaError::Decoding { message },
             E::Store(_) => MarfaError::Store { message },
+            E::StoreBusy(_) => MarfaError::StoreBusy { message },
             E::Redirected {
                 origin,
                 status,
@@ -3207,6 +3213,7 @@ mod tests {
             E::NoKeychain(text()),
             E::StorageFull(text()),
             E::Store(text()),
+            E::StoreBusy(text()),
             E::Redirected {
                 origin: text(),
                 status: 302,
@@ -3570,6 +3577,7 @@ mod tests {
             ),
             (E::Decoding(text()).into(), "Decoding"),
             (E::Store(text()).into(), "Store"),
+            (E::StoreBusy(text()).into(), "StoreBusy"),
             (E::StorageFull(text()).into(), "StorageFull"),
             (E::SignedOut { origin: text() }.into(), "SignedOut"),
             (E::NoKeychain(text()).into(), "NoKeychain"),

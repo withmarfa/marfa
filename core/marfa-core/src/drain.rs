@@ -1570,6 +1570,7 @@ fn send_queue(
                         | CoreError::SignedOut { .. }
                         | CoreError::NoKeychain(_)
                         | CoreError::StorageFull(_)
+                        | CoreError::StoreBusy(_)
                         | CoreError::CopyExpired { .. }
                         | CoreError::StreamIncomplete { .. }
                 ) {
@@ -1842,7 +1843,8 @@ fn failed(error: CoreError) -> Failed {
         | CoreError::StorageFull(_)
         | CoreError::CopyExpired { .. }
         | CoreError::StreamIncomplete { .. }
-        | CoreError::Store(_) => Failed::Fatal(error),
+        | CoreError::Store(_)
+        | CoreError::StoreBusy(_) => Failed::Fatal(error),
         CoreError::RenewalFailed(_) if !error.is_environmental() => Failed::Fatal(error),
         CoreError::Unauthorized { .. } => Failed::Unanswered(error),
         CoreError::Server { status, .. } if crate::error::environmental_status(status) => {
@@ -2503,6 +2505,13 @@ fn same_attempt(conn: &rusqlite::Connection, row: &QueuedWrite) -> Result<()> {
     Ok(())
 }
 
+/// A transaction that records what the server answered, made again from its
+/// first read where another program's commit refuses it. A stop does not cut
+/// it short: a write the server took must not be left looking refused.
+fn recorded<T>(core: &Core, write: impl FnMut() -> Result<T>) -> Result<T> {
+    crate::busy::retrying(&core.conn, &AtomicBool::new(false), write)
+}
+
 /// `read` is a page's read of what its create made at version 1, made
 /// before the answer was settled; the row can have moved past 1 since.
 fn settle_success(
@@ -2566,7 +2575,7 @@ fn settle_success(
             || edge.as_ref().is_some_and(|edge| edge.acknowledged),
         ..Settled::plain(None, None, row.refusals)
     };
-    let owed = {
+    let owed = recorded(core, || {
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;
         same_attempt(&tx, row)?;
@@ -2580,6 +2589,8 @@ fn settle_success(
         // A receipt kept from an earlier pass holds the verdict and says how
         // the answer it settles on reads.
         let kept = store::meta_get(&tx, &receipt_key(&row.id))?.is_some();
+        #[cfg(debug_assertions)]
+        crate::fault::gate("gate-drain-receipt");
         if !kept {
             store::record_verdict(
                 &tx,
@@ -2607,8 +2618,8 @@ fn settle_success(
             }
         }
         tx.commit()?;
-        owed
-    };
+        Ok(owed)
+    })?;
     let Some(owed) = owed else {
         return Ok(settled);
     };
@@ -2631,74 +2642,77 @@ fn settle_success(
         }
         Err(error) => return Err(error),
     };
-    let mut conn = core.conn()?;
-    let tx = conn.transaction()?;
-    same_attempt(&tx, row)?;
-    check_read_back(&tx, &read)?;
-    restore_settled_overlay(&tx, row, &read)?;
-    if let Some(parsed) = &item {
-        if row.kind == WriteKind::CreateItem
-            && let Some(local) = row.item_id.as_deref()
-        {
-            drop_projected_edges(&tx, row, local, Some(&parsed.item))?;
-            store::adopt_answered_id(&tx, local, &parsed.item.id)?;
-            store::refollow(&tx, &parsed.item.id, &row.id)?;
-            take_answered_edges(&tx, &parsed.item)?;
-            create_edges::owe(&tx, row, &parsed.item)?;
+    let follows = recorded(core, || {
+        let mut conn = core.conn()?;
+        let tx = conn.transaction()?;
+        same_attempt(&tx, row)?;
+        check_read_back(&tx, &read)?;
+        restore_settled_overlay(&tx, row, &read)?;
+        if let Some(parsed) = &item {
+            if row.kind == WriteKind::CreateItem
+                && let Some(local) = row.item_id.as_deref()
+            {
+                drop_projected_edges(&tx, row, local, Some(&parsed.item))?;
+                store::adopt_answered_id(&tx, local, &parsed.item.id)?;
+                store::refollow(&tx, &parsed.item.id, &row.id)?;
+                take_answered_edges(&tx, &parsed.item)?;
+                create_edges::owe(&tx, row, &parsed.item)?;
+            }
+            move_edits_behind(
+                &tx,
+                row,
+                verdict,
+                parsed.acknowledged,
+                &parsed.item.id,
+                &AnsweredAt {
+                    version: parsed.item.version,
+                    item: Some(&parsed.item),
+                    made,
+                },
+            )?;
+            if matches!(verdict, Verdict::Accepted | Verdict::Merged) {
+                move_deletes_behind(&tx, row, &parsed.item, parsed.acknowledged)?;
+            }
+            if verdict == Verdict::Conflicted
+                && row.kind == WriteKind::UpdateItem
+                && against_its_own(&tx, row, parsed)?
+            {
+                store::untake_latest_save(&tx, row, &parsed.item.id, parsed.item.version)?;
+            }
         }
-        move_edits_behind(
-            &tx,
-            row,
-            verdict,
-            parsed.acknowledged,
-            &parsed.item.id,
-            &AnsweredAt {
-                version: parsed.item.version,
-                item: Some(&parsed.item),
-                made,
-            },
-        )?;
-        if matches!(verdict, Verdict::Accepted | Verdict::Merged) {
-            move_deletes_behind(&tx, row, &parsed.item, parsed.acknowledged)?;
+        if let Some(parsed) = &edge {
+            move_edits_behind(
+                &tx,
+                row,
+                verdict,
+                parsed.acknowledged,
+                &parsed.edge.id,
+                &AnsweredAt {
+                    version: parsed.edge.version,
+                    item: None,
+                    made,
+                },
+            )?;
         }
-        if verdict == Verdict::Conflicted
-            && row.kind == WriteKind::UpdateItem
-            && against_its_own(&tx, row, parsed)?
-        {
-            store::untake_latest_save(&tx, row, &parsed.item.id, parsed.item.version)?;
+        // The receipt can rename a pin, but the fresh response was checked
+        // against the exact pre-adoption pin set while this transaction held
+        // the writer.
+        apply_read_back_unchecked(&tx, &read)?;
+        let follows = match &item {
+            Some(parsed) if row.kind == WriteKind::CreateItem => {
+                queue_owed_time_clear(&tx, row, &parsed.item, verdict)?
+            }
+            _ => false,
+        };
+        // Everything the receipt settles is settled; an unread answer leaves
+        // only the read owed, for the pass after the copy is built again.
+        if !matches!(read, ReadBack::Unread) {
+            store::settle_read_back(&tx, owed.subject, &owed.id)?;
         }
-    }
-    if let Some(parsed) = &edge {
-        move_edits_behind(
-            &tx,
-            row,
-            verdict,
-            parsed.acknowledged,
-            &parsed.edge.id,
-            &AnsweredAt {
-                version: parsed.edge.version,
-                item: None,
-                made,
-            },
-        )?;
-    }
-    // The receipt can rename a pin, but the fresh response was checked against
-    // the exact pre-adoption pin set while this transaction held the writer.
-    apply_read_back_unchecked(&tx, &read)?;
-    let follows = match &item {
-        Some(parsed) if row.kind == WriteKind::CreateItem => {
-            queue_owed_time_clear(&tx, row, &parsed.item, verdict)?
-        }
-        _ => false,
-    };
-    // Everything the receipt settles is settled; an unread answer leaves only
-    // the read owed, for the pass after the copy is built again.
-    if !matches!(read, ReadBack::Unread) {
-        store::settle_read_back(&tx, owed.subject, &owed.id)?;
-    }
-    store::meta_delete(&tx, &receipt_key(&row.id))?;
-    tx.commit()?;
-    drop(conn);
+        store::meta_delete(&tx, &receipt_key(&row.id))?;
+        tx.commit()?;
+        Ok(follows)
+    })?;
     pass.follow_up |= follows;
     if row.kind == WriteKind::CreateItem
         && let Some(parsed) = &item
@@ -2875,7 +2889,7 @@ fn settle(
                 .unwrap_or_else(|| "unknown".into());
             // The verdict before the read: the other order loses the refusal
             // when the read fails, and the write goes out again.
-            {
+            recorded(core, || {
                 let mut conn = core.conn()?;
                 let tx = conn.transaction()?;
                 same_attempt(&tx, row)?;
@@ -2894,7 +2908,8 @@ fn settle(
                     store::meta_set(&tx, &receipt_key(&row.id), "refused")?;
                 }
                 tx.commit()?;
-            }
+                Ok(())
+            })?;
             let unread = reconcile(core, row, pass)?;
             Ok(Settled {
                 retry_after_seconds: unread
