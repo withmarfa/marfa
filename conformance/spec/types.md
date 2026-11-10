@@ -330,9 +330,9 @@ If a type would give a field another `type`, `format`, `items_type`, `items_fiel
 
 ### `types/child-shape-reparented`
 
-If a replacement of a type would give it a parent above which a type below it declares a field of the name of one a type above that parent gives, in a shape `types/child-shape` or `types/child-range-refused` refuses, then the server MUST answer `400 inheritance_violation` naming the type's `parent`.
+If a replacement of a type would give it a parent above which a type below it declares a field of the name of one a type above that parent gives, in a shape `types/child-shape` or `types/child-range-refused` refuses, and that type below does not already declare it in that shape against the types above the replaced type, then the server MUST answer `400 inheritance_violation` naming the type's `parent`.
 
-**Reason:** attaching a type under an ancestor is judged against every type below it, as adding a field to it is (`types/child-shape`), so a type below never holds a field in a shape its chain does not take.
+**Reason:** attaching a type under an ancestor is judged against every type below it, as adding a field to it is (`types/child-shape`). Only a conflict the replacement brings is refused: one already standing below comes from a change above it (`types/conflict-listed`), and a replacement that leaves it as it is makes nothing worse (`types/child-shape-standing-kept`).
 
 **Tests:** `compliance/type-inheritance.test.ts › refuses a replacement that gives a type a parent above which a subtype declares an inherited field in another shape`.
 
@@ -341,6 +341,14 @@ If a replacement of a type would give it a parent above which a type below it de
 When the server refuses a replacement under `types/child-shape-reparented`, the server MUST NOT change the type.
 
 **Tests:** `compliance/type-inheritance.test.ts › changes nothing when it refuses a replacement for the parent it would give a type`.
+
+### `types/child-shape-standing-kept`
+
+When a replacement of a type does not declare a field that a type below it declares in a shape `types/child-shape` refuses, and that type below already declared it in that shape against the types above the replaced type, the server MUST NOT refuse the replacement for that conflict, whether the replacement keeps the parent or gives the type another parent that gives the field the same shape.
+
+**Reason:** the owner has to be able to edit or move the types between a conflict and its source before the source registers again. The same holds for a status word (`types/status-word-reparented`) and a thumbnail (`types/thumbnail-one-reparented`).
+
+**Tests:** `compliance/type-standing-conflicts.test.ts › takes a move between parents that give the same, and a relabel, for %s`, `› refuses a replacement that declares what the type below holds, for %s`.
 
 ### `types/child-range`
 
@@ -724,6 +732,20 @@ If a type would declare a word that a type in its chain already gives the same s
 
 **Tests:** `compliance/status-groups.test.ts › refuses an inherited word declared again, in any group`, `› refuses a parent change that adds a word a subtype already declares`.
 
+### `types/status-word-reparented`
+
+If a replacement of a type would give it a parent whose chain gives a status field a word that a type below it declares for that field, and that type below does not already declare it against the types above the replaced type, then the server MUST answer `400 inheritance_violation` naming the type's `parent`.
+
+**Reason:** attaching a type under an ancestor is judged against every type below it, as adding a word to it is (`types/status-word-redeclared`). A word a type below already repeats is not refused unless the replacement declares it (`types/child-shape-standing-kept`).
+
+**Tests:** `compliance/status-groups.test.ts › refuses a replacement that gives a type a parent whose chain gives a word a subtype declares`.
+
+### `types/status-word-reparented-unchanged`
+
+When the server refuses a replacement under `types/status-word-reparented`, the server MUST NOT change the type.
+
+**Tests:** `compliance/status-groups.test.ts › changes nothing when it refuses a replacement for the parent it would give a type`.
+
 ### `types/status-parent-wordless`
 
 If a change to a type would leave no word in the chain of a type below it that declares a status field without `status_values`, by removing the field or by giving it another kind, then the server MUST answer `400 inheritance_violation` naming the field.
@@ -811,6 +833,20 @@ The server MUST ship `core.file.image` and `core.media` each declaring an option
 If a type would carry two thumbnail fields, counting one it inherits and one a type inheriting from it declares under another name, then the server MUST answer `400 invalid_schema`.
 
 **Tests:** `compliance/thumbnails.test.ts › refuses a thumbnail named for a field search indexes, and a second thumbnail`, `› refuses a parent gaining a thumbnail beside one its child already declares`, `› refuses a parent gaining a thumbnail under a name its child declares as text, and takes one its child declares as a thumbnail`.
+
+### `types/thumbnail-one-reparented`
+
+If a replacement of a type would give it a parent whose chain gives a thumbnail field, and a type below it declares a thumbnail under another name, and that type below does not already hold two thumbnails against the types above the replaced type, then the server MUST answer `400 invalid_schema` naming the type's `parent`.
+
+**Reason:** attaching a type under an ancestor is judged against every type below it, as adding a thumbnail to it is (`types/thumbnail-one`). A type below that already holds two is not refused unless the replacement declares a thumbnail (`types/child-shape-standing-kept`).
+
+**Tests:** `compliance/thumbnails.test.ts › refuses a replacement that gives a type a parent whose thumbnail a subtype declares another of`.
+
+### `types/thumbnail-one-reparented-unchanged`
+
+When the server refuses a replacement under `types/thumbnail-one-reparented`, the server MUST NOT change the type.
+
+**Tests:** `compliance/thumbnails.test.ts › changes nothing when it refuses a replacement for the parent it would give a type`.
 
 ### `types/thumbnail-name`
 

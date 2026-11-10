@@ -282,6 +282,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/type-permissions.test.ts",
   "src/suites/compliance/type-registry.test.ts",
   "src/suites/compliance/type-scoped-access.test.ts",
+  "src/suites/compliance/type-standing-conflicts.test.ts",
   "src/suites/compliance/type-tables.test.ts",
   "src/suites/compliance/type-versioning.test.ts",
   "src/suites/compliance/types.test.ts",

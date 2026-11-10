@@ -5130,7 +5130,7 @@ If an app declares a type whose identifier breaks the type grammar or uses a res
 
 If an app declares a field, or a member of a list's entries (`items_fields`), that has a `type` other than a field type (for a member, other than `string`, `email`, `url`, `enum`, `boolean`, `integer`, `number`, `date` or `datetime`); that has `items_type` `status`; that has `status_values` where its `type` is not `status`; whose `type` is `status` with `enum_values`, or with `status_values` that is not a non-empty list of words, each exactly a `value` and a `group`, the `value` a lowercase letter then up to 63 lowercase letters, digits and underscores and named once, the `group` one of `not_started`, `in_progress`, `completed` and `canceled`; that is a `string` whose `format` is `currency` with a `maxLength`; or that has `items_fields` where it is not an `array` whose `items_type` is `object`, or that names no member, or a member that is not an object naming its `type`, then a device MUST refuse the declaration `invalid`, naming the field.
 
-**Reason:** the server refuses these when the type is registered (`types/field-grammar`, `types/status-refused`, `types/items-fields-refused`). A list whose entry declaration a device took, with a member of no type or of a kind an entry does not have, would fail every later write of that list with a decoding error instead of a refusal. A device checks only these, the tables a type declares (`device/declaration-tables-refused`) and the shape of an inherited field (`device/declaration-field-shape-refused`). It leaves the rest of the field grammar to the server, which refuses it when a hydration registers the declaration (`device/hydrate-unregistered-said`): for example, in a field or in a member, an `enum` without `enum_values`, a `minimum` above its `maximum` or on a field that is not a number, a `format` it does not know or on a kind the format does not fit, and an `array` without `items_type`.
+**Reason:** the server refuses these when the type is registered (`types/field-grammar`, `types/status-refused`, `types/items-fields-refused`). A list whose entry declaration a device took, with a member of no type or of a kind an entry does not have, would fail every later write of that list with a decoding error instead of a refusal. A device checks only these, the tables a type declares (`device/declaration-tables-refused`), the shape of an inherited field (`device/declaration-field-shape-refused`), and the status words and thumbnails a chain holds (`device/declaration-words-thumbnails-refused`). It leaves the rest of the field grammar to the server, which refuses it when a hydration registers the declaration (`device/hydrate-unregistered-said`): for example, in a field or in a member, an `enum` without `enum_values`, a `minimum` above its `maximum` or on a field that is not a number, a `format` it does not know or on a kind the format does not fit, and an `array` without `items_type`.
 
 **Tests:** `device/save-before-sync.test.ts › refuses a declaration of a list of entries or a currency the server refuses, naming the field`, `› holds a member of a list's entries to the checks a declaration makes of a field, naming the field`.
 
@@ -5149,6 +5149,14 @@ If an app declares a type that gives a field another `type`, `format`, `items_ty
 **Reason:** the server refuses these when the type is registered, and a type a device took would fail there instead of at the app's own declaration.
 
 **Tests:** `device/save-before-sync.test.ts › refuses a declaration whose type gives an inherited field another shape than a type above it, naming the type and the field`.
+
+### `device/declaration-words-thumbnails-refused`
+
+If an app declares a type that gives its status field a word that a type above it gives that field, or that holds a second thumbnail field beside one a type above it gives or it declares, whether that type is in the declaration or one Marfa ships, then a device MUST refuse the declaration `invalid`, naming the type and the word or the field (`types/status-word-redeclared`, `types/thumbnail-one`).
+
+**Reason:** the server refuses these when the type is registered, and a type a device took would fail there instead of at the app's own declaration.
+
+**Tests:** `device/save-before-sync.test.ts › refuses a declaration whose type repeats a status word a type above it gives or holds a second thumbnail, naming the type and the word or the field`.
 
 ### `device/declaration-tables-refused`
 

@@ -182,6 +182,16 @@ impl Registry {
         false
     }
 
+    /// Root first, ending with `row`.
+    pub(super) fn chain_through<'a>(&'a self, row: &'a Obj) -> Vec<&'a Obj> {
+        let mut chain = text(row, "parent")
+            .filter(|parent| Some(*parent) != text(row, "id"))
+            .map(|parent| self.chain_above(parent))
+            .unwrap_or_default();
+        chain.push(row);
+        chain
+    }
+
     /// Root first. A chain that loops or names a type this registry lacks ends there.
     fn chain_above(&self, parent: &str) -> Vec<&Obj> {
         let mut seen = HashSet::new();
