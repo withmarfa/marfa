@@ -4941,6 +4941,46 @@ mod tests {
     }
 
     #[test]
+    fn a_catch_up_and_a_follow_each_let_go_of_a_reread_left_behind() {
+        let staged = |core: &Core| {
+            let conn = core.conn().unwrap();
+            conn.execute(
+                "INSERT INTO rows_reread (item_id, name, id, answer) VALUES ('i', 't', 'r', NULL)",
+                [],
+            )
+            .unwrap();
+        };
+        let left = |core: &Core| -> i64 {
+            core.conn()
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM rows_reread", [], |row| row.get(0))
+                .unwrap()
+        };
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on("/events", vec![withheld_head(None)]);
+        let (_dir, core) = hydrated(&server);
+        staged(&core);
+        assert_eq!(left(&core), 1);
+        let http = core.http.clone().unwrap();
+        let _ = catch_up(&core, &http, MS(200), &AtomicBool::new(false), &mut false);
+        assert_eq!(left(&core), 0, "a catch-up kept a re-read no purge it takes made");
+
+        server.on("/events", vec![held_open()]);
+        staged(&core);
+        let seen = server.seen("/events").len();
+        let run = follow_on(&core, STILL, None);
+        wait_until("the follow never held a stream", || {
+            server.seen("/events").len() > seen
+        });
+        wait_until("a follow kept a re-read no purge it takes made", || {
+            left(&core) == 0
+        });
+        run.stop();
+        run.ended().unwrap();
+    }
+
+    #[test]
     fn a_catch_up_waits_through_comments_for_a_marker_later_than_its_idle() {
         let server = Scripted::start();
         server.on("/types", vec![types(&[(NOTE, None)])]);

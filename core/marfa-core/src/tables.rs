@@ -268,7 +268,11 @@ pub(crate) fn reconcile_all(conn: &Connection) -> Result<()> {
     let chosen = choices(conn)?;
     if chosen.is_empty() {
         let holds = conn
-            .query_row("SELECT 1 FROM item_tables LIMIT 1", [], |_| Ok(()))
+            .query_row(
+                "SELECT 1 FROM item_tables UNION ALL SELECT 1 FROM rows_reread LIMIT 1",
+                [],
+                |_| Ok(()),
+            )
             .optional()?
             .is_some();
         if holds {
@@ -1564,5 +1568,33 @@ mod tests {
             filter_of(&Read::Ids(vec!["a".into(), "b".into()])).unwrap(),
             r#"id eq "a" OR id eq "b""#
         );
+    }
+
+    #[test]
+    fn a_reread_left_behind_goes_with_an_expiry_a_refill_and_a_table_let_go() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = crate::Core::open(dir.path().join("core.sqlite"), None).unwrap();
+        let mut conn = core.conn().unwrap();
+        let stage = |conn: &rusqlite::Connection| {
+            conn.execute(
+                "INSERT INTO rows_reread (item_id, name, id, answer) VALUES ('i', 't', 'r', NULL)",
+                [],
+            )
+            .unwrap();
+        };
+        let left = |conn: &rusqlite::Connection| -> i64 {
+            conn.query_row("SELECT COUNT(*) FROM rows_reread", [], |row| row.get(0))
+                .unwrap()
+        };
+        stage(&conn);
+        assert_eq!(left(&conn), 1);
+        crate::reach::expire(&conn).unwrap();
+        assert_eq!(left(&conn), 0, "an expired copy kept a purge's re-read");
+        stage(&conn);
+        crate::store::start_refill(&conn).unwrap();
+        assert_eq!(left(&conn), 0, "a refill in place kept a purge's re-read");
+        stage(&conn);
+        super::let_go(&mut conn, "core.note", "t").unwrap();
+        assert_eq!(left(&conn), 0, "letting go of a table kept a purge's re-read");
     }
 }
