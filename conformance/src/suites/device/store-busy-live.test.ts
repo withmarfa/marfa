@@ -17,6 +17,7 @@ import {
   CliDevice,
   CliFolder,
   newStore,
+  withoutWriteLine,
   type HeldCommand,
 } from "../../device/cli-adapter.js";
 import type { Outcome } from "../../device/protocol.js";
@@ -389,7 +390,9 @@ it("ends the drain store_busy when another program writes to the store at every 
   await draining.exited();
   expect(reaches).toBeGreaterThan(1);
   expect(draining.exitCode(), draining.stderr).toBe(3);
-  expect(JSON.parse(draining.stderr).error.code).toBe("store_busy");
+  expect(JSON.parse(withoutWriteLine(draining.stderr)).error.code).toBe(
+    "store_busy",
+  );
   const row = await queued(device, write);
   expect(
     [row?.verdict, row?.refusals],
