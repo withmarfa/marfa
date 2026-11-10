@@ -1794,15 +1794,15 @@ When `GET /export?format=archive` names the filters of an NDJSON export, the ser
 
 ### `search-and-filters/archive-entries`
 
-The server MUST write an archive's entries in this order: `manifest.json`, then the gzip-compressed line files `instance.ndjson.gz`, `items.ndjson.gz` and `edges.ndjson.gz`, then an uncompressed `blobs/<hash>` entry for each blob its manifest lists in `blobs`.
+The server MUST write an archive's entries in this order: `manifest.json`, then the gzip-compressed line files `instance.ndjson.gz`, `items.ndjson.gz`, `edges.ndjson.gz` and `rows.ndjson.gz`, then an uncompressed `blobs/<hash>` entry for each blob its manifest lists in `blobs`.
 
-**Reason:** the manifest comes first, so a reader knows what the archive holds before it reads the rest, and the registrations come before the item and edge lines, so a restore can check each line as it arrives.
+**Reason:** the manifest comes first, so a reader knows what the archive holds before it reads the rest, and the registrations come before the item, edge and row lines, so a restore can check each line as it arrives.
 
 **Tests:** `compliance/export.test.ts › opens an archive with its manifest, and the manifest counts what the archive holds`.
 
 ### `search-and-filters/archive-manifest`
 
-The server MUST write into the manifest of an archive its `version`, its `format` of `marfa-archive-v0`, a `created_at` instant, and in `item_count`, `edge_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `connector_state_count` and `connector_agreement_count` the number of each kind of entry or line the archive holds.
+The server MUST write into the manifest of an archive its `version`, its `format` of `marfa-archive-v0`, a `created_at` instant, and in `item_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `connector_state_count` and `connector_agreement_count` the number of each kind of entry or line the archive holds.
 
 **Reason:** `instance/archive-version` and `instance/id-in-archive` state the version and the instance's name in the manifest.
 
@@ -1908,7 +1908,7 @@ If a store fails, or does not answer within 15 seconds, while the server checks 
 
 ### `search-and-filters/archive-only`
 
-The server MUST hold nothing in an archive but `manifest.json`, `instance.ndjson.gz`, `items.ndjson.gz`, `edges.ndjson.gz` and the `blobs/` entries.
+The server MUST hold nothing in an archive but `manifest.json`, `instance.ndjson.gz`, `items.ndjson.gz`, `edges.ndjson.gz`, `rows.ndjson.gz` and the `blobs/` entries.
 
 **Reason:** an archive carries no credential, so no key, session, grant, passkey, connector registration, webhook subscription or `marfa.secrets`, and no tombstone or runtime record, such as a run, a hold, a delivery, a folder report or a bulk job, though an instance holds them. A restore means setting up sign-in again.
 
@@ -2094,7 +2094,7 @@ When a snapshot in an archive requested by a credential names a blob, the server
 
 ### `search-and-filters/archive-selection-read`
 
-The server MUST read every item, edge, registration and record an archive carries from one snapshot of the instance, and count in its manifest exactly the items and edges its line files hold.
+The server MUST read every item, edge, registration and record an archive carries from one snapshot of the instance, and count in its manifest exactly the items, edges and rows its line files hold.
 
 **Reason:** one snapshot is one committed state, so no write can make the items and edges an archive carries disagree with each other, and the selection is read whole before the first byte is sent, because the manifest comes first and a tar header carries each entry's size.
 
@@ -2256,7 +2256,7 @@ When local authority sends `POST /restore` with an archive that `GET /export?for
 
 ### `search-and-filters/restore-counts`
 
-When `POST /restore` succeeds, the server MUST carry the counts `imported`, `duplicates`, `edges_imported`, `edges_skipped`, `edges_skipped_reasons`, `blobs_imported`, `types_registered`, `types_skipped`, `edge_types_registered`, `edge_types_skipped`, `type_icons_added`, `type_icons_skipped`, `type_icons_skipped_reasons`, `sources_added`, `sources_skipped`, `sources_skipped_reasons`, `settings_added`, `settings_skipped`, `connector_states_added`, `connector_states_skipped`, `connector_agreements_added` and `connector_agreements_skipped`, each for the kind of thing it counts.
+When `POST /restore` succeeds, the server MUST carry the counts `imported`, `duplicates`, `edges_imported`, `edges_skipped`, `edges_skipped_reasons`, `blobs_imported`, `types_registered`, `types_skipped`, `edge_types_registered`, `edge_types_skipped`, `type_icons_added`, `type_icons_skipped`, `type_icons_skipped_reasons`, `sources_added`, `sources_skipped`, `sources_skipped_reasons`, `settings_added`, `settings_skipped`, `connector_states_added`, `connector_states_skipped`, `connector_agreements_added`, `connector_agreements_skipped`, `rows_imported` and `rows_skipped`, each for the kind of thing it counts.
 
 **Tests:** `compliance/restore-archive.test.ts › answers the restore result fields on the first restore and on a repeat`.
 
@@ -2528,7 +2528,7 @@ If the body of `POST /restore` is empty, then the server MUST answer `400 valida
 
 ### `search-and-filters/restore-members`
 
-If an archive lacks `manifest.json`, `instance.ndjson.gz`, `items.ndjson.gz` or `edges.ndjson.gz`, then the server MUST answer `400 validation_error` naming each missing entry in the message and in `details.entries`.
+If an archive lacks `manifest.json`, `instance.ndjson.gz`, `items.ndjson.gz`, `edges.ndjson.gz` or `rows.ndjson.gz`, then the server MUST answer `400 validation_error` naming each missing entry in the message and in `details.entries`.
 
 **Reason:** an export writes all four even when it holds no item (`search-and-filters/archive-entries`), so a missing entry is a damaged archive or a file that is no archive, and an archive of nothing is told from it by its entries being empty (`search-and-filters/restore-nothing`). Without the check a restore answers `200` with counts of zero for a file it never read.
 
@@ -2560,11 +2560,19 @@ If the `manifest.json` of an archive names a `version` other than 0, then the se
 
 ### `search-and-filters/restore-manifest`
 
-If the `manifest.json` of an archive is missing `version`, or `blobs`, or mistypes them, `missing_blobs`, an entry of `blobs`, which holds a string `mime_type` and a non-negative integer `size_bytes`, or an entry of `missing_blobs`, which holds the same or `null` for either, then the server MUST answer `400 validation_error` naming each field in the message and in `details.errors` as a dotted `path`.
+If the `manifest.json` of an archive is missing `version`, `blobs`, `item_count`, `edge_count` or `row_count`, or mistypes them, each count holding a non-negative integer, `missing_blobs`, an entry of `blobs`, which holds a string `mime_type` and a non-negative integer `size_bytes`, or an entry of `missing_blobs`, which holds the same or `null` for either, then the server MUST answer `400 validation_error` naming each field in the message and in `details.errors` as a dotted `path`.
 
 **Reason:** another version is free to lay its fields out differently, so a manifest naming one is refused for its version and not its shape.
 
 **Tests:** `compliance/restore-archive.test.ts › refuses a manifest missing or mistyping a field the restore reads, naming the field, and writes nothing`.
+
+### `search-and-filters/restore-line-counts`
+
+If the `item_count`, `edge_count` or `row_count` of an archive's manifest is not the number of lines that `items.ndjson.gz`, `edges.ndjson.gz` or `rows.ndjson.gz` holds, then the server MUST answer `400 validation_error` naming the count in `details.field`.
+
+**Reason:** the manifest says what the archive holds before a reader reads the rest (`search-and-filters/archive-entries`), so a line file that holds other than it says was cut or changed after the export.
+
+**Tests:** `compliance/restore-archive.test.ts › refuses an archive whose %s is not the number of lines its file holds, and writes nothing`.
 
 ### `search-and-filters/restore-state`
 
@@ -2608,7 +2616,7 @@ If an archive records a `version` of an item or an edge that is not a positive s
 
 ### `search-and-filters/restore-text`
 
-If the `manifest.json` of an archive, or a line the restore reads from its `instance.ndjson.gz`, `items.ndjson.gz` or `edges.ndjson.gz`, holds a string or an object key with a surrogate escape that has no partner, then the server MUST answer `400 validation_error` naming the entry or the line and the JSON pointer of the text, and write nothing.
+If the `manifest.json` of an archive, or a line the restore reads from its `instance.ndjson.gz`, `items.ndjson.gz`, `edges.ndjson.gz` or `rows.ndjson.gz`, holds a string or an object key with a surrogate escape that has no partner, then the server MUST answer `400 validation_error` naming the entry or the line and the JSON pointer of the text, and write nothing.
 
 **Reason:** a restore is not a way to plant text the write doors refuse (`items/json-text-well-formed`).
 
@@ -2630,7 +2638,7 @@ When `POST /restore` writes an item or an edge, the server MUST keep the `versio
 
 ### `search-and-filters/restore-dates`
 
-If an archive records a `created_at` or `updated_at` of an item or an edge that is not an instant, then the server MUST answer `400 validation_error` naming the line and the field.
+If an archive records a `created_at` or `updated_at` of an item or an edge, or a `last_activity_at` of an item, that is not an instant, then the server MUST answer `400 validation_error` naming the line and the field.
 
 **Tests:** `compliance/archive-history.test.ts › refuses an item whose %s is malformed, and writes the item ahead of it nowhere`, `› refuses an edge whose date is malformed even when an endpoint is missing`.
 

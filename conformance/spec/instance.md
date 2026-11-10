@@ -470,7 +470,7 @@ When the server takes a backup, the server MUST put it in the object store as on
 
 ### `instance/backup-holds-export`
 
-When the server takes a backup, the server MUST put in it the items, edges and instance lines that `GET /export?format=archive&state=any&files=false` would send a key that holds every permission and reaches every type at that moment, but for the `source` lines that `search-and-filters/archive-sources` gives a backup.
+When the server takes a backup, the server MUST put in it the items, edges, rows and instance lines that `GET /export?format=archive&state=any&files=false` would send a key that holds every permission and reaches every type at that moment, but for the `source` lines that `search-and-filters/archive-sources` gives a backup.
 
 **Tests:** `compliance/backups.test.ts › puts one object in the prefix's backups folder for its instance, named for its created_at, holding what an archive export with state any and files false holds for a key that reaches everything`.
 

@@ -342,6 +342,9 @@ describe("restore", () => {
       },
       { reshape: (m) => without(m, "version"), path: "version" },
       { reshape: (m) => ({ ...m, version: "0" }), path: "version" },
+      { reshape: (m) => without(m, "item_count"), path: "item_count" },
+      { reshape: (m) => ({ ...m, edge_count: -1 }), path: "edge_count" },
+      { reshape: (m) => ({ ...m, row_count: "0" }), path: "row_count" },
     ];
 
     for (const { reshape, path } of cases) {
@@ -363,6 +366,33 @@ describe("restore", () => {
     expect(restored.data).toMatchObject({ imported: 1, blobs_imported: 1 });
     expect((await client.downloadBlob(hash)).status).toBe(200);
   });
+
+  it.each(["item_count", "edge_count", "row_count"])(
+    "refuses an archive whose %s is not the number of lines its file holds, and writes nothing",
+    async (count) => {
+      const id = uuidv7();
+      const archive = (reshape: (m: Record<string, unknown>) => unknown) =>
+        itemsArchive(
+          [{ id, type: "core.note", source: ctx.source, properties: {} }],
+          [],
+          [],
+          reshape,
+        );
+      const refused = await owner.restoreArchive(
+        archive((m) => ({ ...m, [count]: Number(m[count]) + 1 })),
+      );
+      expect(refused.status, JSON.stringify(refused.error)).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+      expect(refused.error?.error.details?.field).toBe(count);
+      expect((await client.getItem(id)).status).toBe(404);
+
+      // The witness: the same archive counting what it holds restores.
+      const restored = await owner.restoreArchive(archive((m) => m));
+      expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+      trackItem(ctx, id);
+      expect(restored.data.imported).toBe(1);
+    },
+  );
 
   it("refuses an archive at another format version, saying it is read only by the build that wrote it", async () => {
     // Every version inside Marfa is 0 until the first public release, so
@@ -395,6 +425,7 @@ describe("restore", () => {
         lineFile("instance", ""),
         lineFile("items", items),
         lineFile("edges", ""),
+        lineFile("rows", ""),
       ]);
     };
 
@@ -427,7 +458,14 @@ describe("restore", () => {
   };
   const manifest = {
     name: "manifest.json",
-    body: JSON.stringify({ version: 0, format: "marfa-archive-v0", blobs: {} }),
+    body: JSON.stringify({
+      version: 0,
+      format: "marfa-archive-v0",
+      item_count: 1,
+      edge_count: 0,
+      row_count: 0,
+      blobs: {},
+    }),
   };
   /** An archive of `items`, its other line files empty, then `rest`. */
   const around = (items: ArchiveFile[], rest: ArchiveFile[] = []): Uint8Array =>
@@ -436,6 +474,7 @@ describe("restore", () => {
       lineFile("instance", ""),
       ...items,
       lineFile("edges", ""),
+      lineFile("rows", ""),
       ...rest,
     ]);
 
@@ -554,6 +593,7 @@ describe("an archive that lacks a member", () => {
     "instance.ndjson.gz",
     "items.ndjson.gz",
     "edges.ndjson.gz",
+    "rows.ndjson.gz",
   ];
 
   /** An archive of one note and one blob that a restore would write. */
@@ -610,7 +650,7 @@ describe("an archive that lacks a member", () => {
     }
     expect(refused.error?.error.details?.entries).toEqual(MEMBERS);
 
-    // The witness: the same tar with the four members, all empty, is an
+    // The witness: the same tar with the five members, all empty, is an
     // archive of nothing and restores as one.
     const nothing = await owner.restoreArchive(
       tar([
@@ -620,12 +660,16 @@ describe("an archive that lacks a member", () => {
           body: JSON.stringify({
             version: 0,
             format: "marfa-archive-v0",
+            item_count: 0,
+            edge_count: 0,
+            row_count: 0,
             blobs: {},
           }),
         },
         lineFile("instance", ""),
         lineFile("items", ""),
         lineFile("edges", ""),
+        lineFile("rows", ""),
       ]),
     );
     expect(nothing.ok, JSON.stringify(nothing.error)).toBe(true);
@@ -1136,6 +1180,7 @@ describe("what a restore answers", () => {
           created_at: new Date().toISOString(),
           item_count: 0,
           edge_count: 0,
+          row_count: 0,
           blob_count: 0,
           type_count: 0,
           edge_type_count: 1,
@@ -1148,6 +1193,7 @@ describe("what a restore answers", () => {
       ),
       lineFile("items", ""),
       lineFile("edges", ""),
+      lineFile("rows", ""),
     ]);
     const restored = await owner.restoreArchive(archive);
     expect(restored.status).toBe(409);

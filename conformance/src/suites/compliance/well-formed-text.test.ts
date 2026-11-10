@@ -637,6 +637,7 @@ describe("a restore", () => {
         body: JSON.stringify({
           ...JSON.parse(manifest),
           edge_count: 1,
+          row_count: 0,
           ...(where === "manifest"
             ? {
                 blobs: {
@@ -663,6 +664,7 @@ describe("a restore", () => {
           .join("\n") + "\n",
       ),
       lineFile("edges", `${JSON.stringify(edgeLine)}\n`),
+      lineFile("rows", ""),
     ]);
   }
 
