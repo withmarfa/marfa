@@ -128,6 +128,20 @@ If a column names a `searchable` that is not `true` or `false`, or `true` on a c
 
 **Tests:** `compliance/type-tables.test.ts › refuses searchable on a column that holds no text, and takes it on one that does`.
 
+### `tables/searchable-bound`
+
+The server MUST take a table that marks 8 columns `searchable` `true`.
+
+**Tests:** `compliance/table-rows-search.test.ts › takes a table that marks 8 columns searchable and refuses one that marks 9`.
+
+### `tables/searchable-max`
+
+If a table marks more than 8 columns `searchable` `true`, then the server MUST answer `400 invalid_schema` naming the table's `columns`.
+
+**Reason:** each searchable column of a table is a column of the search index, which holds the text of every row.
+
+**Tests:** `compliance/table-rows-search.test.ts › takes a table that marks 8 columns searchable and refuses one that marks 9`.
+
 ### `tables/item-unregistered`
 
 If a column's `type_constraints` is empty, is not a list, or holds an entry that is not an identifier of a registered type or of the type that declares the column, then the server MUST answer `400 invalid_schema` naming the column's `type_constraints`.
@@ -1321,3 +1335,175 @@ The server MUST count a batch that changes rows as a change a backup holds.
 **Reason:** a scheduled run skips a backup when nothing it holds has changed (`instance/backup-unchanged`), and rows change without their item.
 
 **Tests:** `compliance/backups.test.ts › takes a scheduled backup after a batch changes rows, and skips one when nothing changed`.
+
+## Searching rows
+
+`GET /search` matches rows as well as items. A hit for a row is still an item: it answers the row's item under `item`, with its `metadata`, `relevance_score` and `snippet_html` as an item hit has them, and names the row under `row` as `{ "table", "id", "column" }`.
+
+### `tables/search-row-hit`
+
+When `GET /search` carries a `q` that a row's searchable columns match, the server MUST answer a hit for that row, apart from any hit for its item's own text.
+
+**Reason:** a person searching for what a message said is looking for the message, so each row that matches is a hit of its own, as an item is.
+
+**Tests:** `compliance/table-rows-search.test.ts › answers a row whose searchable column matches as a hit naming its item, table, row and column`.
+
+### `tables/search-row-named`
+
+The server MUST answer a row hit with the row's item under `item` and, under `row`, the row's table as `table`, its ID as `id` and as `column` the column its excerpt is drawn from.
+
+**Tests:** `compliance/table-rows-search.test.ts › answers a row whose searchable column matches as a hit naming its item, table, row and column`.
+
+### `tables/search-item-unnamed`
+
+The server MUST NOT carry `row` on a hit for an item's own text.
+
+**Tests:** `compliance/table-rows-search.test.ts › answers a row whose searchable column matches as a hit naming its item, table, row and column`.
+
+### `tables/search-row-columns`
+
+The server MUST match a row against the string values of the columns its table marks `searchable` `true`, and against no other column.
+
+**Tests:** `compliance/table-rows-search.test.ts › matches a row by every word across its searchable columns, and never by a column not marked searchable or a value written as an item's id`.
+
+### `tables/search-row-words`
+
+The server MUST match a query against a row by the rules `search-and-filters/search-stem` to `search-and-filters/search-no-word` hold for an item, with the row's searchable columns in place of the item's text.
+
+**Reason:** one query reads the same way against an item and against a row, so every word of it may match in any searchable column of the row.
+
+**Tests:** `compliance/table-rows-search.test.ts › matches a row by every word across its searchable columns, and never by a column not marked searchable or a value written as an item's id`.
+
+### `tables/search-row-reference`
+
+The server MUST NOT match a value that a row holds as an item's ID, whatever the type of its column now is.
+
+**Reason:** such a value is withheld from a key that may not read that item (`tables/rows-item-withheld`), and a column retyped from `item` to text keeps it so (`tables/rows-item-origin`).
+
+**Tests:** `compliance/table-rows-search.test.ts › matches a row by every word across its searchable columns, and never by a column not marked searchable or a value written as an item's id`.
+
+### `tables/search-row-reach`
+
+The server MUST answer a row hit only to a credential that may read the row's item.
+
+**Reason:** reading a row is reading its item (`tables/rows-read-access`).
+
+**Tests:** `compliance/table-rows-search.test.ts › answers a row hit only where the search would answer its item: the key's reach, the search's narrowing and the bin`.
+
+### `tables/search-row-narrowed`
+
+When `GET /search` names a `type`, `state`, `source`, `tags`, `filter`, `include`, `occurred_after`, `occurred_before`, `updated_after` or `updated_before`, the server MUST answer a row hit only where the row's item meets it.
+
+**Tests:** `compliance/table-rows-search.test.ts › answers a row hit only where the search would answer its item: the key's reach, the search's narrowing and the bin`.
+
+### `tables/search-row-bin`
+
+The server MUST NOT match a row of an item in the bin on `GET /search`, whatever `state` the search names.
+
+**Tests:** `compliance/table-rows-search.test.ts › answers a row hit only where the search would answer its item: the key's reach, the search's narrowing and the bin`.
+
+### `tables/search-row-rank`
+
+When `GET /search` names no `sort`, or `sort=relevance`, the server MUST rank a row hit by BM25 over its table's searchable columns at equal weight, in one ranking with the item hits.
+
+**Reason:** a row and an item that match a query are answered in the order of how well each matches, so a page never puts every item before every row.
+
+**Tests:** `compliance/table-rows-search.test.ts › ranks row hits with item hits by BM25, scoring the best hit highest`.
+
+### `tables/search-row-sort`
+
+When `GET /search` names `sort=created_at`, `sort=updated_at`, `sort=occurred_at` or `sort=properties.<field>`, the server MUST order a row hit by its item's value.
+
+**Reason:** a hit for a row is still an item, so it sorts where its item does.
+
+**Tests:** `compliance/table-rows-search.test.ts › orders a sorted search's row hits by their item's value and breaks ties by item, own hit first, then table and row id`.
+
+### `tables/search-row-ties`
+
+When `GET /search` orders hits of one item that tie, the server MUST put the item's own hit first and its row hits after it, by table name and then row ID, ascending.
+
+**Reason:** an unordered tie is two answers to one query (`search-and-filters/search-sort-ties`).
+
+**Tests:** `compliance/table-rows-search.test.ts › orders a sorted search's row hits by their item's value and breaks ties by item, own hit first, then table and row id`.
+
+### `tables/search-row-cursor`
+
+When a client sends back the `next_cursor` of each page of a `GET /search` whose hits include rows, the server MUST continue the ranking, so that walking to `null` delivers every item hit and every row hit once.
+
+**Tests:** `compliance/table-rows-search.test.ts › walks a search whose hits include rows to a null cursor, delivering every hit once`.
+
+### `tables/search-row-depth`
+
+The server MUST count each row hit as one of the 10,000 hits a search reads at most (`search-and-filters/search-depth`).
+
+**Tests:** `compliance/table-rows-search.test.ts › counts row hits toward the depth of a search`.
+
+### `tables/search-row-excerpt`
+
+The server MUST draw a row hit's `snippet_html` from the searchable column with the most matched words in its excerpt, the first by name where two tie, by the rules `search-and-filters/excerpt-words` to `search-and-filters/excerpt-markup` hold for an item's excerpt.
+
+**Tests:** `compliance/table-rows-search.test.ts › excerpts a row hit from its searchable column with the most matched words, marked and escaped`.
+
+### `tables/search-row-written`
+
+When a `put` or a `patch` changes a row's searchable values, the server MUST match the row by its new values, and not by its old ones, from that write's answer on.
+
+**Tests:** `compliance/table-rows-search.test.ts › follows a row's put, patch and delete, an undo, and its item's purge`.
+
+### `tables/search-row-deleted`
+
+When a `delete` removes a row, the server MUST NOT match the row from that write's answer on.
+
+**Tests:** `compliance/table-rows-search.test.ts › follows a row's put, patch and delete, an undo, and its item's purge`.
+
+### `tables/search-row-undone`
+
+When an undo puts a row back, changes it or removes it, the server MUST match the row as the undo left it from the undo's answer on.
+
+**Tests:** `compliance/table-rows-search.test.ts › follows a row's put, patch and delete, an undo, and its item's purge`.
+
+### `tables/search-row-purged`
+
+When the server purges an item, the server MUST NOT match its rows from the purge's answer on.
+
+**Tests:** `compliance/table-rows-search.test.ts › follows a row's put, patch and delete, an undo, and its item's purge`.
+
+### `tables/search-row-restored`
+
+When `POST /restore` writes rows, the server MUST match each by its table's searchable columns from the restore's answer on.
+
+**Tests:** `compliance/table-rows-archive.test.ts › matches the rows a restore writes`.
+
+### `tables/search-column-withdrawn`
+
+When a type change takes `searchable` from a column, changes its type, removes it or removes its table, the server MUST NOT match a row by that column's values from the change's answer on.
+
+**Reason:** a column a person has taken out of search is out of it at once, however many rows its table holds.
+
+**Tests:** `compliance/table-rows-search.test.ts › follows a change to what a table marks searchable, a column removed or retyped, and a table removed`, `› rebuilds a large table's index through table-row-cleanup, matching nothing by a withdrawn column meanwhile`.
+
+### `tables/search-column-added`
+
+When a type change marks a column `searchable` `true`, the server MUST match the rows of the tables it applies to by that column at the latest once `table-row-cleanup` has run.
+
+**Reason:** the server rebuilds the index of a table of up to 1,000 rows in the change itself, and of a larger table a page at a time, so the change never holds every other write behind it.
+
+**Tests:** `compliance/table-rows-search.test.ts › follows a change to what a table marks searchable, a column removed or retyped, and a table removed`, `› rebuilds a large table's index through table-row-cleanup, matching nothing by a withdrawn column meanwhile`.
+
+### `tables/search-rebuilding`
+
+While `table-row-cleanup` has still to rebuild the index of a table after a type change, the server MUST NOT answer a row hit from that table.
+
+**Reason:** until the rebuild ends, the index holds some rows by the old columns and some by the new, and neither answer is the type's.
+
+**Tests:** `compliance/table-rows-search.test.ts › rebuilds a large table's index through table-row-cleanup, matching nothing by a withdrawn column meanwhile`.
+
+### `tables/mcp-find-row`
+
+When `marfa_find` answers a search hit for a row, the server MUST name the row in the entry's `row`, as `GET /search` names it.
+
+**Tests:** `compliance/table-rows-search.test.ts › names the row of a row hit in marfa_find`.
+
+## Linking to a row
+
+A link names a row by `#^` and the row's ID after the item's name, `[[item#^row]]`, as Obsidian names a block. It stays a link to the item, and the row is the one with that ID among the item's tables: a row ID is unique within its table, so where two tables of one item hold the same ID, the link names both. The device's half is `device/link-parts-row` and `device/body-link-row`.

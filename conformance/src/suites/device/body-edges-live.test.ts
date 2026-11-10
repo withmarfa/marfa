@@ -355,6 +355,26 @@ describe("links", () => {
     ]);
   });
 
+  it("makes the edge of a link to a row to the row's item, and none for a link to a row alone", async () => {
+    const chat = await note(device, named("Row chat"));
+    const row = "019a6f3e-7b1c-7d2e-8f00-0123456789ab";
+    const host = await note(
+      device,
+      named("Row host"),
+      `[[${named("Row chat")}#^${row}]] [[#^${row}]]\n`,
+    );
+    await drained(device);
+    expect(await referencesFrom(host.id)).toEqual([chat.id]);
+    const links = value(await device.bodyLinks(host.id)).links;
+    expect(links.map((link) => [link.text, link.name, link.target])).toEqual([
+      [
+        `[[${named("Row chat")}#^${row}]]`,
+        named("Row chat"),
+        { state: "item", id: chat.id },
+      ],
+    ]);
+  });
+
   it.each([
     ["a table", ""],
     ["a table in a quote", "> "],

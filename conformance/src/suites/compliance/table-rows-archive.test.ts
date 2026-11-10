@@ -171,9 +171,12 @@ beforeAll(async () => {
   await register(origin, SECRET, {});
   await register(origin, LEDGER, {
     lines: { columns: { amount: { type: "number" } } },
-    notes: { columns: { text: { type: "string" } } },
+    notes: { columns: { text: { type: "string", searchable: true } } },
     photos: {
-      columns: { caption: { type: "string" }, picture: { type: "item" } },
+      columns: {
+        caption: { type: "string", searchable: true },
+        picture: { type: "item" },
+      },
     },
   });
   await register(origin, SHAPED, {
@@ -407,6 +410,19 @@ describe("rows in an archive", () => {
     const read = (await ok(restoredInto.getItem(made.second))).item;
     expect(read.last_activity_at).toBe(made.lastActivity);
     expect(read.updated_at).toBe(made.updatedAt);
+  });
+
+  it("matches the rows a restore writes", async () => {
+    const later = (await allRows(restoredInto, made.second, "notes")).find(
+      (row) => row.values.text === "later",
+    );
+    expect(later).toBeDefined();
+    const found = await ok(restoredInto.search("later"));
+    expect(found.data.map((hit) => [hit.item.id, hit.row])).toEqual([
+      [made.second, { table: "notes", id: later!.id, column: "text" }],
+    ]);
+    const captions = await ok(restoredInto.search("words alone"));
+    expect(captions.data.map((hit) => hit.row?.id)).toEqual([made.captionRow]);
   });
 
   it("leaves the rows of an item counted as a duplicate as they are, counting the archive's in rows_skipped", async () => {

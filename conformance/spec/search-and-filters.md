@@ -1152,7 +1152,7 @@ The server MUST take a `q` that holds quotes, ampersands and parentheses.
 
 ### `search-and-filters/search-matches`
 
-When `GET /search` carries a `q`, the server MUST answer the items whose searchable text or tags match it, and no other item.
+When `GET /search` carries a `q`, the server MUST answer the items whose searchable text or tags match it, and no other item but the items of the row hits `tables/search-row-hit` adds.
 
 **Tests:** `correctness/persistence.test.ts › search for distinctive text returns matching items`, `› search for nonexistent string returns empty results`.
 
@@ -1212,9 +1212,9 @@ When a client sends back the `next_cursor` of each page of a `GET /search` that 
 
 ### `search-and-filters/search-depth`
 
-When a page of `GET /search` holds the 10,000th item of the ranking, the server MUST answer `next_cursor` of `null`.
+When a page of `GET /search` holds the 10,000th hit of the ranking, the server MUST answer `next_cursor` of `null`.
 
-**Reason:** the server reads the ranking at most 10,000 items deep, so a search is narrowed rather than paged past that depth.
+**Reason:** the server reads the ranking at most 10,000 hits deep, so a search is narrowed rather than paged past that depth.
 
 **Tests:** `compliance/search-depth.test.ts › stops paging a search at its 10,000th item`.
 
@@ -1408,7 +1408,7 @@ When a type is registered, replaced, or deleted with `force`, the server MUST ma
 
 ### `search-and-filters/rank-bm25`
 
-When `GET /search` names no `sort`, or `sort=relevance`, the server MUST rank hits by BM25 over the `title`, `body`, `description`, `name`, extra properties and tags at equal weight.
+When `GET /search` names no `sort`, or `sort=relevance`, the server MUST rank an item's own hit by BM25 over the `title`, `body`, `description`, `name`, extra properties and tags at equal weight.
 
 **Reason:** a device ranks by the same measure (`device/rank-bm25`), so the two orders agree where they rank the same items.
 

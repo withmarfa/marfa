@@ -274,6 +274,8 @@ export interface SearchResult {
   metadata: MarfaMetadata;
   relevance_score: number;
   snippet_html?: string;
+  /** The row a hit for a row names (`tables/search-row-named`). */
+  row?: { table: string; id: string; column: string };
 }
 
 export interface PaginatedResult<T> {
