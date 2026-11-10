@@ -92,7 +92,7 @@ export interface Answer {
  * answer's `ms` and a limiter cannot make a request look quick.
  */
 export async function api(
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "DELETE",
   path: string,
   body?: string | object,
   connection: Connection = connect(),
@@ -119,8 +119,9 @@ export async function api(
         body: payload,
         signal: AbortSignal.timeout(900_000),
       });
+      const body = await response.text();
       status = response.status;
-      text = await response.text();
+      text = body;
       if (status === 429 && attempt < 8) {
         await sleep(Number(response.headers.get("retry-after") ?? "5") * 1000);
         continue;
