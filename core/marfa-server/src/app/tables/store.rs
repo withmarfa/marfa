@@ -421,7 +421,10 @@ pub(super) fn rows_after(
     found.map(|row| held(row?)).collect()
 }
 
-/// Writes a restored row as the archive holds it.
+/// The mark of a row no logged batch left: `row_batches` numbers its batches from 1.
+pub(super) const UNLOGGED: i64 = 0;
+
+/// Writes a restored row as the archive holds it, marked [`UNLOGGED`].
 pub(super) fn insert(
     tx: &Transaction<'_>,
     table: i64,
@@ -431,10 +434,10 @@ pub(super) fn insert(
     refs: Option<&str>,
 ) -> Result<()> {
     tx.prepare_cached(
-        "INSERT INTO table_rows (table_seq, id, updated_at, refs, body) \
-         VALUES (?1, ?2, ?3, jsonb(?4), jsonb(?5))",
+        "INSERT INTO table_rows (table_seq, id, updated_at, batch, refs, body) \
+         VALUES (?1, ?2, ?3, ?4, jsonb(?5), jsonb(?6))",
     )?
-    .execute(params![table, id, updated_at, refs, body])?;
+    .execute(params![table, id, updated_at, UNLOGGED, refs, body])?;
     Ok(())
 }
 

@@ -492,6 +492,75 @@ describe("rows in an archive", () => {
     );
     expect(summary?.last_batch).toBe(batches[2]);
   });
+
+  it("logs no batch for the rows a restore writes, so an undo of its last_batch answers batch_not_found", async () => {
+    // The witness: the source logged the batches that wrote the same rows.
+    expect(
+      (await ok(origin.listBatches(made.busy, "lines"))).data,
+    ).toHaveLength(Math.ceil(MANY / 1000));
+    expect(
+      (await ok(restoredInto.listBatches(made.busy, "lines"))).data,
+    ).toEqual([]);
+    const summary = (await ok(restoredInto.listTables(made.busy))).data.find(
+      (table) => table.name === "lines",
+    )!;
+    const undone = await restoredInto.undoBatch(
+      made.busy,
+      "lines",
+      summary.last_batch,
+    );
+    expect(undone.status).toBe(404);
+    expect(undone.error?.error.code).toBe("batch_not_found");
+    expect(await allRows(restoredInto, made.busy, "lines")).toHaveLength(MANY);
+  });
+
+  it("undoes a write over restored rows, putting each back as the restore wrote it", async () => {
+    const before = (await allRows(restoredInto, made.busy, "lines")).slice(
+      0,
+      2,
+    );
+    const [patched, deleted] = before as [TableRow, TableRow];
+    const written = await ok(
+      restoredInto.writeRows(made.busy, "lines", {
+        operations: [
+          { op: "patch", id: patched.id, values: { amount: -1 } },
+          { op: "delete", id: deleted.id },
+          { op: "put", values: { amount: -2 } },
+        ],
+      }),
+    );
+    const createdId = written.results[2]!.id;
+    const undo = await ok(
+      restoredInto.undoBatch(made.busy, "lines", written.batch!),
+    );
+    expect(undo.results).toEqual(
+      [
+        { id: patched.id, outcome: "replaced" },
+        { id: deleted.id, outcome: "created" },
+        { id: createdId, outcome: "deleted" },
+      ].sort((a, b) => (a.id < b.id ? -1 : 1)),
+    );
+    for (const row of before) {
+      expect(
+        (await ok(restoredInto.getRow(made.busy, "lines", row.id))).values,
+      ).toEqual(row.values);
+    }
+    expect(
+      (await restoredInto.getRow(made.busy, "lines", createdId)).status,
+    ).toBe(404);
+    // Redoing and undoing again finds each restored row standing.
+    await ok(restoredInto.undoBatch(made.busy, "lines", undo.batch!));
+    expect(
+      (await ok(restoredInto.getRow(made.busy, "lines", patched.id))).values,
+    ).toEqual({ amount: -1 });
+    await ok(restoredInto.undoBatch(made.busy, "lines", written.batch!));
+    expect(
+      (await ok(restoredInto.getRow(made.busy, "lines", patched.id))).values,
+    ).toEqual(patched.values);
+    expect(
+      (await ok(restoredInto.listBatches(made.busy, "lines"))).data,
+    ).toHaveLength(4);
+  });
 });
 
 describe("a row line a restore refuses", () => {

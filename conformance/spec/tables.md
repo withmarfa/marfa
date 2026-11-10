@@ -818,7 +818,7 @@ If an undo names a batch that the change log of the item's table does not hold, 
 
 **Reason:** a batch of another table, an id no batch has and a batch past `row_log_retention_days` read alike.
 
-**Tests:** `compliance/table-rows-undo.test.ts › answers batch_not_found for a batch of another table or item, and an id no batch has`, `compliance/table-rows-retention.test.ts › removes the batches older than row_log_retention_days at the next table-row-cleanup run, and keeps the newer`.
+**Tests:** `compliance/table-rows-undo.test.ts › answers batch_not_found for a batch of another table or item, and an id no batch has`, `compliance/table-rows-retention.test.ts › removes the batches older than row_log_retention_days at the next table-row-cleanup run, and keeps the newer`, `compliance/table-rows-archive.test.ts › logs no batch for the rows a restore writes, so an undo of its last_batch answers batch_not_found`.
 
 ### `tables/undo-write-access`
 
@@ -1047,6 +1047,22 @@ When `POST /restore` writes the rows of a table, the server MUST announce them i
 **Reason:** a restored table reaches a device the way a written one does, in batches no larger than a write takes (`tables/rows-batch-limit`).
 
 **Tests:** `compliance/table-rows-archive.test.ts › announces restored rows in rows.changed of at most 1000 rows`.
+
+### `tables/restore-rows-unlogged`
+
+When `POST /restore` writes the rows of a table, the server MUST NOT add a batch to the table's change log.
+
+**Reason:** no one on the instance wrote the rows, so there is no write to take back. The batches a restore announces, and the table's `last_batch` after it, name no batch the log holds, and an undo of one answers `tables/undo-not-found`.
+
+**Tests:** `compliance/table-rows-archive.test.ts › logs no batch for the rows a restore writes, so an undo of its last_batch answers batch_not_found`.
+
+### `tables/restore-rows-undo`
+
+When an undo names a batch that changed a row `POST /restore` wrote, the server MUST put the row back as the restore wrote it.
+
+**Reason:** a restored row stands as no logged batch left it, so a later write over it is undone, and redone, as over any row.
+
+**Tests:** `compliance/table-rows-archive.test.ts › undoes a write over restored rows, putting each back as the restore wrote it`.
 
 ### `tables/restore-rows-counts`
 
