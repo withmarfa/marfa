@@ -2,7 +2,7 @@ use std::future::{Future, poll_fn};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::task::Poll;
 use std::time::{Duration, Instant};
 
@@ -243,11 +243,13 @@ pub async fn supervise(
 ) -> Result<Ended> {
     let _active = active;
     let given_up = Arc::new(AtomicBool::new(false));
+    let kept_unread = Arc::new(AtomicI64::new(0));
     let deadline = app.faults.deadline(job.name).unwrap_or(job.deadline);
     let run = Run {
         job: job.name,
         given_up: given_up.clone(),
         stopping: app.housekeeping.stopping.subscribe(),
+        kept_unread: kept_unread.clone(),
     };
     let mut body = tokio::spawn(perform(app.clone(), job, run));
     let mut cut = app.housekeeping.cut.subscribe();
@@ -292,6 +294,7 @@ pub async fn supervise(
         outcome: if failure.is_some() { "error" } else { "ok" },
         result,
         error: failure.as_ref().map(|failed| failed.message.clone()),
+        kept_unread: kept_unread.load(Ordering::Relaxed),
     };
     record(&app, job, &ended, again).await;
     if let Some(failed) = &failure {

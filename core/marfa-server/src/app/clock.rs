@@ -167,7 +167,7 @@ impl Stamp {
 
     /// Refuses any text but the one form a time is stored in.
     pub fn read(stored: &str) -> refusal::Result<Stamp> {
-        Stamp::parsed(stored).ok_or_else(|| Refusal::internal("a stored time did not read"))
+        Stamp::parsed(stored).ok_or_else(|| Refusal::unread("a stored time did not read"))
     }
 
     /// For a caller that reports an unreadable time itself.
@@ -204,10 +204,10 @@ impl Stamp {
     }
 }
 
-/// Holds only for a time in the stored form; `strftime` alone would also pass an hour of 24.
+/// Holds only for a time in the stored form, and is never NULL; `strftime` alone would pass an hour of 24.
 pub fn readable(column: &str) -> String {
     format!(
-        "(strftime('%Y-%m-%dT%H:%M:%fZ', {column}) = {column} AND substr({column}, 12, 2) < '24')"
+        "COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', {column}) = {column} AND substr({column}, 12, 2) < '24', 0)"
     )
 }
 
@@ -216,12 +216,12 @@ pub struct Unread<'a> {
     pub table: &'a str,
     /// A column, or an expression of columns.
     pub time: &'a str,
-    /// What else makes a row the clean-up's, beside its time before the cutoff `?1`.
+    /// What else makes a row the clean-up's.
     pub scope: &'a str,
 }
 
 impl Unread<'_> {
-    /// Counts them among the rows before the cutoff, and warns when there are any.
+    /// Counts them whatever a cutoff would say, and warns when there are any.
     pub fn report(
         &self,
         db: &rusqlite::Connection,
@@ -231,7 +231,7 @@ impl Unread<'_> {
         let Unread { table, time, scope } = self;
         let count: i64 = db.query_row(
             &format!(
-                "SELECT count(*) FROM {table} WHERE {scope} AND {time} < ?1 AND NOT {}",
+                "SELECT count(*) FROM {table} WHERE ({scope}) AND {time} IS NOT NULL AND NOT {}",
                 readable(time)
             ),
             args,
@@ -331,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn reports_only_rows_before_the_cutoff_whose_time_does_not_read() {
+    fn reports_every_row_in_scope_whose_time_does_not_read_whichever_way_it_sorts() {
         let db = rusqlite::Connection::open_in_memory().unwrap();
         db.execute_batch("CREATE TABLE t (at, kind)").unwrap();
         let rows: [(rusqlite::types::Value, &str); 8] = [
@@ -351,12 +351,9 @@ mod tests {
         let kept = Unread {
             table: "t",
             time: "at",
-            scope: "kind = ?2",
+            scope: "kind = ?1",
         };
-        let count = kept
-            .report(&db, "a-job", ("2026-01-01T00:00:00.000Z", "x"))
-            .unwrap();
-        assert_eq!(count, 3);
+        assert_eq!(kept.report(&db, "a-job", ["x"]).unwrap(), 4);
     }
 
     #[test]
@@ -402,18 +399,24 @@ mod tests {
         for value in &held {
             db.execute("DELETE FROM t", []).unwrap();
             db.execute("INSERT INTO t VALUES (?1)", [value]).unwrap();
-            let passes: bool = db
-                .query_row(
-                    &format!("SELECT EXISTS (SELECT 1 FROM t WHERE {})", readable("at")),
+            let passes = |test: String| -> bool {
+                db.query_row(
+                    &format!("SELECT EXISTS (SELECT 1 FROM t WHERE {test})"),
                     [],
                     |row| row.get(0),
                 )
-                .unwrap();
+                .unwrap()
+            };
             let reads = match value {
                 rusqlite::types::Value::Text(text) => Stamp::parsed(text).is_some(),
                 _ => false,
             };
-            assert_eq!(passes, reads, "{value:?}");
+            assert_eq!(passes(readable("at")), reads, "{value:?}");
+            assert_eq!(
+                passes(format!("NOT {}", readable("at"))),
+                !reads,
+                "{value:?}"
+            );
         }
     }
 

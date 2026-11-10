@@ -202,23 +202,27 @@ fn result(moved: usize, held: usize) -> Value {
 /// Every expirable type is looked at, since one holding only what could not be judged is never due.
 async fn report_kept(app: &Arc<App>, run: &Run) -> Result<()> {
     let (live, job) = (app.clone(), run.job);
-    app.db
+    let kept = app
+        .db
         .read(move |tx| {
             let catalog = catalog::current(&live.catalog_handle(), tx, Snapshot::Committed)?;
-            let scope = format!("type = ?2 AND {EXPIRABLE}");
+            let scope = format!("type = ?1 AND {EXPIRABLE}");
             let unread = Unread {
                 table: "items",
                 time: "created_at",
                 scope: &scope,
             };
+            let mut kept = 0;
             for type_id in expirable_types(tx)? {
-                if let Some(before) = cutoff_of(&live, &catalog, &type_id) {
-                    unread.report(tx, job, [&before, &type_id])?;
+                if cutoff_of(&live, &catalog, &type_id).is_some() {
+                    kept += unread.report(tx, job, [&type_id])?;
                 }
             }
-            Ok(())
+            Ok(kept)
         })
-        .await
+        .await?;
+    run.kept_unread(kept);
+    Ok(())
 }
 
 pub async fn feed_expiry(app: Arc<App>, run: Run) -> Result<Report> {

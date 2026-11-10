@@ -32,7 +32,7 @@ fn chosen(expired: Vec<store::Expired>) -> Vec<i64> {
 pub async fn delivery_cleanup(app: Arc<App>, run: Run) -> Result<Report> {
     let faults = app.faults.clone();
     let (live, job) = (app.clone(), run.job);
-    let (deleted, remaining) = app
+    let (deleted, remaining, kept) = app
         .db
         .write(Write::own(), move |tx| {
             let handled_before = cutoff(tx, &live, INBOUND_HANDLED_RETENTION_DAYS, DAY_MS)?;
@@ -52,19 +52,21 @@ pub async fn delivery_cleanup(app: Arc<App>, run: Run) -> Result<Report> {
             }
             let remaining =
                 store::any_expired(tx, handled_before.as_deref(), pending_before.as_deref())?;
+            let mut kept = 0;
             if !remaining {
                 for (unread, before) in [
-                    (&store::UNREAD_HANDLED, handled_before),
-                    (&store::UNREAD_PENDING, pending_before),
+                    (&store::UNREAD_HANDLED, &handled_before),
+                    (&store::UNREAD_PENDING, &pending_before),
                 ] {
-                    if let Some(before) = before {
-                        unread.report(tx, job, [before])?;
+                    if before.is_some() {
+                        kept += unread.report(tx, job, [])?;
                     }
                 }
             }
-            Ok((seqs.len(), remaining))
+            Ok((seqs.len(), remaining, kept))
         })
         .await?;
+    run.kept_unread(kept);
     Ok(Report::done(
         json!({ "deleted": deleted, "remaining": remaining }),
     ))

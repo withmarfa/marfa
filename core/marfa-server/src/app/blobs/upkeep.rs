@@ -531,18 +531,20 @@ pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
     app.retry_deletions(&run, LEFTOVERS, true, &mut unreachable)
         .await?;
     let (live, at, job) = (app.clone(), app.clock.stamp(), run.job);
-    let candidates = app
+    let (candidates, kept) = app
         .db
         .write(Write::own(), move |tx| {
             // Chosen before this run reports, so only an earlier run's report is purged.
             let candidates = purgeable(tx, &live)?;
-            if let Some(cutoff) = grace_cutoff(tx, &live)? {
-                rows::UNREAD_ORPHANS.report(tx, job, [cutoff])?;
-            }
+            let kept = match grace_cutoff(tx, &live)? {
+                Some(_) => rows::UNREAD_ORPHANS.report(tx, job, [])?,
+                None => 0,
+            };
             rows::report_orphans(tx, &at)?;
-            Ok(candidates)
+            Ok((candidates, kept))
         })
         .await?;
+    run.kept_unread(kept);
     let mut purged = 0u64;
     if !candidates.is_empty() && run.go_on().await {
         // The writer's index recheck protects references committed after this scan.

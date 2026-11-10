@@ -43,7 +43,7 @@ impl Registry {
             let key = match keys::unrevoked_by_id(tx, &key_id) {
                 Ok(Some(key)) => key,
                 Ok(None) => continue,
-                Err(_) => {
+                Err(refused) if refused.unread => {
                     for source in keys::reach_of_unrevoked(tx, &key_id)? {
                         holdings.entry(source).or_default().push(Holding {
                             end: End::Unread,
@@ -52,6 +52,7 @@ impl Registry {
                     }
                     continue;
                 }
+                Err(refused) => return Err(refused),
             };
             let map = key.grants.map(Axis::Type);
             let declared: HashSet<String> = declared
@@ -105,7 +106,7 @@ impl ReadOnly {
         for holding in held {
             match holding.end {
                 End::Unread => {
-                    return Err(Refusal::internal(
+                    return Err(Refusal::unread(
                         "a key that registered a connector has a stored value that does not read",
                     ));
                 }

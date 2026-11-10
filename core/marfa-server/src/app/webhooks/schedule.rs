@@ -166,14 +166,14 @@ pub fn pass(tx: &Transaction<'_>, context: &Context<'_>) -> Result<Pass> {
 }
 
 /// Active subscriptions whose credential stands and manages webhooks, judged once a pass.
-/// One whose standing cannot be judged is passed over, so the rest are still sent.
+/// One whose maker's stored row does not read is passed over, so the rest are still sent.
 fn entitled(tx: &Transaction<'_>, at: &str) -> Result<Vec<Entitled>> {
     let mut entitled = Vec::new();
     for subscription in store::active(tx)? {
         let caller = match standing_maker(tx, &subscription.maker, at) {
             Ok(Some(caller)) => caller,
             Ok(None) => continue,
-            Err(refused) => {
+            Err(refused) if refused.unread => {
                 tracing::warn!(
                     webhook = %subscription.id,
                     error = %refused,
@@ -181,6 +181,7 @@ fn entitled(tx: &Transaction<'_>, at: &str) -> Result<Vec<Entitled>> {
                 );
                 continue;
             }
+            Err(refused) => return Err(refused),
         };
         entitled.push(Entitled {
             subscription,
@@ -254,4 +255,58 @@ fn queue(
         queued += usize::from(added);
     }
     Ok(queued)
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::{Connection, params};
+
+    use super::*;
+
+    const AT: &str = "2026-01-01T00:00:00.000Z";
+
+    fn subscribed(expires_at: &str) -> Connection {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(include_str!("../../db/migrations/0001_baseline.sql"))
+            .unwrap();
+        db.execute(
+            "INSERT INTO api_keys (id, hash, label, source, permissions, type_permissions, \
+             edge_permissions, extension_permissions, metadata_permissions, profile_permissions, \
+             created_at, expires_at) VALUES ('maker', 'maker', 'maker', 'maker', \
+             '[\"webhooks.manage\"]', '{}', '{}', '{}', '{}', '{}', ?1, ?2)",
+            params![AT, expires_at],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO webhooks (id, url, events, secret, active, key_id, starts_after, \
+             created_at, updated_at) VALUES ('hook', 'http://127.0.0.1:9/', '[\"item.created\"]', \
+             'secret', 1, 'maker', 0, ?1, ?1)",
+            [AT],
+        )
+        .unwrap();
+        db
+    }
+
+    fn judged(db: &mut Connection) -> Result<usize> {
+        let tx = db.transaction().unwrap();
+        entitled(&tx, AT).map(|entitled| entitled.len())
+    }
+
+    #[test]
+    fn passes_over_a_maker_whose_stored_expiry_does_not_read() {
+        assert_eq!(
+            judged(&mut subscribed("2099-01-01T00:00:00.000Z")).unwrap(),
+            1
+        );
+        assert_eq!(judged(&mut subscribed("0")).unwrap(), 0);
+    }
+
+    #[test]
+    fn fails_the_pass_on_a_database_fault_while_judging_a_maker() {
+        let mut db = subscribed("2099-01-01T00:00:00.000Z");
+        assert_eq!(judged(&mut db).unwrap(), 1);
+        db.execute_batch("ALTER TABLE api_key_sources RENAME TO api_key_sources_gone")
+            .unwrap();
+        assert!(judged(&mut db).is_err());
+    }
 }

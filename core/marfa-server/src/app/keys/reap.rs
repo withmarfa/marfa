@@ -83,9 +83,9 @@ mod tests {
         assert!(!any(&tx, &before).unwrap());
         let reported: Vec<i64> = UNREAD
             .iter()
-            .map(|unread| unread.report(&tx, "credential-cleanup", [&before]).unwrap())
+            .map(|unread| unread.report(&tx, "credential-cleanup", []).unwrap())
             .collect();
-        assert_eq!(reported, [1, 1]);
+        assert_eq!(reported, [3, 3]);
         let left: i64 = tx
             .query_row("SELECT count(*) FROM api_keys", [], |row| row.get(0))
             .unwrap();

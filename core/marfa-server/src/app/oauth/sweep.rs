@@ -75,20 +75,24 @@ async fn report_kept(
     unread: impl IntoIterator<Item = Unread<'static>> + Send + 'static,
 ) -> Result<()> {
     let (live, job) = (app.clone(), run.job);
-    app.db
+    let kept = app
+        .db
         .read(move |tx| {
             let before = match cutoff {
                 Cutoff::At(at) => Some(at),
                 Cutoff::Kept(retention) => cutoff_of(tx, &live, retention)?,
             };
-            if let Some(before) = before {
-                for unread in unread {
-                    unread.report(tx, job, [before])?;
-                }
+            match before {
+                Some(_) => unread
+                    .into_iter()
+                    .map(|unread| unread.report(tx, job, []))
+                    .sum(),
+                None => Ok(0),
             }
-            Ok(())
         })
-        .await
+        .await?;
+    run.kept_unread(kept);
+    Ok(())
 }
 
 enum Cutoff {

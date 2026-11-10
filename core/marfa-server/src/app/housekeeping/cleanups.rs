@@ -63,14 +63,15 @@ async fn report_kept(
     unread: &'static Unread<'static>,
 ) -> Result<()> {
     let (live, job) = (app.clone(), run.job);
-    app.db
-        .read(move |tx| {
-            if let Some(before) = cutoff(tx, &live, retention, unit_ms)? {
-                unread.report(tx, job, [before])?;
-            }
-            Ok(())
+    let kept = app
+        .db
+        .read(move |tx| match cutoff(tx, &live, retention, unit_ms)? {
+            Some(_) => unread.report(tx, job, []),
+            None => Ok(0),
         })
-        .await
+        .await?;
+    run.kept_unread(kept);
+    Ok(())
 }
 
 /// The log keeps what the webhook sender has not yet passed.
@@ -162,19 +163,24 @@ async fn reap_batch(app: &Arc<App>) -> Result<i64> {
 
 async fn revoked_keys(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
     let (taken, done) = drain(run, BATCH, || reap_batch(app)).await?;
-    if let (true, Some(before)) = (
-        done,
-        app.clock.instant().earlier_by(reap::KEPT_DAYS * DAY_MS),
-    ) {
-        let (before, job) = (before.text(), run.job);
-        app.db
+    if done
+        && app
+            .clock
+            .instant()
+            .earlier_by(reap::KEPT_DAYS * DAY_MS)
+            .is_some()
+    {
+        let job = run.job;
+        let kept = app
+            .db
             .read(move |tx| {
-                for unread in &reap::UNREAD {
-                    unread.report(tx, job, [&before])?;
-                }
-                Ok(())
+                reap::UNREAD
+                    .iter()
+                    .map(|unread| unread.report(tx, job, []))
+                    .sum()
             })
             .await?;
+        run.kept_unread(kept);
     }
     Ok((taken, done))
 }

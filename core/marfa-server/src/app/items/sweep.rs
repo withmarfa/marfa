@@ -202,14 +202,17 @@ const UNREAD: Unread<'static> = Unread {
 /// Once nothing is due, what the bin still holds past the cutoff is what could not be judged.
 async fn report_kept(app: &Arc<App>, run: &Run) -> Result<()> {
     let (live, job) = (app.clone(), run.job);
-    app.db
-        .read(move |tx| {
-            if let Some(before) = cutoff(tx, &live, TRASH_RETENTION_DAYS, DAY_MS)? {
-                UNREAD.report(tx, job, [before])?;
-            }
-            Ok(())
-        })
-        .await
+    let kept = app
+        .db
+        .read(
+            move |tx| match cutoff(tx, &live, TRASH_RETENTION_DAYS, DAY_MS)? {
+                Some(_) => UNREAD.report(tx, job, []),
+                None => Ok(0),
+            },
+        )
+        .await?;
+    run.kept_unread(kept);
+    Ok(())
 }
 
 pub async fn trash_purge(app: Arc<App>, run: Run) -> Result<Report> {

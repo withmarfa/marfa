@@ -119,6 +119,16 @@ impl Instance {
         run["result"].clone()
     }
 
+    /// Runs a job and answers how many rows it kept because their stored time does not read.
+    async fn kept_unread(&self, job: &str) -> i64 {
+        if job == "event-log-cleanup" {
+            self.scheduled().await;
+        }
+        let ended = housekeeping::run_now(&self.app, job).await.unwrap();
+        assert_eq!(ended.outcome, "ok", "{job}: {:?}", ended.error);
+        ended.kept_unread
+    }
+
     async fn job(&self, name: &str) -> Value {
         let list = self.ok(Method::GET, "/housekeeping", Value::Null).await;
         let jobs = list["data"].as_array().unwrap();
@@ -598,6 +608,8 @@ async fn every_cleanup_keeps_a_row_whose_stored_time_does_not_read_and_finishes(
     let path = format!("/keys/{key}");
     instance.ok(Method::DELETE, &path, Value::Null).await;
     instance.dead_delivery().await;
+    let at = instance.app.clock.stamp();
+    let blob = "a".repeat(64);
     // "0" sorts before any cutoff, so only reading the time keeps these rows.
     instance
         .sql(format!(
@@ -605,22 +617,29 @@ async fn every_cleanup_keeps_a_row_whose_stored_time_does_not_read_and_finishes(
              UPDATE items SET trashed_at = '0' WHERE id = '{binned}'; \
              UPDATE api_keys SET revoked_at = '0' WHERE id = '{key}'; \
              UPDATE webhook_deliveries SET created_at = '0' WHERE id = 'dead'; \
-             UPDATE audit_log SET created_at = '0' WHERE id = (SELECT min(id) FROM audit_log);"
+             UPDATE audit_log SET created_at = '0' WHERE id = (SELECT min(id) FROM audit_log); \
+             INSERT INTO idempotency_records (credential, idempotency_key, fingerprint, state, \
+             created_at) VALUES ('kept', 'kept', 'kept', 'complete', '0'); \
+             INSERT INTO bulk_jobs (id, action, input, key_id, status, matched, created_at, \
+             finished_at) VALUES ('kept', 'trash', '{{}}', '{key}', 'completed', 0, '{at}', '0'); \
+             INSERT INTO blobs (hash, mime_type, size_bytes, recorded_at) \
+             VALUES ('{blob}', 'text/plain', 1, '{at}'); \
+             INSERT INTO blob_orphans (hash, reported_at) VALUES ('{blob}', '0');"
         ))
         .await;
 
     instance.forward(400 * DAY);
-    for job in [
-        "audit-cleanup",
-        "trash-purge",
-        "feed-expiry",
-        "event-log-cleanup",
-        "inbound-delivery-cleanup",
-        "bulk-action-gc",
-        "credential-cleanup",
-        "blob-orphans",
+    for (job, kept) in [
+        ("audit-cleanup", 2),
+        ("trash-purge", 1),
+        ("feed-expiry", 1),
+        ("event-log-cleanup", 1),
+        ("inbound-delivery-cleanup", 0),
+        ("bulk-action-gc", 1),
+        ("credential-cleanup", 1),
+        ("blob-orphans", 1),
     ] {
-        instance.run(job).await;
+        assert_eq!(instance.kept_unread(job).await, kept, "{job}");
     }
     for (table, column) in [
         ("items", "created_at"),
@@ -628,6 +647,9 @@ async fn every_cleanup_keeps_a_row_whose_stored_time_does_not_read_and_finishes(
         ("api_keys", "revoked_at"),
         ("webhook_deliveries", "created_at"),
         ("audit_log", "created_at"),
+        ("idempotency_records", "created_at"),
+        ("bulk_jobs", "finished_at"),
+        ("blob_orphans", "reported_at"),
     ] {
         let kept = format!("SELECT count(*) FROM {table} WHERE {column} = '0'");
         assert_eq!(instance.count(&kept), 1, "{table}.{column}");
