@@ -2,6 +2,10 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { RowOperation, TestContext } from "../../client/types.js";
 import {
+  bootFreshServer,
+  FRESH_SERVER_TIMEOUT_MS,
+} from "../../utils/fresh-server.js";
+import {
   createTestContext,
   trackItem,
   trackKey,
@@ -56,6 +60,51 @@ function message(
   } as RowOperation;
 }
 
+const START_MS = Date.parse("2026-03-01T09:00:00Z");
+
+/** A message sent `minutes` after `START_MS`. */
+function sent(text: string, minutes: number, id?: string): RowOperation {
+  return {
+    op: "put",
+    ...(id ? { id } : {}),
+    values: {
+      author: "alice",
+      text,
+      sent_at: new Date(START_MS + minutes * 60_000).toISOString(),
+    },
+  } as RowOperation;
+}
+
+/** A UUIDv7 whose time is `at`, as an importer makes one. */
+function idAt(at: string): string {
+  const time = Date.parse(at).toString(16).padStart(12, "0");
+  const random = Array.from(crypto.getRandomValues(new Uint8Array(10)), (b) =>
+    b.toString(16).padStart(2, "0"),
+  ).join("");
+  return `${time.slice(0, 8)}-${time.slice(8)}-7${random.slice(0, 3)}-8${random.slice(3, 6)}-${random.slice(8, 20)}`;
+}
+
+async function texts(
+  item: string,
+  direction: "asc" | "desc",
+  limit: number,
+): Promise<string[]> {
+  const seen: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const res = await client.listRows(item, "messages", {
+      sort: "values.sent_at",
+      direction,
+      limit,
+      cursor,
+    });
+    expect(res.status, JSON.stringify(res.error)).toBe(200);
+    seen.push(...res.data.data.map((r) => String(r.values.text)));
+    cursor = res.data.next_cursor ?? undefined;
+  } while (cursor);
+  return seen;
+}
+
 async function append(item: string, operations: RowOperation[]) {
   const res = await client.writeRows(item, "messages", { operations });
   expect(res.status, JSON.stringify(res.error)).toBe(200);
@@ -94,9 +143,13 @@ describe("the type", () => {
 
   it("declares a messages table with the author, text, sent time and attachment columns", async () => {
     const type = (await client.getType("core.conversation")).data as {
-      tables: Record<string, { columns: Record<string, unknown> }>;
+      tables: Record<
+        string,
+        { columns: Record<string, unknown>; order?: string }
+      >;
     };
     expect(Object.keys(type.tables)).toEqual(["messages"]);
+    expect(type.tables.messages?.order).toBe("sent_at");
     expect(type.tables.messages?.columns).toMatchObject({
       author: { type: "string", required: true },
       text: { type: "string", searchable: true },
@@ -150,65 +203,141 @@ describe("appending and reading", () => {
     ).toBe(1);
   });
 
-  it("gives each message appended without an id an id after every earlier one", async () => {
-    const made = await conversation("Order");
-    const texts: string[] = [];
-    for (const size of [1, 40, 1, 7]) {
-      const batch = Array.from({ length: size }, () => {
-        const text = `m${String(texts.length + 1).padStart(3, "0")}`;
-        texts.push(text);
-        return message(text);
-      });
-      await append(made.id, batch);
-    }
-    const other = await conversation("Other");
-    await append(other.id, [message("elsewhere")]);
-    await append(made.id, [message("last")]);
-    texts.push("last");
-
-    const ascending = (
-      await client.listRows(made.id, "messages", { limit: 1000 })
-    ).data.data;
-    expect(ascending.map((r) => r.values.text)).toEqual(texts);
-  });
-
   it("reads the latest messages first, a page at a time", async () => {
     const made = await conversation("Long");
-    const texts: string[] = [];
+    const written: string[] = [];
     for (let batch = 0; batch < 3; batch++) {
       const operations = Array.from({ length: 20 }, () => {
-        texts.push(`m${String(texts.length).padStart(3, "0")}`);
-        return message(texts[texts.length - 1]!);
+        written.push(`m${String(written.length).padStart(3, "0")}`);
+        return sent(written[written.length - 1]!, written.length);
       });
       await append(made.id, operations);
     }
-    const first = await client.listRows(made.id, "messages", {
-      sort: "id",
-      direction: "desc",
-      limit: 25,
-    });
+    const page = (cursor?: string) =>
+      client.listRows(made.id, "messages", {
+        sort: "values.sent_at",
+        direction: "desc",
+        limit: 25,
+        cursor,
+      });
+    const first = await page();
     expect(first.data.data.map((r) => r.values.text)).toEqual(
-      texts.slice(-25).reverse(),
+      written.slice(-25).reverse(),
     );
     expect(first.data.next_cursor).not.toBeNull();
-    const second = await client.listRows(made.id, "messages", {
-      sort: "id",
-      direction: "desc",
-      limit: 25,
-      cursor: first.data.next_cursor!,
-    });
+    const second = await page(first.data.next_cursor!);
     expect(second.data.data.map((r) => r.values.text)).toEqual(
-      texts.slice(10, 35).reverse(),
+      written.slice(10, 35).reverse(),
     );
-
-    const newest = await client.listRows(made.id, "messages", {
-      sort: "id",
-      direction: "desc",
-      limit: 1,
-    });
-    expect(newest.data.data[0]?.values.text).toBe("m059");
-    expect(newest.data.next_cursor).not.toBeNull();
+    const third = await page(second.data.next_cursor!);
+    expect(third.data.data.map((r) => r.values.text)).toEqual(
+      written.slice(0, 10).reverse(),
+    );
+    expect(third.data.next_cursor).toBeNull();
   });
+
+  it("places a message by sent_at, whatever its id or when it was written", async () => {
+    const made = await conversation("Imported");
+    await append(made.id, [sent("first", 1), sent("second", 2)]);
+    await append(made.id, [
+      sent("newest, with an id from 2020", 10, idAt("2020-01-01T00:00:00Z")),
+    ]);
+    await append(made.id, [sent("third, written late", 3)]);
+    await append(made.id, [sent("oldest, imported last", -60)]);
+    expect(await texts(made.id, "desc", 50)).toEqual([
+      "newest, with an id from 2020",
+      "third, written late",
+      "second",
+      "first",
+      "oldest, imported last",
+    ]);
+    const byId = (
+      await client.listRows(made.id, "messages", {
+        sort: "id",
+        direction: "desc",
+      })
+    ).data.data.map((r) => r.values.text);
+    expect(byId.at(-1)).toBe("newest, with an id from 2020");
+  });
+
+  it("pages the messages by sent_at in either direction, a tie by id", async () => {
+    const made = await conversation("Ties");
+    const plan: [string, number][] = [
+      ["a", 1],
+      ["b", 2],
+      ["c", 2],
+      ["d", 2],
+      ["e", 3],
+      ["f", 2],
+      ["g", 0],
+    ];
+    const written = await append(
+      made.id,
+      plan.map(([text, minutes]) => sent(text, minutes)),
+    );
+    const rows = plan.map(([text, minutes], n) => ({
+      id: written.results[n]!.id,
+      text,
+      minutes,
+    }));
+    const order = (direction: 1 | -1) =>
+      [...rows]
+        .sort((a, b) =>
+          a.minutes === b.minutes
+            ? a.id < b.id
+              ? -1
+              : 1
+            : (a.minutes - b.minutes) * direction,
+        )
+        .map((row) => row.text);
+    for (const limit of [1, 2, 3, 50]) {
+      expect(await texts(made.id, "asc", limit)).toEqual(order(1));
+      expect(await texts(made.id, "desc", limit)).toEqual(order(-1));
+    }
+  });
+});
+
+describe("activity on a stopped clock", () => {
+  it(
+    "never moves last_activity_at back while the clock stands still",
+    async () => {
+      const server = await bootFreshServer("conversation-clock");
+      try {
+        const writer = new MarfaClient({
+          baseUrl: server.apiUrl,
+          apiKey: server.workingKey,
+        });
+        const made = await writer.createItem({
+          type: "core.conversation",
+          properties: { title: "Still" },
+        } as never);
+        expect(made.status, JSON.stringify(made.error)).toBe(201);
+        const id = made.data.item.id;
+        await server.pauseClock(true);
+        const held: string[] = [];
+        for (let n = 0; n < 3; n++) {
+          const res = await writer.writeRows(id, "messages", {
+            operations: [sent(`still ${String(n)}`, n)],
+          });
+          expect(res.status, JSON.stringify(res.error)).toBe(200);
+          held.push(res.data.last_activity_at!);
+          const read = (await writer.getItem(id)).data.item;
+          expect(read.last_activity_at).toBe(res.data.last_activity_at);
+        }
+        expect(new Set(held).size).toBe(1);
+        expect(held[0]! >= made.data.item.last_activity_at!).toBe(true);
+        await server.pauseClock(false);
+        await new Promise((r) => setTimeout(r, 5));
+        const moved = await writer.writeRows(id, "messages", {
+          operations: [sent("moving", 9)],
+        });
+        expect(moved.data.last_activity_at! > held[0]!).toBe(true);
+      } finally {
+        await server.stop();
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
 });
 
 describe("listing conversations", () => {

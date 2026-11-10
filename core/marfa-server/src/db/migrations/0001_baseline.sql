@@ -158,6 +158,8 @@ CREATE TABLE IF NOT EXISTS table_summaries (
     bytes INTEGER NOT NULL CHECK (bytes >= 0),
     last_batch TEXT NOT NULL,
     changed_at TEXT NOT NULL,
+    -- The `<kind>:<column>` every row's `ord` is the key of; NULL while none or while it is rebuilt.
+    ordered_by TEXT,
     UNIQUE (item_seq, table_name)
 ) STRICT;
 
@@ -167,11 +169,20 @@ CREATE TABLE IF NOT EXISTS table_rows (
     table_seq INTEGER NOT NULL,
     id TEXT NOT NULL,
     updated_at TEXT NOT NULL,
+    ord ANY,
     refs BLOB,
     body BLOB NOT NULL,
     PRIMARY KEY (table_seq, id)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS table_rows_updated ON table_rows (table_seq, updated_at);
+CREATE INDEX IF NOT EXISTS table_rows_ordered ON table_rows (table_seq, ord) WHERE ord IS NOT NULL;
+
+-- Tables whose `ord` `table-row-cleanup` brings to `target` (NULL clears it), a page at a time.
+CREATE TABLE IF NOT EXISTS table_rows_reordering (
+    table_seq INTEGER PRIMARY KEY,
+    target TEXT,
+    after_id TEXT
+) STRICT;
 
 -- Tables of purged items whose rows `table-row-cleanup` has still to remove.
 CREATE TABLE IF NOT EXISTS table_rows_purging (

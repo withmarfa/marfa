@@ -16,9 +16,9 @@ The server MUST ship `core.conversation` taking `title` as an optional string fi
 
 ### `conversations/messages-table`
 
-The server MUST ship `core.conversation` declaring one table, `messages`, with the columns `author`, a required `string`, `text`, a `string` marked `searchable`, `sent_at`, a required `datetime`, and `attachment`, an `item` that admits `core.file`.
+The server MUST ship `core.conversation` declaring one table, `messages`, with the columns `author`, a required `string`, `text`, a `string` marked `searchable`, `sent_at`, a required `datetime`, and `attachment`, an `item` that admits `core.file`, and naming `sent_at` its `order`.
 
-**Reason:** `author` identifies a person or an assistant, and `sent_at` preserves when a message was sent even if it arrives later through an import or an offline device. Optional text allows a message containing only a file.
+**Reason:** `author` identifies a person or an assistant, and `sent_at` preserves when a message was sent even if it arrives later through an import or an offline device, so the messages are kept in its order. Optional text allows a message containing only a file.
 
 **Tests:** `compliance/conversation.test.ts › declares a messages table with the author, text, sent time and attachment columns`.
 
@@ -26,27 +26,19 @@ The server MUST ship `core.conversation` declaring one table, `messages`, with t
 
 ### `conversations/append-activity`
 
-When a caller appends a message to a conversation with a `put` to its `messages` table, the server MUST move the conversation's `last_activity_at` to a time later than the one it held.
+When a caller appends a message to a conversation with a `put` to its `messages` table, the server MUST set the conversation's `last_activity_at` to the later of the time it held and the time of the append.
 
-**Reason:** a conversation lists by its latest message, and the append leaves `updated_at` and `version` alone under `tables/rows-leave-item`.
+**Reason:** a conversation lists by its latest message, and the append leaves `updated_at` and `version` alone under `tables/rows-leave-item`. Two appends in the same millisecond leave the same time, and `last_activity_at` never moves back.
 
-**Tests:** `compliance/conversation.test.ts › appends a message as a row, moving last_activity_at and nothing else of the conversation`.
-
-### `conversations/ids-ascend`
-
-When a batch puts rows that name no `id`, the server MUST give each an `id` that sorts after the `id` of every row it gave an `id` before, in the order the operations came.
-
-**Reason:** the ids are UUIDv7, so reading rows by `id` descending gives the rows appended last first. A writer that imports earlier messages gives each an `id` made from its `sent_at`, which `tables/rows-id-refused` takes.
-
-**Tests:** `compliance/conversation.test.ts › gives each message appended without an id an id after every earlier one`.
+**Tests:** `compliance/conversation.test.ts › appends a message as a row, moving last_activity_at and nothing else of the conversation`, `› never moves last_activity_at back while the clock stands still`.
 
 ### `conversations/latest`
 
-When a caller reads the rows of a conversation's `messages` table with `sort` `id`, `direction` `desc` and a `limit`, the server MUST answer the messages with the greatest `id`s, up to `limit`, greatest first, with a `next_cursor` that continues to the earlier ones.
+When a caller reads the rows of a conversation's `messages` table with `sort` `values.sent_at`, `direction` `desc` and a `limit`, the server MUST answer the messages with the latest `sent_at`, up to `limit`, latest first and a tie by `id` ascending, with a `next_cursor` that continues to the earlier ones.
 
-**Reason:** this is how an app reads the latest messages, 50 at a time, without reading the earlier ones. Reading by `values.sent_at` reads the whole table and is no faster for a long conversation.
+**Reason:** this is how an app reads the latest messages, 50 at a time, without reading the earlier ones. A message imported with an `id` of its own, or written late by an offline device, takes its place by when it was sent, whatever its `id`.
 
-**Tests:** `compliance/conversation.test.ts › reads the latest messages first, a page at a time`.
+**Tests:** `compliance/conversation.test.ts › reads the latest messages first, a page at a time`, `› places a message by sent_at, whatever its id or when it was written`.
 
 ## Listing conversations
 

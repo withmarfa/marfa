@@ -2,6 +2,7 @@
 
 mod events;
 mod lifecycle;
+mod order;
 mod read;
 mod store;
 
@@ -18,11 +19,13 @@ use super::catalog::{self, Catalog, Snapshot};
 use super::items::{self, Host};
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
+use order::Order;
 use store::Held;
 
 pub use events::{ROWS_CHANGED, judged as judged_event};
 pub use lifecycle::{
     cleanup, constraining_columns, doom, held_in_use, refuse_moving_type, refuse_undeclared,
+    reorder_item, reorder_types,
 };
 pub use read::{Page, get, list, page, totals};
 
@@ -176,6 +179,7 @@ pub(crate) struct Table {
     pub name: String,
     pub label: String,
     pub columns: Map<String, Value>,
+    pub order: Option<Order>,
 }
 
 impl Table {
@@ -200,10 +204,12 @@ pub(crate) fn tables_of(catalog: &Catalog, type_id: &str) -> Vec<Table> {
     let mut found: Vec<Table> = tables
         .iter()
         .filter_map(|(name, table)| {
+            let table = table.as_object()?;
             Some(Table {
                 name: name.clone(),
                 label: table.get("label")?.as_str()?.to_string(),
                 columns: table.get("columns")?.as_object()?.clone(),
+                order: Order::of(table),
             })
         })
         .collect();
@@ -466,11 +472,32 @@ impl Batch<'_, '_> {
             self.unit.tx(),
             self.host.seq,
             &self.table.name,
+            self.table.order.as_ref(),
             &self.batch_id,
             &self.unit.at,
         )?;
         self.table_seq = Some(seq);
         Ok(seq)
+    }
+
+    fn put(
+        &self,
+        table: i64,
+        id: &str,
+        values: &Map<String, Value>,
+        refs: &Map<String, Value>,
+    ) -> Result<()> {
+        store::put(
+            self.unit.tx(),
+            &store::Put {
+                table,
+                id,
+                at: &self.unit.at,
+                body: &Value::Object(values.clone()).to_string(),
+                refs: refs_text(refs).as_deref(),
+                order: self.table.order.as_ref(),
+            },
+        )
     }
 
     fn land(&mut self, index: usize, op: Op) -> Result<(String, Outcome)> {
@@ -504,15 +531,7 @@ impl Batch<'_, '_> {
                     return Ok((id, Outcome::Unchanged));
                 }
                 let seq = self.table_seq()?;
-                let body = Value::Object(values.clone()).to_string();
-                store::put(
-                    tx,
-                    seq,
-                    &id,
-                    &self.unit.at,
-                    &body,
-                    refs_text(&refs).as_deref(),
-                )?;
+                self.put(seq, &id, &values, &refs)?;
                 let outcome = match &held {
                     Some(held) => {
                         self.bytes += printed - held.bytes;
@@ -551,15 +570,7 @@ impl Batch<'_, '_> {
                 }
                 let printed = refuse_wide(index, &next)?;
                 let seq = self.table_seq()?;
-                let body = Value::Object(next.clone()).to_string();
-                store::put(
-                    tx,
-                    seq,
-                    &id,
-                    &self.unit.at,
-                    &body,
-                    refs_text(&refs).as_deref(),
-                )?;
+                self.put(seq, &id, &next, &refs)?;
                 self.bytes += printed - held.bytes;
                 self.note(&id, Changed::Held { values: next, refs });
                 Ok((id, Outcome::Patched))

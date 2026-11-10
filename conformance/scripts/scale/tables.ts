@@ -465,6 +465,7 @@ export async function tables(): Promise<void> {
         tables: {
           [TABLE]: {
             label: "Readings",
+            order: "reading",
             columns: {
               sensor: { type: "string" },
               reading: { type: "number", adds_up: "sum" },
@@ -691,7 +692,7 @@ export async function tables(): Promise<void> {
       }),
       upTo("p95 20 ms"),
     );
-    const byColumn = await walk(connection, itemId, {
+    const byOrder = await walk(connection, itemId, {
       order: "reading",
       rows: opts.rows,
       buckets,
@@ -699,11 +700,27 @@ export async function tables(): Promise<void> {
       budgetMs: ORDER_BUDGET_MS,
     });
     add(
+      distribution("tables_page_by_order", "ms", byOrder.times, {
+        errors: byOrder.errors,
+        note: `${byOrder.times.length} pages by cursor from the start, sorted by the table's order column`,
+      }),
+      upTo("p95 20 ms"),
+    );
+    const byColumn = await walk(connection, itemId, {
+      order: "bucket",
+      rows: opts.rows,
+      buckets,
+      query: "sort=values.bucket",
+      budgetMs: ORDER_BUDGET_MS,
+    });
+    add(
       distribution("tables_page_by_column", "ms", byColumn.times, {
         errors: byColumn.errors,
-        note: `${byColumn.times.length} pages by cursor from the start, sorted by a column`,
+        note: `${byColumn.times.length} pages by cursor from the start, sorted by another column`,
       }),
-      recordedOnly("a known limit, about 480 ms"),
+      recordedOnly(
+        "a known limit: a column other than the order reads the whole table",
+      ),
     );
     const picked = 3 % buckets;
     const filtered = await walk(connection, itemId, {

@@ -6,6 +6,7 @@ use rusqlite::Transaction;
 use rusqlite::types::Value as Bound;
 use serde_json::{Map, Value, json};
 
+use super::order::{NO_KEY, Order};
 use super::store::{self, Held};
 use super::{Sight, Table, not_found_row, table_of, tables_of};
 use crate::app::App;
@@ -127,7 +128,14 @@ impl Withholding {
         self.masked(column, &Self::on_body("json_type", column))
     }
 
-    fn sort_key(&self, column: &str) -> Sql {
+    fn sort_key(&self, column: &str, kind: &str) -> Sql {
+        if marfa_rules::schema::ORDER_KINDS.contains(&kind) {
+            let order = Order {
+                column: column.to_string(),
+                kind: kind.to_string(),
+            };
+            return self.masked(column, &Sql::new(&order.value_key_sql("r.body")));
+        }
         let text = property_sort_expression("r.body", "?");
         let mut shown = Sql::new(&text);
         shown.values = vec![Bound::Text(format!("$.{column}")); text.matches('?').count()];
@@ -234,18 +242,18 @@ fn conditions(sql: &mut Sql, expression: &Expression, withholding: &Withholding)
     Ok(())
 }
 
-/// `by_updated` names the index, which the planner passes by for a descending page.
+/// The planner passes by an index a descending page could use unless it is named.
 fn selection(
     table: Option<i64>,
     filter: Option<&Expression>,
     withholding: &Withholding,
-    by_updated: bool,
+    index: Option<&str>,
 ) -> Result<Sql> {
-    let mut sql = Sql::new(if by_updated {
-        " FROM table_rows r INDEXED BY table_rows_updated WHERE r.table_seq = "
-    } else {
-        " FROM table_rows r WHERE r.table_seq = "
-    });
+    let mut sql = Sql::new(" FROM table_rows r ");
+    if let Some(index) = index {
+        sql.push(&format!("INDEXED BY {index} "));
+    }
+    sql.push("WHERE r.table_seq = ");
     sql.bind(table);
     if let Some(expression) = filter {
         conditions(&mut sql, expression, withholding)?;
@@ -257,7 +265,12 @@ fn selection(
 enum Key {
     Id,
     Updated,
-    Column(String),
+    Column {
+        name: String,
+        kind: String,
+    },
+    /// The column the table names as its `order`, whose key is stored with each row.
+    Order(Order),
 }
 
 impl Key {
@@ -266,8 +279,20 @@ impl Key {
             None | Some("id") => Ok(Key::Id),
             Some("updated_at") => Ok(Key::Updated),
             Some(sort) => match sort.strip_prefix("values.") {
-                Some(column) if table.columns.contains_key(column) => {
-                    Ok(Key::Column(column.to_string()))
+                Some(column)
+                    if let Some(order) = table.order.as_ref().filter(|o| o.column == column) =>
+                {
+                    Ok(Key::Order(order.clone()))
+                }
+                Some(column) if let Some(definition) = table.columns.get(column) => {
+                    Ok(Key::Column {
+                        name: column.to_string(),
+                        kind: definition
+                            .get("type")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                    })
                 }
                 _ => Err(invalid(
                     "sort",
@@ -281,7 +306,8 @@ impl Key {
         match self {
             Key::Id => Sql::new("NULL"),
             Key::Updated => Sql::new("r.updated_at"),
-            Key::Column(column) => withholding.sort_key(column),
+            Key::Column { name, kind } => withholding.sort_key(name, kind),
+            Key::Order(order) => Sql::new(&order.key_sql("r.body", "r.refs")),
         }
     }
 }
@@ -309,7 +335,7 @@ fn position_after(sql: &mut Sql, key: &Key, descending: bool, at: &Position) {
             sql.bind(id);
             sql.push(")");
         }
-        (Key::Column(_), value) => {
+        (Key::Column { .. } | Key::Order(_), value) => {
             sql.push(&format!(" AND (k IS NULL OR k {after} "));
             sql.bind(value.clone());
             sql.push(" OR (k = ");
@@ -326,7 +352,9 @@ fn order_by(sql: &mut Sql, key: &Key, descending: bool) {
     match key {
         Key::Id => sql.push(&format!(" ORDER BY r.id {direction}")),
         Key::Updated => sql.push(&format!(" ORDER BY k {direction}, r.id ASC")),
-        Key::Column(_) => sql.push(&format!(" ORDER BY k IS NULL, k {direction}, r.id ASC")),
+        Key::Column { .. } | Key::Order(_) => {
+            sql.push(&format!(" ORDER BY k IS NULL, k {direction}, r.id ASC"));
+        }
     }
 }
 
@@ -359,6 +387,103 @@ fn opened(cursors: &Secret, scope: &str, cursor: &str) -> Result<Position> {
     Position::from_payload(&payload, 1).map_err(|_| refused())
 }
 
+struct Selected<'a> {
+    seq: Option<i64>,
+    filter: Option<&'a Expression>,
+    withholding: &'a Withholding,
+    position: Option<&'a Position>,
+    descending: bool,
+}
+
+fn scanned_page(
+    read: &Reader<'_, '_>,
+    asked: &Selected<'_>,
+    key: &Key,
+    limit: i64,
+) -> Result<Vec<(Held, Bound)>> {
+    let mut sql =
+        Sql::new("SELECT * FROM (SELECT r.id, r.updated_at, json(r.body), json(r.refs), ");
+    sql.append(&key.expression(asked.withholding));
+    sql.push(" AS k");
+    let index = matches!(key, Key::Updated).then_some("table_rows_updated");
+    sql.append(&selection(
+        asked.seq,
+        asked.filter,
+        asked.withholding,
+        index,
+    )?);
+    sql.push(") r WHERE 1 = 1");
+    if let Some(position) = asked.position {
+        position_after(&mut sql, key, asked.descending, position);
+    }
+    order_by(&mut sql, key, asked.descending);
+    sql.push(" LIMIT ");
+    sql.bind(limit);
+    store::page(read.tx, &sql)
+}
+
+/// A page by the order column from its stored keys: the rows with a key through the index, then
+/// the rows without one by id, as [`scanned_page`] orders them.
+fn keyed_page(
+    read: &Reader<'_, '_>,
+    asked: &Selected<'_>,
+    limit: i64,
+) -> Result<Vec<(Held, Bound)>> {
+    let index = Some("table_rows_ordered");
+    let after = asked
+        .position
+        .map(|at| (at.keys.first().cloned().unwrap_or(Bound::Null), at));
+    let mut found = Vec::new();
+    if !matches!(after, Some((Bound::Null, _))) {
+        let mut sql = Sql::new("SELECT r.id, r.updated_at, json(r.body), json(r.refs), r.ord");
+        sql.append(&selection(
+            asked.seq,
+            asked.filter,
+            asked.withholding,
+            index,
+        )?);
+        let (direction, beyond) = match asked.descending {
+            true => ("DESC", "<"),
+            false => ("ASC", ">"),
+        };
+        // The planner bounds the range by one upper bound only, so a cursor's bound replaces this.
+        if !(asked.descending && after.is_some()) {
+            sql.push(&format!(" AND r.ord < {NO_KEY}"));
+        }
+        if let Some((value, at)) = &after {
+            sql.push(&format!(" AND r.ord {beyond}= "));
+            sql.bind(value.clone());
+            sql.push(&format!(" AND (r.ord {beyond} "));
+            sql.bind(value.clone());
+            sql.push(" OR r.id > ");
+            sql.bind(at.id.clone());
+            sql.push(")");
+        }
+        sql.push(&format!(" ORDER BY r.ord {direction}, r.id ASC LIMIT "));
+        sql.bind(limit);
+        found = store::page(read.tx, &sql)?;
+    }
+    let left = limit - found.len() as i64;
+    if left > 0 {
+        let mut sql = Sql::new("SELECT r.id, r.updated_at, json(r.body), json(r.refs), NULL");
+        sql.append(&selection(
+            asked.seq,
+            asked.filter,
+            asked.withholding,
+            index,
+        )?);
+        sql.push(&format!(" AND r.ord = {NO_KEY}"));
+        if let Some((Bound::Null, at)) = &after {
+            sql.push(" AND r.id > ");
+            sql.bind(at.id.clone());
+        }
+        sql.push(" ORDER BY r.id ASC LIMIT ");
+        sql.bind(left);
+        found.extend(store::page(read.tx, &sql)?);
+    }
+    Ok(found)
+}
+
 fn answered_page(
     read: &Reader<'_, '_>,
     item_id: &str,
@@ -382,24 +507,23 @@ fn answered_page(
         .transpose()?;
     let withholding = Withholding::of(read)?;
     let seq = store::table_seq(read.tx, host.seq, &table.name)?;
-    let mut sql =
-        Sql::new("SELECT * FROM (SELECT r.id, r.updated_at, json(r.body), json(r.refs), ");
-    sql.append(&key.expression(&withholding));
-    sql.push(" AS k");
-    sql.append(&selection(
+    let keyed = match (&key, seq) {
+        (Key::Order(order), Some(seq)) => {
+            store::ordered_by(read.tx, seq)? == Some(order.signature())
+        }
+        _ => false,
+    };
+    let selected = Selected {
         seq,
-        filter.as_ref(),
-        &withholding,
-        matches!(key, Key::Updated),
-    )?);
-    sql.push(") r WHERE 1 = 1");
-    if let Some(position) = &position {
-        position_after(&mut sql, &key, asked.descending, position);
-    }
-    order_by(&mut sql, &key, asked.descending);
-    sql.push(" LIMIT ");
-    sql.bind(limit + 1);
-    let mut found = store::page(read.tx, &sql)?;
+        filter: filter.as_ref(),
+        withholding: &withholding,
+        position: position.as_ref(),
+        descending: asked.descending,
+    };
+    let mut found = match keyed {
+        true => keyed_page(read, &selected, limit + 1)?,
+        false => scanned_page(read, &selected, &key, limit + 1)?,
+    };
     let more = found.len() as i64 > limit;
     found.truncate(limit as usize);
     let next = match found.last().filter(|_| more) {
@@ -509,7 +633,7 @@ fn answered_totals(
     let filter = filter.map(|text| expression(text, &table)).transpose()?;
     let withholding = Withholding::of(read)?;
     let seq = store::table_seq(read.tx, host.seq, &table.name)?;
-    let selected = selection(seq, filter.as_ref(), &withholding, false)?;
+    let selected = selection(seq, filter.as_ref(), &withholding, None)?;
     let adding: Vec<(String, String, String)> = table
         .columns
         .iter()

@@ -47,7 +47,7 @@ const coreConversation: ShippedTypeSchema = {
   fields: {
     title: { type: "string", description: "The conversation's name." },
   },
-  tables: {"messages":{"description":"The messages of the conversation, in the order they were appended.","columns":{"author":{"type":"string","description":"Who wrote the message, such as a name, a handle or `assistant`.","required":true},"text":{"type":"string","description":"What the message says. A message may have no text and only an attachment.","searchable":true},"sent_at":{"type":"datetime","description":"When the message was sent.","required":true},"attachment":{"type":"item","description":"A picture or other file the message carries.","type_constraints":["core.file"]}}}},
+  tables: {"messages":{"description":"The messages of the conversation, kept in the order they were sent.","order":"sent_at","columns":{"author":{"type":"string","description":"Who wrote the message, such as a name, a handle or `assistant`.","required":true},"text":{"type":"string","description":"What the message says. A message may have no text and only an attachment.","searchable":true},"sent_at":{"type":"datetime","description":"When the message was sent.","required":true},"attachment":{"type":"item","description":"A picture or other file the message carries.","type_constraints":["core.file"]}}}},
   display_hints: { title_field: "title", icon: "lucide:messages-square" },
   merge_policy: { default: "last_writer_wins" },
 };
@@ -855,7 +855,8 @@ export const SHIPPED_TYPE_SHAPES = {
             "searchable": true,
             "type": "string"
           }
-        }
+        },
+        "order": "sent_at"
       }
     },
     "version": 0

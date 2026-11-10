@@ -187,6 +187,8 @@ export interface TableDefinition {
   label?: string;
   description?: string;
   columns: Record<string, ColumnDefinition>;
+  /** The column whose order the server keeps for the rows. */
+  order?: string;
 }
 
 export interface RecordedActor {

@@ -16,6 +16,7 @@ use crate::app::catalog::{self, Catalog, Provenance, Snapshot};
 use crate::app::instance;
 use crate::app::items;
 use crate::app::refusal::{Code, Refusal, Result};
+use crate::app::tables;
 
 pub(super) fn not_found(id: &str) -> Refusal {
     Refusal::new(Code::TypeNotFound, format!("Type \"{id}\" not found"))
@@ -125,6 +126,7 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
             instance::raise_reach(unit.tx())?;
             let after = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
             items::rekey_changed(unit.tx(), &catalog.rules, &after.rules, std::slice::from_ref(&id))?;
+            tables::reorder_types(unit.tx(), &catalog, &after, std::slice::from_ref(&id), &unit.at)?;
             items::relink_changed(unit.tx(), &catalog, &after, std::slice::from_ref(&id))?;
             items::drop_tombstones(unit.tx(), &id)?;
             items::reindex_changed(unit.tx(), &catalog.rules, &after.rules)?;
@@ -291,7 +293,7 @@ async fn replacing(
             require_evolution(unit.tx(), caller, &family, stored, &schema)?;
             if !force {
                 let next = catalog.types.with(schema.clone());
-                let held = crate::app::tables::held_in_use(unit.tx(), &catalog, &next, &family)?;
+                let held = tables::held_in_use(unit.tx(), &catalog, &next, &family)?;
                 if !held.is_empty() {
                     return Err(Refusal::new(
                         Code::TypeInUse,
@@ -321,6 +323,7 @@ async fn replacing(
             }
             let after = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
             items::rekey_changed(unit.tx(), &catalog.rules, &after.rules, &family)?;
+            tables::reorder_types(unit.tx(), &catalog, &after, &family, &unit.at)?;
             items::relink_changed(unit.tx(), &catalog, &after, std::slice::from_ref(&id))?;
             items::reindex_changed(unit.tx(), &catalog.rules, &after.rules)?;
             unit.audit("type", &id, None)?;
@@ -406,7 +409,7 @@ pub async fn delete(app: &App, caller: &Caller, id: String, force: bool) -> Resu
         let held = items::count_of_type(unit.tx(), &id)?;
         let settings = super::moving::naming(unit.tx(), caller, &id)?;
         let named = settings.as_array().is_some_and(|named| !named.is_empty());
-        let columns = crate::app::tables::constraining_columns(&catalog, &id);
+        let columns = tables::constraining_columns(&catalog, &id);
         if (held > 0 || named || !columns.is_empty()) && !force {
             return Err(Refusal::new(
                 Code::TypeInUse,
@@ -423,6 +426,7 @@ pub async fn delete(app: &App, caller: &Caller, id: String, force: bool) -> Resu
         instance::raise_reach(unit.tx())?;
         let after = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
         items::rekey_changed(unit.tx(), &catalog.rules, &after.rules, std::slice::from_ref(&id))?;
+        tables::reorder_types(unit.tx(), &catalog, &after, std::slice::from_ref(&id), &unit.at)?;
         items::relink_changed(unit.tx(), &catalog, &after, std::slice::from_ref(&id))?;
         items::reindex_changed(unit.tx(), &catalog.rules, &after.rules)?;
         unit.audit("type", &id, None)?;
@@ -643,6 +647,7 @@ pub fn write_restored(
     instance::raise_reach(tx)?;
     let after = catalog::current(cache, tx, Snapshot::Pending)?;
     items::rekey_changed(tx, &before.rules, &after.rules, &ids)?;
+    tables::reorder_types(tx, before, &after, &ids, &unit.at)?;
     items::relink_changed(tx, before, &after, &ids)?;
     for id in &ids {
         items::drop_tombstones(tx, id)?;

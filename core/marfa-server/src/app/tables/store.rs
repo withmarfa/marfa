@@ -4,6 +4,7 @@ use rusqlite::types::Value as Bound;
 use rusqlite::{OptionalExtension, Row, Transaction, params, params_from_iter};
 use serde_json::{Map, Value};
 
+use super::order::Order;
 use crate::app::query::Sql;
 use crate::app::refusal::{Refusal, Result};
 
@@ -63,15 +64,26 @@ pub(super) fn open(
     tx: &Transaction<'_>,
     seq: i64,
     table: &str,
+    order: Option<&Order>,
     batch: &str,
     at: &str,
 ) -> Result<i64> {
     tx.prepare_cached(
-        "INSERT INTO table_summaries (item_seq, table_name, row_count, bytes, last_batch, changed_at) \
-         VALUES (?1, ?2, 0, 0, ?3, ?4) ON CONFLICT (item_seq, table_name) DO NOTHING",
+        "INSERT INTO table_summaries \
+         (item_seq, table_name, row_count, bytes, last_batch, changed_at, ordered_by) \
+         VALUES (?1, ?2, 0, 0, ?3, ?4, ?5) ON CONFLICT (item_seq, table_name) DO NOTHING",
     )?
-    .execute(params![seq, table, batch, at])?;
+    .execute(params![seq, table, batch, at, order.map(Order::signature)])?;
     table_seq(tx, seq, table)?.ok_or_else(|| Refusal::internal("a table summary did not land"))
+}
+
+/// The order every row of table `table` holds the key of, once none is being rebuilt.
+pub(super) fn ordered_by(tx: &Transaction<'_>, table: i64) -> Result<Option<String>> {
+    Ok(tx
+        .prepare_cached("SELECT ordered_by FROM table_summaries WHERE seq = ?1")?
+        .query_row([table], |row| row.get(0))
+        .optional()?
+        .flatten())
 }
 
 pub(super) fn row(tx: &Transaction<'_>, table: Option<i64>, id: &str) -> Result<Option<Held>> {
@@ -88,20 +100,27 @@ pub(super) fn row(tx: &Transaction<'_>, table: Option<i64>, id: &str) -> Result<
     .transpose()
 }
 
-pub(super) fn put(
-    tx: &Transaction<'_>,
-    table: i64,
-    id: &str,
-    at: &str,
-    body: &str,
-    refs: Option<&str>,
-) -> Result<()> {
-    tx.prepare_cached(
-        "INSERT INTO table_rows (table_seq, id, updated_at, refs, body) \
-         VALUES (?1, ?2, ?3, jsonb(?4), jsonb(?5)) \
-         ON CONFLICT (table_seq, id) DO UPDATE SET updated_at = ?3, refs = jsonb(?4), body = jsonb(?5)",
-    )?
-    .execute(params![table, id, at, refs, body])?;
+pub(super) struct Put<'a> {
+    pub table: i64,
+    pub id: &'a str,
+    pub at: &'a str,
+    pub body: &'a str,
+    pub refs: Option<&'a str>,
+    pub order: Option<&'a Order>,
+}
+
+pub(super) fn put(tx: &Transaction<'_>, row: &Put<'_>) -> Result<()> {
+    let key = row.order.map_or_else(
+        || "NULL".to_string(),
+        |order| order.stored_key_sql("?5", "?4"),
+    );
+    tx.prepare_cached(&format!(
+        "INSERT INTO table_rows (table_seq, id, updated_at, ord, refs, body) \
+         VALUES (?1, ?2, ?3, {key}, jsonb(?4), jsonb(?5)) \
+         ON CONFLICT (table_seq, id) DO UPDATE SET updated_at = ?3, ord = excluded.ord, \
+         refs = excluded.refs, body = excluded.body"
+    ))?
+    .execute(params![row.table, row.id, row.at, row.refs, row.body])?;
     Ok(())
 }
 
@@ -227,6 +246,11 @@ pub(super) fn column_held(
 
 /// Forgets a purged item's summaries and leaves its rows for `table-row-cleanup`.
 pub(super) fn doom(tx: &Transaction<'_>, seq: i64) -> Result<bool> {
+    tx.prepare_cached(
+        "DELETE FROM table_rows_reordering WHERE table_seq IN \
+         (SELECT seq FROM table_summaries WHERE item_seq = ?1)",
+    )?
+    .execute([seq])?;
     let held = tx
         .prepare_cached(
             "INSERT OR IGNORE INTO table_rows_purging (table_seq) \
@@ -260,4 +284,129 @@ pub(super) fn remove_page(tx: &Transaction<'_>, limit: i64) -> Result<Option<i64
             .execute([table])?;
     }
     Ok(Some(removed))
+}
+
+/// An item table's summary as reordering reads it.
+pub(super) struct Ordering {
+    pub table_seq: i64,
+    pub table: String,
+    pub row_count: i64,
+    pub ordered_by: Option<String>,
+    /// The order a rebuild under way brings the keys to, `Some(None)` to clear them.
+    pub rebuilding: Option<Option<String>>,
+}
+
+fn orderings(
+    tx: &Transaction<'_>,
+    filter: &str,
+    key: &dyn rusqlite::ToSql,
+) -> Result<Vec<Ordering>> {
+    let mut statement = tx.prepare_cached(&format!(
+        "SELECT s.seq, s.table_name, s.row_count, s.ordered_by, q.table_seq IS NOT NULL, q.target \
+         FROM table_summaries s LEFT JOIN table_rows_reordering q ON q.table_seq = s.seq \
+         WHERE {filter}"
+    ))?;
+    let found = statement.query_map([key], |row| {
+        Ok(Ordering {
+            table_seq: row.get(0)?,
+            table: row.get(1)?,
+            row_count: row.get(2)?,
+            ordered_by: row.get(3)?,
+            rebuilding: match row.get::<_, bool>(4)? {
+                true => Some(row.get(5)?),
+                false => None,
+            },
+        })
+    })?;
+    Ok(found.collect::<rusqlite::Result<_>>()?)
+}
+
+pub(super) fn orderings_of_item(tx: &Transaction<'_>, seq: i64) -> Result<Vec<Ordering>> {
+    orderings(tx, "s.item_seq = ?1", &seq)
+}
+
+pub(super) fn orderings_of_type(tx: &Transaction<'_>, type_id: &str) -> Result<Vec<Ordering>> {
+    orderings(
+        tx,
+        "s.item_seq IN (SELECT seq FROM items WHERE type = ?1)",
+        &type_id,
+    )
+}
+
+fn key_of(order: Option<&Order>) -> String {
+    order.map_or_else(
+        || "NULL".to_string(),
+        |order| order.stored_key_sql("body", "refs"),
+    )
+}
+
+/// Writes every row's key for `order` at once and records it as the table's.
+pub(super) fn reorder_whole(tx: &Transaction<'_>, table: i64, order: Option<&Order>) -> Result<()> {
+    tx.execute(
+        &format!(
+            "UPDATE table_rows SET ord = {} WHERE table_seq = ?1",
+            key_of(order)
+        ),
+        [table],
+    )?;
+    tx.prepare_cached("DELETE FROM table_rows_reordering WHERE table_seq = ?1")?
+        .execute([table])?;
+    tx.prepare_cached("UPDATE table_summaries SET ordered_by = ?2 WHERE seq = ?1")?
+        .execute(params![table, order.map(Order::signature)])?;
+    Ok(())
+}
+
+/// Leaves the table's keys to `table-row-cleanup`, which starts them over for `order`.
+pub(super) fn reorder_later(tx: &Transaction<'_>, table: i64, order: Option<&Order>) -> Result<()> {
+    tx.prepare_cached(
+        "INSERT INTO table_rows_reordering (table_seq, target, after_id) VALUES (?1, ?2, NULL) \
+         ON CONFLICT (table_seq) DO UPDATE SET target = ?2, after_id = NULL",
+    )?
+    .execute(params![table, order.map(Order::signature)])?;
+    tx.prepare_cached("UPDATE table_summaries SET ordered_by = NULL WHERE seq = ?1")?
+        .execute([table])?;
+    Ok(())
+}
+
+/// Writes the keys of up to `limit` rows of one table being reordered; `None` once none is.
+pub(super) fn reorder_page(tx: &Transaction<'_>, limit: i64) -> Result<Option<i64>> {
+    let Some((table, target, after)) = tx
+        .prepare_cached(
+            "SELECT table_seq, target, after_id FROM table_rows_reordering ORDER BY table_seq LIMIT 1",
+        )?
+        .query_row([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, Option<String>>(2)?))
+        })
+        .optional()?
+    else {
+        return Ok(None);
+    };
+    let order = target.as_deref().and_then(Order::from_signature);
+    let mut statement = tx.prepare(&format!(
+        "UPDATE table_rows SET ord = {} WHERE table_seq = ?1 AND id IN \
+         (SELECT id FROM table_rows WHERE table_seq = ?1 AND id > ?2 ORDER BY id LIMIT ?3) \
+         RETURNING id",
+        key_of(order.as_ref())
+    ))?;
+    let ids = statement
+        .query_map(params![table, after.unwrap_or_default(), limit], |row| {
+            row.get::<_, String>(0)
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let taken = ids.len() as i64;
+    match ids.into_iter().max() {
+        Some(last) if taken == limit => {
+            tx.prepare_cached(
+                "UPDATE table_rows_reordering SET after_id = ?2 WHERE table_seq = ?1",
+            )?
+            .execute(params![table, last])?;
+        }
+        _ => {
+            tx.prepare_cached("DELETE FROM table_rows_reordering WHERE table_seq = ?1")?
+                .execute([table])?;
+            tx.prepare_cached("UPDATE table_summaries SET ordered_by = ?2 WHERE seq = ?1")?
+                .execute(params![table, target])?;
+        }
+    }
+    Ok(Some(taken))
 }

@@ -112,7 +112,8 @@
    },
    "tables": {
     "messages": {
-     "description": "The messages of the conversation, in the order they were appended.",
+     "description": "The messages of the conversation, kept in the order they were sent.",
+     "order": "sent_at",
      "columns": {
       "author": {
        "type": "string",

@@ -1,12 +1,13 @@
-//! Row retention across item purges and schema changes.
+//! Row retention and order keys across item purges and schema changes.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use rusqlite::Transaction;
 use serde_json::{Value, json};
 
-use super::store;
+use super::order::Order;
+use super::store::{self, Ordering};
 use super::tables_of;
 use crate::app::App;
 use crate::app::catalog::Catalog;
@@ -16,7 +17,7 @@ use crate::db::Write;
 
 pub const CLEANUP_JOB: &str = "table-row-cleanup";
 /// About 2 ms of the writer on the reference machine, so other writes wait little behind a page.
-const CLEANUP_PAGE: i64 = 1_000;
+pub(super) const CLEANUP_PAGE: i64 = 1_000;
 
 /// A purged item's rows go to `table-row-cleanup`, which removes them a page at a time.
 pub fn doom(tx: &Transaction<'_>, seq: i64, at: &str) -> Result<()> {
@@ -26,25 +27,94 @@ pub fn doom(tx: &Transaction<'_>, seq: i64, at: &str) -> Result<()> {
     Ok(())
 }
 
+/// Removes purged items' rows, then writes the order keys of tables whose order changed.
 pub async fn cleanup(app: Arc<App>, run: Run) -> Result<Report> {
-    let (mut removed, mut pages) = (0_i64, 0_i64);
+    let (mut removed, mut reordered, mut pages) = (0_i64, 0_i64, 0_i64);
+    let result = |removed, reordered, pages| json!({ "removed": removed, "reordered": reordered, "pages": pages });
     loop {
         let page = app
             .db
-            .write(Write::own(), |tx| store::remove_page(tx, CLEANUP_PAGE))
+            .write(Write::own(), |tx| {
+                Ok(match store::remove_page(tx, CLEANUP_PAGE)? {
+                    Some(taken) => Some((taken, 0)),
+                    None => store::reorder_page(tx, CLEANUP_PAGE)?.map(|taken| (0, taken)),
+                })
+            })
             .await?;
-        let Some(taken) = page else {
-            return Ok(Report::done(json!({ "removed": removed, "pages": pages })));
+        let Some((taken, keyed)) = page else {
+            return Ok(Report::done(result(removed, reordered, pages)));
         };
         removed += taken;
+        reordered += keyed;
         pages += 1;
         if !run.go_on().await {
             return Ok(Report {
-                result: json!({ "removed": removed, "pages": pages }),
+                result: result(removed, reordered, pages),
                 again: true,
             });
         }
     }
+}
+
+fn orders(catalog: &Catalog, type_id: &str) -> BTreeMap<String, Option<Order>> {
+    tables_of(catalog, type_id)
+        .into_iter()
+        .map(|table| (table.name, table.order))
+        .collect()
+}
+
+/// A table that fits in one page gets its keys at once; a larger one from `table-row-cleanup`.
+fn settle(tx: &Transaction<'_>, held: &Ordering, order: Option<&Order>, at: &str) -> Result<()> {
+    let wanted = order.map(Order::signature);
+    let settled = match &held.rebuilding {
+        Some(target) => *target == wanted,
+        None => held.ordered_by == wanted,
+    };
+    if settled {
+        return Ok(());
+    }
+    if held.row_count <= CLEANUP_PAGE {
+        return store::reorder_whole(tx, held.table_seq, order);
+    }
+    store::reorder_later(tx, held.table_seq, order)?;
+    housekeeping::bring_forward(tx, CLEANUP_JOB, at)
+}
+
+/// Brings the order keys of every item of `types` to what `after` declares.
+pub fn reorder_types(
+    tx: &Transaction<'_>,
+    before: &Catalog,
+    after: &Catalog,
+    types: &[String],
+    at: &str,
+) -> Result<()> {
+    for type_id in types {
+        let declared = orders(after, type_id);
+        if orders(before, type_id) == declared {
+            continue;
+        }
+        for held in store::orderings_of_type(tx, type_id)? {
+            let order = declared.get(&held.table).cloned().flatten();
+            settle(tx, &held, order.as_ref(), at)?;
+        }
+    }
+    Ok(())
+}
+
+/// Brings the order keys of item `seq`, now of `type_id`, to what `catalog` declares.
+pub fn reorder_item(
+    tx: &Transaction<'_>,
+    catalog: &Catalog,
+    seq: i64,
+    type_id: &str,
+    at: &str,
+) -> Result<()> {
+    let declared = orders(catalog, type_id);
+    for held in store::orderings_of_item(tx, seq)? {
+        let order = declared.get(&held.table).cloned().flatten();
+        settle(tx, &held, order.as_ref(), at)?;
+    }
+    Ok(())
 }
 
 fn blocked(tables: Vec<String>) -> Refusal {
