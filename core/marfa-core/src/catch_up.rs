@@ -1622,8 +1622,8 @@ fn read_stream(
                     refreshed.insert(named);
                     return Ok(Ended::Behind);
                 }
-                // A failed read reopens the stream from before this event
-                // rather than ending.
+                // A read that fails for a reason that clears reopens the
+                // stream from before this event rather than ending.
                 let taken = match take(core, context, catalog, slice, &id, kind, &payload) {
                     Err(ref error) if crate::folder::copy_changed(error) => {
                         context.same_copy(&*core.conn()?)?;
