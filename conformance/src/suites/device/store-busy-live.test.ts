@@ -411,6 +411,11 @@ it("ends the drain store_busy when another program writes to the store at every 
   expect(outsideValue(device.store)).toBe(String(reaches));
 });
 
+interface StepsPage {
+  data: { values: { count: number } }[];
+  next_cursor: string | null;
+}
+
 /** An item of a type of this run's own whose `steps` table holds `count` rows. */
 async function itemWithRows(
   label: string,
@@ -479,14 +484,11 @@ it("makes a fill's page write again from its reads when another program wrote to
   expect(tables.map((one) => [one.item, one.state, one.rows])).toEqual([
     [item, "whole", 1_500],
   ]);
-  const counts: unknown[] = [];
+  const counts: number[] = [];
   let cursor: string | null = null;
   do {
-    const page = value(
-      await device.tableRead<{
-        data: { values: { count: number } }[];
-        next_cursor: string | null;
-      }>([
+    const page: StepsPage & { held: boolean } = value(
+      await device.tableRead<StepsPage>([
         "list",
         item,
         "steps",
@@ -499,7 +501,7 @@ it("makes a fill's page write again from its reads when another program wrote to
     counts.push(...page.data.map((row) => row.values.count));
     cursor = page.next_cursor;
   } while (cursor !== null);
-  expect([...counts].sort((a, b) => Number(a) - Number(b))).toEqual(
+  expect(counts.sort((a, b) => a - b)).toEqual(
     Array.from({ length: 1_500 }, (_, at) => at),
   );
   expect(outsideValue(device.store)).toBe("1");
