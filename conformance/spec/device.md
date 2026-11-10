@@ -4562,7 +4562,7 @@ A device MUST answer an item type as `GET /types/{id}` answers it (`types/read`)
 
 A device MUST answer an item type with the tables it declares and those it inherits, as `GET /types/{id}` answers them (`tables/inherit`, `tables/labels-read`).
 
-**Tests:** `device/catalog.test.ts › reads the tables a type declares and those it inherits, each labelled by its name where it declares none, from the copy alone`.
+**Tests:** `device/catalog.test.ts › reads the tables a type declares and those it inherits, each labelled by its name where it declares none, from the copy alone`, `device/save-before-sync.test.ts › reads a declared table as the server reads it, each column as the kind its format names`.
 
 ### `device/catalog-icon`
 

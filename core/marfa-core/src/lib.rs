@@ -762,9 +762,8 @@ impl Core {
             rows.push(row);
         }
         marfa_rules::catalog::refuse_wordless_status(types)?;
-        if let Some((id, issue)) = marfa_rules::schema::declared_tables_issues(types, &known)
-            .into_iter()
-            .next()
+        if let Err(found) = marfa_rules::schema::declared_tables(types, &known)
+            && let Some((id, issue)) = found.into_iter().next()
         {
             return Err(CoreError::Invalid(format!(
                 "{id} declares tables that do not hold: {}: {}",

@@ -709,12 +709,9 @@ pub fn resolve_item_type(
     let Some((_, own)) = chain.first().copied() else {
         return Ok(None);
     };
-    let mut tables = Map::new();
+    let tables = crate::schema::chain_tables(chain.iter().rev().map(|(_, row)| *row));
     let mut fields: BTreeMap<String, TypeField> = BTreeMap::new();
     for (declaring, row) in chain.iter().rev() {
-        if let Some(declared) = row.get("tables").and_then(Value::as_object) {
-            tables.extend(declared.clone());
-        }
         if let Some(declared) = row.get("fields").and_then(Value::as_object) {
             for (name, definition) in declared {
                 let merged = merge_field_definition(

@@ -159,17 +159,6 @@ pub fn unread_keys(input: &Obj) -> Vec<Issue> {
             }
         }
     }
-    for (name, definition) in as_obj(input.get("tables")).into_iter().flatten() {
-        if let Value::Object(definition) = definition {
-            issues.extend(unread_of(
-                definition,
-                &format!("tables.{name}"),
-                &TABLE_KEYS,
-                "a table definition",
-                &[],
-            ));
-        }
-    }
     for (key, read) in [
         ("display_hints", &HINT_KEYS[..]),
         ("version_policy", &VERSION_KEYS[..]),
@@ -183,8 +172,11 @@ pub fn unread_keys(input: &Obj) -> Vec<Issue> {
     issues
 }
 
-/// The keys of one column definition at `path`.
-pub fn unread_column_keys(definition: &Obj, path: &str) -> Vec<Issue> {
+pub(super) fn unread_table_keys(definition: &Obj, path: &str) -> Vec<Issue> {
+    unread_of(definition, path, &TABLE_KEYS, "a table definition", &[])
+}
+
+pub(super) fn unread_column_keys(definition: &Obj, path: &str) -> Vec<Issue> {
     unread_of(definition, path, &COLUMN_KEYS, "a column definition", &[])
 }
 

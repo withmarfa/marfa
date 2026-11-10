@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use serde_json::{Map, Value};
 
-use super::tables::{with_column_defaults, with_table_labels, without_read_labels};
+use super::tables::{chain_tables, with_column_defaults, with_table_labels, without_read_labels};
 use super::{Obj, Registry, as_obj, text};
 use crate::catalog::merge_field_definition;
 use crate::wire::{label_from_id, label_from_name, plural_from_label};
@@ -147,10 +147,7 @@ pub fn resolve(
         with_field_labels(&merged)
     };
 
-    let mut tables = Obj::new();
-    for row in &chain {
-        tables.extend(as_obj(row.get("tables")).cloned().unwrap_or_default());
-    }
+    let tables = chain_tables(&chain);
     let tables = if declared_only {
         tables
     } else {

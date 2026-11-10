@@ -845,3 +845,99 @@ async fn a_definition_read_as_served_is_written_back_with_no_label_it_did_not_ha
         "{row}"
     );
 }
+
+#[tokio::test]
+async fn a_parent_may_not_gain_a_table_a_subtype_declares_even_as_the_subtype_declares_it() {
+    let instance = Instance::start().await;
+    assert_eq!(
+        instance.register(simple("acme.base")).await.status,
+        StatusCode::CREATED
+    );
+    let mut leaf = child("acme.base.leaf", "acme.base", json!({}));
+    leaf["tables"] = lines();
+    assert_eq!(instance.register(leaf).await.status, StatusCode::CREATED);
+    let mut gaining = simple("acme.base");
+    gaining["tables"] = lines();
+    let refused = instance
+        .local(Method::PUT, "/types/acme.base", Some(gaining))
+        .await;
+    assert_eq!(refused.code(), "inheritance_violation", "{}", refused.body);
+    assert_eq!(refused_paths(&refused), vec!["tables.lines".to_string()]);
+    let held = instance.local(Method::GET, "/types/acme.base", None).await;
+    assert!(held.body.get("tables").is_none(), "{}", held.body);
+}
+
+#[tokio::test]
+async fn attaching_a_type_under_an_ancestor_is_refused_where_a_subtype_declares_its_table_alike() {
+    let instance = Instance::start().await;
+    assert_eq!(
+        instance.register(ledger(lines())).await.status,
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        instance.register(simple("acme.middle")).await.status,
+        StatusCode::CREATED
+    );
+    let mut leaf = child("acme.leaf", "acme.middle", json!({}));
+    leaf["tables"] = read_back_tables(&instance, "acme.ledger").await;
+    assert_eq!(instance.register(leaf).await.status, StatusCode::CREATED);
+    let attached = child(
+        "acme.middle",
+        "acme.ledger",
+        json!({ "note": { "type": "string" } }),
+    );
+    let refused = instance
+        .local(Method::PUT, "/types/acme.middle", Some(attached))
+        .await;
+    assert_eq!(refused.code(), "inheritance_violation", "{}", refused.body);
+    assert_eq!(refused_paths(&refused), vec!["parent".to_string()]);
+}
+
+#[tokio::test]
+async fn a_table_key_nothing_reads_is_refused() {
+    let instance = Instance::start().await;
+    let refused = instance
+        .register(ledger(
+            json!({ "lines": { "mystery": true, "columns": { "a": { "type": "string" } } } }),
+        ))
+        .await;
+    assert_eq!(refused.code(), "invalid_schema", "{}", refused.body);
+    assert_eq!(
+        refused_paths(&refused),
+        vec!["tables.lines.mystery".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn a_subtype_restating_its_parent_s_table_with_the_defaults_written_down_is_taken() {
+    let instance = Instance::start().await;
+    let spelled = json!({ "lines": { "columns": {
+        "a": { "type": "string", "required": false, "searchable": false },
+    } } });
+    assert_eq!(
+        instance.register(ledger(spelled.clone())).await.status,
+        StatusCode::CREATED
+    );
+    let mut restated = child("acme.ledger.child", "acme.ledger", json!({}));
+    restated["tables"] = spelled;
+    let taken = instance.register(restated).await;
+    assert_eq!(taken.status, StatusCode::CREATED, "{}", taken.body);
+}
+
+#[tokio::test]
+async fn a_column_read_back_holds_the_kind_its_format_names() {
+    let instance = Instance::start().await;
+    let created = instance
+        .register(ledger(json!({ "lines": { "columns": {
+            "to": { "type": "string", "format": "email" },
+        } } })))
+        .await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    let read = instance
+        .local(Method::GET, "/types/acme.ledger", None)
+        .await;
+    assert_eq!(
+        read.body["tables"]["lines"]["columns"]["to"],
+        json!({ "type": "email", "label": "To" })
+    );
+}

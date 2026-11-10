@@ -4,7 +4,7 @@ use serde_json::{Map, Value, json};
 
 use super::field::{label_issue, normalize_field, validate_member, vocabulary};
 use super::resolve::label_member;
-use super::unread::unread_column_keys;
+use super::unread::{unread_column_keys, unread_table_keys};
 use super::{Issue, Obj, Registry, as_obj, describe, kind, names, text};
 use crate::catalog::api_name;
 use crate::grammar;
@@ -231,15 +231,78 @@ fn validate_constraints(
     }
 }
 
-/// Judges a type's own `tables` against its ancestors' and its descendants'.
-pub(super) fn validate_tables(
+/// A type's own tables as stored, judged against the ancestors and descendants `registry` holds.
+pub(super) fn judge_tables(
+    definition: &Obj,
+    registry: &Registry,
+    type_known: &dyn Fn(&str) -> bool,
+) -> Result<Obj, Vec<Issue>> {
+    let id = text(definition, "id");
+    let inherited = text(definition, "parent")
+        .filter(|parent| !parent.is_empty() && Some(*parent) != id)
+        .map(|parent| registry.inherited_tables(parent))
+        .unwrap_or_default();
+    let descendants = id.map(|id| registry.descendants(id)).unwrap_or_default();
+    let mut errors = Vec::new();
+    validate_tables(
+        definition.get("tables"),
+        &inherited,
+        &descendants,
+        type_known,
+        &mut errors,
+    );
+    if errors.is_empty() {
+        Ok(stored_tables(definition.get("tables"), &inherited))
+    } else {
+        Err(errors)
+    }
+}
+
+/// Each entry keyed by the id of the type it belongs to.
+type ByType<T> = Vec<(String, T)>;
+
+/// Each type's tables as stored, the set judged as one, so a subtype may restate a parent declared beside it.
+pub fn declared_tables(
+    types: &[Value],
+    type_known: &dyn Fn(&str) -> bool,
+) -> Result<ByType<Obj>, ByType<Issue>> {
+    let declared = Registry::new(types.iter().filter_map(|row| row.as_object().cloned()));
+    let stored = Registry::new(types.iter().filter_map(Value::as_object).map(|row| {
+        let mut row = row.clone();
+        let inherited = text(&row, "parent")
+            .filter(|parent| Some(*parent) != text(&row, "id"))
+            .map(|parent| declared.inherited_tables(parent))
+            .unwrap_or_default();
+        let tables = stored_tables(row.get("tables"), &inherited);
+        row.insert("tables".into(), Value::Object(tables));
+        row
+    }));
+    let mut judged = Vec::new();
+    let mut found = Vec::new();
+    for definition in types.iter().filter_map(Value::as_object) {
+        let Some(id) = text(definition, "id") else {
+            continue;
+        };
+        match judge_tables(definition, &stored, type_known) {
+            Ok(tables) => judged.push((id.to_string(), tables)),
+            Err(issues) => found.extend(issues.into_iter().map(|issue| (id.to_string(), issue))),
+        }
+    }
+    if found.is_empty() {
+        Ok(judged)
+    } else {
+        Err(found)
+    }
+}
+
+fn validate_tables(
     raw: Option<&Value>,
     inherited: &[(String, String, Obj)],
     descendants: &[&Obj],
     type_known: &dyn Fn(&str) -> bool,
     errors: &mut Vec<Issue>,
 ) {
-    descendants_hold_inherited_tables(inherited, descendants, errors);
+    descendants_declare_no_inherited_table(inherited, descendants, errors);
     let Some(raw) = raw else { return };
     let Some(tables) = raw.as_object() else {
         errors.push(Issue::new(
@@ -270,6 +333,7 @@ pub(super) fn validate_tables(
             ));
             continue;
         };
+        errors.extend(unread_table_keys(table, &path));
         label_issue(
             &format!("{path}.label"),
             table.get("label"),
@@ -303,48 +367,14 @@ pub(super) fn validate_tables(
                 .coded("inheritance_violation"),
             );
         }
-        for child in descendants {
-            let declares_otherwise = as_obj(child.get("tables"))
-                .and_then(|held| as_obj(held.get(name)))
-                .is_some_and(|held| !restates(name, held, &normalize_table(table)));
-            if declares_otherwise {
-                let child_id = text(child, "id").unwrap_or_default();
-                errors.push(
-                    Issue::new(
-                        path.clone(),
-                        format!("no table \"{name}\", which \"{child_id}\" declares"),
-                        format!("a table \"{name}\""),
-                        format!(
-                            "Give the table another name, or remove it from \"{child_id}\" first."
-                        ),
-                    )
-                    .coded("inheritance_violation"),
-                );
-            }
-        }
-    }
-}
-
-fn descendants_hold_inherited_tables(
-    inherited: &[(String, String, Obj)],
-    descendants: &[&Obj],
-    errors: &mut Vec<Issue>,
-) {
-    for child in descendants {
-        let child_id = text(child, "id").unwrap_or_default();
-        for (name, table) in as_obj(child.get("tables")).into_iter().flatten() {
-            let Some((_, owner, held)) = inherited.iter().find(|(held, _, _)| held == name) else {
-                continue;
-            };
-            if as_obj(Some(table)).is_some_and(|table| restates(name, table, held)) {
-                continue;
-            }
+        for child in descendants.iter().filter(|child| declares(child, name)) {
+            let child_id = text(child, "id").unwrap_or_default();
             errors.push(
                 Issue::new(
-                    "parent",
-                    format!("a parent whose chain does not declare the table \"{name}\" otherwise than \"{child_id}\" does"),
-                    format!("a parent under \"{owner}\", which declares \"{name}\" otherwise"),
-                    format!("Rename the table on \"{child_id}\", or change it there first."),
+                    path.clone(),
+                    format!("no table \"{name}\", which \"{child_id}\" declares"),
+                    format!("a table \"{name}\""),
+                    format!("Give the table another name, or remove it from \"{child_id}\" first."),
                 )
                 .coded("inheritance_violation"),
             );
@@ -352,36 +382,36 @@ fn descendants_hold_inherited_tables(
     }
 }
 
-/// Table faults by declaring type, including conflicts within the declared set.
-pub fn declared_tables_issues(
-    types: &[Value],
-    type_known: &dyn Fn(&str) -> bool,
-) -> Vec<(String, Issue)> {
-    let registry = Registry::new(types.iter().filter_map(|row| row.as_object().cloned()));
-    let mut found = Vec::new();
-    for definition in types.iter().filter_map(Value::as_object) {
-        let Some(id) = text(definition, "id") else {
-            continue;
-        };
-        let parent = text(definition, "parent").filter(|parent| *parent != id);
-        let inherited = parent
-            .map(|p| registry.inherited_tables(p))
-            .unwrap_or_default();
-        let mut issues = Vec::new();
-        validate_tables(
-            definition.get("tables"),
-            &inherited,
-            &registry.descendants(id),
-            type_known,
-            &mut issues,
-        );
-        found.extend(issues.into_iter().map(|issue| (id.to_string(), issue)));
+fn declares(definition: &Obj, table: &str) -> bool {
+    as_obj(definition.get("tables")).is_some_and(|tables| tables.contains_key(table))
+}
+
+fn descendants_declare_no_inherited_table(
+    inherited: &[(String, String, Obj)],
+    descendants: &[&Obj],
+    errors: &mut Vec<Issue>,
+) {
+    for child in descendants {
+        let child_id = text(child, "id").unwrap_or_default();
+        for (name, owner, _) in inherited
+            .iter()
+            .filter(|(name, _, _)| declares(child, name))
+        {
+            errors.push(
+                Issue::new(
+                    "parent",
+                    format!("a parent whose chain declares no table \"{name}\", which \"{child_id}\" declares"),
+                    format!("a parent under \"{owner}\", which declares \"{name}\""),
+                    format!("Rename the table on \"{child_id}\", or remove it there first."),
+                )
+                .coded("inheritance_violation"),
+            );
+        }
     }
-    found
 }
 
 fn restates(name: &str, table: &Obj, held: &Obj) -> bool {
-    labelled_table(name, &normalize_table(table)) == labelled_table(name, held)
+    labelled_table(name, &normalize_table(table)) == labelled_table(name, &normalize_table(held))
 }
 
 fn normalize_column(raw: &Obj) -> Obj {
@@ -421,7 +451,7 @@ pub fn normalize_table(raw: &Obj) -> Obj {
 }
 
 /// A type's own tables, without any it restates exactly as an ancestor declares it.
-pub(super) fn stored_tables(raw: Option<&Value>, inherited: &[(String, String, Obj)]) -> Obj {
+fn stored_tables(raw: Option<&Value>, inherited: &[(String, String, Obj)]) -> Obj {
     as_obj(raw)
         .into_iter()
         .flatten()
@@ -458,6 +488,19 @@ pub fn with_table_labels(tables: &Obj) -> Obj {
             (name.clone(), table)
         })
         .collect()
+}
+
+/// The tables down a chain of definitions, root first, each as stored.
+pub fn chain_tables<'a>(chain: impl IntoIterator<Item = &'a Obj>) -> Obj {
+    let mut tables = Obj::new();
+    for row in chain {
+        for (name, table) in as_obj(row.get("tables")).into_iter().flatten() {
+            if let Some(table) = table.as_object() {
+                tables.insert(name.clone(), Value::Object(normalize_table(table)));
+            }
+        }
+    }
+    tables
 }
 
 /// Defaults a table leaves out are written down, so two equal definitions compare equal.

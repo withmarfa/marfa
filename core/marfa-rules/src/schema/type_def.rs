@@ -9,7 +9,7 @@ use super::compat::{
 };
 use super::field::{Shape, label_issue, normalize_field, validate_field_shape};
 use super::registry::Ancestry;
-use super::tables::{stored_tables, validate_tables};
+use super::tables::judge_tables;
 use super::{
     Issue, MAX_FEED_DAYS, MERGE_STRATEGIES, Obj, REFUSED_TYPE_KEYS, Registry, TYPE_ROLES, as_obj,
     describe, icon_issue, kind, names, number, positive_integer, required, text, unread_keys,
@@ -245,16 +245,13 @@ pub fn validate_type(input: &Value, registry: &Registry) -> Result<Obj, Vec<Issu
             &mut errors,
         );
     }
-    let inherited_tables = parent
-        .map(|p| registry.inherited_tables(p))
-        .unwrap_or_default();
-    validate_tables(
-        obj.get("tables"),
-        &inherited_tables,
-        &descendants,
-        &|held| registry.contains(held) || id == Some(held),
-        &mut errors,
-    );
+    let tables = judge_tables(obj, registry, &|held| {
+        registry.contains(held) || id == Some(held)
+    })
+    .unwrap_or_else(|issues| {
+        errors.extend(issues);
+        Obj::new()
+    });
     let visible: HashSet<&str> = fields
         .into_iter()
         .flat_map(|f| f.keys().map(String::as_str))
@@ -292,7 +289,6 @@ pub fn validate_type(input: &Value, registry: &Registry) -> Result<Obj, Vec<Issu
     if !errors.is_empty() {
         return Err(errors);
     }
-    let tables = stored_tables(obj.get("tables"), &inherited_tables);
     Ok(stored_form(
         obj,
         fields,

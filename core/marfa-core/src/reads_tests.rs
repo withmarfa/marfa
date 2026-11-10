@@ -626,6 +626,45 @@ fn a_declared_table_may_not_change_one_a_type_above_it_declares() {
 }
 
 #[test]
+fn a_declared_table_key_nothing_reads_is_refused() {
+    let core = Core::open_in_memory(None).unwrap();
+    let refused = core
+        .declare_types(&[json!({"id": "app.acme.ledger", "fields": {},
+            "tables": {"lines": {"mystery": true, "columns": {"a": {"type": "string"}}}}})])
+        .unwrap_err();
+    assert!(
+        matches!(&refused, CoreError::Invalid(message) if message.contains("tables.lines.mystery")),
+        "{refused:?}"
+    );
+}
+
+#[test]
+fn a_declared_subtype_restating_its_parent_s_table_with_the_defaults_written_down_is_taken() {
+    let core = Core::open_in_memory(None).unwrap();
+    let spelled = json!({"lines": {"columns": {
+        "a": {"type": "string", "required": false, "searchable": false}}}});
+    core.declare_types(&[
+        json!({"id": "app.acme.ledger", "fields": {}, "tables": spelled.clone()}),
+        json!({"id": "app.acme.child", "parent": "app.acme.ledger", "fields": {},
+               "tables": spelled}),
+    ])
+    .unwrap();
+}
+
+#[test]
+fn a_declared_column_reads_back_as_the_kind_its_format_names() {
+    let core = Core::open_in_memory(None).unwrap();
+    core.declare_types(&[json!({"id": "app.acme.ledger", "fields": {},
+        "tables": {"lines": {"columns": {"to": {"type": "string", "format": "email"}}}}})])
+        .unwrap();
+    let read = core.item_type("app.acme.ledger").unwrap();
+    assert_eq!(
+        read.tables["lines"]["columns"]["to"],
+        json!({"type": "email", "label": "To"})
+    );
+}
+
+#[test]
 fn changes_since_is_refused_part_way_through_a_hydration_as_every_read_of_edges_is() {
     let server = Scripted::start();
     let core = notes(&server);

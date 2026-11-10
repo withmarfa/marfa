@@ -273,6 +273,14 @@ describe("a copy no server has been named for", () => {
       [[ledger(lines({ memo: { type: "string", addsUp: "sum" } }))], "adds_up"],
       [
         [
+          ledger({
+            lines: { mystery: true, columns: { memo: { type: "string" } } },
+          }),
+        ],
+        "tables.lines.mystery",
+      ],
+      [
+        [
           ledger(lines({ a: { type: "string" } })),
           {
             id: "app.ledger.child",
@@ -304,6 +312,44 @@ describe("a copy no server has been named for", () => {
       ]),
     );
     expect(value(await device.declaredTypes())).toHaveLength(2);
+  });
+
+  it("reads a declared table as the server reads it, each column as the kind its format names", async () => {
+    const device = await offline("save-declare-tables-read");
+    const spelled = {
+      lines: {
+        columns: {
+          to: { type: "string", format: "email", required: false },
+          memo: { type: "string", searchable: false },
+        },
+      },
+    };
+    value(
+      await device.declareTypes([
+        { id: "app.ledger.entry", fields: {}, tables: spelled },
+        {
+          id: "app.ledger.child",
+          parent: "app.ledger.entry",
+          fields: {},
+          tables: spelled,
+        },
+      ]),
+    );
+    const read = {
+      lines: {
+        label: "Lines",
+        columns: {
+          to: { type: "email", label: "To" },
+          memo: { type: "string", label: "Memo" },
+        },
+      },
+    };
+    for (const id of ["app.ledger.entry", "app.ledger.child"]) {
+      expect(
+        value(await device.itemType(id)).tables,
+        `${id} read its table otherwise than a server answers it`,
+      ).toEqual(read);
+    }
   });
 
   it("refuses a declaration whose status field has no words in its chain, naming the field", async () => {
