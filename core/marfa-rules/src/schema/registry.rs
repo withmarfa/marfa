@@ -146,7 +146,6 @@ impl Registry {
         children
     }
 
-    /// Walks above and below `definition` once, as it would stand in this registry.
     pub(super) fn lineage(&self, definition: &Obj) -> Lineage<'_> {
         let id = text(definition, "id");
         let parent = text(definition, "parent").filter(|p| !p.is_empty() && Some(*p) != id);
