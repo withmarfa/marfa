@@ -1042,9 +1042,6 @@ const invocations: Record<string, () => string[]> = {
   "rows list": () => [ID, "lines"],
   "rows get": () => [ID, "lines", ID],
   "rows write": () => ["--body", '{"operations":[]}', ID, "lines"],
-  "rows put": () => ["--values", "{}", ID, "lines"],
-  "rows patch": () => ["--values", "{}", ID, "lines", ID],
-  "rows delete": () => [ID, "lines", ID],
   "rows totals": () => [ID, "lines"],
   "types replace": () => ["--body", '{"id":"user.t"}', "user.t"],
   "types delete": () => ["user.t"],
@@ -1167,6 +1164,10 @@ const beyondTheTable: Record<string, () => string[]> = {
   "sources clear": () => ["--name", "github"],
   // `sign-ins end-all` sends the list and end operations `sign-ins list` and `sign-ins end` are the entries for.
   "sign-ins end-all": () => [],
+  // `rows put`, `rows patch` and `rows delete` send the batch operation `rows write` is the entry for.
+  "rows put": () => ["--values", "{}", ID, "lines"],
+  "rows patch": () => ["--values", "{}", ID, "lines", ID],
+  "rows delete": () => [ID, "lines", ID],
 };
 
 /** Table commands that require private machine authority rather than a key. */
