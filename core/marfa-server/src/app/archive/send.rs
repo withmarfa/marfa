@@ -259,7 +259,10 @@ fn rows_need(need: &RowNeed) -> Judge {
         let levers = caller.levers()?;
         Ok(need.hosts.iter().all(|(type_id, source)| {
             caller.may_read_type(type_id) && levers.lists(&read.catalog.rules, type_id, source)
-        }) && need.types.iter().all(|type_id| caller.may_read_type(type_id))
+        }) && need
+            .types
+            .iter()
+            .all(|type_id| caller.may_read_type(type_id))
             && (!need.unheld || caller.may_read_every_type()))
     })
 }

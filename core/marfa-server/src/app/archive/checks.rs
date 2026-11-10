@@ -235,7 +235,12 @@ pub fn item(catalog: &Catalog, cap: usize, line: &Value, row: usize) -> Result<(
     let Some(type_id) = type_id.filter(|type_id| is_type_id(type_id)) else {
         return Err(at.invalid("type", "a type identifier"));
     };
-    for field in ["created_at", "updated_at", "occurred_at", "last_activity_at"] {
+    for field in [
+        "created_at",
+        "updated_at",
+        "occurred_at",
+        "last_activity_at",
+    ] {
         if item.get(field).is_some_and(|value| !is_instant(value)) {
             return Err(at.invalid(field, "an instant"));
         }
@@ -469,7 +474,12 @@ pub fn row(line: &Value, row: usize) -> Result<RowKey, Box<Refused>> {
         let mut seen = std::collections::HashSet::new();
         for column in columns {
             let named = column.as_str().filter(|column| seen.insert(*column));
-            if !named.is_some_and(|column| values.get(column).and_then(Value::as_str).is_some_and(is_id)) {
+            if !named.is_some_and(|column| {
+                values
+                    .get(column)
+                    .and_then(Value::as_str)
+                    .is_some_and(is_id)
+            }) {
                 return Err(refused(
                     "refs",
                     "an array of distinct columns that each hold an item ID",

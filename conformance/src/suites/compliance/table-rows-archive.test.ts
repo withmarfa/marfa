@@ -423,8 +423,9 @@ describe("rows in an archive", () => {
       rows_imported: 0,
       rows_skipped: lines.length,
     });
-    expect((await ok(restoredInto.getRow(made.first, "lines", row.id))).values)
-      .toEqual({ amount: 99 });
+    expect(
+      (await ok(restoredInto.getRow(made.first, "lines", row.id))).values,
+    ).toEqual({ amount: 99 });
   });
   it("carries a row of a table its type no longer declares, and a value its column no longer takes, and restores both as held", async () => {
     const lines = archiveLines<RowLine>(archive, "rows").filter(
@@ -482,14 +483,15 @@ describe("rows in an archive", () => {
       (event) => (event.data as { rows: unknown[] }).rows.length,
     );
     expect(sizes).toEqual([1000, 1000, 500]);
-    const batches = seen.map((event) => (event.data as { batch: string }).batch);
+    const batches = seen.map(
+      (event) => (event.data as { batch: string }).batch,
+    );
     expect(new Set(batches).size).toBe(3);
     const summary = (await ok(restoredInto.listTables(made.busy))).data.find(
       (table) => table.name === "lines",
     );
     expect(summary?.last_batch).toBe(batches[2]);
   });
-
 });
 
 describe("a row line a restore refuses", () => {
@@ -557,7 +559,10 @@ describe("a row line a restore refuses", () => {
     expect((await client.getItem(itemId)).status).toBe(404);
   }
 
-  async function restoresWith(label: string, rows: (itemId: string) => unknown[]) {
+  async function restoresWith(
+    label: string,
+    rows: (itemId: string) => unknown[],
+  ) {
     const good = withRows(label, rows);
     const accepted = await owner().restoreArchive(good.archive);
     expect(accepted.ok, JSON.stringify(accepted.error)).toBe(true);
@@ -602,9 +607,9 @@ describe("a row line a restore refuses", () => {
       const { good } = await restoresWith(`bad-${field}-witness`, (itemId) => [
         row(itemId, { values: { photo: itemId }, refs: ["photo"] }),
       ]);
-      expect(
-        (await allRows(client, good.itemId, "lines"))[0]?.values,
-      ).toEqual({ photo: good.itemId });
+      expect((await allRows(client, good.itemId, "lines"))[0]?.values).toEqual({
+        photo: good.itemId,
+      });
     },
   );
 
@@ -624,7 +629,9 @@ describe("a row line a restore refuses", () => {
   it("refuses a row out of order or repeated, naming its line", async () => {
     const ordered = (itemId: string) =>
       [row(itemId), row(itemId)].sort((a, b) => (a.id < b.id ? -1 : 1));
-    const reversed = withRows("reversed", (itemId) => ordered(itemId).reverse());
+    const reversed = withRows("reversed", (itemId) =>
+      ordered(itemId).reverse(),
+    );
     await refusedAt(reversed.archive, reversed.itemId, 2);
     const repeated = withRows("repeated", (itemId) => {
       const once = row(itemId);

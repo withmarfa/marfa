@@ -958,7 +958,10 @@ fn manifest(bytes: &[u8]) -> Result<Manifest> {
         wrong("format".into(), "Must be marfa-archive-v0.");
     }
     let mut manifest = Manifest::default();
-    for (at, count) in ["item_count", "edge_count", "row_count"].into_iter().enumerate() {
+    for (at, count) in ["item_count", "edge_count", "row_count"]
+        .into_iter()
+        .enumerate()
+    {
         match held.get(count).and_then(Value::as_u64) {
             Some(counted) => manifest.counts[at] = counted,
             None => wrong(count.into(), "Must be a non-negative integer."),

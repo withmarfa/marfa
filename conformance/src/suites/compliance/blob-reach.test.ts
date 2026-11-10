@@ -2023,6 +2023,7 @@ describe("which write that names a digest lends it", () => {
         "edges",
         `${edgeLine({ cover: edgeLent, alt: edgeDead }, [edgeLent])}\n${edgeLine({ cover: edgeUnlisted }, "not a list", [ids.target, ids.source])}\n`,
       ),
+      lineFile("rows", ""),
       ...Object.values(blobs).map((data) => ({
         name: `blobs/${sha256(data)}`,
         body: data,
