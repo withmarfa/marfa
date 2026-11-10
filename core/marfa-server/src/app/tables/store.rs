@@ -406,7 +406,6 @@ pub(super) fn carried_tables(
     Ok(())
 }
 
-/// Up to `limit` rows of table `table` after row `after`, in order of id.
 pub(super) fn rows_after(
     tx: &Transaction<'_>,
     table: i64,
