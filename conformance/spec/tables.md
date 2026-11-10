@@ -462,11 +462,19 @@ If a `put` leaves out a column the table declares `required` that `tables/rows-w
 
 ### `tables/rows-item-missing`
 
-If a value in a column of type `item` is not the id of an item the writing key may read, outside the bin, then the server MUST answer `400 validation_error` naming `operations.<index>.values.<column>`.
+If a value in a column of type `item` is not the id of an item the writing key may read, outside the bin, and is not the id `tables/rows-item-binned-kept` accepts, then the server MUST answer `400 validation_error` naming `operations.<index>.values.<column>`.
 
 **Reason:** a row points at an item that exists when it is written, and a write never learns of an item its key cannot read.
 
-**Tests:** `compliance/table-rows.test.ts › refuses an item column naming an item that does not exist or that the key may not read`.
+**Tests:** `compliance/table-rows.test.ts › refuses an item column naming an item that does not exist or that the key may not read`, `› takes back the id of an item now in the bin that a column already holds, and refuses it as a new reference`.
+
+### `tables/rows-item-binned-kept`
+
+When a `put` or `patch` sends, for a column of type `item`, the id the row already holds in that column, and the item that id names is in the bin and of a type the writing key may read, the server MUST accept the id.
+
+**Reason:** a key that reads a row, edits it and puts it back sends the id it read; the item's move to the bin does not make that round trip fail, and a write that names a binned item the column does not hold stays refused under `tables/rows-item-missing`.
+
+**Tests:** `compliance/table-rows.test.ts › takes back the id of an item now in the bin that a column already holds, and refuses it as a new reference`.
 
 ### `tables/rows-item-constraint`
 
@@ -556,11 +564,11 @@ While a row holds a value that was written to a column of type `item`, the serve
 
 ### `tables/rows-item-gone`
 
-While a row holds in a column of type `item` the id of an item no longer held, the server MUST withhold the id under `tables/rows-item-withheld` and `tables/rows-event-withheld` only from a key that may not read every type, a key that may read every type being one whose `type_permissions` grant read on `*` and narrow no type below it.
+While a row holds a value that was written to a column of type `item` as the id of an item no longer held, the server MUST withhold it under `tables/rows-item-withheld` and `tables/rows-event-withheld` only from a key that may not read every type, a key that may read every type being one whose `type_permissions` grant read on `*` and narrow no type below it.
 
 **Reason:** a purge leaves the id in the rows that name the item, and only a key that may read every type could have read whatever item it named.
 
-**Tests:** `compliance/table-rows-lifecycle.test.ts › shows the id of a purged item to a key that reads every type, and withholds it from any other`, `compliance/table-rows-events.test.ts › sends a purged item's id to a stream that reads every type, and withholds it from any other`.
+**Tests:** `compliance/table-rows-lifecycle.test.ts › shows the id of a purged item to a key that reads every type, and withholds it from any other`, `› shows a purged item's id to a key that reads every type after its column is removed or retyped, and withholds it from any other`, `compliance/table-rows-events.test.ts › sends a purged item's id to a stream that reads every type, and withholds it from any other`.
 
 ### `tables/rows-withheld-write`
 
