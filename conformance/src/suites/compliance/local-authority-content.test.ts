@@ -14,7 +14,7 @@ let from: string;
 let to: string;
 /** Holds a metadata tag and an extension for the doors that read or change them. */
 let annotated: string;
-/** The type whose link a purged row leaves a tombstone under. */
+/** The type whose link a purged item leaves a tombstone under. */
 const LINKED = "user.local-authority-linked";
 const EXTENSION = "socket.fixture";
 

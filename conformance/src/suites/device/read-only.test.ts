@@ -24,7 +24,7 @@ import { BUILT_FOR, type Responder } from "../../device/scripted-server.js";
 
 /**
  * An item's `read_only` as a working copy holds it. The server's answer for a
- * row is scripted here; what it works out from a connector registration is the
+ * item is scripted here; what it works out from a connector registration is the
  * server's own chapter (`items.md`).
  */
 
@@ -78,7 +78,7 @@ async function followedBy(
   const started = await startHarness(label);
   scriptHydration(started.server, {
     head: "1",
-    rows: { "core.note": items.map((item) => ({ item })) },
+    items: { "core.note": items.map((item) => ({ item })) },
   });
   started.server.copyAnswer("GET", "/events", ...events);
   const hydrated = await started.device.hydrate(["core.note"], "library");
@@ -89,7 +89,7 @@ async function followedBy(
   return started;
 }
 
-/** Answers the next read of `read_only` with these rows. */
+/** Answers the next read of `read_only` with these items. */
 function readAnswers(
   server: Harness["server"],
   ...rows: Array<Record<string, unknown>>
@@ -152,13 +152,13 @@ describe("an item's read_only in a working copy", () => {
     expect(await readOnlyOf(device, "open")).toBe(true);
   });
 
-  it("answers false for a row whose answer leaves read_only out", async () => {
+  it("answers false for an item whose answer leaves read_only out", async () => {
     harness = await hydratedHarness("read-only-left-out", {
-      rows: {
+      items: {
         "core.note": [
           { item: { id: "older", read_only: null } },
-          // The witness: a row the same hydration took true, so a false on the
-          // other row is the field's absence and not a copy that holds nothing.
+          // The witness: an item the same hydration took true, so a false on the
+          // other item is the field's absence and not a copy that holds nothing.
           { item: { id: "newer", read_only: true } },
         ],
       },
@@ -167,9 +167,9 @@ describe("an item's read_only in a working copy", () => {
     expect(await readOnlyOf(harness.device, "newer")).toBe(true);
   });
 
-  it("answers false for a row saved here until the server answers", async () => {
+  it("answers false for an item saved here until the server answers", async () => {
     harness = await hydratedHarness("read-only-saved-here", {
-      rows: { "core.note": [{ item: { id: "n1", read_only: true } }] },
+      items: { "core.note": [{ item: { id: "n1", read_only: true } }] },
     });
     const { server, device } = harness;
     const made = await device.create({
@@ -192,7 +192,7 @@ describe("an item's read_only in a working copy", () => {
 
   it("opens a copy made before read_only with its unsent work, and takes the answer at the next sync", async () => {
     harness = await hydratedHarness("read-only-older-copy", {
-      rows: {
+      items: {
         "core.note": [
           { item: { id: "edited", ...NOTE, read_only: true } },
           { item: { id: "plain", ...NOTE, read_only: true } },
@@ -213,7 +213,7 @@ describe("an item's read_only in a working copy", () => {
     const id = String(made.value.item_id ?? made.value.target_id);
     fromBeforeTheField(device);
 
-    // Before any sync, nothing has answered, and the rows read false.
+    // Before any sync, nothing has answered, and the items read false.
     expect(await readOnlyOf(device, "plain")).toBe(false);
     const before = await device.queue();
     expect(before.ok && before.value.length).toBe(2);
@@ -233,14 +233,14 @@ describe("an item's read_only in a working copy", () => {
     expect(edited.ok && edited.value.properties.title).toBe("unsent");
   });
 
-  it("holds every row of a source and type to one row's answer, with no event", async () => {
+  it("holds every item of a source and type to one item's answer, with no event", async () => {
     harness = await hydratedHarness("read-only-refresh", {
-      rows: {
+      items: {
         "core.note": [
           { item: { id: "n1", ...NOTE } },
           { item: { id: "n2", ...NOTE } },
           { item: { id: "n3", ...NOTE } },
-          // The witness: a row of another source, which the answer leaves as it was.
+          // The witness: an item of another source, which the answer leaves as it was.
           { item: { id: "mine", type: "core.note" } },
         ],
       },
@@ -259,7 +259,7 @@ describe("an item's read_only in a working copy", () => {
     expect(asked).toHaveLength(1);
     expect(
       asked[0],
-      "a read asked for more than one row of a pair",
+      "a read asked for more than one item of a pair",
     ).toHaveLength(2);
     for (const id of ["n1", "n2", "n3"]) {
       const row = await device.get(id);
@@ -292,7 +292,7 @@ describe("an item's read_only in a working copy", () => {
     expect(looks(server)).toHaveLength(1);
   });
 
-  it("holds rows to the answer once a held stream reaches the head", async () => {
+  it("holds items to the answer once a held stream reaches the head", async () => {
     harness = await followedBy(
       "read-only-follow",
       [
@@ -349,7 +349,7 @@ describe("an item's read_only in a working copy", () => {
     expect(await readOnlyOf(device, "n1")).toBe(true);
   });
 
-  it("reports the rows it held apart from the events it applied", async () => {
+  it("reports the items it held apart from the events it applied", async () => {
     harness = await followedBy(
       "read-only-report",
       [
@@ -371,9 +371,9 @@ describe("an item's read_only in a working copy", () => {
     expect(caught.value.read_only_held).toBe(3);
   });
 
-  it("reads another row of a source and type whose row the server leaves out", async () => {
+  it("reads another item of a source and type whose item the server leaves out", async () => {
     harness = await hydratedHarness("read-only-omitted", {
-      rows: {
+      items: {
         "core.note": [
           { item: { id: "n1", ...NOTE } },
           { item: { id: "n2", ...NOTE } },
@@ -389,14 +389,14 @@ describe("an item's read_only in a working copy", () => {
 
     const asked = looks(server).flat();
     expect(asked).toHaveLength(2);
-    expect(new Set(asked).size, "the same row was read twice").toBe(2);
+    expect(new Set(asked).size, "the same item was read twice").toBe(2);
     expect(await readOnlyOf(device, "n1")).toBe(true);
     expect(await readOnlyOf(device, "n2")).toBe(true);
   });
 
-  it("stops at three rows of a source and type the server keeps leaving out", async () => {
+  it("stops at three items of a source and type the server keeps leaving out", async () => {
     harness = await hydratedHarness("read-only-omitted-stops", {
-      rows: {
+      items: {
         "core.note": ["n1", "n2", "n3", "n4", "n5"].map((id) => ({
           item: { id, ...NOTE, read_only: true },
         })),
@@ -418,9 +418,9 @@ describe("an item's read_only in a working copy", () => {
     expect(looks(server)).toHaveLength(3);
   });
 
-  it("reads no row a write is waiting on", async () => {
+  it("reads no item a write is waiting on", async () => {
     harness = await hydratedHarness("read-only-waiting-row", {
-      rows: {
+      items: {
         "core.note": [
           { item: { id: "n1", ...NOTE } },
           { item: { id: "n2", ...NOTE } },
@@ -443,9 +443,9 @@ describe("an item's read_only in a working copy", () => {
     expect(await readOnlyOf(device, "n2")).toBe(true);
   });
 
-  it("keeps an edit waiting on a row whose read_only moves", async () => {
+  it("keeps an edit waiting on an item whose read_only moves", async () => {
     harness = await hydratedHarness("read-only-under-edit", {
-      rows: {
+      items: {
         "core.note": [
           { item: { id: "n1", ...NOTE } },
           { item: { id: "n2", ...NOTE } },
@@ -505,9 +505,11 @@ describe("an item's read_only in a working copy", () => {
     expect(await readOnlyOf(device, "n1")).toBe(false);
   });
 
-  it("sends an edit of a read-only row, and holds the answer's read_only", async () => {
+  it("sends an edit of a read-only item, and holds the answer's read_only", async () => {
     harness = await hydratedHarness("read-only-edit", {
-      rows: { "core.note": [{ item: { id: "n1", ...NOTE, read_only: true } }] },
+      items: {
+        "core.note": [{ item: { id: "n1", ...NOTE, read_only: true } }],
+      },
     });
     const { server, device } = harness;
     const edit = await device.update("n1", {
@@ -537,7 +539,7 @@ describe("an item's read_only in a working copy", () => {
         (request) =>
           request.method === "PATCH" && request.pathname.includes("n1"),
       ),
-      "the edit of a read-only row never reached the server",
+      "the edit of a read-only item never reached the server",
     ).toBe(true);
     const row = await device.get("n1");
     expect(row.ok && row.value.properties.title).toBe("edited");
@@ -546,7 +548,7 @@ describe("an item's read_only in a working copy", () => {
 
   it("answers read_only to a binding as the server gave it", async () => {
     bound = await bindingHarness("read-only-binding", {
-      rows: {
+      items: {
         "core.note": [
           { item: { id: "held", read_only: true } },
           { item: { id: "open", read_only: false } },

@@ -157,7 +157,7 @@ describe("a device code", () => {
   it("is held by the server as something other than the code it issued, and still polls", async () => {
     const flow = await startDeviceFlow(server!, ["core.note:read"]);
     withInstanceDatabase(server!.sqlitePath, (db) => {
-      // The witness: the code's row is there, found by its client.
+      // The witness: the code's item is there, found by its client.
       const rows = db
         .prepare(
           "SELECT device_code FROM auth_oauth_device_code WHERE client_id = ?",

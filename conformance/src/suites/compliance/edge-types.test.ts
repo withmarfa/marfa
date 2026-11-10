@@ -122,14 +122,14 @@ describe("custom edge-type registration", () => {
 
   it("refuses to delete an edge type while edges of it exist, and orphans them on force", async () => {
     // The two registries answer one question one way. `DELETE
-    // /types/{id}` refuses `409 type_in_use` while rows of the type
+    // /types/{id}` refuses `409 type_in_use` while items of the type
     // exist and takes `?force=true`; this door does the same for edges,
     // so a caller does not have to learn which registry it is talking to
     // before it can predict the answer.
     //
     // **Force orphans rather than cascades.** The edges stay and keep
     // naming a type the instance no longer holds, which is untidy and
-    // recoverable; deleting rows nobody asked to delete is neither.
+    // recoverable; deleting items nobody asked to delete is neither.
     //
     // Its own code rather than `type_in_use`, matching the
     // `edge_type_not_found` that sits beside `type_not_found`:
@@ -172,7 +172,7 @@ describe("custom edge-type registration", () => {
     expect(stillListed.data.data.map((t) => t.id)).toContain(etId);
 
     // `force` is the way through, and it orphans rather than cascades:
-    // the edges are the caller's to deal with, and deleting rows nobody
+    // the edges are the caller's to deal with, and deleting items nobody
     // asked to delete is the worse of the two surprises.
     const forced = await client.deleteEdgeType(etId, true);
     expect(forced.ok, JSON.stringify(forced.error)).toBe(true);
@@ -587,7 +587,7 @@ describe("custom edge-type registration", () => {
     trackEdge(ctx, edge.data.edge.id);
     expect(edge.data.edge.properties).toEqual({ path: "Notes/placed.md" });
 
-    // The same key writes nothing of the folder row itself.
+    // The same key writes nothing of the folder item itself.
     const refusals = [
       await placer.createItem({
         type: "system.folder",

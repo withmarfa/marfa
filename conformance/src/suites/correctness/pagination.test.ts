@@ -49,7 +49,7 @@ describe("pagination correctness", () => {
   });
 
   it("cursor continuation delivers every item exactly once", async () => {
-    // An array rather than a set, so a row delivered twice counts twice.
+    // An array rather than a set, so an item delivered twice counts twice.
     const delivered: string[] = [];
     let cursor: string | undefined = undefined;
     const limit = 5;
@@ -202,8 +202,8 @@ describe("the order of the listing", () => {
   beforeAll(async () => {
     ordered = await createSecondClient(ctx, "order");
     source = `${ctx.source}-order`;
-    // No write door gives two rows one `created_at`, but an archive may. The
-    // rows are written in ascending ID order, so a tie that fell to the order
+    // No write door gives two items one `created_at`, but an archive may. The
+    // items are written in ascending ID order, so a tie that fell to the order
     // of the writes would not come out descending.
     const tied = [generateId(), generateId(), generateId()].sort();
     const [older, newer] = [generateId(), generateId()];
@@ -299,7 +299,7 @@ describe("the order of a catch-up", () => {
   it("orders a catch-up by updated_at, then by id, ascending", async () => {
     const catchUp = await createSecondClient(ctx, "catchup");
     const source = `${ctx.source}-catchup`;
-    // Written newest first, with the tied rows in descending ID order, so an
+    // Written newest first, with the tied items in descending ID order, so an
     // order that fell to the order of the writes would not come out ascending.
     const tied = [generateId(), generateId(), generateId()].sort();
     const [late, early, before] = [generateId(), generateId(), generateId()];
@@ -357,7 +357,7 @@ describe("the page limit", () => {
   let wideSource: string;
 
   beforeAll(async () => {
-    // A source of its own, so the rows the other cases count are left alone.
+    // A source of its own, so the items the other cases count are left alone.
     wide = await createSecondClient(ctx, "wide");
     wideSource = `${ctx.source}-wide`;
     word = `limitbounds${ctx.runId}`;
@@ -376,7 +376,7 @@ describe("the page limit", () => {
   it("takes a limit of 500, reads 501 as 500 and refuses 0, on the listing", async () => {
     const path = (limit: number) =>
       `/items?source=${encodeURIComponent(wideSource)}&limit=${String(limit)}`;
-    // More rows are held than the largest page, so a full page is the limit
+    // More items are held than the largest page, so a full page is the limit
     // honored and not the listing running out.
     const widest = await wide.rawRequest<{
       data: unknown[];

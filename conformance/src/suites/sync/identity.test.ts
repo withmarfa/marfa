@@ -11,16 +11,16 @@ import {
 import { collectUntil, withStream } from "../../utils/stream.js";
 
 /**
- * "A client names its own rows": an id is minted by the client and the row
+ * "A client names its own items": an id is minted by the client and the item
  * keeps it.
  *
- * A durable client renders a row before the write leaves the device, so the id
+ * A durable client renders an item before the write leaves the device, so the id
  * it drew has to be the id the server stores. The regression is not that the
  * create fails — it succeeds either way — but that the event coming back
- * afterwards names a different row. The client then has the item twice: once
+ * afterwards names a different item. The client then has the item twice: once
  * under the id it minted, once under the id the event brought, and no later
  * event reconciles them because from the server's side there is only ever one
- * row. It shows up as a duplicate in a list that no refresh clears.
+ * item. It shows up as a duplicate in a list that no refresh clears.
  *
  * The event is therefore the assertion, not the create response. A server
  * could echo the requested id in the response and store its own.
@@ -43,7 +43,7 @@ afterAll(async () => {
 });
 
 describe("client-minted ids", () => {
-  it("keeps the id a client mints for an item, on the row and on the event", async (context) => {
+  it("keeps the id a client mints for an item, on the item and on the event", async (context) => {
     const id = uuidv7();
     // Carries this run's id, because the stream carries every write on the
     // server. A fixed literal lets concurrent runs pick up each other's
@@ -93,7 +93,7 @@ describe("client-minted ids", () => {
     expect(announced).toBeDefined();
     expect(
       (announced!.data as { item: { id: string } }).item.id,
-      "the event announced a different id from the one the client minted, so the client now holds the row twice",
+      "the event announced a different id from the one the client minted, so the client now holds the item twice",
     ).toBe(id);
 
     const fetched = await client.getItem(id);

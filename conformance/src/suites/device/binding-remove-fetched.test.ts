@@ -82,7 +82,7 @@ async function holdingThree(label: string): Promise<BindingHarness> {
   };
   scriptHydration(server, {
     head: "10",
-    rows: {
+    items: {
       "core.note": [
         {
           item: {

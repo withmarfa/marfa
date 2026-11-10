@@ -100,7 +100,7 @@ const comparisons = {
 };
 
 describe("numeric property filters", () => {
-  it("witnesses every seeded row on both doors before filtering", async () => {
+  it("witnesses every seeded item on both doors before filtering", async () => {
     const all = [...rows.map((row) => row.id), ...otherIds].sort();
     expect(await ids("items")).toEqual(all);
     expect(await ids("search")).toEqual(all);

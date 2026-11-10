@@ -20,14 +20,14 @@ import {
  * "What a device may never do locally, and must refuse."
  *
  * Every rule here is a refusal, and each is a refusal because the silent
- * version is invisible. A dropped filter answers every row and reads as a
+ * version is invisible. A dropped filter answers every item and reads as a
  * filter that matched; a dropped tag reads as an item that never had one; a
  * locally resolved conflict reads as agreement. None of them raises anything
  * anywhere, which is why each is written as a refusal rather than as a best
  * effort.
  */
 
-/** A row the copy already holds, so an update has something to be based on. */
+/** An item the copy already holds, so an update has something to be based on. */
 const HELD = { id: "01a00000-0000-7000-8000-00000000000a", version: 3 };
 
 let harness: Harness | undefined;
@@ -41,7 +41,7 @@ async function hydrated(label: string): Promise<Harness> {
   const started = await startHarness(label);
   scriptHydration(started.server, {
     head: "10",
-    rows: { "core.note": [{ item: { id: "n1" } }] },
+    items: { "core.note": [{ item: { id: "n1" } }] },
   });
   expect((await started.device.hydrate(["core.note"], "library")).ok).toBe(
     true,
@@ -52,7 +52,7 @@ async function hydrated(label: string): Promise<Harness> {
 /**
  * Each expression the server's listing grammar refuses with
  * `validation_error`, beside the reason. An expression the device dropped
- * instead would answer every row, and one it refused some other way would
+ * instead would answer every item, and one it refused some other way would
  * tell a caller something different from what the server tells them.
  */
 const OUTSIDE_THE_GRAMMAR: Array<[string, string]> = [
@@ -116,7 +116,7 @@ describe("a device refuses a filter outside the listing grammar", () => {
     const { device } = harness;
 
     // The witnesses. A filter inside the grammar answers, and narrows: one
-    // selects the row and one does not, so the refusals below are the
+    // selects the item and one does not, so the refusals below are the
     // grammar's rather than a device that refuses every filter, and the
     // limits are refused one past where they stop, not at them.
     const matched = await device.list({ filter: 'properties.title eq "n1"' });
@@ -257,7 +257,7 @@ describe("a device refuses a condition its copy cannot answer as the server does
       ]) {
         expect(
           outcome.ok,
-          `${inbound} was answered from a copy that holds no edge drawn to its rows from outside the slice`,
+          `${inbound} was answered from a copy that holds no edge drawn to its items from outside the slice`,
         ).toBe(false);
         if (outcome.ok) continue;
         const envelope = JSON.parse(outcome.refusal.raw) as {
@@ -276,7 +276,7 @@ describe("a device refuses a condition its copy cannot answer as the server does
     const { device, server } = harness;
     scriptHydration(server, {
       head: "10",
-      rows: { "core.note": [{ item: { id: "n1" } }, { item: { id: "n2" } }] },
+      items: { "core.note": [{ item: { id: "n1" } }, { item: { id: "n2" } }] },
       edges: {
         "parent-of": [{ id: "e1", source_id: "n1", target_id: "n2" }],
       },
@@ -369,7 +369,7 @@ describe("a device refuses a write only the server may make", () => {
       expect((await device.get(id)).ok, id).toBe(false);
   });
 
-  it("refuses an item write to a system row on every door, before it saves or queues anything", async () => {
+  it("refuses an item write to a system item on every door, before it saves or queues anything", async () => {
     const FOLDER = "01a00000-0000-7000-8000-0000000000c1";
     harness = await startHarness("system-row");
     const { device, server } = harness;
@@ -382,7 +382,7 @@ describe("a device refuses a write only the server may make", () => {
           },
         }),
       ]),
-      rows: {
+      items: {
         "core.note": [{ item: { id: "n1" } }],
         "system.folder": [
           {
@@ -412,7 +412,7 @@ describe("a device refuses a write only the server may make", () => {
     ): Promise<void> => {
       expect(
         outcome.ok,
-        `${what} of a system row was queued, so the copy shows a change the server refuses to every key`,
+        `${what} of a system item was queued, so the copy shows a change the server refuses to every key`,
       ).toBe(false);
       if (outcome.ok) return;
       const envelope = JSON.parse(outcome.refusal.raw) as {
@@ -474,7 +474,7 @@ describe("a device refuses a write only the server may make", () => {
 
     const queue = await device.queue();
     expect(queue.ok && queue.value, "a refused write was queued").toEqual([]);
-    expect(await listed(), "a refused write saved a row").toEqual(before);
+    expect(await listed(), "a refused write saved an item").toEqual(before);
     expect(await device.get(FOLDER)).toEqual(folderBefore);
     const note = await device.get("n1");
     expect(note.ok && note.value.type).toBe("core.note");
@@ -550,7 +550,7 @@ describe("a device refuses a write only the server may make", () => {
     harness = await hydrated("type-unknown");
     const { device } = harness;
     // The witnesses: a type the catalog holds answers, one that holds no
-    // row answers an empty page, and so does a wildcard that names nothing,
+    // item answers an empty page, and so does a wildcard that names nothing,
     // so the refusal below is the missing type and not a device that
     // refuses every filter.
     const held = await device.list({ type: "core.note" });
@@ -585,16 +585,16 @@ describe("a device refuses a write only the server may make", () => {
     }
   });
 
-  it("queues no purge, and keeps the row, when the purge cannot be sent", async () => {
+  it("queues no purge, and keeps the item, when the purge cannot be sent", async () => {
     harness = await startHarness("purge");
     scriptHydration(harness.server, {
       head: "10",
-      rows: { "core.note": [{ item: { id: "n1", state: "trashed" } }] },
+      items: { "core.note": [{ item: { id: "n1", state: "trashed" } }] },
     });
     expect((await harness.device.hydrate(["core.note"], "library")).ok).toBe(
       true,
     );
-    // The witness: the row is held in the bin, and nothing is queued, before
+    // The witness: the item is held in the bin, and nothing is queued, before
     // the purge.
     const bin = await harness.device.list({ state: "trashed" });
     expect(bin.ok && bin.value.map((row) => row.id)).toEqual(["n1"]);
@@ -617,7 +617,7 @@ describe("a device refuses a write only the server may make", () => {
     const kept = await harness.device.list({ state: "trashed" });
     expect(
       kept.ok && kept.value.map((row) => row.id),
-      "the copy let the row go though the server never purged it",
+      "the copy let the item go though the server never purged it",
     ).toEqual(["n1"]);
     const after = await harness.device.queue();
     expect(
@@ -649,7 +649,7 @@ describe("a device refuses a write only the server may make", () => {
       const refused = await wrong.catchUp();
       expect(
         refused.ok,
-        "a store bound to one server took events from another, so one copy carries two datasets and no read can say which server a row came from",
+        "a store bound to one server took events from another, so one copy carries two datasets and no read can say which server an item came from",
       ).toBe(false);
       if (!refused.ok) {
         expect(
@@ -667,7 +667,7 @@ describe("a device refuses a write only the server may make", () => {
       ).toBeUndefined();
 
       // And nothing reached the store, which is the half the rule is about:
-      // a refusal reported after a row had landed would be a refusal in name.
+      // a refusal reported after an item had landed would be a refusal in name.
       const after = await harness!.device.status();
       expect(after.ok).toBe(true);
       if (after.ok) {
@@ -683,7 +683,9 @@ describe("a device refuses a write only the server may make", () => {
 
   it("refuses a write from a reading handle", async () => {
     harness = await hydratedHarness("reading-handle", {
-      rows: { "core.note": [{ item: { id: HELD.id, version: HELD.version } }] },
+      items: {
+        "core.note": [{ item: { id: HELD.id, version: HELD.version } }],
+      },
     });
     // A write the server accepts and never answers, so the drain sending it
     // stays running and holds the store. `catch-up` will not do: it ends
@@ -733,7 +735,9 @@ describe("a device refuses a write only the server may make", () => {
 describe("a store opened to read writes nothing from the server either", () => {
   it("refuses a hydration, a catch-up and a follow from a reading handle", async () => {
     harness = await hydratedHarness("reading-open-refusals", {
-      rows: { "core.note": [{ item: { id: HELD.id, version: HELD.version } }] },
+      items: {
+        "core.note": [{ item: { id: HELD.id, version: HELD.version } }],
+      },
     });
     // Named a server that is not one: a reading handle is refused before
     // any server is resolved, so resolving one cannot fail it, or refresh
@@ -787,7 +791,7 @@ async function expectRefusedAsReader(
   });
   expect(
     created.ok,
-    "a second opener wrote to a store another process holds the writer handle for, so two processes queue into one file and neither sees the other's rows",
+    "a second opener wrote to a store another process holds the writer handle for, so two processes queue into one file and neither sees the other's items",
   ).toBe(false);
   const updated = await second.update(HELD.id, {
     properties: { title: "from a reader" },
@@ -795,12 +799,12 @@ async function expectRefusedAsReader(
   });
   expect(
     updated.ok,
-    "a second opener changed a row in a store it does not hold the writer handle for",
+    "a second opener changed an item in a store it does not hold the writer handle for",
   ).toBe(false);
   const drained = await second.drain();
   expect(
     drained.ok,
-    "a second opener drained the queue, so it would write verdicts onto rows the writer is still sending",
+    "a second opener drained the queue, so it would write verdicts onto items the writer is still sending",
   ).toBe(false);
 
   // Reading still works, which is the whole point of it being a handle
@@ -831,7 +835,7 @@ async function expectRefusedAsReader(
 describe("a device refuses to decide what the server decides", () => {
   it("refuses to merge two values for one field", async () => {
     harness = await hydratedHarness("no-merge", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -885,7 +889,7 @@ describe("a device refuses to decide what the server decides", () => {
     ).toBe("my line");
     expect(
       Object.keys(sent.properties),
-      "the device sent a property the caller did not name, from the row it held",
+      "the device sent a property the caller did not name, from the item it held",
     ).toEqual(["body"]);
 
     const read = await harness.device.get(HELD.id);
@@ -899,11 +903,13 @@ describe("a device refuses to decide what the server decides", () => {
 
   it("refuses to advance a version of its own accord", async () => {
     harness = await hydratedHarness("no-version", {
-      rows: { "core.note": [{ item: { id: HELD.id, version: HELD.version } }] },
+      items: {
+        "core.note": [{ item: { id: HELD.id, version: HELD.version } }],
+      },
     });
 
     // A local create: version 0, which the server never mints. Not 1, which
-    // would be a version the device decided the row was at.
+    // would be a version the device decided the item was at.
     const created = await harness.device.create({
       type: "core.note",
       properties: { title: "local", body: "local" },
@@ -915,10 +921,10 @@ describe("a device refuses to decide what the server decides", () => {
     if (!fresh.ok) return;
     expect(
       fresh.value.version,
-      "a row the server has never seen carries a version the server mints, so nothing can tell it from a row the server has answered for",
+      "an item the server has never seen carries a version the server mints, so nothing can tell it from an item the server has answered for",
     ).toBe(0);
 
-    // An update to a held row: the version stays where the server put it
+    // An update to a held item: the version stays where the server put it
     // until the server answers. A device that advanced it would base its
     // next write on a version that exists nowhere.
     const edit = await harness.device.update(HELD.id, {
@@ -931,7 +937,7 @@ describe("a device refuses to decide what the server decides", () => {
     if (!pending.ok) return;
     expect(
       pending.value.version,
-      "the device advanced the version of a row nobody has answered for, so the next update is based on a version the server never minted",
+      "the device advanced the version of an item nobody has answered for, so the next update is based on a version the server never minted",
     ).toBe(HELD.version);
 
     // And the server's number is taken when it arrives, which is the
@@ -964,7 +970,7 @@ describe("a device refuses to decide what the server decides", () => {
 
   it("refuses to resolve a conflict it was refused", async () => {
     harness = await hydratedHarness("no-resolve", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -983,7 +989,7 @@ describe("a device refuses to decide what the server decides", () => {
     expect(edit.ok).toBe(true);
 
     scriptWrites(harness.server, {
-      update: [refusal(409, "version_conflict", "the row moved under this")],
+      update: [refusal(409, "version_conflict", "the item moved under this")],
     });
     const drained = await harness.device.drain();
     expect(drained.ok).toBe(true);
@@ -1019,11 +1025,13 @@ describe("a device refuses to decide what the server decides", () => {
 describe("a device refuses to send less than it was given", () => {
   it("refuses a local create whose tags and edges it cannot queue", async () => {
     harness = await hydratedHarness("create-tags-edges", {
-      rows: { "core.note": [{ item: { id: HELD.id, version: HELD.version } }] },
+      items: {
+        "core.note": [{ item: { id: HELD.id, version: HELD.version } }],
+      },
     });
     // Tags it can queue: each becomes its own write, waiting on the create.
     // Not dropped, and not folded into the create's body — where one verdict
-    // would answer for the row and the tags together.
+    // would answer for the item and the tags together.
     const created = await harness.device.create({
       type: "core.note",
       properties: { title: "asked for tags", body: "asked for tags" },
@@ -1074,13 +1082,15 @@ describe("a device refuses to send less than it was given", () => {
     if (!after.ok) return;
     expect(
       after.value.length,
-      "the refused create queued something anyway, so a drain would send a row the caller was told was refused",
+      "the refused create queued something anyway, so a drain would send an item the caller was told was refused",
     ).toBe(queue.value.length);
   });
 
   it("refuses an update carrying a field it cannot send", async () => {
     harness = await hydratedHarness("no-dropped-field", {
-      rows: { "core.note": [{ item: { id: HELD.id, version: HELD.version } }] },
+      items: {
+        "core.note": [{ item: { id: HELD.id, version: HELD.version } }],
+      },
     });
     // A property this build has never heard of, beside one it has. The
     // rule is that neither is dropped: a device that quietly sent only the
@@ -1122,18 +1132,20 @@ describe("a device refuses to send less than it was given", () => {
   });
 });
 
-describe("a device holds an edge only from a row it holds", () => {
-  it("refuses a local edge from a row the copy does not hold", async () => {
+describe("a device holds an edge only from an item it holds", () => {
+  it("refuses a local edge from an item the copy does not hold", async () => {
     harness = await startHarness("edge-source-unheld");
     const { server, device } = harness;
     scriptHydration(server, {
       head: "1",
-      rows: { "core.note": [{ item: { id: HELD.id, version: HELD.version } }] },
+      items: {
+        "core.note": [{ item: { id: HELD.id, version: HELD.version } }],
+      },
       edges: { "parent-of": [] },
     });
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
 
-    // The witness: an edge from a row the copy holds is queued and held, so
+    // The witness: an edge from an item the copy holds is queued and held, so
     // the refusal below is about the source and not about edges at all.
     const outward = await device.createEdge({
       source: HELD.id,
@@ -1152,7 +1164,7 @@ describe("a device holds an edge only from a row it holds", () => {
     });
     expect(
       inward.ok,
-      "the copy took an edge from a row it does not hold, which no catch-up would ever keep current",
+      "the copy took an edge from an item it does not hold, which no catch-up would ever keep current",
     ).toBe(false);
     if (!inward.ok) {
       expect(

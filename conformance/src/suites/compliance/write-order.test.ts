@@ -47,7 +47,7 @@ async function register(id: string, parent?: string) {
   expect(made.status, JSON.stringify(made.error)).toBe(201);
 }
 
-it("judges an item update after a trash against the trashed row", async () => {
+it("judges an item update after a trash against the trashed item", async () => {
   const item = await note("before trash");
   const update = () =>
     client.updateItem(item.id, {

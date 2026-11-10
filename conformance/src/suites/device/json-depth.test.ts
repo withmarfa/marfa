@@ -25,10 +25,10 @@ function body(depth: number, shape: "arrays" | "objects" | "mixed") {
   return { body: "depth witness", nested };
 }
 
-it("accepts 64 containers and refuses 65 without changing the queue or held rows", async () => {
+it("accepts 64 containers and refuses 65 without changing the queue or held items", async () => {
   for (const shape of ["arrays", "objects", "mixed"] as const) {
     harness = await hydratedHarness(`depth-${shape}`, {
-      rows: { "core.note": [{ item: { id: "held", version: 3 } }] },
+      items: { "core.note": [{ item: { id: "held", version: 3 } }] },
     });
     const { device, server } = harness;
     // Each edge create names a target of its own, so none repeats a triple.

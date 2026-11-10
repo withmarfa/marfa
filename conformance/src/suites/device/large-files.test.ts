@@ -83,7 +83,7 @@ async function hydratedWith(
   const made = await startHarness(label);
   scriptHydration(made.server, {
     head: "10",
-    rows: {
+    items: {
       "core.note": notes.map(({ hash, stated }, index) => ({
         item: {
           id: `note-row-${String(index)}`,

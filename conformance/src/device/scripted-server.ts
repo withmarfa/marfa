@@ -410,8 +410,8 @@ export class ScriptedServer {
    * A bulk read by id that no fixture scripted is answered from the reads by
    * id the fixture did script, one for each id in the order named, because
    * the server resolves each id as a read by id does: a fixture that scripts
-   * a row's read scripts what a bulk read of it answers. The one difference
-   * is a `system.*` row, which the bulk read leaves out unless its `include`
+   * an item's read scripts what a bulk read of it answers. The one difference
+   * is a `system.*` item, which the bulk read leaves out unless its `include`
    * names `system` (`items/bulk-get-system`).
    */
   private respond(recorded: RecordedRequest): Answer | undefined {

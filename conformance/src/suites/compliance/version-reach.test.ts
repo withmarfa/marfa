@@ -21,7 +21,7 @@ let taskReader: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
 
-/** A value only the snapshots written while the row was a task hold. */
+/** A value only the snapshots written while the item was a task hold. */
 let taskMark: string;
 
 beforeAll(async () => {
@@ -30,7 +30,7 @@ beforeAll(async () => {
     "version-reach",
   ));
   taskMark = `written-while-a-task-${ctx.runId}`;
-  // Claims this file's source, so its natural keys resolve the same rows.
+  // Claims this file's source, so its natural keys resolve the same items.
   const minted = await client.createKey({
     label: `${ctx.source}-notes`,
     source: `${ctx.source}-notes`,
@@ -56,9 +56,9 @@ afterAll(async () => {
 });
 
 /**
- * A row created as a task holding `taskMark`, edited once as a task, moved
+ * An item created as a task holding `taskMark`, edited once as a task, moved
  * into `core.note` and edited once as a note: versions 1 and 2 are task
- * snapshots and version 3 a note snapshot, and the row is at 4.
+ * snapshots and version 3 a note snapshot, and the item is at 4.
  */
 async function movedRow(): Promise<{ id: string; sourceId: string }> {
   const sourceId = `moved-${Math.random().toString(36).slice(2)}`;
@@ -457,8 +457,8 @@ describe("the page of a version history", () => {
   });
 });
 
-describe("the history of a row a key may not read now", () => {
-  it("answers 404 item_not_found for a row moved into a type the key cannot read, though it read the snapshots before", async () => {
+describe("the history of an item a key may not read now", () => {
+  it("answers 404 item_not_found for an item moved into a type the key cannot read, though it read the snapshots before", async () => {
     const created = await client.createItem({
       type: "core.task",
       source: ctx.source,
@@ -473,7 +473,7 @@ describe("the history of a row a key may not read now", () => {
     });
     expect(edited.status).toBe(200);
 
-    // The witness: the snapshot is the key's to read while the row is a task.
+    // The witness: the snapshot is the key's to read while the item is a task.
     const before = await taskReader.getVersions(id);
     expect(before.status).toBe(200);
     expect(before.data.data.map((v) => [v.version, v.type])).toEqual([
@@ -510,7 +510,7 @@ describe("a write held to the reach of the snapshot it names", () => {
     ...MERGING,
   });
 
-  it("leaves the row as it was when a conditional create names a snapshot the key may not read, and merges for one that may", async () => {
+  it("leaves the item as it was when a conditional create names a snapshot the key may not read, and merges for one that may", async () => {
     const { sourceId } = await movedRow();
     const both = await client.createItem(create(sourceId));
     expect(both.status, JSON.stringify(both.error)).toBe(200);
@@ -527,7 +527,7 @@ describe("a write held to the reach of the snapshot it names", () => {
     expect(after.data.item.properties.title).toBe("a note, edited");
   });
 
-  it("rolls a bulk page back when an entry names a snapshot the key may not read, as an atomic page does, and leaves the row as it was", async () => {
+  it("rolls a bulk page back when an entry names a snapshot the key may not read, as an atomic page does, and leaves the item as it was", async () => {
     const fresh = uuidv7();
     const entries = (sourceId: string) => [
       {
@@ -573,7 +573,7 @@ describe("a write held to the reach of the snapshot it names", () => {
     expect(after.data.item.properties).not.toHaveProperty("notes");
   });
 
-  it("leaves the row as it was when a non-atomic bulk entry names a snapshot the key may not read", async () => {
+  it("leaves the item as it was when a non-atomic bulk entry names a snapshot the key may not read", async () => {
     const { id, sourceId } = await movedRow();
     const res = await noteReader.bulkItems({
       atomic: false,

@@ -12,7 +12,7 @@ import { collectUntil, withStream } from "../../utils/stream.js";
 import type { SseEvent } from "../../utils/sse.js";
 
 /**
- * "A client names its own rows", on the half a queue depends on: a create the
+ * "A client names its own items", on the half a queue depends on: a create the
  * server has already performed, arriving again, is acknowledged rather than
  * repeated.
  *
@@ -20,12 +20,12 @@ import type { SseEvent } from "../../utils/sse.js";
  * create and loses the response cannot know whether the write landed, so it
  * resends — and because the id came from the client rather than the server,
  * the server can recognize its own work. Nothing is written, nothing is
- * published, and the stored row comes back with `acknowledged: true`.
+ * published, and the stored item comes back with `acknowledged: true`.
  *
  * **The silent event is the half that matters.** A server that answered the
  * repeat correctly and published a second time would satisfy every assertion
  * about the response body, while every other device on the instance applies an
- * event for a write that did not happen. On a row it already holds that is
+ * event for a write that did not happen. On an item it already holds that is
  * harmless; on one it has since edited locally it is a rollback nobody asked
  * for. So each case here waits for a sentinel written *after* the repeat, and
  * of the same kind as the frame it is ruling out: a sentinel that has arrived
@@ -36,7 +36,7 @@ import type { SseEvent } from "../../utils/sse.js";
  *
  * The `Idempotency-Key` header in `idempotency.test.ts` is a different
  * mechanism for the same problem, and the two are easy to confuse: one
- * collapses a retry by a header the caller invents, this one by the row id the
+ * collapses a retry by a header the caller invents, this one by the item id the
  * caller already minted.
  */
 
@@ -71,7 +71,7 @@ function framesForEdge(events: SseEvent[], id: string): string[] {
 }
 
 describe("a repeated create is acknowledged", () => {
-  it("answers an item repeat with the stored row and announces nothing", async (context) => {
+  it("answers an item repeat with the stored item and announces nothing", async (context) => {
     const id = uuidv7();
     const sentinelBody = `acknowledged-item-sentinel-${ctx.runId}`;
 
@@ -139,11 +139,11 @@ describe("a repeated create is acknowledged", () => {
 
     expect(
       outcome.repeat.data.item.id,
-      "a resent create under the same minted id produced a different row",
+      "a resent create under the same minted id produced a different item",
     ).toBe(id);
     expect(
       outcome.repeat.data.item.properties.body,
-      "the repeat performed the write again instead of returning the row it already held",
+      "the repeat performed the write again instead of returning the item it already held",
     ).toBe("acknowledged-item-first");
 
     // The control for the assertion below: the first create did reach the
@@ -180,7 +180,7 @@ describe("a repeated create is acknowledged", () => {
     trackItem(ctx, id);
 
     // A draining queue hits exactly this when a corpus has been re-typed
-    // under it. Answering 200 would hand back a row of a type the caller did
+    // under it. Answering 200 would hand back an item of a type the caller did
     // not ask for, and the client would then hold it under the wrong schema.
     const mismatched = await client.createItem({
       id,
@@ -190,7 +190,7 @@ describe("a repeated create is acknowledged", () => {
     });
     expect(
       mismatched.status,
-      "a repeat naming a different type was not refused, so a write can silently re-type the row it lands on",
+      "a repeat naming a different type was not refused, so a write can silently re-type the item it lands on",
     ).toBe(409);
     // One code for a reused id, wherever it happens — this door, the edge
     // door, and a bulk entry the id fallback resolved — and `details`
@@ -203,7 +203,7 @@ describe("a repeated create is acknowledged", () => {
     expect(stored.ok).toBe(true);
     expect(
       stored.data.item.type,
-      "the refused repeat re-typed the row anyway",
+      "the refused repeat re-typed the item anyway",
     ).toBe("core.note");
   });
 
@@ -242,7 +242,7 @@ describe("a repeated create is acknowledged", () => {
     expect((await client.getVersions(id)).data.data).toHaveLength(0);
 
     // The witness: the same version 0 on a natural key that resolves a live
-    // row is looked at and refused, so the acknowledgments above are not a
+    // item is looked at and refused, so the acknowledgments above are not a
     // door that ignores the field everywhere.
     const sourceId = `acknowledged-live-${ctx.runId}`;
     const live = await client.createItem({
@@ -264,7 +264,7 @@ describe("a repeated create is acknowledged", () => {
     expect(refused.error?.error.code).toBe("ancestor_unavailable");
   });
 
-  it("acknowledges a create naming the natural key of a row in the bin whatever version it names, and writes nothing", async () => {
+  it("acknowledges a create naming the natural key of an item in the bin whatever version it names, and writes nothing", async () => {
     const sourceId = `acknowledged-trashed-${ctx.runId}`;
     const first = await client.createItem({
       type: "core.note",
@@ -295,7 +295,7 @@ describe("a repeated create is acknowledged", () => {
       expect(repeat.data.item.version, String(version)).toBe(1);
     }
 
-    // Restored, the row is what the first create wrote: the bin kept it, and
+    // Restored, the item is what the first create wrote: the bin kept it, and
     // none of the three creates reached it.
     const restored = await client.restoreItem(id);
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
@@ -305,7 +305,7 @@ describe("a repeated create is acknowledged", () => {
     );
     expect((await client.getVersions(id)).data.data).toHaveLength(0);
 
-    // The witness: the same version 0 on the key once the row is live again
+    // The witness: the same version 0 on the key once the item is live again
     // is looked at and refused.
     const live = await client.createItem({
       type: "core.note",
@@ -318,7 +318,7 @@ describe("a repeated create is acknowledged", () => {
     expect(live.error?.error.code).toBe("ancestor_unavailable");
   });
 
-  it("answers an edge repeat with the stored row and announces nothing", async (context) => {
+  it("answers an edge repeat with the stored item and announces nothing", async (context) => {
     const [source, target, spare] = await Promise.all([
       client.createItem({
         type: "core.note",
@@ -407,7 +407,7 @@ describe("a repeated create is acknowledged", () => {
     ).toEqual(["edge.created"]);
   });
 
-  it("answers an edge repeat naming other properties with the stored row, unchanged and unannounced", async (context) => {
+  it("answers an edge repeat naming other properties with the stored item, unchanged and unannounced", async (context) => {
     const made = await Promise.all(
       ["source", "target", "sentinel-target"].map((label) =>
         client.createItem({
@@ -470,7 +470,7 @@ describe("a repeated create is acknowledged", () => {
     expect(outcome.repeat.data.acknowledged).toBe(true);
     expect(
       outcome.repeat.data.edge,
-      "the repeat did not return the row the first create stored",
+      "the repeat did not return the item the first create stored",
     ).toEqual(outcome.first.data.edge);
 
     const stored = await client.getEdge(id);

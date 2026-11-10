@@ -49,7 +49,7 @@ it.each([
     });
     scriptHydration(server, {
       head: "10",
-      rows: {
+      items: {
         "core.note": [
           {
             item: {

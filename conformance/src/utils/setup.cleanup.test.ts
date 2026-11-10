@@ -174,7 +174,7 @@ describe("cleanup", () => {
     expect(calls).toContain("view-delete:v1");
   });
 
-  it("revokes a tracked folder and leaves it revoked, since no item door purges a system row", async () => {
+  it("revokes a tracked folder and leaves it revoked, since no item door purges a system item", async () => {
     const { cleanup } = await import("./setup.js");
     await cleanup(contextWithFixtures() as Parameters<typeof cleanup>[0]);
     expect(calls).toContain("folder-revoke:f1");
@@ -208,7 +208,7 @@ describe("cleanup", () => {
 
   it("reports a refused soft delete rather than the 404 behind it", async () => {
     // The realistic pairing, and the one that hides a leak: the delete is
-    // refused, the row stays live, and the purge that follows answers 404 —
+    // refused, the item stays live, and the purge that follows answers 404 —
     // the status this phase treats as already-gone. Reporting the last
     // response instead of the first refusal would call this a clean teardown.
     itemDeleteResult = refusedResult;
@@ -225,7 +225,7 @@ describe("cleanup", () => {
     // A 404 on the delete is already-gone, which this phase counts as
     // success, so it must not shadow the purge's answer: returning the 404 and
     // discarding the purge unread is the same swallow one step along, and it
-    // leaves a live row while the run stays green.
+    // leaves a live item while the run stays green.
     itemDeleteResult = goneResult;
     itemPurgeResult = refusedResult;
     const { cleanup } = await import("./setup.js");
@@ -272,9 +272,9 @@ describe("cleanup", () => {
     const { cleanup } = await import("./setup.js");
     const ctx = contextWithFixtures() as { trackedWebhooks: unknown[] };
     // A different credential from the phase's default. `DELETE /webhooks/{id}`
-    // answers 404 to a credential that cannot see the row, which this phase
-    // treats as already gone, so choosing per phase rather than per row would
-    // leave the row and report a clean teardown.
+    // answers 404 to a credential that cannot see the item, which this phase
+    // treats as already gone, so choosing per phase rather than per item would
+    // leave the item and report a clean teardown.
     ctx.trackedWebhooks = [{ id: "w1", createdBy: provisioningStub }];
 
     await cleanup(ctx as Parameters<typeof cleanup>[0]);
@@ -288,7 +288,7 @@ describe("cleanup", () => {
     const ctx = contextWithFixtures() as { trackedTypes: unknown[] };
     // **The owner is the discriminator, and the default is not.** The phase's
     // default credential is the scoped one, so a type with no recorded owner
-    // cannot show that `deleteAllByOwner` reads the owner at all. This row
+    // cannot show that `deleteAllByOwner` reads the owner at all. This item
     // records the other client, which is the only shape where the two answers
     // differ.
     ctx.trackedTypes = [{ id: "t1", createdBy: provisioningStub }];
@@ -297,7 +297,7 @@ describe("cleanup", () => {
 
     // A DELETE from a credential that cannot see the type answers 404, the
     // status this phase treats as already gone, so reaching for the wrong one
-    // leaves the row and reports a clean teardown.
+    // leaves the item and reports a clean teardown.
     expect(calls).toContain("type:t1");
     expect(calls).not.toContain("scoped-type:t1");
   });
@@ -330,7 +330,7 @@ describe("cleanup, type phase ordering", () => {
 
     await cleanup(ctx as Parameters<typeof cleanup>[0]);
 
-    // Precondition: the phase reached both rows at all. An ordering
+    // Precondition: the phase reached both items at all. An ordering
     // assertion over two deletes that never happened compares -1 with -1
     // and can be satisfied by a fixture that exercises nothing.
     expect(calls).toContain("scoped-type:child");
@@ -389,7 +389,7 @@ describe("cleanup, type phase ordering", () => {
     const { cleanup } = await import("./setup.js");
     const ctx = contextWithFixtures() as { trackedTypes: unknown[] };
     // `core.note` is a platform type: teardown never deletes it, so nothing
-    // is waiting on this row and holding it back only costs a round trip.
+    // is waiting on this item and holding it back only costs a round trip.
     ctx.trackedTypes = [{ id: "a" }, { id: "mine", parent: "core.note" }];
 
     await cleanup(ctx as Parameters<typeof cleanup>[0]);
@@ -409,7 +409,7 @@ describe("cleanup, type phase ordering", () => {
       { id: "other" },
     ];
 
-    // Three rows tracked, one refused. Reporting per level would say
+    // Three items tracked, one refused. Reporting per level would say
     // `Type 1/1` and describe a phase that deleted nothing else.
     await expect(cleanup(ctx as Parameters<typeof cleanup>[0])).rejects.toThrow(
       /Type 1\/3/s,

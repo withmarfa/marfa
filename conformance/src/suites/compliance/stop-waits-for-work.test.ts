@@ -27,7 +27,7 @@ let writer: MarfaClient;
 const THINNING = "version-thinning";
 const HELD_THINNING = "hold:version-thinning:item";
 
-/** More rows than the reference worker processes in one chunk. */
+/** More items than the reference worker processes in one chunk. */
 const ROWS = 350;
 
 beforeAll(async () => {

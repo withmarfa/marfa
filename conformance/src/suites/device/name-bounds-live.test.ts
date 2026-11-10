@@ -242,7 +242,7 @@ it("refuses a property with no name on create and edit, and takes one with a nam
   expect(drained.ok && drained.value.verdicts.at(-1)?.verdict).toBe("accepted");
 });
 
-it("refuses a write naming more than 100 tags, or leaving a row more than 100 it did not hold, as the server does", async () => {
+it("refuses a write naming more than 100 tags, or leaving an item more than 100 it did not hold, as the server does", async () => {
   const tags = (count: number, prefix: string) =>
     Array.from({ length: count }, (_, at) => `${prefix}-${String(at)}`);
   const full = await client.createItem({
@@ -296,7 +296,7 @@ it("refuses a write naming more than 100 tags, or leaving a row more than 100 it
   );
   expect(await device.get(id), "a write past 100 tags was saved").toEqual(held);
 
-  // A hundred is taken, and a row holding a hundred still takes a tag it
+  // A hundred is taken, and an item holding a hundred still takes a tag it
   // holds already and sheds one.
   const created = await device.create({
     type,

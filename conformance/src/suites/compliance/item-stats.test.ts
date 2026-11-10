@@ -52,7 +52,7 @@ describe("GET /items/stats", () => {
     ]);
   });
 
-  it("counts the rows a listing's filters match", async () => {
+  it("counts the items a listing's filters match", async () => {
     const tag = `stats-count-${ctx.runId}`;
     const ids: string[] = [];
     for (const [body, tags] of [
@@ -76,7 +76,7 @@ describe("GET /items/stats", () => {
 
     const scope = `source=${encodeURIComponent(ctx.source)}&tags=${encodeURIComponent(tag)}`;
 
-    // The listing these counts size: two active rows carry the tag, so a
+    // The listing these counts size: two active items carry the tag, so a
     // count that ignored the tag or the source would read higher.
     const listed = await client.rawRequest<{ data: { id: string }[] }>(
       `/items?${scope}&limit=50`,

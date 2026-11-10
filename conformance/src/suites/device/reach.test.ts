@@ -25,7 +25,7 @@ afterEach(async () => {
 
 async function prepared() {
   harness = await hydratedHarness("reach", {
-    rows: { "core.note": [{ item: { id: "held" } }] },
+    items: { "core.note": [{ item: { id: "held" } }] },
   });
   const h = harness;
   expect((await h.device.list()).ok).toBe(true);

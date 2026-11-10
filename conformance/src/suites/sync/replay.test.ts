@@ -21,7 +21,7 @@ import { openEventStream } from "../../utils/sse.js";
  * Both cases here are about a gap that closes silently. A client resumes from
  * its cursor, receives a backlog, applies it and believes it is caught up. If
  * the replay path resolves a filter differently from the live path, or if a
- * write never reached the log to be replayed, the client is missing rows and
+ * write never reached the log to be replayed, the client is missing items and
  * has no way to know — nothing errors, and the next reconnect replays the same
  * incomplete backlog. Only a full re-import recovers it, and nothing asks for
  * one.
@@ -103,10 +103,10 @@ describe("replay", () => {
     trackItem(ctx, unrelated.data.item.id);
 
     // Written last, and the only reason this read can end on an observation.
-    // A replay is a scan of the log from the resume point, and every row above
+    // A replay is a scan of the log from the resume point, and every item above
     // was committed before the subscription opened, so a sentinel that has
     // arrived is proof the scan passed everything ahead of it. Reading to a
-    // quiet window instead would make a slow page and a dropped row the same
+    // quiet window instead would make a slow page and a dropped item the same
     // result, and the case would then report a filter defect for a pause.
     const sentinel = await makeNote("replay-subtype-sentinel");
 
@@ -150,8 +150,8 @@ describe("replay", () => {
     // `enable_fanout: false` is the point of the case, not a detail. The flag
     // governs outbound work — webhook delivery and reactive runs — and never
     // whether the write is recorded. A server that read it as "do not publish"
-    // would drop these rows from the log, and the only client that notices is
-    // one catching up after an import: the rows are all there on a full read,
+    // would drop these items from the log, and the only client that notices is
+    // one catching up after an import: the items are all there on a full read,
     // and absent from every replay forever.
     const bulk = await client.bulkItems({
       enable_fanout: false,
@@ -174,18 +174,18 @@ describe("replay", () => {
     ).toBe(true);
     // Recorded off the write rather than by reading a listing back. A bulk
     // response reports outcomes rather than items, so an extraction that
-    // assumes the single-create shape silently records nothing and the rows
+    // assumes the single-create shape silently records nothing and the items
     // outlive the run.
     const bulkIds = bulk.data.results
       .map((r) => r.id)
       .filter((id): id is string => typeof id === "string");
     for (const id of bulkIds) trackItem(ctx, id);
     // Before anything else, because an entry the server skipped or refused
-    // carries no id: a short list here means rows were not written, and every
+    // carries no id: a short list here means items were not written, and every
     // assertion below would then be reporting on a write that never happened.
     expect(
       bulkIds,
-      `the bulk write did not create two rows: ${JSON.stringify(bulk.data.results)}`,
+      `the bulk write did not create two items: ${JSON.stringify(bulk.data.results)}`,
     ).toHaveLength(2);
 
     // Written last, for the reason the sibling case gives.
@@ -206,7 +206,7 @@ describe("replay", () => {
     const replayedIds = itemIds(events);
 
     // The control. A replay that ignored `Last-Event-ID` and dumped the whole
-    // log would contain the bulk rows for the wrong reason, so the marker
+    // log would contain the bulk items for the wrong reason, so the marker
     // written immediately before the resume point must not be in the backlog.
     expect(
       replayedIds.has(markerId),

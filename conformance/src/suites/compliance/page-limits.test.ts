@@ -20,7 +20,7 @@ interface Door {
   who: "working" | "management" | "owner";
   max: number;
   capped?: boolean;
-  /** The page a request with no `limit` gets, where more rows than that are seeded. */
+  /** The page a request with no `limit` gets, where more items than that are seeded. */
   size?: number;
   path: () => string;
 }
@@ -292,7 +292,7 @@ describe("the limit of a listing", () => {
       expect(page.status).toBe(200);
       expect(page.rows).toHaveLength(door.size!);
       expect(page.nextCursor).not.toBeNull();
-      // The witness: more rows are held than the default page.
+      // The witness: more items are held than the default page.
       const wider = await read(door, `limit=${String(door.size! + 1)}`);
       expect(wider.status).toBe(200);
       expect(wider.rows).toHaveLength(door.size! + 1);

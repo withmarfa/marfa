@@ -13,7 +13,7 @@ import { clientsFor } from "../../utils/own-blob-server.js";
 /**
  * What a restore does with the size of an archive, on servers of the fixture's
  * own. The counts of a restore are held by no limit but the instance's; the
- * size of one row is held to what the write doors take, which is a setting
+ * size of one item is held to what the write doors take, which is a setting
  * the shared server cannot change for every other file.
  */
 const SMALL_CAP = 8192;
@@ -123,7 +123,7 @@ describe("the counts an archive carries", () => {
   );
 });
 
-describe("the size of a row an archive carries", () => {
+describe("the size of an item an archive carries", () => {
   type Oversized = "item" | "version" | "edge";
 
   /** Properties that are exactly `bytes` bytes of JSON. */
@@ -133,12 +133,12 @@ describe("the size of a row an archive carries", () => {
 
   const SOURCE = "archive-row-cap";
 
-  /** A row ahead, and a second row, one of whose kinds of properties is `bytes`. */
+  /** An item ahead, and a second item, one of whose kinds of properties is `bytes`. */
   function archiveOf(kind: Oversized, bytes: number) {
     const first = uuidv7();
     const second = uuidv7();
     const edge = uuidv7();
-    const ordinary = { body: "an ordinary row" };
+    const ordinary = { body: "an ordinary item" };
     const row = (id: string, extra: Record<string, unknown>) =>
       JSON.stringify({
         item: {
@@ -209,12 +209,12 @@ describe("the size of a row an archive carries", () => {
     ],
     ["an edge's properties", "edge", "properties", "edge_id", 1],
   ] as const)(
-    "takes %s of exactly the bulk write cap and refuses one byte more, 413 naming the row and the field, and writes nothing",
+    "takes %s of exactly the bulk write cap and refuses one byte more, 413 naming the line and the field, and writes nothing",
     async (_what, kind, field, idField, row) => {
       const { working } = clientsFor(capped!);
       const owner = ownerFor(capped!);
 
-      // The witness: at the cap, both rows restore.
+      // The witness: at the cap, both items restore.
       const atCap = archiveOf(kind, SMALL_CAP);
       const taken = await owner.restoreArchive(atCap.archive);
       expect(taken.ok, JSON.stringify(taken.error)).toBe(true);

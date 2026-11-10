@@ -483,7 +483,7 @@ describe("a thumbnail field", () => {
     const words = await create({ title: "Words", body: "before" });
     expect(words.ok, JSON.stringify(words.error)).toBe(true);
 
-    // Both rows are updated: one's thumbnail and one's body take the same
+    // Both items are updated: one's thumbnail and one's body take the same
     // image, so what the index holds afterwards is what the update wrote.
     const { token, image } = spelling("upd");
     const updated = await client.updateItem(made.data.item.id, {

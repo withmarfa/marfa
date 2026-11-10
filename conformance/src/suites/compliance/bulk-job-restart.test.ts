@@ -75,8 +75,8 @@ async function announced(head: string): Promise<Map<string, number>> {
 
 describe("a bulk-action job the server was killed on", () => {
   it.each([
-    ["before it wrote a row", HOLD.claimed],
-    ["with a chunk's rows written and not committed", HOLD.inChunk],
+    ["before it wrote an item", HOLD.claimed],
+    ["with a chunk's items written and not committed", HOLD.inChunk],
     ["between two chunks", HOLD.betweenChunks],
   ] as const)(
     "is finished on the server's return without writing or announcing an item twice, killed %s",
@@ -118,7 +118,7 @@ describe("a bulk-action job the server was killed on", () => {
         errored: 0,
       });
 
-      // Every row once: created at version 1, patched at version 2.
+      // Every item once: created at version 1, patched at version 2.
       const ids = await idsWith(working(), tag);
       expect(ids).toHaveLength(rows);
       let cursor: string | undefined;

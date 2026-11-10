@@ -47,7 +47,7 @@ it.each(damage)(
     const { server, device } = harness;
     scriptHydration(server, {
       head: "10",
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -148,7 +148,7 @@ it.each(damage)(
     const { server, device } = harness;
     scriptHydration(server, {
       head: "1",
-      rows: { "core.note": [{ item: { id: "damaged" } }] },
+      items: { "core.note": [{ item: { id: "damaged" } }] },
     });
     let changed = false;
     server.copyAnswer("GET", "/types", () =>

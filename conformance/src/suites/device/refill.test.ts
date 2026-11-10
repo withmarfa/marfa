@@ -43,7 +43,7 @@ type Rows = Record<string, Array<{ item: WireItemOptions }>>;
 
 /**
  * A hydrated copy whose next catch-up is told its cursor aged out of the
- * event log. The server's rows are `rows`, read live, so a fixture changes
+ * event log. The server's items are `rows`, read live, so a fixture changes
  * what the refill finds by changing them; `head` is the log's head as every
  * read of it answers.
  */
@@ -77,7 +77,7 @@ async function agedOut(
   scriptHydration(h.server, {
     head: () => head.now,
     catalog: () => refuse.types ?? typeCatalog(),
-    rows,
+    items: rows,
     pageSize: options.pageSize,
     drop: options.drop,
     instance: options.instance,
@@ -185,7 +185,7 @@ function scriptPin(server: ScriptedServer, item: WireItemOptions): void {
 }
 
 describe("a copy whose cursor aged out", () => {
-  it("fills again in place, changing, adding and sweeping rows", async () => {
+  it("fills again in place, changing, adding and sweeping items", async () => {
     const rows: Rows = {
       "core.note": [
         { item: { id: "changed", properties: { title: "before" } } },
@@ -203,7 +203,7 @@ describe("a copy whose cursor aged out", () => {
       ids: ["changed", "gone"],
       completeness: "stale",
     });
-    // An edge read joins rows the refill may change, and its answer could
+    // An edge read joins items the refill may change, and its answer could
     // not say which, so it waits for the refill.
     const edges = await h.device.edgesFrom("changed");
     expect(
@@ -215,12 +215,12 @@ describe("a copy whose cursor aged out", () => {
     expect(refilled.ok, JSON.stringify(refilled)).toBe(true);
     expect(
       refilled.ok && refilled.value.in_place,
-      "the hydration cleared the aged-out copy first, so its rows vanished while it ran",
+      "the hydration cleared the aged-out copy first, so its items vanished while it ran",
     ).toBe(true);
     expect(refilled.ok && refilled.value.cursor).toBe("900");
     expect(
       await ids(h),
-      "the refill left the copy unlike the server: a row it no longer holds stayed, or one it holds now is missing",
+      "the refill left the copy unlike the server: an item it no longer holds stayed, or one it holds now is missing",
     ).toEqual({ ids: ["added", "changed"], completeness: "complete" });
     const changed = await h.device.get("changed");
     expect(changed.ok && changed.value.properties.title).toBe("after");
@@ -280,7 +280,7 @@ describe("a copy whose cursor aged out", () => {
     expect(carried.ok && carried.value.resumed).toBe(true);
     expect(
       carried.ok && carried.value.in_place,
-      "the hydration after an interrupted refill cleared the copy, so the rows it kept in reach vanished",
+      "the hydration after an interrupted refill cleared the copy, so the items it kept in reach vanished",
     ).toBe(true);
     expect(await ids(h)).toEqual({ ids: ["a", "b"], completeness: "complete" });
     expect(await hydration(h)).toBe("complete");
@@ -361,7 +361,7 @@ describe("a copy whose cursor aged out", () => {
     const taken = await h.device.get("a");
     expect(
       taken.ok && taken.value.version,
-      "the broken-off refill did not take the newer row, so nothing below shows it going",
+      "the broken-off refill did not take the newer item, so nothing below shows it going",
     ).toBe(5);
 
     // The server is restored from a backup whose log ends at 2, before the
@@ -376,7 +376,7 @@ describe("a copy whose cursor aged out", () => {
     expect(again.ok && again.value.restarted).toBe("head_past_log");
     expect(
       again.ok && again.value.in_place,
-      "a refill of a restored server filled over rows it may never have held",
+      "a refill of a restored server filled over items it may never have held",
     ).toBe(false);
     expect(await ids(h)).toEqual({ ids: ["a", "c"], completeness: "complete" });
     const restored = await h.device.get("a");
@@ -414,11 +414,11 @@ describe("a copy whose cursor aged out", () => {
     expect(listed.ok && listed.value.completeness).toBe("partial");
     expect(
       listed.ok && listed.value.items.map((item) => item.id),
-      "rows read from the other instance were answered beside the ones it never held",
+      "items read from the other instance were answered beside the ones it never held",
     ).toEqual(["a"]);
   });
 
-  it("keeps a pinned row and a row a queued write names through the sweep", async () => {
+  it("keeps a pinned item and an item a queued write names through the sweep", async () => {
     const rows: Rows = {
       "core.note": [
         { item: { id: "swept" } },
@@ -427,7 +427,7 @@ describe("a copy whose cursor aged out", () => {
       ],
     };
     const { h } = await agedOut("refill-keeps", rows, {
-      // A row outside the slice, held only by its pin.
+      // An item outside the slice, held only by its pin.
       before: async (held) => {
         scriptPin(held.server, { id: "pinned", tier: "feed" });
         expect((await held.device.pin("pinned")).ok).toBe(true);
@@ -445,17 +445,17 @@ describe("a copy whose cursor aged out", () => {
     expect(refilled.ok, JSON.stringify(refilled)).toBe(true);
     expect(refilled.ok && refilled.value.in_place).toBe(true);
 
-    // The witness: a row the walk did not bring went.
+    // The witness: an item the walk did not bring went.
     const swept = await h.device.get("swept");
-    expect(swept.ok, "the sweep kept a row the server no longer lists").toBe(
+    expect(swept.ok, "the sweep kept an item the server no longer lists").toBe(
       false,
     );
     const pinned = await h.device.get("pinned");
-    expect(pinned.ok, "the sweep took a pinned row").toBe(true);
+    expect(pinned.ok, "the sweep took a pinned item").toBe(true);
     const written = await h.device.get("written");
     expect(
       written.ok,
-      "the sweep took a row a queued write names, so the person's edit has nothing to show against",
+      "the sweep took an item a queued write names, so the person's edit has nothing to show against",
     ).toBe(true);
     expect(written.ok && written.value.properties.title).toBe("waiting");
     expect(await h.device.queue()).toEqual(queued);
@@ -475,7 +475,7 @@ describe("a copy whose cursor aged out", () => {
     });
     expect(
       edit.ok,
-      `a copy whose cursor aged out refused an edit of a row it holds: ${JSON.stringify(edit)}`,
+      `a copy whose cursor aged out refused an edit of an item it holds: ${JSON.stringify(edit)}`,
     ).toBe(true);
     const created = await h.device.create({
       type: "core.note",
@@ -576,7 +576,7 @@ describe("a stale copy and its follow", () => {
 });
 
 describe("a refill's sweep", () => {
-  it("keeps the rows a queued edge write names and the edge itself", async () => {
+  it("keeps the items a queued edge write names and the edge itself", async () => {
     const rows: Rows = {
       "core.note": [
         { item: { id: "from" } },
@@ -605,10 +605,10 @@ describe("a refill's sweep", () => {
     expect(refilled.ok, JSON.stringify(refilled)).toBe(true);
     expect(refilled.ok && refilled.value.in_place).toBe(true);
 
-    // The witness: a row nothing names went.
+    // The witness: an item nothing names went.
     expect(
       (await h.device.get("swept")).ok,
-      "the sweep kept a row the server no longer lists",
+      "the sweep kept an item the server no longer lists",
     ).toBe(false);
     for (const end of ["from", "aimed"]) {
       expect(
@@ -644,7 +644,7 @@ describe("a stale copy before its refill reads a page", () => {
     expect(again.ok, JSON.stringify(again)).toBe(true);
     expect(
       again.ok && again.value.in_place,
-      "a refill of a restored server filled over rows it may never have held",
+      "a refill of a restored server filled over items it may never have held",
     ).toBe(false);
     expect(await ids(h)).toEqual({ ids: ["a", "c"], completeness: "complete" });
     const restored = await h.device.get("a");
@@ -697,7 +697,7 @@ describe("a stale copy before its refill reads a page", () => {
       expect(refused.ok ? "" : refused.refusal.raw).toContain(reason);
       expect(
         await hydration(h),
-        `${reason}: the copy stayed stale, answering rows the server may no longer let the credential read`,
+        `${reason}: the copy stayed stale, answering items the server may no longer let the credential read`,
       ).toBe("expired");
       const read = await h.device.list();
       expect(
@@ -808,7 +808,7 @@ describe("an edge write to a copy that is not whole", () => {
     scriptHydration(harness.server, {
       head: "10",
       pageSize: 1,
-      rows: linked,
+      items: linked,
       drop: () => {
         if (!dropping) return false;
         dropping = false;
@@ -849,7 +849,7 @@ describe("an edge write to a copy that is not whole", () => {
     });
     expect(
       edit.ok,
-      `a stale copy refused a body edit of a row it holds: ${JSON.stringify(edit)}`,
+      `a stale copy refused a body edit of an item it holds: ${JSON.stringify(edit)}`,
     ).toBe(true);
     const queued = await h.device.queue();
     expect(
@@ -913,7 +913,7 @@ describe("a copy that expired for another reason", () => {
     const { server, device } = harness;
     scriptHydration(server, {
       head: "10",
-      rows: { "core.note": [{ item: { id: "first" } }] },
+      items: { "core.note": [{ item: { id: "first" } }] },
     });
     server.copyAnswer(
       "GET",
@@ -929,7 +929,7 @@ describe("a copy that expired for another reason", () => {
     expect((await device.catchUp()).ok).toBe(false);
 
     // The log behind the copy's cursor is not the one it followed, so what
-    // it holds may describe rows the server never had.
+    // it holds may describe items the server never had.
     const read = await device.list();
     expect(read.ok, "a copy that follows another log answered reads").toBe(
       false,
@@ -955,14 +955,14 @@ describe("a copy that expired for another reason", () => {
 });
 
 describe("a copy a first hydration is filling", () => {
-  it("takes writes to the rows it holds and new ones, sending none until it is whole", async () => {
+  it("takes writes to the items it holds and new ones, sending none until it is whole", async () => {
     harness = await startHarness("first-fill-writes");
     const { server, device } = harness;
     let dropping = true;
     scriptHydration(server, {
       head: "10",
       pageSize: 1,
-      rows: {
+      items: {
         "core.note": [
           {
             item: { id: "held", properties: { title: "server", body: "old" } },
@@ -989,7 +989,7 @@ describe("a copy a first hydration is filling", () => {
     });
     expect(
       edit.ok,
-      `a copy part way through its first fill refused an edit of a row it holds: ${JSON.stringify(edit)}`,
+      `a copy part way through its first fill refused an edit of an item it holds: ${JSON.stringify(edit)}`,
     ).toBe(true);
     const created = await device.create({
       type: "core.note",
@@ -1002,7 +1002,7 @@ describe("a copy a first hydration is filling", () => {
     });
     expect(
       unheld.ok,
-      "a copy took an edit of a row it has not read, writing from a version it never saw",
+      "a copy took an edit of an item it has not read, writing from a version it never saw",
     ).toBe(false);
     if (!unheld.ok) expect(unheld.refusal.code).toBe("hydration_incomplete");
     const queued = await device.queue();
@@ -1025,7 +1025,7 @@ describe("a copy a first hydration is filling", () => {
     expect(await device.queue()).toEqual(queued);
   });
 
-  it("takes files added alone or attached to a row it holds, sending none until it is whole", async () => {
+  it("takes files added alone or attached to an item it holds, sending none until it is whole", async () => {
     harness = await startHarness("first-fill-files");
     const h = harness;
     const { server, device } = h;
@@ -1033,7 +1033,7 @@ describe("a copy a first hydration is filling", () => {
     scriptHydration(server, {
       head: "10",
       pageSize: 1,
-      rows: {
+      items: {
         "core.note": [{ item: { id: "held" } }, { item: { id: "later" } }],
       },
       drop: () => {
@@ -1058,7 +1058,7 @@ describe("a copy a first hydration is filling", () => {
     );
     expect(
       attached.ok,
-      `a copy part way through its first fill refused a file attached to a row it holds: ${JSON.stringify(attached)}`,
+      `a copy part way through its first fill refused a file attached to an item it holds: ${JSON.stringify(attached)}`,
     ).toBe(true);
     const unheld = await device.attach(
       "later",
@@ -1066,7 +1066,7 @@ describe("a copy a first hydration is filling", () => {
     );
     expect(
       unheld.ok ? "attached" : unheld.refusal.code,
-      "a copy attached a file to a row it has not read",
+      "a copy attached a file to an item it has not read",
     ).toBe("hydration_incomplete");
     const queued = await device.queue();
     expect(queued.ok && queued.value).toHaveLength(5);
@@ -1182,7 +1182,7 @@ describe("a fill asked to happen only in place", () => {
       fileOf("kept.bin", "kept bytes"),
     );
     expect(attached.ok, JSON.stringify(attached)).toBe(true);
-    // The file's row is the copy's own create, held pinned outside the
+    // The file's item is the copy's own create, held pinned outside the
     // slice, which the server does not hold yet.
     aged.h.server.copyAnswer(
       "GET",
@@ -1390,7 +1390,7 @@ describe("a fill asked to happen only in place", () => {
       expect(refused.ok ? "" : refused.refusal.raw).toContain(reason);
       expect(
         await hydration(h),
-        `${reason}: the copy stayed stale, answering rows the server may no longer let the credential read`,
+        `${reason}: the copy stayed stale, answering items the server may no longer let the credential read`,
       ).toBe("expired");
       expect(
         await h.device.queue(),
@@ -1410,7 +1410,7 @@ describe("a fill asked to happen only in place", () => {
     );
     scriptHydration(h.server, {
       head: "10",
-      rows: { "core.note": [{ item: { id: "a" } }] },
+      items: { "core.note": [{ item: { id: "a" } }] },
       instance: () => instance,
     });
     expect((await h.device.hydrate(["core.note"], "library")).ok).toBe(true);
@@ -1435,7 +1435,7 @@ describe("a fill asked to happen only in place", () => {
     const h = harness;
     scriptHydration(h.server, {
       head: "10",
-      rows: { "core.note": [{ item: { id: "a" } }] },
+      items: { "core.note": [{ item: { id: "a" } }] },
     });
     await refusedInPlace(h, "not_stale");
     expect((await h.device.hydrate(["core.note"], "library")).ok).toBe(true);

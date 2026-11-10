@@ -17,7 +17,7 @@ import {
 import { requireBinary } from "./harness.js";
 
 /**
- * The rows a working copy pins outside its slice, and how long a create's pin
+ * The items a working copy pins outside its slice, and how long a create's pin
  * lasts, against a real server (`device/hydrate-pins-batched`,
  * `device/pin-read-on-hydration`, `device/pin-gone-kept` and
  * `device/pin-create-lasts`), through a proxy that records every request the
@@ -127,7 +127,7 @@ async function recording(): Promise<{
   };
 }
 
-/** A read of one row by id, which a hydration must not send for a pin. */
+/** A read of one item by id, which a hydration must not send for a pin. */
 const readById = (request: Sent): boolean =>
   request.method === "GET" &&
   /^\/items\/[^/]+$/.test(request.path) &&
@@ -159,7 +159,7 @@ async function bookmarks(count: number, label: string): Promise<string[]> {
   return ids;
 }
 
-it("reads the pinned rows outside its slice 100 to a request under its reach, not one request each", async () => {
+it("reads the pinned items outside its slice 100 to a request under its reach, not one request each", async () => {
   const pinned = await bookmarks(250, "pinned");
   const proxy = await recording();
   const store = newStore("pins-batched");
@@ -172,7 +172,7 @@ it("reads the pinned rows outside its slice 100 to a request under its reach, no
   try {
     value(await device.hydrate([slice], "library"));
     for (const id of pinned) value(await device.pin(id));
-    // The witness: each pin read its row, so the copy holds every one.
+    // The witness: each pin read its item, so the copy holds every one.
     expect(value(await device.status()).items).toBe(pinned.length);
 
     proxy.sent.length = 0;
@@ -180,12 +180,12 @@ it("reads the pinned rows outside its slice 100 to a request under its reach, no
     expect(again.items).toBe(pinned.length);
     expect(
       proxy.sent.filter(readById).length,
-      "a hydration read a pinned row by id, one request for each pin",
+      "a hydration read a pinned item by id, one request for each pin",
     ).toBe(0);
     const reads = bulkReads(proxy.sent);
     expect(
       reads.length,
-      "a hydration did not read 250 pinned rows in three requests",
+      "a hydration did not read 250 pinned items in three requests",
     ).toBe(3);
     const named: string[] = [];
     for (const read of reads) {
@@ -194,7 +194,7 @@ it("reads the pinned rows outside its slice 100 to a request under its reach, no
       named.push(...body.ids);
       expect(
         read.reach,
-        "a bulk read of pinned rows was sent outside the copy's reach",
+        "a bulk read of pinned items was sent outside the copy's reach",
       ).toMatch(/^[0-9a-f]{64}$/);
     }
     expect(named.sort()).toEqual([...pinned].sort());
@@ -212,7 +212,7 @@ it("reads the pinned rows outside its slice 100 to a request under its reach, no
   }
 });
 
-it("holds a pinned folder row, and keeps a pin whose row went to the bin without a row", async () => {
+it("holds a pinned folder item, and keeps a pin whose item went to the bin without an item", async () => {
   const folder = await client.createFolder({
     title: `Pins ${ctx.runId}`,
     query: { types: [slice], filter: `source eq "${ctx.source}"` },
@@ -233,7 +233,7 @@ it("holds a pinned folder row, and keeps a pin whose row went to the bin without
     value(await device.hydrate([slice], "library"));
     for (const id of [folder.data.item.id, kept!, gone!])
       value(await device.pin(id));
-    // The witness: every pinned row was held before the next hydration.
+    // The witness: every pinned item was held before the next hydration.
     expect(value(await device.get(gone!)).id).toBe(gone);
     expect(value(await device.get(folder.data.item.id)).type).toBe(
       "system.folder",
@@ -249,15 +249,15 @@ it("holds a pinned folder row, and keeps a pin whose row went to the bin without
     expect(status.hydration).toBe("complete");
     expect(
       [...status.pinned].sort(),
-      "a hydration dropped the pin of a row the server no longer answers",
+      "a hydration dropped the pin of an item the server no longer answers",
     ).toEqual([folder.data.item.id, kept!, gone!].sort());
     expect(
       (await device.get(gone!)).ok,
-      "a hydration kept a pinned row the server holds in the bin",
+      "a hydration kept a pinned item the server holds in the bin",
     ).toBe(false);
     expect(
       value(await device.get(folder.data.item.id)).type,
-      "a hydration left out a pinned system.folder row",
+      "a hydration left out a pinned system.folder item",
     ).toBe("system.folder");
     expect(value(await device.get(kept!)).id).toBe(kept);
   } finally {

@@ -42,7 +42,7 @@ export interface CollectResult {
  * Read an open stream until `done` says enough has arrived.
  *
  * **An absence is settled by a later frame, never by a quiet window**, which
- * cannot tell "nothing more is coming" from "not yet". Write a sentinel row
+ * cannot tell "nothing more is coming" from "not yet". Write a sentinel item
  * after the one under test and wait for the sentinel's own event here: the
  * stream delivers item and edge frames in id order (`events/ids-ascending`), so
  * a sentinel of either kind arriving is proof that everything published before

@@ -363,7 +363,7 @@ describe("edge events", () => {
  * `?edges=none` was the only thing narrowing an edge frame, and a
  * subscriber's own parameter is not a permission: every authenticated
  * credential received every edge the instance wrote — both endpoints, the
- * kind of relationship and the properties on it — for rows
+ * kind of relationship and the properties on it — for items
  * `GET /edges/{id}` refused it one at a time. The pair that door asks is
  * asked per subscriber now, on the live path and on the replay alike,
  * because a replayed frame is the same disclosure reached through a
@@ -377,7 +377,7 @@ describe("edge events", () => {
  * rather than an empty stream.
  */
 describe("the stream answers only the edges a subscriber may read", () => {
-  /** The three rows every case below is about, written in this order:
+  /** The three items every case below is about, written in this order:
    *  one refused on its source's type, one on its own kind, and one the
    *  narrow credential may read. */
   async function writeTheThree(label: string): Promise<{
@@ -417,7 +417,7 @@ describe("the stream answers only the edges a subscriber may read", () => {
       return r.data.edge.id;
     };
 
-    // Order matters: the readable row is written last, so a subscriber
+    // Order matters: the readable item is written last, so a subscriber
     // that has received it has already been offered the two before it.
     const hiddenSource = await make(bookmark.data.item.id, seenKind);
     const hiddenKind = await make(readableSource, unseenKind);
@@ -517,7 +517,7 @@ describe("the stream answers only the edges a subscriber may read", () => {
     const rows = await writeTheThree("replay");
     expect(rows.seenKind).toBe(seenKind);
 
-    // The unnarrowed replay first: every row is behind this cursor, so an
+    // The unnarrowed replay first: every item is behind this cursor, so an
     // absence below is the credential and not the cursor.
     await withStream(apiUrl, apiKey, { lastEventId: eventId }, async (s) => {
       const { events } = await collectUntil(

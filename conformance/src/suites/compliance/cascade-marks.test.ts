@@ -28,7 +28,7 @@ let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
 let apiKey: string;
-// Reads only `core.note`, so a `core.task` root is a row it can't read.
+// Reads only `core.note`, so a `core.task` root is an item it can't read.
 let noteKey: string;
 let noteClient: MarfaClient;
 // Claims this file's source, so it may resend a create for a note it can't
@@ -264,8 +264,8 @@ function frame(
   return found?.data as FrameData | undefined;
 }
 
-describe("an item.deleted frame carries when the row went to the bin", () => {
-  it("holds the time the listing answers, for the row named and the row a cascade took, by DELETE and by transition", async ({
+describe("an item.deleted frame carries when the item went to the bin", () => {
+  it("holds the time the listing answers, for the item named and the item a cascade took, by DELETE and by transition", async ({
     signal,
   }) => {
     const tag = `deleted-at-${ctx.runId}`;
@@ -321,7 +321,7 @@ describe("an item.deleted frame carries when the row went to the bin", () => {
 });
 
 describe("a cascaded trash names its root", () => {
-  it("marks a row a cascade trashed with the row named, and no row trashed on its own", async ({
+  it("marks an item a cascade trashed with the item named, and no item trashed on its own", async ({
     signal,
   }) => {
     const tag = `mark-${ctx.runId}`;
@@ -377,7 +377,7 @@ describe("a cascaded trash names its root", () => {
     }
   });
 
-  it("announces item.deleted with its mark for each row a transition into the bin takes", async ({
+  it("announces item.deleted with its mark for each item a transition into the bin takes", async ({
     signal,
   }) => {
     const tag = `transition-mark-${ctx.runId}`;
@@ -402,12 +402,12 @@ describe("a cascaded trash names its root", () => {
         expect(deleted?.trashed_by_cascade, `${path}: ${taken}`).toBe(true);
         expect(deleted?.trashed_with, `${path}: ${taken}`).toBe(parent);
       }
-      // The row moved is announced as a state change, and carries no mark.
+      // The item moved is announced as a state change, and carries no mark.
       const own = frame(events, "item.state_changed", parent);
       expect(own, `${path}: item.state_changed for ${parent}`).toBeDefined();
       expect(own?.item).not.toHaveProperty("trashed_with");
       expect(own?.item).not.toHaveProperty("trashed_by_cascade");
-      // And as a deletion, as a delete of the row would announce it.
+      // And as a deletion, as a delete of the item would announce it.
       const gone = frame(events, "item.deleted", parent);
       expect(gone, `${path}: item.deleted for ${parent}`).toBeDefined();
       expect(gone?.item).not.toHaveProperty("trashed_with");
@@ -415,7 +415,7 @@ describe("a cascaded trash names its root", () => {
     }
   });
 
-  it("announces item.deleted for the row a bulk transition into the bin names, and with its mark for each row it takes", async ({
+  it("announces item.deleted for the item a bulk transition into the bin names, and with its mark for each item it takes", async ({
     signal,
   }) => {
     const tag = `bulk-trash-${ctx.runId}`;
@@ -463,7 +463,7 @@ describe("a cascaded trash names its root", () => {
     const fullRows = new Map(full.data.data.map((row) => [row.id, row]));
     expect(fullRows.get(child)?.trashed_by_cascade).toBe(true);
     expect(fullRows.get(child)?.trashed_with).toBe(root);
-    // The witness: a row trashed on its own is answered, unmarked.
+    // The witness: an item trashed on its own is answered, unmarked.
     expect(fullRows.get(alone)?.state).toBe("trashed");
     expect(fullRows.get(alone)).not.toHaveProperty("trashed_by_cascade");
 
@@ -474,7 +474,7 @@ describe("a cascaded trash names its root", () => {
     expect(noteRows.get(child)).not.toHaveProperty("trashed_with");
   });
 
-  it("names the row trashed only to a key that may read its type, and says a cascade took the row to any key that reads it", async ({
+  it("names the item trashed only to a key that may read its type, and says a cascade took the item to any key that reads it", async ({
     signal,
   }) => {
     const tag = `narrow-${ctx.runId}`;
@@ -548,7 +548,7 @@ describe("a cascaded trash names its root", () => {
     }
   });
 
-  it("keeps the mark through a purge of the row named, and drops it when the row leaves the bin", async ({
+  it("keeps the mark through a purge of the item named, and drops it when the item leaves the bin", async ({
     signal,
   }) => {
     const tag = `keep-${ctx.runId}`;
@@ -586,7 +586,7 @@ describe("a cascaded trash names its root", () => {
     }
     expect((await client.transitionItem(sibling, "active")).ok).toBe(true);
 
-    // A mark shows only while its row is in the bin, so each is trashed again:
+    // A mark shows only while its item is in the bin, so each is trashed again:
     // the grandchild by a cascade, the witness that a mark is written.
     expect((await client.deleteItem(sibling)).ok).toBe(true);
     expect((await client.deleteItem(child)).ok).toBe(true);
@@ -606,7 +606,7 @@ describe("a cascaded trash names its root", () => {
     }
   });
 
-  it("names the row whose trash took it on the purge of a row a cascade trashed", async ({
+  it("names the item whose trash took it on the purge of an item a cascade trashed", async ({
     signal,
   }) => {
     const tag = `purged-${ctx.runId}`;
@@ -636,11 +636,11 @@ describe("a cascaded trash names its root", () => {
     }
   });
 
-  it("names the row whose trash took it on each row a bulk purge purges, only to a key that may read its type", async ({
+  it("names the item whose trash took it on each item a bulk purge purges, only to a key that may read its type", async ({
     signal,
   }) => {
     const tag = `bulk-purge-${ctx.runId}`;
-    // Tagged apart, so the purge takes the child and not the row named.
+    // Tagged apart, so the purge takes the child and not the item named.
     const root = await task(`${tag}-root`);
     const child = await note("child", tag);
     const alone = await note("alone", tag);
@@ -677,7 +677,7 @@ describe("a cascaded trash names its root", () => {
     }
   });
 
-  it("marks no row a cascade revokes rather than trashes", async ({
+  it("marks no item a cascade revokes rather than trashes", async ({
     signal,
   }) => {
     const tag = `revoke-${ctx.runId}`;
@@ -714,7 +714,7 @@ describe("a cascaded trash names its root", () => {
   });
 });
 
-describe("a create answered with the row it names says a cascade took it", () => {
+describe("a create answered with the item it names says a cascade took it", () => {
   async function resent(
     writer: MarfaClient,
     input: Partial<CreateItemInput>,
@@ -732,7 +732,7 @@ describe("a create answered with the row it names says a cascade took it", () =>
     return r.data.item;
   }
 
-  it("marks a row a cascade trashed on the acknowledgement of a create naming its source and source id, and names the row trashed only to a key that may read its type", async () => {
+  it("marks an item a cascade trashed on the acknowledgement of a create naming its source and source id, and names the item trashed only to a key that may read its type", async () => {
     const tag = `acknowledged-${ctx.runId}`;
     const childKey = { source_id: `${tag}-child` };
     const aloneKey = { source_id: `${tag}-alone` };
@@ -757,7 +757,7 @@ describe("a create answered with the row it names says a cascade took it", () =>
     expect(own).not.toHaveProperty("trashed_with");
   });
 
-  it("marks a row a cascade trashed on the answer to a create repeated under its id, and names the row trashed only to a key that may read its type", async () => {
+  it("marks an item a cascade trashed on the answer to a create repeated under its id, and names the item trashed only to a key that may read its type", async () => {
     const tag = `repeated-${ctx.runId}`;
     const root = await task(tag);
     const child = await note("child", tag);
@@ -778,8 +778,8 @@ describe("a create answered with the row it names says a cascade took it", () =>
   });
 });
 
-describe("a restore says what brought a row back", () => {
-  it("names the row restored on each row its restore brings back, and not on the row itself", async ({
+describe("a restore says what brought an item back", () => {
+  it("names the item restored on each item its restore brings back, and not on the item itself", async ({
     signal,
   }) => {
     const tag = `restore-${ctx.runId}`;
@@ -811,7 +811,7 @@ describe("a restore says what brought a row back", () => {
     }
   });
 
-  it("names the row restored only to a key that may read its type", async ({
+  it("names the item restored only to a key that may read its type", async ({
     signal,
   }) => {
     const tag = `narrow-restore-${ctx.runId}`;
@@ -841,7 +841,7 @@ describe("a restore says what brought a row back", () => {
     }
   });
 
-  it("names the row moved on each row a transition out of the bin brings back, only to a key that may read its type", async ({
+  it("names the item moved on each item a transition out of the bin brings back, only to a key that may read its type", async ({
     signal,
   }) => {
     const tag = `transition-${ctx.runId}`;
@@ -877,7 +877,7 @@ describe("a restore says what brought a row back", () => {
     }
   });
 
-  it("names the row moved on each row a bulk transition out of the bin brings back, only to a key that may read its type", async ({
+  it("names the item moved on each item a bulk transition out of the bin brings back, only to a key that may read its type", async ({
     signal,
   }) => {
     const tag = `bulk-${ctx.runId}`;
@@ -1064,7 +1064,7 @@ describe("a part announces only what moved", () => {
       signal,
     );
     for (const [path, events] of paths) {
-      // The witness: the rows the late part moved are announced.
+      // The witness: the items the late part moved are announced.
       for (const moved of [part, moving]) {
         expect(
           frame(events, "item.deleted", moved)?.item?.trashed_with,
@@ -1160,7 +1160,7 @@ describe("a purge says which edges it took, a conflicted copy's link among them"
 });
 
 describe("an archive carries neither what a trash took nor its mark", () => {
-  it("restores a row a cascade trashed as its own trash, which its parent's restore leaves in the bin", async () => {
+  it("restores an item a cascade trashed as its own trash, which its parent's restore leaves in the bin", async () => {
     const tag = `archive-${ctx.runId}`;
     const parent = await note("parent", tag);
     const child = await note("child", tag);
@@ -1195,7 +1195,7 @@ describe("an archive carries neither what a trash took nor its mark", () => {
 });
 
 describe("a webhook delivery carries the marks", () => {
-  it("delivers the item.deleted of a row a cascade trashed with its mark, and the row trashed's own without one", async () => {
+  it("delivers the item.deleted of an item a cascade trashed with its mark, and the item trashed's own without one", async () => {
     const subscription = await client.createWebhook({
       url: receiver.hookUrl("cascade-marks"),
       events: ["item.deleted"],

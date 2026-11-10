@@ -275,11 +275,11 @@ The server MUST send the event frames of one stream in ascending id order, edge 
 
 **Tests:** `sync/resume.test.ts › a reader that closes at the head and resumes from its last id misses nothing and repeats nothing`, `› a purge's edge.deleted frames carry lower ids than its item.purged frame, live and replayed`.
 
-### `events/purge-edges-before-row`
+### `events/purge-edges-before-item`
 
 When a purge announces the edges it took and the item, the server MUST give each `edge.deleted` a lower id than the `item.purged`, on the live stream and on a replay.
 
-**Reason:** a purge announces the row's edges before the row.
+**Reason:** a purge announces the item's edges before the item.
 
 **Tests:** `sync/resume.test.ts › a purge's edge.deleted frames carry lower ids than its item.purged frame, live and replayed`.
 
@@ -449,23 +449,23 @@ The cascade marks `trashed_by_cascade`, `trashed_with`, `restored_with` and `pur
 
 The server MUST send an item event as `item.created`, `item.updated`, `item.deleted`, `item.restored`, `item.purged` or `item.state_changed`, with `event_type` naming it and `item` holding the item.
 
-**Tests:** `sync/identity.test.ts › keeps the id a client mints for an item, on the row and on the event`, `sync/post-commit.test.ts › a write that rolls back announces nothing, while one that commits does`, `compliance/cascade-marks.test.ts › marks a row a cascade trashed with the row named, and no row trashed on its own`, `compliance/events-contract.test.ts › announces item.restored when a trashed item comes back`, `› announces item.state_changed on a lifecycle transition`, `sync/deletions.test.ts › announces a purge, so a client offline across it learns the row is gone`, `compliance/events-contract.test.ts › names the event in event_type on an item frame and on an edge frame`.
+**Tests:** `sync/identity.test.ts › keeps the id a client mints for an item, on the item and on the event`, `sync/post-commit.test.ts › a write that rolls back announces nothing, while one that commits does`, `compliance/cascade-marks.test.ts › marks an item a cascade trashed with the item named, and no item trashed on its own`, `compliance/events-contract.test.ts › announces item.restored when a trashed item comes back`, `› announces item.state_changed on a lifecycle transition`, `sync/deletions.test.ts › announces a purge, so a client offline across it learns the item is gone`, `compliance/events-contract.test.ts › names the event in event_type on an item frame and on an edge frame`.
 
 ### `events/item-frame-metadata`
 
 The server MUST carry on every item event `metadata`, holding the item's tags and the extension namespaces the subscriber may read, as the item held them after the write, or before the purge for `item.purged`.
 
-**Reason:** a working copy holds the tags of a row an event brings in from the frame (`device/catch-up-entering-tags`), and reads the row only when the frame carries none (`device/catch-up-entering-read-tags`), so a frame without them leaves a row created with tags in the copy with none.
+**Reason:** a working copy holds the tags of an item an event brings in from the frame (`device/catch-up-entering-tags`), and reads the item only when the frame carries none (`device/catch-up-entering-read-tags`), so a frame without them leaves an item created with tags in the copy with none.
 
 **Tests:** `compliance/event-frame-metadata.test.ts › carries on every item event the tags and extensions the write left, only the namespaces the subscriber may read, on a live stream`, `› carries the same metadata on an event a stream replays`.
 
 ### `events/deleted-trashed-at`
 
-When the server sends `item.deleted`, the server MUST set the `trashed_at` of the frame's `item` to the time the move to the bin recorded on that row, for the row a delete or a transition named and for each row a cascade took with it.
+When the server sends `item.deleted`, the server MUST set the `trashed_at` of the frame's `item` to the time the move to the bin recorded on that item, for the item a delete or a transition named and for each item a cascade took with it.
 
-**Reason:** a working copy holds the frame's item as its row (`device/bin-held-event`), and orders its bin by that row's `trashed_at` (`device/bin-local-order`). A frame still holding the row as it was before the move says `null`, so a copy that heard another client bin a row could not place it in the bin.
+**Reason:** a working copy keeps the frame's item (`device/bin-held-event`), and orders its bin by that item's `trashed_at` (`device/bin-local-order`). A frame still holding the item as it was before the move says `null`, so a copy that heard another client bin an item could not place it in the bin.
 
-**Tests:** `compliance/cascade-marks.test.ts › holds the time the listing answers, for the row named and the row a cascade took, by DELETE and by transition`.
+**Tests:** `compliance/cascade-marks.test.ts › holds the time the listing answers, for the item named and the item a cascade took, by DELETE and by transition`.
 
 ### `events/metadata-event`
 
@@ -487,7 +487,7 @@ When a stream replays an event, the server MUST give the subscriber the frame th
 
 **Reason:** the log stores each frame once and answers every subscriber from it when it is sent, so a catch-up discloses nothing a live stream would not.
 
-**Tests:** `compliance/cascade-marks.test.ts › names the row trashed only to a key that may read its type, and says a cascade took the row to any key that reads it`, `› names the row restored only to a key that may read its type`.
+**Tests:** `compliance/cascade-marks.test.ts › names the item trashed only to a key that may read its type, and says a cascade took the item to any key that reads it`, `› names the item restored only to a key that may read its type`.
 
 ### `events/edge-events`
 
@@ -499,7 +499,7 @@ The server MUST send an edge event as `edge.created`, `edge.updated` or `edge.de
 
 The server MUST carry on an edge event `source_type`, the type its source item had when the event was published.
 
-**Reason:** `source_type` decides who is told about the event, and a purge takes the source row before the event is read.
+**Reason:** `source_type` decides who is told about the event, and a purge takes the source item before the event is read.
 
 **Tests:** `compliance/edge-events.test.ts › carries the source item's type on every edge frame`.
 
@@ -529,7 +529,7 @@ When a write commits, the server MUST send its event to the streams open at the 
 
 If a write rolls back, then the server MUST NOT send an event for it to any stream.
 
-**Reason:** an event for a write that never happened tells a client about a row that does not exist.
+**Reason:** an event for a write that never happened tells a client about an item that does not exist.
 
 **Tests:** `sync/post-commit.test.ts › a write that rolls back announces nothing, while one that commits does`.
 
@@ -545,7 +545,7 @@ If the server refuses a write with `503 write_contention`, then the server MUST 
 
 **Reason:** a `5xx` tells the caller nothing was written, so it sends the write again, and an event for the refused write would announce a change that then happens twice.
 
-**Tests:** `compliance/write-contention.test.ts › announces nothing and keeps no row for a write it refused with 503, on the stream open at the time and on a replay`.
+**Tests:** `compliance/write-contention.test.ts › announces nothing and keeps no item for a write it refused with 503, on the stream open at the time and on a replay`.
 
 ### `events/committed-not-failed`
 
@@ -559,7 +559,7 @@ If a change has committed, then the server MUST NOT answer it with a `5xx` statu
 
 When a retention job purges an item, the server MUST send `item.purged` for it.
 
-**Reason:** the log's retention and the bin's are set independently, and a device resuming from a cursor inside the log's retention would otherwise keep a row the instance has dropped.
+**Reason:** the log's retention and the bin's are set independently, and a device resuming from a cursor inside the log's retention would otherwise keep an item the instance has dropped.
 
 **Tests:** `compliance/event-retention.test.ts › announces item.purged for an item the retention job purges`.
 
@@ -617,7 +617,7 @@ When `POST /items/summaries/{id}/trash`, `POST /items/summaries/{id}/restore`, `
 
 When a cascade moves a `system.*` item to `revoked`, the server MUST announce `item.deleted` for it, with `state` `revoked`.
 
-**Tests:** `compliance/cascade-marks.test.ts › marks no row a cascade revokes rather than trashes`.
+**Tests:** `compliance/cascade-marks.test.ts › marks no item a cascade revokes rather than trashes`.
 
 ### `events/edge-bulk-announced`
 
@@ -681,7 +681,7 @@ The source filter is `enforcement.source_filter` as it holds for the stream's cr
 
 Where the source filter names an item's type or a type above it and does not name the item's source, the server MUST withhold the item's events from a stream that is not a copy stream, live and on a replay from a cursor.
 
-**Reason:** a stream frame carries the whole item, so a stream that sent it would hand over a row every listing leaves out.
+**Reason:** a stream frame carries the whole item, so a stream that sent it would hand over an item every listing leaves out.
 
 **Tests:** `compliance/stream-source-filter.test.ts › leaves out of a live stream the items and edges whose source item the filter hides, and nothing else`, `› leaves the same frames out of a replay from a cursor`.
 
@@ -703,9 +703,9 @@ When the source filter that holds for an open stream's credential changes, the s
 
 Where the source filter leaves out an item the credential may read, the server MUST still send the item's events on a copy stream, with `listed` `false`.
 
-**Reason:** `reach/frame-excluded` holds the copy stream to every row a device may hold.
+**Reason:** `reach/frame-excluded` holds the copy stream to every item a device may hold.
 
-**Tests:** `compliance/stream-source-filter.test.ts › still sends a row the filter hides on a copy stream, with listed false`.
+**Tests:** `compliance/stream-source-filter.test.ts › still sends an item the filter hides on a copy stream, with listed false`.
 
 ## A stream and its credential
 
@@ -1147,7 +1147,7 @@ The server MUST carry `event_id` in a delivery's body, as the id of the event in
 
 ### `events/delivery-id`
 
-The server MUST carry `delivery_id` in a delivery's body, equal to the `id` of the delivery's row in `GET /webhooks/{id}/deliveries` and the same on every attempt.
+The server MUST carry `delivery_id` in a delivery's body, equal to the `id` of the delivery's entry in `GET /webhooks/{id}/deliveries` and the same on every attempt.
 
 **Tests:** `compliance/webhooks.test.ts › delivers a matching event to the URL with a verifiable signature`, `compliance/webhook-delivery.test.ts › leaves a delivery pending after a 500 and retries it with the same ids`.
 
@@ -1155,7 +1155,7 @@ The server MUST carry `delivery_id` in a delivery's body, equal to the `id` of t
 
 The server MUST carry `delivered_at` in a delivery's body, as the instant of that attempt.
 
-**Tests:** `compliance/webhook-delivery.test.ts › leaves a delivery pending after a 500 and retries it with the same ids`, `compliance/webhooks.test.ts › redelivers a retained failed row to the current address with stable identity`.
+**Tests:** `compliance/webhook-delivery.test.ts › leaves a delivery pending after a 500 and retries it with the same ids`, `compliance/webhooks.test.ts › redelivers a retained failed delivery to the current address with stable identity`.
 
 ### `events/delivery-payload`
 
@@ -1179,13 +1179,13 @@ The server MUST give the `t` of `X-Marfa-Signature` as the time of the attempt.
 
 The server MUST carry in a delivery the cascade marks the stream frame carries, `trashed_by_cascade`, `trashed_with`, `restored_with` and `purged_with` among them.
 
-**Tests:** `compliance/cascade-marks.test.ts › delivers the item.deleted of a row a cascade trashed with its mark, and the row trashed's own without one`, `compliance/webhook-delivery.test.ts › delivers the marks of a stream frame, naming another row only to an owner who may read its type`, `› sends no edge.deleted for an edge a purge took to an owner who may not read the purged item's type, and sends it for a type the owner reads`.
+**Tests:** `compliance/cascade-marks.test.ts › delivers the item.deleted of an item a cascade trashed with its mark, and the item trashed's own without one`, `compliance/webhook-delivery.test.ts › delivers the marks of a stream frame, naming another item only to an owner who may read its type`, `› sends no edge.deleted for an edge a purge took to an owner who may not read the purged item's type, and sends it for a type the owner reads`.
 
 ### `events/delivery-marks-named`
 
-When a delivery carries a mark that names another row, the server MUST name it only where the subscription's credential may read that row's type.
+When a delivery carries a mark that names another item, the server MUST name it only where the subscription's credential may read that item's type.
 
-**Tests:** `compliance/webhook-delivery.test.ts › delivers the marks of a stream frame, naming another row only to an owner who may read its type`.
+**Tests:** `compliance/webhook-delivery.test.ts › delivers the marks of a stream frame, naming another item only to an owner who may read its type`.
 
 ## What a subscription's credential may read
 
@@ -1449,13 +1449,13 @@ When the server settles a delivery unsent, the server MUST record it `canceled` 
 
 When the credential that owns a subscription sends `POST /webhooks/{id}/deliveries/{delivery_id}/redeliver` for a `dead_letter` delivery, the server MUST answer `202` with that delivery as `pending`, keeping its `id`, `status_code` and `attempt`.
 
-**Tests:** `compliance/webhooks.test.ts › redelivers a retained failed row to the current address with stable identity`.
+**Tests:** `compliance/webhooks.test.ts › redelivers a retained failed delivery to the current address with stable identity`.
 
 ### `events/redeliver-current`
 
 When the server redelivers a delivery, the server MUST send it to the subscription's current `url`, signed under its current secret, with the same `event_id` and `delivery_id` and a new `delivered_at`.
 
-**Tests:** `compliance/webhooks.test.ts › redelivers a retained failed row to the current address with stable identity`.
+**Tests:** `compliance/webhooks.test.ts › redelivers a retained failed delivery to the current address with stable identity`.
 
 ### `events/redeliver-not-failed`
 
@@ -1469,13 +1469,13 @@ If a redelivery names a delivery that is `pending`, `success` or `canceled`, the
 
 If the server refuses a redelivery, then the server MUST leave the delivery's `status` and `attempt` as they were.
 
-**Tests:** `compliance/webhook-delivery.test.ts › refuses to redeliver a delivery that is pending, delivered or canceled with 409 conflict, where a failed one is accepted`, `compliance/webhooks.test.ts › redelivers a retained failed row to the current address with stable identity`.
+**Tests:** `compliance/webhook-delivery.test.ts › refuses to redeliver a delivery that is pending, delivered or canceled with 409 conflict, where a failed one is accepted`, `compliance/webhooks.test.ts › redelivers a retained failed delivery to the current address with stable identity`.
 
 ### `events/redeliver-inactive`
 
 If a redelivery names a delivery of a subscription that is not active, then the server MUST answer `409 conflict`.
 
-**Tests:** `compliance/webhooks.test.ts › redelivers a retained failed row to the current address with stable identity`.
+**Tests:** `compliance/webhooks.test.ts › redelivers a retained failed delivery to the current address with stable identity`.
 
 ### `events/redeliver-conflict-reason`
 
@@ -1483,13 +1483,13 @@ When the server answers a redelivery `409 conflict`, the server MUST carry in `d
 
 **Reason:** the four refusals need different remedies, and a caller who is told only that the request collides cannot tell a switch to turn on from a delivery that cannot be sent again. A `dead_letter` delivery keeps the event it was queued with, so no fifth refusal is needed for an event the log has since let go.
 
-**Tests:** `compliance/webhooks.test.ts › redelivers a retained failed row to the current address with stable identity`, `compliance/webhook-delivery.test.ts › refuses to redeliver a delivery that is pending, delivered or canceled with 409 conflict, where a failed one is accepted`, `compliance/webhook-history.test.ts › refuses to redeliver a dead_letter delivery older than the audit retention`, `compliance/webhooks-owner.test.ts › names a maker that no longer holds webhooks.manage as the reason a local redelivery is refused`.
+**Tests:** `compliance/webhooks.test.ts › redelivers a retained failed delivery to the current address with stable identity`, `compliance/webhook-delivery.test.ts › refuses to redeliver a delivery that is pending, delivered or canceled with 409 conflict, where a failed one is accepted`, `compliance/webhook-history.test.ts › refuses to redeliver a dead_letter delivery older than the audit retention`, `compliance/webhooks-owner.test.ts › names a maker that no longer holds webhooks.manage as the reason a local redelivery is refused`.
 
 ### `events/redeliver-missing`
 
 If a redelivery names a delivery the subscription does not hold, then the server MUST answer `404 webhook_not_found`.
 
-**Tests:** `compliance/webhooks.test.ts › redelivers a retained failed row to the current address with stable identity`.
+**Tests:** `compliance/webhooks.test.ts › redelivers a retained failed delivery to the current address with stable identity`.
 
 ### `events/redeliver-once`
 
@@ -1507,13 +1507,13 @@ When a receiver answers every attempt of a redelivered delivery with a retryable
 
 When the server accepts a redelivery, the server MUST record a `webhook.delivery.redeliver` entry with `resource_type` `webhook_delivery`, the delivery's id as `resource_id` and the subscription's id as `details.webhook_id`.
 
-**Tests:** `compliance/webhooks.test.ts › redelivers a retained failed row to the current address with stable identity`.
+**Tests:** `compliance/webhooks.test.ts › redelivers a retained failed delivery to the current address with stable identity`.
 
 ### `events/redeliver-refused-no-audit`
 
 If the server refuses or duplicates a redelivery, then the server MUST NOT record a `webhook.delivery.redeliver` entry for it.
 
-**Tests:** `compliance/webhooks.test.ts › redelivers a retained failed row to the current address with stable identity`, `compliance/webhook-delivery.test.ts › refuses to redeliver a delivery that is pending, delivered or canceled with 409 conflict, where a failed one is accepted`, `› queues one transition when a redelivery is requested twice at once, and records one audit entry`.
+**Tests:** `compliance/webhooks.test.ts › redelivers a retained failed delivery to the current address with stable identity`, `compliance/webhook-delivery.test.ts › refuses to redeliver a delivery that is pending, delivered or canceled with 409 conflict, where a failed one is accepted`, `› queues one transition when a redelivery is requested twice at once, and records one audit entry`.
 
 ### `events/redeliver-audit-fails`
 
@@ -1673,7 +1673,7 @@ When an ordinary write follows a bulk write of 50,000 items with fan-out disable
 
 **Reason:** events that do not fan out must not consume successive scheduling runs before an event that does fan out can be reached; their payloads are not inspected by webhook scheduling because they cannot create deliveries.
 
-**Tests:** `compliance/webhook-bulk-backlog.test.ts › delivers the next fan-out within ordinary latency after 50,000 bulk rows`.
+**Tests:** `compliance/webhook-bulk-backlog.test.ts › delivers the next fan-out within ordinary latency after 50,000 bulk items`.
 
 ## Real conditions
 
@@ -1803,7 +1803,7 @@ When a bulk action runs with `dry_run`, the server MUST NOT record an entry for 
 
 ### `events/audit-job-chunk`
 
-When a bulk-action job commits a chunk of rows, the server MUST record an `items.bulk_action.chunk` entry for it, whose chunks together walk the matched rows from the first to the last once.
+When a bulk-action job commits a chunk of items, the server MUST record an `items.bulk_action.chunk` entry for it, whose chunks together walk the matched items from the first to the last once.
 
 **Tests:** `compliance/audit-jobs.test.ts › records the enqueue and each committed chunk of a job, and nothing for a dry run`.
 
@@ -1875,7 +1875,7 @@ The server MUST filter `GET /audit` by `q` to the entries that hold every word o
 
 ### `events/audit-bounds`
 
-The server MUST bound `GET /audit` by `created_after` and `created_before`, both exclusive of a row's own instant.
+The server MUST bound `GET /audit` by `created_after` and `created_before`, both exclusive of an entry's own instant.
 
 **Tests:** `compliance/audit.test.ts › bounds by created_after and created_before, both exclusive`.
 
@@ -1893,9 +1893,9 @@ If `created_after` or `created_before` is not an instant, then the server MUST a
 
 ### `events/audit-paged`
 
-When `limit` cuts the audit listing short, the server MUST answer a `next_cursor` that, followed, reaches every row once.
+When `limit` cuts the audit listing short, the server MUST answer a `next_cursor` that, followed, reaches every entry once.
 
-**Tests:** `compliance/audit.test.ts › paginates with a cursor and delivers every row once`.
+**Tests:** `compliance/audit.test.ts › paginates with a cursor and delivers every entry once`.
 
 ### `events/audit-limit-default`
 
@@ -1925,7 +1925,7 @@ If a credential without `audit.read` sends `GET /audit`, then the server MUST an
 
 If `GET /audit` names a query key the operation does not declare, then the server MUST answer `400 validation_error` with the key in `details.unknown_parameters`.
 
-**Reason:** an undeclared bound answered with the whole trail would read exactly like a time range that matched every row.
+**Reason:** an undeclared bound answered with the whole trail would read exactly like a time range that matched every item.
 
 **Tests:** `compliance/audit.test.ts › refuses an undeclared bound rather than answering the whole trail`.
 

@@ -91,15 +91,15 @@ describe("validation edge cases", () => {
         `${label} was not refused`,
       ).toEqual([400, "invalid_id"]);
       // Nothing was written: the natural key it named is still free, so a
-      // create naming it lands as a new row rather than an upsert.
+      // create naming it lands as a new item rather than an upsert.
       const free = await client.createItem(
         createNote({ source: ctx.source, source_id: sourceId }),
       );
-      expect(free.status, `${label} left a row behind`).toBe(201);
+      expect(free.status, `${label} left an item behind`).toBe(201);
       trackItem(ctx, free.data.item.id);
     }
 
-    // The witness: the lowercase UUIDv7 is taken as the row's id.
+    // The witness: the lowercase UUIDv7 is taken as the item's id.
     const accepted = await client.createItem(
       createNote({ id: lowercase, source: ctx.source }),
     );
@@ -247,7 +247,7 @@ describe("validation edge cases", () => {
           data: ({ id: string } | { item: { id: string } })[];
         }>(`${door}filter=${encodeURIComponent(joined(10, logical))}`);
         expect(largest.status, `${door} ${logical} 10`).toBe(200);
-        // The witness that the ten were read and not skipped: the row is
+        // The witness that the ten were read and not skipped: the item is
         // answered under them.
         expect(
           largest.data.data.map((r) => ("item" in r ? r.item.id : r.id)),
@@ -420,7 +420,7 @@ describe("validation edge cases", () => {
       } as never);
     const matched = (r: { data: unknown }) => (r.data as { ids: string[] }).ids;
 
-    // The witnesses: a filter naming nothing reads every row this key can
+    // The witnesses: a filter naming nothing reads every item this key can
     // write, so the refusals below are of what would have been read, and each
     // field with a real value is taken.
     const everything = await dryRun({});
@@ -647,7 +647,7 @@ describe("type identifier validation", () => {
     expect(Object.keys(r.data.item.properties)).toEqual(declaredThenSent);
 
     // Read back by id, because the create's answer is built on the write
-    // path and the read is built on the row.
+    // path and the read is built on the item.
     const read = await client.getItem(r.data.item.id);
     expect(read.ok).toBe(true);
     expect(Object.keys(read.data.item.properties)).toEqual(declaredThenSent);
@@ -691,7 +691,7 @@ describe("type identifier validation", () => {
     expect(Object.keys(read.data.item.properties)).toEqual(answered);
   });
 
-  it("keeps the order a whole edit behind the row finds, as a merge does", async () => {
+  it("keeps the order a whole edit behind the item finds, as a merge does", async () => {
     const r = await client.createItem({
       type: "core.note",
       source: ctx.source,
@@ -710,7 +710,7 @@ describe("type identifier validation", () => {
       "anchor",
     ]);
     // Sent on the version before that write, it is merged: the properties
-    // the row holds keep their places, and the one it adds goes after them.
+    // the item holds keep their places, and the one it adds goes after them.
     const behind = await client.updateItem(r.data.item.id, {
       properties: { zz: "added here", courier: "changed here", body: "kept" },
       properties_mode: "replace",
@@ -824,7 +824,7 @@ describe("type identifier validation", () => {
     trackItem(ctx, r.data.item.id);
     expect(Object.keys(r.data.item.properties)).toEqual(["body", "courier"]);
 
-    // A merge moves no key the row holds, so a declared field it adds goes
+    // A merge moves no key the item holds, so a declared field it adds goes
     // after them, as an undeclared one does, in the order it was sent.
     const merged = await client.updateItem(r.data.item.id, {
       properties: { anchor: "added first", title: "declared, added second" },
@@ -838,7 +838,7 @@ describe("type identifier validation", () => {
       "title",
     ]);
 
-    // A whole edit is the row's properties as sent, in the order sent.
+    // A whole edit is the item's properties as sent, in the order sent.
     const replaced = await client.updateItem(r.data.item.id, {
       properties: { anchor: "first", title: "second", body: "third" },
       properties_mode: "replace",

@@ -12,7 +12,7 @@
  * - **The target may be cold.** A server's first requests carry start-up cost.
  *   `warmTarget()` absorbs that in `beforeAll` so no measured sample carries
  *   it.
- * - **Rows belong to one file.** Suites scope their reads to their own
+ * - **Items belong to one file.** Suites scope their reads to their own
  *   credential `source` (or to a run-unique full-text marker) rather than
  *   reading whatever else lives in the dataset, and they keep concurrency low
  *   enough that one suite does not starve the rest of the run.
@@ -39,7 +39,7 @@ import {
 
 /**
  * Every item written by a load suite carries this tag. Suites delete their own
- * rows via the tracked-resource path, so it is only a backstop: if a run is
+ * items via the tracked-resource path, so it is only a backstop: if a run is
  * killed mid-flight, `pnpm load:cleanup` sweeps whatever is left by this tag.
  */
 export const LOAD_TAG = "env:test";
@@ -114,7 +114,7 @@ export interface SeedCorpusOptions {
 export interface SeededCorpus {
   /** Every item id the server reported as created, in write order. */
   ids: string[];
-  /** Ids grouped by type, so a suite can narrow to one type's rows. */
+  /** Ids grouped by type, so a suite can narrow to one type's items. */
   idsByType: Record<string, string[]>;
   /** Ids of the items whose searchable text carries the marker. */
   markedIds: string[];
@@ -250,9 +250,9 @@ export async function seedCorpus(
 
   for (const chunk of chunks) {
     const { result, durationMs } = await measure(() =>
-      // `create_only` keeps a re-run from silently updating rows a previous
+      // `create_only` keeps a re-run from silently updating items a previous
       // run left behind; `atomic: false` reports per-item outcomes so a single
-      // bad row does not discard the whole batch.
+      // bad item does not discard the whole batch.
       client.bulkItems({ items: chunk, mode: "create_only", atomic: false }),
     );
     batchDurationsMs.push(durationMs);
@@ -347,7 +347,7 @@ export function benchMarker(ctx: TestContext, label: string): string {
 
 /**
  * Deterministically pick `n` ids from a list, cycling if `n` exceeds the pool.
- * Deterministic so two runs of a suite read the same rows.
+ * Deterministic so two runs of a suite read the same items.
  */
 export function sampleIds(ids: readonly string[], n: number): string[] {
   if (ids.length === 0) return [];

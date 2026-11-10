@@ -95,7 +95,7 @@ describe("POST /items/bulk-get", () => {
     expect(narrow.data.items.map((i) => i.id)).toEqual([note]);
 
     // The witness: a key that reads all three types is handed the bookmark,
-    // so its absence above is the key's reach and not the row.
+    // so its absence above is the key's reach and not the item.
     const full = await client.bulkGet(ids);
     expect(full.status).toBe(200);
     expect(full.data.items.map((i) => i.id)).toEqual([
@@ -119,7 +119,7 @@ describe("POST /items/bulk-get", () => {
     expect(res.status).toBe(200);
     await expectMatchesSchema("POST", "/items/bulk-get", 200, res.data);
     // The ids the caller named are the whole answer, so there is no cursor
-    // beside the rows.
+    // beside the items.
     expect(Object.keys(res.data).sort()).toEqual(["items", "metadata"]);
     expect(Array.isArray(res.data.metadata)).toBe(true);
     expect(res.data.metadata?.some((m) => m.item_id === a)).toBe(true);

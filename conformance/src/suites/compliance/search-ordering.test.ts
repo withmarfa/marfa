@@ -8,10 +8,10 @@ import { cleanup, createTestContext, trackItem } from "../../utils/setup.js";
  * direction (`search-and-filters/search-sort-relevance` to
  * `search-and-filters/search-cursor-parameters`).
  *
- * Four rows share a word. They are made oldest first, so `created_at` and
+ * Four items share a word. They are made oldest first, so `created_at` and
  * `updated_at` run in that order, `occurred_at` runs the other way, a
  * shorter body ranks higher, `title` orders them alphabetically and the last
- * has none. Two further rows hold the same body and no title, so they tie on
+ * has none. Two further items hold the same body and no title, so they tie on
  * relevance and on the property.
  */
 let client: MarfaClient;
@@ -65,7 +65,7 @@ beforeAll(async () => {
     ],
     [
       {
-        body: `${word} among a much longer run of further words that dilute the match for this one row of the four`,
+        body: `${word} among a much longer run of further words that dilute the match for this one item of the four`,
       },
       "2026-01-01T00:00:00.000Z",
     ],
@@ -105,7 +105,7 @@ describe("search ordering", () => {
     const res = await client.search(word);
     expect(res.status).toBe(200);
     const scores = res.data.data.map((hit) => hit.relevance_score);
-    // The witness: the rows do not all rank alike, so the order can differ.
+    // The witness: the items do not all rank alike, so the order can differ.
     expect(new Set(scores).size).toBeGreaterThan(1);
     expect(scores).toEqual([...scores].sort((a, b) => b - a));
 
@@ -140,7 +140,7 @@ describe("search ordering", () => {
       made,
     );
     // The witness that the columns differ: occurred_at runs the other way
-    // for the four rows.
+    // for the four items.
     const four = rows.map((row) => row.id);
     expect(
       (await ids({ sort: "occurred_at", direction: "asc" })).filter((id) =>
@@ -149,7 +149,7 @@ describe("search ordering", () => {
     ).toEqual([...four].reverse());
   });
 
-  it("orders a search by a property with the rows that lack one last in both directions", async () => {
+  it("orders a search by a property with the items that lack one last in both directions", async () => {
     const [pear, apple, quince, untitled] = rows.map((row) => row.id);
     const [twinA, twinB] = twins.map((row) => row.id).sort();
     if (!pear || !apple || !quince || !untitled || !twinA || !twinB)
@@ -178,7 +178,7 @@ describe("search ordering", () => {
         byRelevance.indexOf(twinB),
       );
     }
-    // A property no row holds ties every hit.
+    // A property no item holds ties every hit.
     const none = await ids({ sort: "properties.nothing_here" });
     expect(none).toEqual([...all].sort());
     expect(

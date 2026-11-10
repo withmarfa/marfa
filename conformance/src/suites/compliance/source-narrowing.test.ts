@@ -9,7 +9,7 @@ import {
 } from "../../utils/setup.js";
 
 /**
- * Two sources hold rows that share a tag and a word, so the only thing that
+ * Two sources hold items that share a tag and a word, so the only thing that
  * tells them apart is the source. A request that narrows by something else as
  * well would pass for the wrong reason, so each door is asked once with the
  * source and once without it.
@@ -51,8 +51,8 @@ afterAll(async () => {
 
 const enc = encodeURIComponent;
 
-describe("source narrows the doors that declare it to the rows stamped with it", () => {
-  it("GET /items answers only the rows stamped with the source named", async () => {
+describe("source narrows the doors that declare it to the items stamped with it", () => {
+  it("GET /items answers only the items stamped with the source named", async () => {
     const both = await client.listItems({ tags: [tag] });
     expect(both.status).toBe(200);
     expect(both.data.data.map((row: MarfaItem) => row.id).sort()).toEqual(
@@ -66,7 +66,7 @@ describe("source narrows the doors that declare it to the rows stamped with it",
     expect(yours.data.data.map((row: MarfaItem) => row.id)).toEqual([theirs]);
   });
 
-  it("GET /items/stats counts only the rows stamped with the source named", async () => {
+  it("GET /items/stats counts only the items stamped with the source named", async () => {
     const stats = async (query: string) => {
       const res = await client.rawRequest<Record<string, number>>(
         `/items/stats?tags=${enc(tag)}${query}`,
@@ -79,7 +79,7 @@ describe("source narrows the doors that declare it to the rows stamped with it",
     expect(await stats(`&source=${enc(otherSource)}`)).toEqual({ active: 1 });
   });
 
-  it("GET /export carries only the rows stamped with the source named", async () => {
+  it("GET /export carries only the items stamped with the source named", async () => {
     const lines = async (source: string): Promise<string[]> => {
       const res = await client.exportItems({ type: "core.note", source });
       expect(res.status, JSON.stringify(res.error)).toBe(200);
@@ -95,7 +95,7 @@ describe("source narrows the doors that declare it to the rows stamped with it",
     expect(await lines(otherSource)).toEqual([theirs]);
   });
 
-  it("POST /items/bulk-actions selects only the rows stamped with the source named", async () => {
+  it("POST /items/bulk-actions selects only the items stamped with the source named", async () => {
     const selected = async (filter: Record<string, unknown>) => {
       const res = await client.rawRequest<{ ids: string[] }>(
         "/items/bulk-actions",
@@ -117,8 +117,8 @@ describe("source narrows the doors that declare it to the rows stamped with it",
     expect(await selected({ source: otherSource })).toEqual([theirs]);
   });
 
-  it("GET /search answers only the rows stamped with the source named", async () => {
-    // The witness: the same search without the key finds both rows.
+  it("GET /search answers only the items stamped with the source named", async () => {
+    // The witness: the same search without the key finds both items.
     const both = await client.search(word);
     expect(both.status).toBe(200);
     expect(both.data.data.map((hit) => hit.item.id).sort()).toEqual(

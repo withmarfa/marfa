@@ -63,7 +63,7 @@ function held() {
   };
 }
 
-/** The row the server holds, for a refusal to be reconciled against. */
+/** The item the server holds, for a refusal to be reconciled against. */
 function serverRow(): ScriptedWrites["read"] {
   return [
     answers.updated(
@@ -76,7 +76,7 @@ function serverRow(): ScriptedWrites["read"] {
   ];
 }
 
-/** Queue one update to the held row, script the answers, and drain `times`. */
+/** Queue one update to the held item, script the answers, and drain `times`. */
 async function drainAgainst(
   harness: Harness,
   writes: ScriptedWrites,
@@ -126,7 +126,7 @@ async function queueOf(harness: Harness): Promise<QueuedWrite[]> {
 
 describe("an environmental failure retries and is never counted", () => {
   it("retries an environmental failure past the ceiling without counting it", async () => {
-    harness = await hydratedHarness("class-environmental", { rows: held() });
+    harness = await hydratedHarness("class-environmental", { items: held() });
     // Six attempts, one past the ceiling. A device that counted them would
     // have killed the write on the fifth.
     const reports = await drainAgainst(
@@ -164,7 +164,7 @@ describe("an environmental failure retries and is never counted", () => {
 
   it("ends the pass at the first write the server cannot take, leaving the rest untried and uncounted", async () => {
     harness = await hydratedHarness("class-environmental-ends", {
-      rows: held(),
+      items: held(),
     });
     const { server, device } = harness;
     for (const title of ["first", "second", "third"]) {
@@ -248,7 +248,7 @@ describe("an environmental failure retries and is never counted", () => {
   });
 
   it("counts only the writes the server answered, and says why the rest were not delivered", async () => {
-    harness = await hydratedHarness("class-counts", { rows: held() });
+    harness = await hydratedHarness("class-counts", { items: held() });
     const { server, device } = harness;
     for (const title of ["refused", "unsent"]) {
       expect(
@@ -265,7 +265,7 @@ describe("an environmental failure retries and is never counted", () => {
         refusal(400, "invalid_properties", "no such property"),
         { kind: "drop" },
       ],
-      // A refused create is read back, and the server holds no such row.
+      // A refused create is read back, and the server holds no such item.
       read: [refusal(404, "item_not_found", "no such item")],
     });
     const drained = await device.drain();
@@ -288,7 +288,7 @@ describe("an environmental failure retries and is never counted", () => {
   it.each([undefined, null])(
     "passes on the wait a read reconciling a refusal was asked for (contract %s)",
     async (contract) => {
-      harness = await hydratedHarness("class-read-waits", { rows: held() });
+      harness = await hydratedHarness("class-read-waits", { items: held() });
       const { server, device } = harness;
       expect(
         (
@@ -322,7 +322,7 @@ describe("an environmental failure retries and is never counted", () => {
   );
 
   it("counts the writes it settled without sending apart from those the server answered", async () => {
-    harness = await hydratedHarness("class-unsent", { rows: held() });
+    harness = await hydratedHarness("class-unsent", { items: held() });
     const { server, device } = harness;
     const created = await device.create({
       type: "core.note",
@@ -358,7 +358,7 @@ describe("an environmental failure retries and is never counted", () => {
   });
 
   it("ends the pass at a read the server cannot answer, sending nothing after it", async () => {
-    harness = await hydratedHarness("class-read-ends", { rows: held() });
+    harness = await hydratedHarness("class-read-ends", { items: held() });
     const { server, device } = harness;
     const edit = await device.update(HELD.id, {
       properties: { title: "edited" },
@@ -417,7 +417,7 @@ describe("an environmental failure retries and is never counted", () => {
   });
 
   it("retries a 5xx and a 429 without counting them", async () => {
-    harness = await hydratedHarness("class-5xx", { rows: held() });
+    harness = await hydratedHarness("class-5xx", { items: held() });
     const reports = await drainAgainst(
       harness,
       {
@@ -455,7 +455,7 @@ describe("an environmental failure retries and is never counted", () => {
   });
 
   it("passes on at most 300 seconds of the wait a write was asked for", async () => {
-    harness = await hydratedHarness("class-retry-after-cap", { rows: held() });
+    harness = await hydratedHarness("class-retry-after-cap", { items: held() });
     const reports = await drainAgainst(
       harness,
       {
@@ -480,7 +480,7 @@ describe("an environmental failure retries and is never counted", () => {
 describe("a failure of the environment past the network itself", () => {
   it.each([408, 425])("retries a %i without counting it", async (status) => {
     harness = await hydratedHarness(`class-${String(status)}`, {
-      rows: held(),
+      items: held(),
     });
     const reports = await drainAgainst(
       harness,
@@ -504,7 +504,7 @@ describe("a failure of the environment past the network itself", () => {
   });
 
   it("retries a write the server never answers, without counting it", async () => {
-    harness = await hydratedHarness("class-stalled", { rows: held() });
+    harness = await hydratedHarness("class-stalled", { items: held() });
     const reports = await drainAgainst(
       harness,
       {
@@ -542,7 +542,7 @@ describe("a contract failure does not retry", () => {
     "refuses on the first answer a %i %s that names the contract",
     async (status, code) => {
       harness = await hydratedHarness(`class-refused-${String(status)}`, {
-        rows: held(),
+        items: held(),
       });
       const reports = await drainAgainst(
         harness,
@@ -569,7 +569,7 @@ describe("a contract failure does not retry", () => {
   );
 
   it("refuses a contract failure on the first answer", async () => {
-    harness = await hydratedHarness("class-contract", { rows: held() });
+    harness = await hydratedHarness("class-contract", { items: held() });
     const [first] = await drainAgainst(harness, {
       update: [refusal(400, "invalid_properties", "body is required")],
       read: serverRow(),
@@ -594,7 +594,7 @@ describe("a contract failure does not retry", () => {
 
 describe("the class that is neither retries and is counted", () => {
   it("counts a write whose answer the copy cannot take, and goes on to the next", async () => {
-    harness = await hydratedHarness("class-local", { rows: held() });
+    harness = await hydratedHarness("class-local", { items: held() });
     const { server, device } = harness;
     const edit = await device.update(HELD.id, {
       properties: { title: "edited" },
@@ -658,7 +658,7 @@ describe("the class that is neither retries and is counted", () => {
    * core) for the write the fault names.
    */
   async function storeFaulted(label: string, fault: string) {
-    harness = await hydratedHarness(label, { rows: held() });
+    harness = await hydratedHarness(label, { items: held() });
     const { server, device } = harness;
     const edit = await device.update(HELD.id, {
       properties: { title: "edited" },
@@ -792,7 +792,7 @@ describe("the class that is neither retries and is counted", () => {
   });
 
   it("counts a write whose request cannot be made, and makes it dead at the ceiling", async () => {
-    harness = await hydratedHarness("class-unmade", { rows: held() });
+    harness = await hydratedHarness("class-unmade", { items: held() });
     const { device, server } = harness;
     const path = `${device.store}.unmade`;
     writeFileSync(path, "bytes");
@@ -826,7 +826,7 @@ describe("the class that is neither retries and is counted", () => {
   });
 
   it("retries an answer it cannot read, and counts it", async () => {
-    harness = await hydratedHarness("class-unreadable", { rows: held() });
+    harness = await hydratedHarness("class-unreadable", { items: held() });
     const reports = await drainAgainst(
       harness,
       { update: [{ kind: "json", status: 200, body: "not an answer" }] },
@@ -843,7 +843,7 @@ describe("the class that is neither retries and is counted", () => {
   });
 
   it("retries a key the server reports in flight, and counts it", async () => {
-    harness = await hydratedHarness("class-in-flight", { rows: held() });
+    harness = await hydratedHarness("class-in-flight", { items: held() });
     const reports = await drainAgainst(
       harness,
       {
@@ -874,7 +874,7 @@ describe("the class that is neither retries and is counted", () => {
 
 describe("the three refusals that park a write", () => {
   it("blocks the whole queue on a refused credential, and stops the drain", async () => {
-    harness = await hydratedHarness("class-401", { rows: held() });
+    harness = await hydratedHarness("class-401", { items: held() });
     const first = await harness.device.update(HELD.id, {
       properties: { title: "one" },
       version: HELD.version,
@@ -900,7 +900,7 @@ describe("the three refusals that park a write", () => {
 
     expect(
       drained.value.answered,
-      "the drain worked through a queue every row of which carries the same refused credential, spending a request per row to be told the same thing",
+      "the drain worked through a queue every write of which carries the same refused credential, spending a request per write to be told the same thing",
     ).toBe(1);
     expect(
       drained.value.stopped,
@@ -910,7 +910,7 @@ describe("the three refusals that park a write", () => {
     const queue = await queueOf(harness);
     expect(
       queue.map((row) => row.verdict),
-      "a refused credential parked only the row that met it, and every other row carries the same credential",
+      "a refused credential parked only the write that met it, and every other write carries the same credential",
     ).toEqual(["blocked", "blocked", "blocked"]);
     for (const row of queue) {
       expect(row.reason).toBe("credential_refused");
@@ -922,7 +922,7 @@ describe("the three refusals that park a write", () => {
   });
 
   it("blocks a spent key on the first refusal rather than spending the ceiling", async () => {
-    harness = await hydratedHarness("class-key-spent", { rows: held() });
+    harness = await hydratedHarness("class-key-spent", { items: held() });
     const [first] = await drainAgainst(harness, {
       update: [
         refusal(422, "idempotency_key_reused", "answered for another body"),
@@ -930,7 +930,7 @@ describe("the three refusals that park a write", () => {
     });
     expect(
       first?.verdicts[0]?.verdict,
-      "a spent key was retried, and re-sending the same key cannot clear it: the ceiling would be spent on five identical refusals and the row parked under a reason naming the wrong cause",
+      "a spent key was retried, and re-sending the same key cannot clear it: the ceiling would be spent on five identical refusals and the write parked under a reason naming the wrong cause",
     ).toBe("blocked");
     expect(first?.verdicts[0]?.reason).toBe("key_spent");
     expect(
@@ -940,7 +940,7 @@ describe("the three refusals that park a write", () => {
   });
 
   it("blocks a write whose base version the server no longer holds", async () => {
-    harness = await hydratedHarness("class-ancestor", { rows: held() });
+    harness = await hydratedHarness("class-ancestor", { items: held() });
     const [first] = await drainAgainst(harness, {
       update: [
         refusal(409, "ancestor_unavailable", "no snapshot of that version"),
@@ -954,9 +954,9 @@ describe("the three refusals that park a write", () => {
   });
 
   it("blocks a conflict the server declined to resolve", async () => {
-    harness = await hydratedHarness("class-conflict", { rows: held() });
+    harness = await hydratedHarness("class-conflict", { items: held() });
     const [first] = await drainAgainst(harness, {
-      update: [refusal(409, "version_conflict", "the row moved under this")],
+      update: [refusal(409, "version_conflict", "the item moved under this")],
     });
     expect(
       first?.verdicts[0]?.verdict,
@@ -974,7 +974,7 @@ describe("the three refusals that park a write", () => {
       ],
     ] as const) {
       const own = await hydratedHarness(`class-passed-over-${reason}`, {
-        rows: held(),
+        items: held(),
       });
       try {
         const reports = await drainAgainst(own, { update: [refused] }, 3);
@@ -1003,7 +1003,7 @@ describe("the three refusals that park a write", () => {
 
 describe("the ceiling, and releasing what it stopped", () => {
   it("counts refusals rather than attempts, so a long outage does not exhaust the ceiling", async () => {
-    harness = await hydratedHarness("class-outage", { rows: held() });
+    harness = await hydratedHarness("class-outage", { items: held() });
     // Ten attempts nobody answered, then one counted refusal. The count is
     // one, not eleven: a device that could not ask has not been refused.
     const reports = await drainAgainst(
@@ -1023,7 +1023,7 @@ describe("the ceiling, and releasing what it stopped", () => {
   });
 
   it("reaches the ceiling on the fifth refusal", async () => {
-    harness = await hydratedHarness("class-ceiling", { rows: held() });
+    harness = await hydratedHarness("class-ceiling", { items: held() });
     const reports = await drainAgainst(
       harness,
       { update: [{ kind: "json", status: 200, body: "not an answer" }] },
@@ -1058,7 +1058,7 @@ describe("the ceiling, and releasing what it stopped", () => {
     ];
     for (const [index, writes] of blocking.entries()) {
       const own = await hydratedHarness(`class-reasons-${String(index)}`, {
-        rows: held(),
+        items: held(),
       });
       try {
         const [report] = await drainAgainst(own, writes);
@@ -1076,7 +1076,7 @@ describe("the ceiling, and releasing what it stopped", () => {
     // The fifth comes from a dependency rather than from an answer, which
     // is why reading only the refusals would leave it looking unreachable.
     const waiting = await hydratedHarness("class-reasons-dependency", {
-      rows: held(),
+      items: held(),
     });
     try {
       const created = await waiting.device.create({
@@ -1106,7 +1106,7 @@ describe("the ceiling, and releasing what it stopped", () => {
     // in three drains running, the first five minutes ago, set aside once the
     // create sent to test it is taken and it fails again.
     const failing = await hydratedHarness("class-reasons-failing-alone", {
-      rows: held(),
+      items: held(),
     });
     try {
       const stuck = await failing.device.create({
@@ -1172,7 +1172,7 @@ describe("the ceiling, and releasing what it stopped", () => {
       );
       scriptHydration(moved.server, {
         head: "10",
-        rows: held(),
+        items: held(),
         instance: () => instance,
       });
       expect((await moved.device.hydrate(["core.note"], "library")).ok).toBe(
@@ -1204,7 +1204,7 @@ describe("the ceiling, and releasing what it stopped", () => {
 
   it("releases a held write when its dependency is answered", async () => {
     harness = await hydratedHarness("class-release-dependency", {
-      rows: held(),
+      items: held(),
     });
     const created = await harness.device.create({
       type: "core.note",
@@ -1257,7 +1257,7 @@ describe("the ceiling, and releasing what it stopped", () => {
 
   it("will not release a write the server itself refused, dependency or not", async () => {
     harness = await hydratedHarness("class-release-server-refusal", {
-      rows: held(),
+      items: held(),
     });
     const created = await harness.device.create({
       type: "core.note",
@@ -1286,7 +1286,7 @@ describe("the ceiling, and releasing what it stopped", () => {
     scriptWrites(harness.server, {
       create: [answers.created(wireItem({ id, version: 1 }))],
       update: [refusal(400, "invalid_properties", "not a title")],
-      // The refusal is reconciled, which reads the server's row back.
+      // The refusal is reconciled, which reads the server's item back.
       read: [
         answers.updated(
           wireItem({
@@ -1302,7 +1302,7 @@ describe("the ceiling, and releasing what it stopped", () => {
     const row = (await queueOf(harness)).find((it) => it.id === edit.value.id);
     expect(
       row?.verdict,
-      "the update was not refused by the server at all, so the release below is about the wrong row",
+      "the update was not refused by the server at all, so the release below is about the wrong item",
     ).toBe("refused");
     expect(
       row?.depends_on ?? [],
@@ -1325,8 +1325,8 @@ describe("the ceiling, and releasing what it stopped", () => {
     ).toBe("refused");
   });
 
-  it("sends a released row again under a fresh key", async () => {
-    harness = await hydratedHarness("class-release-key", { rows: held() });
+  it("sends a released write again under a fresh key", async () => {
+    harness = await hydratedHarness("class-release-key", { items: held() });
     const [first] = await drainAgainst(harness, {
       update: [
         refusal(422, "idempotency_key_reused", "answered for another body"),
@@ -1341,7 +1341,7 @@ describe("the ceiling, and releasing what it stopped", () => {
     const released = await harness.device.release({ id: blocked.id });
     expect(
       released.ok,
-      `the device refused to release a blocked row: ${JSON.stringify(released)}`,
+      `the device refused to release a blocked write: ${JSON.stringify(released)}`,
     ).toBe(true);
     if (!released.ok) return;
     expect(released.value).toBe(1);
@@ -1349,15 +1349,15 @@ describe("the ceiling, and releasing what it stopped", () => {
     const after = (await queueOf(harness))[0];
     expect(
       after?.verdict,
-      "a released row kept its verdict, so a drain still passes over it",
+      "a released write kept its verdict, so a drain still passes over it",
     ).toBeNull();
     expect(
       after?.idempotency_key,
-      "a released row went back out under the key that was answered for another body, which is the same refusal that blocked it: releasing would mean nothing",
+      "a released write went back out under the key that was answered for another body, which is the same refusal that blocked it: releasing would mean nothing",
     ).not.toBe(blocked.idempotency_key);
     expect(
       after?.refusals,
-      "a released row kept the refusals it had, so the next counted failure kills it at once",
+      "a released write kept the refusals it had, so the next counted failure kills it at once",
     ).toBe(0);
 
     const drained = await harness.device.drain();
@@ -1365,7 +1365,7 @@ describe("the ceiling, and releasing what it stopped", () => {
     if (!drained.ok) return;
     expect(
       drained.value.verdicts[0]?.verdict,
-      "a released row was not sent again, so a release is a state change nothing acts on",
+      "a released write was not sent again, so a release is a state change nothing acts on",
     ).toBe("accepted");
     const keys = harness.server.requests
       .filter((request) => request.method === "PATCH")
@@ -1376,10 +1376,10 @@ describe("the ceiling, and releasing what it stopped", () => {
     ).toBe(2);
   });
 
-  it("releases by reason the rows blocked for it, and never a dead one", async () => {
+  it("releases by reason the writes blocked for it, and never a dead one", async () => {
     const DEAD = { id: "01a00000-0000-7000-8000-00000000000d", version: 2 };
     harness = await hydratedHarness("class-release-reason", {
-      rows: {
+      items: {
         "core.note": [
           ...held()["core.note"],
           {
@@ -1403,7 +1403,7 @@ describe("the ceiling, and releasing what it stopped", () => {
       });
       expect(edit.ok, JSON.stringify(edit)).toBe(true);
     }
-    // One row meets a spent key and is blocked on the first answer; the
+    // One write meets a spent key and is blocked on the first answer; the
     // other is answered unreadably until the ceiling kills it.
     scriptWrites(server, {
       update: [
@@ -1425,11 +1425,11 @@ describe("the ceiling, and releasing what it stopped", () => {
       const row = settled.find((queued) => queued.item_id === id);
       return [row?.verdict, row?.reason];
     };
-    // The blocked row's reason is the witness that the queue reports the
+    // The blocked write's reason is the witness that the queue reports the
     // column the dead row leaves empty.
     expect(
       [settledOf(HELD.id), settledOf(DEAD.id)],
-      "the fixture did not reach one row blocked for a spent key and one dead one carrying no reason, so the release below is about neither",
+      "the fixture did not reach one write blocked for a spent key and one dead one carrying no reason, so the release below is about neither",
     ).toEqual([
       ["blocked", "key_spent"],
       ["dead", null],
@@ -1440,7 +1440,7 @@ describe("the ceiling, and releasing what it stopped", () => {
     if (!released.ok) return;
     expect(
       released.value,
-      "a release by reason took a row it does not name, and a dead write goes out again under a fresh key with nobody having asked for it",
+      "a release by reason took a write it does not name, and a dead write goes out again under a fresh key with nobody having asked for it",
     ).toBe(1);
     const after = await queueOf(harness);
     const now = (id: string) => after.find((row) => row.item_id === id);
@@ -1450,7 +1450,7 @@ describe("the ceiling, and releasing what it stopped", () => {
       "a release by reason released a dead write",
     ).toBe("dead");
 
-    // The witness: the dead row is one a release takes, by its id.
+    // The witness: the dead write is one a release takes, by its id.
     const dead = now(DEAD.id);
     expect(dead).toBeDefined();
     if (dead === undefined) return;
@@ -1476,7 +1476,7 @@ describe("the ceiling, and releasing what it stopped", () => {
   });
 
   it("releases no write held behind another, by the reason it waits under or by its id", async () => {
-    harness = await hydratedHarness("class-release-held", { rows: held() });
+    harness = await hydratedHarness("class-release-held", { items: held() });
     const { device, server } = harness;
     const created = await device.create({
       type: "core.note",
@@ -1524,7 +1524,7 @@ describe("the ceiling, and releasing what it stopped", () => {
   });
 
   it("keeps a create blocked for its source, and the writes queued on it before the drain", async () => {
-    harness = await hydratedHarness("class-unclaimed-kept", { rows: held() });
+    harness = await hydratedHarness("class-unclaimed-kept", { items: held() });
     const { device, server } = harness;
     const created = await device.create({
       type: "core.note",
@@ -1562,14 +1562,14 @@ describe("the ceiling, and releasing what it stopped", () => {
     const shown = await device.get(local);
     expect(
       shown.ok && shown.value.properties.title,
-      "the row the create shows was forgotten",
+      "the item the create shows was forgotten",
     ).toBe("mine");
   });
 
   it("holds a write behind a create blocked with another for a source its key does not claim", async () => {
     const KEYED = { id: "01a00000-0000-7000-8000-00000000000b", version: 2 };
     harness = await hydratedHarness("class-unclaimed-follower", {
-      rows: {
+      items: {
         "core.note": [
           ...held()["core.note"],
           {
@@ -1591,8 +1591,8 @@ describe("the ceiling, and releasing what it stopped", () => {
       source: "notes",
       sourceId: "first.md",
     });
-    // Carries the natural key of the row the copy holds, so it is a write to
-    // that row, and the edit queued after it follows it.
+    // Carries the natural key of the item the copy holds, so it is a write to
+    // that item, and the edit queued after it follows it.
     const keyed = await device.create({
       type: "core.note",
       properties: { title: "again", body: "kept" },
@@ -1607,7 +1607,7 @@ describe("the ceiling, and releasing what it stopped", () => {
       throw new Error(JSON.stringify([first, keyed, edited]));
     expect(
       edited.value.follows,
-      "the edit does not follow the create carrying its row's natural key, so nothing here is about that order",
+      "the edit does not follow the create carrying its item's natural key, so nothing here is about that order",
     ).toBe(keyed.value.id);
     scriptWrites(server, {
       create: [
@@ -1639,7 +1639,7 @@ describe("the ceiling, and releasing what it stopped", () => {
 
   it("blocks a create naming a source its key does not claim, and sends it once the key does", async () => {
     harness = await hydratedHarness("class-unclaimed-source", {
-      rows: held(),
+      items: held(),
     });
     const { device, server } = harness;
     // The key claims `notes` only once this flips, as an operator granting
@@ -1846,7 +1846,7 @@ describe("the ceiling, and releasing what it stopped", () => {
       "the drain did not say which source the key does not claim, and `credential_refused` alone reads as a key that no longer works",
     ).toEqual(["notes"]);
 
-    // Nothing was reconciled away: the row the create was queued as is still
+    // Nothing was reconciled away: the item the create was queued as is still
     // held, and an edit of it waits for the create rather than going to an id
     // the server does not hold.
     expect((await device.get(local)).ok).toBe(true);
@@ -1858,9 +1858,9 @@ describe("the ceiling, and releasing what it stopped", () => {
     if (!edit.ok) return;
     expect(
       edit.value.depends_on,
-      "an edit of a row whose create is blocked did not wait for it, so it goes out to an id the server never held and is refused",
+      "an edit of an item whose create is blocked did not wait for it, so it goes out to an id the server never held and is refused",
     ).toEqual([first.value.id]);
-    // An edge from that row waits for the create as well.
+    // An edge from that item waits for the create as well.
     const linked = await device.createEdge({
       source: local,
       target: HELD.id,
@@ -1881,7 +1881,7 @@ describe("the ceiling, and releasing what it stopped", () => {
         .map((request) => `${request.method} ${request.pathname}`)
         .filter((sent) => sent !== "GET /"),
     ).toEqual(["POST /items"]);
-    // The edge's create is held behind the row's now, and an edit of the edge
+    // The edge's create is held behind the item's now, and an edit of the edge
     // waits for it in turn rather than going to an edge the server lacks.
     const reworded = queuedEdit(
       await device.updateEdge(linked.value.edge_id ?? "", {
@@ -1929,7 +1929,7 @@ describe("the ceiling, and releasing what it stopped", () => {
 });
 
 describe("withdrawing a write that can never be sent", () => {
-  /** The row the server holds once another device has moved it on. */
+  /** The item the server holds once another device has moved it on. */
   function movedOn(): ScriptedWrites["read"] {
     return [
       answers.updated(
@@ -1942,7 +1942,7 @@ describe("withdrawing a write that can never be sent", () => {
     ];
   }
 
-  it("withdraws a write blocked ancestor_unavailable or conflict_unresolved, and puts the row back as the server holds it", async () => {
+  it("withdraws a write blocked ancestor_unavailable or conflict_unresolved, and puts the item back as the server holds it", async () => {
     for (const [reason, refused] of [
       [
         "ancestor_unavailable",
@@ -1950,11 +1950,11 @@ describe("withdrawing a write that can never be sent", () => {
       ],
       [
         "conflict_unresolved",
-        refusal(409, "version_conflict", "the row moved under this"),
+        refusal(409, "version_conflict", "the item moved under this"),
       ],
     ] as const) {
       const own = await hydratedHarness(`class-withdraw-${reason}`, {
-        rows: held(),
+        items: held(),
       });
       try {
         const [first] = await drainAgainst(own, {
@@ -1963,11 +1963,11 @@ describe("withdrawing a write that can never be sent", () => {
         });
         expect(
           [first?.verdicts[0]?.verdict, first?.verdicts[0]?.reason],
-          "the write was not blocked, so the withdraw below is about some other row",
+          "the write was not blocked, so the withdraw below is about some other item",
         ).toEqual(["blocked", reason]);
         const blocked = (await queueOf(own))[0];
-        if (blocked === undefined) throw new Error("the queue lost the row");
-        // The witness: a blocked write is laid over the row (35), so the
+        if (blocked === undefined) throw new Error("the queue lost the item");
+        // The witness: a blocked write is laid over the item (35), so the
         // copy shows the edit until something takes it away.
         const before = await own.device.get(HELD.id);
         expect(before.ok && before.value.properties.title).toBe("edited");
@@ -1988,7 +1988,7 @@ describe("withdrawing a write that can never be sent", () => {
         if (!after.ok) return;
         expect(
           [after.value.properties.title, after.value.version],
-          "the copy still shows the withdrawn edit, or the version it was based on, rather than the row the server holds",
+          "the copy still shows the withdrawn edit, or the version it was based on, rather than the item the server holds",
         ).toEqual(["theirs", HELD.version + 2]);
 
         const sent = own.server.requests.filter(
@@ -2006,9 +2006,9 @@ describe("withdrawing a write that can never be sent", () => {
     }
   });
 
-  it("lays a write still waiting back over the row a withdraw puts back", async () => {
+  it("lays a write still waiting back over the item a withdraw puts back", async () => {
     harness = await hydratedHarness("class-withdraw-lays-over", {
-      rows: held(),
+      items: held(),
     });
     const { device, server } = harness;
     const [first] = await drainAgainst(harness, {
@@ -2020,7 +2020,7 @@ describe("withdrawing a write that can never be sent", () => {
     });
     expect(first?.verdicts[0]?.reason).toBe("ancestor_unavailable");
     const blocked = (await queueOf(harness))[0];
-    if (blocked === undefined) throw new Error("the queue lost the row");
+    if (blocked === undefined) throw new Error("the queue lost the item");
 
     // A second edit, of another property, goes out and has no answer, so
     // it is still waiting when the first is withdrawn.
@@ -2044,14 +2044,14 @@ describe("withdrawing a write that can never be sent", () => {
     if (!after.ok) return;
     expect(
       after.value.properties,
-      "the row a withdraw put back dropped the edit still waiting, or kept the withdrawn one",
+      "the item a withdraw put back dropped the edit still waiting, or kept the withdrawn one",
     ).toMatchObject({ title: "theirs", body: "mine" });
     expect(server.unmatchedRequests).toEqual([]);
   });
 
   it("will not withdraw a write that may yet land or be released", async () => {
     harness = await hydratedHarness("class-withdraw-refuses", {
-      rows: held(),
+      items: held(),
     });
     const { device } = harness;
     const edit = await device.update(HELD.id, {
@@ -2088,7 +2088,7 @@ describe("withdrawing a write that can never be sent", () => {
     expect(unknown.ok).toBe(false);
     if (!unknown.ok) expect(unknown.refusal.code).toBe("not_found");
 
-    // The witness: the same row, once blocked for a reason no sending
+    // The witness: the same item, once blocked for a reason no sending
     // clears, is one a withdraw takes.
     const released = await device.release({ id: edit.value.id });
     expect(released.ok && released.value).toBe(1);
@@ -2098,9 +2098,9 @@ describe("withdrawing a write that can never be sent", () => {
     expect(taken.ok && taken.value, JSON.stringify(taken)).toBe(true);
   });
 
-  it("changes nothing when it cannot read the row back", async () => {
+  it("changes nothing when it cannot read the item back", async () => {
     harness = await hydratedHarness("class-withdraw-unread", {
-      rows: held(),
+      items: held(),
     });
     const { device } = harness;
     const [first] = await drainAgainst(harness, {
@@ -2111,21 +2111,21 @@ describe("withdrawing a write that can never be sent", () => {
     });
     expect(first?.verdicts[0]?.reason).toBe("ancestor_unavailable");
     const blocked = (await queueOf(harness))[0];
-    if (blocked === undefined) throw new Error("the queue lost the row");
+    if (blocked === undefined) throw new Error("the queue lost the item");
 
     const failed = await device.withdraw(blocked.id);
     expect(
       failed.ok,
-      "a withdraw that could not read the row back answered as though it had",
+      "a withdraw that could not read the item back answered as though it had",
     ).toBe(false);
     expect(
       (await queueOf(harness)).map((row) => [row.id, row.reason]),
-      "a withdraw that could not read the row back took the write out of the queue anyway",
+      "a withdraw that could not read the item back took the write out of the queue anyway",
     ).toEqual([[blocked.id, "ancestor_unavailable"]]);
     const kept = await device.get(HELD.id);
     expect(
       kept.ok && kept.value.properties.title,
-      "a withdraw that could not read the row back changed the copy",
+      "a withdraw that could not read the item back changed the copy",
     ).toBe("edited");
 
     // The witness: the same withdraw, once the server answers, goes.
@@ -2137,7 +2137,7 @@ describe("withdrawing a write that can never be sent", () => {
 
   /**
    * An ordinary create blocked by a scripted ancestor refusal,
-   * with an edit of its row held for it.
+   * with an edit of its item held for it.
    */
   async function createHeldFor(label: string): Promise<{
     harness: Harness;
@@ -2145,7 +2145,7 @@ describe("withdrawing a write that can never be sent", () => {
     edit: QueuedWrite;
     local: string;
   }> {
-    const own = await hydratedHarness(label, { rows: held() });
+    const own = await hydratedHarness(label, { items: held() });
     const created = await own.device.create({
       type: "core.note",
       properties: { title: "mine", body: "mine" },
@@ -2172,7 +2172,7 @@ describe("withdrawing a write that can never be sent", () => {
           0,
         ),
       ],
-      // The blocked local create has no server row.
+      // The blocked local create has no server item.
       read: [refusal(404, "item_not_found", "Item not found")],
     });
     expect((await own.device.drain()).ok).toBe(true);
@@ -2199,7 +2199,7 @@ describe("withdrawing a write that can never be sent", () => {
     const setup = await createHeldFor("class-withdraw-held");
     harness = setup.harness;
     const { device, server } = harness;
-    // The witness: before the withdraw, the minted row is held.
+    // The witness: before the withdraw, the minted item is held.
     expect((await device.get(setup.local)).ok).toBe(true);
 
     const withdrawn = await device.withdraw(setup.create.id);
@@ -2218,7 +2218,7 @@ describe("withdrawing a write that can never be sent", () => {
     const gone = await device.get(setup.local);
     expect(
       gone.ok,
-      "the copy kept the row a withdrawn create minted, which exists nowhere",
+      "the copy kept the item a withdrawn create minted, which exists nowhere",
     ).toBe(false);
 
     const released = await device.release({ id: setup.edit.id });
@@ -2238,7 +2238,7 @@ describe("withdrawing a write that can never be sent", () => {
     "settles a transitive edge dependency with its item create %s",
     async (outcome) => {
       harness = await hydratedHarness("class-withdraw-transitive", {
-        rows: held(),
+        items: held(),
       });
       const { device, server } = harness;
       const created = await device.create({
@@ -2466,7 +2466,7 @@ describe("withdrawing a write that can never be sent", () => {
     ]);
   });
 
-  it("clears with the answered rows those only a withdrawn write was keeping, but for one carrying content", async () => {
+  it("clears with the answered writes those only a withdrawn write was keeping, but for one carrying content", async () => {
     const setup = await createHeldFor("class-withdraw-forget-held");
     harness = setup.harness;
     const { device } = harness;
@@ -2498,11 +2498,11 @@ describe("withdrawing a write that can never be sent", () => {
     );
     expect(await queueOf(harness)).toEqual([]);
 
-    // And an answered create kept only by an edit of its row that was
+    // And an answered create kept only by an edit of its item that was
     // blocked: clearing keeps it while the edit may be released, and clears
     // it once the edit is withdrawn.
     const answered = await hydratedHarness("class-withdraw-forget-answered", {
-      rows: held(),
+      items: held(),
     });
     try {
       const created = await answered.device.create({
@@ -2532,7 +2532,7 @@ describe("withdrawing a write that can never be sent", () => {
       expect((await answered.device.drain()).ok).toBe(true);
       expect(
         (await queueOf(answered)).map((row) => row.verdict),
-        "the create was not answered with the edit of its row blocked behind it",
+        "the create was not answered with the edit of its item blocked behind it",
       ).toEqual(["accepted", "blocked"]);
       const before = await answered.device.forget();
       expect(

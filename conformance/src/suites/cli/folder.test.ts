@@ -1123,7 +1123,7 @@ describe("a folder round trip", () => {
     );
     const pushed = await c.cli.run(["folders", "push", dir]);
     expect(pushed.code, pushed.stderr).toBe(0);
-    // The server kept its own text on the row, and the edit's text is in a
+    // The server kept its own text on the item, and the edit's text is in a
     // sibling the pull wrote as a file.
     expect(readFileSync(path, "utf8")).toContain("Changed elsewhere");
     const copy = join(dir, `${title} (2).md`);

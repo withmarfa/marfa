@@ -288,7 +288,7 @@ describe("the bulk action asks about reading, not writing", () => {
     const narrowed = await ask(key, "POST", "/items/bulk-actions", body);
     expect(narrowed.status).toBe(200);
     expect(narrowed.ids).toEqual([]);
-    // The witness: the owner's key writes the type and matches the row.
+    // The witness: the owner's key writes the type and matches the item.
     const writer = await ask(apiKey, "POST", "/items/bulk-actions", body);
     expect(writer.status).toBe(200);
     expect(writer.ids).toContain(eventId);
@@ -307,13 +307,13 @@ describe("a type nothing registers is refused as unknown", () => {
     },
   );
 
-  it("POST /items/bulk-actions does not refuse one, because it takes no wildcard to reach the rows a removed type kept", async () => {
+  it("POST /items/bulk-actions does not refuse one, because it takes no wildcard to reach the items a removed type kept", async () => {
     const seen = await DOORS[6]!.ask(UNREGISTERED, apiKey);
     expect(seen.status).toBe(200);
     expect(seen.ids).toEqual([]);
   });
 
-  it("POST /items/bulk-actions selects the rows a type removed with force left behind, by the type's own name", async () => {
+  it("POST /items/bulk-actions selects the items a type removed with force left behind, by the type's own name", async () => {
     const removed = `user.removed_${ctx.runId}`;
     const registered = await client.registerType({
       id: removed,
@@ -332,7 +332,7 @@ describe("a type nothing registers is refused as unknown", () => {
     expect((await client.deleteType(removed, true)).status).toBe(200);
 
     // The listing refuses the name now that nothing registers it, so the
-    // bulk action is the one door that still reaches the row by it.
+    // bulk action is the one door that still reaches the item by it.
     const listed = await ask(apiKey, "GET", `/items?type=${removed}`);
     expect(listed.status).toBe(400);
     expect(listed.code).toBe("unknown_type");
@@ -533,7 +533,7 @@ describe("POST /items/lookup refuses a type the key may not read", () => {
     const unknown = await lookup(key, UNREGISTERED);
     expect(unknown.status).toBe(400);
     expect(unknown.code).toBe("unknown_type");
-    // The witness: a key that reads the type is answered the row.
+    // The witness: a key that reads the type is answered the item.
     const served = await lookup(apiKey, UNREADABLE);
     expect(served.status).toBe(200);
     expect(served.ids).toContain(noteId);
@@ -604,7 +604,7 @@ describe("POST /items/lookup refuses a type the key may not read", () => {
   });
 
   it("answers no tombstones to a key that reads only a type under the one named", async () => {
-    // A purged `core.entity` row leaves a tombstone under `core.entity`. This
+    // A purged `core.entity` item leaves a tombstone under `core.entity`. This
     // key reads `core.entity.person`, which the filter selects, and not
     // `core.entity`, so it is answered and the tombstone is withheld.
     const sourceId = `unreadable-filter-tombstone-${ctx.runId}`;

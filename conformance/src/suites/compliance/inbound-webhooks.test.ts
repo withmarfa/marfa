@@ -416,7 +416,7 @@ describe("endpoints", () => {
       if (actions.length >= 2) break;
       await new Promise((r) => setTimeout(r, 100));
     }
-    // A second retirement's row, had it been written, lands beside the
+    // A second retirement's record, had it been written, lands beside the
     // first, so a settled count of two is its absence.
     await new Promise((r) => setTimeout(r, 300));
     actions = (await client.listAudit({ resource_id: made.id })).data.data

@@ -132,7 +132,7 @@ describe("a single create with mode create_only", () => {
       source_id: sourceId,
     });
     expect((await client.deleteItem(first.id)).ok).toBe(true);
-    // A create without the mode acknowledges a row in the bin and writes
+    // A create without the mode acknowledges an item in the bin and writes
     // nothing, which is how a key reads one.
     const inBin = async () => {
       const read = await client.createItem(
@@ -384,7 +384,7 @@ describe("a create with mode create_only meeting an item the key may not read", 
 
   const secret = { url: "https://example.com/hidden", title: "Hidden" };
 
-  /** What a refusal names of the row, which it must not. */
+  /** What a refusal names of the item, which it must not. */
   const disclosed = (answer: unknown, named: string[]): string[] => {
     const text = JSON.stringify(answer);
     return named.filter((name) => text.includes(name));

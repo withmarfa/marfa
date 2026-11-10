@@ -4,11 +4,11 @@
  * A bounded benchmark over `GET /export`. It separates the two numbers that
  * matter for a streaming endpoint — time to the first record, and time to
  * drain the rest — and checks that a source-scoped export returns exactly the
- * rows the calling credential wrote, no more and no fewer.
+ * items the calling credential wrote, no more and no fewer.
  *
  * Every export here is narrowed to this file's own credential `source`. An
  * unscoped export streams the whole dataset, which makes the measurement about
- * every other file's rows rather than this one's.
+ * every other file's items rather than this one's.
  *
  * Self-cleaning: the seeded corpus is tracked on the test context and removed
  * by `cleanup(ctx)` in `afterAll`.
@@ -60,7 +60,7 @@ describe("export stream performance", () => {
     await cleanup(ctx);
   });
 
-  it("streams exactly the rows written under this credential", async () => {
+  it("streams exactly the items written under this credential", async () => {
     const stats = await streamExport(apiUrl, apiKey, { source: ctx.source });
 
     expect(stats.status).toBe(200);

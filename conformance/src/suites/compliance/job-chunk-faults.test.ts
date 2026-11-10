@@ -70,7 +70,7 @@ async function run(tag: string, marker: string) {
 }
 
 describe("a fault that ends a job's write partway through a chunk", () => {
-  /** The rows the chunk had reached when `fail:job-row=2` ended it. */
+  /** The items the chunk had reached when `fail:job-row=2` ended it. */
   const TRIED = 2;
 
   it("reports the chunk's unwritten items in the job's errors with the fault's own cause, and goes on to the next chunk", async () => {
@@ -83,15 +83,15 @@ describe("a fault that ends a job's write partway through a chunk", () => {
     const acted = (await server.faults()).find(
       (fault) => fault.name === "fail:job-row",
     );
-    // The witness that the fault acted once, on a row.
+    // The witness that the fault acted once, on an item.
     expect(acted?.fired).toBe(1);
 
     const written = await idsWith(client, "written");
     const everyone = await idsWith(client, tag);
     const unwritten = everyone.filter((id) => !written.includes(id));
     // The job's counters cover the chunk as far as it got (items/job-chunk-fault):
-    // the row written before the failed one went with the chunk's
-    // transaction, so both are counted as failed, and every row after them
+    // the item written before the failed one went with the chunk's
+    // transaction, so both are counted as failed, and every item after them
     // was written (items/job-chunk-continues).
     expect(chunk).toBeGreaterThan(TRIED);
     expect(unwritten).toHaveLength(TRIED);
@@ -100,7 +100,7 @@ describe("a fault that ends a job's write partway through a chunk", () => {
     expect(job.errored).toBe(TRIED);
     expect(job.succeeded).toBe(rows - TRIED);
     // The errors the job lists are a sample, which the server may cut short,
-    // so each one only has to name a row of the failed chunk, once.
+    // so each one only has to name an item of the failed chunk, once.
     const failed = errors.map((entry) => entry.id);
     expect(failed.length).toBeGreaterThan(0);
     expect(new Set(failed).size).toBe(failed.length);

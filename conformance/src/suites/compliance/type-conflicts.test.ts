@@ -16,7 +16,7 @@ import { expectMatchesSchema } from "../../utils/openapi.js";
  * **Arranged in the stored file, on a server of its own.** The fixture
  * registers a subtype of the shipped `core.task` with a field of a name the
  * shipped type does not declare, stops the server, renames that field in the
- * stored row to `assignees`, which `core.task` declares as a list of
+ * stored item to `assignees`, which `core.task` declares as a list of
  * objects, and boots the server on that file. What is asserted is what the
  * instance then answers.
  */

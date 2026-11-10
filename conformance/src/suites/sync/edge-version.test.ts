@@ -15,9 +15,9 @@ import type { SyncCapabilities } from "./capabilities.js";
  * version, an update names the version it read, and a stale one is refused.
  *
  * An edge without one is the one part of the graph where two devices editing
- * the same row silently lose an edit. It also breaks the client rule that
+ * the same item silently lose an edit. It also breaks the client rule that
  * events apply in log order gated by version: a store applies an inbound
- * payload only when its version is not older than the row it holds, and with
+ * payload only when its version is not older than the item it holds, and with
  * no version on the payload there is nothing to compare, so a late-arriving
  * event overwrites a newer local edge.
  */
@@ -121,7 +121,7 @@ describe("edges carry a version", () => {
     // round trip the refusal already had the answer for.
     //
     // Under `current`, which is where every `version_conflict` this server
-    // answers puts the live row (`edges/update-stale-answer`), rather than
+    // answers puts the live item (`edges/update-stale-answer`), rather than
     // under `edge` where the 200 puts it.
     const refused: EdgeEnvelope["edge"] | undefined = (
       stale.data as unknown as { current?: EdgeEnvelope["edge"] }

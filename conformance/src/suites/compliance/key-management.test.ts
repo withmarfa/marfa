@@ -21,7 +21,7 @@ beforeAll(async () => {
     "compliance",
     "key-management",
   ));
-  // The context tracks the file's own key first, and that row is the creator
+  // The context tracks the file's own key first, and that item is the creator
   // every mint in this file inherits from.
   ownKeyId = ctx.trackedKeys[0]!;
 });
@@ -662,7 +662,7 @@ describe("key management", () => {
   it("management permissions do not grant content access", async () => {
     const operator = getManagementClient();
 
-    // A row the file's own key can see, so `POST /items/bulk-get` names
+    // An item the file's own key can see, so `POST /items/bulk-get` names
     // something real: an empty answer there has to be the refusal and not
     // an id that resolves nothing.
     const seeded = await client.createItem({
@@ -675,9 +675,9 @@ describe("key management", () => {
 
     // An empty `200` on a listing would say "there is nothing here", and
     // there is a great deal here; what is true is that this credential may
-    // not see it. The single-row doors refuse `type_not_permitted` through
+    // not see it. The single-item doors refuse `type_not_permitted` through
     // the same map, so the listings refuse it too, and one question gets one
-    // answer however many rows were asked for.
+    // answer however many items were asked for.
     const refused = [
       ["GET /items", await operator.listItems({ limit: 5 })],
       ["GET /items/stats", await operator.itemStats()],

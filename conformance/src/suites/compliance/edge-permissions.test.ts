@@ -384,16 +384,16 @@ describe("per-edge-type permissions", () => {
 /**
  * What the plural door discloses, against what the singular one does.
  *
- * `GET /edges/{id}` resolves the row's source item and asks two questions
+ * `GET /edges/{id}` resolves the item's source item and asks two questions
  * before it answers: may this credential read the source's type, and may it
  * read the edge type. A listing that asked neither handed the same
  * credential every edge in the instance — both endpoints, the properties on
- * them and the type of the relationship — for the rows it was refused one
+ * them and the type of the relationship — for the items it was refused one
  * at a time. The listing drops what it may not disclose rather than
  * refusing the page, because a page is a page of what the caller may see.
  *
  * Each case names its own edge type and filters on it, so the assertions
- * are about the two rows the case made and not about whatever else the
+ * are about the two items the case made and not about whatever else the
  * run's shared instance holds.
  */
 describe("the edge listing answers only what the credential may read", () => {
@@ -448,7 +448,7 @@ describe("the edge listing answers only what the credential may read", () => {
     expect(page.ok, JSON.stringify(page.error)).toBe(true);
     const ids = page.data.data.map((e) => e.id);
     // The witness sits beside the absence rather than after it: the same
-    // page carries the edge this credential may read, so the row that is
+    // page carries the edge this credential may read, so the item that is
     // missing is missing because of the gate and not because the filter,
     // the page size or the edge type kept everything out.
     expect(
@@ -460,7 +460,7 @@ describe("the edge listing answers only what the credential may read", () => {
       "the listing disclosed an edge whose source is a type this credential may not read",
     ).not.toContain(hiddenEdge.data.edge.id);
 
-    // And the row is really there: a credential that may read both types
+    // And the item is really there: a credential that may read both types
     // sees both, so what changed is the credential's reach and not the
     // instance's contents.
     const wide = await makeKey("disclosure-wide", {
@@ -514,7 +514,7 @@ describe("the edge listing answers only what the credential may read", () => {
     ).not.toContain(edge.data.edge.id);
 
     // The same page under a credential holding the edge type carries it,
-    // so the row exists and the filter is the credential's.
+    // so the item exists and the filter is the credential's.
     const wide = await makeKey("kind-wide", {
       type_permissions: { "*": "read" },
       edge_permissions: { "*": "read" },
@@ -528,7 +528,7 @@ describe("the edge listing answers only what the credential may read", () => {
   });
 
   it("drops it still when the source is trashed, which is when a null source would read as no source at all", async () => {
-    // The door resolves the source including trashed rows on purpose. A
+    // The door resolves the source including trashed items on purpose. A
     // plain read answers null for a trashed item, and a null source has
     // no type to refuse — so trashing the source item would turn the
     // refusal above into a disclosure, and nothing else here would say
@@ -595,7 +595,7 @@ describe("the edge listing answers only what the credential may read", () => {
 
     const target = await scopedItem(client, "paged-target");
     const readable: string[] = [];
-    // Readable at both ends and four hidden rows between them, so a walk
+    // Readable at both ends and four hidden items between them, so a walk
     // at two a page meets at least one page with nothing on it.
     for (const [index, kind] of [
       "note",
@@ -662,7 +662,7 @@ describe("the edge listing answers only what the credential may read", () => {
     }
     expect(
       cursor,
-      "the walk ran out of pages before the listing ran out of rows",
+      "the walk ran out of pages before the listing ran out of items",
     ).toBeUndefined();
     expect(
       emptyPages,
@@ -676,16 +676,16 @@ describe("the edge listing answers only what the credential may read", () => {
  * The doors under an item, against the same single read.
  *
  * Each checked the anchor item's type and stopped. On the outbound side
- * that settles the source — the anchor is every row's source — and leaves
+ * that settles the source — the anchor is every item's source — and leaves
  * the edge type unasked, so a credential holding read on one kind of
  * relationship was handed every kind the item has. On the inbound side it
  * settles neither: the anchor is the **target**, and an edge's
- * readability is its source item's, a row the door never read.
+ * readability is its source item's, an item the door never read.
  *
  * Every case names its own edge types and filters on them, so what it
- * asserts is about the rows it made rather than about whatever else the
+ * asserts is about the items it made rather than about whatever else the
  * run's shared instance holds. And every case carries its witness in the
- * same answer: a row the credential does see, so an absence is the gate
+ * same answer: an item the credential does see, so an absence is the gate
  * rather than an empty fixture.
  */
 describe("the doors under an item answer only what the credential may read", () => {
@@ -760,7 +760,7 @@ describe("the doors under an item answer only what the credential may read", () 
       "the door disclosed an edge of a kind this credential may not read",
     ).not.toContain(hiddenEdge);
 
-    // And the row is really there, so what changed is the credential's
+    // And the item is really there, so what changed is the credential's
     // reach and not the item's edges.
     const wide = await makeKey("underitem-out-wide", {
       type_permissions: { "*": "read" },
@@ -863,7 +863,7 @@ describe("the doors under an item answer only what the credential may read", () 
     ).not.toContain(unseen);
 
     // The inbound half of the same read, whose anchor is the target and
-    // whose rows are therefore readable only through their sources.
+    // whose items are therefore readable only through their sources.
     const withBackrefs = await narrowClient.getItemWithBackrefs(anchor);
     expect(withBackrefs.ok, JSON.stringify(withBackrefs.error)).toBe(true);
     const backIds = Object.values(withBackrefs.data.backrefs ?? {}).flatMap(
@@ -881,7 +881,7 @@ describe("the doors under an item answer only what the credential may read", () 
     // The item listing, through the same hydration the bulk read uses.
     // Requested rather than argued for: two doors reading one function is
     // not a reason to assert only one of them.
-    // Narrowed to this file's own rows, because the page is capped and
+    // Narrowed to this file's own items, because the page is capped and
     // the run's instance is shared: a listing of every note would put the
     // anchor's presence at the mercy of what else the run wrote.
     const listed = await narrowClient.listItems({
@@ -916,7 +916,7 @@ describe("the doors under an item answer only what the credential may read", () 
     ).not.toContain(unseen);
 
     // The witness for all three: a credential that may read both types
-    // and both kinds sees every row, so the absences above are the gate.
+    // and both kinds sees every item, so the absences above are the gate.
     const wide = await makeKey("underitem-hydrate-wide", {
       type_permissions: { "*": "read" },
       edge_permissions: { "*": "read" },
@@ -938,7 +938,7 @@ describe("the doors under an item answer only what the credential may read", () 
     // The two per-item doors publish the same paging rule the edge
     // listing does — short pages, an empty page with a cursor to follow,
     // and a cursor that still reaches the end — so one of them asserts
-    // it. The backref door, because it is the one whose rows are dropped
+    // it. The backref door, because it is the one whose items are dropped
     // by the source's type rather than by their own kind, so a page can
     // empty without the filter naming anything.
     const edgeType = await kind("paged");
@@ -946,7 +946,7 @@ describe("the doors under an item answer only what the credential may read", () 
     const readable: string[] = [];
     // Six inbound edges, mostly from items the narrow credential cannot
     // read, so a walk two at a time meets a page with nothing on it.
-    // The readable rows sit at the ends and four unreadable ones run
+    // The readable items sit at the ends and four unreadable ones run
     // between them, so a page of two lands entirely inside that run
     // whichever direction the door walks.
     for (const kindOfSource of [
@@ -999,7 +999,7 @@ describe("the doors under an item answer only what the credential may read", () 
     }
     expect(
       cursor,
-      "the walk ran out of pages before the door ran out of rows",
+      "the walk ran out of pages before the door ran out of items",
     ).toBeUndefined();
     expect(
       emptyPages,
@@ -1065,7 +1065,7 @@ describe("the doors under an item answer only what the credential may read", () 
     expect(refusedFullForm.error?.error.code).toBe("edge_permission_denied");
 
     // An anchor it may not read is not refused: it matches as an anchor no
-    // row holds, so the page says nothing of the item or its edges.
+    // item holds, so the page says nothing of the item or its edges.
     const hiddenAnchor = await narrowClient.listItems({
       backref: { [seen]: hiddenSource },
       limit: 100,
@@ -1098,7 +1098,7 @@ describe("the doors under an item answer only what the credential may read", () 
     expect(searchWitness.ok, JSON.stringify(searchWitness.error)).toBe(true);
     expect(
       searchWitness.data.data.map((r) => r.item.id),
-      "search dropped a row matching a term the credential may read",
+      "search dropped an item matching a term the credential may read",
     ).toContain(source);
 
     const searchRefused = await narrowClient.search("ep-filter-source", {
@@ -1227,7 +1227,7 @@ describe("an edge write says nothing of a target the credential cannot read", ()
     trackItem(ctx, task.data.item.id);
     readable = task.data.item.id;
 
-    // The row the natural-key door below resolves and upserts.
+    // The item the natural-key door below resolves and upserts.
     const keyed = await writer.createItem(
       createNote({
         source_id: UPSERT_SOURCE_ID,

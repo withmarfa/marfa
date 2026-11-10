@@ -22,7 +22,7 @@ afterAll(async () => {
   await stopFreshServers();
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-it("delivers the next fan-out within ordinary latency after 50,000 bulk rows", async () => {
+it("delivers the next fan-out within ordinary latency after 50,000 bulk items", async () => {
   const client = new MarfaClient({
     baseUrl: server.apiUrl,
     apiKey: server.workingKey,
@@ -59,12 +59,12 @@ it("delivers the next fan-out within ordinary latency after 50,000 bulk rows", a
     expect(answer.data.counts.created).toBe(5_000);
   }
   const started = performance.now();
-  const sentinel = await write("fan-out after 50,000 bulk rows");
+  const sentinel = await write("fan-out after 50,000 bulk items");
   await delivered(sentinel);
   const elapsed = performance.now() - started;
   expect(elapsed).toBeLessThan(5_000);
   expect(receiver.received).toHaveLength(2);
   console.log(
-    `50,000 bulk rows: next fan-out delivered in ${String(Math.round(elapsed))} ms`,
+    `50,000 bulk items: next fan-out delivered in ${String(Math.round(elapsed))} ms`,
   );
 }, 300_000);

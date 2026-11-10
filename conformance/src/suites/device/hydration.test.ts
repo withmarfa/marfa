@@ -41,7 +41,7 @@ import {
 /**
  * "Hydration subscribes first, then reads."
  *
- * The ordering is the whole rule. A device that reads the rows and then asks
+ * The ordering is the whole rule. A device that reads the items and then asks
  * where the log has reached names a resume point past every write that landed
  * during the read, and those writes are then in neither the snapshot nor the
  * replay. Nothing reports them missing: the copy is simply wrong, by exactly
@@ -102,7 +102,7 @@ describe("what a hydration declares", () => {
     );
     scriptHydration(server, {
       head: "10",
-      rows: { "core.note": [{ item: { id: "n1" } }] },
+      items: { "core.note": [{ item: { id: "n1" } }] },
       key: [
         answers.currentKey("fixture-key", { "*": "write" }),
         narrow,
@@ -213,7 +213,7 @@ describe("what a hydration declares", () => {
     const { server, device } = harness;
     scriptHydration(server, {
       head: "10",
-      rows: { "core.note": [{ item: { id: "n1" } }] },
+      items: { "core.note": [{ item: { id: "n1" } }] },
     });
     server.copyAnswer("GET", "/items", (request) => {
       const type = request.query.get("type");
@@ -362,18 +362,18 @@ describe("the order a hydration reads in", () => {
     expect(held.ok).toBe(true);
     expect(
       held.ok ? held.value.map((item) => item.id) : [],
-      "a row written while the snapshot was being read never reached the copy, which is the loss the ordering exists to prevent",
+      "an item written while the snapshot was being read never reached the copy, which is the loss the ordering exists to prevent",
     ).toContain("written-during-the-snapshot");
   });
 });
 
-describe("the pinned rows a hydration reads first", () => {
-  it("reads a pinned row before the first page of an item listing", async () => {
+describe("the pinned items a hydration reads first", () => {
+  it("reads a pinned item before the first page of an item listing", async () => {
     harness = await startHarness("system-pins-first");
     const { server, device } = harness;
     scriptHydration(server, {
       head: "10",
-      rows: { "core.note": [{ item: { id: "note" } }] },
+      items: { "core.note": [{ item: { id: "note" } }] },
     });
     server.copyAnswer(
       "GET",
@@ -402,7 +402,7 @@ describe("the pinned rows a hydration reads first", () => {
     expect(system, doors.join(", ")).toBeGreaterThanOrEqual(0);
     expect(
       system,
-      "a pinned row was read after the first page, so a folder's own row is missing from the copy while the listing fills it",
+      "a pinned item was read after the first page, so a folder's own item is missing from the copy while the listing fills it",
     ).toBeLessThan(page);
     const held = await device.get("settings");
     expect(held.ok ? held.value.properties.title : "not held").toBe("pinned");
@@ -443,14 +443,14 @@ describe("what a hydration leaves behind", () => {
     ).toContain("from-the-second-slice");
     expect(
       ids,
-      "the previous slice survived the hydration, so a device that narrows what it declares keeps carrying rows it no longer asks the server about and never learns they changed",
+      "the previous slice survived the hydration, so a device that narrows what it declares keeps carrying items it no longer asks the server about and never learns they changed",
     ).not.toContain("from-the-first-slice");
 
     const status = await device.status();
     expect(status.ok).toBe(true);
     expect(
       status.ok ? status.value.slice_types : [],
-      "the device reports a slice it no longer holds, so a catch-up would ask for types the copy has no rows of",
+      "the device reports a slice it no longer holds, so a catch-up would ask for types the copy has no items of",
     ).toEqual(["core.bookmark"]);
   });
 
@@ -480,7 +480,7 @@ describe("what a hydration leaves behind", () => {
     ).toEqual([2, 3]);
   });
 
-  it("says it accepts gzip for each listing page and takes the rows of one sent compressed", async () => {
+  it("says it accepts gzip for each listing page and takes the items of one sent compressed", async () => {
     harness = await startHarness("gzip-pages");
     const { server, device } = harness;
     server.copyAnswer("GET", "/events", copyHeadRead("7"));
@@ -515,7 +515,7 @@ describe("what a hydration leaves behind", () => {
     const held = await device.list();
     expect(
       held.ok ? held.value.map((item) => item.id).sort() : held,
-      "the rows of the compressed page are not in the copy",
+      "the items of the compressed page are not in the copy",
     ).toEqual(["compressed", "plain"]);
   });
 
@@ -524,7 +524,7 @@ describe("what a hydration leaves behind", () => {
     const { server, device } = harness;
     scriptHydration(server, {
       head: "7",
-      rows: { "core.note": [{ item: { id: "ticket" } }] },
+      items: { "core.note": [{ item: { id: "ticket" } }] },
     });
     server.copyAnswer(
       "GET",
@@ -575,7 +575,7 @@ describe("what a hydration leaves behind", () => {
     const { server, device } = harness;
     scriptHydration(server, {
       head: "7",
-      rows: { "core.note": [{ item: { id: "ticket" } }] },
+      items: { "core.note": [{ item: { id: "ticket" } }] },
     });
     server.copyAnswer(
       "GET",
@@ -639,7 +639,7 @@ describe("what a hydration leaves behind", () => {
     if (!hydrated.ok) return;
     expect(
       hydrated.value.items,
-      "the report did not count every row it pulled",
+      "the report did not count every item it pulled",
     ).toBe(2);
     expect(
       [hydrated.value.types, hydrated.value.tier],
@@ -668,7 +668,7 @@ describe("what a hydration asks for", () => {
     const { server, device } = harness;
     scriptHydration(server, {
       head: "10",
-      rows: {
+      items: {
         "core.note": [{ item: { id: "note", tier: "feed" } }],
         "core.file": [
           {
@@ -853,7 +853,7 @@ describe("how a hydration completes", () => {
     const { server, device } = harness;
     scriptHydration(server, {
       head: "10",
-      rows: { "core.note": [{ item: { id: "held" } }] },
+      items: { "core.note": [{ item: { id: "held" } }] },
     });
     // The first hydration takes the scripted listing; the next two take a
     // page cut short and then a whole one.
@@ -971,7 +971,7 @@ describe("an interrupted hydration", () => {
     let cut = true;
     scriptHydration(server, {
       head: "10",
-      rows: rows(),
+      items: rows(),
       pageSize: 1,
       ...options,
       drop: (offset) => {
@@ -990,7 +990,7 @@ describe("an interrupted hydration", () => {
     expect(status.ok && status.value.hydration).toBe("in_progress");
     expect(
       status.ok && [status.value.items_listed, status.value.items_expected],
-      "an interrupted hydration lost the count of rows its listings had brought, so a resumed one reports a fill that starts again from nothing",
+      "an interrupted hydration lost the count of items its listings had brought, so a resumed one reports a fill that starts again from nothing",
     ).toEqual([2, 3]);
     return harness;
   }
@@ -1025,7 +1025,7 @@ describe("an interrupted hydration", () => {
     // interrupted, holds the same copy.
     const whole = await startHarness("resume-pages-whole");
     try {
-      scriptHydration(whole.server, { head: "10", rows: rows(), pageSize: 1 });
+      scriptHydration(whole.server, { head: "10", items: rows(), pageSize: 1 });
       expect((await whole.device.hydrate(["core.note"], "library")).ok).toBe(
         true,
       );
@@ -1038,7 +1038,7 @@ describe("an interrupted hydration", () => {
     }
   });
 
-  it("replays a row changed and a row deleted on the server while it was stopped", async () => {
+  it("replays an item changed and an item deleted on the server while it was stopped", async () => {
     const changed = wireItem({
       id: "a",
       version: 2,
@@ -1052,7 +1052,7 @@ describe("an interrupted hydration", () => {
           ? copyReplay("12", log)
           : copyReplay(cursor, []),
     });
-    // Rows the walk already took change after it took them; the third page
+    // Items the walk already took change after it took them; the third page
     // is read after the changes, as a server answers it.
     log = [
       copyItemEvent("11", "item.updated", changed),
@@ -1071,20 +1071,20 @@ describe("an interrupted hydration", () => {
     );
     expect(
       byId.get("a")?.properties.title,
-      "a row changed while the hydration was stopped kept the version its page brought",
+      "an item changed while the hydration was stopped kept the version its page brought",
     ).toBe("changed while stopped");
     expect(
       byId.has("b"),
-      "a row deleted while the hydration was stopped is still listed",
+      "an item deleted while the hydration was stopped is still listed",
     ).toBe(false);
     expect([...byId.keys()].sort()).toEqual(["a", "c"]);
     expect(listed(server)).toEqual([null, "1", "2", "2"]);
   });
 
-  it("keeps the queue and the pinned rows across a resume", async () => {
+  it("keeps the queue and the pinned items across a resume", async () => {
     harness = await startHarness("resume-queue");
     const { server, device } = harness;
-    // Read by id before the listings: the pinned row, and the row a queued
+    // Read by id before the listings: the pinned item, and the item a queued
     // create made, which the server does not hold yet.
     server.copyAnswer("GET", "/items/pinned", {
       kind: "json",
@@ -1100,7 +1100,7 @@ describe("an interrupted hydration", () => {
     let cut = false;
     scriptHydration(server, {
       head: "10",
-      rows: rows(),
+      items: rows(),
       pageSize: 1,
       drop: (offset) => {
         const dropped = offset === 2 && cut;
@@ -1140,7 +1140,7 @@ describe("an interrupted hydration", () => {
     expect(status.ok && status.value.pinned).toEqual(["pinned"]);
     expect(
       (await device.get("pinned")).ok,
-      "the pinned row is missing from the resumed copy",
+      "the pinned item is missing from the resumed copy",
     ).toBe(true);
   });
 
@@ -1159,7 +1159,7 @@ describe("an interrupted hydration", () => {
         then: itemsPage([]),
       },
     );
-    scriptHydration(server, { head: "10", rows: rows(), pageSize: 1 });
+    scriptHydration(server, { head: "10", items: rows(), pageSize: 1 });
     expect((await device.status()).ok).toBe(true);
 
     const hydrating = device.hold([
@@ -1215,7 +1215,7 @@ describe("an interrupted hydration", () => {
       version: 2,
       properties: { title: "changed during the replay", body: "changed" },
     });
-    // A row of a type the catalog does not name sends the replay to read
+    // An item of a type the catalog does not name sends the replay to read
     // the catalog again, which tells the fixture the event before it landed.
     const unnamed = wireItem({ id: "late", type: "user.late" });
     const log = [
@@ -1227,8 +1227,8 @@ describe("an interrupted hydration", () => {
     async function pinned(label: string, gate: () => boolean) {
       const started = await startHarness(label);
       const { server, device } = started;
-      // The pinned row is gone from the server once pinned, so a hydration
-      // holds no row for it and reads it again each time it walks its pins
+      // The pinned item is gone from the server once pinned, so a hydration
+      // holds no item for it and reads it again each time it walks its pins
       // (`device/pin-gone-kept`).
       const replay = { log: false, held: false };
       server.copyAnswer("GET", "/items/pinned", () =>
@@ -1245,7 +1245,7 @@ describe("an interrupted hydration", () => {
       server.copyAnswer("GET", /^\/items\/[^/]+\/edges$/, edgesPage([]));
       scriptHydration(server, {
         head: "10",
-        rows: rows(),
+        items: rows(),
         pageSize: 1,
         catalog: () =>
           replay.held && gate()
@@ -1334,7 +1334,7 @@ describe("an interrupted hydration", () => {
     ).toEqual([]);
     expect(
       pinReads(),
-      "a resume in the replay read the pinned rows again",
+      "a resume in the replay read the pinned items again",
     ).toBe(pinsKilled);
     expect(
       after
@@ -1383,7 +1383,7 @@ describe("an interrupted hydration", () => {
         then: itemsPage([{ item: wireItem({ id: "c" }) }]),
       },
     );
-    scriptHydration(server, { head: "10", rows: rows(), pageSize: 1 });
+    scriptHydration(server, { head: "10", items: rows(), pageSize: 1 });
     expect((await device.status()).ok).toBe(true);
 
     const hydrating = device.hold([

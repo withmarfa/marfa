@@ -101,6 +101,7 @@ A reason says why the rule exists, in one or two sentences, so that an agent cha
 
 - **Every statement has an ID,** `<chapter>/<name>`, such as `housekeeping/run-unknown-name`. The chapter is the file's name without `.md`. The name is lowercase words and numbers joined by hyphens, starts with a word, and is at most 40 characters.
 - **An ID is a name, not a summary.** It is never changed to follow a change in wording.
+- **One exception, made once.** The IDs that used `row` for an item were renamed to use `item`, because `row` is reserved for a row of a table. An ID is not renamed for any other reason.
 - **An ID is never given to a different rule.** When a statement is removed, its ID goes with it.
 - **A reference is the ID in code font,** in a chapter, a code comment or a document: `` `housekeeping/run-unknown-name` ``. The ID is also the statement's heading, so a link reaches it.
 - **Never a number.** `src/utils/spec-citations.test.ts` reads every file in the repository and fails on an ID that names no statement, and on a statement referred to by a number, naming the file and the line.
@@ -117,7 +118,7 @@ A reason says why the rule exists, in one or two sentences, so that an agent cha
 **The server's half** runs against one locally booted server on SQLite, with one dataset:
 
 - Each fixture file mints its own key with a `source` unique to the file.
-- Every row a file writes carries that source, or one built from it that the file's own keys claim.
+- Every item a file writes carries that source, or one built from it that the file's own keys claim.
 - Management operations use their named permissions; owner-only operations use the private local command.
 
 **The device's half** runs against a scripted server the fixture controls. A device must reach verdicts for failures the real server cannot be asked for, such as a dropped connection, a server at rest, a spent credential or a retry ceiling.

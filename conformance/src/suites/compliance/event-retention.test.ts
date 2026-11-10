@@ -18,7 +18,7 @@ import { collectUntil, withStream } from "../../utils/stream.js";
 /**
  * What the retention jobs do to the event log and announce through it.
  *
- * Nothing a request does ages a row, and the retention windows are an hour
+ * Nothing a request does ages an item, and the retention windows are an hour
  * and a day at the least, so each case writes through the doors, moves the
  * server's clock past the window through the target interface, and runs the
  * job through the operator's door. That is the state a long-running instance
@@ -395,7 +395,7 @@ describe("the trash retention job", () => {
       ).cursor;
 
       await bin.clock.advance(PAST_BOTH_WINDOWS_MS);
-      // The witness: the row is in the bin, past the window, until the job runs.
+      // The witness: the item is in the bin, past the window, until the job runs.
       const binned = async (): Promise<boolean> => {
         const listed = await bin.writer().listItems({ state: "trashed" });
         expect(listed.ok, JSON.stringify(listed.error)).toBe(true);

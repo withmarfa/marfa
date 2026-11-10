@@ -55,7 +55,7 @@ afterAll(async () => {
   await server.stop();
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-/** A row holding a link and a natural key, put in the bin. */
+/** An item holding a link and a natural key, put in the bin. */
 async function binned(): Promise<{ id: string; link: string; key: string }> {
   serial += 1;
   const link = `link-${String(serial)}`;
@@ -93,7 +93,7 @@ describe("a tombstone and housekeeping", () => {
     "is recorded, for the link and the natural key, when the trash-purge job purges an item",
     async () => {
       const row = await binned();
-      // The witness: a row in the bin holds its link and leaves no tombstone.
+      // The witness: an item in the bin holds its link and leaves no tombstone.
       expect(await tombstones(row.link, row.key)).toEqual({
         byLink: [],
         byKey: [],

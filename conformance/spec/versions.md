@@ -8,7 +8,7 @@ An item carries a `version` that starts at 1 and moves with each write to its fi
 
 When `PATCH /items/{id}` names the version the item holds and carries `properties`, `tier`, `occurred_at`, `source_id` or a move to another type, the server MUST answer `200` with the item at the next version.
 
-**Tests:** `correctness/item-versioning.test.ts › version increments on update`, `› moves a row's tier on an update`, `› moves the version on an update of occurred_at, source_id or a type`.
+**Tests:** `correctness/item-versioning.test.ts › version increments on update`, `› moves an item's tier on an update`, `› moves the version on an update of occurred_at, source_id or a type`.
 
 ### `versions/metadata-keeps-version`
 
@@ -22,7 +22,7 @@ When `POST /items/{id}/tags`, `PUT /items/{id}/metadata` or `PUT /items/{id}/ext
 
 If the server refuses `PATCH /items/{id}`, then the server MUST NOT write a snapshot.
 
-**Tests:** `compliance/version-order.test.ts › leaves it after an update refused invalid_properties at the row's version, and writes a snapshot for the same update once valid`, `› leaves it after a stale update refused version_conflict, and writes a snapshot for a stale update that merges`.
+**Tests:** `compliance/version-order.test.ts › leaves it after an update refused invalid_properties at the item's version, and writes a snapshot for the same update once valid`, `› leaves it after a stale update refused version_conflict, and writes a snapshot for a stale update that merges`.
 
 ### `versions/create-version-one`
 
@@ -44,7 +44,7 @@ When `PATCH /items/{id}` names the version the item holds and carries `propertie
 
 **Reason:** a write that carries `properties` is a write to the item, whatever those properties hold.
 
-**Tests:** `correctness/item-versioning.test.ts › writes a version for an update whose properties are empty or equal to the row's`.
+**Tests:** `correctness/item-versioning.test.ts › writes a version for an update whose properties are empty or equal to the item's`.
 
 ### `versions/update-edges-only`
 
@@ -52,7 +52,7 @@ When `PATCH /items/{id}` names the version the item holds and carries only `edge
 
 **Reason:** an edge is not one of the item's own fields, and a version counts writes to those.
 
-**Tests:** `correctness/item-versioning.test.ts › leaves the version, the row and the history where they were on an update that carries only edges or names the row's own type`.
+**Tests:** `correctness/item-versioning.test.ts › leaves the version, the item and the history where they were on an update that carries only edges or names the item's own type`.
 
 ### `versions/update-version-missing`
 
@@ -86,7 +86,7 @@ When two `PATCH /items/{id}` writes that name one version, name no `conflict=aut
 
 ### `versions/update-order`
 
-When `PATCH /items/{id}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a `conflict` other than `auto`, `manual` or `callback`; a missing `version`, or one that is not a whole number of at least 0; a body member the operation does not declare; a malformed id; an update naming nothing to change; an `occurred_at` that is not a time; an item no item holds, in the bin or of a type the credential may not read; no write on the item's type; a `type` other than the item's; a move to a type nothing registered; an item of a type nothing registered; a failed exact version precondition; a `version` other than the item's where nothing writes the row; a `version` no snapshot the credential may read covers; a collision without `conflict=auto`; properties the merged result lacks.
+When `PATCH /items/{id}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a `conflict` other than `auto`, `manual` or `callback`; a missing `version`, or one that is not a whole number of at least 0; a body member the operation does not declare; a malformed id; an update naming nothing to change; an `occurred_at` that is not a time; an item no item holds, in the bin or of a type the credential may not read; no write on the item's type; a `type` other than the item's; a move to a type nothing registered; an item of a type nothing registered; a failed exact version precondition; a `version` other than the item's where nothing writes the item; a `version` no snapshot the credential may read covers; a collision without `conflict=auto`; properties the merged result lacks.
 
 **Reason:** the answers about the item itself, such as `404 item_not_found` and `409 type_mismatch`, come after the check for nothing to change and before the version is looked at.
 
@@ -98,21 +98,21 @@ When `PATCH /items/{id}` meets more than one of the answers this chapter gives i
 
 When the server advances an item's version, the server MUST record the item as it stood at the version it left as a snapshot under that version.
 
-**Reason:** a merge needs the item as the writer read it, which the current row no longer holds.
+**Reason:** a merge needs the item as the writer read it, which the current item no longer holds.
 
-**Tests:** `correctness/item-versioning.test.ts › updating an item creates a version snapshot`, `› multiple updates create multiple versions`, `› merges a stale write that collides on nothing, writes a snapshot of the row it merged over, and leaves the history as it was on one that collides`, `sync/conflict.test.ts › records the row the resolution moved on from, and gives the copy a history of its own`, `sync/idempotency.test.ts › a create naming a stale version on an existing row merges where nothing collides`.
+**Tests:** `correctness/item-versioning.test.ts › updating an item creates a version snapshot`, `› multiple updates create multiple versions`, `› merges a stale write that collides on nothing, writes a snapshot of the item it merged over, and leaves the history as it was on one that collides`, `sync/conflict.test.ts › records the item the resolution moved on from, and gives the copy a history of its own`, `sync/idempotency.test.ts › a create naming a stale version on an existing item merges where nothing collides`.
 
 ### `versions/snapshot-fields`
 
 When a credential sends `GET /items/{id}/versions`, the server MUST name in each snapshot the `type`, `tier`, `occurred_at` and `source_id` the item held at that version.
 
-**Tests:** `correctness/item-versioning.test.ts › records the tier, own time, natural key and type the row had at each version`, `compliance/version-reach.test.ts › names the type each snapshot was written under`.
+**Tests:** `correctness/item-versioning.test.ts › records the tier, own time, natural key and type the item had at each version`, `compliance/version-reach.test.ts › names the type each snapshot was written under`.
 
 ### `versions/history-list`
 
 When a credential sends `GET /items/{id}/versions` for an item it may read, the server MUST answer `200` with a page in which each snapshot in `data` carries its `id`, the item's `id` as `item_id`, `version`, `properties`, `type`, `tier`, `occurred_at`, `source_id`, `writer` and `created_at`.
 
-**Tests:** `correctness/item-versioning.test.ts › updating an item creates a version snapshot`, `› versions have correct item_id reference`, `› records the tier, own time, natural key and type the row had at each version`.
+**Tests:** `correctness/item-versioning.test.ts › updating an item creates a version snapshot`, `› versions have correct item_id reference`, `› records the tier, own time, natural key and type the item had at each version`.
 
 ### `versions/history-ascending`
 
@@ -132,7 +132,7 @@ If `GET /items/{id}/versions` names an id no item holds, an item in the bin or a
 
 **Reason:** the type is judged as it stands now, so a credential that read the snapshots of an item before it moved to a type the credential cannot read is refused after the move.
 
-**Tests:** `correctness/item-versioning.test.ts › answers 404 for an unknown item's history and 400 for a malformed id`, `compliance/declared-refusals.test.ts › is refused on every metadata, tag and version door by what it holds on the type, and on an inline edge it does not hold`, `compliance/unreadable-items.test.ts › $name`, `compliance/version-reach.test.ts › answers 404 for the history of an item in the bin, and the history again once it is restored`, `› answers 404 for the history of an item of a type the key may not read`, `› answers 404 item_not_found for a row moved into a type the key cannot read, though it read the snapshots before`.
+**Tests:** `correctness/item-versioning.test.ts › answers 404 for an unknown item's history and 400 for a malformed id`, `compliance/declared-refusals.test.ts › is refused on every metadata, tag and version door by what it holds on the type, and on an inline edge it does not hold`, `compliance/unreadable-items.test.ts › $name`, `compliance/version-reach.test.ts › answers 404 for the history of an item in the bin, and the history again once it is restored`, `› answers 404 for the history of an item of a type the key may not read`, `› answers 404 item_not_found for an item moved into a type the key cannot read, though it read the snapshots before`.
 
 ### `versions/history-restored`
 
@@ -158,7 +158,7 @@ If a credential whose type map reaches no type sends `GET /items/{id}/versions`,
 
 ### `versions/history-refusal-order`
 
-When `GET /items/{id}/versions` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a credential whose type map reaches no type; a parameter the operation does not declare or a `limit` outside 1 to 200; a malformed id; an item no item holds, in the bin or of a type the credential may not read; a malformed `cursor`.
+When `GET /items/{id}/versions` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a credential whose type map reaches no type; a parameter the operation does not declare or a `limit` outside 1 to 200; a malformed id; an id no item holds, in the bin or of a type the credential may not read; a malformed `cursor`.
 
 **Tests:** `compliance/version-reach.test.ts › answers 403 type_not_permitted to a key whose type map reaches no type, before it looks the item up`, `› refuses a parameter it does not declare 400 validation_error, and names it`, `› refuses a cursor that is malformed or that another listing issued, and takes one the door issued for another item`, `compliance/version-order.test.ts › asks whether the key reaches any type before it names an undeclared parameter`, `› asks whether limit is valid before whether the id is well formed`, `› asks whether the id is well formed before it looks the item up`.
 
@@ -346,13 +346,13 @@ When `PATCH /items/{id}` names `version_match: exact` and a `version` other than
 
 **Reason:** an app can base a write on fields it inspected without writing those fields itself, such as an ownership marker. Merging disjoint changes would invalidate that decision.
 
-**Tests:** `compliance/version-exact.test.ts › refuses stale exact writes without changing the row or history`, `correctness/clear-properties.test.ts › refuses a stale clear under version_match exact`.
+**Tests:** `compliance/version-exact.test.ts › refuses stale exact writes without changing the item or history`, `correctness/clear-properties.test.ts › refuses a stale clear under version_match exact`.
 
 ### `versions/exact-envelope`
 
 When `PATCH /items/{id}` refuses an exact version precondition, the server MUST carry `current`, with the item's `id`, `version`, `properties`, `type`, `tier`, `occurred_at` and `source_id`, and none of `ancestor`, `conflicting_fields`, `merge_policy` or `requested_version`.
 
-**Tests:** `compliance/version-exact.test.ts › refuses stale exact writes without changing the row or history`.
+**Tests:** `compliance/version-exact.test.ts › refuses stale exact writes without changing the item or history`.
 
 ### `versions/exact-current`
 
@@ -362,7 +362,7 @@ When an otherwise valid `PATCH /items/{id}` names `version_match: exact` and the
 
 ### `versions/exact-atomic`
 
-When two otherwise valid `PATCH /items/{id}` writes name `version_match: exact` and the same current `version` and each changes the row, the server MUST accept one and refuse the other `409 version_conflict`.
+When two otherwise valid `PATCH /items/{id}` writes name `version_match: exact` and the same current `version` and each changes the item, the server MUST accept one and refuse the other `409 version_conflict`.
 
 **Tests:** `compliance/version-exact.test.ts › admits only one concurrent exact write to different fields`.
 
@@ -380,7 +380,7 @@ When `POST /items/{id}/transition` names a `version` query parameter other than 
 
 When `POST /edges` or `DELETE /edges/{id}` names a `source_version` query parameter other than the source item's current version, the server MUST answer `409 version_conflict` before changing an edge.
 
-**Reason:** apps can own some rows and observe others under the same type; replacing a whole edge set to check row ownership would risk unrelated edges.
+**Reason:** apps can own some items and observe others under the same type; replacing a whole edge set to check item ownership would risk unrelated edges.
 
 **Tests:** `compliance/version-exact.test.ts › conditions lifecycle and edge writes on the source version without replacing other edges`.
 
@@ -460,7 +460,7 @@ If a stale `PATCH /items/{id}` moves the item to a type other than the one it ho
 
 **Reason:** landing the move would undo a move the writer never saw. A stale write that does not move the item collides with nothing on `type`.
 
-**Tests:** `correctness/item-versioning.test.ts › refuses a stale move onto a row another writer moved since, naming type`, `› names the type each side of a conflict held`.
+**Tests:** `correctness/item-versioning.test.ts › refuses a stale move onto an item another writer moved since, naming type`, `› names the type each side of a conflict held`.
 
 ### `versions/collision-omitted`
 
@@ -514,7 +514,7 @@ When a stale write carries or clears a property named like a member every object
 
 When `PATCH /items/{id}` names a version the item no longer holds, whose snapshot the credential may read, and the write carries no change to a field that has changed since, the server MUST apply the write's changes over the current item where the result meets its type and takes no link another item holds.
 
-**Tests:** `correctness/merge-policy.test.ts › non-conflicting writes from two clients both apply (different fields)`, `correctness/item-versioning.test.ts › merges a stale write on an item field nobody else changed`, `› merges a stale write that collides on nothing, writes a snapshot of the row it merged over, and leaves the history as it was on one that collides`.
+**Tests:** `correctness/merge-policy.test.ts › non-conflicting writes from two clients both apply (different fields)`, `correctness/item-versioning.test.ts › merges a stale write on an item field nobody else changed`, `› merges a stale write that collides on nothing, writes a snapshot of the item it merged over, and leaves the history as it was on one that collides`.
 
 ### `versions/merge-item-fields`
 
@@ -528,7 +528,7 @@ When the server applies a stale write over the current item, by a merge or by a 
 
 **Reason:** a merged write is told from a clean one by its version, which is more than one step past the version the writer named.
 
-**Tests:** `correctness/item-versioning.test.ts › merges a stale write that collides on nothing, writes a snapshot of the row it merged over, and leaves the history as it was on one that collides`, `› clears a field a stale replace leaves out, where nobody changed it since`, `sync/conflict.test.ts › resolves a property both writers set to one value as a collision`.
+**Tests:** `correctness/item-versioning.test.ts › merges a stale write that collides on nothing, writes a snapshot of the item it merged over, and leaves the history as it was on one that collides`, `› clears a field a stale replace leaves out, where nobody changed it since`, `sync/conflict.test.ts › resolves a property both writers set to one value as a collision`.
 
 ### `versions/merge-replace-clear`
 
@@ -544,7 +544,7 @@ When a stale `PATCH /items/{id}` under `properties_mode: replace` leaves out a p
 
 **Reason:** the writer never read the property, so leaving it out clears nothing. A type that came to require it is still met.
 
-**Tests:** `correctness/item-versioning.test.ts › judges a stale write by its merged result, not by the body laid over the current row`.
+**Tests:** `correctness/item-versioning.test.ts › judges a stale write by its merged result, not by the body laid over the current item`.
 
 ### `versions/merge-clear`
 
@@ -572,7 +572,7 @@ If the properties a stale `PATCH /items/{id}` that carries `properties` or a mov
 
 **Reason:** the merged result is what the type judges, and the body alone is not.
 
-**Tests:** `correctness/item-versioning.test.ts › refuses a stale move whose merged properties fall short of the type entered`, `› names the field a merged result lacks when a stale write leaves the row short of its type`.
+**Tests:** `correctness/item-versioning.test.ts › refuses a stale move whose merged properties fall short of the type entered`, `› names the field a merged result lacks when a stale write leaves the item short of its type`.
 
 ### `versions/merge-type-lax`
 
@@ -622,13 +622,13 @@ If `PATCH /items/{id}` carries `properties`, `tier`, `occurred_at`, `source_id` 
 
 If `POST /items` names a natural key that a live item holds and a version whose snapshot is of a type the credential may not read, then the server MUST answer `409 ancestor_unavailable`.
 
-**Tests:** `compliance/version-reach.test.ts › answers a conditional create naming an unreadable snapshot ancestor_unavailable`, `› leaves the row as it was when a conditional create names a snapshot the key may not read, and merges for one that may`.
+**Tests:** `compliance/version-reach.test.ts › answers a conditional create naming an unreadable snapshot ancestor_unavailable`, `› leaves the item as it was when a conditional create names a snapshot the key may not read, and merges for one that may`.
 
 ### `versions/ancestor-unreadable-bulk`
 
 If an entry of `POST /items/bulk` under `mode: upsert` names a version whose snapshot is of a type the credential may not read, then the server MUST refuse the entry `ancestor_unavailable`.
 
-**Tests:** `compliance/version-reach.test.ts › answers a bulk entry naming an unreadable snapshot ancestor_unavailable`, `› rolls a bulk page back when an entry names a snapshot the key may not read, as an atomic page does, and leaves the row as it was`, `› leaves the row as it was when a non-atomic bulk entry names a snapshot the key may not read`.
+**Tests:** `compliance/version-reach.test.ts › answers a bulk entry naming an unreadable snapshot ancestor_unavailable`, `› rolls a bulk page back when an entry names a snapshot the key may not read, as an atomic page does, and leaves the item as it was`, `› leaves the item as it was when a non-atomic bulk entry names a snapshot the key may not read`.
 
 ## A write that carries nothing to merge
 
@@ -638,13 +638,13 @@ If `PATCH /items/{id}` carries only `edges`, or only `retype: true` with the ite
 
 **Reason:** the write carries no field to compare, so the server looks up no snapshot. A write that names a field and a version no snapshot covers is answered `ancestor_unavailable` (`versions/ancestor-none`).
 
-**Tests:** `correctness/item-versioning.test.ts › answers an update that carries only edges or names the row's own type version_conflict with no ancestor, whichever version it names`, `› answers an edges-only stale write with the envelope minus its merge half`.
+**Tests:** `correctness/item-versioning.test.ts › answers an update that carries only edges or names the item's own type version_conflict with no ancestor, whichever version it names`, `› answers an edges-only stale write with the envelope minus its merge half`.
 
 ### `versions/stale-bare-envelope`
 
 When `PATCH /items/{id}` answers `409 version_conflict` to a write that carries nothing to merge, the server MUST carry `current`, with the item's `id` and the item as it stands, and none of `ancestor`, `conflicting_fields`, `merge_policy` or `requested_version`.
 
-**Tests:** `correctness/item-versioning.test.ts › answers an edges-only stale write with the envelope minus its merge half`, `› answers an update that carries only edges or names the row's own type version_conflict with no ancestor, whichever version it names`.
+**Tests:** `correctness/item-versioning.test.ts › answers an edges-only stale write with the envelope minus its merge half`, `› answers an update that carries only edges or names the item's own type version_conflict with no ancestor, whichever version it names`.
 
 ## A create that names a version
 
@@ -656,7 +656,7 @@ When `POST /items` names a natural key or an `id` that an item holds, with a `ve
 
 **Reason:** a version is the precondition of a write, and a repeat that is acknowledged writes nothing, so it has no precondition to fail.
 
-**Tests:** `sync/acknowledged.test.ts › acknowledges an item repeat whatever version it names, and writes nothing`, `› acknowledges a create naming the natural key of a row in the bin whatever version it names, and writes nothing`, `compliance/version-order.test.ts › asks whether the key may read the item its natural key resolves before whether the id is the item's`, `› asks whether the id is the one the natural key resolves before whether the type is the item's`, `› asks whether the type is the item's before it asks the version`, `› asks whether a snapshot exists before it looks for a collision`.
+**Tests:** `sync/acknowledged.test.ts › acknowledges an item repeat whatever version it names, and writes nothing`, `› acknowledges a create naming the natural key of an item in the bin whatever version it names, and writes nothing`, `compliance/version-order.test.ts › asks whether the key may read the item its natural key resolves before whether the id is the item's`, `› asks whether the id is the one the natural key resolves before whether the type is the item's`, `› asks whether the type is the item's before it asks the version`, `› asks whether a snapshot exists before it looks for a collision`.
 
 ### `versions/create-stale-collides`
 
@@ -664,27 +664,27 @@ If `POST /items` names a natural key that a live item holds, a version the item 
 
 **Reason:** a create that resolves a live item is an update, and a version on it is the precondition `PATCH /items/{id}` takes.
 
-**Tests:** `sync/idempotency.test.ts › a create naming a stale version on an existing row is refused`.
+**Tests:** `sync/idempotency.test.ts › a create naming a stale version on an existing item is refused`.
 
 ### `versions/create-stale-merges`
 
 When `POST /items` names a natural key that a live item holds and a version the item no longer holds, and the create carries no change to a field that has changed since, the server MUST apply it over the current item where the result meets its type and takes no link another item holds.
 
-**Tests:** `sync/idempotency.test.ts › a create naming a stale version on an existing row merges where nothing collides`.
+**Tests:** `sync/idempotency.test.ts › a create naming a stale version on an existing item merges where nothing collides`.
 
 ### `versions/create-ancestor-none`
 
 If `POST /items` names a natural key that a live item holds and a version other than the one the item holds, which no snapshot covers, 0 included, then the server MUST answer `409 ancestor_unavailable`.
 
-**Tests:** `sync/idempotency.test.ts › takes a create's version of zero as the claim that there is no row`.
+**Tests:** `sync/idempotency.test.ts › takes a create's version of zero as the claim that there is no item`.
 
-### `versions/create-names-row`
+### `versions/create-names-item`
 
 When `POST /items` answers `409 version_conflict` or `409 ancestor_unavailable` for a natural key, the server MUST name the item the key resolved in `current.id`.
 
 **Reason:** the request names a key and not an id, so the answer is the one way the writer learns which item refused it, and a device needs that to hold the item rather than a second copy of it.
 
-**Tests:** `sync/idempotency.test.ts › a create naming a stale version on an existing row is refused`, `› takes a create's version of zero as the claim that there is no row`.
+**Tests:** `sync/idempotency.test.ts › a create naming a stale version on an existing item is refused`, `› takes a create's version of zero as the claim that there is no item`.
 
 ### `versions/create-claim-none`
 
@@ -692,7 +692,7 @@ When `POST /items` names a `version` of 0, a natural key no item holds and no `i
 
 **Reason:** the server never gives an item version 0, so 0 is the claim that the writer read no item under the key.
 
-**Tests:** `sync/idempotency.test.ts › takes a create's version of zero as the claim that there is no row`.
+**Tests:** `sync/idempotency.test.ts › takes a create's version of zero as the claim that there is no item`.
 
 ### `versions/create-repeat-version`
 
@@ -704,19 +704,19 @@ When the server acknowledges `POST /items` under `items/create-repeat`, the serv
 
 When the server acknowledges `POST /items` under `items/natural-key-trashed`, the server MUST do so whatever `version` it names.
 
-**Tests:** `sync/acknowledged.test.ts › acknowledges a create naming the natural key of a row in the bin whatever version it names, and writes nothing`.
+**Tests:** `sync/acknowledged.test.ts › acknowledges a create naming the natural key of an item in the bin whatever version it names, and writes nothing`.
 
 ### `versions/bulk-claim-none`
 
 When a `POST /items/bulk` entry names a `version`, a natural key no item holds and no `id` an item holds, the server MUST create the item at version 1, under `mode: upsert` and under `mode: create_only`.
 
-**Tests:** `sync/idempotency.test.ts › takes a bulk entry's version of zero as the claim that there is no row, in both modes`.
+**Tests:** `sync/idempotency.test.ts › takes a bulk entry's version of zero as the claim that there is no item, in both modes`.
 
 ### `versions/bulk-ancestor-none`
 
 If a `POST /items/bulk` entry under `mode: upsert` names a natural key that a live item holds and a version other than the one the item holds, which no snapshot covers, 0 included, then the server MUST refuse the entry `ancestor_unavailable`.
 
-**Tests:** `sync/idempotency.test.ts › takes a bulk entry's version of zero as the claim that there is no row, in both modes`.
+**Tests:** `sync/idempotency.test.ts › takes a bulk entry's version of zero as the claim that there is no item, in both modes`.
 
 ### `versions/bulk-merge`
 
@@ -734,7 +734,7 @@ When the server refuses a `POST /items/bulk` entry `version_conflict` under `ato
 
 When a `POST /items/bulk` entry under `mode: create_only` names a natural key that a live item holds, the server MUST report it `skipped`, whatever `version` it names.
 
-**Tests:** `sync/idempotency.test.ts › takes a bulk entry's version of zero as the claim that there is no row, in both modes`.
+**Tests:** `sync/idempotency.test.ts › takes a bulk entry's version of zero as the claim that there is no item, in both modes`.
 
 ## Resolving a collision
 
@@ -842,7 +842,7 @@ If a stale `PATCH /items/{id}?conflict=auto` collides and also moves the item to
 
 If a stale `PATCH /items/{id}?conflict=auto` moves the item to a type other than the one it holds and another writer moved it since the version the write names, then the server MUST answer `409 version_conflict` naming `type` in `conflicting_fields`.
 
-**Tests:** `sync/conflict.test.ts › refuses to resolve a stale move onto a row another writer moved since`.
+**Tests:** `sync/conflict.test.ts › refuses to resolve a stale move onto an item another writer moved since`.
 
 ### `versions/auto-refused-no-copy`
 
@@ -888,7 +888,7 @@ If a stale `PATCH /items/{id}?conflict=auto` would write a conflicted copy holdi
 
 When the server writes a conflicted copy, the server MUST write it at version 1, with no history.
 
-**Tests:** `sync/conflict.test.ts › records the row the resolution moved on from, and gives the copy a history of its own`.
+**Tests:** `sync/conflict.test.ts › records the item the resolution moved on from, and gives the copy a history of its own`.
 
 ### `versions/copy-source`
 
@@ -922,13 +922,13 @@ When the server writes a conflicted copy, the server MUST NOT give it an edge th
 
 When the server writes a conflicted copy, the server MUST NOT give it an edge the writer could not have made with `POST /edges`, which asks write on the source's type, write on the edge type and read on the target's type.
 
-**Tests:** `sync/conflict.test.ts › gives the conflicted copy no edge its writer could not have made, and none to a row in the bin`.
+**Tests:** `sync/conflict.test.ts › gives the conflicted copy no edge its writer could not have made, and none to an item in the bin`.
 
 ### `versions/copy-edges-bin`
 
 When the server writes a conflicted copy, the server MUST NOT give it an edge whose other end is in the bin.
 
-**Tests:** `sync/conflict.test.ts › gives the conflicted copy no edge its writer could not have made, and none to a row in the bin`, `› gives the conflicted copy only the edges the original's own file writes, none that cascade or block`.
+**Tests:** `sync/conflict.test.ts › gives the conflicted copy no edge its writer could not have made, and none to an item in the bin`, `› gives the conflicted copy only the edges the original's own file writes, none that cascade or block`.
 
 ### `versions/copy-edges-stored`
 
@@ -974,7 +974,7 @@ When the server writes a conflicted copy, the server MUST announce `edge.created
 
 When the server writes a conflicted copy, the server MUST write one `derived-from` edge from the copy to the original, with no properties and at version 1.
 
-**Reason:** nothing else joins the two rows. Without the edge an app that reads the copy later, on this device after a restart or on another, cannot show it beside its original, and an app that reads the original cannot find the copies made from it. `derived-from` is the shipped edge type for a row made from another, many to many, written at its source.
+**Reason:** nothing else joins the two items. Without the edge an app that reads the copy later, on this device after a restart or on another, cannot show it beside its original, and an app that reads the original cannot find the copies made from it. `derived-from` is the shipped edge type for an item made from another, many to many, written at its source.
 
 **Tests:** `sync/conflict.test.ts › links the conflicted copy to its original with one derived-from edge, whatever edge grants the writer holds`, `› links the conflicted copy to its original for a writer holding the edge grants, and gives it the edges those grants allow`.
 
@@ -1014,7 +1014,7 @@ When the server executes again, under the same `Idempotency-Key`, a write that w
 
 When the original of a conflicted copy is moved to the bin, the server MUST keep the copy's link to it.
 
-**Reason:** a move to the bin keeps every edge of the row, so a restore brings the original back beside its copy.
+**Reason:** a move to the bin keeps every edge of the item, so a restore brings the original back beside its copy.
 
 **Tests:** `sync/conflict.test.ts › keeps the link while the original is in the bin, and a purge of the original takes the link and leaves the copy`, `› leaves the conflicted copy as it was when its original is purged, and when it is restored beside it`.
 
@@ -1022,7 +1022,7 @@ When the original of a conflicted copy is moved to the bin, the server MUST keep
 
 When the original of a conflicted copy is purged, the server MUST leave the copy as it was, its tags and its other edges included.
 
-**Reason:** the copy holds the text the person lost, which a purge of the original does not decide about. The link goes with the original under `items/purge-edges`, and `derived-from` orphans the other end of a deleted row (`edges/orphan-shipped`).
+**Reason:** the copy holds the text the person lost, which a purge of the original does not decide about. The link goes with the original under `items/purge-edges`, and `derived-from` orphans the other end of a deleted item (`edges/orphan-shipped`).
 
 **Tests:** `sync/conflict.test.ts › keeps the link while the original is in the bin, and a purge of the original takes the link and leaves the copy`, `› leaves the conflicted copy as it was when its original is purged, and when it is restored beside it`.
 
@@ -1040,7 +1040,7 @@ When `POST /items/{id}/transition`, `DELETE /items/{id}`, `POST /items/{id}/rest
 
 When `POST /items/{id}/transition`, `DELETE /items/{id}`, `POST /items/{id}/restore` or a `transition` run by `POST /items/bulk-actions` moves an item, the server MUST NOT add a snapshot to its history.
 
-**Reason:** a snapshot recorded at a version that does not move would be a second row under a number the next update records again.
+**Reason:** a snapshot recorded at a version that does not move would be a second snapshot under a number the next update records again.
 
 **Tests:** `correctness/item-versioning.test.ts › moves neither the version nor its history on a transition, a delete or a restore`.
 
@@ -1056,7 +1056,7 @@ When `POST /items/{id}/transition`, `DELETE /items/{id}`, `POST /items/{id}/rest
 
 When a cascade moves an item to the bin or a restore brings it back, the server MUST leave the item's version and history as they were.
 
-**Tests:** `correctness/item-versioning.test.ts › leaves the version and the history of a row a cascade trashed and restored as they were`.
+**Tests:** `correctness/item-versioning.test.ts › leaves the version and the history of an item a cascade trashed and restored as they were`.
 
 ### `versions/folder-revoke-version`
 

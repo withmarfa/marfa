@@ -186,14 +186,14 @@ fn reads_row(read: &Reader<'_, '_>, row: &Archived) -> Result<bool> {
 
 fn unrestorable(refused: &checks::Refused) -> Refusal {
     Refusal::new(
-        Code::ExportRowsUnrestorable,
+        Code::ExportItemsUnrestorable,
         format!(
-            "No archive was sent, because a restore would refuse or skip a row this instance \
-             holds: {} Correct the row or its type, then export again.",
+            "No archive was sent, because a restore would refuse or skip an item or edge this \
+             instance holds: {} Correct it or its type, then export again.",
             refused.refusal.message
         ),
     )
-    .with_detail("row", refused.row())
+    .with_detail("item", refused.item())
 }
 
 impl App {

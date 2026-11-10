@@ -657,14 +657,14 @@ it("clears the own time of an item whose create still waits to the server's crea
   expect(value(await device.get(id)).occurred_at).toBe(served.created_at);
 });
 
-it("clears the own time of a keyed create that lands on a row the server holds", async () => {
+it("clears the own time of a keyed create that lands on an item the server holds", async () => {
   const key = `cleared-${ctx.runId}`;
   const held = await make({
     source: ctx.source,
     source_id: key,
     occurred_at: "2020-01-01T00:00:00.000Z",
   });
-  // The witness: the same landing without the clear keeps the held row's time.
+  // The witness: the same landing without the clear keeps the held item's time.
   const kept = await make({
     source: ctx.source,
     source_id: `${key}-kept`,
@@ -695,7 +695,7 @@ it("clears the own time of a keyed create that lands on a row the server holds",
   expect(value(await device.get(held.id)).occurred_at).toBe(served.created_at);
 });
 
-it("sends the time set after a clear on a keyed create that lands on a held row", async () => {
+it("sends the time set after a clear on a keyed create that lands on a held item", async () => {
   const key = `cleared-then-set-${ctx.runId}`;
   const held = await make({
     source: ctx.source,

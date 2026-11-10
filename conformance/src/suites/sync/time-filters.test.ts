@@ -13,7 +13,7 @@ import type { SyncCapabilities } from "./capabilities.js";
 /**
  * "A modification time moves when the item changes", on the read a
  * reconnecting client makes: the catch-up covers the graph as well as the
- * rows, and a bound the request names is either applied or refused — never
+ * items, and a bound the request names is either applied or refused — never
  * dropped.
  *
  * Query parameters are parsed with a schema that strips keys it does not
@@ -23,7 +23,7 @@ import type { SyncCapabilities } from "./capabilities.js";
  * from the narrow one they asked for. On a read that is a wrong answer. On
  * `POST /items/bulk-actions` the filter *is* the match set, so a dropped
  * bound turns "purge the items before this date" into "purge everything", and
- * under the match cap it does not error — it succeeds, against every row the
+ * under the match cap it does not error — it succeeds, against every item the
  * credential can see.
  *
  * That door is why this file exists rather than the bounds being taken on
@@ -119,7 +119,7 @@ describe("a bound is applied or refused, never dropped", () => {
     ).toBe(true);
     expect(
       bounded.data.data ?? [],
-      "the bound returned rows dated before an impossible lower bound, so it is being dropped",
+      "the bound returned items dated before an impossible lower bound, so it is being dropped",
     ).toHaveLength(0);
 
     // And a name the door does not declare is refused rather than stripped.
@@ -137,7 +137,7 @@ describe("a bound is applied or refused, never dropped", () => {
     ]);
   });
 
-  it("refuses an undeclared bound inside a bulk-action filter, where a dropped bound is every row", async () => {
+  it("refuses an undeclared bound inside a bulk-action filter, where a dropped bound is every item", async () => {
     const seed = await client.createItem({
       type: "core.note",
       source: ctx.source,
@@ -149,7 +149,7 @@ describe("a bound is applied or refused, never dropped", () => {
     // Every request in this test is a dry run, and the action is the mildest
     // one the door takes. The refusal is what is under test; matching against
     // a live purge to observe it would be a test that has to work perfectly to
-    // avoid destroying the rows it matched.
+    // avoid destroying the items it matched.
     const dryRun = (filter: Record<string, unknown>) =>
       client.rawRequest<{ matched?: number; dry_run?: boolean }>(
         "/items/bulk-actions",
@@ -164,7 +164,7 @@ describe("a bound is applied or refused, never dropped", () => {
         },
       );
 
-    // The control. The door has to match this run's own row under a filter
+    // The control. The door has to match this run's own item under a filter
     // with no time bound, or "matched nothing" below would be the door
     // matching nothing at all.
     const unbounded = await dryRun({});
@@ -174,7 +174,7 @@ describe("a bound is applied or refused, never dropped", () => {
     ).toBe(true);
     expect(
       unbounded.data.matched ?? 0,
-      "the dry run matched nothing under an unbounded filter, so this door is not reading this run's rows",
+      "the dry run matched nothing under an unbounded filter, so this door is not reading this run's items",
     ).toBeGreaterThan(0);
     expect(
       unbounded.data.dry_run,
@@ -189,7 +189,7 @@ describe("a bound is applied or refused, never dropped", () => {
 
     // And the declared bound narrows rather than being dropped in its turn.
     // An impossible lower bound has to match nothing, against a filter that
-    // matched this run's row a moment ago.
+    // matched this run's item a moment ago.
     const bounded = await dryRun({ occurred_after: IMPOSSIBLE_FUTURE });
     expect(
       bounded.ok,
@@ -197,21 +197,21 @@ describe("a bound is applied or refused, never dropped", () => {
     ).toBe(true);
     expect(
       bounded.data.matched ?? -1,
-      "the bound matched rows dated before an impossible lower bound, so the bulk-action door is dropping it",
+      "the bound matched items dated before an impossible lower bound, so the bulk-action door is dropping it",
     ).toBe(0);
   });
 });
 
 describe("the catch-up window, at both ends", () => {
   /**
-   * Three rows and three assertions per bound, because two of them cannot
+   * Three items and three assertions per bound, because two of them cannot
    * tell the failures apart.
    *
-   * The row **on** the bound's instant is what separates exclusive from
-   * inclusive. The row **inside** the range is the control that separates a
+   * The item **on** the bound's instant is what separates exclusive from
+   * inclusive. The item **inside** the range is the control that separates a
    * working bound from one the validator stripped: a dropped predicate and a
-   * predicate that matched nothing both leave the boundary row absent, and
-   * only a row that must come back can tell them apart. The row **outside**
+   * predicate that matched nothing both leave the boundary item absent, and
+   * only an item that must come back can tell them apart. The item **outside**
    * on the far side proves the bound narrows in the direction it claims.
    */
   it("bounds an item listing by updated_before, exclusively", async () => {
@@ -232,7 +232,7 @@ describe("the catch-up window, at both ends", () => {
     const [earlier, onBound, later] = seeded;
     expect(
       new Set(seeded.map((row) => row.at)).size,
-      "two rows share a modification instant, so a bound on one cannot separate them",
+      "two items share a modification instant, so a bound on one cannot separate them",
     ).toBe(3);
 
     const scope = `source=${encodeURIComponent(ctx.source)}&limit=200`;
@@ -247,7 +247,7 @@ describe("the catch-up window, at both ends", () => {
       ).toBe(true);
       expect(
         page.data.next_cursor,
-        "the page was truncated, so a row missing from it proves nothing about the bound",
+        "the page was truncated, so an item missing from it proves nothing about the bound",
       ).toBeNull();
       return (page.data.data ?? []).map((row) => row.id);
     };
@@ -257,21 +257,21 @@ describe("the catch-up window, at both ends", () => {
     );
     expect(
       bounded,
-      "a row whose modification time is exactly the upper bound came back, so the bound is inclusive where the rule says exclusive",
+      "an item whose modification time is exactly the upper bound came back, so the bound is inclusive where the rule says exclusive",
     ).not.toContain(onBound.id);
     expect(
       bounded,
-      "a row modified before the upper bound was missing, so the bound is being dropped or is narrowing the wrong way",
+      "an item modified before the upper bound was missing, so the bound is being dropped or is narrowing the wrong way",
     ).toContain(earlier.id);
     expect(
       bounded,
-      "a row modified after the upper bound came back, so the bound narrows in the wrong direction",
+      "an item modified after the upper bound came back, so the bound narrows in the wrong direction",
     ).not.toContain(later.id);
   });
 
   it("keeps updated_after inclusive, which the catch-up depends on", async () => {
     // The carve-out, asserted rather than assumed. `updated_at` ties across
-    // a bulk write, so a strict lower bound would drop every row sharing a
+    // a bulk write, so a strict lower bound would drop every item sharing a
     // resuming client's cursor — silently, and with no way to ask again.
     const seeded: { id: string; at: number }[] = [];
     for (let i = 0; i < 3; i++) {
@@ -304,21 +304,21 @@ describe("the catch-up window, at both ends", () => {
     ).toBe(true);
     expect(
       page.data.next_cursor,
-      "the page was truncated, so a row missing from it proves nothing about the bound",
+      "the page was truncated, so an item missing from it proves nothing about the bound",
     ).toBeNull();
     const ids = (page.data.data ?? []).map((row) => row.id);
 
     expect(
       ids,
-      "a row whose modification time is exactly the cursor was dropped: this is the catch-up losing every row that shares a bulk write's instant",
+      "an item whose modification time is exactly the cursor was dropped: this is the catch-up losing every item that shares a bulk write's instant",
     ).toContain(onBound.id);
     expect(
       ids,
-      "a row modified after the cursor was missing, so the catch-up is not returning what changed",
+      "an item modified after the cursor was missing, so the catch-up is not returning what changed",
     ).toContain(later.id);
     expect(
       ids,
-      "a row modified before the cursor came back, so the bound is being dropped",
+      "an item modified before the cursor came back, so the bound is being dropped",
     ).not.toContain(earlier.id);
   });
 
@@ -372,7 +372,7 @@ describe("the catch-up window, at both ends", () => {
     ).toBe(true);
     expect(
       page.data.next_cursor,
-      "the page was truncated, so a row missing from it proves nothing about the bound",
+      "the page was truncated, so an item missing from it proves nothing about the bound",
     ).toBeNull();
     const ids = (page.data.data ?? []).map((row) => row.id);
 
@@ -398,7 +398,7 @@ describe("the catch-up window, at both ends", () => {
     const bound = encodeURIComponent(seed.data.item.updated_at ?? "");
     const scope = `source=${encodeURIComponent(ctx.source)}&updated_after=${bound}`;
 
-    // The witness: the order the bound implies, named or not, answers the row.
+    // The witness: the order the bound implies, named or not, answers the item.
     for (const order of [
       "",
       "&sort=updated_at",
@@ -488,7 +488,7 @@ describe("the catch-up window, at both ends", () => {
       ).toBe(true);
       expect(
         page.data.next_cursor,
-        "the page was truncated, so a row missing from it proves nothing about the bound",
+        "the page was truncated, so an item missing from it proves nothing about the bound",
       ).toBeNull();
       return (page.data.data ?? []).map((row) => row.id);
     };

@@ -185,7 +185,7 @@ export interface ItemCreate {
   /** An archive restore: a row that is not of a `core` or `system` type that
    *  this build ships is stored as the archive holds it, in whatever shape,
    *  and under a type that need not be registered
-   *  (`search-and-filters/restore-rows-shape-free`). */
+   *  (`search-and-filters/restore-items-shape-free`). */
   as_archived?: true;
   /** With `as_archived`, the `schema_version` the archive holds. */
   schema_version?: number;

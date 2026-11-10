@@ -213,7 +213,7 @@ async function copyStream(
 describe("the reach header on a write", () => {
   it("answers a write carrying a stale, a malformed or a matching reach as it answers one without the header", async () => {
     const proof = await bootstrap();
-    const row = await seed("a row for the writes");
+    const row = await seed("an item for the writes");
     const headers = [
       ["stale", STALE],
       ["matching", proof.reach],
@@ -426,7 +426,7 @@ describe("the order POST /items/bulk-get asks its refusals in", () => {
 
 describe("the order a conditional GET asks its refusals in", () => {
   it("answers 400 to a malformed copy of a stale reach, and 409 to the stale reach itself", async () => {
-    const row = await seed("a row to retype");
+    const row = await seed("an item to retype");
     const proof = await bootstrap();
     const door = "/items?include=metadata";
     const witness = await request(door, { proof: proof.reach });
@@ -627,7 +627,7 @@ describe("what a move to another type does to the reach", () => {
   });
 
   it("changes the reach for a PATCH that moves the item to another type and writes properties, and keeps it for one that writes properties alone", async () => {
-    const row = await seed("a row to move with properties");
+    const row = await seed("an item to move with properties");
     const proof = await bootstrap();
     const written = await client.updateItem(row.id, {
       version: row.version,
@@ -653,7 +653,7 @@ describe("what a move to another type does to the reach", () => {
 
 describe("the reach header on an answer that is not certified", () => {
   it("carries none on a 400 or a 409 to a conditional read, and carries one on the same door when the read succeeds", async () => {
-    const row = await seed("a row for the doors");
+    const row = await seed("an item for the doors");
     const proof = await bootstrap();
     const doors: Array<[string, string, string]> = [
       [

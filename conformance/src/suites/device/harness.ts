@@ -68,7 +68,7 @@ export function queuedEdit(
   return { ok: true, value: outcome.value };
 }
 
-/** How many requests read row `id`: alone by id, or in a bulk read by id. */
+/** How many requests read item `id`: alone by id, or in a bulk read by id. */
 export function readsOf(server: ScriptedServer, id: string): number {
   return server.requests.filter(
     (request) =>
@@ -289,7 +289,7 @@ export async function startBindingHarness(
  * answer after the device has already been through a door queues it behind
  * the one that is still answering, which reads as the new answer being
  * ignored.
- * `rows` is keyed by type, and a type with no entry
+ * `items` is keyed by type, and a type with no entry
  * answers an empty page rather than going unscripted, because an unscripted
  * door answers 501 and the device would report that instead of the thing
  * under test.
@@ -305,7 +305,7 @@ export function scriptHydration(
     /** Folder report responses; defaults to accepting the observed sequence. */
     statusReport?: Responder[];
     instance?: () => string;
-    rows?: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
+    items?: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
     /** What `GET /edges` lists, by edge type; scripted only where named. */
     edges?: Record<string, WireEdgeOptions[]>;
     /** The catalog every read of `/types` answers, the scripted one unless named. */
@@ -318,11 +318,11 @@ export function scriptHydration(
     /** What `GET /keys/current` answers, a key reading and writing every
      *  type unless named. */
     key?: Responder[];
-    /** Rows to a page of the item listing, each page naming the next by its
+    /** Items to a page of the item listing, each page naming the next by its
      *  offset; one page holds them all unless named. */
     pageSize?: number;
     /** Whether the page at an offset dies unanswered, as the page of an
-     *  interrupted hydration does, or what it answers in place of its rows,
+     *  interrupted hydration does, or what it answers in place of its items,
      *  such as a refusal of its cursor. Asked of every page but the first. */
     drop?: (offset: number) => boolean | Answer;
     /** Holds the counts a hydration reads before it marks itself in
@@ -375,7 +375,7 @@ export function scriptHydration(
   };
   const head = (): string =>
     typeof options.head === "string" ? options.head : options.head();
-  const rows = options.rows ?? {};
+  const items = options.items ?? {};
   const edges = options.edges;
   if (edges !== undefined) {
     server.copyAnswer("GET", "/edges", (request) => {
@@ -429,7 +429,7 @@ export function scriptHydration(
   server.copyAnswer("GET", "/types", options.catalog ?? typeCatalog());
   scriptStats(
     server,
-    rows,
+    items,
     options.statsHeldUntil,
     options.reading,
     edges ?? {},
@@ -448,14 +448,14 @@ export function scriptHydration(
     // No type is every type the key reads, which leaves `system.*` out.
     const forType =
       type === null
-        ? Object.values(rows)
+        ? Object.values(items)
             .flat()
             .filter((row) => !(row.item.type ?? "").startsWith("system."))
-        : (rows[type] ?? []);
+        : (items[type] ?? []);
     // The state parameter is honored rather than ignored, because a
     // scripted server more generous than the real one lets a device that
     // stopped asking for every state stay green while a real copy silently
-    // holds only active rows (`device/list-default-active`). `any` is the only value
+    // holds only active items (`device/list-default-active`). `any` is the only value
     // hydration sends, so anything else narrows the same way the server's
     // listing does.
     // A copy narrowed by its folder's query names its states as a list.
@@ -512,17 +512,17 @@ export function scriptHydration(
         ),
       );
     }
-    // A pin that a read by id answers 404 asks the bin for the row this way.
+    // A pin that a read by id answers 404 asks the bin for the item this way.
     return itemsPage(
       inState
         .filter((row) => row.item.id === byId[1])
         .map((row) => ({ item: wireItem(row.item), tags: row.tags })),
     );
   });
-  scriptTitles(server, rows, options.lookup, options.catalog);
+  scriptTitles(server, items, options.lookup, options.catalog);
 }
 
-/** A row with the scripted edges it is the source of, as the server's
+/** An item with the scripted edges it is the source of, as the server's
  *  `include=edges` draws them, unless the fixture drew its own. Only a
  *  listing narrowed beneath an item draws them, which is the one listing a
  *  catch-up holds a moved branch from. */
@@ -564,7 +564,7 @@ function beneathOf(
   return reached;
 }
 
-/** Whether a row's state is one a listing's `state` parameter names:
+/** Whether an item's state is one a listing's `state` parameter names:
  *  `any`, one state, or a comma-separated list of them. */
 function inStates(asked: string): (state: string) => boolean {
   if (asked === "any") return () => true;
@@ -572,13 +572,13 @@ function inStates(asked: string): (state: string) => boolean {
   return (state) => states.includes(state);
 }
 
-/** A row as a scripted filter reads it. */
-type FilteredRow = { item: WireItemOptions; tags?: string[] };
+/** An item as a scripted filter reads it. */
+type FilteredItem = { item: WireItemOptions; tags?: string[] };
 
-/** Which rows a filter selects, or `undefined` where it is not read. */
+/** Which items a filter selects, or `undefined` where it is not read. */
 export type FilterReading = (
   filter: string,
-) => ((row: FilteredRow) => boolean) | undefined;
+) => ((row: FilteredItem) => boolean) | undefined;
 
 /**
  * The scripted server's reading of a filter a folder narrows its copy by:
@@ -589,19 +589,19 @@ export type FilterReading = (
  */
 export function scriptedFilter(
   filter: string,
-): ((row: FilteredRow) => boolean) | undefined {
+): ((row: FilteredItem) => boolean) | undefined {
   const anyOf = filter
     .split(/\s+OR\s+/)
     .map((part) => part.split(/\s+AND\s+/).map(scriptedTerm));
   if (anyOf.some((allOf) => allOf.some((term) => term === undefined)))
     return undefined;
-  const terms = anyOf as Array<Array<(row: FilteredRow) => boolean>>;
+  const terms = anyOf as Array<Array<(row: FilteredItem) => boolean>>;
   return (row) => terms.some((allOf) => allOf.every((term) => term(row)));
 }
 
 function scriptedTerm(
   term: string,
-): ((row: FilteredRow) => boolean) | undefined {
+): ((row: FilteredItem) => boolean) | undefined {
   const parts =
     /^(tags|source|id|properties\.[A-Za-z0-9_]+) (eq|neq|gt|gte|lt|lte|contains|exists|not_exists)(?: (".*"|-?[0-9.]+|true|false))?$/.exec(
       term.trim(),
@@ -609,7 +609,7 @@ function scriptedTerm(
   if (parts === null) return undefined;
   const [, field, op, raw] = parts;
   const value: unknown = raw === undefined ? undefined : JSON.parse(raw);
-  const read = (row: FilteredRow): unknown => {
+  const read = (row: FilteredItem): unknown => {
     if (field === "tags") return row.tags ?? [];
     const item = wireItem(row.item);
     if (field === "source" || field === "id") return item[field];
@@ -665,15 +665,15 @@ export function foldedName(text: string): string {
 const TITLES_PER_NAME = 20;
 
 /**
- * What `POST /items/titles` answers for the rows a fixture scripts: for each
- * name, the active and archived rows outside `system.*` whose folded title
+ * What `POST /items/titles` answers for the items a fixture scripts: for each
+ * name, the active and archived items outside `system.*` whose folded title
  * is the name's folded, the first `TITLES_PER_NAME` of them, by id. `lookup`
  * answers a call that names a name it recognises with its own answer, as a
  * server that refuses the call would.
  */
 export function scriptTitles(
   server: ScriptedServer,
-  rows: Record<string, Array<{ item: WireItemOptions }>>,
+  items: Record<string, Array<{ item: WireItemOptions }>>,
   lookup?: (text: string) => Answer | undefined,
   catalog: Responder = typeCatalog(),
 ): void {
@@ -710,7 +710,7 @@ export function scriptTitles(
       (item.properties as Record<string, unknown>)[
         titleFieldOf(String(item.type))
       ];
-    const held = Object.values(rows)
+    const held = Object.values(items)
       .flat()
       .map((row) => wireItem(row.item))
       .filter(
@@ -751,7 +751,7 @@ export function scriptTitles(
 }
 
 /**
- * What `GET /items/stats` answers for the rows a fixture scripts, which a
+ * What `GET /items/stats` answers for the items a fixture scripts, which a
  * hydration reads once for the count it reports while it fills
  * (`device/report-items-expected`). It counts as the server does: by type
  * under `by=type`, at the tier named, every state where none is named, and
@@ -760,7 +760,7 @@ export function scriptTitles(
  */
 export function scriptStats(
   server: ScriptedServer,
-  rows: Record<string, Array<FilteredRow>> = {},
+  items: Record<string, Array<FilteredItem>> = {},
   heldUntil?: Promise<void>,
   reading?: FilterReading,
   edges: Record<string, WireEdgeOptions[]> = {},
@@ -779,7 +779,7 @@ export function scriptStats(
     const system = request.query.get("include") === "system";
     const byType = request.query.get("by") === "type";
     const counts: Record<string, number> = {};
-    for (const held of Object.values(rows)) {
+    for (const held of Object.values(items)) {
       for (const row of held) {
         const type = String(wireItem(row.item).type);
         if (type.startsWith("system.") && !system) continue;
@@ -826,14 +826,14 @@ export function scriptKey(server: ScriptedServer, ...key: Responder[]): void {
  *
  * A write refuses on a store that has never pulled a slice, so a fixture
  * asserting something about a write would otherwise be asserting the
- * hydration refusal. `rows` seeds the copy so an update has something to be
+ * hydration refusal. `items` seeds the copy so an update has something to be
  * based on.
  */
 export async function hydratedHarness(
   label: string,
   options: {
     head?: string;
-    rows?: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
+    items?: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
     types?: string[];
     /** Types the catalog lists beside the scripted ones. */
     registered?: ReadonlyArray<Record<string, unknown>>;
@@ -842,7 +842,7 @@ export async function hydratedHarness(
   const harness = await startHarness(label);
   scriptHydration(harness.server, {
     head: options.head ?? "1",
-    rows: options.rows,
+    items: options.items,
     ...(options.registered === undefined
       ? {}
       : { catalog: () => typeCatalog(options.registered) }),
@@ -872,7 +872,7 @@ export interface ScriptedWrites {
   create?: Responder[];
   /** The lookup a keyed create naming no tier waits on
    *  (`queue-and-verdicts/keyed-create-lookup`). Where creates are scripted
-   *  and this is not, no row holds any key. */
+   *  and this is not, no item holds any key. */
   lookup?: Responder[];
   update?: Responder[];
   /** The certified single-item read used to reconcile a settled write. */
@@ -935,9 +935,9 @@ export interface FolderHarness {
   dir: string;
   /** The `system.folder` this folder follows, as the server holds it: a
    *  fixture changes it to stand for another device changing the settings. */
-  settings: FolderRow;
-  /** What the hydration served, so a scripted write door knows those rows. */
-  rows: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
+  settings: FolderItem;
+  /** What the hydration served, so a scripted write door knows those items. */
+  items: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
   /** The folder registry of the machine it is on (`folders/registry-lists-folders`). */
   registry: string;
   /** What the add reported, including what the first sync will do. */
@@ -946,14 +946,14 @@ export interface FolderHarness {
 }
 
 /** A `system.folder` the scripted server holds. */
-export interface FolderRow {
+export interface FolderItem {
   id: string;
   version: number;
   settings: FolderSettings;
 }
 
-/** The row a `system.folder` read answers, as the server holds it. */
-export function folderItem(row: FolderRow): Record<string, unknown> {
+/** The item a `system.folder` read answers, as the server holds it. */
+export function folderItem(row: FolderItem): Record<string, unknown> {
   return wireItem({
     id: row.id,
     type: "system.folder",
@@ -966,11 +966,11 @@ export function folderItem(row: FolderRow): Record<string, unknown> {
  * Serves a `system.folder` by id, as its current settings. Scripted before
  * any fixture's own read door, so the first-matching route is this one.
  */
-export function scriptFolderRow(
+export function scriptFolderItem(
   server: ScriptedServer,
   settings: FolderSettings,
-): FolderRow {
-  const row: FolderRow = { id: uuidv7(), version: 1, settings };
+): FolderItem {
+  const row: FolderItem = { id: uuidv7(), version: 1, settings };
   server.copyAnswer("GET", `/items/${row.id}`, () =>
     answers.updated(folderItem(row)),
   );
@@ -980,7 +980,7 @@ export function scriptFolderRow(
 /**
  * A folder on a scripted server, added and hydrated.
  *
- * `rows` seeds what the hydration answers, so a fixture about an item
+ * `items` seeds what the hydration answers, so a fixture about an item
  * becoming a file has an item to start from.
  */
 export async function folderHarness(
@@ -997,10 +997,10 @@ export async function folderHarness(
     sharing?: { server: ScriptedServer; key: string };
     /** A `system.folder` the shared server already holds, for a second
      *  machine bound to the same folder. */
-    folder?: FolderRow;
+    folder?: FolderItem;
     head?: string;
     statusReport?: Responder[];
-    rows?: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
+    items?: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
     /** What `GET /keys/current` answers, a key placing files unless named. */
     key?: Responder[];
     /** Skip the hydration, for the cases that are about a folder before one. */
@@ -1036,9 +1036,9 @@ export async function folderHarness(
      * like the device ignoring the events.
      */
     events?: Responder[];
-    /** Rows to a page of the item listing, as `scriptHydration` takes it. */
+    /** Items to a page of the item listing, as `scriptHydration` takes it. */
     pageSize?: number;
-    /** Scripts what the add itself reads, such as a row a waiting first
+    /** Scripts what the add itself reads, such as an item a waiting first
      *  sync's plan reads by id. */
     beforeAdd?: (server: ScriptedServer) => void;
     /** Whether a page of the item listing dies unanswered, as
@@ -1072,7 +1072,7 @@ export async function folderHarness(
   });
   const settings =
     options.folder ??
-    scriptFolderRow(
+    scriptFolderItem(
       server,
       options.settings ?? { query: { types: ["core.note"] } },
     );
@@ -1088,12 +1088,12 @@ export async function folderHarness(
   };
   // Before the add, which reads the catalog. A shared server's doors are
   // its owner's; a second folder hydrates from what the owner scripted, and
-  // sees the rows the owner's fixture adds.
+  // sees the items the owner's fixture adds.
   if (options.sharing === undefined) {
     scriptHydration(server, {
       head: options.head ?? "1",
       statusReport: options.statusReport,
-      rows: options.rows,
+      items: options.items,
       // A folder holds whole every edge type a file may write at its target.
       edges: options.edges ?? {},
       catalog: options.catalog,
@@ -1137,7 +1137,7 @@ export async function folderHarness(
     folder,
     dir,
     settings,
-    rows: options.rows ?? {},
+    items: options.items ?? {},
     registry,
     added: added.value,
     stop,

@@ -52,7 +52,7 @@ const rows = {
     row(1, TASK, { stage: "todo" }),
     row(2, TASK, { stage: "doing" }),
     row(3, TASK, { stage: "done" }),
-    // A word the type no longer declares, as a row written before a word was
+    // A word the type no longer declares, as an item written before a word was
     // removed is held.
     row(4, TASK, { stage: "pending" }),
     // A chore's word on a task, which a task does not declare.
@@ -74,7 +74,7 @@ afterEach(async () => {
 
 async function hydrated(name: string) {
   harness = await startHarness(name);
-  scriptHydration(harness.server, { head: "10", catalog, rows });
+  scriptHydration(harness.server, { head: "10", catalog, items: rows });
   expect((await harness.device.hydrate([TASK, NOTE], "library")).ok).toBe(true);
   return harness;
 }
@@ -123,7 +123,7 @@ describe("a working copy reads status words through the groups every type shares
     );
     expect(await device.queue(), "a refused write was queued").toEqual(queued);
     expect(server.requests.length).toBe(calls);
-    // The witnesses: the same row takes an edit that names its word
+    // The witnesses: the same item takes an edit that names its word
     // unchanged, as a synced file sends every property, and each type takes
     // the words its chain declares.
     expect(
@@ -149,7 +149,7 @@ describe("a working copy reads status words through the groups every type shares
     }
   });
 
-  it("refuses a move into a type that does not declare the row's status word", async () => {
+  it("refuses a move into a type that does not declare the item's status word", async () => {
     const { device, server } = await hydrated("status-groups-move");
     const queued = await device.queue();
     const calls = server.requests.length;
@@ -160,12 +160,12 @@ describe("a working copy reads status words through the groups every type shares
     );
     expect(await device.queue(), "a refused move was queued").toEqual(queued);
     expect(server.requests.length).toBe(calls);
-    // The witness: a row holding a word the type declares moves.
+    // The witness: an item holding a word the type declares moves.
     const done = rows[TASK][7]!.item.id;
     expect(
       (await device.update(done, { version: 1, type: TASK, properties: {} }))
         .ok,
-      "a move into a type declaring the row's word was refused",
+      "a move into a type declaring the item's word was refused",
     ).toBe(true);
   });
 

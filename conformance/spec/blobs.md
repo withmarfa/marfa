@@ -468,13 +468,13 @@ When the key that minted a link is revoked, the server MUST go on serving the by
 
 When the key that minted a link is narrowed until it no longer reaches the blob, the server MUST go on serving the bytes at the link for the rest of its lifetime.
 
-**Tests:** `compliance/blob-reach.test.ts › keeps a minted link working after its key is narrowed and after the rows that referenced the bytes are gone`.
+**Tests:** `compliance/blob-reach.test.ts › keeps a minted link working after its key is narrowed and after the items that referenced the bytes are gone`.
 
 ### `blobs/link-outlives-references`
 
-When the rows that referenced a blob are purged, the server MUST go on serving the bytes at a link minted before, for the rest of its lifetime, until the orphan sweep purges the blob.
+When the items that referenced a blob are purged, the server MUST go on serving the bytes at a link minted before, for the rest of its lifetime, until the orphan sweep purges the blob.
 
-**Tests:** `compliance/blob-reach.test.ts › keeps a minted link working after its key is narrowed and after the rows that referenced the bytes are gone`.
+**Tests:** `compliance/blob-reach.test.ts › keeps a minted link working after its key is narrowed and after the items that referenced the bytes are gone`.
 
 ### `blobs/link-purged-blob`
 
@@ -502,7 +502,7 @@ When a caller authorized by `blobs.manage` or local authority sends `GET /blobs/
 
 ### `blobs/read-unregistered-map`
 
-If a working key or an app's access token lacking `blobs.manage` whose type map names only a type nothing registers sends a blob read for a blob that no row it may read references, then the server MUST answer `404 blob_not_found`, as it does any credential that may not read the blob.
+If a working key or an app's access token lacking `blobs.manage` whose type map names only a type nothing registers sends a blob read for a blob that no item it may read references, then the server MUST answer `404 blob_not_found`, as it does any credential that may not read the blob.
 
 **Reason:** a pattern is a pattern whether or not a type matches it, so the key reaches a type and is not refused under `blobs/read-no-type`.
 
@@ -510,15 +510,15 @@ If a working key or an app's access token lacking `blobs.manage` whose type map 
 
 ### `blobs/read-unreferenced`
 
-While no row references a blob, the server MUST answer `404 blob_not_found` to every working key and app's access token lacking `blobs.manage` that reads it on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` and `GET /blobs/{hash}/copies`, the credential that uploaded it included.
+While no item references a blob, the server MUST answer `404 blob_not_found` to every working key and app's access token lacking `blobs.manage` that reads it on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` and `GET /blobs/{hash}/copies`, the credential that uploaded it included.
 
-**Reason:** an upload's answer carries the hash, the type and the size, and the uploader holds the bytes already, so the blob is read only once a row that lends names it.
+**Reason:** an upload's answer carries the hash, the type and the size, and the uploader holds the bytes already, so the blob is read only once an item that lends names it.
 
 **Tests:** `compliance/blob-reach.test.ts › answers a blob nothing references as an unknown one, to the key that uploaded it too`, `compliance/blob-reach-app.test.ts › answers a blob nothing references as an unknown one to the app that uploaded it`.
 
 ### `blobs/read-unreadable`
 
-If a working key or an access token lacking `blobs.manage` reads a blob that only rows it may not read reference, then the server MUST answer `404 blob_not_found` with the message an unknown hash gets.
+If a working key or an access token lacking `blobs.manage` reads a blob that only items it may not read reference, then the server MUST answer `404 blob_not_found` with the message an unknown hash gets.
 
 **Reason:** the answer says nothing of whether the instance holds the bytes, as an item the credential may not read answers as a missing one (`keys-and-oauth/unreadable-as-missing`).
 
@@ -540,7 +540,7 @@ While only an earlier version of an item references a blob, the server MUST answ
 
 ### `blobs/lend-withdrawn`
 
-When a row stops naming a digest, because an item, an edge or an extension namespace was rewritten without it, the edge or the namespace was deleted, or the item was purged with its edges and namespaces, the server MUST stop serving the blob to a credential that read it only through that row.
+When an item stops naming a digest, because an item, an edge or an extension namespace was rewritten without it, the edge or the namespace was deleted, or the item was purged with its edges and namespaces, the server MUST stop serving the blob to a credential that read it only through that item.
 
 **Tests:** `compliance/blob-reach.test.ts › does not serve a blob through an earlier version`, `› serves a blob named only in an edge's properties to a key that reads the edge, and to no other`, `› serves a blob named only in an extension to a key that reads the namespace, and to no other`, `› serves a blob an edge names through a source in the bin, and stops once the source is purged`, `› serves a blob an extension names through an item in the bin, and stops once the item is purged`.
 
@@ -604,19 +604,19 @@ If a working key or an app's access token writes an item of `core.file`, or of a
 
 **Reason:** a file item stands for its bytes. Taken, the write would leave a file whose bytes no credential lacking `blobs.manage` may download, its writer and the bytes' uploader included, which its owner meets as a lost file, while the `201` told the writer that it worked. The way forward is to upload the bytes under the writing credential, which `blobs/upload-repeat` takes for bytes the instance already holds, and write again. A digest anywhere else in a row's properties, such as an embed in a note's body, is text: the write is taken and the digest lends nothing (`blobs/proof-item`).
 
-**Tests:** `compliance/file-blob-proof.test.ts › is refused when another key uploaded the bytes, and taken once its writer uploads them too`, `› is refused once the uploader is revoked, while a row the uploader wrote keeps lending`, `› refuses a create`, `› refuses an upsert onto a natural key`, `› refuses a patch at the current version`, `› refuses a stale merge naming bytes its base lacked`, `› refuses a keep-both write`, `› refuses a retype into a file type`.
+**Tests:** `compliance/file-blob-proof.test.ts › is refused when another key uploaded the bytes, and taken once its writer uploads them too`, `› is refused once the uploader is revoked, while an item the uploader wrote keeps lending`, `› refuses a create`, `› refuses an upsert onto a natural key`, `› refuses a patch at the current version`, `› refuses a stale merge naming bytes its base lacked`, `› refuses a keep-both write`, `› refuses a retype into a file type`.
 
 ### `blobs/proof-file-refused-bulk`
 
-If an entry of `POST /items/bulk`, or a row of `POST /items/bulk-actions` with `update_properties`, writes a file item's `blob_ref` as `blobs/proof-file-refused` describes, then the server MUST refuse that entry or row with `blob_not_found`.
+If an entry of `POST /items/bulk`, or an item of `POST /items/bulk-actions` with `update_properties`, writes a file item's `blob_ref` as `blobs/proof-file-refused` describes, then the server MUST refuse that entry or item with `blob_not_found`.
 
-**Tests:** `compliance/file-blob-proof.test.ts › refuses a bulk create's entry`, `› refuses a bulk update's entry`, `› refuses a bulk action's row`.
+**Tests:** `compliance/file-blob-proof.test.ts › refuses a bulk create's entry`, `› refuses a bulk update's entry`, `› refuses a bulk action's item`.
 
 ### `blobs/proof-file-refused-nothing`
 
-When the server refuses a write under `blobs/proof-file-refused` or `blobs/proof-file-refused-bulk`, the server MUST NOT store the hash in any row, the item, a keep-both copy and a bulk entry's row included.
+When the server refuses a write under `blobs/proof-file-refused` or `blobs/proof-file-refused-bulk`, the server MUST NOT store the hash in any stored record, the item, a keep-both copy and a bulk entry's item included.
 
-**Tests:** `compliance/file-blob-proof.test.ts › is refused when another key uploaded the bytes, and taken once its writer uploads them too`, `› answers bytes another key holds exactly as it answers a hash nothing holds`, `› refuses a create`, `› refuses a keep-both write`, `› refuses a bulk create's entry`, `› refuses a bulk action's row`.
+**Tests:** `compliance/file-blob-proof.test.ts › is refused when another key uploaded the bytes, and taken once its writer uploads them too`, `› answers bytes another key holds exactly as it answers a hash nothing holds`, `› refuses a create`, `› refuses a keep-both write`, `› refuses a bulk create's entry`, `› refuses a bulk action's item`.
 
 ### `blobs/proof-file-refused-as-unknown`
 
@@ -666,7 +666,7 @@ When a working key writes an extension namespace through `PUT /items/{id}/extens
 
 While an item, an edge or an extension namespace keeps naming a digest that does not lend, the server MUST NOT make that reference lend by a later write, whoever makes it and whatever it holds.
 
-**Reason:** a key that may read every blob would otherwise vouch for a hash someone else put there, by editing beside it or rewriting the whole row.
+**Reason:** a key that may read every blob would otherwise vouch for a hash someone else put there, by editing beside it or rewriting the whole item.
 
 **Tests:** `compliance/blob-reach.test.ts › keeps a planted digest dead when a key holding every blob edits the note`, `› lends no reach through a digest written by a key that never sent the bytes`, `› lends through an edge or an extension only a digest its writer proved`, `› keeps a planted digest dead through an export, a purge and a restore`.
 
@@ -680,11 +680,11 @@ While an item, an edge or an extension namespace keeps naming a digest through a
 
 ### `blobs/proof-repair`
 
-When a row that names a digest that does not lend is written without it, and a later write names it again with the proof, the server MUST make the reference lend.
+When an item that names a digest that does not lend is written without it, and a later write names it again with the proof, the server MUST make the reference lend.
 
 **Reason:** this is the one repair for a reference that does not lend, a restored one included.
 
-**Tests:** `compliance/blob-reach.test.ts › lends no reach through a digest written by a key that never sent the bytes`, `› lends through an edge or an extension only a digest its writer proved`, `› restores a row's reach only for the digests its archive line says lent`.
+**Tests:** `compliance/blob-reach.test.ts › lends no reach through a digest written by a key that never sent the bytes`, `› lends through an edge or an extension only a digest its writer proved`, `› restores an item's reach only for the digests its archive line says lent`.
 
 ### `blobs/proof-stale`
 
@@ -752,7 +752,7 @@ If a key or app token with `blobs.manage` and no type map sends `GET /export`, t
 
 When a working key sends `GET /export?format=archive`, the server MUST carry a blob's bytes in the archive, as `blobs/<hash>`, only where the blob reads would serve them to that key.
 
-**Reason:** a digest in a reference that does not lend, in an edge or an extension namespace the key may not read, or only in an earlier version, carries no bytes unless another row the key reads lends it.
+**Reason:** a digest in a reference that does not lend, in an edge or an extension namespace the key may not read, or only in an earlier version, carries no bytes unless another item the key reads lends it.
 
 **Tests:** `compliance/blob-reach.test.ts › carries in an export archive only the bytes the blob doors would serve`, `› leaves out of an export archive a digest a property names without lending it, and one only an earlier version names`, `› leaves out of an export archive the bytes an edge or an extension lends to a key that may not read them`, `› carries the bytes an edge and an extension lend, and restores the same answers`.
 
@@ -772,7 +772,7 @@ When a working key sends `GET /export?format=archive`, the server MUST answer as
 
 ### `blobs/export-line-lending`
 
-When a working key sends `GET /export?format=archive`, the server MUST list on each item line, in `lending_blobs`, the digests in that row's properties that lend.
+When a working key sends `GET /export?format=archive`, the server MUST list on each item line, in `lending_blobs`, the digests in that item's properties that lend.
 
 **Tests:** `compliance/blob-reach.test.ts › writes on each export line the digests that lend, and no namespace that lends none`.
 
@@ -794,19 +794,19 @@ When a local caller sends `POST /restore`, the server MUST make each digest in a
 
 **Reason:** every other digest the line names restores as one that does not lend, and `blobs/proof-repair` is how it is repaired.
 
-**Tests:** `compliance/blob-reach.test.ts › restores a row's reach only for the digests its archive line says lent`, `› restores an edge's and an extension's reach only for the digests their archive lines say lent`, `› carries the bytes an edge and an extension lend, and restores the same answers`, `› keeps a planted digest dead through an export, a purge and a restore`.
+**Tests:** `compliance/blob-reach.test.ts › restores an item's reach only for the digests its archive line says lent`, `› restores an edge's and an extension's reach only for the digests their archive lines say lent`, `› carries the bytes an edge and an extension lend, and restores the same answers`, `› keeps a planted digest dead through an export, a purge and a restore`.
 
 ### `blobs/restore-unlisted`
 
 When a local caller sends `POST /restore` with a line that lists no lending digests, or lists them as anything but a list, the server MUST make no digest of that line lend.
 
-**Tests:** `compliance/blob-reach.test.ts › restores a row's reach only for the digests its archive line says lent`, `› restores an edge's and an extension's reach only for the digests their archive lines say lent`.
+**Tests:** `compliance/blob-reach.test.ts › restores an item's reach only for the digests its archive line says lent`, `› restores an edge's and an extension's reach only for the digests their archive lines say lent`.
 
 ### `blobs/restore-reserve`
 
 Where an instance keeps a reserve of free space, if a local caller sends `POST /restore` with a body that would leave less free on the volume that holds the disk store's folder than the reserve, then the server MUST answer `507 insufficient_storage`.
 
-**Tests:** `compliance/disk-reserve.test.ts › refuses a restore 507 insufficient_storage, and writes no row, no type and no blob`, `› takes the same upload and the same restore once the instance holds no reserve`.
+**Tests:** `compliance/disk-reserve.test.ts › refuses a restore 507 insufficient_storage, and writes no item, no type and no blob`, `› takes the same upload and the same restore once the instance holds no reserve`.
 
 ### `blobs/restore-reserve-inflated`
 
@@ -814,13 +814,13 @@ Where an instance keeps a reserve of free space, if an entry of the archive in a
 
 **Reason:** a body need not say how long it is, and the volume can fill while it arrives, so the room is judged as each part is written as well as before the first.
 
-**Tests:** `compliance/disk-space-faults.test.ts › is answered 507 insufficient_storage and writes no row and no blob when an entry would take the volume inside the reserve`, `› is taken once the volume has the room, which is the witness for the refusal above`.
+**Tests:** `compliance/disk-space-faults.test.ts › is answered 507 insufficient_storage and writes no item and no blob when an entry would take the volume inside the reserve`, `› is taken once the volume has the room, which is the witness for the refusal above`.
 
 ### `blobs/restore-reserve-nothing-written`
 
 When the server answers `POST /restore` with `507 insufficient_storage`, the server MUST NOT write any item, type registration or blob of the archive.
 
-**Tests:** `compliance/disk-reserve.test.ts › refuses a restore 507 insufficient_storage, and writes no row, no type and no blob`, `› takes the same upload and the same restore once the instance holds no reserve`.
+**Tests:** `compliance/disk-reserve.test.ts › refuses a restore 507 insufficient_storage, and writes no item, no type and no blob`, `› takes the same upload and the same restore once the instance holds no reserve`.
 
 ## The enrichment sweep
 

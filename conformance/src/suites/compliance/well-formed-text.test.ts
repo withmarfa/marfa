@@ -683,7 +683,7 @@ describe("a restore", () => {
     ["type", "/type/label", "type"],
     ["manifest", "/blobs/", "manifest.json"],
   ] as const)(
-    "refuses a %s that holds a surrogate escape with no partner, naming the row and where, and takes a pair there",
+    "refuses a %s that holds a surrogate escape with no partner, naming the line and where, and takes a pair there",
     async (where, pointer, row) => {
       const owner = getOwnerClient();
       const hex = randomUUID().replaceAll("-", "");

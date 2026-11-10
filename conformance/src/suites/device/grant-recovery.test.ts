@@ -45,7 +45,7 @@ describe("a grant refusal waits for the credential", () => {
     "keeps an edit blocked for $kind $level until its grant returns",
     async (grant) => {
       harness = await hydratedHarness("grant-edit", {
-        rows: { "core.note": [{ item: originalOptions }] },
+        items: { "core.note": [{ item: originalOptions }] },
       });
       const { device, server } = harness;
       let permitted = false;
@@ -181,7 +181,7 @@ describe("a grant refusal waits for the credential", () => {
       const { device, server } = harness;
       scriptHydration(server, {
         head: "10",
-        rows: { "core.note": [{ item: originalOptions }] },
+        items: { "core.note": [{ item: originalOptions }] },
       });
       const landed = wireItem({
         id: ID,
@@ -290,7 +290,7 @@ describe("a grant refusal waits for the credential", () => {
     "keeps a permanent fence terminal when its details are %j",
     async (details) => {
       harness = await hydratedHarness("grant-fence", {
-        rows: { "core.note": [{ item: originalOptions }] },
+        items: { "core.note": [{ item: originalOptions }] },
       });
       const { device, server } = harness;
       scriptWrites(server, {
@@ -321,7 +321,7 @@ describe("a grant refusal waits for the credential", () => {
 
   it("sends an unrelated write behind a grant-blocked one in the same drain", async () => {
     harness = await hydratedHarness("grant-goes-on", {
-      rows: { "core.note": [{ item: originalOptions }] },
+      items: { "core.note": [{ item: originalOptions }] },
     });
     const { device, server } = harness;
     const made = new Map<string, ReturnType<typeof wireItem>>();

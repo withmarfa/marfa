@@ -158,7 +158,7 @@ When a key sends `DELETE /views/{id}` for an active or revoked view, the server 
 
 When a key deletes a view, the server MUST announce `item.purged` for it, and neither `item.deleted` nor `item.state_changed`.
 
-**Reason:** `item.deleted` announces a row that stays, in the bin or, for a `system.*` row a cascade revokes, with `state` `revoked`, and a working copy keeps it; `item.purged` tells every working copy to drop the view.
+**Reason:** `item.deleted` announces an item that stays, in the bin or, for a `system.*` item a cascade revokes, with `state` `revoked`, and a working copy keeps it; `item.purged` tells every working copy to drop the view.
 
 **Tests:** `compliance/views.test.ts › publishes a view's create and change as item events, and its delete as item.purged`.
 
@@ -256,7 +256,7 @@ Where a view holds a `group`, the server MUST answer `GET /views/{id}/items` wit
 
 **Reason:** the server stores a `group` for each client to apply to the items it reads. `device/view-group-value`, `device/view-group-tags`, `device/view-group-order`, `device/view-group-hidden`, `device/view-group-edge`, `device/view-date-bucket` and `device/view-date-missing` state what its parts mean, and an app with no working copy gives them the same meaning.
 
-**Tests:** `compliance/views-items.test.ts › lists the same flat page with a group that would hide and reorder rows as without one`.
+**Tests:** `compliance/views-items.test.ts › lists the same flat page with a group that would hide and reorder items as without one`.
 
 ### `views/items-limit`
 

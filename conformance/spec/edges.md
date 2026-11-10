@@ -46,13 +46,13 @@ When `POST /items`, `PATCH /items/{id}` or an entry of `POST /items/bulk` names 
 
 When a key sends `POST /edges` naming a `source_id`, a `target_id` and an `edge_type`, and no rule of this chapter refuses the edge, the server MUST answer `201` with an `edge` carrying its `id`, `source_id`, `target_id`, `edge_type`, `properties`, `created_at`, `updated_at` and `version`.
 
-**Tests:** `compliance/edge-types.test.ts › registered edge type is usable in POST /edges`, `sync/identity.test.ts › keeps the id a client mints for an edge`, `sync/acknowledged.test.ts › answers an edge repeat naming other properties with the stored row, unchanged and unannounced`.
+**Tests:** `compliance/edge-types.test.ts › registered edge type is usable in POST /edges`, `sync/identity.test.ts › keeps the id a client mints for an edge`, `sync/acknowledged.test.ts › answers an edge repeat naming other properties with the stored item, unchanged and unannounced`.
 
 ### `edges/create-version`
 
 When `POST /edges` creates an edge, the server MUST give it `version` 1.
 
-**Tests:** `correctness/edges/edges-list.test.ts › reads an edge by id with its version`, `sync/acknowledged.test.ts › answers an edge repeat naming other properties with the stored row, unchanged and unannounced`.
+**Tests:** `correctness/edges/edges-list.test.ts › reads an edge by id with its version`, `sync/acknowledged.test.ts › answers an edge repeat naming other properties with the stored item, unchanged and unannounced`.
 
 ### `edges/create-announced`
 
@@ -124,7 +124,7 @@ If `POST /edges` names a `source_id` whose item is in the bin, or a `target_id` 
 
 When `POST /edges` names an `id` that is a lowercase UUIDv7 and that no edge holds, the server MUST create the edge under that `id`, on the answer and on its `edge.created` event.
 
-**Reason:** a client that works offline names its rows before the server sees them.
+**Reason:** a client that works offline names its edges before the server sees them.
 
 **Tests:** `sync/identity.test.ts › keeps the id a client mints for an edge`.
 
@@ -134,19 +134,19 @@ When a key that may write the source's type and the edge type sends `POST /edges
 
 **Reason:** a client that lost the answer to its create sends it again, and gets the edge it made.
 
-**Tests:** `sync/acknowledged.test.ts › answers an edge repeat with the stored row and announces nothing`, `› answers an edge repeat naming other properties with the stored row, unchanged and unannounced`, `compliance/version-exact.test.ts › conditions lifecycle and edge writes on the source version without replacing other edges`.
+**Tests:** `sync/acknowledged.test.ts › answers an edge repeat with the stored item and announces nothing`, `› answers an edge repeat naming other properties with the stored item, unchanged and unannounced`, `compliance/version-exact.test.ts › conditions lifecycle and edge writes on the source version without replacing other edges`.
 
 ### `edges/id-repeat-unchanged`
 
 When `POST /edges` answers `acknowledged: true`, the server MUST leave the edge as it was, whatever `properties` the repeat names.
 
-**Tests:** `sync/acknowledged.test.ts › answers an edge repeat naming other properties with the stored row, unchanged and unannounced`.
+**Tests:** `sync/acknowledged.test.ts › answers an edge repeat naming other properties with the stored item, unchanged and unannounced`.
 
 ### `edges/id-repeat-silent`
 
 When `POST /edges` answers `acknowledged: true`, the server MUST NOT announce an event for it.
 
-**Tests:** `sync/acknowledged.test.ts › answers an edge repeat with the stored row and announces nothing`, `› answers an edge repeat naming other properties with the stored row, unchanged and unannounced`.
+**Tests:** `sync/acknowledged.test.ts › answers an edge repeat with the stored item and announces nothing`, `› answers an edge repeat naming other properties with the stored item, unchanged and unannounced`.
 
 ### `edges/id-repeat-source-in-bin`
 
@@ -160,7 +160,7 @@ If `POST /edges` repeats the `id` and triple of an edge whose source is now in t
 
 If a key that may write the source's type and the edge type sends `POST /edges` whose source exists outside the bin and whose `source_version` is absent or matches the source's current version, naming an `id` that an edge the key may read holds and another triple, then the server MUST answer `409 id_reused`.
 
-**Reason:** the same code `POST /items` answers for a reused item id, because it is the same mistake: a caller minted an id that names a row it is not describing (`items/create-id-other-type`).
+**Reason:** the same code `POST /items` answers for a reused item id, because it is the same mistake: a caller minted an id that names an item it is not describing (`items/create-id-other-type`).
 
 **Tests:** `sync/acknowledged.test.ts › refuses an edge id that names a different triple`.
 
@@ -282,7 +282,7 @@ If a credential whose type map reaches no type sends `GET /edges`, `GET /edges/{
 
 **Reason:** a credential that reaches no type is not one with nothing to see, and an empty `200` would say the wrong one of the two (`keys-and-oauth/permissions-no-content`).
 
-**Tests:** `compliance/key-management.test.ts › management permissions do not grant content access`, `compliance/unreadable-items.test.ts › a key reaching no type is refused a single row, whatever the id names`.
+**Tests:** `compliance/key-management.test.ts › management permissions do not grant content access`, `compliance/unreadable-items.test.ts › a key reaching no type is refused a single item, whatever the id names`.
 
 ### `edges/list-bin`
 
@@ -1112,7 +1112,7 @@ While a folder is revoked, the server MUST keep the `in-folder` edges it held wh
 
 When a key holding write on an item's type, write on `in-folder` and read on `system.folder` sends `POST /edges` for the item and a folder, the server MUST create the edge.
 
-**Reason:** the folder row stays refused to every operation that would write it (`items/system-types`, `items/folder-grant`).
+**Reason:** the folder item stays refused to every operation that would write it (`items/system-types`, `items/folder-grant`).
 
 **Tests:** `compliance/edge-types.test.ts › writes an in-folder edge from a key holding the source's type, the edge type and read on system.folder, and writing nothing of it`.
 
@@ -1190,7 +1190,7 @@ When `DELETE /items/{id}` names an item that holds outbound edges of a registere
 
 When `DELETE /items/{id}` names an item that holds an edge of a shipped type whose `cascade_on_delete` is `orphan`, the server MUST leave the other end of the edge active.
 
-**Reason:** the edge row stays while its item is in the bin. What a `with-hosts` edge takes is `edges/parts-trash`, and it takes nothing from the host when its part is deleted.
+**Reason:** the edge stays while its item is in the bin. What a `with-hosts` edge takes is `edges/parts-trash`, and it takes nothing from the host when its part is deleted.
 
 **Tests:** `correctness/edges/edges-cascade.test.ts › supersedes defaults to orphan: deleting head leaves predecessor intact`, `› about defaults to orphan: deleting source leaves target intact`, `› references defaults to orphan: deleting the referenced target leaves the source intact`, `› attached-to takes nothing from the attachment's side: deleting the attachment leaves the host intact`.
 
@@ -1214,7 +1214,7 @@ When `POST /items/{id}/purge` names an item that is the target of an `excerpt-of
 
 While an edge's type is not registered, when `DELETE /items/{id}` names an item at one end of the edge, the server MUST leave the other end of the edge active.
 
-**Reason:** the cascade of an edge is the `cascade_on_delete` of its registration (`edges/cascade-custom`), and an edge with no registration has none. The edge row stays while its item is in the bin, as an edge of an `orphan` type does (`edges/orphan-shipped`).
+**Reason:** the cascade of an edge is the `cascade_on_delete` of its registration (`edges/cascade-custom`), and an edge with no registration has none. The edge stays while its item is in the bin, as an edge of an `orphan` type does (`edges/orphan-shipped`).
 
 **Tests:** `compliance/restore-edges-unregistered.test.ts › keeps the edge as the archive holds it, reads it as the origin does, and restores its own export again`.
 
@@ -1238,7 +1238,7 @@ If `DELETE /items/{id}` or a transition into the bin is refused `400 edge_constr
 
 If a delete is refused by a `block` edge whose edge type or whose either end the key may not read, then the server MUST leave that edge out of `details.blocking_edges` and out of the count its message gives.
 
-**Reason:** the refusal can reveal that something hidden holds the row, never its id or type. Which edges a refusal names is `items/trash-blocked-names`.
+**Reason:** the refusal can reveal that something hidden holds the item, never its id or type. Which edges a refusal names is `items/trash-blocked-names`.
 
 **Tests:** `compliance/edge-hidden-limits.test.ts › refuses a delete held by a blocking edge it cannot see, naming no hidden id`, `› counts the edge without naming it, where a key that reads the type is told which`.
 
@@ -1326,7 +1326,7 @@ While an item is the source of a `with-hosts` edge whose target is out of the bi
 
 ### `edges/parts-trash-marked`
 
-When the server moves a part into the bin with its hosts, the server MUST mark the part with `trashed_by_cascade` `true` and with `trashed_with` naming the host whose trash took it, on its rows and on its `item.deleted` frame.
+When the server moves a part into the bin with its hosts, the server MUST mark the part with `trashed_by_cascade` `true` and with `trashed_with` naming the host whose trash took it, on its items and on its `item.deleted` frame.
 
 **Tests:** `correctness/edges/edges-parts.test.ts › stays out while one host is out, goes with the last, and comes back with any`, `› takes a reply with the comment it answers, at every depth, and the part's own children`, `compliance/cascade-marks.test.ts › marks a part's item.deleted, item.restored and item.purged with its host, and the edge the host's purge took`.
 
@@ -1418,13 +1418,13 @@ When a key moves into the bin or brings back an item, the server MUST apply the 
 
 **Reason:** a limit accepted, as a delete takes children whatever their types (`edges/cascade-hidden-children`).
 
-**Tests:** `compliance/edge-hidden-limits.test.ts › takes and brings back a part whose other host is hidden and in the bin, naming no hidden row`, `› keeps a part whose hidden host is out of the bin, naming it nowhere`, `› takes and brings back a hidden part with the host the key trashes, naming it nowhere`.
+**Tests:** `compliance/edge-hidden-limits.test.ts › takes and brings back a part whose other host is hidden and in the bin, naming no hidden item`, `› keeps a part whose hidden host is out of the bin, naming it nowhere`, `› takes and brings back a hidden part with the host the key trashes, naming it nowhere`.
 
 ### `edges/parts-hidden-unnamed`
 
 When a key moves into the bin, brings back or previews an item, the server MUST NOT name in its answer a part or a host whose type the key may not read.
 
-**Tests:** `compliance/edge-hidden-limits.test.ts › takes and brings back a part whose other host is hidden and in the bin, naming no hidden row`, `› keeps a part whose hidden host is out of the bin, naming it nowhere`, `› takes and brings back a hidden part with the host the key trashes, naming it nowhere`.
+**Tests:** `compliance/edge-hidden-limits.test.ts › takes and brings back a part whose other host is hidden and in the bin, naming no hidden item`, `› keeps a part whose hidden host is out of the bin, naming it nowhere`, `› takes and brings back a hidden part with the host the key trashes, naming it nowhere`.
 
 ## Edge types
 
@@ -1776,7 +1776,7 @@ When the server refuses `DELETE /edge-types/{id}` for the key's edge map, the se
 
 If `DELETE /edge-types/{id}` names a type of which any edge is stored and names no `force=true`, then the server MUST answer `409 edge_type_in_use` with `details.edge_type`.
 
-**Reason:** the sibling `DELETE /types/{id}` consults the rows in the same way.
+**Reason:** the sibling `DELETE /types/{id}` consults the items in the same way.
 
 **Tests:** `compliance/edge-types.test.ts › refuses to delete an edge type while edges of it exist, and orphans them on force`.
 
@@ -1790,7 +1790,7 @@ When `DELETE /edge-types/{id}` names `force=true`, the server MUST delete the re
 
 When `DELETE /edge-types/{id}` deletes a registration that stored edges name, the server MUST keep those edges, still naming the type.
 
-**Reason:** forcing orphans rather than cascades, because deleting rows nobody asked to delete is the worse of the two surprises.
+**Reason:** forcing orphans rather than cascades, because deleting items nobody asked to delete is the worse of the two surprises.
 
 **Tests:** `compliance/edge-types.test.ts › refuses to delete an edge type while edges of it exist, and orphans them on force`.
 
@@ -1798,7 +1798,7 @@ When `DELETE /edge-types/{id}` deletes a registration that stored edges name, th
 
 While an edge's type is not registered, the server MUST return the edge from `GET /edges/{id}`, `GET /edges`, `GET /items/{id}/edges`, `GET /items/{id}/backrefs` and the `edges` of an item read.
 
-**Reason:** a forced delete keeps the edges (`edges/types-delete-force-keeps`), and a row nothing can describe is still a row a person made. An edge restored under an edge type that is not registered is read the same way (`search-and-filters/restore-edges-unregistered`).
+**Reason:** a forced delete keeps the edges (`edges/types-delete-force-keeps`), and an item nothing can describe is still an item a person made. An edge restored under an edge type that is not registered is read the same way (`search-and-filters/restore-edges-unregistered`).
 
 **Tests:** `compliance/restore-edges-unregistered.test.ts › keeps the edge as the archive holds it, reads it as the origin does, and restores its own export again`.
 
@@ -2098,7 +2098,7 @@ If `GET /edges/{id}`, `PATCH /edges/{id}` or `DELETE /edges/{id}` names an edge 
 
 If a filter term of `GET /items`, `GET /items/stats`, `GET /search`, `POST /items/bulk-actions` or the `query.filter` of the view `GET /views/{id}/items` lists names an edge type the credential may not read, then the server MUST answer `403 edge_permission_denied`.
 
-**Reason:** a dropped term would answer a different question under the same status, which is the unfiltered page an unknown parameter is refused to prevent. This holds for `edge[<type>]=`, `backref[<type>]=` and the full `filter=` form, and `POST /items/bulk-actions` refuses it before it matches a row.
+**Reason:** a dropped term would answer a different question under the same status, which is the unfiltered page an unknown parameter is refused to prevent. This holds for `edge[<type>]=`, `backref[<type>]=` and the full `filter=` form, and `POST /items/bulk-actions` refuses it before it matches an item.
 
 **Tests:** `compliance/edge-permissions.test.ts › refuses a filter term naming a relationship the credential may not read`, `› refuses the term on GET /items/stats and on a view's items, and answers one the credential may read`.
 
@@ -2172,7 +2172,7 @@ If a key sends `POST /edges/bulk` with an entry whose source it may read and who
 
 If `POST /edges`, an entry of `POST /edges/bulk` from a key that may write its edge type, or an inline `edges` of `POST /items`, `PATCH /items/{id}` or an entry of `POST /items/bulk` names a target whose type the key may not read, then the server MUST answer exactly as for a target no item holds, `item_not_found` with the message `Edge target item not found: <id>`, on a bulk page as `error` on the entry under `atomic: false` and as `details.code` of the rollback under `atomic: true`.
 
-**Reason:** the answer discloses neither the row's existence nor its type.
+**Reason:** the answer discloses neither the item's existence nor its type.
 
 **Tests:** `compliance/edge-permissions.test.ts › $name answers an unreadable target as a missing one, whatever its type`, `compliance/edge-check-order.test.ts › answers an entry's end the key cannot read as a refused edge type when the key cannot write it, and as missing when it can`.
 

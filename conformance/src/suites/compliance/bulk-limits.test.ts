@@ -313,7 +313,7 @@ describe("POST /items/bulk with retype", () => {
 });
 
 describe("POST /items/bulk-actions match caps", () => {
-  // Each cap test seeds its rows on a server of its own: tens of thousands of
+  // Each cap test seeds its items on a server of its own: tens of thousands of
   // events on the shared server would hold back every later file's webhook
   // deliveries while the scheduler walks past them.
   it(
@@ -490,7 +490,7 @@ describe("a bulk purge", () => {
     expect((served.data as BulkActionResponse).ids).toEqual([id]);
   });
 
-  it("lists a live row in a purge dry run, which the purge then leaves", async () => {
+  it("lists a live item in a purge dry run, which the purge then leaves", async () => {
     const tag = `limits-purge-live-${ctx.runId}`;
     const id = await noteWithTag(tag);
     const filter = { tags: [tag] };

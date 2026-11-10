@@ -72,7 +72,7 @@ describe("outbound webhooks", () => {
     expect(mine?.secret).not.toBe(created.data.secret);
   });
 
-  it("redelivers a retained failed row to the current address with stable identity", async () => {
+  it("redelivers a retained failed delivery to the current address with stable identity", async () => {
     const refusal = await startReceiver({ status: 400 });
     let subscriptionId: string | undefined;
     try {
@@ -414,7 +414,7 @@ describe("outbound webhooks", () => {
     expectSignedBy(delivered, named.data.secret);
 
     // Nothing reached the URL the refused request named, which is what makes
-    // the refusal a refusal rather than a row written somewhere else.
+    // the refusal a refusal rather than an item written somewhere else.
     expect(
       receiver.received.filter((r) => r.path === "/hook/wildcard"),
     ).toEqual([]);
@@ -427,7 +427,7 @@ describe("outbound webhooks", () => {
 
   it("refuses a wildcard on the update door, leaving the stored events alone", async () => {
     // One vocabulary, two doors. `PATCH` rewrites the whole event list, so a
-    // door that still took `*` here would put back exactly the row the create
+    // door that still took `*` here would put back exactly the item the create
     // door now refuses to write, and the refusal would be a property of one
     // door rather than of the vocabulary.
     const created = await client.createWebhook({
@@ -462,7 +462,7 @@ describe("outbound webhooks", () => {
   it("calls out for a bulk write only when the call asks for fan-out", async () => {
     // What `enable_fanout` governs is the outbound call and nothing else. It is
     // off unless the caller says otherwise, because one bulk call writes
-    // thousands of rows and a delivery per row per subscriber is not what the
+    // thousands of items and a delivery per item per subscriber is not what the
     // caller asked for. The event log is not conditional on it:
     // `items/bulk-event-log` cites `sync/replay.test.ts` for that half, which
     // is the half a client rebuilding its state depends on.
@@ -520,7 +520,7 @@ describe("outbound webhooks", () => {
         .length,
     ).toBe(1);
 
-    // And the silent write is a write: the row is there to be read.
+    // And the silent write is a write: the item is there to be read.
     const read = await client.getItem(quietId);
     expect(read.ok).toBe(true);
   });
@@ -734,7 +734,7 @@ describe("outbound webhooks", () => {
     );
 
     // Read back rather than trusting the write's own answer: a server that
-    // echoed the patch while storing the old row satisfies every assertion
+    // echoed the patch while storing the old item satisfies every assertion
     // above.
     const read = await client.getWebhook(created.data.id);
     expect(read.ok).toBe(true);
@@ -970,7 +970,7 @@ describe("outbound webhooks", () => {
     expect(list.error?.error.details?.required_scope).toBe("webhooks.manage");
 
     // Against a subscription that exists and belongs to another credential,
-    // so a 403 here is the permission gate rather than a miss the row-scoped
+    // so a 403 here is the permission gate rather than a miss the item-scoped
     // doors would answer 404 for.
     for (const refused of [
       await narrowed.getWebhook(mine.data.id),
@@ -989,7 +989,7 @@ describe("outbound webhooks", () => {
       );
     }
 
-    // The refusals left the row where it was.
+    // The refusals left the item where it was.
     const survived = await client.getWebhook(mine.data.id);
     expect(survived.ok).toBe(true);
     expect(survived.data.active).toBe(true);

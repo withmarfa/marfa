@@ -34,13 +34,13 @@ import {
   hashOf,
   requireBinary,
   scriptBlob,
-  scriptFolderRow,
+  scriptFolderItem,
   scriptWrites,
 } from "./harness.js";
 import { CliFolder, type FolderSettings } from "../../device/cli-adapter.js";
 import type { FolderDoor } from "../../device/folder-door.js";
 import { ScriptedServer } from "../../device/scripted-server.js";
-import type { FolderHarness, FolderRow } from "./harness.js";
+import type { FolderHarness, FolderItem } from "./harness.js";
 import type {
   WireEdgeOptions,
   WireItemOptions,
@@ -78,7 +78,7 @@ describe("folders on one Mac", () => {
           const moved = "01a00000-0000-7000-8000-000000000ae1";
           const missing = "01a00000-0000-7000-8000-000000000ae2";
           harness = await folderHarness(`contract-unidentified-${kind}`, {
-            rows: {
+            items: {
               "core.note": [
                 {
                   item: {
@@ -239,7 +239,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     };
     harness = await folderHarness(`${label}-a`, {
       settings: first,
-      rows: Object.fromEntries(
+      items: Object.fromEntries(
         Object.entries(rows).map(([type, held]) => [
           type,
           held.map((row) => ({ ...row, item: drawn(row.item) })),
@@ -251,7 +251,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       events: [edges.stream()],
     });
     // Before the item doors, whose read would answer for any id.
-    const otherRow = scriptFolderRow(harness.server, other);
+    const otherRow = scriptFolderItem(harness.server, other);
     before?.(harness.server);
     let door: FolderDoor | undefined;
     scriptFolderWrites(harness, {
@@ -1963,7 +1963,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
 
   it("holds a delete while the registry cannot be read, and an add writes it afresh", async () => {
     const gone = "01a00000-0000-7000-8000-0000000038b1";
-    let third: FolderRow | undefined;
+    let third: FolderItem | undefined;
     const { a } = await onOneMac(
       "unreadable-registry",
       { query: { types: ["core.note"] } },
@@ -1974,7 +1974,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
         ],
       },
       (server) => {
-        third = scriptFolderRow(server, { query: { types: ["core.note"] } });
+        third = scriptFolderItem(server, { query: { types: ["core.note"] } });
       },
     );
     expect((await a.folder.pull()).ok).toBe(true);
@@ -2561,7 +2561,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
         query: { types: ["core.note"] },
         first_placement: { "core.note": "inner/" },
       },
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -2573,7 +2573,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       },
     });
     // Before the item doors, whose read would answer for any id.
-    const innerRow = scriptFolderRow(harness.server, {
+    const innerRow = scriptFolderItem(harness.server, {
       query: { types: ["core.note"] },
     });
     scriptFolderWrites(harness);
@@ -3428,7 +3428,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
 
   it("lists a folder under the folder it follows now, once, and drops one whose state was removed", async () => {
     harness = await folderHarness("registry-entries");
-    const other = scriptFolderRow(harness.server, {
+    const other = scriptFolderItem(harness.server, {
       query: { types: ["core.note"] },
     });
     // Its state removed by hand and the directory added again under
@@ -3580,7 +3580,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     site: "list" | "add" | "pass",
   ): Promise<void> {
     const moved = "01a00000-0000-7000-8000-0000000043a1";
-    let more: FolderRow | undefined;
+    let more: FolderItem | undefined;
     const { a, b } = await onOneMac(
       `root-replaced-${site}`,
       { query: { types: ["core.note"] } },
@@ -3593,7 +3593,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
         ],
       },
       (server) => {
-        more = scriptFolderRow(server, {
+        more = scriptFolderItem(server, {
           query: { types: ["core.event"] },
         });
       },
@@ -3661,14 +3661,14 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     emptyStandsInPlace("pass"));
 
   it("keeps a folder listed when another folder's state stands where it was added", async () => {
-    let more: FolderRow | undefined;
+    let more: FolderItem | undefined;
     const { a, b } = await onOneMac(
       "root-replaced-other",
       { query: { types: ["core.note"] } },
       { query: { types: ["core.bookmark"] } },
       {},
       (server) => {
-        more = scriptFolderRow(server, { query: { types: ["core.event"] } });
+        more = scriptFolderItem(server, { query: { types: ["core.event"] } });
       },
     );
     const third = await folderHarness("root-replaced-other-c", {

@@ -24,10 +24,10 @@ import {
   KEY,
   folderHarness,
   requireBinary,
-  scriptFolderRow,
+  scriptFolderItem,
 } from "./harness.js";
 import { CliFolder, type HeldCommand } from "../../device/cli-adapter.js";
-import type { FolderHarness, FolderRow } from "./harness.js";
+import type { FolderHarness, FolderItem } from "./harness.js";
 import type { FolderSettings } from "../../device/cli-adapter.js";
 import type { ScriptedServer } from "../../device/scripted-server.js";
 import type { WireItemOptions } from "../../device/marfa-answers.js";
@@ -73,7 +73,7 @@ async function twoFolders(
   a: FolderHarness;
   b: FolderHarness;
   edges: EdgeDoor;
-  others: FolderRow[];
+  others: FolderItem[];
 }> {
   const edges = new EdgeDoor();
   const a = await folderHarness(`${label}-a`, {
@@ -83,9 +83,9 @@ async function twoFolders(
   });
   made.push(a);
   // Before the item doors, whose read would answer for any id.
-  const otherRow = scriptFolderRow(a.server, tagged("b"));
+  const otherRow = scriptFolderItem(a.server, tagged("b"));
   const others = (options.others ?? []).map((settings) =>
-    scriptFolderRow(a.server, settings),
+    scriptFolderItem(a.server, settings),
   );
   options.before?.(a.server);
   scriptFolderWrites(a, { edges });

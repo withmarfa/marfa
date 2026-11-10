@@ -39,7 +39,7 @@ afterEach(async () => {
 const id = "01a00000-0000-7000-8000-00000000000a";
 async function prepared() {
   harness = await hydratedHarness("cli-outcomes", {
-    rows: {
+    items: {
       "core.note": [
         {
           item: { id, version: 3, properties: { title: "held", body: "held" } },
@@ -301,7 +301,7 @@ describe("CLI outcomes preserve the result", () => {
   });
 
   it("exits 3 for a write left undelivered by a pass the server finished", async () => {
-    harness = await hydratedHarness("cli-outcomes-undelivered", { rows: {} });
+    harness = await hydratedHarness("cli-outcomes-undelivered", { items: {} });
     const cli = new Cli(requireBinary(), harness.server.url, KEY);
     const path = `${harness.device.store}.locked`;
     writeFileSync(path, "held and locked for now\n");

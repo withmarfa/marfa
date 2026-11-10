@@ -780,7 +780,7 @@ describe("what a connector keeps on the instance", () => {
       200,
       read.data,
     );
-    // The rows named, and no cursor: nothing is left to page.
+    // The items named, and no cursor: nothing is left to page.
     expect(Object.keys(read.data)).toEqual(["data"]);
     expect(
       read.data.data.map(({ item_id, waiting: w, record }) => ({
@@ -795,7 +795,7 @@ describe("what a connector keeps on the instance", () => {
     ]);
     for (const row of read.data.data) expect(row.updated_at).toMatch(ISO);
 
-    // A record is replaced whole, and a clear of a row with none clears
+    // A record is replaced whole, and a clear of an item with none clears
     // nothing and skips nothing.
     const changed = await mine.client.writeConnectorAgreements(mine.id, {
       process,
@@ -803,7 +803,7 @@ describe("what a connector keeps on the instance", () => {
       clear: [waiting.id, bystander.id, task.data.item.id, missing, trashed.id],
     });
     expect(changed.status).toBe(200);
-    // The trashed row's agreement is cleared as a live row's is.
+    // The trashed item's agreement is cleared as a live item's is.
     expect(changed.data).toEqual({
       written: 1,
       cleared: 2,
@@ -825,7 +825,7 @@ describe("what a connector keeps on the instance", () => {
   it("lists skipped set ids before skipped clear ids, whatever order the body names them", async () => {
     const mine = await connector("agreement-skipped-order");
     const process = await holding(mine);
-    // Four rows nothing stores. Named out of their own sort order, so that
+    // Four items nothing stores. Named out of their own sort order, so that
     // neither a sort nor the order of the ids can stand in for the rule.
     const ids = [uuidv7(), uuidv7(), uuidv7(), uuidv7()].sort();
     const [a, b, c, d] = ids as [string, string, string, string];
@@ -1031,7 +1031,7 @@ describe("what a connector keeps on the instance", () => {
 
     for (const id of ["", "i".repeat(201)]) {
       const label = `${String(id.length)} characters`;
-      // A row the key can hold sits in each batch, so a batch refused whole
+      // An item the key can hold sits in each batch, so a batch refused whole
       // leaves it without an agreement.
       for (const [where, body] of [
         ["set", { set: [entry(row.id), entry(id)] }],
@@ -1046,7 +1046,7 @@ describe("what a connector keeps on the instance", () => {
     }
     expect(await found(mine, [row.id])).toEqual([]);
 
-    // The ends, which name no stored row, are skipped rather than refused.
+    // The ends, which name no stored item, are skipped rather than refused.
     for (const id of ["i", "i".repeat(200)]) {
       const cleared = "j".repeat(id.length);
       const taken = await write({ set: [entry(id)], clear: [cleared] });
@@ -1184,7 +1184,7 @@ describe("what a connector keeps on the instance", () => {
     expect(await found(mine, [row.id])).toEqual([row.id]);
   });
 
-  it("leaves a row the key no longer reads out of its reads and its clears", async () => {
+  it("leaves an item the key no longer reads out of its reads and its clears", async () => {
     const source = `${ctx.source}-narrowed`;
     const minted = await client.createKey({
       label: `${source}-key`,
@@ -1243,7 +1243,7 @@ describe("what a connector keeps on the instance", () => {
     expect(await found(mine, [taskId])).toEqual([taskId]);
   });
 
-  it("answers each row a lookup names once, in the order it was first named", async () => {
+  it("answers each item a lookup names once, in the order it was first named", async () => {
     const mine = await connector("agreement-lookup-order");
     const process = await holding(mine);
     const [a, b, c] = [await note("a"), await note("b"), await note("c")];
@@ -1256,7 +1256,7 @@ describe("what a connector keeps on the instance", () => {
       })),
     });
     expect(written.status).toBe(200);
-    // The witness: named once each, the rows come back in the order named.
+    // The witness: named once each, the items come back in the order named.
     expect(await found(mine, [c.id, a.id, b.id])).toEqual([c.id, a.id, b.id]);
     expect(await found(mine, [b.id, c.id, b.id, a.id, c.id])).toEqual([
       b.id,
@@ -1265,7 +1265,7 @@ describe("what a connector keeps on the instance", () => {
     ]);
   });
 
-  it("finds agreements by row and lists the waiting ones a page at a time", async () => {
+  it("finds agreements by item and lists the waiting ones a page at a time", async () => {
     const mine = await connector("agreement-list");
     const process = await holding(mine);
     const [x1, x2, x3, settled] = [
@@ -1359,7 +1359,7 @@ describe("what a connector keeps on the instance", () => {
     }
   });
 
-  it("writes an agreement without touching the row or announcing it", async ({
+  it("writes an agreement without touching the item or announcing it", async ({
     signal,
   }) => {
     const mine = await connector("agreement-quiet");
@@ -1394,7 +1394,7 @@ describe("what a connector keeps on the instance", () => {
       expect(untouched.data.item.updated_at).toBe(row.updated_at);
       expect(untouched.data.item.version).toBe(row.version);
 
-      // The witness: an ordinary update to the same row moves both and is
+      // The witness: an ordinary update to the same item moves both and is
       // announced.
       const updated = await client.updateItem(row.id, {
         version: row.version,
@@ -1408,7 +1408,7 @@ describe("what a connector keeps on the instance", () => {
       const { events } = await collectUntil(
         stream,
         updateSeen,
-        "the update to the row",
+        "the update to the item",
         signal,
       );
       expect(
@@ -1428,7 +1428,7 @@ describe("what a connector keeps on the instance", () => {
         const { events } = await collectUntil(
           replay,
           updateSeen,
-          "the update to the row on the replay",
+          "the update to the item on the replay",
           signal,
         );
         expect(
@@ -1438,7 +1438,7 @@ describe("what a connector keeps on the instance", () => {
     );
   });
 
-  it("goes with a purged row", async () => {
+  it("goes with a purged item", async () => {
     const mine = await connector("agreement-purge");
     const process = await holding(mine);
     const row = await note("purged");
@@ -1453,7 +1453,7 @@ describe("what a connector keeps on the instance", () => {
     });
     expect(written.data.written).toBe(2);
     expect((await client.deleteItem(row.id)).status).toBe(200);
-    // The witness: a trashed row keeps its agreement.
+    // The witness: a trashed item keeps its agreement.
     expect(await found(mine, [row.id])).toEqual([row.id]);
     expect((await client.purgeItem(row.id)).status).toBe(200);
     expect(await found(mine, [row.id, kept.id])).toEqual([kept.id]);
@@ -1463,7 +1463,7 @@ describe("what a connector keeps on the instance", () => {
       ),
     ).toEqual([kept.id]);
 
-    // Reads join the rows, so only the clear's count shows the store itself.
+    // Reads join the items, so only the clear's count shows the store itself.
     expect((await mine.client.deleteConnectorState(mine.id)).status).toBe(200);
     const audited = await client.listAudit({
       resource_id: mine.id,

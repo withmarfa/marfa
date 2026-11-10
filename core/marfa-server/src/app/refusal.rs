@@ -89,7 +89,7 @@ codes! {
     CopiesBelowMinimum = "copies_below_minimum", 409;
     CopyHeldByBackup = "copy_held_by_backup", 409;
     EdgeTypeInUse = "edge_type_in_use", 409;
-    ExportRowsUnrestorable = "export_rows_unrestorable", 409;
+    ExportItemsUnrestorable = "export_items_unrestorable", 409;
     HousekeepingJobRunning = "housekeeping_job_running", 409;
     IdReused = "id_reused", 409;
     IdempotencyKeyInFlight = "idempotency_key_in_flight", 409;

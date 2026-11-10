@@ -18,7 +18,7 @@ import {
 } from "../../utils/own-blob-server.js";
 
 /**
- * What an archive carries of the instance beside its rows: stored settings,
+ * What an archive carries of the instance beside its items: stored settings,
  * connector state and agreements, each only to a credential that manages it,
  * and never a webhook, a secret or an address the instance answers at; and
  * what a restore does with them: sets what the instance lacks, replacing

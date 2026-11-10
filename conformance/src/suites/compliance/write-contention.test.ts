@@ -367,7 +367,7 @@ describe("contention on the write lock", () => {
       await lock.release();
     }
   }, 120_000);
-  it("announces nothing and keeps no row for a write it refused with 503, on the stream open at the time and on a replay", async ({
+  it("announces nothing and keeps no item for a write it refused with 503, on the stream open at the time and on a replay", async ({
     signal,
   }) => {
     const client = clientFor(impatient!);
@@ -437,7 +437,7 @@ describe("contention on the write lock", () => {
     expect(titles(replayed)).toContain("contention-sentinel");
     expect(titles(replayed)).not.toContain("contention-refused");
 
-    // And no row: the page of notes holds the two that landed and not it.
+    // And no item: the page of notes holds the two that landed and not it.
     const listed = await client.listItems({ type: "core.note", limit: 100 });
     expect(listed.ok, JSON.stringify(listed.error)).toBe(true);
     const held = listed.data.data.map((item) => item.properties.title);

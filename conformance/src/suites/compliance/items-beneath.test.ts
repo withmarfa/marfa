@@ -1,7 +1,7 @@
 /**
  * `beneath` on the item listing and its stats: an item and everything under
  * it by `parent-of`, so a folder's copy can ask the server for one subtree
- * instead of every row of its types.
+ * instead of every item of its types.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
