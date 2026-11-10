@@ -1,5 +1,6 @@
 //! Row writes share one transaction per batch.
 
+pub mod archive;
 mod events;
 mod lifecycle;
 mod read;
@@ -297,7 +298,7 @@ impl Sight {
     }
 }
 
-fn refs_text(refs: &Map<String, Value>) -> Option<String> {
+pub(crate) fn refs_text(refs: &Map<String, Value>) -> Option<String> {
     (!refs.is_empty()).then(|| Value::Object(refs.clone()).to_string())
 }
 
@@ -634,11 +635,12 @@ pub async fn write(
             unit,
             &events::Announced {
                 host: &host,
-                table: &table,
+                table: &table.name,
                 batch: &batch_id,
                 at,
                 changed: &changed,
                 referenced: &referenced,
+                ids_only: false,
             },
         )?;
         unit.audit(

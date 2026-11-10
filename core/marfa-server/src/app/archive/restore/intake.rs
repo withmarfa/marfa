@@ -23,8 +23,9 @@ const MANIFEST: &str = "manifest.json";
 const INSTANCE: &str = "instance.ndjson.gz";
 const ITEMS: &str = "items.ndjson.gz";
 const EDGES: &str = "edges.ndjson.gz";
+const ROWS: &str = "rows.ndjson.gz";
 const BLOBS: &str = "blobs/";
-const ENTRIES: [&str; 4] = [MANIFEST, INSTANCE, ITEMS, EDGES];
+const ENTRIES: [&str; 5] = [MANIFEST, INSTANCE, ITEMS, EDGES, ROWS];
 
 fn invalid(message: impl Into<String>) -> Refusal {
     Refusal::validation(message.into())
@@ -73,6 +74,8 @@ impl Ids {
 pub struct Manifest {
     pub blobs: BTreeMap<String, (String, u64)>,
     pub missing: BTreeMap<String, (Option<String>, Option<u64>)>,
+    /// The lines it counts in `items.ndjson.gz`, `edges.ndjson.gz` and `rows.ndjson.gz`.
+    pub counts: [u64; 3],
 }
 
 /// What `instance.ndjson.gz` registers and sets; the agreements stay in the spool.
@@ -91,7 +94,7 @@ pub struct Registrations {
 pub struct Received {
     pub manifest: Manifest,
     pub registrations: Registrations,
-    pub spools: [crate::app::blobs::Scratch; 3],
+    pub spools: [crate::app::blobs::Scratch; 4],
     pub snapshots: Ids,
     pub carried: Vec<(Sealed, String)>,
 }
@@ -134,6 +137,7 @@ enum LineFile {
     Instance,
     Items,
     Edges,
+    Rows,
 }
 
 impl LineFile {
@@ -142,6 +146,7 @@ impl LineFile {
             LineFile::Instance => INSTANCE,
             LineFile::Items => ITEMS,
             LineFile::Edges => EDGES,
+            LineFile::Rows => ROWS,
         }
     }
 
@@ -165,7 +170,10 @@ struct Rows {
     snapshots: Ids,
     items: usize,
     edges: usize,
+    rows: usize,
     instance: usize,
+    /// The place of the last row line read, which the next must come after.
+    last_row: Option<checks::RowKey>,
 }
 
 fn kind_of(line: &Value) -> Option<&'static str> {
@@ -185,11 +193,7 @@ fn kind_of(line: &Value) -> Option<&'static str> {
 
 impl Rows {
     fn line(&mut self, file: LineFile, text: &[u8]) -> Result<()> {
-        let row = match file {
-            LineFile::Instance => &mut self.instance,
-            LineFile::Items => &mut self.items,
-            LineFile::Edges => &mut self.edges,
-        };
+        let row = self.counted(file);
         *row += 1;
         let row = *row;
         if text.len() > TEXT_CAP {
@@ -225,7 +229,43 @@ impl Rows {
             LineFile::Instance => self.instance_line(&line, row),
             LineFile::Items => self.item_line(&line, row),
             LineFile::Edges => self.edge_line(&line, row),
+            LineFile::Rows => self.row_line(&line, row),
         }
+    }
+
+    fn counted(&mut self, file: LineFile) -> &mut usize {
+        match file {
+            LineFile::Instance => &mut self.instance,
+            LineFile::Items => &mut self.items,
+            LineFile::Edges => &mut self.edges,
+            LineFile::Rows => &mut self.rows,
+        }
+    }
+
+    fn row_line(&mut self, line: &Value, row: usize) -> Result<()> {
+        let key = checks::row(line, row).map_err(|refused| refused.refusal)?;
+        let held = bits(&key.item_id).is_some_and(|id| self.item_types.contains_key(&id));
+        if !held {
+            return Err(invalid(format!(
+                "Row {} on line {row} of {ROWS} names item {}, which the archive does not hold.",
+                key.id, key.item_id
+            ))
+            .with_detail("line", row)
+            .with_detail("row_id", key.id.as_str())
+            .with_detail("item_id", key.item_id.as_str())
+            .with_detail("field", "item_id"));
+        }
+        if self.last_row.as_ref().is_some_and(|last| *last >= key) {
+            return Err(invalid(format!(
+                "Row {} on line {row} of {ROWS} does not come after the line before it in order of item_id, table and id.",
+                key.id
+            ))
+            .with_detail("line", row)
+            .with_detail("row_id", key.id.as_str())
+            .with_detail("item_id", key.item_id.as_str()));
+        }
+        self.last_row = Some(key);
+        Ok(())
     }
 
     fn instance_line(&mut self, line: &Value, row: usize) -> Result<()> {
@@ -496,6 +536,7 @@ fn named_by(file: LineFile, text: &[u8]) -> Option<(&'static str, String)> {
     match file {
         LineFile::Items => Some(("Item", named("/item/id")?)),
         LineFile::Edges => Some(("Edge", named("/edge/id")?)),
+        LineFile::Rows => Some(("Row", named("/id")?)),
         LineFile::Instance => named("/type/id")
             .or_else(|| named("/edge_type/id"))
             .or_else(|| named("/type_icon/type_id"))
@@ -537,11 +578,7 @@ impl Write for Splitter {
             rest = &rest[at + 1..];
         }
         if self.pending.len() + rest.len() > TEXT_CAP {
-            let row = match self.file {
-                LineFile::Instance => self.rows.instance,
-                LineFile::Items => self.rows.items,
-                LineFile::Edges => self.rows.edges,
-            } + 1;
+            let row = *self.rows.counted(self.file) + 1;
             self.failed = Some(
                 invalid(format!(
                     "Line {row} of {} holds more than {TEXT_CAP} bytes, more than a restore reads.",
@@ -587,7 +624,7 @@ pub struct Intake {
     disorder: Option<String>,
     manifest: Option<Manifest>,
     rows: Option<Rows>,
-    spools: [Option<crate::app::blobs::Scratch>; 3],
+    spools: [Option<crate::app::blobs::Scratch>; 4],
     carried: Vec<(Sealed, String)>,
 }
 
@@ -607,6 +644,7 @@ impl Intake {
     /// Opens the three line spools at once, so the body is spooled from its first part.
     pub fn new(spool: Spool, committed: Arc<Catalog>, cap: usize) -> Result<Intake> {
         let spools = [
+            Some(spool.scratch()?),
             Some(spool.scratch()?),
             Some(spool.scratch()?),
             Some(spool.scratch()?),
@@ -634,7 +672,9 @@ impl Intake {
                 snapshots: Ids::default(),
                 items: 0,
                 edges: 0,
+                rows: 0,
                 instance: 0,
+                last_row: None,
             }),
             spools,
             carried: Vec::new(),
@@ -684,7 +724,12 @@ impl Intake {
                 self.entry = Entry::Manifest(Vec::new());
                 return Ok(());
             }
-            let file = [LineFile::Instance, LineFile::Items, LineFile::Edges][rank - 1];
+            let file = [
+                LineFile::Instance,
+                LineFile::Items,
+                LineFile::Edges,
+                LineFile::Rows,
+            ][rank - 1];
             let mut rows = self
                 .rows
                 .take()
@@ -839,13 +884,29 @@ impl Intake {
             .rows
             .take()
             .ok_or_else(|| Refusal::internal("a restore's row checks were lost"))?;
-        let [Some(instance), Some(items), Some(edges)] = std::mem::take(&mut self.spools) else {
+        let manifest = self.manifest.take().unwrap_or_default();
+        let held = [
+            ("item_count", ITEMS, rows.items),
+            ("edge_count", EDGES, rows.edges),
+            ("row_count", ROWS, rows.rows),
+        ];
+        for ((count, file, lines), counted) in held.into_iter().zip(manifest.counts) {
+            if lines as u64 != counted {
+                return Err(invalid(format!(
+                    "{MANIFEST} counts {counted} in {count}, and {file} holds {lines} lines."
+                ))
+                .with_detail("field", count));
+            }
+        }
+        let [Some(instance), Some(items), Some(edges), Some(row_lines)] =
+            std::mem::take(&mut self.spools)
+        else {
             return Err(Refusal::internal("a restore's spool was lost"));
         };
         Ok(Received {
-            manifest: self.manifest.take().unwrap_or_default(),
+            manifest,
             registrations: rows.registrations,
-            spools: [instance, items, edges],
+            spools: [instance, items, edges, row_lines],
             snapshots: rows.snapshots,
             carried: std::mem::take(&mut self.carried),
         })
@@ -897,6 +958,12 @@ fn manifest(bytes: &[u8]) -> Result<Manifest> {
         wrong("format".into(), "Must be marfa-archive-v0.");
     }
     let mut manifest = Manifest::default();
+    for (at, count) in ["item_count", "edge_count", "row_count"].into_iter().enumerate() {
+        match held.get(count).and_then(Value::as_u64) {
+            Some(counted) => manifest.counts[at] = counted,
+            None => wrong(count.into(), "Must be a non-negative integer."),
+        }
+    }
     match held.get("blobs") {
         Some(Value::Object(blobs)) => {
             for (hash, entry) in blobs {

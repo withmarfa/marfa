@@ -26,6 +26,7 @@ import {
   listEntries,
   readEntry,
   readLineFile,
+  editLineFile,
   itemsArchive,
   blobHash,
   type ArchiveFile,
@@ -573,18 +574,13 @@ describe("restore", () => {
   });
 });
 
-/** The archive with one line file's lines replaced, every other entry as it was. */
+/** The archive with one line file's lines replaced, and counted, every other entry as it was. */
 function withLines(
   archive: Uint8Array,
   file: LineFile,
   lines: string,
 ): Uint8Array {
-  const replaced = lineFile(file, lines);
-  return tar(
-    listEntries(archive).map((entry) =>
-      entry.name === replaced.name ? replaced : entry,
-    ),
-  );
+  return editLineFile(archive, file, () => lines);
 }
 
 describe("an archive that lacks a member", () => {
@@ -910,6 +906,8 @@ describe("what a restore answers", () => {
         "connector_states_skipped",
         "connector_agreements_added",
         "connector_agreements_skipped",
+        "rows_imported",
+        "rows_skipped",
         "set_up_again",
       ].sort(),
     );
@@ -940,6 +938,8 @@ describe("what a restore answers", () => {
       connector_states_skipped: 0,
       connector_agreements_added: 0,
       connector_agreements_skipped: 0,
+      rows_imported: 0,
+      rows_skipped: 0,
       set_up_again: expect.any(String),
     });
     await expectMatchesSchema("POST", "/restore", 200, first.data);
@@ -986,6 +986,8 @@ describe("what a restore answers", () => {
       connector_states_skipped: 0,
       connector_agreements_added: 0,
       connector_agreements_skipped: 0,
+      rows_imported: 0,
+      rows_skipped: 0,
       set_up_again: expect.any(String),
     });
     await expectMatchesSchema("POST", "/restore", 200, again.data);

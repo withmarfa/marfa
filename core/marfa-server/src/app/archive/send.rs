@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 
 use super::spool::{Spooled, read_chunk};
 use super::tar;
-use super::{EdgeNeed, InstanceNeed, ItemNeed, Prepared, Sender};
+use super::{EdgeNeed, InstanceNeed, ItemNeed, Prepared, RowNeed, Sender};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::blobs::Hash;
@@ -120,6 +120,8 @@ impl Out<'_> {
         self.lines("items.ndjson.gz", &prepared.items, items_need)
             .await?;
         self.lines("edges.ndjson.gz", &prepared.edges, edges_need)
+            .await?;
+        self.lines("rows.ndjson.gz", &prepared.rows, rows_need)
             .await?;
         for (carried, store) in &prepared.blobs {
             self.blob(carried, store).await?;
@@ -247,6 +249,18 @@ fn edges_need(need: &EdgeNeed) -> Judge {
             .0
             .iter()
             .all(|(edge_type, source_type)| read.caller.may_read_edge(edge_type, source_type)))
+    })
+}
+
+fn rows_need(need: &RowNeed) -> Judge {
+    let need = need.clone();
+    Box::new(move |read| {
+        let caller = &read.caller;
+        let levers = caller.levers()?;
+        Ok(need.hosts.iter().all(|(type_id, source)| {
+            caller.may_read_type(type_id) && levers.lists(&read.catalog.rules, type_id, source)
+        }) && need.types.iter().all(|type_id| caller.may_read_type(type_id))
+            && (!need.unheld || caller.may_read_every_type()))
     })
 }
 

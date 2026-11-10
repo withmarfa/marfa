@@ -331,7 +331,7 @@ describe("rows in an archive", () => {
     const narrow = await ok(
       new MarfaClient({
         baseUrl: source.apiUrl,
-        apiKey: source.managementKey,
+        controlSocket: source.controlSocket,
       }).createKey({
         label: "rows-archive-narrow",
         source: "rows-archive-narrow",
@@ -382,10 +382,7 @@ describe("rows in an archive", () => {
     // A key that may not read the secret's type sees its id withheld, as the
     // mark says, on the restored instance.
     const narrow = await ok(
-      new MarfaClient({
-        baseUrl: destination.apiUrl,
-        apiKey: destination.managementKey,
-      }).createKey({
+      destinationOwner.createKey({
         label: "rows-archive-restored-narrow",
         source: "rows-archive-restored-narrow",
         type_permissions: { [LEDGER]: "read" },
@@ -412,6 +409,23 @@ describe("rows in an archive", () => {
     expect(read.updated_at).toBe(made.updatedAt);
   });
 
+  it("leaves the rows of an item counted as a duplicate as they are, counting the archive's in rows_skipped", async () => {
+    const row = made.sourceRows.get(`${made.first}/lines`)![0]!;
+    await ok(
+      restoredInto.writeRows(made.first, "lines", {
+        operations: [{ op: "patch", id: row.id, values: { amount: 99 } }],
+      }),
+    );
+    const again = await ok(destinationOwner.restoreArchive(archive));
+    const lines = archiveLines<RowLine>(archive, "rows");
+    expect(again).toMatchObject({
+      imported: 0,
+      rows_imported: 0,
+      rows_skipped: lines.length,
+    });
+    expect((await ok(restoredInto.getRow(made.first, "lines", row.id))).values)
+      .toEqual({ amount: 99 });
+  });
   it("carries a row of a table its type no longer declares, and a value its column no longer takes, and restores both as held", async () => {
     const lines = archiveLines<RowLine>(archive, "rows").filter(
       (line) => line.item_id === made.shaped,
@@ -476,23 +490,6 @@ describe("rows in an archive", () => {
     expect(summary?.last_batch).toBe(batches[2]);
   });
 
-  it("leaves the rows of an item counted as a duplicate as they are, counting the archive's in rows_skipped", async () => {
-    const row = made.sourceRows.get(`${made.first}/lines`)![0]!;
-    await ok(
-      restoredInto.writeRows(made.first, "lines", {
-        operations: [{ op: "patch", id: row.id, values: { amount: 99 } }],
-      }),
-    );
-    const again = await ok(destinationOwner.restoreArchive(archive));
-    const lines = archiveLines<RowLine>(archive, "rows");
-    expect(again).toMatchObject({
-      imported: 0,
-      rows_imported: 0,
-      rows_skipped: lines.length,
-    });
-    expect((await ok(restoredInto.getRow(made.first, "lines", row.id))).values)
-      .toEqual({ amount: 99 });
-  });
 });
 
 describe("a row line a restore refuses", () => {

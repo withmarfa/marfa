@@ -53060,7 +53060,7 @@
         "description": "Restores an exported archive atomically and returns counts of written and skipped records. Other writes wait until it finishes. Requires the private local command.",
         "requestBody": {
           "required": true,
-          "description": "The archive file, as `GET /export?format=archive` returned it, with its `manifest.json`, `instance.ndjson.gz`, `items.ndjson.gz` and `edges.ndjson.gz`. Only the build that wrote an archive is sure to read it.",
+          "description": "The archive file, as `GET /export?format=archive` returned it, with its `manifest.json`, `instance.ndjson.gz`, `items.ndjson.gz`, `edges.ndjson.gz` and `rows.ndjson.gz`. Only the build that wrote an archive is sure to read it.",
           "content": {
             "application/x-tar": {
               "schema": {
@@ -53182,6 +53182,14 @@
                       "type": "number",
                       "description": "How many connector agreements Marfa skipped because the instance holds no such item or already holds an agreement for it."
                     },
+                    "rows_imported": {
+                      "type": "number",
+                      "description": "How many table rows Marfa wrote."
+                    },
+                    "rows_skipped": {
+                      "type": "number",
+                      "description": "How many table rows Marfa skipped because their item was counted as a duplicate."
+                    },
                     "set_up_again": {
                       "type": "string",
                       "description": "A sentence saying that an archive holds no sign-in, keys, apps or webhooks, so you set them up again on this instance."
@@ -53211,6 +53219,8 @@
                     "connector_states_skipped",
                     "connector_agreements_added",
                     "connector_agreements_skipped",
+                    "rows_imported",
+                    "rows_skipped",
                     "set_up_again"
                   ]
                 }
@@ -54038,6 +54048,14 @@
                       "type": "number",
                       "description": "How many connector agreements Marfa skipped because the instance holds no such item or already holds an agreement for it."
                     },
+                    "rows_imported": {
+                      "type": "number",
+                      "description": "How many table rows Marfa wrote."
+                    },
+                    "rows_skipped": {
+                      "type": "number",
+                      "description": "How many table rows Marfa skipped because their item was counted as a duplicate."
+                    },
                     "set_up_again": {
                       "type": "string",
                       "description": "A sentence saying that an archive holds no sign-in, keys, apps or webhooks, so you set them up again on this instance."
@@ -54086,6 +54104,8 @@
                     "connector_states_skipped",
                     "connector_agreements_added",
                     "connector_agreements_skipped",
+                    "rows_imported",
+                    "rows_skipped",
                     "set_up_again",
                     "backup"
                   ]

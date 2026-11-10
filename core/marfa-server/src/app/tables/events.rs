@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use serde_json::{Map, Value, json};
 
-use super::{Changed, Table};
+use super::Changed;
 use crate::app::access::Caller;
 use crate::app::events::Event;
 use crate::app::items::Host;
@@ -14,17 +14,19 @@ use crate::app::unit::Unit;
 pub const ROWS_CHANGED: &str = "rows.changed";
 
 /// Past this many bytes of values an event carries row ids alone.
-const VALUES_CAP: usize = 65_536;
+pub(super) const VALUES_CAP: usize = 65_536;
 /// Kept in the log beside a row's values; a frame never carries it.
 const ITEM_TYPES: &str = "item_types";
 
 pub(super) struct Announced<'a> {
     pub host: &'a Host,
-    pub table: &'a Table,
+    pub table: &'a str,
     pub batch: &'a str,
     pub at: &'a str,
     pub changed: &'a [(String, Changed)],
     pub referenced: &'a HashMap<String, Option<String>>,
+    /// Whether the batch's values passed the cap before they were all held.
+    pub ids_only: bool,
 }
 
 fn logged_rows(announced: &Announced<'_>) -> (Vec<Value>, bool) {
@@ -34,7 +36,7 @@ fn logged_rows(announced: &Announced<'_>) -> (Vec<Value>, bool) {
             bytes += serde_json::to_vec(values).map_or(usize::MAX, |text| text.len());
         }
     }
-    let included = bytes <= VALUES_CAP;
+    let included = !announced.ids_only && bytes <= VALUES_CAP;
     let rows = announced
         .changed
         .iter()
@@ -72,7 +74,7 @@ pub(super) fn announce(unit: &Unit<'_, '_>, announced: &Announced<'_>) -> Result
     let (rows, included) = logged_rows(announced);
     let mut payload = json!({
         "item": { "id": host.id, "type": host.type_id, "source": host.source },
-        "table": announced.table.name,
+        "table": announced.table,
         "batch": announced.batch,
         "last_activity_at": announced.at,
         "rows": rows,
