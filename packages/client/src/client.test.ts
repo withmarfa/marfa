@@ -375,6 +375,81 @@ describe("where the credential goes", () => {
   });
 });
 
+describe("an item's tables", () => {
+  const item = { params: { path: { id: "i" } } };
+  const lines = { params: { path: { id: "i", table: "lines" } } };
+
+  it("types the five table operations from the document", () => {
+    const client = make(stubServer());
+    // Checked by the compiler when the package typechecks.
+    const typed = () => {
+      void client.GET("/items/{id}/tables", item);
+      void client.GET("/items/{id}/tables/{table}/rows", {
+        params: {
+          path: { id: "i", table: "lines" },
+          query: { filter: "values.amount gt 1", sort: "id", limit: 10 },
+        },
+      });
+      void client.GET("/items/{id}/tables/{table}/rows/{row}", {
+        params: { path: { id: "i", table: "lines", row: "r" } },
+      });
+      void client.GET("/items/{id}/tables/{table}/totals", lines);
+      void client.POST("/items/{id}/tables/{table}/rows", {
+        ...lines,
+        body: {
+          operations: [
+            { op: "put", values: { amount: 1 } },
+            { op: "patch", id: "r", values: { amount: 2 } },
+            { op: "delete", id: "r" },
+          ],
+        },
+      });
+      void client.POST("/items/{id}/tables/{table}/rows", {
+        ...lines,
+        // @ts-expect-error: a batch names its operations
+        body: {},
+      });
+      // @ts-expect-error: the table is a path parameter
+      void client.GET("/items/{id}/tables/{table}/totals", item);
+    };
+    expect(typeof typed).toBe("function");
+  });
+
+  it("walks a table's rows page by page, and writes a batch", async () => {
+    const server = stubServer((path) => {
+      if (path.endsWith("/rows") && path.startsWith("/items/i/tables/lines")) {
+        return {
+          body: JSON.stringify({
+            data: [{ id: "r", values: { amount: 1 }, updated_at: "t" }],
+            next_cursor: null,
+          }),
+        };
+      }
+      return {};
+    });
+    const client = make(server);
+    const rows = pages(async (cursor) => {
+      const { data } = await client.GET("/items/{id}/tables/{table}/rows", {
+        params: { path: { id: "i", table: "lines" }, query: { cursor } },
+      });
+      if (!data) throw new Error("the rows were refused");
+      return data;
+    });
+    const seen: string[] = [];
+    for await (const row of rows) seen.push(row.id);
+    expect(seen).toEqual(["r"]);
+
+    await client.POST("/items/{id}/tables/{table}/rows", {
+      ...lines,
+      body: { operations: [{ op: "delete", id: "r" }] },
+    });
+    expect(server.seen.map((request) => request.url)).toEqual([
+      "/items/i/tables/lines/rows",
+      "/items/i/tables/lines/rows",
+    ]);
+  });
+});
+
 describe("a body of bytes", () => {
   // A PNG signature and three more bytes: not text, and not JSON.
   const png = [
