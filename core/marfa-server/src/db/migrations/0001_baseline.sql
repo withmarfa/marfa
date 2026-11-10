@@ -167,11 +167,38 @@ CREATE TABLE IF NOT EXISTS table_rows (
     table_seq INTEGER NOT NULL,
     id TEXT NOT NULL,
     updated_at TEXT NOT NULL,
+    -- The `row_batches.seq` of the batch whose values the row holds; an undo puts back the one
+    -- it held before, so a batch an undo has cleared the way for can be undone in turn.
+    batch INTEGER NOT NULL,
     refs BLOB,
     body BLOB NOT NULL,
     PRIMARY KEY (table_seq, id)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS table_rows_updated ON table_rows (table_seq, updated_at);
+
+-- A table's change log, one entry per batch that changed a row. AUTOINCREMENT: a change outlives
+-- its batch until `table-row-cleanup` removes it, so a seq is never given again.
+CREATE TABLE IF NOT EXISTS row_batches (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    table_seq INTEGER NOT NULL,
+    at TEXT NOT NULL,
+    rows INTEGER NOT NULL CHECK (rows >= 0),
+    undoes TEXT
+) STRICT;
+CREATE INDEX IF NOT EXISTS row_batches_table ON row_batches (table_seq, seq);
+
+-- Each row a batch changed as it stood before, with `table_rows.batch` before and after: no
+-- `body` or `before_batch` where the batch created the row, no `after_batch` where it removed it.
+CREATE TABLE IF NOT EXISTS row_changes (
+    batch INTEGER NOT NULL,
+    id TEXT NOT NULL,
+    before_batch INTEGER,
+    after_batch INTEGER,
+    refs BLOB,
+    body BLOB,
+    PRIMARY KEY (batch, id)
+) STRICT, WITHOUT ROWID;
 
 -- Tables of purged items whose rows `table-row-cleanup` has still to remove.
 CREATE TABLE IF NOT EXISTS table_rows_purging (

@@ -200,6 +200,32 @@ describe("undoing a batch", () => {
     expect(await rows(item)).toEqual({ [r1]: { amount: 1 } });
   });
 
+  it("undoes a run of batches newest first, and redoes them oldest first", async () => {
+    const item = await itemOf(await ledgerType());
+    const [r1] = ids();
+    await write(item, [{ op: "put", id: r1, values: { amount: 1 } }]);
+    const states: Record<string, unknown>[] = [await rows(item)];
+    const made: string[] = [];
+    for (const amount of [2, 3, 4]) {
+      made.push(
+        await write(item, [{ op: "patch", id: r1, values: { amount } }]),
+      );
+      states.push(await rows(item));
+    }
+    const undos: string[] = [];
+    for (let n = made.length - 1; n >= 0; n -= 1) {
+      undos.unshift((await undo(item, made[n]!)).batch!);
+      expect(await rows(item)).toEqual(states[n]);
+    }
+    for (let n = 0; n < undos.length; n += 1) {
+      await undo(item, undos[n]!);
+      expect(await rows(item)).toEqual(states[n + 1]);
+    }
+    const refused = await client.undoBatch(item, "lines", made[0]!);
+    expect(refused.status).toBe(409);
+    expect(refused.error?.error.code).toBe("undo_conflict");
+  });
+
   it("answers batch null for an undo sent again, changing nothing", async () => {
     const item = await itemOf(await ledgerType());
     const { r1, r2, r3, r4, batch, before } = await mixedBatch(item);

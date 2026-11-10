@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "vitest";
-import type { MarfaClient } from "../../client/api.js";
+import { MarfaClient } from "../../client/api.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -11,7 +11,7 @@ import {
   movedClock,
   QUIET_SCHEDULE,
   runJob,
-  operatorOf,
+  writerOf,
 } from "../../utils/moved-clock.js";
 
 /**
@@ -28,13 +28,18 @@ async function ledger(server: FreshServer): Promise<{
   writer: MarfaClient;
   item: string;
 }> {
-  const writer = operatorOf(server);
-  const type = await writer.registerType({
+  const owner = new MarfaClient({
+    baseUrl: server.apiUrl,
+    apiKey: "",
+    controlSocket: server.controlSocket,
+  });
+  const type = await owner.registerType({
     id: TYPE,
     fields: { title: { type: "string" } },
     tables: { lines: { columns: { amount: { type: "number" } } } },
   } as never);
   expect(type.status, JSON.stringify(type.error)).toBe(201);
+  const writer = writerOf(server);
   const made = await writer.createItem({
     type: TYPE,
     properties: { title: "Ledger" },

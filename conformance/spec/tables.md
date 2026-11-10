@@ -744,7 +744,7 @@ While a stream is a copy stream, the server MUST NOT send it `rows.changed`.
 
 ## The change log and undo
 
-A table keeps a change log: each batch that changed at least one of its rows, with each row as it stood before the batch, for `row_log_retention_days`. An undo is itself a batch, so undoing an undo redoes the batch it undid. A row stands as a batch left it while no later batch has changed it or, for a row the batch deleted, while the table holds no row with its id. The doors are `POST /items/{id}/tables/{table}/batches/{batch}/undo` and `GET /items/{id}/tables/{table}/batches`.
+A table keeps a change log: each batch that changed at least one of its rows, with each row as it stood before the batch, for `row_log_retention_days`. An undo is itself a batch, so undoing an undo redoes the batch it undid. A row stands as a batch left it while no later batch has changed it, or every later batch that did has been undone, newest first; a row the batch deleted stands as it left it while the table holds no row with its id. The doors are `POST /items/{id}/tables/{table}/batches/{batch}/undo` and `GET /items/{id}/tables/{table}/batches`.
 
 ### `tables/undo`
 
@@ -752,7 +752,7 @@ When a caller sends `POST /items/{id}/tables/{table}/batches/{batch}/undo` and e
 
 **Reason:** a person takes back a write whole, one batch at a time, from the newest.
 
-**Tests:** `compliance/table-rows-undo.test.ts › undoes a batch, putting back rows it replaced, patched and deleted and removing rows it created`, `› undoes a batch where a later batch left a row as it was before the batch`.
+**Tests:** `compliance/table-rows-undo.test.ts › undoes a batch, putting back rows it replaced, patched and deleted and removing rows it created`, `› undoes a batch where a later batch left a row as it was before the batch`, `› undoes a run of batches newest first, and redoes them oldest first`.
 
 ### `tables/undo-answer`
 
@@ -780,7 +780,7 @@ When the batch an undo names is itself an undo, the server MUST undo it as any b
 
 **Reason:** redo is the undo of an undo, so one door and one log serve both.
 
-**Tests:** `compliance/table-rows-undo.test.ts › redoes a batch by undoing its undo, and undoes it again`.
+**Tests:** `compliance/table-rows-undo.test.ts › redoes a batch by undoing its undo, and undoes it again`, `› undoes a run of batches newest first, and redoes them oldest first`.
 
 ### `tables/undo-conflict`
 
