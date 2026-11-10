@@ -276,6 +276,45 @@ describe("reading rows", () => {
     expect(gone.error?.error.details).toMatchObject({ field: "cursor" });
   });
 
+  it("pages rows that share a long sort value without skipping or repeating one", async () => {
+    const { item } = await spendingItem();
+    const a = "a".repeat(200);
+    const b = "b".repeat(200);
+    const written = await put(
+      item,
+      [a, a, a, a, a, b, b, b, "short", "short", "é".repeat(100)].map(
+        (memo) => ({ amount: 1, memo }),
+      ),
+    );
+    const ids = written.results.map((r) => r.id);
+    for (const direction of ["asc", "desc"] as const) {
+      const whole = (
+        await client.listRows(item, "spend", {
+          sort: "values.memo",
+          direction,
+          limit: 1000,
+        })
+      ).data.data.map((r) => r.id);
+      expect([...whole].sort()).toEqual([...ids].sort());
+      for (const limit of [1, 2, 3]) {
+        const paged: string[] = [];
+        let cursor: string | undefined;
+        do {
+          const res = await client.listRows(item, "spend", {
+            sort: "values.memo",
+            direction,
+            limit,
+            cursor,
+          });
+          expect(res.status, JSON.stringify(res.error)).toBe(200);
+          paged.push(...res.data.data.map((r) => r.id));
+          cursor = res.data.next_cursor ?? undefined;
+        } while (cursor);
+        expect(paged, `${direction} ${limit}`).toEqual(whole);
+      }
+    }
+  });
+
   it("filters rows on columns with the item filter grammar", async () => {
     const { item } = await spendingItem();
     const written = await put(item, [

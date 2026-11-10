@@ -640,7 +640,7 @@ When `GET /items/{id}/tables/{table}/rows` answers a `next_cursor`, the server M
 
 When a caller continues a listing by a `cursor` that follows a row whose sort value is unchanged, the server MUST answer the rows that come after that row in the listing's order, skipping none and repeating none, whatever the length of that sort value.
 
-**Tests:** `compliance/table-rows-reads.test.ts › keeps a cursor short however long the sort value is, and follows the row it names`.
+**Tests:** `compliance/table-rows-reads.test.ts › keeps a cursor short however long the sort value is, and follows the row it names`, `› pages rows that share a long sort value without skipping or repeating one`.
 
 ### `tables/rows-cursor-moved`
 
