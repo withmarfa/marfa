@@ -452,7 +452,7 @@ describe("a field the door does not declare, against the key and the fence", () 
         fence: { method: "PUT", path: "/state", body: { state: {} } },
       },
       {
-        label: "a row named twice",
+        label: "an item named twice",
         call: {
           method: "POST",
           path: "/agreements",
@@ -572,7 +572,7 @@ describe("a body the door refuses once the key is the connector's own, against a
         },
       },
       {
-        label: "a batch naming a row twice",
+        label: "a batch naming an item twice",
         call: {
           method: "POST",
           path: "/agreements",

@@ -281,7 +281,7 @@ describe("tier axis", () => {
     { mode: "upsert", defaultTier: "library" },
     { mode: "create_only", defaultTier: "library" },
   ] as const)(
-    "uses the credential default and explicit tier on new bulk rows ($mode, $defaultTier)",
+    "uses the credential default and explicit tier on new bulk items ($mode, $defaultTier)",
     async ({ mode, defaultTier }) => {
       const scoped = await makeClient(`${mode}-${defaultTier}`, defaultTier);
       const override = defaultTier === "feed" ? "library" : "feed";
@@ -318,8 +318,8 @@ describe("tier axis", () => {
     },
   );
 
-  it("keeps a row's tier through a natural-key re-sync on both doors", async () => {
-    // A person moves a synced row to the feed; the connector's next sync
+  it("keeps an item's tier through a natural-key re-sync on both doors", async () => {
+    // A person moves a synced item to the feed; the connector's next sync
     // names no tier and must leave it there, whichever door it uses.
     for (const door of ["single", "bulk"] as const) {
       const sourceId = `tier-resync-${door}-${String(Date.now())}`;

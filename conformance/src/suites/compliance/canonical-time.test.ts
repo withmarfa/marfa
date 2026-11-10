@@ -136,7 +136,7 @@ describe("canonical instants on item writes and filters", () => {
   });
 
   it("compares filter timestamps with neq, gt, lt and lte as instants, on listing and search", async () => {
-    // `+02:00` spellings of instants that sit on and between the two rows'
+    // `+02:00` spellings of instants that sit on and between the two items'
     // own times, 07:00:00Z and 08:00:00Z, so the comparison is of instants
     // and not of text.
     const [first, second] = rows as [Row, Row];
@@ -155,8 +155,8 @@ describe("canonical instants on item writes and filters", () => {
     for (const path of ["/items", "/search"]) {
       const params: Record<string, string> =
         path === "/search" ? { q: "chronocanonical" } : { type: "core.note" };
-      // The witness: both rows answer a comparison that excludes neither, so each
-      // answer below leaves out a row that was there to be found.
+      // The witness: both items answer a comparison that excludes neither, so each
+      // answer below leaves out an item that was there to be found.
       expect(
         await ids(path, {
           ...params,

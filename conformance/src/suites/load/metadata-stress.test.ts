@@ -143,7 +143,7 @@ describe("metadata operations at scale", () => {
     }
 
     // Counted by paging rather than from the timed call, whose page size is
-    // the server's ceiling: the larger profiles tag more rows than one page
+    // the server's ceiling: the larger profiles tag more items than one page
     // can return, so reading the count off a single response would compare a
     // page limit against a sample count and fail wherever they differ.
     // Unmeasured deliberately — it is a completeness check, not the operation
@@ -177,9 +177,9 @@ describe("metadata operations at scale", () => {
     });
 
     expect(errors).toBe(0);
-    // Both write passes target the same sampled rows, so every sampled row
+    // Both write passes target the same sampled items, so every sampled item
     // must carry the tag. Distinct, because a sample larger than the corpus
-    // wraps and asks for some rows twice. Exact, not a lower bound: a server
+    // wraps and asks for some items twice. Exact, not a lower bound: a server
     // writing one sidecar in ten and answering 200 to the rest would satisfy
     // any floor above zero while losing most of the writes.
     expect(observed).toBe(new Set(sampleIds(corpusIds, writeSamples)).size);

@@ -15,7 +15,7 @@ import {
   writerOf,
 } from "../../utils/moved-clock.js";
 
-// No API stores a value outside a setting's bounds, so the row is written as a
+// No API stores a value outside a setting's bounds, so the item is written as a
 // hand edit or a release that narrows a bound would leave it.
 
 afterAll(stopFreshServers, 2 * FRESH_SERVER_TIMEOUT_MS);

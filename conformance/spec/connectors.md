@@ -858,7 +858,7 @@ When a connector of one source writes or clears its state document or its agreem
 
 ### `connectors/source-records-apart`
 
-When two connectors of different sources each write an agreement for one row, the server MUST keep a record for each and answer each its own.
+When two connectors of different sources each write an agreement for one item, the server MUST keep a record for each and answer each its own.
 
 **Tests:** `compliance/connector-state.test.ts › keeps each source's state and agreements apart`.
 
@@ -928,11 +928,11 @@ When the server clears a source's state, the server MUST record a `connector_sta
 
 When the server records a `connector_state.delete` audit entry, the server MUST carry the `source`, whether a state document went as `state`, and the number of agreements removed as `agreements` in its `details`.
 
-**Tests:** `compliance/connector-state.test.ts › clears the state and the agreements for the own key or the manager, and audits it`, `› goes with a purged row`.
+**Tests:** `compliance/connector-state.test.ts › clears the state and the agreements for the own key or the manager, and audits it`, `› goes with a purged item`.
 
 ## Writing agreements
 
-An agreement is a connector's record of what it and its vendor last agreed about one row, one for each row and source. Writing one announces nothing and leaves the row alone.
+An agreement is a connector's record of what it and its vendor last agreed about one item, one for each item and source. Writing one announces nothing and leaves the item alone.
 
 ### `connectors/agreements-written`
 
@@ -942,31 +942,31 @@ When the connector's own key sends `POST /connectors/{id}/agreements` with a `pr
 
 ### `connectors/agreements-set`
 
-When `POST /connectors/{id}/agreements` names a row in `set` with its `waiting` and its `record`, the server MUST replace that row's agreement with them.
+When `POST /connectors/{id}/agreements` names an item in `set` with its `waiting` and its `record`, the server MUST replace that item's agreement with them.
 
 **Tests:** `compliance/connector-state.test.ts › writes and clears agreements, skipping an id it cannot hold`.
 
 ### `connectors/agreements-clear`
 
-When `POST /connectors/{id}/agreements` names a row in `clear`, the server MUST remove that row's agreement.
+When `POST /connectors/{id}/agreements` names an item in `clear`, the server MUST remove that item's agreement.
 
 **Tests:** `compliance/connector-state.test.ts › writes and clears agreements, skipping an id it cannot hold`.
 
 ### `connectors/agreements-skip-absent`
 
-If an id in `set` or `clear` names no stored row, then the server MUST name it in `skipped`, the ids from `set` before those from `clear`, each in the order named, and not refuse the batch.
+If an id in `set` or `clear` names no stored item, then the server MUST name it in `skipped`, the ids from `set` before those from `clear`, each in the order named, and not refuse the batch.
 
 **Tests:** `compliance/connector-state.test.ts › writes and clears agreements, skipping an id it cannot hold`, `› refuses a batch over its caps and writes nothing`, `› lists skipped set ids before skipped clear ids, whatever order the body names them`.
 
 ### `connectors/agreements-skip-unreadable`
 
-If an id in `set` or `clear` names a row whose type the key's type map does not read, then the server MUST skip it as it skips an id that names no stored row.
+If an id in `set` or `clear` names an item whose type the key's type map does not read, then the server MUST skip it as it skips an id that names no stored item.
 
-**Tests:** `compliance/connector-state.test.ts › writes and clears agreements, skipping an id it cannot hold`, `› leaves a row the key no longer reads out of its reads and its clears`.
+**Tests:** `compliance/connector-state.test.ts › writes and clears agreements, skipping an id it cannot hold`, `› leaves an item the key no longer reads out of its reads and its clears`.
 
 ### `connectors/agreements-trashed`
 
-When an id in `set` or `clear` names a trashed row, the server MUST write or clear its agreement as it does a live row's.
+When an id in `set` or `clear` names a trashed item, the server MUST write or clear its agreement as it does a live item's.
 
 **Tests:** `compliance/connector-state.test.ts › writes and clears agreements, skipping an id it cannot hold`.
 
@@ -1014,7 +1014,7 @@ If an entry of `set` names a `waiting` that is not a boolean, then the server MU
 
 ### `connectors/agreements-named-twice`
 
-If `POST /connectors/{id}/agreements` names one row twice, within `set` or `clear` or across the two, then the server MUST answer `400 validation_error`.
+If `POST /connectors/{id}/agreements` names one item twice, within `set` or `clear` or across the two, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/connector-state.test.ts › refuses a batch over its caps and writes nothing`.
 
@@ -1066,53 +1066,53 @@ If `POST /connectors/{id}/agreements` carries a body larger than the bulk cap, t
 
 When the server writes or clears an agreement, the server MUST NOT announce it on the event stream.
 
-**Tests:** `compliance/connector-state.test.ts › writes an agreement without touching the row or announcing it`.
+**Tests:** `compliance/connector-state.test.ts › writes an agreement without touching the item or announcing it`.
 
 ### `connectors/agreements-silent-replay`
 
 When the server writes or clears an agreement, the server MUST NOT carry it in a replay from a cursor taken before the write.
 
-**Tests:** `compliance/connector-state.test.ts › writes an agreement without touching the row or announcing it`.
+**Tests:** `compliance/connector-state.test.ts › writes an agreement without touching the item or announcing it`.
 
 ### `connectors/agreements-keep-updated-at`
 
-When the server writes or clears an agreement, the server MUST keep the row's `updated_at`.
+When the server writes or clears an agreement, the server MUST keep the item's `updated_at`.
 
-**Tests:** `compliance/connector-state.test.ts › writes an agreement without touching the row or announcing it`.
+**Tests:** `compliance/connector-state.test.ts › writes an agreement without touching the item or announcing it`.
 
 ### `connectors/agreements-keep-version`
 
-When the server writes or clears an agreement, the server MUST keep the row's `version`.
+When the server writes or clears an agreement, the server MUST keep the item's `version`.
 
-**Tests:** `compliance/connector-state.test.ts › writes an agreement without touching the row or announcing it`.
+**Tests:** `compliance/connector-state.test.ts › writes an agreement without touching the item or announcing it`.
 
 ### `connectors/agreements-trash-keeps`
 
-When a row is trashed, the server MUST keep its agreement.
+When an item is trashed, the server MUST keep its agreement.
 
-**Tests:** `compliance/connector-state.test.ts › goes with a purged row`.
+**Tests:** `compliance/connector-state.test.ts › goes with a purged item`.
 
 ### `connectors/agreements-purge-removes`
 
-When a row is purged, the server MUST remove its agreement.
+When an item is purged, the server MUST remove its agreement.
 
-**Reason:** the reads leave out a row that is gone, so only the count of a later clear shows it.
+**Reason:** the reads leave out an item that is gone, so only the count of a later clear shows it.
 
-**Tests:** `compliance/connector-state.test.ts › goes with a purged row`.
+**Tests:** `compliance/connector-state.test.ts › goes with a purged item`.
 
 ## Reading agreements
 
 ### `connectors/lookup-answer`
 
-When the connector's own key sends `POST /connectors/{id}/agreements/lookup` with 1 to 500 `item_ids`, the server MUST answer `200` with `data` holding the agreement of each named row that has one.
+When the connector's own key sends `POST /connectors/{id}/agreements/lookup` with 1 to 500 `item_ids`, the server MUST answer `200` with `data` holding the agreement of each named item that has one.
 
-**Tests:** `compliance/connector-state.test.ts › writes and clears agreements, skipping an id it cannot hold`, `› finds agreements by row and lists the waiting ones a page at a time`.
+**Tests:** `compliance/connector-state.test.ts › writes and clears agreements, skipping an id it cannot hold`, `› finds agreements by item and lists the waiting ones a page at a time`.
 
 ### `connectors/lookup-once-in-order`
 
-When `POST /connectors/{id}/agreements/lookup` names a row more than once, the server MUST answer its agreement once, in the order the row was first named.
+When `POST /connectors/{id}/agreements/lookup` names an item more than once, the server MUST answer its agreement once, in the order the item was first named.
 
-**Tests:** `compliance/connector-state.test.ts › answers each row a lookup names once, in the order it was first named`.
+**Tests:** `compliance/connector-state.test.ts › answers each item a lookup names once, in the order it was first named`.
 
 ### `connectors/lookup-fields`
 
@@ -1146,33 +1146,33 @@ If `POST /connectors/{id}/agreements/lookup` names no `item_ids`, then the serve
 
 ### `connectors/lookup-unreadable`
 
-When a row's type is one the key's type map does not read, the server MUST leave its agreement out of `POST /connectors/{id}/agreements/lookup`.
+When an item's type is one the key's type map does not read, the server MUST leave its agreement out of `POST /connectors/{id}/agreements/lookup`.
 
-**Tests:** `compliance/connector-state.test.ts › leaves a row the key no longer reads out of its reads and its clears`, `› writes and clears agreements, skipping an id it cannot hold`.
+**Tests:** `compliance/connector-state.test.ts › leaves an item the key no longer reads out of its reads and its clears`, `› writes and clears agreements, skipping an id it cannot hold`.
 
 ### `connectors/list-agreements-order`
 
 When the server lists agreements, the server MUST list the agreement written longest ago first.
 
-**Tests:** `compliance/connector-state.test.ts › finds agreements by row and lists the waiting ones a page at a time`.
+**Tests:** `compliance/connector-state.test.ts › finds agreements by item and lists the waiting ones a page at a time`.
 
 ### `connectors/list-agreements-waiting`
 
 When `GET /connectors/{id}/agreements` names `waiting=true`, the server MUST list only the agreements whose `waiting` is `true`.
 
-**Tests:** `compliance/connector-state.test.ts › finds agreements by row and lists the waiting ones a page at a time`.
+**Tests:** `compliance/connector-state.test.ts › finds agreements by item and lists the waiting ones a page at a time`.
 
 ### `connectors/list-agreements-settled`
 
 When `GET /connectors/{id}/agreements` names `waiting=false`, the server MUST list only the agreements whose `waiting` is `false`.
 
-**Tests:** `compliance/connector-state.test.ts › finds agreements by row and lists the waiting ones a page at a time`.
+**Tests:** `compliance/connector-state.test.ts › finds agreements by item and lists the waiting ones a page at a time`.
 
 ### `connectors/list-agreements-waiting-invalid`
 
 If `GET /connectors/{id}/agreements` names a `waiting` that is neither `true` nor `false`, then the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/connector-state.test.ts › finds agreements by row and lists the waiting ones a page at a time`.
+**Tests:** `compliance/connector-state.test.ts › finds agreements by item and lists the waiting ones a page at a time`.
 
 ### `connectors/list-agreements-limit-default`
 
@@ -1184,39 +1184,39 @@ When `GET /connectors/{id}/agreements` names no `limit`, the server MUST list at
 
 If `GET /connectors/{id}/agreements` names a `limit` that is not a whole number of 1 to 200, then the server MUST answer `400 validation_error` naming `limit`.
 
-**Tests:** `compliance/connector-codes.test.ts › refuses a limit outside 1 to 200 with validation_error on the runs, agreements and deliveries listings, and takes both ends`, `compliance/connector-state.test.ts › finds agreements by row and lists the waiting ones a page at a time`, `compliance/page-limits.test.ts › $door refuses a limit of 0, a negative and a non-number, naming limit`, `› $door takes its largest page and refuses a limit past it or a fraction`.
+**Tests:** `compliance/connector-codes.test.ts › refuses a limit outside 1 to 200 with validation_error on the runs, agreements and deliveries listings, and takes both ends`, `compliance/connector-state.test.ts › finds agreements by item and lists the waiting ones a page at a time`, `compliance/page-limits.test.ts › $door refuses a limit of 0, a negative and a non-number, naming limit`, `› $door takes its largest page and refuses a limit past it or a fraction`.
 
 ### `connectors/list-agreements-paged`
 
 When a `limit` cuts the list of agreements short, the server MUST answer a `next_cursor` that reaches the rest.
 
-**Tests:** `compliance/connector-state.test.ts › finds agreements by row and lists the waiting ones a page at a time`.
+**Tests:** `compliance/connector-state.test.ts › finds agreements by item and lists the waiting ones a page at a time`.
 
 ### `connectors/list-agreements-undeclared-key`
 
 If `GET /connectors/{id}/agreements` names a query key the operation does not declare, then the server MUST answer `400 validation_error` with the key in `details.unknown_parameters`.
 
-**Tests:** `compliance/connector-state.test.ts › finds agreements by row and lists the waiting ones a page at a time`.
+**Tests:** `compliance/connector-state.test.ts › finds agreements by item and lists the waiting ones a page at a time`.
 
 ### `connectors/list-agreements-unreadable`
 
-When a row's type is one the key's type map does not read, the server MUST leave its agreement out of `GET /connectors/{id}/agreements`.
+When an item's type is one the key's type map does not read, the server MUST leave its agreement out of `GET /connectors/{id}/agreements`.
 
-**Tests:** `compliance/connector-state.test.ts › leaves a row the key no longer reads out of its reads and its clears`.
+**Tests:** `compliance/connector-state.test.ts › leaves an item the key no longer reads out of its reads and its clears`.
 
 ### `connectors/list-agreements-short-page`
 
-When a page of agreements holds rows the key's type map does not read, the server MUST answer the page without them and with a `next_cursor` that reaches the rest, so the page can be short.
+When a page of agreements holds agreements for items the key's type map does not read, the server MUST answer the page without them and with a `next_cursor` that reaches the rest, so the page can be short.
 
-**Reason:** the page is cut before the rows are left out, so a cursor never skips a row the key can read.
+**Reason:** the page is cut before the agreements for such items are left out, so a cursor never skips an agreement the key can read.
 
-**Tests:** `compliance/connector-bounds.test.ts › answers a short page with a cursor still to follow, over rows the key no longer reads`.
+**Tests:** `compliance/connector-bounds.test.ts › answers a short page with a cursor still to follow, over items the key no longer reads`.
 
 ### `connectors/agreement-unreadable-kept`
 
-When a key's type map is widened to read a type again, the server MUST answer the agreements it kept for rows of that type.
+When a key's type map is widened to read a type again, the server MUST answer the agreements it kept for items of that type.
 
-**Tests:** `compliance/connector-state.test.ts › leaves a row the key no longer reads out of its reads and its clears`.
+**Tests:** `compliance/connector-state.test.ts › leaves an item the key no longer reads out of its reads and its clears`.
 
 ## The fence
 
@@ -1292,7 +1292,7 @@ If a request to an operation under `/connectors/{id}` has a body field or a quer
 
 ### `connectors/order-key-before-handler-checks`
 
-If a key that `POST /connectors/{id}/runs`, `PUT /connectors/{id}/state` or `POST /connectors/{id}/agreements` refuses `403 forbidden` on an existing registration sends it a run that finishes before it starts or names a time whose UTC year is outside 0000 to 9999, a state of more than 512 KiB serialized, or a batch that names a row twice or holds a record of more than 16 KiB serialized, then the server MUST answer `403 forbidden`.
+If a key that `POST /connectors/{id}/runs`, `PUT /connectors/{id}/state` or `POST /connectors/{id}/agreements` refuses `403 forbidden` on an existing registration sends it a run that finishes before it starts or names a time whose UTC year is outside 0000 to 9999, a state of more than 512 KiB serialized, or a batch that names an item twice or holds a record of more than 16 KiB serialized, then the server MUST answer `403 forbidden`.
 
 **Reason:** the server makes these checks after it finds the registration and judges the key, unlike the declared shape that `connectors/order-body-before-registration` checks first. A top-level field the operation does not declare is ordered the same way, as `connectors/order-key-before-stray-field` says.
 
@@ -1324,7 +1324,7 @@ If the connector's own key sends `PUT /connectors/{id}/state` or `POST /connecto
 
 ### `connectors/order-body-before-fence`
 
-If the connector's own key sends, for a process that holds no live hold, `PUT /connectors/{id}/state` with a state of more than 512 KiB, or `POST /connectors/{id}/agreements` with a batch that names a row twice or holds a record of more than 16 KiB, then the server MUST answer `400 validation_error` and not `409 connector_held`.
+If the connector's own key sends, for a process that holds no live hold, `PUT /connectors/{id}/state` with a state of more than 512 KiB, or `POST /connectors/{id}/agreements` with a batch that names an item twice or holds a record of more than 16 KiB, then the server MUST answer `400 validation_error` and not `409 connector_held`.
 
 **Tests:** `compliance/connector-check-order.test.ts › answers a state or a batch the door refuses 400 before the fence's 409`.
 

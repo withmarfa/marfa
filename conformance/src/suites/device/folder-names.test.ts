@@ -29,7 +29,7 @@ const BAD_TAGS: Array<[string, string]> = [
 async function started(settings = {}) {
   folder = await folderHarness("names", {
     settings: { query: { types: ["core.note"] }, ...settings },
-    rows: {
+    items: {
       "core.note": [
         {
           item: {
@@ -150,7 +150,7 @@ describe("a folder's file whose tags would leave its item more than 100", () => 
   it("is flagged with its reason and queues nothing of it, while a swap on a full item and the files after it are saved", async () => {
     folder = await folderHarness("tag-count", {
       settings: { query: { types: ["core.note"] } },
-      rows: {
+      items: {
         "core.note": [
           row(FULL, "full", named("f", 100)),
           row(ROW, "held", named("h", 60)),

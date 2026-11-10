@@ -2,9 +2,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { hydratedHarness, type Harness } from "./harness.js";
 
 /**
- * A row that leaves the bin is found by a local search again
+ * An item that leaves the bin is found by a local search again
  * (`device/index-fields`, `device/search-no-bin`): the copy takes it out of its
- * index when a delete or a transition puts it in the bin, and the same row
+ * index when a delete or a transition puts it in the bin, and the same item
  * outside the bin matches on its title, body and tags.
  */
 
@@ -20,7 +20,7 @@ const ZEBRA = "01900000-0000-7000-8000-0000000000b1";
 async function started(label: string): Promise<Harness> {
   return hydratedHarness(label, {
     head: "10",
-    rows: {
+    items: {
       "core.note": [
         {
           item: {
@@ -44,10 +44,10 @@ async function found(h: Harness, query: string): Promise<string[]> {
 
 const MATCHES = ["zebra", "quagga", "savannah"];
 
-describe("a row that leaves the bin is found again", () => {
-  it("finds a restored row by its title, body and tags", async () => {
+describe("an item that leaves the bin is found again", () => {
+  it("finds a restored item by its title, body and tags", async () => {
     harness = await started("restore-search");
-    // The witness: the row is found before it goes to the bin.
+    // The witness: the item is found before it goes to the bin.
     for (const query of MATCHES)
       expect(await found(harness, query)).toContain(ZEBRA);
 
@@ -56,7 +56,7 @@ describe("a row that leaves the bin is found again", () => {
     for (const query of MATCHES) {
       expect(
         await found(harness, query),
-        "a row in the bin was found",
+        "an item in the bin was found",
       ).not.toContain(ZEBRA);
     }
 
@@ -65,14 +65,14 @@ describe("a row that leaves the bin is found again", () => {
     for (const query of MATCHES) {
       expect(
         await found(harness, query),
-        `a restored row was not found by ${query}`,
+        `a restored item was not found by ${query}`,
       ).toContain(ZEBRA);
     }
     const plain = await harness.device.search("zebra");
     expect(plain.ok && plain.value.map((hit) => hit.item.id)).toContain(ZEBRA);
   });
 
-  it("finds a row moved from the bin to the archive", async () => {
+  it("finds an item moved from the bin to the archive", async () => {
     harness = await started("transition-search");
     expect((await harness.device.deleteItem(ZEBRA)).ok).toBe(true);
     expect(await found(harness, "zebra")).not.toContain(ZEBRA);
@@ -83,11 +83,11 @@ describe("a row that leaves the bin is found again", () => {
     expect(hits.ok, JSON.stringify(hits)).toBe(true);
     expect(
       hits.ok && hits.value.map((hit) => hit.item.id),
-      "a row moved from the bin to the archive was not found",
+      "an item moved from the bin to the archive was not found",
     ).toContain(ZEBRA);
   });
 
-  it("finds a row moved from the bin to active", async () => {
+  it("finds an item moved from the bin to active", async () => {
     harness = await started("transition-active-search");
     expect((await harness.device.deleteItem(ZEBRA)).ok).toBe(true);
     const moved = await harness.device.transitionItem(ZEBRA, "active");
@@ -97,7 +97,7 @@ describe("a row that leaves the bin is found again", () => {
 });
 
 describe("the index follows a tag the copy changes", () => {
-  it("finds a row by a tag added here and not by one removed here", async () => {
+  it("finds an item by a tag added here and not by one removed here", async () => {
     harness = await started("tag-search");
     expect((await harness.device.addTag(ZEBRA, "stripes")).ok).toBe(true);
     expect(

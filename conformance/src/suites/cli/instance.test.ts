@@ -824,7 +824,7 @@ describe("the instance from the terminal", () => {
       created.item.id,
     ]);
     expect(audit.data.length).toBeGreaterThan(0);
-    // The filter reached the wire: every row is the item's, and the create
+    // The filter reached the wire: every item is the item's, and the create
     // is among them.
     for (const row of audit.data) expect(row.resource_id).toBe(created.item.id);
     expect(audit.data.map((row) => row.action)).toContain("item.create");

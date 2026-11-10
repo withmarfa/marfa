@@ -1,14 +1,14 @@
 /**
  * A device filling a large image library.
  *
- * A measurement, not a service level. It seeds two sets of rows of one shape,
- * one carrying a thumbnail in every row and one carrying none, hydrates a
+ * A measurement, not a service level. It seeds two sets of items of one shape,
+ * one carrying a thumbnail in every item and one carrying none, hydrates a
  * working copy of each with the `marfa` binary, and writes what it saw to
  * `reports/load/hydration.json` beside the load reports. Nothing here asserts
- * a time. It fails only when a hydration fails or does not bring every row,
+ * a time. It fails only when a hydration fails or does not bring every item,
  * because a number taken from a fill that did not finish says nothing.
  *
- * The plain set runs first so that the rows of the heavier set are not on the
+ * The plain set runs first so that the items of the heavier set are not on the
  * server while it is measured.
  *
  * The set size is `MARFA_HYDRATION_ROWS`, per set; the nightly run sets it
@@ -41,13 +41,13 @@ import { REPORTS_DIR } from "../load/results.js";
 
 const run = promisify(execFile);
 
-/** Rows in each set. */
+/** Items in each set. */
 const ROWS = positiveInteger("MARFA_HYDRATION_ROWS", 2_000);
-/** Rows in a bulk write; a batch of the heavier set stays well under the bulk body cap. */
+/** Items in a bulk write; a batch of the heavier set stays well under the bulk body cap. */
 const BATCH = 250;
-/** Rows sharing a tag, so a clean-up bulk action stays under the 50,000 a bulk action may match. */
+/** Items sharing a tag, so a clean-up bulk action stays under the 50,000 a bulk action may match. */
 const GROUP = 25_000;
-/** The rows in a page of a hydration, `ITEM_PAGE_LIMIT` in `core/marfa-core/src/http.rs`. */
+/** The items in a page of a hydration, `ITEM_PAGE_LIMIT` in `core/marfa-core/src/http.rs`. */
 const PAGE = 500;
 /** Pages read to measure the server, from the first. */
 const SERVER_PAGES = 10;
@@ -71,7 +71,7 @@ const PLACES = [
   "square",
 ];
 const CAMERAS = ["Leica Q3", "Fuji X100V", "Canon R5", "iPhone 17", "Sony A7"];
-/** A word one row in ten holds, so a search has many matches to rank. */
+/** A word one item in ten holds, so a search has many matches to rank. */
 const SEARCH_WORD = PLACES[0];
 
 function positiveInteger(name: string, fallback: number): number {
@@ -127,7 +127,7 @@ interface SetReport {
   hydration_ms: number;
   rows_per_second: number;
   pages: number;
-  /** Rows the fill reported holding; the run fails unless it is `rows`. */
+  /** Items the fill reported holding; the run fails unless it is `rows`. */
   items: number;
   store_bytes: number;
   server_page: {
@@ -307,7 +307,7 @@ function row(type: string, i: number, withThumbnail: boolean): BulkItemInput {
     seq: i,
   };
   if (withThumbnail) {
-    // Different bytes in every row, so a transfer that squeezes repeated
+    // Different bytes in every item, so a transfer that squeezes repeated
     // content cannot make a fill look cheaper than a library of different
     // photographs would. The server reads only the format's signature and the
     // size, so this stands in for a JPEG at its size.
@@ -344,7 +344,7 @@ async function seed(
     });
     if (!written.ok || written.data.counts.created !== items.length) {
       throw new Error(
-        `seeding ${type} from row ${String(from)} wrote ${String(written.data?.counts.created)} of ${String(items.length)}: ${JSON.stringify(written.error ?? written.data?.results.find((r) => r.outcome === "errored"))}`,
+        `seeding ${type} from item ${String(from)} wrote ${String(written.data?.counts.created)} of ${String(items.length)}: ${JSON.stringify(written.error ?? written.data?.results.find((r) => r.outcome === "errored"))}`,
       );
     }
     if ((from / BATCH) % 40 === 0) {
@@ -357,9 +357,9 @@ async function seed(
 }
 
 /**
- * Takes the set's rows off the server, a bulk action at a time, so a server
+ * Takes the set's items off the server, a bulk action at a time, so a server
  * that outlives the run is not left holding a library. A bulk action refuses to
- * match more than 50,000 rows, so each goes at one tagged group of the set.
+ * match more than 50,000 items, so each goes at one tagged group of the set.
  */
 async function removeRows(client: MarfaClient, type: string): Promise<void> {
   const step = async (
@@ -458,7 +458,7 @@ describe("a device filling a library of images", () => {
 
     const seed_ms = await seed(client, type, withThumbnail);
     console.log(
-      `  seeded ${String(ROWS)} ${name} rows in ${(seed_ms / 1000).toFixed(0)}s`,
+      `  seeded ${String(ROWS)} ${name} items in ${(seed_ms / 1000).toFixed(0)}s`,
     );
 
     const env: Environment = { url, key, store: join(work, `${name}.sqlite`) };
@@ -473,7 +473,7 @@ describe("a device filling a library of images", () => {
       items: number;
       pages: number;
     };
-    expect(hydrated.items, "rows the fill brought").toBe(ROWS);
+    expect(hydrated.items, "items the fill brought").toBe(ROWS);
 
     const report: SetReport = {
       rows: ROWS,
@@ -495,13 +495,13 @@ describe("a device filling a library of images", () => {
       ]),
       search: await localRead(env, ["search", SEARCH_WORD, "--type", type]),
     };
-    expect(report.listing.results, "rows the copy lists").toBe(
+    expect(report.listing.results, "items the copy lists").toBe(
       Math.min(PAGE, ROWS),
     );
     expect(report.search.results, "hits the copy finds").toBeGreaterThan(0);
     console.log(
-      `  ${name}: filled ${String(ROWS)} rows in ${(report.hydration_ms / 1000).toFixed(1)}s ` +
-        `(${report.rows_per_second.toFixed(0)} rows/s), ${String(report.server_page.bytes_per_row)} bytes a row, ` +
+      `  ${name}: filled ${String(ROWS)} items in ${(report.hydration_ms / 1000).toFixed(1)}s ` +
+        `(${report.rows_per_second.toFixed(0)} rows/s), ${String(report.server_page.bytes_per_row)} bytes an item, ` +
         `store ${(report.store_bytes / 1e6).toFixed(0)} MB`,
     );
     rmSync(env.store, { force: true });
@@ -510,7 +510,7 @@ describe("a device filling a library of images", () => {
     return report;
   }
 
-  it("fills a copy of rows with no thumbnail, then of rows with one", async () => {
+  it("fills a copy of items with no thumbnail, then of items with one", async () => {
     sets.plain = await measure("plain", false);
     sets.thumbnails = await measure("thumbnails", true);
   });
@@ -524,7 +524,7 @@ describe("a device filling a library of images", () => {
       try {
         for (const type of types) await removeRows(client, type);
       } catch (error) {
-        console.error("removing the rows failed:", error);
+        console.error("removing the items failed:", error);
         throw error;
       } finally {
         await cleanup(ctx);

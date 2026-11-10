@@ -108,7 +108,7 @@ const SERVED = {
   copies: [200, undefined],
 };
 
-/** Every row the source holds, in any state, tracked for cleanup. */
+/** Every item the source holds, in any state, tracked for cleanup. */
 async function rowsOf(source: string): Promise<Record<string, unknown>[]> {
   const rows = await client.listItems({ source, state: "any", limit: 200 });
   expect(rows.ok, JSON.stringify(rows.error)).toBe(true);
@@ -127,7 +127,7 @@ describe("a file whose bytes its writer never proved", () => {
     const writer = await keyHolding({ "core.file": "write" });
     const { hash, bytes } = await uploadAs(uploader.client, "bytes A sent");
 
-    // The witness: the instance holds the bytes, and no row names them yet.
+    // The witness: the instance holds the bytes, and no item names them yet.
     expect((await operator.headBlob(hash)).status).toBe(200);
 
     const refused = await writer.client.createItem({
@@ -245,7 +245,7 @@ describe("a file whose bytes its writer never proved", () => {
     expect(await readingDoors(knower.client, other.hash)).toEqual(SERVED);
   });
 
-  it("is refused once the uploader is revoked, while a row the uploader wrote keeps lending", async () => {
+  it("is refused once the uploader is revoked, while an item the uploader wrote keeps lending", async () => {
     const uploader = await keyHolding({ "core.note": "write" });
     const writer = await keyHolding({ "core.file": "write" });
     const reader = await keyHolding({ "core.note": "read" });
@@ -321,7 +321,7 @@ describe("a file whose bytes its writer never proved", () => {
 });
 
 /**
- * A door that writes a file's properties, given a writer: it prepares the row
+ * A door that writes a file's properties, given a writer: it prepares the item
  * that writer needs, and answers the write naming a digest as the refusal's
  * code, or undefined where the door took it.
  */
@@ -549,7 +549,7 @@ describe("which write that names a file's bytes is refused", () => {
     });
   });
 
-  it("refuses a bulk action's row", async () => {
+  it("refuses a bulk action's item", async () => {
     await expectDoorRefuses(async (writer) => {
       const tag = nextKey();
       await fileOf(writer, PENDING, { tags: [tag] });

@@ -493,7 +493,7 @@ async function subscribe(
   return { id: created.data.id, secret: created.data.secret };
 }
 
-/** The newest delivery row of a subscription, once `settled` says it is. */
+/** The newest delivery of a subscription, once `settled` says it is. */
 async function deliveryOf(
   webhookId: string,
   settled: (row: WebhookDelivery) => boolean,
@@ -700,7 +700,7 @@ describe("outbound webhook delivery", () => {
       }
 
       // The retried two are attempted again, and the run that does so would
-      // have picked up any other row still pending.
+      // have picked up any other delivery still pending.
       await waitForRetries(
         () =>
           hook.attempts("408").length >= 2 && hook.attempts("429").length >= 2,
@@ -792,7 +792,7 @@ describe("outbound webhook delivery", () => {
       );
 
       // Past the wait that made each of them due, with the run that retries
-      // the untouched subscription a witness that a due row is attempted.
+      // the untouched subscription a witness that a due delivery is attempted.
       const lastFirst = Math.max(
         ...["repointed", "off", "deleted", "control"].map(
           (label) => hook.attempts(label)[0]!.at,
@@ -1190,7 +1190,7 @@ describe("outbound webhook delivery", () => {
     }
   });
 
-  it("delivers the marks of a stream frame, naming another row only to an owner who may read its type", async () => {
+  it("delivers the marks of a stream frame, naming another item only to an owner who may read its type", async () => {
     const owner = await keyWith("marks-notes-owner", {
       type_permissions: { "core.note": "read" },
     });
@@ -1256,7 +1256,7 @@ describe("outbound webhook delivery", () => {
       );
     }
 
-    // An owner that reads every type is told which row each mark names.
+    // An owner that reads every type is told which item each mark names.
     for (const eventType of ["item.deleted", "item.purged"]) {
       const frames = framesAt("marks-full", eventType, child);
       expect(frames.length, eventType).toBeGreaterThan(0);
@@ -1268,8 +1268,8 @@ describe("outbound webhook delivery", () => {
     expect(restoredWith("marks-full", child)).toEqual([root]);
     expect(restoredWith("marks-full", root)).toEqual([undefined]);
 
-    // An owner that may not read tasks is told a cascade took the row, and
-    // not which row.
+    // An owner that may not read tasks is told a cascade took the item, and
+    // not which item.
     for (const eventType of ["item.deleted", "item.purged"]) {
       const frames = framesAt("marks-notes", eventType, child);
       expect(frames.length, eventType).toBeGreaterThan(0);
@@ -1918,7 +1918,7 @@ describe("outbound webhook delivery", () => {
         );
         await deliveryOf(control.id, (r) => r.attempt === 1);
         expect(pending).toMatchObject({ status: "pending", status_code: 500 });
-        // The witness: the pending attempt carried the hidden source's row.
+        // The witness: the pending attempt carried the hidden source's item.
         expect(hook.attempts("narrowed-source")[0]!.body).toContain(before);
 
         const update = await client.updateKey(owner.id, {

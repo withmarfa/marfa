@@ -439,7 +439,7 @@ describe("metadata extensions", () => {
       const before = await client.getItem(target.id);
       expect(before.ok).toBe(true);
 
-      // What the item doors answer this key for the same row.
+      // What the item doors answer this key for the same item.
       const itemRead = await writer.getItem(target.id);
       expect(itemRead.status).toBe(404);
       expect(itemRead.error?.error.code).toBe("item_not_found");
@@ -465,7 +465,7 @@ describe("metadata extensions", () => {
         expect(r.error?.error.code).toBe(itemWrite.error?.error.code);
       }
 
-      // A refusal after the write would still have moved the row.
+      // A refusal after the write would still have moved the item.
       const after = await client.getItem(target.id);
       expect(after.data.item.updated_at).toBe(before.data.item.updated_at);
       const held = await client.listItemExtensions(target.id);
@@ -519,7 +519,7 @@ describe("metadata extensions", () => {
       apiKey: keyResp.data.key,
     });
 
-    // The witness: the read doors admit the key on this row.
+    // The witness: the read doors admit the key on this item.
     const read = await reader.getItemExtension(noteId, ns);
     expect(read.status).toBe(200);
     expect(read.data.data).toEqual({ kept: 1 });

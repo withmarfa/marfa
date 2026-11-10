@@ -1080,7 +1080,7 @@ pub struct QueuedWrite {
     pub idempotency_key: String,
     /// The writes this one cannot go without, and is refused with.
     pub depends_on: Vec<String>,
-    /// The write ahead of this one to the same row or edge, which it goes
+    /// The write ahead of this one to the same item or edge, which it goes
     /// out after and is not refused with.
     pub follows: Option<String>,
     /// None while the server has not answered it.

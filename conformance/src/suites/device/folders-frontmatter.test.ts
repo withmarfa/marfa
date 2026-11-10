@@ -44,7 +44,7 @@ import type {
   Responder,
   ScriptedServer,
 } from "../../device/scripted-server.js";
-import type { DoorRow } from "../../device/folder-door.js";
+import type { DoorItem } from "../../device/folder-door.js";
 import type {
   WireEdgeOptions,
   WireItemOptions,
@@ -75,7 +75,7 @@ afterEach(async () => {
   second = undefined;
 });
 
-/** A row the hydration serves, with the edges it draws hydrated onto it. */
+/** An item the hydration serves, with the edges it draws hydrated onto it. */
 function edgeRows(
   items: WireItemOptions[],
   edges: WireEdgeOptions[],
@@ -113,7 +113,7 @@ function titled(
 }
 
 /** A folder whose server holds `items` and `edges` wherever the real one
- *  would serve them: on the source's row, listed whole, and at the edge door. */
+ *  would serve them: on the source's item, listed whole, and at the edge door. */
 async function edgeHarness(
   label: string,
   items: WireItemOptions[],
@@ -140,7 +140,7 @@ async function edgeHarness(
     edges.filter((edge) => edge.edge_type === type);
   const made = await folderHarness(label, {
     settings: options.settings,
-    rows: edgeRows(items, edges, options.tags),
+    items: edgeRows(items, edges, options.tags),
     edges: {
       "parent-of": whole("parent-of"),
       "attached-to": whole("attached-to"),
@@ -1156,7 +1156,7 @@ describe("edges in frontmatter", () => {
       },
     });
     harness = await folderHarness("folder-edge-registered", {
-      rows: edgeRows([titled(alpha, "Alpha"), titled(beta, "Beta")], []),
+      items: edgeRows([titled(alpha, "Alpha"), titled(beta, "Beta")], []),
       edgeTypes: catalog,
     });
     const door = new EdgeDoor();
@@ -1218,7 +1218,7 @@ describe("edges in frontmatter", () => {
       },
     });
     harness = await folderHarness("folder-edge-refused-retried", {
-      rows: edgeRows([titled(alpha, "Alpha"), titled(beta, "Beta")], []),
+      items: edgeRows([titled(alpha, "Alpha"), titled(beta, "Beta")], []),
       edgeTypes: catalog,
     });
     const door = new EdgeDoor();
@@ -1266,7 +1266,7 @@ describe("edges in frontmatter", () => {
   it("leaves the names a lookup refused as a whole carried waiting, says why once, and asks for them again at the next push", async () => {
     const back = "01a00000-0000-7000-8000-00000000e10b";
     harness = await folderHarness("folder-edge-lookup-fails", {
-      rows: edgeRows(
+      items: edgeRows(
         [titled(alpha, "Alpha"), titled(back, "Back\\", "core.bookmark")],
         [],
       ),
@@ -1327,7 +1327,7 @@ describe("edges in frontmatter", () => {
       edge_type: "parent-of",
     };
     harness = await folderHarness("folder-edge-unshown", {
-      rows: edgeRows(
+      items: edgeRows(
         [titled(project, "One"), titled(other, "Two"), titled(child, "Child")],
         [],
       ),
@@ -1376,7 +1376,7 @@ describe("edges in frontmatter", () => {
       edge_type: "parent-of",
     };
     harness = await folderHarness("folder-edge-held-unshown", {
-      rows: edgeRows([titled(project, "One"), titled(child, "Child")], []),
+      items: edgeRows([titled(project, "One"), titled(child, "Child")], []),
       events: [
         (): Answer =>
           copyReplay("2", [
@@ -1955,7 +1955,7 @@ describe("edges in frontmatter", () => {
       ),
     );
     harness = await folderHarness("folder-edge-common", {
-      rows: edgeRows([titled(alpha, "Alpha"), ...common], []),
+      items: edgeRows([titled(alpha, "Alpha"), ...common], []),
     });
     scriptFolderWrites(harness);
     put(harness, "New.md", '---\nabout: "[[Common]]"\n---\nso common\n');
@@ -2158,7 +2158,7 @@ describe("edges in frontmatter", () => {
     ).toEqual(["edges", "refused"]);
   });
 
-  it("holds a pin while a line names its row, and lets go only a pin it made", async () => {
+  it("holds a pin while a line names its item, and lets go only a pin it made", async () => {
     const kept = "01a00000-0000-7000-8000-00000000e110";
     const manual = "01a00000-0000-7000-8000-00000000e111";
     let archived: Record<string, unknown> = {};
@@ -2811,7 +2811,7 @@ describe("embedded files", () => {
 
   /**
    * A folder whose server already places `items` where another machine put
-   * them, each row carrying its placement and the attachments and references
+   * them, each item carrying its placement and the attachments and references
    * it draws.
    */
   async function placedEmbeds(
@@ -2824,7 +2824,7 @@ describe("embedded files", () => {
     harness: FolderHarness;
     door: EdgeDoor;
     placements: Record<string, string>;
-    /** The answer a read of each row by id is given in place of the door's. */
+    /** The answer a read of each item by id is given in place of the door's. */
     unread: Map<string, Answer>;
   }> {
     const door = new EdgeDoor();
@@ -2836,7 +2836,7 @@ describe("embedded files", () => {
     }
     const made = await folderHarness(label, {
       settings: { query: { types } },
-      rows,
+      items: rows,
       edges: {
         "attached-to": edges.filter((edge) => edge.edge_type === "attached-to"),
         references: edges.filter((edge) => edge.edge_type === "references"),
@@ -5602,7 +5602,7 @@ describe("what frontmatter says", () => {
         query: { types: ["core.note", "core.bookmark"] },
         defaults: { tags: ["inbox"] },
       },
-      rows: {
+      items: {
         "core.note": [
           {
             item: { id, properties: { title: "Held", body: "held\n" } },
@@ -5797,7 +5797,7 @@ describe("what frontmatter says", () => {
   it("clears a property whose line was taken out of a versioned file", async () => {
     const id = "01a00000-0000-7000-8000-0000000013b1";
     harness = await folderHarness("folder-clears-a-line", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -5841,7 +5841,7 @@ describe("what frontmatter says", () => {
   it("merges an edit from a file with no version line", async () => {
     const id = "01a00000-0000-7000-8000-0000000013c1";
     harness = await folderHarness("folder-merges-a-lineless-file", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -5887,7 +5887,7 @@ describe("what frontmatter says", () => {
     harness = await folderHarness("folder-display-hints", {
       settings: { query: { types: ["core.event", "user.passage"] } },
       catalog: typeCatalog([PASSAGE_TYPE]),
-      rows: {
+      items: {
         "core.event": [
           {
             item: {
@@ -6022,7 +6022,7 @@ describe("what frontmatter says", () => {
           next_cursor: null,
         },
       },
-      rows: {
+      items: {
         "user.ticket": [
           {
             item: {
@@ -6069,7 +6069,7 @@ describe("what frontmatter says", () => {
     const id = "01a00000-0000-7000-8000-0000000013f1";
     harness = await folderHarness("folder-retype", {
       settings: { query: { types: ["core.note", "core.bookmark"] } },
-      rows: {
+      items: {
         "core.note": [
           { item: { id, properties: { title: "Link", body: "a page\n" } } },
         ],
@@ -6105,7 +6105,7 @@ describe("what frontmatter says", () => {
     const shelving = "01a00000-0000-7000-8000-000000001403";
     harness = await folderHarness("folder-retype-refused", {
       settings: { query: { types: ["core.note", "core.bookmark"] } },
-      rows: {
+      items: {
         "core.note": [
           { item: { id, properties: { title: "Link", body: "a page\n" } } },
           {
@@ -6198,7 +6198,7 @@ describe("what frontmatter says", () => {
   it("holds a file whose frontmatter does not parse", async () => {
     const id = "01a00000-0000-7000-8000-000000001411";
     harness = await folderHarness("folder-unreadable-frontmatter", {
-      rows: {
+      items: {
         "core.note": [
           { item: { id, properties: { title: "Held", body: "as it was\n" } } },
         ],
@@ -6310,7 +6310,7 @@ describe("what frontmatter says", () => {
     };
     harness = await folderHarness("folder-own-fields-stale", {
       settings: { query: { types: ["core.note", "core.bookmark"] } },
-      rows: {
+      items: {
         "core.note": [
           {
             item: { id, properties: { title: "Link", body: "as read\n" } },
@@ -6379,7 +6379,7 @@ describe("what frontmatter says", () => {
     const archived = "01a00000-0000-7000-8000-000000001421";
     const active = "01a00000-0000-7000-8000-000000001422";
     harness = await folderHarness("folder-archived-state", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -6446,7 +6446,7 @@ describe("what frontmatter says", () => {
   it("keeps every save of three scanned before one drain", async () => {
     const id = "01a00000-0000-7000-8000-000000001441";
     harness = await folderHarness("folder-three-saves", {
-      rows: {
+      items: {
         "core.note": [
           { item: { id, properties: { title: "Three", body: "one\n" } } },
         ],
@@ -6485,7 +6485,7 @@ describe("what frontmatter says", () => {
     const id = "01a00000-0000-7000-8000-000000001451";
     const edges = new EdgeDoor();
     harness = await folderHarness("folder-old-buffer-tags", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: { id, properties: { title: "Kept", body: "as read\n" } },
@@ -6549,7 +6549,7 @@ describe("what frontmatter says", () => {
       settings: {
         query: { types: ["core.note", "core.bookmark", "core.event"] },
       },
-      rows: {
+      items: {
         "core.bookmark": [
           {
             item: {
@@ -6628,7 +6628,7 @@ describe("what frontmatter says", () => {
     const named = "01a00000-0000-7000-8000-000000001482";
     harness = await folderHarness("folder-own-lines-unwritten", {
       settings: { query: { types: ["core.note", "core.bookmark"] } },
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -6676,7 +6676,7 @@ describe("what frontmatter says", () => {
     const shelved = "01a00000-0000-7000-8000-0000000014d1";
     const trashing = "01a00000-0000-7000-8000-0000000014d2";
     harness = await folderHarness("folder-own-forms", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -6898,7 +6898,7 @@ describe("what frontmatter says", () => {
         properties: { title: "Never", body: "n\n" },
       };
       harness = await folderHarness("folder-occurred-at-pull", {
-        rows: { "core.note": [{ item: set }, { item: never }] },
+        items: { "core.note": [{ item: set }, { item: never }] },
       });
       scriptFolderWrites(harness);
       expect((await harness.folder.pull()).ok).toBe(true);
@@ -6926,7 +6926,7 @@ describe("what frontmatter says", () => {
         properties: { title: "Moving", body: "m\n" },
       };
       harness = await folderHarness("folder-occurred-at-follows", {
-        rows: { "core.note": [{ item }] },
+        items: { "core.note": [{ item }] },
         events: [
           copyReplay("2", [
             copyItemEvent(
@@ -7032,7 +7032,7 @@ describe("what frontmatter says", () => {
         properties: { title: "Behind", body: "b\n" },
       };
       harness = await folderHarness("folder-occurred-at-behind", {
-        rows: { "core.note": [{ item }] },
+        items: { "core.note": [{ item }] },
         events: [
           copyReplay("2", [
             copyItemEvent(
@@ -7075,7 +7075,7 @@ describe("what frontmatter says", () => {
   it("sends nothing for a save that only reformats the frontmatter", async () => {
     const id = "01a00000-0000-7000-8000-0000000014e1";
     harness = await folderHarness("folder-reformat", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: { id, properties: { title: "T", body: "b\n", status: "s" } },
@@ -7112,7 +7112,7 @@ describe("what frontmatter says", () => {
   it("sends a tag the person adds and then takes out again at one version", async () => {
     const id = "01a00000-0000-7000-8000-0000000014f1";
     harness = await folderHarness("folder-tag-add-remove", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: { id, properties: { title: "T", body: "b\n" } },
@@ -7143,7 +7143,7 @@ describe("what frontmatter says", () => {
     const id = "01a00000-0000-7000-8000-000000001501";
     const edges = new EdgeDoor();
     harness = await folderHarness("folder-restore-elsewhere", {
-      rows: {
+      items: {
         "core.note": [
           { item: { id, properties: { title: "T", body: "as read\n" } } },
         ],
@@ -7185,7 +7185,7 @@ describe("what frontmatter says", () => {
     const id = "01a00000-0000-7000-8000-000000001511";
     const edges = new EdgeDoor();
     harness = await folderHarness("folder-many-tag-writes", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: { id, properties: { title: "T", body: "as read\n" } },
@@ -7233,7 +7233,7 @@ describe("what frontmatter says", () => {
     const edges = new EdgeDoor();
     harness = await folderHarness("folder-quoted-version", {
       settings: { query: { types: ["core.note", "core.bookmark"] } },
-      rows: {
+      items: {
         "core.note": [
           {
             item: { id: quoted, properties: { title: "Q", body: "as read\n" } },
@@ -7326,7 +7326,7 @@ describe("what frontmatter says", () => {
     const id = "01a00000-0000-7000-8000-000000001531";
     harness = await folderHarness("folder-refused-then-landed", {
       settings: { query: { types: ["core.note", "core.bookmark"] } },
-      rows: {
+      items: {
         "core.note": [
           { item: { id, properties: { title: "T", body: "as read\n" } } },
         ],
@@ -7382,7 +7382,7 @@ describe("what frontmatter says", () => {
     ): Promise<{ id: string; bad: string; door: FolderDoor }> {
       const id = "01a00000-0000-7000-8000-000000001541";
       harness = await folderHarness(label, {
-        rows: {
+        items: {
           "core.note": [
             {
               item: {
@@ -7460,7 +7460,7 @@ describe("what frontmatter says", () => {
     it("through a later save that only edits the body, where a tag was refused", async () => {
       const id = "01a00000-0000-7000-8000-000000001542";
       harness = await folderHarness("folder-refused-tag-then-body", {
-        rows: {
+        items: {
           "core.note": [
             {
               item: { id, properties: { title: "T", body: "as read\n" } },
@@ -7513,7 +7513,7 @@ describe("what frontmatter says", () => {
   it("sends a mended tag from a file whose edit landed beside the refused one", async () => {
     const id = "01a00000-0000-7000-8000-000000001551";
     harness = await folderHarness("folder-refused-tag-mended", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: { id, properties: { title: "T", body: "as read\n" } },
@@ -7552,7 +7552,7 @@ describe("what frontmatter says", () => {
   it("sends a save right after its own edit lands as current", async () => {
     const id = "01a00000-0000-7000-8000-000000001561";
     harness = await folderHarness("folder-save-after-landing", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -7587,7 +7587,7 @@ describe("what frontmatter says", () => {
     const id = "01a00000-0000-7000-8000-000000001571";
     const edges = new EdgeDoor();
     harness = await folderHarness("folder-invisible-step", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: { id, properties: { title: "T", body: "as read\n" } },
@@ -7628,7 +7628,7 @@ describe("what frontmatter says", () => {
     const id = "01a00000-0000-7000-8000-000000001581";
     const edges = new EdgeDoor();
     harness = await folderHarness("folder-restored-single-buffer", {
-      rows: {
+      items: {
         "core.note": [
           { item: { id, properties: { title: "T", body: "as read\n" } } },
         ],
@@ -7662,7 +7662,7 @@ describe("what frontmatter says", () => {
   it("keeps an unreadable file's item when it moves with no identity", async () => {
     const id = "01a00000-0000-7000-8000-0000000014a1";
     harness = await folderHarness("folder-unreadable-no-identity", {
-      rows: {
+      items: {
         "core.note": [
           { item: { id, properties: { title: "Held", body: "as it was\n" } } },
         ],
@@ -7704,7 +7704,7 @@ describe("what frontmatter says", () => {
           next_cursor: null,
         },
       },
-      rows: {
+      items: {
         "core.note": [
           { item: { id, properties: { title: "Typed", body: "text\n" } } },
           {
@@ -7791,7 +7791,7 @@ describe("what frontmatter says", () => {
      *  from a file whose type line is an Obsidian-style word. */
     async function madeFromForeign(
       label: string,
-    ): Promise<{ id: string; rows: Map<string, DoorRow> }> {
+    ): Promise<{ id: string; rows: Map<string, DoorItem> }> {
       harness = await folderHarness(label, {
         settings: { query: { types: ["core.note", "core.bookmark"] } },
       });
@@ -7857,7 +7857,7 @@ describe("what frontmatter says", () => {
       const row = rows.get(id)!;
       second = await folderHarness("folder-type-foreign-second", {
         settings: { query: { types: ["core.note", "core.bookmark"] } },
-        rows: {
+        items: {
           "core.note": [
             {
               item: {
@@ -7927,7 +7927,7 @@ describe("what frontmatter says", () => {
       const id = "01a00000-0000-7000-8000-0000000099f1";
       harness = await folderHarness("folder-type-foreign-over-app", {
         settings: { query: { types: ["core.note", "core.bookmark"] } },
-        rows: {
+        items: {
           "core.note": [
             {
               item: {
@@ -8059,7 +8059,7 @@ describe("what frontmatter says", () => {
     const versioned = "01a00000-0000-7000-8000-0000000014c1";
     const lineless = "01a00000-0000-7000-8000-0000000014c2";
     harness = await folderHarness("folder-missing-tags-line", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: { id: versioned, properties: { title: "V", body: "v\n" } },

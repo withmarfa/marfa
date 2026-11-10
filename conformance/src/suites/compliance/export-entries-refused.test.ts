@@ -7,19 +7,19 @@ import {
 } from "../../utils/fresh-server.js";
 
 /**
- * An archive export of a row a restore would refuse. A replacement of a type
- * is allowed to leave the rows already stored under it as they were, and one
- * that makes a type an event leaves a row whose rule no calendar read can
- * unfold: the way to make such a row through the HTTP API alone. The shape of
- * a type is no such way, because a restore does not hold a row to it
- * (`search-and-filters/restore-rows-shape-free`).
+ * An archive export of an item a restore would refuse. A replacement of a type
+ * is allowed to leave the items already stored under it as they were, and one
+ * that makes a type an event leaves an item whose rule no calendar read can
+ * unfold: the way to make such an item through the HTTP API alone. The shape of
+ * a type is no such way, because a restore does not hold an item to it
+ * (`search-and-filters/restore-items-shape-free`).
  */
 let server: FreshServer | undefined;
 let working: MarfaClient;
 let owner: MarfaClient;
 
 beforeAll(async () => {
-  server = await bootFreshServer("export-rows-refused");
+  server = await bootFreshServer("export-entries-refused");
   working = new MarfaClient({
     baseUrl: server.apiUrl,
     apiKey: server.workingKey,
@@ -34,7 +34,7 @@ afterAll(async () => {
   await server?.stop();
 }, FRESH_SERVER_TIMEOUT_MS);
 
-const TYPE = "conformance.refused-row";
+const TYPE = "conformance.refused-item";
 
 async function archive(): Promise<Response> {
   return fetch(
@@ -43,8 +43,8 @@ async function archive(): Promise<Response> {
   );
 }
 
-describe("an archive export of a row a restore would refuse", () => {
-  it("answers 409 naming the row, and exports once the row is corrected", async () => {
+describe("an archive export of an item a restore would refuse", () => {
+  it("answers 409 naming the entry, and exports once the entry is corrected", async () => {
     const fields = {
       title: { type: "string" as const, required: true },
       starts_at: { type: "string" as const, format: "datetime" as const },
@@ -85,9 +85,9 @@ describe("an archive export of a row a restore would refuse", () => {
     expect(refused.headers.get("content-type")).toContain("application/json");
     expect(await refused.json()).toMatchObject({
       error: {
-        code: "export_rows_unrestorable",
+        code: "export_entry_unrestorable",
         details: {
-          row: {
+          entry: {
             kind: "item",
             id,
             type: TYPE,

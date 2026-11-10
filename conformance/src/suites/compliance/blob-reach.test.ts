@@ -585,7 +585,7 @@ describe("who may read and upload a blob", () => {
       expect(readEntry(archive.data, `blobs/${hash}`)).not.toBeNull();
     }
 
-    // Take the rows away, which withdraws both reaches, and restore them.
+    // Take the items away, which withdraws both reaches, and restore them.
     expect((await client.deleteEdge(edge.data.edge.id)).ok).toBe(true);
     expect((await client.deleteItemExtension(source.id, namespace)).ok).toBe(
       true,
@@ -617,7 +617,7 @@ describe("who may read and upload a blob", () => {
     );
   });
 
-  it("restores a row's reach only for the digests its archive line says lent", async () => {
+  it("restores an item's reach only for the digests its archive line says lent", async () => {
     const lent = new TextEncoder().encode(`restored and lent ${ctx.runId}`);
     const unlent = new TextEncoder().encode(
       `restored, lent nothing ${ctx.runId}`,
@@ -680,7 +680,7 @@ describe("who may read and upload a blob", () => {
     expect((await operator.downloadBlob(sha256(unlent))).status).toBe(200);
 
     // The one repair: the owner sends the bytes, drops the digest from the
-    // row, and writes it again. Rewriting it in place changes nothing.
+    // item, and writes it again. Rewriting it in place changes nothing.
     expect((await client.uploadBlob(unlent, "text/plain")).status).toBe(201);
     const row = await client.getItem(lines[1]!.id);
     expect(row.ok, JSON.stringify(row.error)).toBe(true);
@@ -983,7 +983,7 @@ describe("who may read and upload a blob", () => {
 
 /**
  * A door that writes properties, named by what it does once it is handed a
- * writer: it prepares whatever row that writer needs, and answers the write
+ * writer: it prepares whatever item that writer needs, and answers the write
  * that names a digest through the door.
  */
 type Door = (writer: MarfaClient) => Promise<(hash: string) => Promise<void>>;
@@ -1042,7 +1042,7 @@ async function expectDoorCredits(
   await nameAsSender(hash);
   expect(await readingDoors(reader.client, hash)).toEqual(SERVED);
 
-  // Rows these keys wrote, a keep-both sibling and a bulk create among them,
+  // Items these keys wrote, a keep-both sibling and a bulk create among them,
   // are cleaned up with the file's.
   for (const writer of [sender, stranger]) {
     const own = await writer.client.getCurrentKey();
@@ -1580,7 +1580,7 @@ describe("which write that names a digest lends it", () => {
     expect(await readingDoors(reader.client, later)).toEqual(SERVED);
   });
 
-  it("keeps a minted link working after its key is narrowed and after the rows that referenced the bytes are gone", async () => {
+  it("keeps a minted link working after its key is narrowed and after the items that referenced the bytes are gone", async () => {
     const hash = await upload("bytes behind a link outliving its reach");
     const id = await fileNaming(hash);
     const reader = await keyHolding({ "core.file": "read" });

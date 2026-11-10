@@ -37,12 +37,12 @@ import { waitFor } from "../../utils/wait.js";
  * What a restore leaves when it does not finish, and what other requests see
  * while it writes, on a server of the fixture's own. The fixtures stop a
  * restore where the target interface's faults say (`conformance/README.md`,
- * "Faults"): `hold:restore:before-commit` makes it wait with every row
+ * "Faults"): `hold:restore:before-commit` makes it wait with every item
  * written and nothing committed, `fail:audit`, `fail:commit` and
  * `fail:commit-full` fail the write that would commit it, and a `SIGKILL`
  * while it waits ends the process.
  *
- * Each case restores an archive of its own, so the rows, types, blobs and
+ * Each case restores an archive of its own, so the items, types, blobs and
  * events of one never stand for another's.
  */
 let server: FreshServer;
@@ -83,7 +83,7 @@ const edgeTypeOf = (id: string) => ({
   written_at: "source",
 });
 
-/** What an archive carries: a type, an edge type, a blob, two rows and an edge. */
+/** What an archive carries: a type, an edge type, a blob, two items and an edge. */
 interface Carried {
   a: string;
   b: string;
@@ -210,7 +210,7 @@ function edgeIdOf(event: SseEvent): string | undefined {
 
 /**
  * The log from `eventId` to a write made now holds no event of the restore's
- * rows or edge. The sentinel's own event settles the absence.
+ * items or edge. The sentinel's own event settles the absence.
  */
 async function expectNoEventsOf(rows: Carried, eventId: string): Promise<void> {
   await withStream(
@@ -289,7 +289,7 @@ describe("a restore that does not finish", () => {
     { fault: "fail:commit-full=restore_archive", status: 507 },
     { fault: "fail:blob-write", status: 507 },
   ])(
-    "leaves no row, type, edge type, event or audit record when a write fails ($fault), the next blob-integrity run removes the bytes it placed, and it restores whole when tried again",
+    "leaves no item, type, edge type, event or audit record when a write fails ($fault), the next blob-integrity run removes the bytes it placed, and it restores whole when tried again",
     async ({ fault, status }) => {
       const rows = carrying();
       const eventId = await eventCursor();
@@ -318,7 +318,7 @@ describe("a restore that does not finish", () => {
     },
   );
 
-  it("leaves no row, type, edge type, event or audit record when the process stops while it writes, and the next copy cleanup removes the bytes it placed", async () => {
+  it("leaves no item, type, edge type, event or audit record when the process stops while it writes, and the next copy cleanup removes the bytes it placed", async () => {
     const rows = carrying();
     const eventId = await eventCursor();
     const since = new Date().toISOString();
@@ -331,7 +331,7 @@ describe("a restore that does not finish", () => {
       );
     await server.waitForHold("hold:restore:before-commit");
     // The witness that there is something to leave: the bytes are in place
-    // before the rows are committed.
+    // before the items are committed.
     expect(await diskHolds(server.controlSocket, rows.hash)).toBe(true);
 
     await server.restart({ signal: "SIGKILL" });
@@ -341,7 +341,7 @@ describe("a restore that does not finish", () => {
 
     await expectNothingOf(rows, since);
     await expectNoEventsOf(rows, eventId);
-    // No row names the bytes, so the cleanup of the next run removes them.
+    // No item names the bytes, so the cleanup of the next run removes them.
     await runJob(operator, "blob-integrity");
     expect(await diskHolds(server.controlSocket, rows.hash)).toBe(false);
     expect(await spooled()).toEqual([]);
@@ -353,7 +353,7 @@ describe("a restore that does not finish", () => {
 });
 
 describe("a restore that is still writing", () => {
-  it("shows other requests none of its rows, registrations, blobs or events until it commits", async () => {
+  it("shows other requests none of its items, registrations, blobs or events until it commits", async () => {
     const rows = carrying();
     const since = new Date().toISOString();
     await withStream(server.apiUrl, server.workingKey, {}, async (stream) => {
@@ -365,7 +365,7 @@ describe("a restore that is still writing", () => {
       const restoring = ownerClient().restoreArchive(rows.archive);
       await server.waitForHold("hold:restore:before-commit");
 
-      // Every row is written, and the bytes are in place, and none of it shows.
+      // Every item is written, and the bytes are in place, and none of it shows.
       expect(await diskHolds(server.controlSocket, rows.hash)).toBe(true);
       await expectNothingOf(rows, since);
       const listed = await working.listItems({ source: rows.source });
@@ -472,10 +472,10 @@ describe("a writer while a restore writes", () => {
 });
 
 describe("a restore that does not commit and removes the bytes it placed", () => {
-  it("keeps the bytes a committed row names, and removes those no row names", async () => {
-    // A blob the instance holds a row for whose bytes are gone from the disk:
-    // the restore brings them back, and the row is what names them.
-    const kept = new TextEncoder().encode(`named by a row, ${uuidv7()}`);
+  it("keeps the bytes a committed item names, and removes those no item names", async () => {
+    // A blob the instance holds an item for whose bytes are gone from the disk:
+    // the restore brings them back, and the item is what names them.
+    const kept = new TextEncoder().encode(`named by an item, ${uuidv7()}`);
     const keptHash = blobHash(kept);
     const upload = await working.uploadBlob(kept, "application/octet-stream");
     expect(upload.status, JSON.stringify(upload.error)).toBe(201);
@@ -489,7 +489,7 @@ describe("a restore that does not commit and removes the bytes it placed", () =>
     expect(refused.status, JSON.stringify(refused.error)).toBe(500);
 
     // The witness that bytes are taken back: the restore's own are, by the
-    // next copy cleanup, which leaves those a committed row names.
+    // next copy cleanup, which leaves those a committed item names.
     await runJob(operator, "blob-integrity");
     expect(await diskHolds(server.controlSocket, rows.hash)).toBe(false);
     expect(await diskHolds(server.controlSocket, keptHash)).toBe(true);

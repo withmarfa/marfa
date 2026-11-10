@@ -701,7 +701,7 @@ describe("filtering by status_group", () => {
       expect(created.status, JSON.stringify(created.error)).toBe(201);
       made[name] = created.data.item.id;
     }
-    // The type stops declaring `waiting`; the row keeps the word.
+    // The type stops declaring `waiting`; the item keeps the word.
     const narrowed = await client.replaceType(parent, {
       id: parent,
       fields: {

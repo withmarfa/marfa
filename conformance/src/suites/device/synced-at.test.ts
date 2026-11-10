@@ -23,7 +23,7 @@ import type { DeviceUnderTest } from "../../device/protocol.js";
 /**
  * `synced_at` is what an app shows as "updated 5 minutes ago" or "offline
  * since 10:42". A stamp moved by a pull that failed tells a person their
- * rows are current when they are not, and one lost on reopen tells them the
+ * items are current when they are not, and one lost on reopen tells them the
  * copy never synced.
  */
 
@@ -70,7 +70,7 @@ function scriptPulls(server: Harness["server"], ...replays: Answer[]): void {
   let asked = 0;
   scriptHydration(server, {
     head: "10",
-    rows: { "core.note": [{ item: { id: "n1" } }] },
+    items: { "core.note": [{ item: { id: "n1" } }] },
     replay: () => {
       asked++;
       // The hydration's own replay comes first.
@@ -319,7 +319,7 @@ describe("the time a copy last synced", () => {
       head: "10",
       pageSize: 1,
       drop: () => cut,
-      rows: {
+      items: {
         "core.note": [{ item: { id: "n1" } }],
         "core.bookmark": [
           { item: { id: "b1", type: "core.bookmark" } },

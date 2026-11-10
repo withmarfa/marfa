@@ -2684,7 +2684,7 @@ describe("the contract the working copy was built for", () => {
     const { server: scripted, device } = harness;
     scriptHydration(scripted, {
       head: "10",
-      rows: { "core.note": [{ item: { id: "n1" } }] },
+      items: { "core.note": [{ item: { id: "n1" } }] },
     });
     scripted.contract = other;
     const refused = await device.hydrate(["core.note"], "library");
@@ -2705,7 +2705,7 @@ describe("the contract the working copy was built for", () => {
     expect(status.ok && status.value.hydration).toBe("never");
 
     // The witness: the same script on the core's own contract hydrates, and
-    // the row is held.
+    // the item is held.
     scripted.contract = String(builtFor);
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     expect((await device.get("n1")).ok).toBe(true);
@@ -2897,21 +2897,21 @@ describe("the contract the working copy was built for", () => {
     expect(posts()).toEqual(["/blobs", "/blobs", "/items"]);
   });
 
-  it("keeps a row a 404 naming no contract says is gone, since a proxy's says nothing of the server's rows", async () => {
+  it("keeps an item a 404 naming no contract says is gone, since a proxy's says nothing of the server's items", async () => {
     const held = {
       id: "01a00000-0000-7000-8000-00000000000a",
       version: 3,
       properties: { title: "held", body: "held" },
     };
     harness = await hydratedHarness("contract-proxy-404", {
-      rows: { "core.note": [{ item: held }] },
+      items: { "core.note": [{ item: held }] },
     });
     const { server: scripted, device } = harness;
     const notFound = (contract?: null) => ({
       ...refused(404, "item_not_found", "no such item"),
       ...(contract === null ? { contract } : {}),
     });
-    // Each refused update is reconciled against the server's row: the first
+    // Each refused update is reconciled against the server's item: the first
     // read is answered by a proxy, the second by the server.
     scriptWrites(scripted, {
       update: [refused(400, "invalid_properties", "not a title")],
@@ -2928,10 +2928,10 @@ describe("the contract the working copy was built for", () => {
     expect(first.ok && first.value.verdicts[0]?.verdict).toBe("refused");
     expect(
       (await device.get(held.id)).ok,
-      "the copy forgot a row the server holds because a proxy answered 404",
+      "the copy forgot an item the server holds because a proxy answered 404",
     ).toBe(true);
 
-    // The witness: the server's own 404 is the row's absence, and the copy
+    // The witness: the server's own 404 is the item's absence, and the copy
     // forgets it.
     expect((await edit()).ok).toBe(true);
     const second = await device.drain();
@@ -2989,7 +2989,7 @@ describe("the contract the working copy was built for", () => {
       properties: { title: "held", body: "held" },
     };
     harness = await hydratedHarness("contract-proxy-refusal", {
-      rows: { "core.note": [{ item: held }] },
+      items: { "core.note": [{ item: held }] },
     });
     const { server: scripted, device } = harness;
     const unnamed = (status: number, code: string): Answer => ({
@@ -3118,7 +3118,7 @@ describe("the contract the working copy was built for", () => {
       ).toBe("unnamed_answer");
     }
 
-    // The read of the row a create landed on.
+    // The read of the item a create landed on.
     const THEIRS = "01a00000-0000-7000-8000-0000000000ca";
     const current = {
       id: THEIRS,
@@ -3164,7 +3164,7 @@ describe("the contract the working copy was built for", () => {
     ).toHaveLength(1);
   });
 
-  it("ends the pass when the read of the row a create landed on answers on another contract", async () => {
+  it("ends the pass when the read of the item a create landed on answers on another contract", async () => {
     const THEIRS = "01a00000-0000-7000-8000-0000000000c9";
     const current = {
       id: THEIRS,
@@ -3207,7 +3207,7 @@ describe("the contract the working copy was built for", () => {
     const drained = await device.drain();
     expect(
       drained.ok,
-      "a drain read a landed row on another contract and went on as though it could not read it",
+      "a drain read a landed item on another contract and went on as though it could not read it",
     ).toBe(false);
     if (!drained.ok) expect(drained.refusal.code).toBe("contract_mismatch");
     expect(
@@ -3290,7 +3290,7 @@ describe("the contract the working copy was built for", () => {
     const status = await device.status();
     expect(
       status.ok && status.value.items,
-      "a row from a page on another contract reached the copy",
+      "an item from a page on another contract reached the copy",
     ).toBe(0);
 
     // The witness: the same page on the core's own contract is applied.
@@ -3597,7 +3597,7 @@ describe("the contract the working copy was built for", () => {
       properties: { title: "held", body: "held" },
     };
     harness = await hydratedHarness("contract-reconcile", {
-      rows: { "core.note": [{ item: held }] },
+      items: { "core.note": [{ item: held }] },
     });
     const { server: scripted, device } = harness;
     const edited = await device.update(held.id, {

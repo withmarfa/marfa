@@ -8,7 +8,7 @@ import { scriptHydration, startHarness, type Harness } from "./harness.js";
  * from the copy alone as the server reads the same lists
  * (`search-and-filters/type-list` and `search-and-filters/state-list`).
  *
- * Every case seeds a row the lists leave out, so a device that ignored a list
+ * Every case seeds an item the lists leave out, so a device that ignored a list
  * and one that read only its first entry both fail.
  */
 
@@ -50,7 +50,7 @@ async function seeded(label: string): Promise<DeviceUnderTest> {
       },
     });
   });
-  scriptHydration(harness.server, { head: "10", rows });
+  scriptHydration(harness.server, { head: "10", items: rows });
   const hydrated = await harness.device.hydrate(TYPES, "library");
   expect(
     hydrated.ok,
@@ -59,7 +59,7 @@ async function seeded(label: string): Promise<DeviceUnderTest> {
   const held = await harness.device.list({ allStates: true });
   expect(
     held.ok ? held.value.map((item) => item.id).sort() : held,
-    "the copy does not hold every seeded row, so an absence below says nothing about the read",
+    "the copy does not hold every seeded item, so an absence below says nothing about the read",
   ).toEqual(ROWS.map((row) => row.id).sort());
   return harness.device;
 }
@@ -100,7 +100,7 @@ function refusedWith(outcome: Outcome<unknown>): string {
 }
 
 describe("a local read naming several types", () => {
-  it("answers the rows any type names, on a list and a search", async () => {
+  it("answers the items any type names, on a list and a search", async () => {
     const device = await seeded("read-type-list");
     // The bookmark is the witness: it is answered with no type named, so
     // its absence below is the list narrowing.
@@ -110,11 +110,11 @@ describe("a local read naming several types", () => {
     const both = ["core.note", "core.event"];
     expect(
       await listed(device, { type: both }),
-      "a list naming two types did not answer exactly the active rows of both",
+      "a list naming two types did not answer exactly the active items of both",
     ).toEqual(["live-event", "live-note"]);
     expect(
       await searched(device, { type: both }),
-      "a search naming two types did not match exactly the active rows of both",
+      "a search naming two types did not match exactly the active items of both",
     ).toEqual(["live-event", "live-note"]);
     expect(
       await listed(device, { type: ["core.event", "core.*"] }),
@@ -191,11 +191,11 @@ describe("a local read naming several types", () => {
 });
 
 describe("a local read naming several states", () => {
-  it("answers the rows in any state it names, and a search still never the bin", async () => {
+  it("answers the items in any state it names, and a search still never the bin", async () => {
     const device = await seeded("read-state-list");
     expect(
       await listed(device, { state: ["active", "archived"] }),
-      "a list naming two states did not answer exactly the rows in either",
+      "a list naming two states did not answer exactly the items in either",
     ).toEqual([
       "filed-event",
       "filed-note",
@@ -205,12 +205,12 @@ describe("a local read naming several states", () => {
     ]);
     expect(
       await listed(device, { state: ["archived", "trashed"] }),
-      "a list naming the archive and the bin did not answer exactly the rows in either",
+      "a list naming the archive and the bin did not answer exactly the items in either",
     ).toEqual(["binned-note", "filed-event", "filed-note"]);
     const found = await searched(device, { state: ["archived", "trashed"] });
     expect(
       found,
-      "a search naming the archive did not match the archived rows, so the absence of the bin below proves nothing",
+      "a search naming the archive did not match the archived items, so the absence of the bin below proves nothing",
     ).toEqual(["filed-event", "filed-note"]);
     expect(
       await listed(device, {
@@ -240,11 +240,11 @@ describe("a local read naming several states", () => {
 });
 
 describe("the limit on a local read", () => {
-  it("counts only the rows the type and state lists keep", async () => {
+  it("counts only the items the type and state lists keep", async () => {
     const device = await seeded("read-limit-after-filter");
-    // The newest row, the bookmark, is one the type list leaves out, and the
+    // The newest item, the bookmark, is one the type list leaves out, and the
     // next, the archived event, is one the state list leaves out: a limit
-    // applied before either list answers an empty page or the wrong row.
+    // applied before either list answers an empty page or the wrong item.
     const page = await device.list({
       state: ["active", "trashed"],
       type: ["core.event", "core.note"],
@@ -254,7 +254,7 @@ describe("the limit on a local read", () => {
     });
     expect(
       page.ok ? page.value.map((item) => item.id) : page,
-      "a page of one did not hold the newest row the lists keep",
+      "a page of one did not hold the newest item the lists keep",
     ).toEqual(["live-event"]);
 
     const hits = await device.search(
@@ -264,7 +264,7 @@ describe("the limit on a local read", () => {
     );
     expect(
       hits.ok ? hits.value.map((hit) => hit.item.id) : hits,
-      "a search page of one held no row",
+      "a search page of one held no item",
     ).toHaveLength(1);
     expect(["live-note", "filed-note"]).toContain(
       hits.ok ? hits.value[0]?.item.id : undefined,

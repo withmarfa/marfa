@@ -1,7 +1,7 @@
 //! A row or edge this device removed stays gone while the copy reads events
 //! from before its removal, until the event of the removal itself
 //! (`device/deleted-stays-gone`, `device/deleted-edge-stays-gone` and
-//! `device/deleted-row-edges-stay-gone`).
+//! `device/deleted-item-edges-stay-gone`).
 
 use std::path::Path;
 use std::sync::Arc;

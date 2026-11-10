@@ -10,7 +10,7 @@ import { gunzipSync, gzipSync } from "node:zlib";
  *
  * Most archive fixtures post back what `GET /export?format=archive` produced,
  * which keeps the round trip honest. A few preconditions cannot be arranged
- * that way, such as a row under a source no key may hold, a row in a state its
+ * that way, such as an item under a source no key may hold, an item in a state its
  * type's lifecycle cannot produce, or a blob larger than the request cap that
  * nothing on the instance names yet, so those archives are built here.
  *
@@ -184,7 +184,7 @@ export function archiveManifest<T = Record<string, unknown>>(
   return JSON.parse(readEntry(archive, "manifest.json") ?? "{}") as T;
 }
 
-/** One `items.ndjson.gz` line: the row, and the metadata layer beside it. */
+/** One `items.ndjson.gz` line: the item, and the metadata layer beside it. */
 export interface ArchiveItem {
   id: string;
   type: string;
@@ -241,8 +241,8 @@ export function itemsArchive(
     ),
     missing_blobs: {},
   };
-  // Each row lends what it names among the blobs carried, as an export
-  // writes a row whose writer sent the bytes.
+  // Each item lends what it names among the blobs carried, as an export
+  // writes an item whose writer sent the bytes.
   const carried = blobs.map((blob) => blob.named ?? blobHash(blob.data));
   return tar([
     {

@@ -21,7 +21,7 @@ it("returns an accepted change when its read-back fails, leaving refresh to a la
     const row = { id, type: "system.view", properties: settings };
     scriptHydration(server, {
       head: "1",
-      rows: { "system.view": [{ item: row }] },
+      items: { "system.view": [{ item: row }] },
       catalog: typeCatalog([{ id: "system.view", version: 0, fields: {} }]),
     });
     value(await device.hydrate(["system.view"], "all"));

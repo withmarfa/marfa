@@ -9,9 +9,9 @@ import {
 } from "../../utils/setup.js";
 
 /**
- * How a type map is ranked, asked of the same rows at every door that reads
+ * How a type map is ranked, asked of the same items at every door that reads
  * them: the listing, search, the tag counts and a read by id. A rule that held
- * on one door and not another would show a row in one answer and hide it in
+ * on one door and not another would show an item in one answer and hide it in
  * the next, so each case asserts all four agree as well as what they answer.
  */
 

@@ -13,8 +13,8 @@ import type { Answer } from "../../device/scripted-server.js";
 import { scriptHydration, startHarness, type Harness } from "./harness.js";
 
 /**
- * Reads of many rows in one call, and the rows changed since a cursor (the
- * device chapter's section "Reads of many rows, and what changed").
+ * Reads of many items in one call, and the items changed since a cursor (the
+ * device chapter's section "Reads of many items, and what changed").
  */
 
 let harness: Harness | undefined;
@@ -70,7 +70,7 @@ async function hydrated(
   scriptHydration(started.server, {
     head: "10",
     replay: (cursor) => replayed ?? copyReplay(cursor, []),
-    rows: { "core.note": rows },
+    items: { "core.note": rows },
     edges: { references: [ab, ba] },
   });
   const done = await started.device.hydrate(["core.note"], "library", {
@@ -103,7 +103,7 @@ describe("a read of many items by id", () => {
     const listed = value(await device.bulkGet(named));
     expect(
       listed.items.map((item) => item.id),
-      "the read answered rows out of the order named, twice, from the bin, or one the copy does not hold",
+      "the read answered items out of the order named, twice, from the bin, or one the copy does not hold",
     ).toEqual([C, A]);
     expect(listed.completeness).toBe("complete");
     // The witness: the item in the bin is held, and answered when asked for.
@@ -135,7 +135,7 @@ describe("a read of many items by id", () => {
       head: "10",
       pageSize: 1,
       drop: () => cut,
-      rows: {
+      items: {
         "core.note": [
           { item: note(A, "Note A", "") },
           { item: note(B, "Note B", "") },
@@ -148,7 +148,7 @@ describe("a read of many items by id", () => {
     expect(listed.items.map((item) => item.id)).toEqual([A]);
     expect(
       listed.completeness,
-      "a read that left out a row still to arrive did not say the copy was partial",
+      "a read that left out an item still to arrive did not say the copy was partial",
     ).toBe("partial");
     // The witness: once whole, the same read answers both, marked complete.
     cut = false;
@@ -212,7 +212,7 @@ describe("a read of edges by id", () => {
       head: "10",
       pageSize: 1,
       drop: () => cut,
-      rows: {
+      items: {
         "core.note": [
           { item: note(A, "Note A", "") },
           { item: note(B, "Note B", "") },
@@ -282,7 +282,7 @@ describe("what changed since a cursor", () => {
     const first = value(await device.changed());
     expect(
       first.everything,
-      "a read with no cursor named rows one by one",
+      "a read with no cursor named items one by one",
     ).toBe(true);
     const quiet = value(await device.changed({ since: first.cursor }));
     expect(quiet).toMatchObject({
@@ -364,7 +364,7 @@ describe("what changed since a cursor", () => {
       head: "10",
       pageSize: 1,
       drop: () => cut,
-      rows: { "core.note": rows },
+      items: { "core.note": rows },
     });
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     const since = value(await device.changed()).cursor;

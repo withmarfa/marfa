@@ -24,8 +24,8 @@ export interface Refusal {
 export type Outcome<T> =
   { ok: true; value: T } | { ok: false; refusal: Refusal };
 
-/** A `system.folder` row as a device reads it, with the settings it carries. */
-export interface FolderRow {
+/** A `system.folder` item as a device reads it, with the settings it carries. */
+export interface FolderItem {
   id: string;
   version: number;
   state: string;
@@ -93,7 +93,7 @@ export interface HydrateReport {
   /** Why an interrupted hydration was filled again from the first page
    *  rather than resumed; absent where it was resumed or nothing waited. */
   restarted?: HydrateRestart;
-  /** Whether the copy was filled again over the rows it held rather than
+  /** Whether the copy was filled again over the items it held rather than
    *  cleared first (`device/refill-in-place`). */
   in_place: boolean;
   cursor: string;
@@ -112,7 +112,7 @@ export interface HydrateReport {
 export interface CatchUpReport {
   applied: number;
   skipped: number;
-  /** Rows a read of `read_only` changed, which no event brought
+  /** Items a read of `read_only` changed, which no event brought
    *  (`device/read-only-report`). */
   read_only_held: number;
   cursor: string;
@@ -143,7 +143,7 @@ export interface Change {
 export interface FollowReport {
   applied: number;
   skipped: number;
-  /** Rows a read of `read_only` changed, which no event brought
+  /** Items a read of `read_only` changed, which no event brought
    *  (`device/read-only-report`). */
   read_only_held: number;
   cursor: string;
@@ -228,9 +228,9 @@ export interface Status {
   /** The edge types the slice holds whole. */
   slice_edge_types: string[];
   /** The slice's narrowing past its types and tier, absent where the copy
-   *  holds every row of them (`device/report-fields`). */
+   *  holds every item of them (`device/report-fields`). */
   slice_query?: SliceQuery;
-  /** The rows held by id whatever the slice says of them. */
+  /** The items held by id whatever the slice says of them. */
   pinned: string[];
   event_cursor?: string | null;
   /** The instance the copy was hydrated from, as the server's root named it. */
@@ -240,7 +240,7 @@ export interface Status {
   /** While a hydration fills the copy, the items its slice held on the
    *  server when it started, where the server counted them. */
   items_expected?: number;
-  /** While a hydration fills the copy, the rows its listings have brought,
+  /** While a hydration fills the copy, the items its listings have brought,
    *  the figure a caller sets against `items_expected`. */
   items_listed?: number;
   edges: number;
@@ -314,7 +314,7 @@ export interface EdgeType {
 /** What a pin or an unpin answers. */
 export interface PinReport {
   id: string;
-  /** Whether the row is pinned now. */
+  /** Whether the item is pinned now. */
   pinned: boolean;
   /** Whether it was pinned before this call. */
   was_pinned: boolean;
@@ -369,14 +369,14 @@ export interface QueuedWrite {
   base_version: number | null;
   idempotency_key: string;
   /** The writes this one cannot go without, by queue id: the create of a
-   *  row it names while the server has not taken it, the creates of both of
+   *  item it names while the server has not taken it, the creates of both of
    *  an edge's endpoints, the edge's own create, the upload a file item
    *  names. A refusal of one refuses this one (`queue-and-verdicts/depends-on-create` and `queue-and-verdicts/dependency-refused`). */
   depends_on: string[];
-  /** The write ahead of this one to the same row or edge, where one was
+  /** The write ahead of this one to the same item or edge, where one was
    *  still to be written when this one was queued. This one is held while
    *  that one has gone out without an answer or is held behind one that
-   *  has, and goes on any answer to it (`queue-and-verdicts/held-behind-ahead` and `queue-and-verdicts/answer-frees-follower`); a row
+   *  has, and goes on any answer to it (`queue-and-verdicts/held-behind-ahead` and `queue-and-verdicts/answer-frees-follower`); a write
    *  held with nothing it depends on still waiting is held by this. */
   follows: string | null;
   verdict: string | null;
@@ -420,7 +420,7 @@ export interface WriteRefusal {
   message: string | null;
   /** The envelope's `details.errors`. */
   fields: Array<{ field: string; message: string }>;
-  /** The row the write named is in the bin. */
+  /** The item the write named is in the bin. */
   trashed: boolean;
   /** The grant the credential lacks, where the refusal names one. */
   grant: { kind: string; name: string; level: string } | null;
@@ -441,8 +441,8 @@ export interface DrainReport {
   /** Writes the server answered this pass, whatever it answered
    *  (`queue-and-verdicts/count-answered`). */
   answered: number;
-  /** Rows it did not send because a write they depend on, or the write
-   *  ahead of them to the same row or edge, has no answer yet
+  /** Writes it did not send because a write they depend on, or the write
+   *  ahead of them to the same item or edge, has no answer yet
    *  (`queue-and-verdicts/count-held`). */
   held: number;
   /** Writes it could not deliver, each waiting for the next drain
@@ -571,19 +571,19 @@ export interface Edit {
   /** The version is one read before the version the copy holds, and the
    *  server merges the edit against it (`queue-and-verdicts/as-read-sent-on-read`). */
   asRead?: boolean;
-  /** The type to move the row to; sent as a retype. */
+  /** The type to move the item to; sent as a retype. */
   type?: string;
-  /** The tier to move the row to. */
+  /** The tier to move the item to. */
   tier?: "library" | "feed";
-  /** The row's own time. */
+  /** The item's own time. */
   occurredAt?: string;
-  /** Gives the row no time of its own again, so it is its creation time
+  /** Gives the item no time of its own again, so it is its creation time
    *  (`device/edit-occurred-at`). */
   clearOccurredAt?: boolean;
-  /** The properties are the row's whole properties, so one left out is
+  /** The properties are the item's whole properties, so one left out is
    *  cleared (`queue-and-verdicts/whole-sent-replace`). */
   replace?: boolean;
-  /** Properties to remove from the row, leaving every other
+  /** Properties to remove from the item, leaving every other
    *  (`queue-and-verdicts/clear-property-sent`). */
   clear?: string[];
 }
@@ -604,10 +604,10 @@ export interface EdgeDraft {
  *  tags, a listing-grammar expression and `beneath`, each read as the list
  *  reads it. */
 export interface SearchFilters {
-  /** One state, or several: a row in any of them matches. */
+  /** One state, or several: an item in any of them matches. */
   state?: string | string[];
   allStates?: boolean;
-  /** One type, or several: a row any of them selects matches. */
+  /** One type, or several: an item any of them selects matches. */
   type?: string | string[];
   tier?: Tier;
   tags?: string[];
@@ -622,9 +622,9 @@ export interface SearchFilters {
 }
 
 export interface ListFilters {
-  /** One type, or several: a row any of them selects matches. */
+  /** One type, or several: an item any of them selects matches. */
   type?: string | string[];
-  /** One state, or several: a row in any of them matches. */
+  /** One state, or several: an item in any of them matches. */
   state?: string | string[];
   allStates?: boolean;
   /** Exclusive lower bound on the item's own time. */
@@ -669,9 +669,9 @@ export interface DeviceUnderTest {
     tier: SliceTier,
     options?: { edgeTypes?: string[]; inPlaceOnly?: boolean },
   ): Promise<Outcome<HydrateReport>>;
-  /** Hold one row by id, whatever the slice says of it, read now. */
+  /** Hold one item by id, whatever the slice says of it, read now. */
   pin(id: string): Promise<Outcome<PinReport>>;
-  /** Stop holding a row by id; one outside the slice goes once no write to
+  /** Stop holding an item by id; one outside the slice goes once no write to
    *  it waits. */
   unpin(id: string): Promise<Outcome<PinReport>>;
   catchUp(): Promise<Outcome<CatchUpReport>>;
@@ -702,18 +702,18 @@ export interface DeviceUnderTest {
   update(id: string, edit: Edit): Promise<Outcome<QueuedWrite>>;
   /** Send what the queue holds. One pass. */
   drain(): Promise<Outcome<DrainReport>>;
-  /** Send a blocked or dead row again, under a fresh key. */
+  /** Send a blocked or dead write again, under a fresh key. */
   release(
     target: { id: string } | { reason: string },
   ): Promise<Outcome<number>>;
   /**
-   * Take a row that can never be sent out of the queue, and put the copy
-   * back to what the server holds. Answers whether the row was one a
+   * Take a write that can never be sent out of the queue, and put the copy
+   * back to what the server holds. Answers whether the write was one a
    * withdraw takes.
    */
   withdraw(id: string): Promise<Outcome<boolean>>;
   /**
-   * Clear the rows the server has answered, and say how many went. With
+   * Clear the writes the server has answered, and say how many went. With
    * `ids`, only those named, and none for an empty list.
    */
   forget(ids?: string[]): Promise<Outcome<number>>;

@@ -13,7 +13,7 @@ import { requireBinary } from "./harness.js";
 
 /**
  * The bin through a working copy (`device/bin-read`, `device/bin-read-order`, `device/bin-unheld`, `device/bin-offline`, `device/pin-trashed`,
- * `device/read-back-trashed-held`, `device/read-back-trashed-pin`, `queue-and-verdicts/refused-row-absent` and
+ * `device/read-back-trashed-held`, `device/read-back-trashed-pin`, `queue-and-verdicts/refused-item-absent` and
  * `queue-and-verdicts/restore-by-id`), against a real server and the real binary.
  * Each device command is a process of its own, so every step here is also a
  * device started again.
@@ -108,20 +108,20 @@ it("reads the server's bin a page at a time, holding nothing", async () => {
     2,
   );
   expect([...found.keys()].sort()).toEqual(rows.map((row) => row.id).sort());
-  expect(pages, "three rows came on one page of two").toBeGreaterThan(1);
+  expect(pages, "three items came on one page of two").toBeGreaterThan(1);
   for (const row of found.values()) {
     expect(row.updated_at).toBeTruthy();
     expect(row.version).toBeGreaterThan(0);
   }
   const after = value(await copy.status());
-  expect(after.items, "the bin's rows were held in the copy").toBe(
+  expect(after.items, "the bin's items were held in the copy").toBe(
     before.items,
   );
   const held = value(await copy.list({ state: "trashed", tier: "library" }));
   expect(held.map((row) => row.id)).not.toContain(rows[0]!.id);
 });
 
-it("reads the server's bin newest binned first, with when each row went there", async () => {
+it("reads the server's bin newest binned first, with when each item went there", async () => {
   // Created a, b, c and binned b, c, a, so newest binned first is a, c, b
   // where creation order is c, b, a.
   const made: string[] = [];
@@ -151,7 +151,7 @@ it("reads the server's bin newest binned first, with when each row went there", 
   for (const row of mine) expect(row.trashed_at).not.toBeNull();
 });
 
-it("refuses to pin a row in the bin, saying so", async () => {
+it("refuses to pin an item in the bin, saying so", async () => {
   const doomed = await trashedNote("pinned from the bin");
   const active = await client.createItem({
     type: "core.note",
@@ -162,11 +162,11 @@ it("refuses to pin a row in the bin, saying so", async () => {
   expect(active.ok).toBe(true);
   trackItem(ctx, active.data.item.id);
   const copy = await device("pin", "feed");
-  // The witness: a row outside the bin pins.
+  // The witness: an item outside the bin pins.
   value(await copy.pin(active.data.item.id));
 
   const refused = await copy.pin(doomed.id);
-  expect(refused.ok, "a row in the bin was pinned").toBe(false);
+  expect(refused.ok, "an item in the bin was pinned").toBe(false);
   if (!refused.ok) {
     expect(refused.refusal.code).toBe("not_found");
     expect(refused.refusal.raw).toContain("trashed");
@@ -174,7 +174,7 @@ it("refuses to pin a row in the bin, saying so", async () => {
   expect(value(await copy.status()).pinned).not.toContain(doomed.id);
 });
 
-it("refuses a pin of a row in the bin of a type the key may not read as one that is gone", async () => {
+it("refuses a pin of an item in the bin of a type the key may not read as one that is gone", async () => {
   const unread = await client.createItem({
     type: "core.task",
     source: ctx.source,
@@ -186,23 +186,23 @@ it("refuses a pin of a row in the bin of a type the key may not read as one that
   expect((await client.deleteItem(unread.data.item.id)).ok).toBe(true);
   const readable = await trashedNote("a note the key may read");
   const copy = await device("pin-unread", "feed");
-  // The witness: a row in the bin the key may read is refused as one.
+  // The witness: an item in the bin the key may read is refused as one.
   const binned = await copy.pin(readable.id);
   expect(!binned.ok && binned.refusal.raw).toContain("trashed");
 
   const refused = await copy.pin(unread.data.item.id);
-  expect(refused.ok, "a row the key may not read was pinned").toBe(false);
+  expect(refused.ok, "an item the key may not read was pinned").toBe(false);
   if (!refused.ok) {
     expect(refused.refusal.code).toBe("not_found");
     expect(
       refused.refusal.raw,
-      "the copy told a key that may not read a row that it is in the bin",
+      "the copy told a key that may not read an item that it is in the bin",
     ).not.toContain("trashed");
   }
   expect(value(await copy.status()).pinned).not.toContain(unread.data.item.id);
 });
 
-it("keeps a row it holds in the bin when a pin of it is refused", async () => {
+it("keeps an item it holds in the bin when a pin of it is refused", async () => {
   const trashed = await trashedNote("held in the bin");
   const copy = await device("pin-held", "library");
   const inBin = async () =>
@@ -213,19 +213,19 @@ it("keeps a row it holds in the bin when a pin of it is refused", async () => {
         filter: `id eq "${trashed.id}"`,
       }),
     ).map((row) => row.id);
-  // The witness: a copy of the library holds the row its slice takes, in
+  // The witness: a copy of the library holds the item its slice takes, in
   // the bin as in any other state.
   expect(await inBin()).toContain(trashed.id);
 
   const refused = await copy.pin(trashed.id);
-  expect(refused.ok, "a row in the bin was pinned").toBe(false);
+  expect(refused.ok, "an item in the bin was pinned").toBe(false);
   if (!refused.ok) {
     expect(refused.refusal.code).toBe("not_found");
     expect(refused.refusal.raw).toContain("trashed");
   }
   expect(
     await inBin(),
-    "a refused pin let go of a row the slice takes, so the copy no longer shows the bin it holds",
+    "a refused pin let go of an item the slice takes, so the copy no longer shows the bin it holds",
   ).toContain(trashed.id);
   expect(value(await copy.status()).pinned).not.toContain(trashed.id);
 });
@@ -242,7 +242,7 @@ async function heldNote(title: string) {
   return created.data.item;
 }
 
-/** The row of `id` the copy holds in the bin, if it holds one. */
+/** The item of `id` the copy holds in the bin, if it holds one. */
 async function heldInBin(copy: CliDevice, id: string): Promise<Item[]> {
   return value(
     await copy.list({
@@ -253,7 +253,7 @@ async function heldInBin(copy: CliDevice, id: string): Promise<Item[]> {
   );
 }
 
-it("keeps a row another client trashed when the read after its refused edit finds it gone by id", async () => {
+it("keeps an item another client trashed when the read after its refused edit finds it gone by id", async () => {
   const note = await heldNote("edited here, trashed there");
   const copy = await device("refused-edit", "library");
   value(
@@ -264,7 +264,7 @@ it("keeps a row another client trashed when the read after its refused edit find
   );
   expect((await client.deleteItem(note.id)).ok).toBe(true);
   value(await copy.catchUp());
-  // The witness: the catch-up brought the row into the copy's bin.
+  // The witness: the catch-up brought the item into the copy's bin.
   expect((await heldInBin(copy, note.id)).map((row) => row.id)).toEqual([
     note.id,
   ]);
@@ -275,11 +275,11 @@ it("keeps a row another client trashed when the read after its refused edit find
   ]);
   expect(
     (await heldInBin(copy, note.id)).map((row) => row.id),
-    "the read after the refusal let go of a row the server holds in the bin",
+    "the read after the refusal let go of an item the server holds in the bin",
   ).toEqual([note.id]);
 });
 
-it("keeps a row it trashed itself, held only by its pin, at the server's version once the delete is answered", async () => {
+it("keeps an item it trashed itself, held only by its pin, at the server's version once the delete is answered", async () => {
   const note = await heldNote("trashed here");
   // A copy of the feed, so only the pin holds the library's note.
   const copy = await device("own-delete", "feed");
@@ -295,22 +295,22 @@ it("keeps a row it trashed itself, held only by its pin, at the server's version
     "accepted",
   ]);
   const server = (await findInBin(copy, [note.id])).found.get(note.id);
-  expect(server, "the server's bin does not hold the row").toBeDefined();
+  expect(server, "the server's bin does not hold the item").toBeDefined();
   const held = await heldInBin(copy, note.id);
   expect(
     held.map((row) => row.id),
-    "the read after the answer let go of the row the device trashed",
+    "the read after the answer let go of the item the device trashed",
   ).toEqual([note.id]);
   expect(held[0]!.version).toBe(server!.version);
   expect(held[0]!.updated_at).toBe(server!.updated_at);
   expect(value(await copy.status()).pinned).toContain(note.id);
 
-  // Named with no version, a purge goes only to a row the copy holds.
+  // Named with no version, a purge goes only to an item the copy holds.
   expect(value(await copy.purgeItem(note.id)).purged).toBe(true);
   expect((await findInBin(copy, [note.id])).found.has(note.id)).toBe(false);
 });
 
-it("lets go of a row neither a read by id nor the bin holds after its refused edit", async () => {
+it("lets go of an item neither a read by id nor the bin holds after its refused edit", async () => {
   const note = await heldNote("edited here, purged there");
   const copy = await device("purged", "library");
   value(
@@ -321,7 +321,7 @@ it("lets go of a row neither a read by id nor the bin holds after its refused ed
   );
   expect((await client.deleteItem(note.id)).ok).toBe(true);
   expect((await client.purgeItem(note.id)).ok).toBe(true);
-  // The witness: no catch-up, so the copy still holds the row.
+  // The witness: no catch-up, so the copy still holds the item.
   expect(
     value(
       await copy.list({ allStates: true, filter: `id eq "${note.id}"` }),
@@ -334,32 +334,32 @@ it("lets go of a row neither a read by id nor the bin holds after its refused ed
   ]);
   expect(
     value(await copy.list({ allStates: true, filter: `id eq "${note.id}"` })),
-    "the copy kept a row the server holds nowhere",
+    "the copy kept an item the server holds nowhere",
   ).toEqual([]);
 });
 
-it("restores a row read from the bin that the copy does not hold", async () => {
+it("restores an item read from the bin that the copy does not hold", async () => {
   const copy = await device("restore", "library");
   // Made and trashed elsewhere after the copy's hydration, and not caught
   // up, so the copy does not hold it.
   const id = (await trashedNote("trashed elsewhere, restored here")).id;
-  // The witness: the row is in the bin on the server and not in the copy.
+  // The witness: the item is in the bin on the server and not in the copy.
   expect((await findInBin(copy, [id])).found.has(id)).toBe(true);
   const held = value(await copy.list({ state: "trashed" }));
   expect(
     held.map((row) => row.id),
-    "the copy held a row it never read",
+    "the copy held an item it never read",
   ).not.toContain(id);
 
   const restored = value(await copy.restoreItem(id));
   expect(restored.kind).toBe("restore_item");
   expect(restored.item_id).toBe(id);
   const twice = await copy.restoreItem(id);
-  expect(twice.ok, "a second restore of the same row was queued").toBe(false);
+  expect(twice.ok, "a second restore of the same item was queued").toBe(false);
   if (!twice.ok) expect(twice.refusal.code).toBe("invalid");
   expect(
     (await copy.get(id)).ok,
-    "the copy showed a row it does not hold before the restore was answered",
+    "the copy showed an item it does not hold before the restore was answered",
   ).toBe(false);
   expect(
     value(await copy.drain()).verdicts.map((verdict) => verdict.verdict),
@@ -370,7 +370,7 @@ it("restores a row read from the bin that the copy does not hold", async () => {
   expect(read.ok && read.data.item.state).toBe("active");
 });
 
-it("purges a row read from the bin at the version it was read at", async () => {
+it("purges an item read from the bin at the version it was read at", async () => {
   const doomed = await trashedNote("purged from the bin");
   const copy = await device("purge", "feed");
   const refused = await copy.purgeItem(doomed.id);
@@ -378,7 +378,7 @@ it("purges a row read from the bin at the version it was read at", async () => {
   if (!refused.ok) expect(refused.refusal.raw).toContain("not_held");
 
   const entry = (await findInBin(copy, [doomed.id])).found.get(doomed.id);
-  expect(entry, "the row was not in the bin").toBeDefined();
+  expect(entry, "the item was not in the bin").toBeDefined();
   value(await copy.purgeItem(doomed.id, entry!.version));
   expect((await findInBin(copy, [doomed.id])).found.has(doomed.id)).toBe(false);
   expect(value(await copy.queue())).toEqual([]);

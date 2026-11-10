@@ -600,7 +600,7 @@ describe("the instance", () => {
 
   it("publishes exactly the operations the coverage table knows", async () => {
     // spec/coverage.md is the referee's inventory. A published operation
-    // missing from it is coverage nobody has decided about; a row the
+    // missing from it is coverage nobody has decided about; an item the
     // document no longer publishes is a decision about nothing, unless the
     // table says the door is served unpublished.
     const rows = coverageRows();
@@ -613,7 +613,7 @@ describe("the instance", () => {
     expect(published.size).toBeGreaterThan(0);
     const missing = [...published].filter((key) => !known.has(key));
     expect(missing).toEqual([]);
-    // A row stands for an operation of the committed document, which the
+    // An item stands for an operation of the committed document, which the
     // target may not serve yet.
     const committed = new Set(
       committedOperations().map((op) => `${op.method} ${op.path}`),
@@ -623,7 +623,7 @@ describe("the instance", () => {
       .map((row) => `${row.method} ${row.path}`)
       .filter((key) => !committed.has(key));
     expect(stale).toEqual([]);
-    // And the exemption cannot be borrowed: a row that says unpublished
+    // And the exemption cannot be borrowed: an item that says unpublished
     // about a door the document publishes would wave that door out of
     // both checks above and out of the body validation with one word.
     const wavedOut = rows

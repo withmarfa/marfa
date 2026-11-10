@@ -30,7 +30,7 @@ afterAll(async () => {
   await cleanup(ctx);
 });
 
-// Assertions select their own rows because expansion reads every stored rule.
+// Assertions select their own items because expansion reads every stored rule.
 
 async function event(properties: Record<string, unknown>): Promise<string> {
   const r = await client.createItem({
@@ -1122,7 +1122,7 @@ describe("what a write may store", () => {
     ).toBeUndefined();
   });
 
-  it("refuses it on a bulk-action patch per row, and in a restored archive", async () => {
+  it("refuses it on a bulk-action patch per item, and in a restored archive", async () => {
     const tag = `recurrence-${ctx.runId}`;
     const r = await client.createItem({
       type: "core.event",

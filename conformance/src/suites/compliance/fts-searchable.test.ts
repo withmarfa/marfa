@@ -137,7 +137,7 @@ describe("FTS — searchable:false honoring", () => {
     expect(fetched.data.item.properties.secret).toBe(phrase);
   });
 
-  it("rows already stored follow a change to what their type marks searchable", async () => {
+  it("items already stored follow a change to what their type marks searchable", async () => {
     const typeId = `user.searchable-flip-${ctx.runId}`;
     const reg = await client.registerType({
       id: typeId,
@@ -158,7 +158,7 @@ describe("FTS — searchable:false honoring", () => {
       expect(result.ok).toBe(true);
       return result.data.data.some((hit) => hit.item.id === id);
     };
-    // The witness: the row matches before the change.
+    // The witness: the item matches before the change.
     expect(await matches()).toBe(true);
 
     const flip = async (searchable: boolean) => {
@@ -185,7 +185,7 @@ describe("FTS — searchable:false honoring", () => {
     expect(await matches()).toBe(true);
   });
 
-  /** Whether a search for `token` answers the row `id`. */
+  /** Whether a search for `token` answers the item `id`. */
   async function matches(token: string, id: string): Promise<boolean> {
     const result = await client.search(token, { limit: 50 });
     expect(result.status, JSON.stringify(result.error)).toBe(200);
@@ -237,7 +237,7 @@ describe("FTS — searchable:false honoring", () => {
     expect(await matches(word, listed)).toBe(false);
   });
 
-  it("keeps the four core properties and the tags of a row whose type was removed with force", async () => {
+  it("keeps the four core properties and the tags of an item whose type was removed with force", async () => {
     const typeId = `user.orphan-core-${ctx.runId}`;
     const registered = await client.registerType({
       id: typeId,
@@ -285,7 +285,7 @@ describe("FTS — searchable:false honoring", () => {
     );
   });
 
-  it("indexes the rows of a type that inherits again when its parent changes what it marks searchable", async () => {
+  it("indexes the items of a type that inherits again when its parent changes what it marks searchable", async () => {
     const parent = `user.inherit-index-${ctx.runId}`;
     const child = `${parent}.child`;
     const registered = await client.registerType({
@@ -297,7 +297,7 @@ describe("FTS — searchable:false honoring", () => {
     expect(sub.ok, JSON.stringify(sub.error)).toBe(true);
     const token = `inherited${ctx.runId.replace(/\W/g, "")}`;
     const id = await seed(child, { blurb: token });
-    // The witness: the child's row matches under what it inherits.
+    // The witness: the child's item matches under what it inherits.
     expect(await matches(token, id)).toBe(true);
 
     const flip = async (searchable: boolean, version: number) => {

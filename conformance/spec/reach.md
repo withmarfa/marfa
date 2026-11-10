@@ -258,7 +258,7 @@ When a write names the type the item already has, the server MUST leave the reac
 
 When `PATCH /edges/{id}` moves the source of an edge, the server MUST change the reach.
 
-**Reason:** the server makes the change on the move alone and never from the rows a copy holds, so a copy cannot tell a move that leaves its rows as they were from one that does, and a device expires its copy for every move it sends (`queue-and-verdicts/edge-source-move-expires`).
+**Reason:** the server makes the change on the move alone and never from the items a copy holds, so a copy cannot tell a move that leaves its items as they were from one that does, and a device expires its copy for every move it sends (`queue-and-verdicts/edge-source-move-expires`).
 
 **Tests:** `compliance/reach.test.ts › changes the reach when an edge moves to another source, and keeps it when only the target moves`.
 
@@ -290,7 +290,7 @@ When an edge type is registered or deleted, the server MUST change the reach.
 
 When a retention sweep purges at least one item, the server MUST change the reach.
 
-**Reason:** a sweep purges rows without a request, so no write answers the change.
+**Reason:** a sweep purges items without a request, so no write answers the change.
 
 **Tests:** `compliance/reach-sweep.test.ts › changes the reach, and a sweep that purges nothing does not`.
 
@@ -334,7 +334,7 @@ When a conditional read answers, the server MUST NOT carry a reach in the body.
 
 When a credential sends `GET /items?include=metadata`, `GET /items/{id}` or `POST /items/bulk-get` without `X-Marfa-Reach`, the server MUST answer it as an ordinary read, without `X-Marfa-Reach`.
 
-**Tests:** `compliance/reach.test.ts › walks conditional metadata pages to explicit null and certifies every supported read door`, `› certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`, `› answers a system row to a bulk read under a reach only when include names system`.
+**Tests:** `compliance/reach.test.ts › walks conditional metadata pages to explicit null and certifies every supported read door`, `› certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`, `› answers a system item to a bulk read under a reach only when include names system`.
 
 ### `reach/conditional-item-page`
 
@@ -432,9 +432,9 @@ When a credential sends `GET /items` with a matching `X-Marfa-Reach` and `includ
 
 **Tests:** `compliance/reach.test.ts › walks conditional metadata pages to explicit null and certifies every supported read door`.
 
-### `reach/page-rows`
+### `reach/page-items`
 
-When a credential sends `GET /items` with a matching `X-Marfa-Reach` and `include=metadata`, the server MUST answer each row with `item`, `metadata` and `listed` `true`.
+When a credential sends `GET /items` with a matching `X-Marfa-Reach` and `include=metadata`, the server MUST answer each item with `item`, `metadata` and `listed` `true`.
 
 **Tests:** `compliance/reach.test.ts › walks conditional metadata pages to explicit null and certifies every supported read door`.
 
@@ -478,7 +478,7 @@ When a credential sends `POST /items/bulk-get` with a matching `X-Marfa-Reach`, 
 
 **Reason:** the source filter does not narrow a read by id (`types/source-filter-by-id`), so `listed` is how a device that reads many items by id at once learns which of them belong to its inventory.
 
-**Tests:** `compliance/reach.test.ts › certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`, `› answers a system row to a bulk read under a reach only when include names system`.
+**Tests:** `compliance/reach.test.ts › certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`, `› answers a system item to a bulk read under a reach only when include names system`.
 
 ### `reach/listed-not-on-edges`
 
@@ -490,7 +490,7 @@ When a conditional read answers an edge, the server MUST NOT carry `listed` on i
 
 ### `reach/receipt-uncertified`
 
-When `POST /items`, `POST /edges`, `POST /folders` or `POST /views` creates a row, the server MUST answer it without `X-Marfa-Reach` and without a reach in the body.
+When `POST /items`, `POST /edges`, `POST /folders` or `POST /views` creates an item or edge, the server MUST answer it without `X-Marfa-Reach` and without a reach in the body.
 
 **Reason:** a receipt says what the write did, and not what a key's reach covers, so a device reads under its reach again before it adopts what the write left.
 

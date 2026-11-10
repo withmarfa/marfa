@@ -90,7 +90,7 @@ describe("namespace grammar", () => {
    * `content`, `metadata`, `edge` and `profile`, so a type under one could
    * be written and never granted: the `keys` family publishes literals like
    * `keys.mint`, and `keys.thing:read` is not a scope at all, so a
-   * `keys.thing` type is a row no grant can reach. `space` heads nothing
+   * `keys.thing` type is an item no grant can reach. `space` heads nothing
    * and is reserved so nobody may claim it; the grammar treats it the same.
    */
   const REFUSED_ROOTS = [

@@ -601,7 +601,7 @@ async function startServer(args: BootOptions): Promise<Started> {
     // purge as two runs through the housekeeping door. The sweep's own
     // cadence stays a day, but its first run is thirty seconds after boot
     // and a run is a run — so a fixture that reads the report has to expect
-    // one of its own rows to have been purged by the scheduler and ask
+    // one of its own items to have been purged by the scheduler and ask
     // again. Replication's cadence is an hour, so between an upload's own
     // wake and the fixture's runs nothing copies on a clock of its own.
     // Overridable, as the limiter is below: a fixture about a positive grace

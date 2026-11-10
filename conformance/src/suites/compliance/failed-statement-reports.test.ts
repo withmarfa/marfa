@@ -202,7 +202,7 @@ describe("a bulk action whose writes fail", () => {
       errored: number;
       result: { errors: { id: string; code: string; message: string }[] };
     };
-    // The fault ends the chunk at its first row, which is reported, and the
+    // The fault ends the chunk at its first item, which is reported, and the
     // job goes on to write the other.
     expect(failed).toMatchObject({ succeeded: 1, errored: 1 });
     expect(failed.result.errors).toHaveLength(1);

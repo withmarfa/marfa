@@ -234,7 +234,7 @@ describe("folder sync reports", () => {
     const created = rows.map((row) => row.created_at);
     expect(created, "newest first").toEqual([...created].sort().reverse());
 
-    // The same order by single-row pages, which a Set would not show.
+    // The same order by single-item pages, which a Set would not show.
     const paged: string[] = [];
     let cursor: string | null = null;
     do {

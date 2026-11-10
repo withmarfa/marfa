@@ -3,13 +3,13 @@ import { existsSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { refusal } from "../../device/marfa-answers.js";
 import type { FolderDoor } from "../../device/folder-door.js";
-import type { DoorRow } from "../../device/folder-door.js";
+import type { DoorItem } from "../../device/folder-door.js";
 import {
   KEY,
   folderHarness,
-  scriptFolderRow,
+  scriptFolderItem,
   type FolderHarness,
-  type FolderRow,
+  type FolderItem,
 } from "./harness.js";
 import {
   EdgeDoor,
@@ -61,7 +61,7 @@ const REWRITTEN = BODY.replace(
 interface Linked {
   door: FolderDoor;
   edges: EdgeDoor;
-  held: Map<string, DoorRow>;
+  held: Map<string, DoorItem>;
   old: string;
   host: string;
 }
@@ -69,7 +69,7 @@ interface Linked {
 /** A folder whose push made `Old.md` and `Host.md`, which links to it
  *  three ways in its body and once in a frontmatter line. `joining` runs
  *  before the push, so another folder can join and hear the creates; it is
- *  given a second folder row, scripted before the item doors, whose read
+ *  given a second folder item, scripted before the item doors, whose read
  *  would answer for any id. `text` is what `Host.md` holds, `HOST` unless
  *  given. */
 async function linked(
@@ -78,15 +78,15 @@ async function linked(
     id: string,
     sent: Parameters<FolderDoor["update"]>[1],
   ) => ReturnType<FolderDoor["update"]> | undefined,
-  joining?: (owner: FolderHarness, other: FolderRow) => Promise<void>,
+  joining?: (owner: FolderHarness, other: FolderItem) => Promise<void>,
   text = HOST,
 ): Promise<Linked> {
   const edges = new EdgeDoor();
   harness = await folderHarness(label, {
-    rows: { "core.note": [] },
+    items: { "core.note": [] },
     events: [edges.stream()],
   });
-  const other = scriptFolderRow(harness.server, {
+  const other = scriptFolderItem(harness.server, {
     query: { types: ["core.note"] },
   });
   let door: FolderDoor | undefined;

@@ -320,7 +320,7 @@ describe("an edge whose endpoint constraint names a force-deleted item type", ()
     const whole = await archiveOf(source);
 
     // The archive as a build wrote it before the type was deleted, and as one
-    // that carried no registration of the type holds the same rows.
+    // that carried no registration of the type holds the same items.
     const registrations = (archive: Uint8Array) =>
       readLineFile(archive, "instance") ?? "";
     expect(registeredTypeIds(registrations(whole))).toContain(PAPER);

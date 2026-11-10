@@ -138,7 +138,7 @@ it.each([
   }
 });
 
-it("keeps the text and binned-row reason of an edit refused after another delete", async () => {
+it("keeps the text and binned-item reason of an edit refused after another delete", async () => {
   const made = await client.createItem({
     type: "core.note",
     source: ctx.source,

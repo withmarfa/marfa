@@ -130,7 +130,7 @@ export const PERF_SCALES: Record<
  * so it goes through bulk rather than one create per item. Writes are stamped
  * with the credential's `source`, which is unique per test file, so the seeded
  * set stays addressable as `source=ctx.source`. `source_id` carries the run id
- * so a re-run seeds fresh rows instead of deduplicating onto the last run's.
+ * so a re-run seeds fresh items instead of deduplicating onto the last run's.
  */
 export async function seedWorkingSet(
   client: MarfaClient,

@@ -129,7 +129,7 @@ describe("a stream whose read of the log fails", () => {
     });
     expect(await fired("fail:stream-replay")).toBe(1);
 
-    // The cursor is good: the stream resumed from it replays the row.
+    // The cursor is good: the stream resumed from it replays the item.
     const again = await open({ lastEventId: before });
     const events = await again.until(named("stream_live"), "the replay done");
     expect(events.some((event) => event.event === "item.created")).toBe(true);

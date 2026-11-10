@@ -142,7 +142,7 @@ describe("the server resolves a conflict", () => {
     );
   });
 
-  it("gives the conflicted copy no edge its writer could not have made, and none to a row in the bin", async () => {
+  it("gives the conflicted copy no edge its writer could not have made, and none to an item in the bin", async () => {
     requireRule(caps, "serverSideMerge");
 
     // The writer may write notes and the edges below, only read bookmarks,
@@ -443,7 +443,7 @@ describe("the server resolves a conflict", () => {
     // The witness: an edge the album's own file writes comes with the copy.
     expect(outbound).toContain(`about>${topic.id}`);
     // An inbound edge the album's own file writes comes with it, and not
-    // one from a row in the bin.
+    // one from an item in the bin.
     expect(inbound).toContain(`${over.id}>${under}`);
     expect(inbound).not.toContain(`${binnedOver.id}>${under}`);
     // An edge no file writes goes out with the copy, and does not come in.
@@ -519,7 +519,7 @@ describe("the server resolves a conflict", () => {
       resolved.ok,
       `a colliding update sent with conflict=auto was not resolved: ${resolved.status} ${JSON.stringify(resolved.error)}`,
     ).toBe(true);
-    // Every row this write may have spawned, before any assertion can throw:
+    // Every item this write may have spawned, before any assertion can throw:
     // a server that resolved differently may have written one the envelope
     // does not name, and a listing scoped to this file's credential owns it.
     await trackSourceScopedItems({ client, ctx });
@@ -553,7 +553,7 @@ describe("the server resolves a conflict", () => {
     // The keep-both arm on the original: the server's value stands.
     expect(
       original.data.item.properties.body,
-      "a keep-both field took the losing write on the original row, which is last-writer-wins under another name",
+      "a keep-both field took the losing write on the original item, which is last-writer-wins under another name",
     ).toBe("body from the winner");
 
     // And the losing text survives somewhere the person can find it. This is
@@ -568,7 +568,7 @@ describe("the server resolves a conflict", () => {
     );
     expect(
       kept.map((i) => i.id),
-      "the row carrying the losing text is not the one the envelope named",
+      "the item carrying the losing text is not the one the envelope named",
     ).toEqual([resolution?.conflicted_copy_id]);
     expect(
       kept,
@@ -576,7 +576,7 @@ describe("the server resolves a conflict", () => {
     ).toHaveLength(1);
 
     // The sibling has to be findable as a conflicted copy of the same type,
-    // or a person meets an unexplained second row rather than a copy they can
+    // or a person meets an unexplained second item rather than a copy they can
     // reconcile.
     const sibling = await client.getItem(kept[0].id);
     expect(sibling.ok).toBe(true);
@@ -652,7 +652,7 @@ describe("the server resolves a conflict", () => {
     expect(resolution?.strategy?.title).toBe("last_writer_wins");
     expect(resolution?.strategy?.notes).toBe("keep_both_copies");
     // The later writer's clear takes the last-writer-wins field; the
-    // keep-both field keeps the server's value on the row.
+    // keep-both field keeps the server's value on the item.
     expect(resolved.data.item.properties).not.toHaveProperty("title");
     expect(resolved.data.item.properties.notes).toBe("notes from the winner");
     expect(resolved.data.item.properties.body).toBe("shared body");
@@ -662,7 +662,7 @@ describe("the server resolves a conflict", () => {
     const sibling = await client.getItem(copyId!);
     expect(sibling.ok).toBe(true);
     // The losing value of a keep-both field was "absent", so the copy
-    // carries the row without it.
+    // carries the item without it.
     expect(sibling.data.item.properties).not.toHaveProperty("notes");
     expect(sibling.data.item.properties.title).toBe("title from the winner");
     expect(sibling.data.item.properties.body).toBe("shared body");
@@ -735,7 +735,7 @@ describe("the server resolves a conflict", () => {
     expect(winner.ok).toBe(true);
 
     // A stale replace that clears the body the winner changed, and moves
-    // the row to a bookmark: the collision is real, and the copy a resolution
+    // the item to a bookmark: the collision is real, and the copy a resolution
     // would write would belong to neither type.
     const refused = await client.rawRequest(`/items/${id}?conflict=auto`, {
       method: "PATCH",
@@ -761,7 +761,7 @@ describe("the server resolves a conflict", () => {
     // `tier`, `occurred_at` and `source_id` are the item's own fields
     // rather than properties, so the type declares no strategy for them
     // and `keep_both_copies` has nothing to mean: a sibling is a copy of
-    // the row's properties, and a tier on it would be the sibling's own.
+    // the item's properties, and a tier on it would be the sibling's own.
     // They take the later writer, and the resolution says so rather than
     // naming a field in `fields` with no strategy beside it.
     const seed = await client.createItem(
@@ -832,7 +832,7 @@ describe("the server resolves a conflict", () => {
     ).toBe("feed");
   });
 
-  /** The rows under this file's source whose `body` or `notes` is `marker`. */
+  /** The items under this file's source whose `body` or `notes` is `marker`. */
   const holding = async (marker: string): Promise<string[]> => {
     const found: string[] = [];
     let cursor: string | undefined;
@@ -869,7 +869,7 @@ describe("the server resolves a conflict", () => {
       apiKey: minted.data.key,
     });
 
-    // The witness that the two sources differ: a row the writer creates
+    // The witness that the two sources differ: an item the writer creates
     // carries the writer's.
     const own = await writer.createItem({
       type: "core.note",
@@ -913,7 +913,7 @@ describe("the server resolves a conflict", () => {
     expect(copy.data.item.properties.body).toBe("body from the writer");
     expect(copy.data.item.source).toBe(ctx.source);
     expect(copy.data.item.source_id ?? null).toBeNull();
-    // The original keeps both, so the natural key still names one row.
+    // The original keeps both, so the natural key still names one item.
     const original = await client.getItem(id);
     expect(original.data.item.source).toBe(ctx.source);
     expect(original.data.item.source_id).toBe(sourceId);
@@ -1032,7 +1032,7 @@ describe("the server resolves a conflict", () => {
     expect(resolved.data.item.version).toBe(3);
   });
 
-  it("records the row the resolution moved on from, and gives the copy a history of its own", async () => {
+  it("records the item the resolution moved on from, and gives the copy a history of its own", async () => {
     requireRule(caps, "serverSideMerge");
 
     const made = await client.createItem(
@@ -1077,7 +1077,7 @@ describe("the server resolves a conflict", () => {
 
     const history = await client.getVersions(id);
     expect(history.data.data.map((v) => v.version)).toEqual([1, 2]);
-    // Version 2 is the row the resolution left, the winner's.
+    // Version 2 is the item the resolution left, the winner's.
     expect(history.data.data[1]?.properties).toEqual({
       title: "title from the winner",
       body: "body from the winner",
@@ -1123,7 +1123,7 @@ describe("the server resolves a conflict", () => {
 
     // The replace carries a losing value for the keep-both field, which the
     // resolution copies, and leaves out the required title, whose clear
-    // takes the later writer and so leaves the row short of its type.
+    // takes the later writer and so leaves the item short of its type.
     const replace = (properties: Record<string, unknown>) =>
       client.rawRequest<{
         conflict_resolution?: { conflicted_copy_id?: string };
@@ -1209,7 +1209,7 @@ describe("the server resolves a conflict", () => {
     ]);
   });
 
-  it("refuses to resolve a stale move onto a row another writer moved since", async () => {
+  it("refuses to resolve a stale move onto an item another writer moved since", async () => {
     requireRule(caps, "serverSideMerge");
 
     const made = await client.createItem(
@@ -1348,7 +1348,7 @@ describe("the server resolves a conflict", () => {
       expect(copies[0]).not.toBe(copies[1]);
       expect(answers.map((a) => a.data.item.version).sort()).toEqual([3, 4]);
 
-      // Whichever was ordered last took the title, and the row keeps the
+      // Whichever was ordered last took the title, and the item keeps the
       // winner's body, which is a keep-both field.
       const row = await client.getItem(id);
       expect(row.data.item.version).toBe(4);
@@ -1506,7 +1506,7 @@ describe("a conflicted copy names its original", () => {
     expect(provenance.ok).toBe(true);
     trackEdge(ctx, provenance.data.edge.id);
     // The witness: an outbound edge of a type the original's own file
-    // writes, many-to-many, orphaning, to a live row and drawn by a writer
+    // writes, many-to-many, orphaning, to a live item and drawn by a writer
     // who holds every grant, is one the copy takes.
     const topic = await client.createItem(
       createNote({

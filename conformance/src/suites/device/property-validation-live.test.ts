@@ -589,7 +589,7 @@ it.each([
   ["9223372036854776000"],
   ["18446744073709550000"],
 ])(
-  "holds the digits %s as written on the server and in the local row, before and after a drain",
+  "holds the digits %s as written on the server and in the local item, before and after a drain",
   async (digits) => {
     const holds = (text: string | false) =>
       typeof text === "string" &&

@@ -16,7 +16,7 @@ import {
 import { collectUntil, withStream } from "../../utils/stream.js";
 
 /**
- * A retention sweep purges rows without a request, so no write answers the
+ * A retention sweep purges items without a request, so no write answers the
  * change it makes to the reach. The age that makes a binned item due is a
  * clock the fixture moves through the target interface, and the sweep is run
  * with the operator's key.

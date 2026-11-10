@@ -52,7 +52,7 @@ describe("the 100-tags-per-item limit", () => {
     expect(refused.error?.error.code).toBe("validation_error");
 
     // Nothing was written: the same natural key is a create, not an upsert
-    // onto a row the refusal left behind.
+    // onto an item the refusal left behind.
     const accepted = await client.createItem(
       createNote({
         source: ctx.source,

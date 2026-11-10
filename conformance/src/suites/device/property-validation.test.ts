@@ -60,7 +60,7 @@ async function hydrated() {
         fields: { url: { type: "url", required: true } },
       },
     ]),
-    rows: {
+    items: {
       [TYPE]: [
         {
           item: {
@@ -180,7 +180,7 @@ describe("a working copy checks the fields its catalog holds", () => {
         },
         { id: "fixture.grandchild", parent: "fixture.child", fields: {} },
       ]),
-      rows: {},
+      items: {},
     });
     expect(
       (await harness.device.hydrate(["fixture.parent"], "library")).ok,
@@ -266,7 +266,7 @@ describe("a working copy checks the fields its catalog holds", () => {
       );
   });
 
-  it("judges a known upsert by the row it leaves, and a stale or other-type one by what it supplies", async () => {
+  it("judges a known upsert by the item it leaves, and a stale or other-type one by what it supplies", async () => {
     harness = await startHarness("property-validation-known-upsert");
     scriptHydration(harness.server, {
       head: "10",
@@ -277,8 +277,8 @@ describe("a working copy checks the fields its catalog holds", () => {
           fields: { url: { type: "url", required: true } },
         },
       ]),
-      rows: {
-        // Held without the title its type requires, as a row written before
+      items: {
+        // Held without the title its type requires, as an item written before
         // the type required it is.
         [TYPE]: [
           {
@@ -330,7 +330,7 @@ describe("a working copy checks the fields its catalog holds", () => {
           properties: { read: true },
         })
       ).ok,
-      "a create on a version the copy does not hold was judged on the row the copy holds",
+      "a create on a version the copy does not hold was judged on the item the copy holds",
     ).toBe(true);
     expect(
       (
@@ -341,7 +341,7 @@ describe("a working copy checks the fields its catalog holds", () => {
           properties: { read: true },
         })
       ).ok,
-      "a create whose key names a row of another type was judged as a whole new row",
+      "a create whose key names an item of another type was judged as a whole new item",
     ).toBe(true);
     // The witness: the same create giving the title is taken.
     expect(
@@ -443,7 +443,7 @@ describe("a working copy checks the fields its catalog holds", () => {
     folder = await folderHarness("destination-registration", {
       settings: { query: { types: [TYPE] } },
       catalog: typeCatalog(types),
-      rows: {
+      items: {
         [TYPE]: [
           {
             item: {
@@ -538,7 +538,7 @@ describe("a working copy checks the fields its catalog holds", () => {
     folder = await folderHarness("property-validation", {
       settings: { query: { types: [TYPE] } },
       catalog: typeCatalog(types),
-      rows: {
+      items: {
         [TYPE]: [
           {
             item: {
@@ -643,7 +643,7 @@ describe("a working copy checks the fields its catalog holds", () => {
     folder = await folderHarness("property-validation-list", {
       settings: { query: { types: [TYPE] } },
       catalog: typeCatalog(types),
-      rows: {},
+      items: {},
     });
     expect((await folder.folder.pull()).ok).toBe(true);
     const path = join(folder.dir, "list.md");
@@ -686,7 +686,7 @@ describe("a working copy checks the fields its catalog holds", () => {
       folder = await folderHarness("property-validation-digits", {
         settings: { query: { types: [TYPE] } },
         catalog: typeCatalog(types),
-        rows: {},
+        items: {},
       });
       expect((await folder.folder.pull()).ok).toBe(true);
       const path = join(folder.dir, "digits.md");

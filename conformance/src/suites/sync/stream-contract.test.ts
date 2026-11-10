@@ -220,7 +220,7 @@ describe("the stream says when it is live", () => {
       context.signal,
     );
     const note = await makeNote("live-note");
-    // The log's head is a row the filtered stream is never sent, so no
+    // The log's head is an item the filtered stream is never sent, so no
     // frame with an id can show the reader that the replay reached it.
     const bookmark = await client.createItem({
       type: "core.bookmark",
@@ -270,7 +270,7 @@ describe("the stream says when it is live", () => {
       ),
     );
 
-    // Resuming from it: nothing the replay covered comes back, the row it
+    // Resuming from it: nothing the replay covered comes back, the item it
     // never delivered included, and a write made after it does.
     const after = await makeNote("live-after");
     const { events: resumed } = await withStream(

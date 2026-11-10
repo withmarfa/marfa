@@ -676,7 +676,7 @@ describe("moving a type's items", () => {
     );
   });
 
-  it("names the new type for the rows a moved root took into the bin", async () => {
+  it("names the new type for the items a moved root took into the bin", async () => {
     const { deal, contract } = await pair("cascade");
     const root = await item(deal, { name: "root" });
     const child = await client.createItem({

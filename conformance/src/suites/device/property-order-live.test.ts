@@ -13,7 +13,7 @@ import {
 import { requireBinary } from "./harness.js";
 
 /**
- * A row a device writes shows its properties in the order the server answers
+ * An item a device writes shows its properties in the order the server answers
  * them (`items/property-order-create`, `items/property-order-merge` and
  * `items/property-order-replace`), before the server has answered and after:
  * run against a real server and the real binary, through an offline create, a
@@ -162,7 +162,7 @@ it("shows an edit in the order the server answers it, before the answer and afte
   const created = value(await device.get(id));
   expect(Object.keys(created.properties)).toEqual(["beta", "extra1"]);
 
-  // A merge moves no key the row holds, and a declared field it adds goes
+  // A merge moves no key the item holds, and a declared field it adds goes
   // after them as any other does.
   value(
     await device.update(id, {

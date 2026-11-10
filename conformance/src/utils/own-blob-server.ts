@@ -120,7 +120,7 @@ export async function pastInstant(iso: string): Promise<void> {
 }
 
 /** Resolves once the clock reads a millisecond other than this one's, so two
- *  rows written one after the other carry different creation times. */
+ *  items written one after the other carry different creation times. */
 export async function nextMillisecond(): Promise<void> {
   const now = Date.now();
   while (Date.now() === now) {

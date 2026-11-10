@@ -194,10 +194,10 @@ function requestsTo(harness: Harness, method: string, pathname: string) {
 
 /**
  * An upload a gateway refuses with a `413` naming no contract, an edit to a
- * row, and a new note behind it, which is the queue the issue was found in.
+ * item, and a new note behind it, which is the queue the issue was found in.
  */
 async function stuckUpload(label: string) {
-  const own = await hydratedHarness(label, { rows: held() });
+  const own = await hydratedHarness(label, { items: held() });
   harness = own;
   const upload = await own.device.putBlob(
     fileOf("big.bin", "bytes the gateway will not take\n"),
@@ -458,7 +458,7 @@ describe("a write that keeps meeting an environmental failure", () => {
   });
 
   it("sets aside a create the server answers with a 500 it names its contract for", async () => {
-    harness = await hydratedHarness("stuck-create", { rows: held() });
+    harness = await hydratedHarness("stuck-create", { items: held() });
     const own = harness;
     const stuck = await note(own, "stuck");
     const edited = await edit(own);
@@ -512,7 +512,7 @@ describe("a write that keeps meeting an environmental failure", () => {
   });
 
   it("shows a write whose connection dies every time as having had no answer", async () => {
-    harness = await hydratedHarness("stuck-no-answer", { rows: held() });
+    harness = await hydratedHarness("stuck-no-answer", { items: held() });
     const own = harness;
     const stuck = await note(own, "stuck");
     const noted = await note(own, "behind");
@@ -537,7 +537,7 @@ describe("a write that keeps meeting an environmental failure", () => {
 
 describe("what is not a write failing alone", () => {
   it("sets nothing aside in an outage that fails every write, however long it lasts", async () => {
-    harness = await hydratedHarness("stuck-outage", { rows: held() });
+    harness = await hydratedHarness("stuck-outage", { items: held() });
     const own = harness;
     await note(own, "first");
     await note(own, "second");
@@ -572,7 +572,7 @@ describe("what is not a write failing alone", () => {
   });
 
   it("sets nothing aside while a server fails every write for a few drains and then recovers", async () => {
-    harness = await hydratedHarness("stuck-short", { rows: held() });
+    harness = await hydratedHarness("stuck-short", { items: held() });
     const own = harness;
     await note(own, "first");
     await note(own, "second");
@@ -614,7 +614,7 @@ describe("what is not a write failing alone", () => {
   });
 
   it("sets nothing aside while the server limits requests, and sends nothing behind the write", async () => {
-    harness = await hydratedHarness("stuck-limited", { rows: held() });
+    harness = await hydratedHarness("stuck-limited", { items: held() });
     const own = harness;
     const first = await note(own, "first");
     await note(own, "second");
@@ -650,7 +650,7 @@ describe("what is not a write failing alone", () => {
   });
 
   it("shows a 429 as the last answer a write met, without adding to its streak, and a failure after it in its place", async () => {
-    harness = await hydratedHarness("stuck-429-shown", { rows: held() });
+    harness = await hydratedHarness("stuck-429-shown", { items: held() });
     const own = harness;
     const queued = await own.device.putBlob(
       fileOf("big.bin", "bytes the gateway will not take\n"),
@@ -689,7 +689,7 @@ describe("what is not a write failing alone", () => {
   });
 
   it("sets the write aside only when the write sent to test it was not itself met by a failure", async () => {
-    harness = await hydratedHarness("stuck-both", { rows: held() });
+    harness = await hydratedHarness("stuck-both", { items: held() });
     const own = harness;
     const stuck = await note(own, "stuck");
     const other = await note(own, "other");
@@ -739,7 +739,7 @@ describe("what is not a write failing alone", () => {
 
 describe("the write sent to test a write that fails", () => {
   it("parks the queue on a refused credential the test meets, and sets nothing aside", async () => {
-    harness = await hydratedHarness("stuck-credential", { rows: held() });
+    harness = await hydratedHarness("stuck-credential", { items: held() });
     const own = harness;
     const stuck = await note(own, "stuck");
     const other = await note(own, "other");
@@ -775,7 +775,7 @@ describe("the write sent to test a write that fails", () => {
   });
 
   it("never depends on that write, so the writes waiting on an upload stay waiting", async () => {
-    harness = await hydratedHarness("stuck-dependants", { rows: held() });
+    harness = await hydratedHarness("stuck-dependants", { items: held() });
     const own = harness;
     const attached = await own.device.attach(
       HELD.id,
@@ -842,7 +842,7 @@ describe("the write sent to test a write that fails", () => {
   });
 
   it("leaves the write queued, and the pass ending as before, where no other write could go", async () => {
-    harness = await hydratedHarness("stuck-alone-in-queue", { rows: held() });
+    harness = await hydratedHarness("stuck-alone-in-queue", { items: held() });
     const own = harness;
     const upload = await own.device.putBlob(
       fileOf("big.bin", "bytes the gateway will not take\n"),
@@ -899,7 +899,7 @@ async function stuckUploads(
   uploads: number,
   down: () => boolean = () => false,
 ) {
-  const own = await hydratedHarness(label, { rows: held() });
+  const own = await hydratedHarness(label, { items: held() });
   harness = own;
   const stuck: QueuedWrite[] = [];
   for (let index = 1; index <= uploads; index += 1) {
@@ -1125,7 +1125,7 @@ describe("writes that each fail alone, and the write behind them", () => {
   });
 
   it("sends at most two requests a drain, and sets nothing aside, in an outage that fails ten queued writes", async () => {
-    harness = await hydratedHarness("ten-outage", { rows: held() });
+    harness = await hydratedHarness("ten-outage", { items: held() });
     const own = harness;
     for (let index = 1; index <= 10; index += 1)
       await note(own, `note ${index}`);
@@ -1181,7 +1181,7 @@ describe("writes that each fail alone, and the write behind them", () => {
   });
 
   it("sends two requests a drain in an outage once every queued write has met the failure in three drains, and still sets nothing aside", async () => {
-    harness = await hydratedHarness("three-outage", { rows: held() });
+    harness = await hydratedHarness("three-outage", { items: held() });
     const own = harness;
     for (let index = 1; index <= 3; index += 1)
       await note(own, `note ${index}`);
@@ -1216,7 +1216,7 @@ describe("writes that each fail alone, and the write behind them", () => {
   });
 
   it("ends the pass at a write sent to test them that the server limits, adding nothing to its streak", async () => {
-    harness = await hydratedHarness("stuck-test-limited", { rows: held() });
+    harness = await hydratedHarness("stuck-test-limited", { items: held() });
     const own = harness;
     const stuck = await note(own, "stuck");
     const limited = await note(own, "limited");
@@ -1283,7 +1283,7 @@ describe("writes that each fail alone, and the write behind them", () => {
   });
 
   it("never sends a write that waits on the second stuck upload to test it, and holds it once the second upload is set aside", async () => {
-    harness = await hydratedHarness("second-dependants", { rows: held() });
+    harness = await hydratedHarness("second-dependants", { items: held() });
     const own = harness;
     const first = await own.device.putBlob(
       fileOf("big-1.bin", "bytes the proxy will not take, file 1\n"),
@@ -1451,7 +1451,7 @@ const BAD_GATEWAY = "<html>bad gateway</html>";
 
 describe("a write the server takes again before it is set aside", () => {
   it("sets nothing aside when the outage ends between the suspect and the write sent to test it", async () => {
-    harness = await hydratedHarness("suspect-outage-ends", { rows: held() });
+    harness = await hydratedHarness("suspect-outage-ends", { items: held() });
     const own = harness;
     const stuck = await note(own, "stuck");
     const test = await note(own, "test");
@@ -1498,7 +1498,7 @@ describe("a write the server takes again before it is set aside", () => {
   });
 
   it("sets nothing aside for a single failure in a drain where an earlier write was answered", async () => {
-    harness = await hydratedHarness("suspect-after-landing", { rows: held() });
+    harness = await hydratedHarness("suspect-after-landing", { items: held() });
     const own = harness;
     // Answered every time, but not with a verdict: it stays queued, so each
     // drain has the server answering a write ahead of the one that fails.
@@ -1547,7 +1547,7 @@ describe("a write the server takes again before it is set aside", () => {
   });
 
   it("sets nothing aside for a gateway that flaps for two minutes, however many drains it fails", async () => {
-    harness = await hydratedHarness("suspect-flapping", { rows: held() });
+    harness = await hydratedHarness("suspect-flapping", { items: held() });
     const own = harness;
     const first = await note(own, "first");
     const second = await note(own, "second");
@@ -1591,7 +1591,9 @@ describe("a write the server takes again before it is set aside", () => {
   });
 
   it("sets nothing aside when the server limits requests as the suspect is sent again, and shows that as its last answer", async () => {
-    harness = await hydratedHarness("suspect-resend-limited", { rows: held() });
+    harness = await hydratedHarness("suspect-resend-limited", {
+      items: held(),
+    });
     const own = harness;
     const stuck = await note(own, "stuck");
     const test = await note(own, "test");
@@ -1638,7 +1640,7 @@ describe("a write the server takes again before it is set aside", () => {
   });
 
   it("keeps the streak of a suspect when the drain is stopped while the write sent to test it is in flight", async () => {
-    harness = await hydratedHarness("suspect-stopped", { rows: held() });
+    harness = await hydratedHarness("suspect-stopped", { items: held() });
     const own = harness;
     const stuck = await note(own, "stuck");
     await note(own, "test");
@@ -1688,7 +1690,7 @@ describe("a write the server takes again before it is set aside", () => {
   });
 
   it("goes on to the next write when the one chosen to test has no bytes to send, and sends one test to the server", async () => {
-    harness = await hydratedHarness("suspect-test-gone", { rows: held() });
+    harness = await hydratedHarness("suspect-test-gone", { items: held() });
     const own = harness;
     const bytes = (label: string) => `bytes of ${label}\n`;
     const upload = async (label: string) => {
@@ -1737,7 +1739,7 @@ describe("a write the server takes again before it is set aside", () => {
   });
 
   it("keeps the test moving through the queue when the clock is set back", async () => {
-    harness = await hydratedHarness("suspect-clock-back", { rows: held() });
+    harness = await hydratedHarness("suspect-clock-back", { items: held() });
     const own = harness;
     for (let index = 1; index <= 4; index += 1)
       await note(own, `note ${index}`);
@@ -1884,7 +1886,7 @@ describe("a run of failures that is not one run", () => {
 
 describe("a write sent to test that cannot be sent", () => {
   it("ends the pass with nothing set aside, and sends no other write to test the same suspect", async () => {
-    harness = await hydratedHarness("test-unsendable", { rows: held() });
+    harness = await hydratedHarness("test-unsendable", { items: held() });
     const own = harness;
     const upload = async (label: string, mime: string) => {
       const queued = await own.device.putBlob(

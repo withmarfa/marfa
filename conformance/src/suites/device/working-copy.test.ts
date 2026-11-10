@@ -35,11 +35,11 @@ import {
 import { CliDevice, newStore } from "../../device/cli-adapter.js";
 import { BUILT_FOR } from "../../device/scripted-server.js";
 
-/** One `core.file` row naming `hash`, for a hydration to pull. */
+/** One `core.file` item naming `hash`, for a hydration to pull. */
 function hydrateOneFile(server: Harness["server"], hash: string): void {
   scriptHydration(server, {
     head: "10",
-    rows: {
+    items: {
       "core.file": [
         {
           item: {
@@ -61,9 +61,9 @@ function hydrateOneFile(server: Harness["server"], hash: string): void {
  * "A device holds a working copy": one slice of one server, and nothing else.
  *
  * The slice is what makes a small app small and what keeps a phone from
- * holding a library. A device that quietly held a row outside its slice would
+ * holding a library. A device that quietly held an item outside its slice would
  * be a device whose size nobody can predict from what it declared, and one
- * that quietly dropped a row inside it would be a device that answers a
+ * that quietly dropped an item inside it would be a device that answers a
  * question wrongly with no way for the caller to tell.
  */
 
@@ -91,7 +91,7 @@ describe("the working copy holds one slice", () => {
       "GET",
       "/events",
       copyReplay("13", [
-        // The control. A row of a declared type has to land, or every
+        // The control. An item of a declared type has to land, or every
         // assertion below passes against a device that applied nothing at all.
         copyItemEvent(
           "11",
@@ -125,7 +125,7 @@ describe("the working copy holds one slice", () => {
     const ids = held.ok ? held.value.map((item) => item.id).sort() : [];
     expect(
       ids,
-      "a declared type, or the subtype under it, is missing from the copy, so a caller reading the slice it asked for is short rows the server announced",
+      "a declared type, or the subtype under it, is missing from the copy, so a caller reading the slice it asked for is short items the server announced",
     ).toContain("note");
     expect(
       ids,
@@ -133,7 +133,7 @@ describe("the working copy holds one slice", () => {
     ).toContain("image");
     expect(
       ids,
-      "a row of a type outside the slice was held, so the copy grows past what the device declared and no app can predict its own size",
+      "an item of a type outside the slice was held, so the copy grows past what the device declared and no app can predict its own size",
     ).not.toContain("bookmark");
   });
 
@@ -145,8 +145,8 @@ describe("the working copy holds one slice", () => {
       "GET",
       "/events",
       copyReplay("12", [
-        // The control, again: without a library row landing, an empty copy
-        // would satisfy the assertion about the feed row.
+        // The control, again: without a library item landing, an empty copy
+        // would satisfy the assertion about the feed item.
         copyItemEvent(
           "11",
           "item.created",
@@ -172,7 +172,7 @@ describe("the working copy holds one slice", () => {
     ).toContain("library-row");
     expect(
       ids,
-      "a row of the other tier was held, so a device that asked for the library is carrying the feed as well",
+      "an item of the other tier was held, so a device that asked for the library is carrying the feed as well",
     ).not.toContain("feed-row");
   });
 
@@ -181,7 +181,7 @@ describe("the working copy holds one slice", () => {
     const { server, device } = harness;
     scriptHydration(server, {
       head: "10",
-      rows: {
+      items: {
         "core.note": [
           { item: { id: "library-row", tier: "library" } },
           { item: { id: "feed-row", tier: "feed" } },
@@ -238,10 +238,10 @@ describe("the working copy holds one slice", () => {
     harness = await startHarness("edge-type-whole");
     const { server, device } = harness;
     // Two projects outside the slice, one over the other, over a ticket in
-    // it: neither edge starts at a row the slice holds.
+    // it: neither edge starts at an item the slice holds.
     scriptHydration(server, {
       head: "10",
-      rows: { "core.note": [{ item: { id: "ticket" } }] },
+      items: { "core.note": [{ item: { id: "ticket" } }] },
       edges: {
         "parent-of": [
           { id: "project-in-project", source_id: "outer", target_id: "inner" },
@@ -282,7 +282,7 @@ describe("the working copy holds one slice", () => {
     ).toEqual(["parent-of"]);
     expect(
       await ids(device.edgesFrom("outer")),
-      "an edge of a type held whole between two rows outside the slice was left out",
+      "an edge of a type held whole between two items outside the slice was left out",
     ).toEqual(["project-in-project"]);
     expect(
       await ids(device.edgesFrom("inner")),
@@ -308,7 +308,7 @@ describe("the working copy holds one slice", () => {
     const ancient = "2022-01-01T00:00:00.000Z";
     scriptHydration(server, {
       head: "10",
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -336,15 +336,15 @@ describe("the working copy holds one slice", () => {
     const held = await device.list({ allStates: true });
     expect(held.ok).toBe(true);
     const ids = held.ok ? held.value.map((item) => item.id).sort() : [];
-    // The control: the rows a sweeper would have kept are there, so a missing
-    // old row is an expiry rather than a copy that never landed.
+    // The control: the items a sweeper would have kept are there, so a missing
+    // old item is an expiry rather than a copy that never landed.
     expect(
       ids,
-      "the recent rows are missing, so this says nothing about the old one",
+      "the recent items are missing, so this says nothing about the old one",
     ).toEqual(expect.arrayContaining(["newest", "recent"]));
     expect(
       ids,
-      "an item was dropped for being old, so a device removes rows the server still holds and goes on reporting the slice as complete",
+      "an item was dropped for being old, so a device removes items the server still holds and goes on reporting the slice as complete",
     ).toContain("ancient");
   });
 
@@ -363,7 +363,7 @@ describe("the working copy holds one slice", () => {
     scriptHydration(server, {
       head: "10",
       catalog,
-      rows: {
+      items: {
         "user.snapshot": [
           {
             item: {
@@ -392,7 +392,7 @@ describe("the working copy holds one slice", () => {
 
     // The command opens the store with no transport, so it has no server to
     // ask and a count of requests here could never move. That the core
-    // reads the held row rather than asking is the core's own test, over a
+    // reads the held item rather than asking is the core's own test, over a
     // server that records every request:
     // `a_thumbnail_is_read_from_the_held_row_and_never_searched`.
     const out = `${device.store}.thumbnail.png`;
@@ -515,7 +515,7 @@ describe("the working copy holds one slice", () => {
     let reads = 0;
     scriptHydration(server, {
       head: "10",
-      rows: {
+      items: {
         "user.photo": [
           {
             item: {
@@ -574,7 +574,7 @@ describe("the working copy holds one slice", () => {
       const hits = await device.search(query);
       return hits.ok ? hits.value.map((hit) => hit.item.id) : [];
     };
-    // The witness: the event was applied and its row indexed.
+    // The witness: the event was applied and its item indexed.
     expect(await found("zebraword")).toEqual(["photo"]);
     expect(
       await found("unicornsXYZ"),
@@ -652,7 +652,7 @@ describe("the working copy holds one slice", () => {
       expect((await device.hydrate(["user.photo"], "library")).ok).toBe(true);
       const followed = await device.follow(3);
       expect(followed.ok, JSON.stringify(followed)).toBe(true);
-      // The witness: the event was applied and its row indexed, and an image
+      // The witness: the event was applied and its item indexed, and an image
       // held as text is found, so the thumbnail's absence is its own.
       expect(await found("zebraword")).toEqual(["second"]);
       expect(await found("iconwordXYZ")).toEqual(["first", "second"]);
@@ -706,7 +706,7 @@ describe("the working copy holds one slice", () => {
       expect((await device.hydrate(["user.photo"], "library")).ok).toBe(true);
       const followed = await device.follow(4);
       expect(followed.ok, JSON.stringify(followed)).toBe(true);
-      // The witness: the event was applied and its row indexed.
+      // The witness: the event was applied and its item indexed.
       expect(await found("zebraword")).toEqual(["second"]);
       expect(
         await found("unicornsXYZ"),
@@ -754,7 +754,7 @@ describe("the working copy holds one slice", () => {
       expect((await device.hydrate(["user.photo"], "library")).ok).toBe(true);
       const caught = await device.catchUp();
       expect(caught.ok, JSON.stringify(caught)).toBe(true);
-      // The witness: the event was applied and its row indexed, and an image
+      // The witness: the event was applied and its item indexed, and an image
       // held as text is found, so the thumbnail's absence is its own.
       expect(await found("zebraword")).toEqual(["second"]);
       expect(await found("iconwordXYZ")).toEqual(["first", "second"]);
@@ -769,7 +769,7 @@ describe("the working copy holds one slice", () => {
     });
   });
 
-  describe("keeps a thumbnail out of its index on every path that writes a row", () => {
+  describe("keeps a thumbnail out of its index on every path that writes an item", () => {
     const catalog = {
       kind: "json" as const,
       status: 200,
@@ -804,7 +804,7 @@ describe("the working copy holds one slice", () => {
         true,
       );
       expect((await device.catchUp()).ok).toBe(true);
-      // The witness: the event was applied and its row indexed.
+      // The witness: the event was applied and its item indexed.
       expect(await found("zebraword")).toEqual(["applied"]);
       expect(
         await found("unicornsXYZ"),
@@ -826,7 +826,7 @@ describe("the working copy holds one slice", () => {
       expect(created.ok, JSON.stringify(created)).toBe(true);
       if (!created.ok) return;
       const id = created.value.item_id ?? "";
-      // The server's row carries a title and an image the local one did
+      // The server's item carries a title and an image the local one did
       // not; the certified read after the receipt supplies the indexed baseline.
       scriptWrites(server, {
         read: [
@@ -850,12 +850,12 @@ describe("the working copy holds one slice", () => {
       });
       const drained = await device.drain();
       expect(drained.ok, JSON.stringify(drained)).toBe(true);
-      // The witness: the certified row was written and indexed, an image in
+      // The witness: the certified item was written and indexed, an image in
       // its title found as the text it is there.
       expect(await found("zebraword")).toEqual([id]);
       expect(
         await found("unicornsXYZ"),
-        "the row a drain's answer carried put the image's base64 into the index",
+        "the item a drain's answer carried put the image's base64 into the index",
       ).toEqual([]);
     });
 
@@ -865,7 +865,7 @@ describe("the working copy holds one slice", () => {
       scriptHydration(server, {
         head: "10",
         catalog,
-        rows: {
+        items: {
           "user.snapshot": [
             {
               item: {
@@ -885,7 +885,7 @@ describe("the working copy holds one slice", () => {
         version: 1,
       });
       expect(edit.ok, JSON.stringify(edit)).toBe(true);
-      // The witness: the edit was laid over the row and indexed, an image in
+      // The witness: the edit was laid over the item and indexed, an image in
       // its title found as the text it is there.
       expect(await found("zebraword")).toEqual(["edited"]);
       expect(
@@ -894,13 +894,13 @@ describe("the working copy holds one slice", () => {
       ).toEqual([]);
     });
 
-    it("keeps a thumbnail out of its index when a refused write's row is read back", async () => {
+    it("keeps a thumbnail out of its index when a refused write's item is read back", async () => {
       harness = await startHarness("thumbnail-reconciled");
       const { server, device } = harness;
       scriptHydration(server, {
         head: "10",
         catalog,
-        rows: {
+        items: {
           "user.snapshot": [
             {
               item: {
@@ -920,7 +920,7 @@ describe("the working copy holds one slice", () => {
         version: 1,
       });
       expect(edit.ok, JSON.stringify(edit)).toBe(true);
-      // The edit is refused, and the row read back carries an image in its
+      // The edit is refused, and the item read back carries an image in its
       // title and in its thumbnail, so what the index holds afterwards is
       // what the read-back wrote.
       scriptWrites(server, {
@@ -937,15 +937,15 @@ describe("the working copy holds one slice", () => {
         ],
       });
       expect((await device.drain()).ok).toBe(true);
-      // The witness: the read-back row was written and indexed.
+      // The witness: the read-back item was written and indexed.
       expect(await found("zebraword")).toEqual(["refused"]);
       expect(
         await found("unicornsXYZ"),
-        "the row a refused write's reconcile read back put the image's base64 into the index",
+        "the item a refused write's reconcile read back put the image's base64 into the index",
       ).toEqual([]);
     });
 
-    it("keeps a thumbnail out of its index when a refused create lands on the row its key names", async () => {
+    it("keeps a thumbnail out of its index when a refused create lands on the item its key names", async () => {
       harness = await startHarness("thumbnail-landed");
       const { server, device } = harness;
       scriptHydration(server, { head: "10", catalog });
@@ -960,7 +960,7 @@ describe("the working copy holds one slice", () => {
         properties: { title: "Made here" },
       });
       expect(created.ok, JSON.stringify(created)).toBe(true);
-      // The key names a row the server holds, which the refusal names and
+      // The key names an item the server holds, which the refusal names and
       // the device reads, carrying an image in its title and its thumbnail.
       const row = {
         id: "landed",
@@ -989,7 +989,7 @@ describe("the working copy holds one slice", () => {
       });
       const drained = await device.drain();
       expect(drained.ok, JSON.stringify(drained)).toBe(true);
-      // The witness: the create landed on the row, which was written and
+      // The witness: the create landed on the item, which was written and
       // indexed.
       expect(
         drained.ok && drained.value.verdicts.map((entry) => entry.reason),
@@ -997,17 +997,17 @@ describe("the working copy holds one slice", () => {
       expect(await found("zebraword")).toEqual(["landed"]);
       expect(
         await found("unicornsXYZ"),
-        "the row a refused create landed on put the image's base64 into the index",
+        "the item a refused create landed on put the image's base64 into the index",
       ).toEqual([]);
     });
 
-    it("keeps a thumbnail out of its index when a waiting edit is laid over a row an event brought", async () => {
+    it("keeps a thumbnail out of its index when a waiting edit is laid over an item an event brought", async () => {
       harness = await startHarness("thumbnail-laid-over");
       const { server, device } = harness;
       scriptHydration(server, {
         head: "10",
         catalog,
-        rows: {
+        items: {
           "user.snapshot": [
             {
               item: {
@@ -1047,7 +1047,7 @@ describe("the working copy holds one slice", () => {
       expect(edit.ok, JSON.stringify(edit)).toBe(true);
       expect((await device.catchUp()).ok).toBe(true);
       // The witness: the event was applied and the waiting edit laid over
-      // it, so the row holds the image and the edit's title, indexed.
+      // it, so the item holds the image and the edit's title, indexed.
       const held = await device.get("laid");
       expect(held.ok && held.value.properties).toEqual({
         title: pngOf("zebraword"),
@@ -1056,7 +1056,7 @@ describe("the working copy holds one slice", () => {
       expect(await found("zebraword")).toEqual(["laid"]);
       expect(
         await found("unicornsXYZ"),
-        "the row a waiting edit was laid over put the image's base64 into the index",
+        "the item a waiting edit was laid over put the image's base64 into the index",
       ).toEqual([]);
     });
   });
@@ -1265,7 +1265,7 @@ describe("the working copy holds one slice", () => {
     const { server, device } = harness;
     scriptHydration(server, {
       head: "10",
-      rows: {
+      items: {
         "core.file": [
           {
             item: {
@@ -1333,7 +1333,7 @@ describe("the working copy belongs to one server", () => {
       const refused = await wrong.hydrate(["core.note"], "library");
       expect(
         refused.ok,
-        "a store bound to one server accepted a hydration from another, so one file would carry two datasets with nothing recording which row came from where",
+        "a store bound to one server accepted a hydration from another, so one file would carry two datasets with nothing recording which item came from where",
       ).toBe(false);
       if (!refused.ok) {
         expect(
@@ -1479,7 +1479,7 @@ describe("the working copy belongs to one server", () => {
     const { server, device } = harness;
     scriptHydration(server, {
       head: "10",
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -1618,7 +1618,7 @@ describe("the working copy belongs to one server", () => {
 
   it("opens a store to read without claiming the writer role, and is told when it saves", async () => {
     harness = await hydratedHarness("reader-first", {
-      rows: { "core.note": [{ item: { id: "n1" } }] },
+      items: { "core.note": [{ item: { id: "n1" } }] },
     });
     // A path where nothing has been made: the reading open refuses it and
     // leaves nothing there. The witness: an ordinary open of such a path
@@ -1777,7 +1777,7 @@ describe("the working copy belongs to one server", () => {
 
   it("refuses to read a store a writer of another schema version made", async () => {
     harness = await hydratedHarness("reader-schema", {
-      rows: { "core.note": [{ item: { id: "n1" } }] },
+      items: { "core.note": [{ item: { id: "n1" } }] },
     });
     // The witness: the same store, at the reader's own version, reads.
     const reading = harness.device.reopen({ reader: true });
@@ -1818,7 +1818,7 @@ describe("the working copy belongs to one server", () => {
 
   it("refuses a store another build shaped, by name, with the writes it holds unsent", async () => {
     harness = await hydratedHarness("store-shape", {
-      rows: { "core.note": [{ item: { id: "n1" } }] },
+      items: { "core.note": [{ item: { id: "n1" } }] },
     });
     const queued = await harness.device.create({
       type: "core.note",
@@ -1866,7 +1866,7 @@ describe("the working copy belongs to one server", () => {
   it("names a blocked write among the writes a store of another shape holds unsent", async () => {
     const id = "01a00000-0000-7000-8000-00000000000a";
     harness = await hydratedHarness("store-shape-held", {
-      rows: { "core.note": [{ item: { id, version: 3 } }] },
+      items: { "core.note": [{ item: { id, version: 3 } }] },
     });
     const edit = await harness.device.update(id, {
       properties: { title: "edited", body: "edited" },
@@ -1874,7 +1874,7 @@ describe("the working copy belongs to one server", () => {
     });
     expect(edit.ok, JSON.stringify(edit)).toBe(true);
     scriptWrites(harness.server, {
-      update: [refusal(409, "version_conflict", "the row moved")],
+      update: [refusal(409, "version_conflict", "the item moved")],
     });
     const drained = await harness.device.drain();
     // The witness: the write is blocked, which the server has not taken.
@@ -1904,7 +1904,7 @@ describe("the working copy belongs to one server", () => {
 
   it("names a write of a kind this build does not send, among the writes a store of another shape holds", async () => {
     harness = await hydratedHarness("store-shape-kind", {
-      rows: { "core.note": [{ item: { id: "n1" } }] },
+      items: { "core.note": [{ item: { id: "n1" } }] },
     });
     const { device } = harness;
     const queued = await device.replaceMetadata("n1", ["held"]);
@@ -1979,7 +1979,7 @@ describe("the working copy belongs to one server", () => {
 
   it("opens a store made before a table this build adds, and adds it", async () => {
     harness = await hydratedHarness("store-older", {
-      rows: { "core.note": [{ item: { id: "n1" } }] },
+      items: { "core.note": [{ item: { id: "n1" } }] },
     });
     const store = new DatabaseSync(harness.device.store);
     try {
@@ -2016,7 +2016,7 @@ describe("the working copy belongs to one server", () => {
 
   it("opens a store made before a column this build adds, adds it, and sends the write it holds", async () => {
     harness = await hydratedHarness("store-older-column", {
-      rows: { "core.note": [{ item: { id: "n1" } }] },
+      items: { "core.note": [{ item: { id: "n1" } }] },
     });
     const edit = await harness.device.update("n1", {
       properties: { title: "unsent", body: "unsent" },
@@ -2087,7 +2087,7 @@ describe("the working copy belongs to one server", () => {
 
   it("gives a second opener a reading handle that refuses writes", async () => {
     harness = await hydratedHarness("one-writer", {
-      rows: { "core.note": [{ item: { id: "n1" } }] },
+      items: { "core.note": [{ item: { id: "n1" } }] },
     });
     // A command that holds the store: a drain whose write the server accepts
     // and never answers. Every other command opens the store, does its work
@@ -2140,7 +2140,7 @@ describe("the working copy belongs to one server", () => {
       });
       expect(
         wrote.ok,
-        "two processes both held the writer handle for one store, so both queue into one file and neither sees the other's rows",
+        "two processes both held the writer handle for one store, so both queue into one file and neither sees the other's items",
       ).toBe(false);
       if (!wrote.ok) {
         expect(
@@ -2361,7 +2361,7 @@ describe("the working copy says what it is", () => {
     const got = await device.get("whatever");
     expect(
       got.ok ? "answered" : got.refusal.code,
-      "a row the copy does not hold was answered or refused for a reason other than that it is not held",
+      "an item the copy does not hold was answered or refused for a reason other than that it is not held",
     ).toBe("not_held");
 
     // The witness: what the app saves is what a read then answers, so the
@@ -2451,7 +2451,7 @@ describe("the working copy says what it is", () => {
       head: "10",
       pageSize: 1,
       drop: cut,
-      rows: {
+      items: {
         "core.note": ["one", "two", "three"].map((word) => ({
           item: {
             id: `partial-${word}`,
@@ -2462,7 +2462,7 @@ describe("the working copy says what it is", () => {
     });
   }
 
-  it("answers a listing and a search part way through a hydration from the rows it holds, saying the answer is partial", async () => {
+  it("answers a listing and a search part way through a hydration from the items it holds, saying the answer is partial", async () => {
     harness = await startHarness("partial-reads");
     const { server, device } = harness;
     let cut = true;
@@ -2501,7 +2501,7 @@ describe("the working copy says what it is", () => {
       ).toBe("partial");
     }
 
-    // The witness: the same reads of the whole copy answer every row and say
+    // The witness: the same reads of the whole copy answer every item and say
     // so, so the answers above were short because the copy was.
     cut = false;
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
@@ -2524,7 +2524,7 @@ describe("the working copy says what it is", () => {
     ).toEqual({ hits: 3, completeness: "complete" });
   });
 
-  it("answers a read by id of a row it holds part way through a hydration, and refuses one it does not hold yet", async () => {
+  it("answers a read by id of an item it holds part way through a hydration, and refuses one it does not hold yet", async () => {
     harness = await startHarness("partial-get");
     const { server, device } = harness;
     let cut = true;
@@ -2534,15 +2534,15 @@ describe("the working copy says what it is", () => {
     const held = await device.get("partial-one");
     expect(
       held.ok ? held.value.id : held.refusal.code,
-      "a row the copy holds was refused part way through a hydration",
+      "an item the copy holds was refused part way through a hydration",
     ).toBe("partial-one");
     const arriving = await device.get("partial-two");
     expect(
       arriving.ok ? "answered" : arriving.refusal.code,
-      "a row still to arrive was answered or refused as though the copy were whole, so a caller reads it as gone",
+      "an item still to arrive was answered or refused as though the copy were whole, so a caller reads it as gone",
     ).toBe("hydration_incomplete");
 
-    // The witness: the whole copy answers the row, and says a row it does not
+    // The witness: the whole copy answers the item, and says an item it does not
     // hold is not held, so the refusal above was the copy's state speaking.
     cut = false;
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
@@ -2564,7 +2564,7 @@ describe("the working copy says what it is", () => {
     ] as const) {
       expect(
         edges.ok ? "answered" : edges.refusal.code,
-        `the edges ${name} a row were answered part way through a hydration, though an edge may still be arriving`,
+        `the edges ${name} an item were answered part way through a hydration, though an edge may still be arriving`,
       ).toBe("hydration_incomplete");
     }
 
@@ -2613,7 +2613,7 @@ describe("the working copy says what it is", () => {
     ).toBe(false);
   });
 
-  it("reports the rows its listings brought apart from a write still waiting while a hydration fills the copy", async () => {
+  it("reports the items its listings brought apart from a write still waiting while a hydration fills the copy", async () => {
     harness = await startHarness("partial-listed");
     const { server, device } = harness;
     // The report makes the copy a create needs.
@@ -2637,12 +2637,12 @@ describe("the working copy says what it is", () => {
     expect(filling.ok, JSON.stringify(filling)).toBe(true);
     if (!filling.ok) return;
     expect(filling.value.hydration).toBe("in_progress");
-    // The witness: the waiting write is a row the copy holds, so `items`
+    // The witness: the waiting write is an item the copy holds, so `items`
     // counts it, and a caller setting `items` against the count misreads.
     expect(filling.value.items).toBe(2);
     expect(
       [filling.value.items_listed, filling.value.items_expected],
-      "the rows the listings brought counted the waiting write, so the progress against the server's count can pass the whole",
+      "the items the listings brought counted the waiting write, so the progress against the server's count can pass the whole",
     ).toEqual([1, 3]);
   });
 
@@ -2669,18 +2669,18 @@ describe("the working copy says what it is", () => {
     ).toBe(false);
   });
 
-  it("takes writes to new rows only after an interrupted hydration, and sends none", async () => {
+  it("takes writes to new items only after an interrupted hydration, and sends none", async () => {
     harness = await startHarness("interrupted-write");
     const { server, device } = harness;
     scriptHydration(server, {
       head: "10",
-      rows: { "core.note": [{ item: { id: "n1" } }] },
+      items: { "core.note": [{ item: { id: "n1" } }] },
     });
     // Answers are taken in order, so the second hydration is the one that
     // dies part way.
     server.copyAnswer("GET", "/items", { kind: "drop" });
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
-    // The witness: the hydrated copy takes an edit of the row it holds.
+    // The witness: the hydrated copy takes an edit of the item it holds.
     const edited = await device.update("n1", {
       version: 1,
       properties: { title: "taken" },
@@ -2692,7 +2692,7 @@ describe("the working copy says what it is", () => {
     // before it reads a page, so this one leaves n1 unheld.
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(false);
 
-    // A new row conflicts with nothing the server holds, so the copy takes
+    // A new item conflicts with nothing the server holds, so the copy takes
     // it and keeps it for the drain after the hydration.
     const created = await device.create({
       type: "core.note",
@@ -2700,17 +2700,17 @@ describe("the working copy says what it is", () => {
     });
     expect(
       created.ok,
-      `a copy part way through a hydration refused a new row, so the person cannot write until it ends: ${JSON.stringify(created)}`,
+      `a copy part way through a hydration refused a new item, so the person cannot write until it ends: ${JSON.stringify(created)}`,
     ).toBe(true);
 
-    // A row the copy does not hold has no version to write from.
+    // An item the copy does not hold has no version to write from.
     const refused = await device.update("n1", {
       version: 1,
       properties: { title: "refused" },
     });
     expect(
       refused.ok,
-      "a copy part way through a hydration took an edit of a row it does not hold, writing from a version it never read",
+      "a copy part way through a hydration took an edit of an item it does not hold, writing from a version it never read",
     ).toBe(false);
     if (!refused.ok) expect(refused.refusal.code).toBe("hydration_incomplete");
     const waiting = await device.queue();
@@ -2770,7 +2770,7 @@ describe("the working copy says what it is", () => {
     const { server, device } = harness;
     scriptHydration(server, {
       head: "10",
-      rows: { "core.note": [{ item: { id: "first" } }] },
+      items: { "core.note": [{ item: { id: "first" } }] },
     });
     // Queued behind the snapshot the first hydration takes: the server
     // hands out its answers in order, so the second hydration is the one
@@ -2809,7 +2809,7 @@ describe("the working copy says what it is", () => {
 
 describe("a local read answers the active state unless asked otherwise", () => {
   /**
-   * Three rows, one per state, in one slice. Hydration asks the server for
+   * Three items, one per state, in one slice. Hydration asks the server for
    * every state (`device/list-default-active`), so what the copy holds is not in question
    * here and what a read answers is.
    */
@@ -2817,7 +2817,7 @@ describe("a local read answers the active state unless asked otherwise", () => {
     harness = await startHarness(label);
     scriptHydration(harness.server, {
       head: "10",
-      rows: {
+      items: {
         "core.note": [
           { item: { id: "live", properties: { title: "zqlocal live" } } },
           {
@@ -2843,7 +2843,7 @@ describe("a local read answers the active state unless asked otherwise", () => {
     ).toBe(true);
 
     // The slice is a type list and a tier, never a state: a hydration that
-    // asked for the default would land only active rows, and every read
+    // asked for the default would land only active items, and every read
     // below would then be answered by a copy that never held the others.
     // The scripted server honors the parameter, so this is what keeps the
     // widening under test rather than assumed.
@@ -2857,7 +2857,7 @@ describe("a local read answers the active state unless asked otherwise", () => {
     for (const read of itemReads) {
       expect(
         read.query.get("state"),
-        "hydration stopped asking for every state, so a working copy holds only active rows and a caller can never reach the rest",
+        "hydration stopped asking for every state, so a working copy holds only active items and a caller can never reach the rest",
       ).toBe("any");
     }
   }
@@ -2884,22 +2884,22 @@ describe("a local read answers the active state unless asked otherwise", () => {
     const ids = listed.ok ? listed.value.map((item) => item.id).sort() : [];
     expect(
       ids,
-      "a local list naming no state stopped answering live rows, so an unnarrowed read reports an empty copy",
+      "a local list naming no state stopped answering live items, so an unnarrowed read reports an empty copy",
     ).toContain("live");
     expect(
       ids,
-      "a local list naming no state answers archived rows, so a device and the server it copies give different answers to one question",
+      "a local list naming no state answers archived items, so a device and the server it copies give different answers to one question",
     ).not.toContain("filed");
     expect(
       ids,
-      "a local list naming no state answers the bin, so a deleted row still reads as present on the device",
+      "a local list naming no state answers the bin, so a deleted item still reads as present on the device",
     ).not.toContain("binned");
 
     // The copy holds all three, so the absences above are the read's doing
     // rather than a hydration that never landed them.
     expect(
       await heldIds(),
-      "the widening flag does not widen, so the rows the default hides are unreachable and the case above proves nothing",
+      "the widening flag does not widen, so the items the default hides are unreachable and the case above proves nothing",
     ).toEqual(["binned", "filed", "live"]);
 
     const filed = await device.list({ state: "archived" });
@@ -2909,7 +2909,7 @@ describe("a local read answers the active state unless asked otherwise", () => {
     ).toBe(true);
     expect(
       filed.ok ? filed.value.map((item) => item.id) : [],
-      "naming a state no longer reaches it, so a caller cannot ask for the rows the default hides",
+      "naming a state no longer reaches it, so a caller cannot ask for the items the default hides",
     ).toEqual(["filed"]);
   });
 
@@ -2918,11 +2918,11 @@ describe("a local read answers the active state unless asked otherwise", () => {
     const device = harness!.device;
 
     // This case's own store, so the list case's control does not carry: a
-    // hydration that stopped landing non-active rows would make both
+    // hydration that stopped landing non-active items would make both
     // absences below true for the wrong reason.
     expect(
       await heldIds(),
-      "the copy does not hold the rows the search must not answer, so the absences below say nothing about the search",
+      "the copy does not hold the items the search must not answer, so the absences below say nothing about the search",
     ).toEqual(["binned", "filed", "live"]);
 
     const hits = await device.search("zqlocal");
@@ -2933,15 +2933,15 @@ describe("a local read answers the active state unless asked otherwise", () => {
     const ids = hits.ok ? hits.value.map((hit) => hit.item.id).sort() : [];
     expect(
       ids,
-      "a local search stopped matching live rows, so the local index answers nothing and the absences below are vacuous",
+      "a local search stopped matching live items, so the local index answers nothing and the absences below are vacuous",
     ).toContain("live");
     expect(
       ids,
-      "a local search answers a row a local list hides, which is two answers to one question on one device",
+      "a local search answers an item a local list hides, which is two answers to one question on one device",
     ).not.toContain("filed");
     expect(
       ids,
-      "a local search answers the bin, so a deleted row is still findable on the device",
+      "a local search answers the bin, so a deleted item is still findable on the device",
     ).not.toContain("binned");
 
     // A caller who names a state is answered it, which is what makes the
@@ -2953,18 +2953,18 @@ describe("a local read answers the active state unless asked otherwise", () => {
     ).toBe(true);
     expect(
       filed.ok ? filed.value.map((hit) => hit.item.id) : [],
-      "naming a state no longer reaches it on the local search door, so the rows the default hides are unreachable by any local read",
+      "naming a state no longer reaches it on the local search door, so the items the default hides are unreachable by any local read",
     ).toEqual(["filed"]);
   });
 
-  it("keeps a row in the bin out of the index, whatever state a search names", async () => {
+  it("keeps an item in the bin out of the index, whatever state a search names", async () => {
     await hydrateEveryState("local-search-bin");
     const device = harness!.device;
 
     // The copy holds it, so what follows is the index rather than the slice.
     expect(
       await heldIds(),
-      "the copy does not hold the row in the bin, so a search that misses it proves nothing about the index",
+      "the copy does not hold the item in the bin, so a search that misses it proves nothing about the index",
     ).toContain("binned");
 
     for (const [named, filters] of [
@@ -2980,7 +2980,7 @@ describe("a local read answers the active state unless asked otherwise", () => {
       const ids = hits.value.map((hit) => hit.item.id);
       expect(
         ids,
-        `a local search naming ${named} answers a row in the bin, so a device matches text the server it copies answers nothing for`,
+        `a local search naming ${named} answers an item in the bin, so a device matches text the server it copies answers nothing for`,
       ).not.toContain("binned");
     }
 
@@ -2995,12 +2995,12 @@ describe("a local read answers the active state unless asked otherwise", () => {
     ).toEqual(["filed", "live"]);
   });
 
-  it("stops finding a row once an event puts it in the bin", async () => {
+  it("stops finding an item once an event puts it in the bin", async () => {
     harness = await startHarness("search-binned-later");
     const { server, device } = harness;
     scriptHydration(server, {
       head: "10",
-      rows: {
+      items: {
         "core.note": [
           {
             item: { id: "doomed", properties: { title: "zqlater", body: "b" } },
@@ -3029,7 +3029,7 @@ describe("a local read answers the active state unless asked otherwise", () => {
       const hits = await device.search("zqlater", filters);
       return hits.ok ? hits.value.map((hit) => hit.item.id) : hits;
     };
-    // The witness: the row is found before it goes to the bin.
+    // The witness: the item is found before it goes to the bin.
     expect(await ids({})).toEqual(["doomed"]);
     expect((await device.catchUp()).ok).toBe(true);
     const held = await device.list({ state: "trashed" });
@@ -3038,11 +3038,11 @@ describe("a local read answers the active state unless asked otherwise", () => {
     ]);
     expect(
       [await ids({ allStates: true }), await ids({ state: "trashed" })],
-      "a row put in the bin after it was indexed was still found",
+      "an item put in the bin after it was indexed was still found",
     ).toEqual([[], []]);
   });
 
-  it("reads an archived row by id and reports a trashed one as absent", async () => {
+  it("reads an archived item by id and reports a trashed one as absent", async () => {
     await hydrateEveryState("local-get-state");
     const device = harness!.device;
 
@@ -3053,7 +3053,7 @@ describe("a local read answers the active state unless asked otherwise", () => {
     ).toBe(true);
     expect(
       filed.ok ? filed.value.id : undefined,
-      "an archived row is not readable by id, so a caller holding its id is told it does not exist while the server would hand it over",
+      "an archived item is not readable by id, so a caller holding its id is told it does not exist while the server would hand it over",
     ).toBe("filed");
 
     const live = await device.get("live");
@@ -3064,18 +3064,18 @@ describe("a local read answers the active state unless asked otherwise", () => {
 
     // The witness for the absence below, which the two cases above carry and
     // this one did not. Hydrating proves the request asked for every state;
-    // it does not prove the row landed. Without this, a device that dropped
-    // trashed rows on ingest would pass this case while having lost the row
+    // it does not prove the item landed. Without this, a device that dropped
+    // trashed items on ingest would pass this case while having lost the item
     // from `--all-states` reads and from what a catch-up prunes against.
     expect(
       await heldIds(),
-      "the copy does not hold the binned row at all, so the absence below is a row that never arrived rather than one the read refuses",
+      "the copy does not hold the binned item at all, so the absence below is an item that never arrived rather than one the read refuses",
     ).toEqual(["binned", "filed", "live"]);
 
     const binned = await device.get("binned");
     expect(
       binned.ok && binned.value !== null,
-      "a row in the bin is readable by id, so a device hands back a row the server it copies answers 404 for",
+      "an item in the bin is readable by id, so a device hands back an item the server it copies answers 404 for",
     ).toBe(false);
   });
 });
@@ -3097,7 +3097,7 @@ describe("a local search narrows as a list does", () => {
     scriptHydration(harness.server, {
       head: "10",
       catalog,
-      rows: {
+      items: {
         "core.note": [
           {
             item: { id: "note", properties: { title: "heron note" } },
@@ -3154,15 +3154,15 @@ describe("a local search narrows as a list does", () => {
     ).toEqual(["file", "image", "photo"]);
     expect(
       await ids({ tags: ["birds"] }),
-      "a search narrowed to a tag answered a row without it",
+      "a search narrowed to a tag answered an item without it",
     ).toEqual(["image", "note"]);
     expect(
       await ids({ tags: ["birds", "garden"] }),
-      "a search narrowed by two tags answered a row carrying only one of them",
+      "a search narrowed by two tags answered an item carrying only one of them",
     ).toEqual(["note"]);
     expect(
       await ids({ type: "core.note", tags: ["birds", "garden"] }),
-      "a search narrowed by a type and two tags answered a row lacking one of them",
+      "a search narrowed by a type and two tags answered an item lacking one of them",
     ).toEqual(["note"]);
   });
 });
@@ -3172,7 +3172,7 @@ describe("a local search narrows as a list does", () => {
  * copy (`device/filter-grammar-refused` and `device/filter-as-server`).
  *
  * A filter the copy answered differently from the server would show one set
- * of rows offline and another online for the same question, with nothing to
+ * of items offline and another online for the same question, with nothing to
  * say which is right. Four notes: `root` is the parent of `child`, which is the parent of
  * `grandchild` and refers to `stranger`. Every expression below selects some
  * of the four and not all of them, so each answer is the narrowing and not a
@@ -3199,7 +3199,7 @@ describe("a local read narrows by the listing grammar", () => {
     harness = await startHarness(label);
     scriptHydration(harness.server, {
       head: "10",
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -3299,7 +3299,7 @@ describe("a local read narrows by the listing grammar", () => {
     expect(await listed({})).toEqual(ALL);
     expect(
       await listed({ filter: 'properties.status eq "open"' }),
-      "a property equality answered a row whose property differs, or dropped one that matches",
+      "a property equality answered an item whose property differs, or dropped one that matches",
     ).toEqual(["grandchild", "root", "stranger"]);
     expect(
       await listed({ filter: 'properties.note contains "HERON"' }),
@@ -3315,23 +3315,23 @@ describe("a local read narrows by the listing grammar", () => {
     ).toEqual(["grandchild"]);
     expect(
       await listed({ filter: 'tags contains "birds"' }),
-      "a tag condition answered a row without the tag",
+      "a tag condition answered an item without the tag",
     ).toEqual(["child", "grandchild"]);
     expect(
       await listed({ filter: "tags not_exists" }),
-      "a row with no tags was not told apart from one with some",
+      "an item with no tags was not told apart from one with some",
     ).toEqual(["stranger"]);
     expect(
       await listed({
         filter: 'properties.status eq "open" AND tags contains "garden"',
       }),
-      "AND answered a row meeting only one of its conditions",
+      "AND answered an item meeting only one of its conditions",
     ).toEqual(["grandchild", "root"]);
     expect(
       await listed({
         filter: 'properties.status eq "closed" OR tags not_exists',
       }),
-      "OR answered only the rows meeting both, or a row meeting neither",
+      "OR answered only the items meeting both, or an item meeting neither",
     ).toEqual(["child", "stranger"]);
     expect(
       await listed({
@@ -3347,23 +3347,23 @@ describe("a local read narrows by the listing grammar", () => {
     expect(await listed({})).toEqual(ALL);
     expect(
       await listed({ filter: 'edge[parent-of] eq "child"' }),
-      "an edge condition answered a row that draws no such edge to the item",
+      "an edge condition answered an item that draws no such edge to the item",
     ).toEqual(["root"]);
     expect(
       await listed({ filter: 'edge[references] eq "stranger"' }),
-      "an edge condition answered a row that draws no such edge to the item",
+      "an edge condition answered an item that draws no such edge to the item",
     ).toEqual(["child"]);
     expect(
       await listed({ filter: "edge[parent-of] exists" }),
-      "`exists` on an edge type answered a row that draws none of that type",
+      "`exists` on an edge type answered an item that draws none of that type",
     ).toEqual(["child", "root"]);
     expect(
       await listed({ filter: "edge[parent-of] not_exists" }),
-      "`not_exists` on an edge type answered a row that draws one of that type",
+      "`not_exists` on an edge type answered an item that draws one of that type",
     ).toEqual(["grandchild", "stranger"]);
     expect(
       await listed({ filter: 'edge[parent-of] neq "child"' }),
-      "`neq` on an edge answered the row that draws exactly that edge",
+      "`neq` on an edge answered the item that draws exactly that edge",
     ).toEqual(["child", "grandchild", "stranger"]);
   });
 
@@ -3389,7 +3389,7 @@ describe("a local read narrows by the listing grammar", () => {
   });
 
   // The short timeout: a walk that does not end on the cycle hangs rather than refuses.
-  it("ends beneath on a parent-of cycle, answering each row once", async () => {
+  it("ends beneath on a parent-of cycle, answering each item once", async () => {
     harness = await startHarness("filter-beneath-cycle");
     const note = (id: string, child: string | null) => ({
       item: {
@@ -3408,7 +3408,7 @@ describe("a local read narrows by the listing grammar", () => {
     });
     scriptHydration(harness.server, {
       head: "10",
-      rows: {
+      items: {
         "core.note": [
           note("first", "second"),
           note("second", "third"),
@@ -3426,7 +3426,7 @@ describe("a local read narrows by the listing grammar", () => {
       const answer = await harness.device.list({ beneath: root });
       expect(
         answer.ok ? answer.value.map((item) => item.id).sort() : answer,
-        `beneath ${root} on a cycle did not answer the cycle, each row once`,
+        `beneath ${root} on a cycle did not answer the cycle, each item once`,
       ).toEqual(cycle);
     }
     expect(await searched({ beneath: "second" })).toEqual(cycle);
@@ -3463,7 +3463,7 @@ describe("a local list narrows on the item's own time", () => {
    * Both bounds are exclusive, which is one rule across the whole API
    * (`search-and-filters/own-time-exclusive`). A device that read either of them
    * inclusively would answer a bounded list differently from the server it
-   * copies, and the row that tells the two apart is the one sitting exactly
+   * copies, and the item that tells the two apart is the one sitting exactly
    * on the instant.
    */
   const ON_LOWER = "2026-03-01T00:00:00.000Z";
@@ -3475,7 +3475,7 @@ describe("a local list narrows on the item's own time", () => {
     harness = await startHarness(label);
     scriptHydration(harness.server, {
       head: "10",
-      rows: {
+      items: {
         "core.note": [
           { item: { id: "on-lower", occurred_at: ON_LOWER } },
           { item: { id: "inside", occurred_at: INSIDE } },
@@ -3490,7 +3490,7 @@ describe("a local list narrows on the item's own time", () => {
     ).toBe(true);
   }
 
-  it("excludes a row sitting exactly on either bound", async () => {
+  it("excludes an item sitting exactly on either bound", async () => {
     await hydrateFourRows("bounds-exclusive");
     const listed = await harness!.device.list({
       occurredAfter: ON_LOWER,
@@ -3503,7 +3503,7 @@ describe("a local list narrows on the item's own time", () => {
     if (!listed.ok) return;
     const ids = listed.value.map((item) => item.id);
 
-    // The witness. Without a row the query must return, both absences below
+    // The witness. Without an item the query must return, both absences below
     // are satisfied by a bound that dropped its predicate and matched
     // nothing at all.
     expect(
@@ -3520,7 +3520,7 @@ describe("a local list narrows on the item's own time", () => {
     ).not.toContain("on-upper");
     expect(
       ids,
-      "a row outside the window came back, so the bounds narrow nothing",
+      "an item outside the window came back, so the bounds narrow nothing",
     ).not.toContain("outside");
   });
 
@@ -3537,11 +3537,11 @@ describe("a local list narrows on the item's own time", () => {
       const ids = above.value.map((item) => item.id);
       expect(
         ids,
-        "a lower bound on its own drops rows above it, so it is narrowing something other than the item's own time",
+        "a lower bound on its own drops items above it, so it is narrowing something other than the item's own time",
       ).toEqual(expect.arrayContaining(["inside", "on-upper", "outside"]));
       expect(
         ids,
-        "a lower bound on its own keeps the row sitting on it, so that bound alone is inclusive",
+        "a lower bound on its own keeps the item sitting on it, so that bound alone is inclusive",
       ).not.toContain("on-lower");
     }
 
@@ -3551,11 +3551,11 @@ describe("a local list narrows on the item's own time", () => {
       const ids = below.value.map((item) => item.id);
       expect(
         ids,
-        "an upper bound on its own drops rows below it, so it is narrowing something other than the item's own time",
+        "an upper bound on its own drops items below it, so it is narrowing something other than the item's own time",
       ).toEqual(expect.arrayContaining(["on-lower", "inside"]));
       expect(
         ids,
-        "an upper bound on its own keeps the row sitting on it, so that bound alone is inclusive",
+        "an upper bound on its own keeps the item sitting on it, so that bound alone is inclusive",
       ).not.toContain("on-upper");
     }
   });
@@ -3586,7 +3586,7 @@ describe("a local read of edges answers both ends", () => {
     const { server, device } = harness;
     scriptHydration(server, {
       head: "10",
-      rows: {
+      items: {
         "core.note": [
           {
             item: {
@@ -3654,7 +3654,7 @@ describe("a local read of edges answers both ends", () => {
     const { server, device } = harness;
     scriptHydration(server, {
       head: "10",
-      rows: { "core.note": [{ item: { id: "ticket" } }] },
+      items: { "core.note": [{ item: { id: "ticket" } }] },
       edges: {
         "parent-of": [
           { id: "beneath", source_id: "project", target_id: "ticket" },

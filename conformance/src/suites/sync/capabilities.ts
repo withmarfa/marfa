@@ -13,9 +13,9 @@ import type { SseEvent } from "../../utils/sse.js";
  * Why these probes read behavior rather than a status code or a spec.
  *
  * The server drops query keys it does not declare and answers 200. Measured
- * against a fifty-row listing: a nonsense key returns the same fifty rows as
+ * against a fifty-item listing: a nonsense key returns the same fifty items as
  * no filter at all, and so does a filter parameter the server does not
- * implement, while a filter it does implement returns zero rows for an
+ * implement, while a filter it does implement returns zero items for an
  * impossible bound. There is no status, no warning and no field in the
  * response that separates "this filter matched everything" from "this filter
  * does not exist".
@@ -99,9 +99,9 @@ let cached: Promise<SyncCapabilities> | undefined;
 /**
  * Probe every rule once per file and cache the answer.
  *
- * Cached because the probes write: three of them create rows, and repeating
+ * Cached because the probes write: three of them create items, and repeating
  * that per file would multiply a dozen requests by however many files the
- * project grows. The rows belong to whichever file probed first and are torn
+ * project grows. The items belong to whichever file probed first and are torn
  * down with that file, which is fine — the answer outlives them.
  */
 export function detectSyncCapabilities(args: {
@@ -184,7 +184,7 @@ async function keyedCreate(
  * rule. **Do not reduce it to a two-valued reading.** The three answers are:
  *
  *   - **honored** — the key is read and a true repeat gets the stored result;
- *   - **ignored** — the key is dropped and every send writes another row;
+ *   - **ignored** — the key is dropped and every send writes another item;
  *   - **reuse-refused** — the key is read, and it names a *different* request
  *     than the one it was minted for, which is a client error rather than a
  *     retry.
@@ -204,13 +204,13 @@ async function keyedCreate(
  *   1. **Reuse.** Two different bodies under one key. A refusal, or a replay
  *      of the first, means the key was read; two ids mean it was not, and
  *      that is `absent` with no control needed — neither an honoring server
- *      nor a dedupe writes two rows for one key.
+ *      nor a dedupe writes two items for one key.
  *   2. **Replay.** Two byte-identical creates under a second key, which is
  *      what an offline queue actually resends. One id means no second write
  *      happened, since a re-run of a create with no caller-supplied id would
  *      mint a fresh one.
  *   3. **The control**, and it is leg 2 that needs it. The same content again
- *      under a *third* key has to produce a new row. If it does not, this
+ *      under a *third* key has to produce a new item. If it does not, this
  *      door collapses on content and leg 2's single id says nothing about the
  *      key — so the probe throws rather than reporting a rule it could not
  *      see.
@@ -242,7 +242,7 @@ async function probeIdempotencyKeys(args: {
     if (reuseSecond.id !== reuseFirst.id) {
       // Neither an honoring server nor a content dedupe produces this: one
       // key naming two requests is either refused or replayed, and a dedupe
-      // has nothing to collapse because the bodies differ. Two rows means
+      // has nothing to collapse because the bodies differ. Two items means
       // the header was dropped.
       return {
         present: false,
@@ -253,7 +253,7 @@ async function probeIdempotencyKeys(args: {
     // bodies — but this answer serves the reuse rather than refusing it. The
     // rule is still present; the deviation belongs in a test's assertion
     // rather than in the probe's verdict.
-    readsTheKey = `a second, different request under one key was answered with the first row (${reuseFirst.id}) rather than refused`;
+    readsTheKey = `a second, different request under one key was answered with the first item (${reuseFirst.id}) rather than refused`;
   } else if (reuseSecond.errorCode === "idempotency_key_reused") {
     readsTheKey = `a second, different request under one key was refused ${reuseSecond.status} idempotency_key_reused`;
   } else {
@@ -287,7 +287,7 @@ async function probeIdempotencyKeys(args: {
     );
   }
 
-  // Leg 3 — the control for leg 2. Same content, fresh key, must be a new row.
+  // Leg 3 — the control for leg 2. Same content, fresh key, must be a new item.
   const controlKey = `probe-control-${randomUUID()}`;
   const control = await keyedCreate(client, ctx, controlKey, replayBody);
   if (!control.ok) {
@@ -299,7 +299,7 @@ async function probeIdempotencyKeys(args: {
   if (control.id === replayFirst.id) {
     throw new IndeterminateProbe(
       "idempotencyKeys",
-      `the same content under a different key returned the same row (${control.id}), so this door collapses writes on their content and the repeated id in the replay leg says nothing about the key`,
+      `the same content under a different key returned the same item (${control.id}), so this door collapses writes on their content and the repeated id in the replay leg says nothing about the key`,
     );
   }
 
@@ -308,7 +308,7 @@ async function probeIdempotencyKeys(args: {
     evidence:
       `${readsTheKey}; an identical repeat returned the first id (${replayFirst.id}) ` +
       `${replaySecond.replayed ? "and carried Idempotency-Replayed" : "without an Idempotency-Replayed header"}, ` +
-      `while the same content under a fresh key wrote a new row (${control.id})`,
+      `while the same content under a fresh key wrote a new item (${control.id})`,
   };
 }
 
@@ -317,7 +317,7 @@ async function probeIdempotencyKeys(args: {
  *
  * Three reads that differ only in the query string: none, an impossible future
  * bound, and a key the server certainly does not declare. Present means the
- * future bound returns strictly fewer rows than no filter *and* the nonsense
+ * future bound returns strictly fewer items than no filter *and* the nonsense
  * key returns the same as no filter.
  *
  * The nonsense leg does double duty. It proves the probe discriminates, and it
@@ -338,7 +338,7 @@ async function probeUpdatedAfter(args: {
   if (!seed.ok) {
     throw new IndeterminateProbe(
       "updatedAfter",
-      `could not seed a row to filter (${seed.status})`,
+      `could not seed an item to filter (${seed.status})`,
     );
   }
   trackItem(ctx, seed.data.item.id);
@@ -356,19 +356,19 @@ async function probeUpdatedAfter(args: {
 
   // `<= 0` rather than `=== 0`, because a count of -1 means the page could not
   // be read at all — a refusal, or a listing envelope this probe is reading
-  // the wrong key out of. Read as a row count, that arm reports "the filter
+  // the wrong key out of. Read as an item count, that arm reports "the filter
   // changed nothing" against every server, which is the false negative this
   // whole file is built to make impossible: the rule's tests would then fail
   // naming the server for a probe that never looked.
   if (bare.rows <= 0) {
     throw new IndeterminateProbe(
       "updatedAfter",
-      `the unfiltered read returned ${bare.rows} rows (status ${bare.status}) even after seeding one, so a filter that removes them cannot be told from one that does nothing`,
+      `the unfiltered read returned ${bare.rows} items (status ${bare.status}) even after seeding one, so a filter that removes them cannot be told from one that does nothing`,
     );
   }
 
   // This server refuses unknown keys, so a status separates the two cases on
-  // its own, which is a better probe than a row count.
+  // its own, which is a better probe than an item count.
   if (control.status === 400) {
     if (probe.status === 400) {
       return {
@@ -391,18 +391,18 @@ async function probeUpdatedAfter(args: {
   if (control.rows !== bare.rows) {
     throw new IndeterminateProbe(
       "updatedAfter",
-      `a key the server does not declare changed the row count (${bare.rows} -> ${control.rows}), so a row-count difference proves nothing about updated_after`,
+      `a key the server does not declare changed the item count (${bare.rows} -> ${control.rows}), so an item-count difference proves nothing about updated_after`,
     );
   }
   if (probe.rows < bare.rows) {
     return {
       present: true,
-      evidence: `updated_after=${IMPOSSIBLE_FUTURE} narrowed the listing from ${bare.rows} rows to ${probe.rows}, while a nonsense key left it at ${control.rows}`,
+      evidence: `updated_after=${IMPOSSIBLE_FUTURE} narrowed the listing from ${bare.rows} items to ${probe.rows}, while a nonsense key left it at ${control.rows}`,
     };
   }
   return {
     present: false,
-    evidence: `updated_after=${IMPOSSIBLE_FUTURE} returned the same ${probe.rows} rows as no filter, and so did the nonsense control key — the parameter is being dropped`,
+    evidence: `updated_after=${IMPOSSIBLE_FUTURE} returned the same ${probe.rows} items as no filter, and so did the nonsense control key — the parameter is being dropped`,
   };
 }
 
@@ -420,14 +420,14 @@ async function countRows(
  *
  * Asked separately because the answer can differ. A catch-up that reads items
  * incrementally and edges not at all is the shape a server acquires by
- * implementing the obvious half: the rows all arrive, the graph between them
+ * implementing the obvious half: the items all arrive, the graph between them
  * does not, and a client reconnecting believes it is current while holding a
  * stale set of edges. Nothing distinguishes that from a dataset whose edges
  * genuinely did not change.
  *
  * The bound is impossible rather than merely narrow, so `present` means the
  * listing came back empty rather than merely smaller. `/edges` takes no
- * `source` filter, so it returns the rows other files in the run wrote too,
+ * `source` filter, so it returns the items other files in the run wrote too,
  * and a "fewer than before" comparison would be reading their churn.
  */
 async function probeEdgeUpdatedAfter(args: {
@@ -481,7 +481,7 @@ async function probeEdgeUpdatedAfter(args: {
   if (bare.rows <= 0) {
     throw new IndeterminateProbe(
       "edgeUpdatedAfter",
-      `the unfiltered edge listing returned ${bare.rows} rows (status ${bare.status}) even after seeding one, so a filter that removes them cannot be told from one that does nothing`,
+      `the unfiltered edge listing returned ${bare.rows} items (status ${bare.status}) even after seeding one, so a filter that removes them cannot be told from one that does nothing`,
     );
   }
   if (control.status === 400) {
@@ -511,7 +511,7 @@ async function probeEdgeUpdatedAfter(args: {
   if (probe.rows === 0) {
     return {
       present: true,
-      evidence: `updated_after=${IMPOSSIBLE_FUTURE} emptied the edge listing (${bare.rows} rows without it, ${control.rows} with a nonsense key)`,
+      evidence: `updated_after=${IMPOSSIBLE_FUTURE} emptied the edge listing (${bare.rows} items without it, ${control.rows} with a nonsense key)`,
     };
   }
   return {
@@ -771,7 +771,7 @@ async function probeItemPurgedEvent(args: {
     }
     const id = created.data.item.id;
     // Tracked in case anything below throws; the purge removes it, and
-    // teardown tolerates a row that is already gone.
+    // teardown tolerates an item that is already gone.
     trackItem(ctx, id);
 
     const deleted = await client.deleteItem(id);
@@ -835,7 +835,7 @@ async function probeItemPurgedEvent(args: {
     }
     return {
       present: false,
-      evidence: `purging ${id} delivered item.deleted but no item.purged, so a client offline across the purge is never told the row is gone`,
+      evidence: `purging ${id} delivered item.deleted but no item.purged, so a client offline across the purge is never told the item is gone`,
     };
   });
 }
@@ -1021,7 +1021,7 @@ async function probeAnnouncedCursor(args: {
 /**
  * Track every item written under this file's credential.
  *
- * A write whose side effect is another row leaves the caller with no id to
+ * A write whose side effect is another item leaves the caller with no id to
  * record, and the `source` a credential stamps is the only handle on it. A
  * refused listing is a failure, not an empty answer: an empty list is the one
  * answer indistinguishable from a question never asked. The cursor is
@@ -1042,14 +1042,14 @@ export async function trackSourceScopedItems(args: {
     }>(`/items?${query.toString()}`);
     if (!listing.ok) {
       throw new Error(
-        `listing the rows written under ${ctx.source} answered ${String(listing.status)}: ${JSON.stringify(listing.error)}`,
+        `listing the items written under ${ctx.source} answered ${String(listing.status)}: ${JSON.stringify(listing.error)}`,
       );
     }
     for (const item of listing.data.data ?? []) trackItem(ctx, item.id);
     if (!listing.data.next_cursor) return;
     cursor = listing.data.next_cursor;
   }
-  throw new Error(`listing the rows written under ${ctx.source} did not end`);
+  throw new Error(`listing the items written under ${ctx.source} did not end`);
 }
 
 /**

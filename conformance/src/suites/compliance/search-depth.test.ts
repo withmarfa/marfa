@@ -6,10 +6,10 @@ import {
 } from "../../utils/fresh-server.js";
 
 /**
- * How deep a search reads its ranking. The rows are many enough that the
+ * How deep a search reads its ranking. The items are many enough that the
  * ranking could go on past the depth, which is what a search on the run's
- * shared server cannot hold: every file's rows would match too. So the
- * server is the file's own, and the rows are its whole content.
+ * shared server cannot hold: every file's items would match too. So the
+ * server is the file's own, and the items are its whole content.
  */
 
 const DEPTH = 10_000;
@@ -40,9 +40,9 @@ beforeAll(async () => {
 }, FRESH_SERVER_TIMEOUT_MS + 300_000);
 
 describe("search depth", () => {
-  it("stops paging a search at its 10,000th row", async () => {
-    // The witness: the instance holds a row past the depth, so a cursor of
-    // `null` at the 10,000th row is the depth's doing and not the ranking's
+  it("stops paging a search at its 10,000th item", async () => {
+    // The witness: the instance holds an item past the depth, so a cursor of
+    // `null` at the 10,000th item is the depth's doing and not the ranking's
     // end.
     let held = 0;
     let listing: string | undefined;

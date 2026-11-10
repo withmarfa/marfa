@@ -37,7 +37,7 @@ import {
  *
  * A cycle is the failure that lands in the right place. Its targets exist, so
  * the up-front pass admits them; the check that refuses it runs against the
- * post-delete graph inside the caller's transaction, after the item row has
+ * post-delete graph inside the caller's transaction, after the item has
  * been written. `edge_cycle` is asserted rather than the status alone because
  * it is the discriminator: no refusal raised before the transaction opens
  * carries that code, so reading it back is how this test knows it reached the
@@ -131,10 +131,10 @@ describe("post-commit emission", () => {
       );
 
       // The ordering control, and the reason the phantom leg is worth
-      // anything. The same request with a version the row has already moved
+      // anything. The same request with a version the item has already moved
       // past is refused by the item write itself — which sits at the top of
       // the transaction, ahead of the edge check — so a 409 here is how this
-      // test knows the row is written before the cycle refuses it. Were the
+      // test knows the item is written before the cycle refuses it. Were the
       // order the other way round, the answer would be the cycle's 400 and
       // the rolled-back leg below would be rolling back nothing.
       const ordering = await client.updateItem(id, {
@@ -144,11 +144,11 @@ describe("post-commit emission", () => {
       });
       expect(
         ordering.status,
-        "a stale version lost to the edge check, so the item row is not written before the refusal and this test is not measuring a rollback",
+        "a stale version lost to the edge check, so the item is not written before the refusal and this test is not measuring a rollback",
       ).toBe(409);
 
       // The rolled-back leg. The targets exist, so the up-front pass admits
-      // them and the write proceeds: the item row lands, the item's existing
+      // them and the write proceeds: the item lands, the item's existing
       // `parent-of` edges are deleted, and only then does the cycle check
       // refuse the set — inside the transaction, which unwinds all of it.
       const rolledBack = await client.updateItem(id, {
@@ -198,7 +198,7 @@ describe("post-commit emission", () => {
     expect(outcome.rolledBackStatus).toBe(400);
     expect(
       outcome.rolledBackCode,
-      "the patch was refused somewhere other than the in-transaction edge check, so no item row was written and there was never a phantom to announce",
+      "the patch was refused somewhere other than the in-transaction edge check, so no item was written and there was never a phantom to announce",
     ).toBe("edge_cycle");
 
     // Nothing the subscriber received carries the rolled-back body. This is
@@ -212,7 +212,7 @@ describe("post-commit emission", () => {
       "a rolled-back write was announced to a live subscriber",
     ).toEqual([]);
 
-    // And the row itself never moved, so there was a rollback to announce.
+    // And the item itself never moved, so there was a rollback to announce.
     const after = await client.getItem(id);
     expect(after.ok).toBe(true);
     expect(after.data.item.properties.body).toBe("post-commit-committed");

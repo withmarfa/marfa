@@ -46,7 +46,7 @@ function refused<T>(result: Outcome<T>): { code: string; raw: string } {
 
 function id(key: string): string {
   const found = ids.get(key);
-  if (!found) throw new Error(`no row ${key}`);
+  if (!found) throw new Error(`no item ${key}`);
   return found;
 }
 
@@ -173,8 +173,8 @@ describe("a copy reads a folder's settings and answers its query", () => {
     const feed = copy("feed");
     value(await feed.hydrate([typeId, FOLDER_TYPE], "feed"));
     expect(value(await feed.folder(id("shelf"))).id).toBe(id("shelf"));
-    // The witness: the feed copy holds the type's feed row and not its
-    // library rows, so the tier still narrows every other type.
+    // The witness: the feed copy holds the type's feed item and not its
+    // library items, so the tier still narrows every other type.
     const rows = value(await feed.list({ type: typeId, allStates: true }));
     expect(rows.map((row) => row.id)).toEqual([id("feed")]);
   });

@@ -17,7 +17,7 @@ import {
   folderHarness,
   folderItem,
   KEY,
-  scriptFolderRow,
+  scriptFolderItem,
   scriptHydration,
   type FolderHarness,
 } from "./harness.js";
@@ -40,7 +40,7 @@ afterEach(async () => {
 
 async function setup(items: WireItemOptions[]) {
   server = await ScriptedServer.start();
-  const settings = scriptFolderRow(server, {
+  const settings = scriptFolderItem(server, {
     query: { types: ["core.note"] },
   });
   const edges: WireEdgeOptions[] = items.map((row, index) => ({
@@ -53,7 +53,7 @@ async function setup(items: WireItemOptions[]) {
   const frames: SseFrame[] = [];
   scriptHydration(server, {
     head: "1",
-    rows: { "core.note": items.map((item) => ({ item })) },
+    items: { "core.note": items.map((item) => ({ item })) },
     edges: { "in-folder": edges },
   });
   const folder = await folderHarness("contract-c-effects", {
@@ -209,7 +209,7 @@ describe("completed effects of a restarted folder pull", () => {
     async (direction) => {
       const row = item(1);
       const { folder, frames, settings } = await setup([row]);
-      const otherSettings = scriptFolderRow(server!, {
+      const otherSettings = scriptFolderItem(server!, {
         query: { types: ["core.note"] },
       });
       const other = await folderHarness("contract-c-transfer", {

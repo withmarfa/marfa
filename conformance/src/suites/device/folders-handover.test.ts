@@ -16,7 +16,7 @@ import {
   KEY,
   folderHarness,
   requireBinary,
-  scriptFolderRow,
+  scriptFolderItem,
 } from "./harness.js";
 import type { FolderHarness } from "./harness.js";
 import { CliFolder } from "../../device/cli-adapter.js";
@@ -186,7 +186,7 @@ async function twoFolders(label: string): Promise<{
     }),
   });
   made.push(a);
-  const otherRow = scriptFolderRow(a.server, tagged("b"));
+  const otherRow = scriptFolderItem(a.server, tagged("b"));
   const rows = scriptFolderWrites(a);
   const b = await folderHarness(`${label}-b`, {
     sharing: { server: a.server, key: KEY },

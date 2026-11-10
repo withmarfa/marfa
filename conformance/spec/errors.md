@@ -30,7 +30,7 @@ When the server answers `409 version_conflict` or `409 ancestor_unavailable`, th
 
 **Reason:** `versions.md` states the rest of each envelope. The member is the one thing that sets these two answers apart from every other refusal.
 
-**Tests:** `correctness/item-versioning.test.ts › a stale write answers version_conflict with a three-way envelope`, `› a version no client ever read answers ancestor_unavailable`, `› answers an edges-only stale write with the envelope minus its merge half`, `› answers an update that carries only edges or names the row's own type version_conflict with no ancestor, whichever version it names`, `compliance/error-codes.test.ts › rejects a stale write whose base version is retained`, `› rejects an update naming a version that never existed`, `correctness/edges/edges-crud.test.ts › refuses a stale edge update, under current and not under edge`, `compliance/edge-refusals.test.ts › answers a stale edge update with the edge as it stands and none of ancestor, conflicting_fields or merge_policy`, `compliance/purge-preconditions.test.ts › refuses a stale version with version_conflict, and the row survives`.
+**Tests:** `correctness/item-versioning.test.ts › a stale write answers version_conflict with a three-way envelope`, `› a version no client ever read answers ancestor_unavailable`, `› answers an edges-only stale write with the envelope minus its merge half`, `› answers an update that carries only edges or names the item's own type version_conflict with no ancestor, whichever version it names`, `compliance/error-codes.test.ts › rejects a stale write whose base version is retained`, `› rejects an update naming a version that never existed`, `correctness/edges/edges-crud.test.ts › refuses a stale edge update, under current and not under edge`, `compliance/edge-refusals.test.ts › answers a stale edge update with the edge as it stands and none of ancestor, conflicting_fields or merge_policy`, `compliance/purge-preconditions.test.ts › refuses a stale version with version_conflict, and the item survives`.
 
 ### `errors/code-closed`
 
@@ -412,7 +412,7 @@ If a write meets a volume with no room left for it, then the server MUST answer 
 
 **Reason:** a `500` names no cause, so a full disk reads as a fault in the server. A device retries a `5xx` without counting it against the write (`queue-and-verdicts/environmental-uncounted`) and keeps the write queued, which is what a write that only freed space can land needs. A `503` would read as a busy instance that a retry a moment later clears, and only someone freeing space does.
 
-**Tests:** `compliance/write-faults.test.ts › answers 507 insufficient_storage with write_outcome unknown, and the write that follows lands`, `compliance/disk-space-faults.test.ts › is answered 507 insufficient_storage when the disk store has no room for the bytes of an upload, which are not kept, and the next upload lands`, `› is answered 507 insufficient_storage when the disk store has no room for the bytes of a restore, which writes no row`.
+**Tests:** `compliance/write-faults.test.ts › answers 507 insufficient_storage with write_outcome unknown, and the write that follows lands`, `compliance/disk-space-faults.test.ts › is answered 507 insufficient_storage when the disk store has no room for the bytes of an upload, which are not kept, and the next upload lands`, `› is answered 507 insufficient_storage when the disk store has no room for the bytes of a restore, which writes no item`.
 
 ### `errors/storage-full-unknown`
 
@@ -488,7 +488,7 @@ If a `403` is not caused by a grant that the key could be given, such as the res
 
 **Reason:** where no grant could let the request through, a grant named would send the client to ask for one that cannot be had. Where the natural key resolves an item the key may not read, a grant named would disclose the item's type.
 
-**Tests:** `compliance/write-refusal-details.test.ts › names no grant where no grant would open the door`, `compliance/claimed-sources.test.ts › tells a key its natural key is taken, and nothing of a row it may not read`.
+**Tests:** `compliance/write-refusal-details.test.ts › names no grant where no grant would open the door`, `compliance/claimed-sources.test.ts › tells a key its natural key is taken, and nothing of an item it may not read`.
 
 ## An item in the bin, or no item at all
 
@@ -784,7 +784,7 @@ Every code the server answers over HTTP is a row of the table below, and a serve
 | `copies_below_minimum`               | 409                 | Dropping the copy would leave fewer live copies than the instance's minimum.                                                                                                                   |
 | `copy_held_by_backup`                | 409                 | A backup kept in the named object store names the blob.                                                                                                                                        |
 | `edge_type_in_use`                   | 409                 | Edges of the edge type still exist, and the delete did not ask to force.                                                                                                                       |
-| `export_rows_unrestorable`           | 409                 | Both reads of an archive export refused the same unchanged row. No archive bytes were sent. `details.row` names the row.                                                                       |
+| `export_entry_unrestorable`          | 409                 | An archive export selected an item or edge that a restore would refuse or skip. No archive bytes were sent. `details.entry` names it.                                                          |
 | `housekeeping_job_running`           | 409                 | The housekeeping job is in the middle of a run.                                                                                                                                                |
 | `id_reused`                          | 409                 | A caller-minted id already names a different item or edge.                                                                                                                                     |
 | `idempotency_key_in_flight`          | 409                 | An `Idempotency-Key` is held by another request, or kept changing hands. Retry.                                                                                                                |

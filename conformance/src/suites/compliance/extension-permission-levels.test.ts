@@ -90,7 +90,7 @@ async function mint(
 
 describe("extension permission levels", () => {
   it("keeps an exact read ceiling when minting or updating wildcard write", async () => {
-    // Set the valid map through the API, without changing a stored row.
+    // Set the valid map through the API, without changing a stored item.
     const narrowed = await api(
       "PATCH",
       `/keys/${key.id}`,

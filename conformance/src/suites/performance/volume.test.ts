@@ -25,8 +25,8 @@ import { measure } from "../../utils/timing.js";
  *
  * The property under test is that a bounded read stays bounded: fetching one
  * page, or one item by id, should cost the same whether the caller owns forty
- * rows or six hundred. A query plan that scans instead of seeking shows up as
- * latency tracking the row count.
+ * items or six hundred. A query plan that scans instead of seeking shows up as
+ * latency tracking the item count.
  *
  * The working set is scoped to this file's credential rather than to the whole
  * dataset, and the comparable signal is each step measured against the step
@@ -43,7 +43,7 @@ const READ_P95_CEILING_MS = 5_000;
 /**
  * How much slower the largest working set is allowed to be than the smallest.
  * Four times absorbs ordinary noise while still failing a read whose cost
- * tracks the row count — a scan over fifteen times the rows cannot hide under
+ * tracks the item count — a scan over fifteen times the items cannot hide under
  * this. The absolute floor stops a fast baseline from turning normal jitter
  * into a failure.
  */
@@ -96,7 +96,7 @@ function assertHealthySeries(series: PerfSeries, runs: number): void {
 }
 
 /** One measurement point: a bounded page read and a point read, both scoped to
- *  this file's own rows. */
+ *  this file's own items. */
 async function measurePoint(items: number): Promise<void> {
   const list = await measureSeries(
     `GET /items (${String(items)} in set)`,
@@ -131,7 +131,7 @@ async function measurePoint(items: number): Promise<void> {
 beforeAll(async () => {
   ({ ctx, client } = await createTestContext("performance", "volume"));
 
-  // One row before the first measurement so the baseline exercises the same
+  // One item before the first measurement so the baseline exercises the same
   // code path as every later step rather than the empty-result path.
   sampleIds = await seedWorkingSet(client, ctx, 1, buildSeedItem, {
     label: "v0",

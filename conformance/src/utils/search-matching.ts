@@ -1,19 +1,19 @@
 /**
  * The corpus and the queries the server's search fixtures and the device's hold
  * to one answer (the sections on search in `search-and-filters.md` and
- * `device.md`). Both halves create these rows under a type of their own and
- * search that type, so a case names the rows it expects by key and the other
- * rows on the server cannot change the answer.
+ * `device.md`). Both halves create these items under a type of their own and
+ * search that type, so a case names the items it expects by key and the other
+ * items on the server cannot change the answer.
  */
 
-export interface MatchingRow {
+export interface MatchingItem {
   key: string;
   properties: Record<string, unknown>;
   tags?: string[];
 }
 
-/** Created in this order, so a later row's identifier sorts after an earlier one's. */
-export const MATCHING_ROWS: MatchingRow[] = [
+/** Created in this order, so a later item's identifier sorts after an earlier one's. */
+export const MATCHING_ITEMS: MatchingItem[] = [
   {
     key: "running",
     properties: { title: "Running shoes", body: "A pair for the track" },
@@ -83,7 +83,7 @@ export interface MatchingCase {
   name: string;
   query: string;
   /**
-   * Row keys in rank order, best first; the rows of one group tie and come
+   * Item keys in rank order, best first; the items of one group tie and come
    * in identifier order. An unranked case lists one group and is compared as
    * a set.
    */
@@ -212,7 +212,7 @@ export const MATCHING_CASES: MatchingCase[] = [
     hits: [],
   },
   {
-    name: "more matches of a word rank higher, and equal rows tie by identifier",
+    name: "more matches of a word rank higher, and equal items tie by identifier",
     query: "kiwi",
     hits: [["k1"], ["k2"], ["k3", "k4"]],
     ranked: true,
@@ -263,9 +263,9 @@ export const MATCHING_CASES: MatchingCase[] = [
 /** The words a hit's snippet is held to: a match deep in a long text. */
 export const SNIPPET_QUERY = "needle";
 
-/** A word in a row whose text holds the characters HTML gives meaning to. */
+/** A word in an item whose text holds the characters HTML gives meaning to. */
 export const MARKUP_QUERY = "numbat";
 
-/** The excerpt `MARKUP_QUERY` answers: the row's text escaped, the match marked. */
+/** The excerpt `MARKUP_QUERY` answers: the item's text escaped, the match marked. */
 export const MARKUP_SNIPPET =
   "&lt;b&gt;<mark>numbat</mark>&lt;/b&gt; &amp; &quot;q&quot; &#39;p&#39;";

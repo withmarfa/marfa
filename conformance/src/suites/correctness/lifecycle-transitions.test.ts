@@ -78,9 +78,9 @@ describe("lifecycle transitions", () => {
     expect(revoked.status).toBe(400);
     expect(revoked.error?.error.code).toBe("validation_error");
 
-    // The witness. The same door moves the same row to a state this
+    // The witness. The same door moves the same item to a state this
     // type's lifecycle does contain, so the refusal above is about
-    // `revoked` and not about the door, the row or the credential.
+    // `revoked` and not about the door, the item or the credential.
     const archived = await client.transitionItem(r.data.item.id, "archived");
     expect(archived.ok).toBe(true);
     expect(archived.data.item.state).toBe("archived");
@@ -109,7 +109,7 @@ describe("lifecycle transitions", () => {
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("validation_error");
 
-    // Nothing was written: the same natural key lands as a new row.
+    // Nothing was written: the same natural key lands as a new item.
     const archived = await client.createItem(
       createNote({
         source: ctx.source,
@@ -124,7 +124,7 @@ describe("lifecycle transitions", () => {
     expect(read.data.item.state).toBe("archived");
   });
 
-  it("refuses a move to the state the row is in", async () => {
+  it("refuses a move to the state the item is in", async () => {
     const r = await client.createItem(createNote({ source: ctx.source }));
     expect(r.ok).toBe(true);
     trackItem(ctx, r.data.item.id);
@@ -134,7 +134,7 @@ describe("lifecycle transitions", () => {
     expect(same.error?.error.code).toBe("invalid_transition");
 
     // The witness: a move to a different state the graph allows is taken, so
-    // the refusal above is about the state the row is in.
+    // the refusal above is about the state the item is in.
     const moved = await client.transitionItem(r.data.item.id, "archived");
     expect(moved.ok).toBe(true);
     expect(moved.data.item.state).toBe("archived");

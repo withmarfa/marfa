@@ -471,7 +471,7 @@ describe("type registry", () => {
     await expectMatchesSchema("PUT", "/types/{id}", 200, updated.data);
   });
 
-  it("keeps the rows a type already has as they are when it gains a field", async () => {
+  it("keeps the items a type already has as they are when it gains a field", async () => {
     const typeId = testTypeId("gain-field");
     const schema: TypeSchema = {
       id: typeId,
@@ -498,7 +498,7 @@ describe("type registry", () => {
     });
     expect(gained.status).toBe(200);
 
-    // The witness: the new fields refuse what the stored row holds.
+    // The witness: the new fields refuse what the stored item holds.
     const refused = await client.createItem({
       type: typeId,
       properties: { name: "new", count: "not a number", rank: 1 },
@@ -525,8 +525,8 @@ describe("type registry", () => {
       properties: { name: "renamed" },
       version: before.version,
     });
-    // A write is judged on the properties the row would hold after it, so
-    // the stored values meet the new fields at the row's next write.
+    // A write is judged on the properties the item would hold after it, so
+    // the stored values meet the new fields at the item's next write.
     expect(unrelated.status).toBe(400);
     expect(unrelated.error?.error.code).toBe("invalid_properties");
     const fields = (
@@ -631,7 +631,7 @@ describe("type registry", () => {
     expect(again.error?.error.code).toBe("unknown_type");
   });
 
-  it("refuses a write to a row a forced delete left, until its type is registered again", async () => {
+  it("refuses a write to an item a forced delete left, until its type is registered again", async () => {
     const typeId = testTypeId("force-delete-then-patch");
     const created = await client.registerType({
       id: typeId,
@@ -665,7 +665,7 @@ describe("type registry", () => {
     expect(resynced.error?.error.code).toBe("unknown_type");
     expect((await client.getItem(id)).data.item.properties.name).toBe("kept");
 
-    // Registered again, under another shape: the row is the type's again and
+    // Registered again, under another shape: the item is the type's again and
     // a write to it is held to that shape.
     const again = await client.registerType({
       id: typeId,
@@ -744,7 +744,7 @@ describe("type registry", () => {
       expect(moved.status, state).toBe(200);
 
       // The witness: no item of the type is listed by default, so the refusal
-      // below is for a row the ordinary listing does not show.
+      // below is for an item the ordinary listing does not show.
       const listed = await client.listItems({ type: typeId });
       expect(listed.data.data, state).toEqual([]);
 
@@ -755,7 +755,7 @@ describe("type registry", () => {
     }
   });
 
-  it("refuses a bulk upsert and a bulk action onto a row a forced delete left", async () => {
+  it("refuses a bulk upsert and a bulk action onto an item a forced delete left", async () => {
     const typeId = testTypeId("force-delete-then-bulk");
     const tag = `orphan-bulk-${ctx.runId}`;
     const sourceId = `orphan-bulk-${ctx.runId}`;
@@ -798,7 +798,7 @@ describe("type registry", () => {
     expect((await client.getItem(id)).data.item.properties.name).toBe("kept");
 
     // The witness: once the type is registered again the same upsert resolves
-    // to the row by its natural key and the same patch applies, so what was
+    // to the item by its natural key and the same patch applies, so what was
     // refused is the missing type.
     expect((await client.registerType({ id: typeId, fields })).status).toBe(
       201,
@@ -819,7 +819,7 @@ describe("type registry", () => {
     );
   });
 
-  it("refuses a change of tier or time to a row a forced delete left, singly and in bulk", async () => {
+  it("refuses a change of tier or time to an item a forced delete left, singly and in bulk", async () => {
     const typeId = testTypeId("force-delete-then-tier");
     const tag = `orphan-tier-${ctx.runId}`;
     const fields = { name: { type: "string" as const } };
@@ -877,7 +877,7 @@ describe("type registry", () => {
     expect(read.occurred_at).toBe(timed.data.item.occurred_at);
   });
 
-  it("keeps the tags, extensions and lifecycle of a row a forced delete left writable", async () => {
+  it("keeps the tags, extensions and lifecycle of an item a forced delete left writable", async () => {
     const typeId = testTypeId("force-delete-then-metadata");
     expect(
       (
@@ -897,7 +897,7 @@ describe("type registry", () => {
     trackItem(ctx, id);
     expect((await client.deleteType(typeId, true)).status).toBe(200);
 
-    // The witness: the row's properties are refused, so its type is gone.
+    // The witness: the item's properties are refused, so its type is gone.
     const patched = await client.updateItem(id, {
       properties: { name: "changed" },
       version: item.data.item.version,

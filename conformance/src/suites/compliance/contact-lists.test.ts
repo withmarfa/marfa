@@ -186,7 +186,7 @@ describe("a filter on a member of a list's entries", () => {
     expect(ids(viewed.data.data)).toEqual([person]);
   });
 
-  it("selects no row whose field is not a list of objects holding the member", async () => {
+  it("selects no item whose field is not a list of objects holding the member", async () => {
     const value = `odd-${ctx.runId}@example.com`;
     const odd = [
       { emails: value },

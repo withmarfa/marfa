@@ -48,7 +48,7 @@ async function listed(filter: string): Promise<string[]> {
 describe("a null literal in a filter", () => {
   it("is not needed: not_exists asks for a property that is absent or null, and exists for one that has a value", async () => {
     // The witness for the refusals below: the question a caller means by
-    // `eq null` has an answer, and it holds both kinds of row.
+    // `eq null` has an answer, and it holds both kinds of item.
     expect(await listed("properties.subtitle not_exists")).toEqual(
       [held.null, held.missing].sort(),
     );

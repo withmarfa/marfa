@@ -10,7 +10,7 @@ import {
 import type { Answer } from "./scripted-server.js";
 
 /** `core.note`'s policy, which the server answers a collision with
- *  (`versions/stale-merge-policy`). The door's rows are notes and files, and
+ *  (`versions/stale-merge-policy`). The door's items are notes and files, and
  *  a file's properties collide under the same default. */
 const NOTE_MERGE_POLICY = {
   fields: { body: "keep_both_copies", notes: "keep_both_copies" },
@@ -21,21 +21,21 @@ function same(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-/** A row the scripted door holds, as the real server would keep it. */
-export interface DoorRow {
+/** An item the scripted door holds, as the real server would keep it. */
+export interface DoorItem {
   properties: Record<string, unknown>;
   source?: string;
   source_id: string | null;
   type?: string;
   version: number;
-  /** A row somebody trashed, which a natural key still resolves. */
+  /** An item somebody trashed, which a natural key still resolves. */
   trashed?: boolean;
-  /** The row's tags, which a read answers in its metadata. */
+  /** The item's tags, which a read answers in its metadata. */
   tags?: string[];
   tier?: "library" | "feed";
-  /** The row's own time as the server stores it, UTC at millisecond
+  /** The item's own time as the server stores it, UTC at millisecond
    *  precision, where a write named one (`items/occurred-at-utc`); unset, it
-   *  is the row's `created_at` (`items/occurred-at-default`). */
+   *  is the item's `created_at` (`items/occurred-at-default`). */
   occurred_at?: string;
   /** `archived`, where a transition moved it there. */
   state?: string;
@@ -63,13 +63,13 @@ export function storedTime(sent: string): string {
   return new Date(sent).toISOString();
 }
 
-/** What a row's `created_at` is where a write names its own time. */
+/** What an item's `created_at` is where a write names its own time. */
 const CREATED_AT = "2026-09-18T00:00:00.000Z";
 
 /** What the door decided, beside the answer it gives. */
 export interface DoorDecision {
   answer: Answer;
-  /** The row the create made, where it made one. */
+  /** The item the create made, where it made one. */
   minted?: string;
 }
 
@@ -80,34 +80,34 @@ export interface DoorDecision {
  *
  * A folder fixture scripts its server with this rather than with fixed
  * answers, because what a folder does depends on what the server decides:
- * whether a create lands on a row or makes one, is refused for an id or a
+ * whether a create lands on an item or makes one, is refused for an id or a
  * version, or is refused a source the key does not claim; whether an update
- * lands, names a row that is not there or one in the bin; whether a read finds
- * the row. The queue's fixtures for an edit behind an edit use it for the same
+ * lands, names an item that is not there or one in the bin; whether a read finds
+ * the item. The queue's fixtures for an edit behind an edit use it for the same
  * reason: what the second edit meets depends on what the server made of the
  * first. `fidelity.test.ts` holds each of those decisions to the real
  * server's for the same request, so a fixture passing against this door is
  * passing against the server's rules and not against this file's.
  */
 export class FolderDoor {
-  /** Every row the door holds by id, including the ones it was seeded with. */
-  readonly rows = new Map<string, DoorRow>();
+  /** Every item the door holds by id, including the ones it was seeded with. */
+  readonly rows = new Map<string, DoorItem>();
 
-  /** The properties each row held at each version it has moved past: the
+  /** The properties each item held at each version it has moved past: the
    *  snapshots the server keeps and merges a stale write against. */
-  private readonly snapshots = new Map<string, Map<number, DoorRow>>();
+  private readonly snapshots = new Map<string, Map<number, DoorItem>>();
 
   constructor(
-    seeded: Iterable<[string, DoorRow]> = [],
+    seeded: Iterable<[string, DoorItem]> = [],
     /** Whether the credential's key claims a source other than its own. */
     readonly claims: (source: string) => boolean = () => true,
     /** Whether the credential may read a type, which decides what a
-     *  natural key resolving a row of it may learn
+     *  natural key resolving an item of it may learn
      *  (`items/natural-key-unreadable`). */
     readonly reads: (type: string) => boolean = () => true,
-    /** Whether the refusal for such a row names its id and type, which the
+    /** Whether the refusal for such an item names its id and type, which the
      *  real server never does. A fixture asserting a folder learns nothing
-     *  of the row sets this for its control, to show that what the refusal
+     *  of the item sets this for its control, to show that what the refusal
      *  carries does reach what it asserts on. */
     readonly names: boolean = false,
   ) {
@@ -136,14 +136,14 @@ export class FolderDoor {
         );
   }
 
-  private store(id: string, row: DoorRow): void {
+  private store(id: string, row: DoorItem): void {
     this.rows.set(id, {
       ...row,
       properties: this.properties(row.type, row.properties),
     });
   }
 
-  /** The row a natural key names, if the door holds one. */
+  /** The item a natural key names, if the door holds one. */
   keyed(source: string | undefined, sourceId: string): string | undefined {
     return [...this.rows].find(
       ([, row]) => row.source === source && row.source_id === sourceId,
@@ -166,10 +166,10 @@ export class FolderDoor {
       sent.source_id === undefined
         ? undefined
         : this.keyed(sent.source, sent.source_id);
-    // An id the door already holds, where no natural key resolves a row, is a
-    // repeat of a create it performed: acknowledged with the row as it stands,
+    // An id the door already holds, where no natural key resolves an item, is a
+    // repeat of a create it performed: acknowledged with the item as it stands,
     // and nothing written (`items/create-repeat` and
-    // `items/create-repeat-silent`). A repeat naming a row of another type is
+    // `items/create-repeat-silent`). A repeat naming an item of another type is
     // refused `id_reused`, which the door does not model.
     const repeated = sent.id === undefined ? undefined : this.rows.get(sent.id);
     if (
@@ -194,21 +194,21 @@ export class FolderDoor {
         ...sent,
         properties: this.properties(held.type, sent.properties, true),
       };
-      // Asked before anything else about the row, and answered without
+      // Asked before anything else about the item, and answered without
       // naming it: the key learns its key is taken and nothing more.
       if (!this.reads(held.type ?? "core.note")) {
         return {
           answer: refusal(
             403,
             "type_not_permitted",
-            "The natural key resolves a row of a type this credential may not reach",
+            "The natural key resolves an item of a type this credential may not reach",
             this.names
               ? { id: incumbent, type: held.type ?? "core.note" }
               : undefined,
           ),
         };
       }
-      // A row in the bin is acknowledged and not written, whatever version
+      // An item in the bin is acknowledged and not written, whatever version
       // the create carries (`versions/create-trashed-version`).
       if (held.trashed === true) {
         return { answer: this.acknowledged(incumbent) };
@@ -223,7 +223,7 @@ export class FolderDoor {
           ),
         };
       }
-      // A version makes the upsert conditional. A version the row has moved
+      // A version makes the upsert conditional. A version the item has moved
       // past is merged against its snapshot, and one no snapshot covers is
       // refused: zero, which the server never mints, among them
       // (`versions/create-ancestor-none`).
@@ -240,7 +240,7 @@ export class FolderDoor {
           )
           .sort();
         // A stale create whose changes collide with nothing is merged over
-        // the row as it stands: only what it changed since the version it
+        // the item as it stands: only what it changed since the version it
         // names is applied, and the answer is the upsert's.
         if (colliding.length === 0) {
           const changed = Object.fromEntries(
@@ -273,7 +273,7 @@ export class FolderDoor {
           ),
         };
       }
-      const now: DoorRow = {
+      const now: DoorItem = {
         ...held,
         properties: { ...held.properties, ...sent.properties },
         version: held.version + 1,
@@ -299,16 +299,16 @@ export class FolderDoor {
 
   /**
    * An update, which moves none of type, source or key unless it names the
-   * key. On the version the row is at it lands. On one the row has moved
+   * key. On the version the item is at it lands. On one the item has moved
    * past it is merged against that version's snapshot as the server merges
    * it (`versions/merge-stale`, `versions/stale-collision`,
    * `versions/auto-resolved` and `versions/copy-written`): a property, or
    * the natural key, that only it changed is applied, one both changed
    * collides, and a collision is refused where the caller did not ask the
    * server to resolve. Where it did, a last-writer property and the natural
-   * key take this write's value, and a keep-both property keeps the row's
+   * key take this write's value, and a keep-both property keeps the item's
    * while this write's goes to a sibling:
-   * the row's properties with the losing values laid over, under the row's
+   * the item's properties with the losing values laid over, under the item's
    * type and source and no natural key, tagged as a conflicted copy.
    */
   update(
@@ -326,7 +326,7 @@ export class FolderDoor {
     },
     options: { resolve?: boolean } = {},
   ): Answer {
-    // A row in the bin, or of a type the key cannot read, is not there to an
+    // An item in the bin, or of a type the key cannot read, is not there to an
     // update, as it is not to a read (`keys-and-oauth/unreadable-as-missing`).
     const before = this.rows.get(id);
     if (!this.shows(before)) {
@@ -337,7 +337,7 @@ export class FolderDoor {
       sent.properties ?? {},
       true,
     );
-    // Under replace the body is the row's whole properties, so a field it
+    // Under replace the body is the item's whole properties, so a field it
     // leaves out is one it clears (`items/update-replace`).
     const replace = sent.properties_mode === "replace";
     const moves = {
@@ -358,7 +358,7 @@ export class FolderDoor {
     let sourceId = sent.source_id ?? before.source_id;
     let resolution: Record<string, string> | undefined;
     let sibling: string | undefined;
-    // Exact is refused once the row moved on, conflict mode or not
+    // Exact is refused once the item moved on, conflict mode or not
     // (`versions/exact-match`).
     if (sent.version_match === "exact" && sent.version !== before.version) {
       return answers.staleVersion(this.snapshot(id, before), sent.version);
@@ -460,7 +460,7 @@ export class FolderDoor {
       : answers.resolved(this.wire(id), resolution, sibling);
   }
 
-  /** A create the door answers without writing: the stored row, which
+  /** A create the door answers without writing: the stored item, which
    *  carries no hydrated edges because nothing was read back with them. */
   private acknowledged(id: string): Answer {
     const { edges: _edges, ...stored } = this.wire(id);
@@ -477,13 +477,13 @@ export class FolderDoor {
   }
 
   /** The conflicted copies a keep-both resolution wrote, by id. */
-  conflictedCopies(): Array<[string, DoorRow]> {
+  conflictedCopies(): Array<[string, DoorItem]> {
     return [...this.rows].filter(([, row]) =>
       (row.tags ?? []).includes(CONFLICTED_COPY_TAG),
     );
   }
 
-  /** A read by id, which a device makes to hold a row a refusal named. A row
+  /** A read by id, which a device makes to hold an item a refusal named. An item
    *  in the bin, or one the key cannot read, reads as absent, as on the server. */
   read(id: string): Answer {
     const row = this.rows.get(id);
@@ -500,7 +500,7 @@ export class FolderDoor {
       return refusal(404, "item_not_found", "Item not found");
     }
     this.rows.set(id, { ...row, state });
-    // The stored row, as the transition door answers it: no hydrated edges.
+    // The stored item, as the transition door answers it: no hydrated edges.
     const { edges: _edges, ...stored } = this.wire(id);
     return answers.updated(stored, row.tags ?? []);
   }
@@ -511,14 +511,14 @@ export class FolderDoor {
     this.snapshots.get(id)?.delete(version);
   }
 
-  /** Moves a row to the bin, as another device's delete would. */
+  /** Moves an item to the bin, as another device's delete would. */
   trash(id: string): void {
     const row = this.rows.get(id);
     if (row !== undefined) this.rows.set(id, { ...row, trashed: true });
   }
 
-  /** Whether a read by id shows this row: live, and of a type the key reads. */
-  private shows(row: DoorRow | undefined): row is DoorRow {
+  /** Whether a read by id shows this item: live, and of a type the key reads. */
+  private shows(row: DoorItem | undefined): row is DoorItem {
     return (
       row !== undefined &&
       row.trashed !== true &&
@@ -526,13 +526,13 @@ export class FolderDoor {
     );
   }
 
-  private remember(id: string, row: DoorRow): void {
-    const kept = this.snapshots.get(id) ?? new Map<number, DoorRow>();
+  private remember(id: string, row: DoorItem): void {
+    const kept = this.snapshots.get(id) ?? new Map<number, DoorItem>();
     kept.set(row.version, row);
     this.snapshots.set(id, kept);
   }
 
-  private snapshot(id: string, row: DoorRow): ConflictSnapshotBody {
+  private snapshot(id: string, row: DoorItem): ConflictSnapshotBody {
     return {
       id,
       version: row.version,
@@ -544,7 +544,7 @@ export class FolderDoor {
     };
   }
 
-  /** A row as the server answers it. */
+  /** An item as the server answers it. */
   wire(id: string): Record<string, unknown> {
     const row = this.rows.get(id)!;
     return wireItem({

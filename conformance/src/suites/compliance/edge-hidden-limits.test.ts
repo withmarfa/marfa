@@ -651,8 +651,8 @@ describe("a delete refused for a live grant it would take with it", () => {
   );
 });
 
-// A part goes with its hosts judged over every row, whatever the key reads,
-// and a key is told only of rows it may read.
+// A part goes with its hosts judged over every item, whatever the key reads,
+// and a key is told only of items it may read.
 describe("parts and hosts a key cannot read", () => {
   /** Writes notes and every edge type, and holds nothing on bookmarks. */
   let writer: MarfaClient;
@@ -701,7 +701,7 @@ describe("parts and hosts a key cannot read", () => {
     return r.ok ? r.data.item.state : "trashed";
   }
 
-  it("takes and brings back a part whose other host is hidden and in the bin, naming no hidden row", async () => {
+  it("takes and brings back a part whose other host is hidden and in the bin, naming no hidden item", async () => {
     const tag = `parts-hidden-host-${ctx.runId}`;
     const host = await note(tag);
     const secret = await bookmark(tag);

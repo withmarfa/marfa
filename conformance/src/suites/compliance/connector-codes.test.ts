@@ -90,7 +90,7 @@ describe("a revoked key", () => {
       outcome: "succeeded",
       started_at: when,
       finished_at: when,
-      summary: "ten rows",
+      summary: "ten items",
     });
     expect(succeeded.status).toBe(201);
     const runs = (await own.client.listConnectorRuns(own.id)).data.data;
@@ -479,7 +479,7 @@ describe("a registration that was refused", () => {
       (await written()).filter((row) => [keyId, ownerId].includes(row.key_id)),
     ).toEqual([]);
 
-    // The witness: a registration that is taken leaves its row and its
+    // The witness: a registration that is taken leaves its item and its
     // audit entry, so the absence above is of what a refusal would have left.
     const taken = await own.registerConnector({ name: `${ctx.runId} taken` });
     expect(taken.status).toBe(201);

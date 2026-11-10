@@ -29,7 +29,7 @@ afterAll(async () => {
   await cleanup(ctx);
 });
 
-/** Well-formed, so the door reaches its row lookup rather than refusing the id. */
+/** Well-formed, so the door reaches its item lookup rather than refusing the id. */
 const UNKNOWN_ID = "019537a0-7b80-7000-8000-000000000000";
 
 /** Mint with the file's own key, which holds everything a working key can. */
@@ -60,7 +60,7 @@ function narrowMinter(label: string) {
   });
 }
 
-/** What an id no row holds answers, with the id spelled out of the message. */
+/** What an id no item holds answers, with the id spelled out of the message. */
 async function unknownAnswer(by: MarfaClient, method: "revoke" | "update") {
   const r =
     method === "revoke"
