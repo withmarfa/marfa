@@ -231,6 +231,7 @@ describe("a file item carries the size of the bytes it names", () => {
           created_at: new Date().toISOString(),
           item_count: 2,
           edge_count: 0,
+          row_count: 0,
           blob_count: 2,
           type_count: 0,
           edge_type_count: 0,
@@ -248,6 +249,7 @@ describe("a file item carries the size of the bytes it names", () => {
         `${line(lentId, lent, true)}\n${line(unlentId, unlent, false)}\n`,
       ),
       lineFile("edges", ""),
+      lineFile("rows", ""),
       { name: `blobs/${sha256(lent)}`, body: lent },
       { name: `blobs/${sha256(unlent)}`, body: unlent },
     ]);

@@ -72,9 +72,34 @@ async function health(server: FreshServer, client?: MarfaClient) {
   };
 }
 
-/** A note, a note in the trash, and a file whose bytes the bucket holds. */
+/** A type with a table, and an item of it holding `count` rows. */
+async function ledger(working: MarfaClient, label: string, count: number) {
+  const type = `user.backup_ledger_${label}`;
+  const registered = await working.registerType({
+    id: type,
+    fields: { title: { type: "string" } },
+    tables: { lines: { columns: { amount: { type: "number" } } } },
+  } as never);
+  expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+  const item = await working.createItem({
+    type,
+    properties: { title: "a ledger" },
+  } as never);
+  expect(item.status, JSON.stringify(item.error)).toBe(201);
+  const written = await working.writeRows(item.data.item.id, "lines", {
+    operations: Array.from({ length: count }, (_, at) => ({
+      op: "put" as const,
+      values: { amount: at },
+    })),
+  });
+  expect(written.status, JSON.stringify(written.error)).toBe(200);
+  return item.data.item.id;
+}
+
+/** A note, a note in the trash, a file whose bytes the bucket holds, and an item with rows. */
 async function contents(server: FreshServer) {
   const { operator, working } = clientsFor(server);
+  const withRows = await ledger(working, "contents", 3);
   const note = await working.createItem({
     type: "core.note",
     properties: { title: "kept in a backup", body: "kept" },
@@ -107,6 +132,7 @@ async function contents(server: FreshServer) {
     file: file.data.item.id,
     hash: uploaded.data.hash,
     bytes,
+    withRows,
   };
 }
 
@@ -153,6 +179,7 @@ describe("a backup in the object store", () => {
       "instance.ndjson.gz",
       "items.ndjson.gz",
       "edges.ndjson.gz",
+      "rows.ndjson.gz",
     ]);
     expect(manifest.blobs).toEqual({});
     expect(Object.keys(manifest.missing_blobs)).toContain(made.hash);
@@ -170,7 +197,12 @@ describe("a backup in the object store", () => {
     expect(exported.status).toBe(200);
     const asExported = archiveManifest<{ item_count: number }>(exported.data);
     expect(manifest.item_count).toBe(asExported.item_count);
-    for (const file of ["instance", "items", "edges"] as const) {
+    expect(
+      archiveLines<{ item_id: string }>(backup, "rows").filter(
+        (line) => line.item_id === made.withRows,
+      ),
+    ).toHaveLength(3);
+    for (const file of ["instance", "items", "edges", "rows"] as const) {
       expect(sortedById(archiveLines(backup, file))).toEqual(
         sortedById(archiveLines(exported.data, file)),
       );
@@ -269,6 +301,11 @@ describe("a backup in the object store", () => {
     const read = await operator.downloadBlob(made.hash);
     expect(read.status).toBe(200);
     expect(new Uint8Array(read.data)).toEqual(made.bytes);
+    const rows = await working.listRows(made.withRows, "lines", {});
+    expect(rows.status, JSON.stringify(rows.error)).toBe(200);
+    expect(rows.data.data.map((row) => row.values.amount).sort()).toEqual([
+      0, 1, 2,
+    ]);
   });
 
   it("answers 404 backup_not_found for a name the object store does not hold, or one that is not a backup's", async () => {
@@ -328,6 +365,35 @@ describe("the backup schedule", () => {
       expect(asked.status, JSON.stringify(asked.error)).toBe(200);
       expect(asked.data.outcome).toBe("put");
       expect((await mine.backupKeys()).length).toBe(3);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("takes a scheduled backup after a batch changes rows, and skips one when nothing changed", async () => {
+    const own = ownObjectStore();
+    const mine = bucketAt(own.S3_PREFIX);
+    const server = await bootFreshServer("backups-rows", {
+      ...own,
+      MARFA_BACKUP_INTERVAL_MS: YEAR_MS,
+    });
+    try {
+      const { operator, working } = clientsFor(server);
+      const id = await ledger(working, "schedule", 1);
+      await afterFirstScheduledBackup(server);
+      const before = (await mine.backupKeys()).length;
+
+      // The witness: with nothing changed, the run puts nothing.
+      const idle = await runJob<{ outcome: string }>(operator, "backup");
+      expect(idle.result.outcome).toBe("unchanged");
+
+      const written = await working.writeRows(id, "lines", {
+        operations: [{ op: "put", values: { amount: 7 } }],
+      });
+      expect(written.status, JSON.stringify(written.error)).toBe(200);
+      const after = await runJob<{ outcome: string }>(operator, "backup");
+      expect(after.result.outcome).toBe("put");
+      expect((await mine.backupKeys()).length).toBe(before + 1);
     } finally {
       await server.stop();
     }

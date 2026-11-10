@@ -27,7 +27,7 @@ use super::faults::{FAIL_EXPORT_READ, HOLD_EXPORT_PAGE};
 use super::items::{self, Archived, Reader, reading, reading_background};
 use super::query::{self, Ask};
 use super::refusal::{Code, Refusal, Result};
-use super::{backups, connectors, edges, sources, stored};
+use super::{backups, connectors, edges, sources, stored, tables};
 use crate::db::io_refusal;
 use crate::settings::registry::{self, ADDRESSES, SIGN_IN_ADDRESS};
 use spool::{Lines, Spooled};
@@ -117,12 +117,24 @@ impl InstanceNeed {
 #[derive(Clone, Debug, Default)]
 struct EdgeNeed(BTreeSet<(String, String)>);
 
+/// What the rows of one segment need of the credential that sends them.
+#[derive(Clone, Debug, Default)]
+struct RowNeed {
+    /// Each row's item's type and source.
+    hosts: BTreeSet<(String, String)>,
+    /// The types of the items the carried values name.
+    types: BTreeSet<String>,
+    /// Whether a carried value names an item no longer held.
+    unheld: bool,
+}
+
 struct Prepared {
     created_at: Stamp,
     manifest: Vec<u8>,
     instance: Spooled<InstanceNeed>,
     items: Spooled<ItemNeed>,
     edges: Spooled<EdgeNeed>,
+    rows: Spooled<RowNeed>,
     blobs: Vec<(Carried, String)>,
 }
 
@@ -152,6 +164,7 @@ struct Selected {
     instance: Spooled<InstanceNeed>,
     items: Spooled<ItemNeed>,
     edges: Spooled<EdgeNeed>,
+    rows: Spooled<RowNeed>,
     counts: Map<String, Value>,
     listed: Vec<Carried>,
     missing: BTreeMap<String, Value>,
@@ -241,6 +254,7 @@ impl App {
             + entry(prepared.instance.size)
             + entry(prepared.items.size)
             + entry(prepared.edges.size)
+            + entry(prepared.rows.size)
             + tar::END.len() as u64;
         let limit = super::blobs::store::write_deadline(check, size);
         let (sender, body) = channel(QUEUED);
@@ -274,6 +288,7 @@ impl App {
     ) -> Result<(Prepared, Option<Snapshot>)> {
         let created_at = self.clock.instant();
         let scratch = [
+            self.scratch().await?,
             self.scratch().await?,
             self.scratch().await?,
             self.scratch().await?,
@@ -325,6 +340,7 @@ impl App {
         manifest.insert("instance_id".into(), self.instance_id.clone().into());
         manifest.insert("item_count".into(), selected.items.lines.into());
         manifest.insert("edge_count".into(), selected.edges.lines.into());
+        manifest.insert("row_count".into(), selected.rows.lines.into());
         manifest.insert("blob_count".into(), blobs.len().into());
         manifest.extend(selected.counts);
         manifest.insert("blobs".into(), Value::Object(listed));
@@ -342,6 +358,7 @@ impl App {
             instance: selected.instance,
             items: selected.items,
             edges: selected.edges,
+            rows: selected.rows,
             blobs,
         };
         Ok((prepared, snapshot))
@@ -352,13 +369,14 @@ impl App {
 fn select(
     read: &Reader<'_, '_>,
     ask: &Ask,
-    [instance, items, edges]: [crate::app::blobs::Scratch; 3],
+    [instance, items, edges, rows]: [crate::app::blobs::Scratch; 4],
     room: Room,
     cap: usize,
     bucket: Option<&str>,
 ) -> Result<Selected> {
     let mut items: Lines<ItemNeed> = Lines::new(items, room.clone())?;
     let mut edges: Lines<EdgeNeed> = Lines::new(edges, room.clone())?;
+    let mut rows: Lines<RowNeed> = Lines::new(rows, room.clone())?;
     let mut instance: Lines<InstanceNeed> = Lines::new(instance, room)?;
     let caller = &read.caller;
     let catalog = &read.catalog;
@@ -463,6 +481,23 @@ fn select(
             digests.extend(references::digests(&items::parsed(&edge.properties)?));
         }
     }
+    tables::archive::archived(
+        read,
+        |seq| selected.binary_search(&seq).is_ok(),
+        |row| {
+            checks::row(&row.line, rows.lines as usize + 1).map_err(|refused| {
+                Refusal::internal(&format!(
+                    "a stored row does not pass a restore's check: {}",
+                    refused.refusal.message
+                ))
+            })?;
+            rows.push(&print(&row.line)?, |need| {
+                need.hosts.insert(row.host);
+                need.types.extend(row.types);
+                need.unheld |= row.unheld;
+            })
+        },
+    )?;
     let mut listed = Vec::new();
     let mut missing = BTreeMap::new();
     for digest in digests.union(&file_refs) {
@@ -624,6 +659,7 @@ fn select(
         instance: instance.finish()?,
         items: items.finish()?,
         edges: edges.finish()?,
+        rows: rows.finish()?,
         counts,
         listed,
         missing,

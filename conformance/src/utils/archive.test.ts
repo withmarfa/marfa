@@ -94,7 +94,7 @@ describe("listEntries", () => {
 });
 
 describe("editLineFile", () => {
-  it("replaces one line file's text and keeps every other member in its place", () => {
+  it("replaces one line file's text, counts its lines in the manifest, and keeps every other member in its place", () => {
     const archive = itemsArchive([
       { id: "x", type: "core.note", properties: {}, source: "s" },
     ]);
@@ -108,6 +108,8 @@ describe("editLineFile", () => {
     );
     expect(readLineFile(edited, "edges")).toBe('{"edge":{}}\n');
     expect(readLineFile(edited, "items")).toBe(readLineFile(archive, "items"));
+    expect(archiveManifest<{ edge_count: number }>(edited).edge_count).toBe(1);
+    expect(archiveManifest<{ item_count: number }>(edited).item_count).toBe(1);
   });
 });
 
@@ -123,6 +125,7 @@ describe("itemsArchive", () => {
       "instance.ndjson.gz",
       "items.ndjson.gz",
       "edges.ndjson.gz",
+      "rows.ndjson.gz",
       `blobs/${blobHash(data)}`,
     ]);
     expect(archiveLines(archive, "items")).toHaveLength(1);

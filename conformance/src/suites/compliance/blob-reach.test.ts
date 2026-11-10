@@ -635,6 +635,7 @@ describe("who may read and upload a blob", () => {
           created_at: new Date().toISOString(),
           item_count: 2,
           edge_count: 0,
+          row_count: 0,
           blob_count: 2,
           type_count: 0,
           edge_type_count: 0,
@@ -666,6 +667,7 @@ describe("who may read and upload a blob", () => {
           .concat("\n"),
       ),
       lineFile("edges", ""),
+      lineFile("rows", ""),
       ...lines.map((line) => ({
         name: `blobs/${sha256(line.data)}`,
         body: line.data,
@@ -1997,6 +1999,7 @@ describe("which write that names a digest lends it", () => {
           created_at: new Date().toISOString(),
           item_count: 2,
           edge_count: 2,
+          row_count: 0,
           blob_count: Object.keys(blobs).length,
           type_count: 0,
           edge_type_count: 0,
@@ -2020,6 +2023,7 @@ describe("which write that names a digest lends it", () => {
         "edges",
         `${edgeLine({ cover: edgeLent, alt: edgeDead }, [edgeLent])}\n${edgeLine({ cover: edgeUnlisted }, "not a list", [ids.target, ids.source])}\n`,
       ),
+      lineFile("rows", ""),
       ...Object.values(blobs).map((data) => ({
         name: `blobs/${sha256(data)}`,
         body: data,

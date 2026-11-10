@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import type { MarfaEdge, MarfaItem } from "../../client/types.js";
+import type { MarfaEdge, MarfaItem, TableRow } from "../../client/types.js";
 import { archiveLines, archiveManifest } from "../../utils/archive.js";
 import {
   bootFreshServer,
@@ -17,15 +17,23 @@ import { clientsFor, DISK_ONLY } from "../../utils/own-blob-server.js";
 
 let server: FreshServer;
 let working: MarfaClient;
+let destination: FreshServer;
+let destinationOwner: MarfaClient;
 
 beforeAll(async () => {
   server = await bootFreshServer("export-snapshot", DISK_ONLY);
   ({ working } = clientsFor(server));
+  destination = await bootFreshServer("export-snapshot-destination", DISK_ONLY);
+  destinationOwner = new MarfaClient({
+    baseUrl: destination.apiUrl,
+    controlSocket: destination.controlSocket,
+  });
 }, FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
   await server.clearFault();
   await server.stop();
+  await destination.stop();
 }, FRESH_SERVER_TIMEOUT_MS);
 
 async function note(title: string): Promise<MarfaItem> {
@@ -106,5 +114,122 @@ describe("an archive whose selection is read while writes land", () => {
         (line) => line.edge.id,
       ),
     ).toContain(lateEdge);
+  });
+
+  it("carries the rows as they stood when the read began, counts them in row_count, and restores them whole", async () => {
+    const type = "user.export_snapshot_ledger";
+    const registered = await working.registerType({
+      id: type,
+      fields: { title: { type: "string" } },
+      tables: { lines: { columns: { amount: { type: "number" } } } },
+    } as never);
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    const typed = async (title: string) => {
+      const made = await working.createItem({
+        type,
+        properties: { title },
+      } as never);
+      expect(made.status, JSON.stringify(made.error)).toBe(201);
+      return made.data.item;
+    };
+    const rowsOf = async (itemId: string): Promise<TableRow[]> => {
+      const listed = await working.listRows(itemId, "lines", { limit: 1000 });
+      expect(listed.status, JSON.stringify(listed.error)).toBe(200);
+      return listed.data.data;
+    };
+    const put = async (itemId: string, amounts: number[]) => {
+      const written = await working.writeRows(itemId, "lines", {
+        operations: amounts.map((amount) => ({
+          op: "put" as const,
+          values: { amount },
+        })),
+      });
+      expect(written.status, JSON.stringify(written.error)).toBe(200);
+      return written.data.results.map((result) => result.id);
+    };
+
+    const kept = await typed("rows kept");
+    const doomed = await typed("rows doomed");
+    const [patched, removed] = await put(kept.id, [1, 2, 3]);
+    await put(doomed.id, [7]);
+    const before = {
+      kept: await rowsOf(kept.id),
+      doomed: await rowsOf(doomed.id),
+    };
+
+    await server.setFault("hold:export-page=1");
+    const pending = working.exportArchive();
+    let added = "";
+    try {
+      await server.waitForHold("hold:export-page");
+      [added] = await put(kept.id, [4]);
+      const changed = await working.writeRows(kept.id, "lines", {
+        operations: [
+          { op: "patch", id: patched!, values: { amount: 10 } },
+          { op: "delete", id: removed! },
+        ],
+      });
+      expect(changed.status, JSON.stringify(changed.error)).toBe(200);
+      await put(doomed.id, [8]);
+      expect((await working.deleteItem(doomed.id)).status).toBe(200);
+      expect((await working.purgeItem(doomed.id)).status).toBe(200);
+    } finally {
+      await server.clearFault();
+    }
+    const archive = await pending;
+    expect(archive.status).toBe(200);
+
+    interface Line {
+      item_id: string;
+      table: string;
+      id: string;
+      values: Record<string, unknown>;
+    }
+    const lines = archiveLines<Line>(archive.data, "rows");
+    const held = (itemId: string) =>
+      lines
+        .filter((line) => line.item_id === itemId)
+        .map((line) => ({ id: line.id, values: line.values }))
+        .sort((a, b) => a.id.localeCompare(b.id));
+    const stood = (rows: TableRow[]) =>
+      rows
+        .map((row) => ({ id: row.id, values: row.values }))
+        .sort((a, b) => a.id.localeCompare(b.id));
+    expect(held(kept.id)).toEqual(stood(before.kept));
+    expect(held(doomed.id)).toEqual(stood(before.doomed));
+    expect(lines.length).toBe(before.kept.length + before.doomed.length);
+    expect(archiveManifest<{ row_count: number }>(archive.data).row_count).toBe(
+      lines.length,
+    );
+
+    // The witness: the writes landed, and the next archive carries them.
+    const next = await working.exportArchive();
+    expect(next.status).toBe(200);
+    const now = archiveLines<Line>(next.data, "rows");
+    expect(now.find((line) => line.id === added)?.values).toEqual({
+      amount: 4,
+    });
+    expect(now.find((line) => line.id === patched)?.values).toEqual({
+      amount: 10,
+    });
+    expect(now.some((line) => line.id === removed)).toBe(false);
+    expect(now.some((line) => line.item_id === doomed.id)).toBe(false);
+
+    const restored = await destinationOwner.restoreArchive(archive.data);
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    expect(restored.data).toMatchObject({
+      rows_imported: lines.length,
+      rows_skipped: 0,
+    });
+    const restoredRows = async (itemId: string) => {
+      const listed = await new MarfaClient({
+        baseUrl: destination.apiUrl,
+        apiKey: destination.workingKey,
+      }).listRows(itemId, "lines", { limit: 1000 });
+      expect(listed.status, JSON.stringify(listed.error)).toBe(200);
+      return listed.data.data;
+    };
+    expect(await restoredRows(kept.id)).toEqual(before.kept);
+    expect(await restoredRows(doomed.id)).toEqual(before.doomed);
   });
 });
