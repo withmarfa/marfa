@@ -7,7 +7,12 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { movedClock, QUIET_SCHEDULE, quiet, runJob } from "../../utils/moved-clock.js";
+import {
+  movedClock,
+  QUIET_SCHEDULE,
+  quiet,
+  runJob,
+} from "../../utils/moved-clock.js";
 import { clientsFor, everythingClient } from "../../utils/own-blob-server.js";
 import { tapStream } from "../../utils/stream-tap.js";
 import { requireBinary } from "./harness.js";
@@ -103,7 +108,12 @@ async function filled(item: string, count: number, from = 0): Promise<void> {
 }
 
 interface Page {
-  data: { id: string; values: Record<string, unknown>; updated_at: string; withheld?: string[] }[];
+  data: {
+    id: string;
+    values: Record<string, unknown>;
+    updated_at: string;
+    withheld?: string[];
+  }[];
   next_cursor: string | null;
 }
 
@@ -121,7 +131,10 @@ async function serverPage(
 }
 
 /** Every row of the table, by id, as the server answers it. */
-async function serverRows(item: string, client = working): Promise<Page["data"]> {
+async function serverRows(
+  item: string,
+  client = working,
+): Promise<Page["data"]> {
   const rows: Page["data"] = [];
   let cursor: string | null = null;
   do {
@@ -182,11 +195,16 @@ async function hydrated(
   return device;
 }
 
-function stateOf(held: HeldTables, item: string): HeldTables["tables"][number] | undefined {
+function stateOf(
+  held: HeldTables,
+  item: string,
+): HeldTables["tables"][number] | undefined {
   return held.tables.find((table) => table.item === item);
 }
 
-async function keyFor(types: Record<string, string>): Promise<{ id: string; key: string }> {
+async function keyFor(
+  types: Record<string, string>,
+): Promise<{ id: string; key: string }> {
   counter += 1;
   const minted = await minter.createKey({
     label: `tables-${String(counter)}`,
@@ -247,7 +265,13 @@ describe("how a device fills a table", () => {
     const own = await keyFor({ [type]: "write" });
     const device = await hydrated([type], "pages", own.key);
     const held = value(await device.holdTable(type, "steps"));
-    expect(held.fill).toEqual({ whole: 1, online: 0, unfilled: 0, pages: 3, rows: 2500 });
+    expect(held.fill).toEqual({
+      whole: 1,
+      online: 0,
+      unfilled: 0,
+      pages: 3,
+      rows: 2500,
+    });
     const expected = await serverRows(item);
 
     const revoked = await minter.revokeKey(own.id);
@@ -256,15 +280,19 @@ describe("how a device fills a table", () => {
     expect(read.held).toEqual([true, true, true]);
     expect(read.rows).toEqual(expected);
     const one = value(
-      await device.tableRead<Page["data"][number]>(["get", item, "steps", expected[7]!.id]),
+      await device.tableRead<Page["data"][number]>([
+        "get",
+        item,
+        "steps",
+        expected[7]!.id,
+      ]),
     );
     expect(one).toEqual({ ...expected[7], held: true });
     const totals = value(
-      await device.tableRead<{ row_count: number; totals: Record<string, unknown> }>([
-        "totals",
-        item,
-        "steps",
-      ]),
+      await device.tableRead<{
+        row_count: number;
+        totals: Record<string, unknown>;
+      }>(["totals", item, "steps"]),
     );
     expect(totals).toEqual({
       row_count: 2500,
@@ -281,7 +309,9 @@ describe("how a device fills a table", () => {
     await server.setFault("fail:table-rows-page=2");
     try {
       const cut = await device.holdTable(type, "steps");
-      expect(cut.ok, "the second page failed, so the fill did not finish").toBe(false);
+      expect(cut.ok, "the second page failed, so the fill did not finish").toBe(
+        false,
+      );
     } finally {
       await server.clearFault();
     }
@@ -291,14 +321,24 @@ describe("how a device fills a table", () => {
       state: "filling",
       rows: 1000,
     });
-    const meanwhile = value(await device.tableRead<Page>(["list", item, "steps"]));
+    const meanwhile = value(
+      await device.tableRead<Page>(["list", item, "steps"]),
+    );
     expect(meanwhile.held).toBe(false);
     expect(meanwhile.data).toEqual((await serverPage(item)).data);
 
     const rest = value(await device.fillTables());
-    expect(rest).toEqual({ whole: 1, online: 0, unfilled: 0, pages: 3, rows: 2500 });
+    expect(rest).toEqual({
+      whole: 1,
+      online: 0,
+      unfilled: 0,
+      pages: 3,
+      rows: 2500,
+    });
     expect(stateOf(value(await device.heldTables()), item)?.rows).toBe(3500);
-    expect((await deviceRows(device, item)).rows).toEqual(await serverRows(item));
+    expect((await deviceRows(device, item)).rows).toEqual(
+      await serverRows(item),
+    );
   });
 
   it("reads a table past the cap from the server, holding none of its rows, and holds it whole once a delete brings it within", async () => {
@@ -348,8 +388,18 @@ describe("applying rows.changed", () => {
       const expected = await serverRows(item);
       const started = Date.now();
       for (;;) {
-        const read = await reader.tableRead<Page>(["list", item, "steps", "--limit", "1000"]);
-        if (read.ok && read.value.held && JSON.stringify(read.value.data) === JSON.stringify(expected)) {
+        const read = await reader.tableRead<Page>([
+          "list",
+          item,
+          "steps",
+          "--limit",
+          "1000",
+        ]);
+        if (
+          read.ok &&
+          read.value.held &&
+          JSON.stringify(read.value.data) === JSON.stringify(expected)
+        ) {
           return;
         }
         if (Date.now() - started > 20_000) {
@@ -365,7 +415,9 @@ describe("applying rows.changed", () => {
         { op: "put", values: { count: 2 } },
       ]);
       await settled("the rows put");
-      await write(item, [{ op: "patch", id: kept!.id, values: { note: "patched" } }]);
+      await write(item, [
+        { op: "patch", id: kept!.id, values: { note: "patched" } },
+      ]);
       await settled("the row patched");
       await write(item, [{ op: "delete", id: gone!.id }]);
       await settled("the row deleted");
@@ -375,9 +427,16 @@ describe("applying rows.changed", () => {
       const started = Date.now();
       for (;;) {
         const held = value(await reader.heldTables());
-        if (stateOf(held, later)?.state === "whole" && stateOf(held, later)?.rows === 1) break;
+        if (
+          stateOf(held, later)?.state === "whole" &&
+          stateOf(held, later)?.rows === 1
+        )
+          break;
         if (Date.now() - started > 20_000) {
-          expect(stateOf(held, later)).toMatchObject({ state: "whole", rows: 1 });
+          expect(stateOf(held, later)).toMatchObject({
+            state: "whole",
+            rows: 1,
+          });
         }
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
@@ -393,11 +452,17 @@ describe("applying rows.changed", () => {
     value(await device.holdTable(type, "steps"));
     const tap = await tapStream(server.apiUrl, server.workingKey);
     try {
-      await tap.until((seen) => seen.some((e) => e.event === "stream_live"), "the stream going live");
+      await tap.until(
+        (seen) => seen.some((e) => e.event === "stream_live"),
+        "the stream going live",
+      );
       const long = "x".repeat(1000);
       const put = await write(
         item,
-        Array.from({ length: 100 }, (_, at) => ({ op: "put", values: { count: at, note: long } })),
+        Array.from({ length: 100 }, (_, at) => ({
+          op: "put",
+          values: { count: at, note: long },
+        })),
       );
       await write(
         item,
@@ -408,7 +473,9 @@ describe("applying rows.changed", () => {
         "both batches on the stream",
       );
       const batches = seen.filter((e) => e.event === "rows.changed");
-      expect((batches[0]!.data as { values_included?: boolean }).values_included).toBe(false);
+      expect(
+        (batches[0]!.data as { values_included?: boolean }).values_included,
+      ).toBe(false);
       // With the delete's own event hidden, only the read of the first
       // batch's rows can take the ten out.
       await server.setFault(`hide:event=${batches[1]!.id!}`);
@@ -435,12 +502,19 @@ describe("applying rows.changed", () => {
       properties: { title: "secret" },
     } as never);
     expect(secret.status).toBe(201);
-    await write(item, [{ op: "put", values: { count: 1, ref: secret.data.item.id } }]);
+    await write(item, [
+      { op: "put", values: { count: 1, ref: secret.data.item.id } },
+    ]);
     const narrow = await keyFor({ [type]: "read" });
-    const reader = new MarfaClient({ baseUrl: server.apiUrl, apiKey: narrow.key });
+    const reader = new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: narrow.key,
+    });
     const device = await hydrated([type], "withheld", narrow.key);
     value(await device.holdTable(type, "steps"));
-    await write(item, [{ op: "put", values: { count: 2, ref: secret.data.item.id } }]);
+    await write(item, [
+      { op: "put", values: { count: 2, ref: secret.data.item.id } },
+    ]);
     value(await device.catchUp());
     const expected = await serverRows(item, reader);
     expect(expected.map((row) => row.withheld)).toEqual([["ref"], ["ref"]]);
@@ -475,7 +549,10 @@ describe("applying rows.changed", () => {
     ]);
 
     expect(value(await device.letGoTable(type, "steps")).was_held).toBe(true);
-    expect(value(await device.heldTables())).toEqual({ choices: [], tables: [] });
+    expect(value(await device.heldTables())).toEqual({
+      choices: [],
+      tables: [],
+    });
     const read = value(await device.tableRead<Page>(["list", kept, "steps"]));
     expect(read.held).toBe(false);
     expect(read.data).toHaveLength(2);
@@ -494,7 +571,11 @@ describe("applying rows.changed", () => {
     });
     const changed = await working.replaceType(
       type,
-      { id: type, fields: { title: { type: "string" } }, tables: { steps: STEPS } },
+      {
+        id: type,
+        fields: { title: { type: "string" } },
+        tables: { steps: STEPS },
+      },
       true,
     );
     expect(changed.status, JSON.stringify(changed.error)).toBe(200);
@@ -516,8 +597,14 @@ describe("reading a table on a device", () => {
         op: "put",
         values: {
           ...(at % 4 === 0 ? {} : { count: at % 7 }),
-          ...(at % 3 === 0 ? { note: `note ${String.fromCharCode(97 + (at % 5))}` } : {}),
-          ...(at % 5 === 0 ? {} : { at: `2026-0${String(1 + (at % 9))}-01T0${String(at % 10)}:00:00Z` }),
+          ...(at % 3 === 0
+            ? { note: `note ${String.fromCharCode(97 + (at % 5))}` }
+            : {}),
+          ...(at % 5 === 0
+            ? {}
+            : {
+                at: `2026-0${String(1 + (at % 9))}-01T0${String(at % 10)}:00:00Z`,
+              }),
         },
       })),
     );
@@ -538,7 +625,10 @@ describe("reading a table on a device", () => {
       { filter: 'values.at gte "2026-05-01T00:00:00Z"' },
     ];
     for (const query of asked) {
-      const flags = Object.entries(query).flatMap(([name, given]) => [`--${name}`, given]);
+      const flags = Object.entries(query).flatMap(([name, given]) => [
+        `--${name}`,
+        given,
+      ]);
       const walked: Page["data"] = [];
       let cursor: string | null = null;
       let pages = 0;
@@ -569,7 +659,11 @@ describe("reading a table on a device", () => {
       } while (next !== null);
       expect(walked, JSON.stringify(query)).toEqual(expected);
     }
-    for (const filter of [undefined, "values.count lt 4", 'values.note starts_with "note b"']) {
+    for (const filter of [
+      undefined,
+      "values.count lt 4",
+      'values.note starts_with "note b"',
+    ]) {
       const local = value(
         await device.tableRead<Record<string, unknown>>([
           "totals",
@@ -590,8 +684,16 @@ describe("reading a table on a device", () => {
     const refused: [string, string[], Record<string, string>][] = [
       ["limit", ["--limit", "0"], { limit: "0" }],
       ["limit", ["--limit", "1001"], { limit: "1001" }],
-      ["filter", ["--filter", "values.nothing eq 1"], { filter: "values.nothing eq 1" }],
-      ["filter", ["--filter", "properties.title eq 1"], { filter: "properties.title eq 1" }],
+      [
+        "filter",
+        ["--filter", "values.nothing eq 1"],
+        { filter: "values.nothing eq 1" },
+      ],
+      [
+        "filter",
+        ["--filter", "properties.title eq 1"],
+        { filter: "properties.title eq 1" },
+      ],
       ["sort", ["--sort", "values.nothing"], { sort: "values.nothing" }],
       ["cursor", ["--cursor", "nonsense"], { cursor: "nonsense" }],
     ];
@@ -640,7 +742,10 @@ describe("a gap in the stream", () => {
     const device = await hydrated([type], "gap");
     value(await device.holdTable(type, "steps"));
     const config = (await operator.getConfig()).data as Record<string, unknown>;
-    const set = await operator.updateConfig({ ...config, event_log_retention_hours: 1 });
+    const set = await operator.updateConfig({
+      ...config,
+      event_log_retention_hours: 1,
+    });
     expect(set.status, JSON.stringify(set.error)).toBe(200);
     const first = (await serverPage(item, { limit: "1" })).data[0]!;
     await write(item, [

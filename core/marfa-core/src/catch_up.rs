@@ -1417,7 +1417,11 @@ fn read_stream(
         }
         recovery.tell(&report.cursor, on_change);
         look.tell(report, on_change)?;
-        let wait = if filling { Duration::ZERO } else { pace.stop_poll };
+        let wait = if filling {
+            Duration::ZERO
+        } else {
+            pace.stop_poll
+        };
         let frame = match frames.recv_timeout(wait) {
             Ok(Ok(frame)) => frame,
             Ok(Err(error)) if error.kind() == io::ErrorKind::InvalidData => {

@@ -343,9 +343,8 @@ pub(crate) fn held(conn: &Connection) -> Result<HeldTables> {
         .into_iter()
         .map(|(type_id, table)| TableChoice { type_id, table })
         .collect();
-    let mut query = conn.prepare(
-        "SELECT item_id, name, state, rows FROM item_tables ORDER BY item_id, name",
-    )?;
+    let mut query =
+        conn.prepare("SELECT item_id, name, state, rows FROM item_tables ORDER BY item_id, name")?;
     let tables = query
         .query_map([], |row| {
             Ok(HeldTable {
@@ -371,7 +370,11 @@ pub(crate) fn owes(conn: &Connection) -> Result<bool> {
         .is_some())
 }
 
-fn state_of(conn: &Connection, item: &str, table: &str) -> Result<Option<(String, Option<String>)>> {
+fn state_of(
+    conn: &Connection,
+    item: &str,
+    table: &str,
+) -> Result<Option<(String, Option<String>)>> {
     Ok(conn
         .query_row(
             "SELECT state, cursor FROM item_tables WHERE item_id = ?1 AND name = ?2",
@@ -440,7 +443,10 @@ fn hold_row(
 /// A row of a server's answer: `{ id, values, updated_at, withheld? }`.
 fn hold_answered(conn: &Connection, item: &str, table: &str, row: &Value) -> Result<String> {
     let id = row.get("id").and_then(Value::as_str).ok_or_else(invalid)?;
-    let values = row.get("values").and_then(Value::as_object).ok_or_else(invalid)?;
+    let values = row
+        .get("values")
+        .and_then(Value::as_object)
+        .ok_or_else(invalid)?;
     let updated_at = row
         .get("updated_at")
         .and_then(Value::as_str)
@@ -484,11 +490,16 @@ fn is_gone(error: &CoreError) -> bool {
     matches!(error, CoreError::NotFound { .. })
 }
 
-/// The next table a pass has not yet tried, with its state and cursor.
-fn next_owed(
-    conn: &Connection,
-    tried: &HashSet<(String, String)>,
-) -> Result<Option<(String, String, String, Option<String>)>> {
+/// A table not yet whole: its item, name, state and the cursor it sends next.
+struct Owed {
+    item: String,
+    table: String,
+    state: String,
+    cursor: Option<String>,
+}
+
+/// The next table a pass has not yet tried.
+fn next_owed(conn: &Connection, tried: &HashSet<(String, String)>) -> Result<Option<Owed>> {
     let mut query = conn.prepare(
         "SELECT t.item_id, t.name, t.state, t.cursor FROM item_tables t JOIN items i ON i.id = t.item_id
           WHERE t.state IN ('owed', 'filling') AND i.state <> 'trashed'
@@ -498,7 +509,12 @@ fn next_owed(
     while let Some(row) = rows.next()? {
         let key: (String, String) = (row.get(0)?, row.get(1)?);
         if !tried.contains(&key) {
-            return Ok(Some((key.0, key.1, row.get(2)?, row.get(3)?)));
+            return Ok(Some(Owed {
+                item: key.0,
+                table: key.1,
+                state: row.get(2)?,
+                cursor: row.get(3)?,
+            }));
         }
     }
     Ok(None)
@@ -506,8 +522,19 @@ fn next_owed(
 
 /// One request towards a table not yet whole; `false` where none is left
 /// for this pass.
-fn step(core: &Core, http: &Http, tried: &mut HashSet<(String, String)>, report: &mut FillReport) -> Result<bool> {
-    let Some((item, table, state, cursor)) = next_owed(&*core.conn()?, tried)? else {
+fn step(
+    core: &Core,
+    http: &Http,
+    tried: &mut HashSet<(String, String)>,
+    report: &mut FillReport,
+) -> Result<bool> {
+    let Some(Owed {
+        item,
+        table,
+        state,
+        cursor,
+    }) = next_owed(&*core.conn()?, tried)?
+    else {
         return Ok(false);
     };
     let still = |conn: &Connection| -> Result<bool> {
@@ -531,8 +558,14 @@ fn step(core: &Core, http: &Http, tried: &mut HashSet<(String, String)>, report:
             tried.insert((item, table));
             return Ok(true);
         };
-        let count = summary.get("row_count").and_then(Value::as_i64).ok_or_else(invalid)?;
-        let bytes = summary.get("bytes").and_then(Value::as_i64).ok_or_else(invalid)?;
+        let count = summary
+            .get("row_count")
+            .and_then(Value::as_i64)
+            .ok_or_else(invalid)?;
+        let bytes = summary
+            .get("bytes")
+            .and_then(Value::as_i64)
+            .ok_or_else(invalid)?;
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;
         if still(&tx)? {
@@ -575,7 +608,10 @@ fn step(core: &Core, http: &Http, tried: &mut HashSet<(String, String)>, report:
         }
         other => other?,
     };
-    let rows = page.get("data").and_then(Value::as_array).ok_or_else(invalid)?;
+    let rows = page
+        .get("data")
+        .and_then(Value::as_array)
+        .ok_or_else(invalid)?;
     let next = match page.get("next_cursor") {
         None | Some(Value::Null) => None,
         Some(Value::String(next)) => Some(next.clone()),
@@ -640,7 +676,10 @@ pub(crate) fn fill_step(core: &Core, tried: &mut HashSet<(String, String)>) -> R
 
 /// The rows an event names without values, read from the server before the
 /// event applies; `None` where the copy does not hold the table.
-pub(crate) fn rows_to_read(core: &Core, event: &RowsEvent) -> Result<Option<HashMap<String, Value>>> {
+pub(crate) fn rows_to_read(
+    core: &Core,
+    event: &RowsEvent,
+) -> Result<Option<HashMap<String, Value>>> {
     if event.values_included {
         return Ok(None);
     }
@@ -670,7 +709,11 @@ pub(crate) fn rows_to_read(core: &Core, event: &RowsEvent) -> Result<Option<Hash
             params.push(("cursor", cursor.as_str()));
         }
         let page = http.table_rows(&event.item.id, &event.table, &params)?;
-        for row in page.get("data").and_then(Value::as_array).ok_or_else(invalid)? {
+        for row in page
+            .get("data")
+            .and_then(Value::as_array)
+            .ok_or_else(invalid)?
+        {
             let id = row.get("id").and_then(Value::as_str).ok_or_else(invalid)?;
             if wanted.contains(id) {
                 found.insert(id.to_string(), row.clone());
@@ -712,7 +755,15 @@ pub(crate) fn apply(
         }
         if event.values_included {
             let values = row.values.as_ref().ok_or_else(invalid)?;
-            hold_row(conn, item, table, &row.id, values, &row.withheld, &event.last_activity_at)?;
+            hold_row(
+                conn,
+                item,
+                table,
+                &row.id,
+                values,
+                &row.withheld,
+                &event.last_activity_at,
+            )?;
             continue;
         }
         let Some(read) = read else {
@@ -839,9 +890,10 @@ impl Key {
             Key::Updated => "r.updated_at".into(),
             Key::Column(column) => {
                 let text = property_sort_expression("r.body", "?");
-                values.extend(
-                    std::iter::repeat_n(Value::String(format!("$.{column}")), text.matches('?').count()),
-                );
+                values.extend(std::iter::repeat_n(
+                    Value::String(format!("$.{column}")),
+                    text.matches('?').count(),
+                ));
                 text
             }
         }
@@ -950,7 +1002,9 @@ fn page_from_copy(
                 values.extend([at.clone(), at.clone(), Value::String(id.clone())]);
             }
             (Key::Column(_), at) => {
-                sql.push_str(&format!(" AND (k IS NULL OR k {after} ? OR (k = ? AND r.id > ?))"));
+                sql.push_str(&format!(
+                    " AND (k IS NULL OR k {after} ? OR (k = ? AND r.id > ?))"
+                ));
                 values.extend([at.clone(), at.clone(), Value::String(id.clone())]);
             }
         }
@@ -1047,7 +1101,9 @@ fn totals_from_copy(
     filter: Option<&str>,
 ) -> Result<Value> {
     let columns = columns(definition);
-    let filter = filter.map(|filter| expression(filter, &columns)).transpose()?;
+    let filter = filter
+        .map(|filter| expression(filter, &columns))
+        .transpose()?;
     let adding: Vec<(String, String, String)> = columns
         .iter()
         .filter_map(|(name, definition)| {
@@ -1072,14 +1128,19 @@ fn totals_from_copy(
     }
     let bound: Vec<Bound> = values.iter().map(bound_json).collect();
     let found: Vec<Bound> = conn.query_row(&sql, params_from_iter(bound.iter()), |row| {
-        (0..=adding.len()).map(|at| row.get::<_, Bound>(at)).collect()
+        (0..=adding.len())
+            .map(|at| row.get::<_, Bound>(at))
+            .collect()
     })?;
     let mut found = found.into_iter();
     let row_count = found.next().unwrap_or(Bound::Integer(0));
     let mut totals = Map::new();
     for (name, kind, way) in &adding {
         let bound = found.next().unwrap_or(Bound::Null);
-        totals.insert(name.clone(), json!({ way.as_str(): total_value(kind, way, &bound) }));
+        totals.insert(
+            name.clone(),
+            json!({ way.as_str(): total_value(kind, way, &bound) }),
+        );
     }
     Ok(json!({
         "row_count": total_value("integer", "count", &row_count),
@@ -1091,7 +1152,10 @@ pub(crate) fn rows(core: &Core, item: &str, table: &str, asked: &RowsAsked) -> R
     {
         let conn = core.conn()?;
         if let Some(definition) = local_table(&conn, item, table)? {
-            return Ok(marked(page_from_copy(&conn, item, table, &definition, asked)?, true));
+            return Ok(marked(
+                page_from_copy(&conn, item, table, &definition, asked)?,
+                true,
+            ));
         }
     }
     let mut params: Vec<(&str, &str)> = Vec::new();
@@ -1107,7 +1171,10 @@ pub(crate) fn rows(core: &Core, item: &str, table: &str, asked: &RowsAsked) -> R
             params.push((name, value));
         }
     }
-    Ok(marked(core.http()?.table_rows(item, table, &params)?, false))
+    Ok(marked(
+        core.http()?.table_rows(item, table, &params)?,
+        false,
+    ))
 }
 
 pub(crate) fn row(core: &Core, item: &str, table: &str, row: &str) -> Result<Value> {
@@ -1123,9 +1190,10 @@ pub(crate) fn row(core: &Core, item: &str, table: &str, row: &str) -> Result<Val
                 )
                 .optional()?;
             return match held {
-                Some((body, withheld, updated_at)) => {
-                    Ok(marked(shown(row.into(), &body, withheld, updated_at)?, true))
-                }
+                Some((body, withheld, updated_at)) => Ok(marked(
+                    shown(row.into(), &body, withheld, updated_at)?,
+                    true,
+                )),
                 None => Err(CoreError::NotFound {
                     code: "row_not_found".into(),
                     message: format!("the table {table} holds no row {row}"),
@@ -1146,6 +1214,12 @@ pub(crate) fn totals(core: &Core, item: &str, table: &str, filter: Option<&str>)
             ));
         }
     }
-    let params: Vec<(&str, &str)> = filter.map(|filter| ("filter", filter)).into_iter().collect();
-    Ok(marked(core.http()?.table_totals(item, table, &params)?, false))
+    let params: Vec<(&str, &str)> = filter
+        .map(|filter| ("filter", filter))
+        .into_iter()
+        .collect();
+    Ok(marked(
+        core.http()?.table_totals(item, table, &params)?,
+        false,
+    ))
 }

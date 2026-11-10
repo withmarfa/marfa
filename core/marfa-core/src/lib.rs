@@ -105,10 +105,6 @@ pub use body::{
     BodyLinks, BodyName, BodyTarget, LinkCandidates, LinkPart, LinkParts, LinkState, link_parts,
 };
 pub use catalog::ServerCatalog;
-pub use tables::{
-    BYTE_CAP as TABLE_BYTE_CAP, FillReport, HeldTable, HeldTables, ROW_CAP as TABLE_ROW_CAP,
-    RowsAsked, TableChoice, TableHold,
-};
 pub use catch_up::{Change, ChangeEvent, FollowReport};
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::{
@@ -121,6 +117,10 @@ pub use file_cache::{
 pub use marfa_rules::catalog::{EdgeType, End, ItemType, TypeField, WrittenAt};
 pub use marfa_rules::display::ItemDisplay;
 pub use marfa_rules::thumbnail::Thumbnail;
+pub use tables::{
+    BYTE_CAP as TABLE_BYTE_CAP, FillReport, HeldTable, HeldTables, ROW_CAP as TABLE_ROW_CAP,
+    RowsAsked, TableChoice, TableHold,
+};
 /// Refuses the first whole number in `text`, a JSON object of properties,
 /// that a float would change, read as written.
 pub fn refuse_inexact_integers(text: &str) -> Result<()> {
@@ -8479,6 +8479,17 @@ mod tests {
             ("pin_page", reader.pin_page(&["x".to_owned()]).unwrap_err()),
             ("unpin", reader.unpin("x").unwrap_err()),
             (
+                "hold_table_until",
+                reader
+                    .hold_table_until("core.note", "x", &NEVER_STOPPED)
+                    .unwrap_err(),
+            ),
+            (
+                "let_go_table",
+                reader.let_go_table("core.note", "x").unwrap_err(),
+            ),
+            ("fill_tables", reader.fill_tables(&NEVER_STOPPED).unwrap_err()),
+            (
                 "follow",
                 reader
                     .follow(&std::sync::atomic::AtomicBool::new(true), false, |_| {})
@@ -8500,7 +8511,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            55,
+            58,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );

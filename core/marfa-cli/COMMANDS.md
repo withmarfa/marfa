@@ -3496,6 +3496,134 @@ marfa device views groups [OPTIONS] <ID>
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
+### marfa device tables
+
+The tables the copy holds: which an app holds, and how each fills.
+
+```text
+marfa device tables [OPTIONS] <COMMAND>
+```
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
+### marfa device tables hold
+
+Hold a table of each item the copy holds whose type TYPE names, as a slice names a type, and fill it now: whole up to 100,000 rows and 64 MiB, and read from the server past that.
+
+```text
+marfa device tables hold [OPTIONS] <TYPE> <TABLE>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<TYPE>` | The type, as a slice names one: an id, `<root>.*`, or `*`. |
+| `<TABLE>` | The table's name. |
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
+### marfa device tables let-go
+
+Stop holding a table, removing the rows the copy holds of it.
+
+```text
+marfa device tables let-go [OPTIONS] <TYPE> <TABLE>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<TYPE>` | The type, as it was held. |
+| `<TABLE>` | The table's name. |
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
+### marfa device tables held
+
+The tables held, and how far each item's table has filled.
+
+```text
+marfa device tables held [OPTIONS]
+```
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
+### marfa device tables fill
+
+Fill each table held that is not whole.
+
+```text
+marfa device tables fill [OPTIONS]
+```
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
+### marfa device rows
+
+A table's rows, read from the copy where it holds the table whole and from the server otherwise; `held` says which.
+
+```text
+marfa device rows [OPTIONS] <COMMAND>
+```
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
+### marfa device rows list
+
+One page of a table's rows, as `marfa rows list` answers it.
+
+```text
+marfa device rows list [OPTIONS] <ITEM> <TABLE>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ITEM>` | The item id. |
+| `<TABLE>` | The table name. |
+
+| Option | Description |
+| --- | --- |
+| `--filter <FILTER>` | Only the rows this expression matches, in the server's filter grammar, where `values.<column>` names a column, and `id` and `updated_at` are the row's own. |
+| `--sort <FIELD>` | What to order by: `id`, `updated_at` or `values.<column>`. The server's default is `id`. |
+| `--direction <DIRECTION>` | `asc` or `desc`; the server's default is `asc`. One of `asc`, `desc`. |
+| `--limit <LIMIT>` | How many at most. |
+| `--cursor <CURSOR>` | The cursor the previous page answered with. |
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
+### marfa device rows get
+
+One row of a table.
+
+```text
+marfa device rows get [OPTIONS] <ITEM> <TABLE> <ROW>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ITEM>` | The item id. |
+| `<TABLE>` | The table name. |
+| `<ROW>` | The row id. |
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
+### marfa device rows totals
+
+How many rows a filter selects, and the total of each column that names `adds_up`.
+
+```text
+marfa device rows totals [OPTIONS] <ITEM> <TABLE>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ITEM>` | The item id. |
+| `<TABLE>` | The table name. |
+
+| Option | Description |
+| --- | --- |
+| `--filter <FILTER>` | Only the rows this expression matches, in the server's filter grammar, where `values.<column>` names a column. |
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
 ### marfa device search
 
 Full-text search over the local copy, best match first.

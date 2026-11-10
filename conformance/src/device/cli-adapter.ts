@@ -256,7 +256,13 @@ export class CliDevice implements DeviceUnderTest {
   }
 
   async holdTable(type: string, table: string): Promise<Outcome<TableHold>> {
-    return this.json<TableHold>(["tables", "hold", type, table, ...this.server()]);
+    return this.json<TableHold>([
+      "tables",
+      "hold",
+      type,
+      table,
+      ...this.server(),
+    ]);
   }
 
   async letGoTable(
@@ -276,7 +282,11 @@ export class CliDevice implements DeviceUnderTest {
 
   /** `marfa device rows <command>`, as the copy or the server answers it, with `held`. */
   async tableRead<T>(args: string[]): Promise<Outcome<T & { held: boolean }>> {
-    return this.json<T & { held: boolean }>(["rows", ...args, ...this.server()]);
+    return this.json<T & { held: boolean }>([
+      "rows",
+      ...args,
+      ...this.server(),
+    ]);
   }
 
   async catchUp(): Promise<Outcome<CatchUpReport>> {
