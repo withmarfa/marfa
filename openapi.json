@@ -4764,6 +4764,13 @@
             },
             "description": "The type's own fields, by name. `GET /types/{id}` adds the fields it inherits."
           },
+          "tables": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/TableDefinition"
+            },
+            "description": "The type's own tables, by name. `GET /types/{id}` adds the tables it inherits."
+          },
           "version": {
             "type": "integer",
             "minimum": 0,
@@ -5049,6 +5056,13 @@
             },
             "description": "The type's own fields, by name."
           },
+          "tables": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/TableDefinition"
+            },
+            "description": "The type's own tables, by name: at most 32, each named by a lowercase letter, then up to 63 lowercase letters, digits and underscores. A subtype gets its parents' tables and declares only its own."
+          },
           "version": {
             "type": "integer",
             "minimum": 0,
@@ -5290,6 +5304,13 @@
               "$ref": "#/components/schemas/FieldDefinition"
             },
             "description": "The type's own fields, by name."
+          },
+          "tables": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/TableDefinition"
+            },
+            "description": "The type's own tables, by name, as on registration. Tables you leave out are removed, which needs `schema.write`, as removing a field does."
           },
           "version": {
             "type": "integer",
@@ -11042,6 +11063,124 @@
           "start_only"
         ],
         "description": "Every setting Marfa has: the stored ones, the rules across them and the ones only the environment sets."
+      },
+      "ColumnDefinition": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "string",
+              "email",
+              "url",
+              "enum",
+              "boolean",
+              "integer",
+              "number",
+              "date",
+              "datetime",
+              "item"
+            ],
+            "description": "The column's type. `item` holds the ID of an item, and `type_constraints` may name the types it accepts. The others are as a field of that type."
+          },
+          "label": {
+            "type": "string",
+            "description": "A name for people to read, up to 100 characters. Leave it out and a type read answers one made from the column's name, such as `Due At` for `due_at`. The type list answers only the declared label."
+          },
+          "description": {
+            "type": "string",
+            "description": "What the column holds."
+          },
+          "required": {
+            "type": "boolean",
+            "description": "`true` if every row must have a value for the column."
+          },
+          "enum_values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The values an `enum` column allows."
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "url",
+              "email",
+              "datetime",
+              "date",
+              "bcp47",
+              "iso3166",
+              "currency",
+              "phone"
+            ],
+            "description": "A refinement of a `string` column, as a field's `format`. Not for an `item` column."
+          },
+          "maxLength": {
+            "type": "integer",
+            "description": "The longest value a `string` or `enum` column allows. Not for an `item` column."
+          },
+          "minimum": {
+            "type": "number",
+            "description": "The lowest value the column allows, itself included. Only a `number` or `integer` column takes it."
+          },
+          "maximum": {
+            "type": "number",
+            "description": "The highest value the column allows, itself included. Only a `number` or `integer` column takes it."
+          },
+          "type_constraints": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The identifiers of the types an `item` column accepts. Each must be registered, or be the type that declares the column. Leave it out to accept any type."
+          },
+          "adds_up": {
+            "type": "string",
+            "enum": [
+              "sum",
+              "average",
+              "min",
+              "max",
+              "count"
+            ],
+            "description": "How the column totals: `sum` and `average` for a `number` or `integer` column, `min` and `max` also for a `date` or `datetime` column, and `count` of the rows that hold a value for any column. Leave it out for no total."
+          },
+          "searchable": {
+            "type": "boolean",
+            "description": "`true` to feed full-text search from a `string`, `email` or `url` column. Defaults to `false`, unlike a field."
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": {},
+        "description": "One column of a table: its type, and how rows may fill it."
+      },
+      "TableDefinition": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "A name for people to read, up to 100 characters. Leave it out and a type read answers one made from the table's name, such as `Line Items` for `line_items`."
+          },
+          "description": {
+            "type": "string",
+            "description": "What the table holds."
+          },
+          "columns": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ColumnDefinition"
+            },
+            "description": "The table's columns, by name: at least one and at most 64."
+          }
+        },
+        "required": [
+          "columns"
+        ],
+        "additionalProperties": {},
+        "description": "One table a type declares: the rows an item of the type holds under a name, in the columns it lists."
       }
     },
     "parameters": {},

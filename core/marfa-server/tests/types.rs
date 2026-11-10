@@ -497,3 +497,302 @@ async fn an_edge_type_registers_widens_by_evolution_and_deletes() {
         .await;
     assert_eq!(absent.code(), "edge_type_not_found");
 }
+
+fn ledger(tables: Value) -> Value {
+    json!({ "id": "acme.ledger", "fields": { "title": { "type": "string" } }, "tables": tables })
+}
+
+fn lines() -> Value {
+    json!({ "lines": { "label": "Lines", "columns": {
+        "amount": { "type": "number", "adds_up": "sum" },
+        "memo": { "type": "string", "searchable": true },
+    } } })
+}
+
+fn refused_paths(reply: &Reply) -> Vec<String> {
+    reply.body["error"]["details"]["errors"]
+        .as_array()
+        .map(|errors| {
+            errors
+                .iter()
+                .map(|error| error["field"].as_str().unwrap_or("").to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn a_type_declares_tables_and_every_door_reads_them_back() {
+    let instance = Instance::start().await;
+    let created = instance.register(ledger(lines())).await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+    assert_eq!(
+        created.body["type"]["tables"]["lines"]["columns"]["amount"]["adds_up"],
+        "sum"
+    );
+
+    let read = instance
+        .local(Method::GET, "/types/acme.ledger", None)
+        .await;
+    assert_eq!(read.body["tables"]["lines"]["label"], "Lines");
+    assert_eq!(
+        read.body["tables"]["lines"]["columns"]["memo"]["label"],
+        "Memo"
+    );
+    assert_eq!(
+        read.body["tables"]["lines"]["columns"]["memo"]["searchable"],
+        true
+    );
+
+    let listed = instance.local(Method::GET, "/types", None).await;
+    let row = listed.body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == "acme.ledger")
+        .unwrap();
+    assert!(row["tables"]["lines"]["columns"]["amount"].is_object());
+
+    let judged = instance
+        .local(Method::POST, "/types/normalize", Some(ledger(lines())))
+        .await;
+    assert_eq!(judged.status, StatusCode::OK, "{}", judged.body);
+    assert_eq!(
+        judged.body["type"]["tables"]["lines"]["columns"]["amount"]["required"],
+        false
+    );
+    assert_eq!(
+        judged.body["type"]["tables"]["lines"]["columns"]["memo"]["searchable"],
+        true
+    );
+    assert_eq!(
+        judged.body["type"]["tables"]["lines"]["columns"]["amount"]["searchable"],
+        false
+    );
+}
+
+#[tokio::test]
+async fn a_table_a_type_cannot_hold_is_refused_at_registration_and_stores_nothing() {
+    let instance = Instance::start().await;
+    let cases = [
+        (
+            json!({ "lines": { "colums": { "a": { "type": "string" } }, "columns": { "a": { "type": "string" } } } }),
+            "tables.lines.colums",
+        ),
+        (
+            json!({ "lines": { "columns": { "a": { "type": "decimal" } } } }),
+            "tables.lines.columns.a.type",
+        ),
+        (
+            json!({ "lines": { "columns": { "a": { "type": "string", "adds_up": "sum" } } } }),
+            "tables.lines.columns.a.adds_up",
+        ),
+        (
+            json!({ "lines": { "columns": { "a": { "type": "item", "type_constraints": ["acme.nothing"] } } } }),
+            "tables.lines.columns.a.type_constraints",
+        ),
+        (
+            json!({ "lines": { "columns": {} } }),
+            "tables.lines.columns",
+        ),
+    ];
+    for (tables, field) in cases {
+        let refused = instance.register(ledger(tables)).await;
+        assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.body);
+        assert_eq!(refused.code(), "invalid_schema");
+        assert_eq!(
+            refused_paths(&refused),
+            vec![field.to_string()],
+            "{}",
+            refused.body
+        );
+    }
+    let crowded: serde_json::Map<String, Value> = (0..33)
+        .map(|n| {
+            (
+                format!("t{n}"),
+                json!({ "columns": { "a": { "type": "string" } } }),
+            )
+        })
+        .collect();
+    let refused = instance.register(ledger(Value::Object(crowded))).await;
+    assert_eq!(refused_paths(&refused), vec!["tables".to_string()]);
+    let wide: serde_json::Map<String, Value> = (0..65)
+        .map(|n| (format!("c{n}"), json!({ "type": "string" })))
+        .collect();
+    let refused = instance
+        .register(ledger(json!({ "lines": { "columns": wide } })))
+        .await;
+    assert_eq!(
+        refused_paths(&refused),
+        vec!["tables.lines.columns".to_string()]
+    );
+    assert!(
+        !instance
+            .type_ids()
+            .await
+            .contains(&"acme.ledger".to_string())
+    );
+}
+
+#[tokio::test]
+async fn a_subtype_inherits_tables_and_may_not_declare_one_again() {
+    let instance = Instance::start().await;
+    assert_eq!(
+        instance.register(ledger(lines())).await.status,
+        StatusCode::CREATED
+    );
+    let mut sub = child("acme.sub", "acme.ledger", json!({}));
+    sub["tables"] = json!({ "extra": { "columns": { "n": { "type": "integer" } } } });
+    let made = instance.register(sub).await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    let read = instance.local(Method::GET, "/types/acme.sub", None).await;
+    let tables = read.body["tables"].as_object().unwrap();
+    assert!(tables.contains_key("lines") && tables.contains_key("extra"));
+
+    let mut again = child("acme.again", "acme.ledger", json!({}));
+    again["tables"] = json!({ "lines": { "columns": { "other": { "type": "string" } } } });
+    let refused = instance.register(again).await;
+    assert_eq!(refused.code(), "inheritance_violation", "{}", refused.body);
+    assert_eq!(refused_paths(&refused), vec!["tables.lines".to_string()]);
+
+    let mut restated = child("acme.restated", "acme.ledger", json!({}));
+    restated["tables"] = read_back_tables(&instance, "acme.ledger").await;
+    let kept = instance.register(restated).await;
+    assert_eq!(kept.status, StatusCode::CREATED, "{}", kept.body);
+    let listed = instance.local(Method::GET, "/types", None).await;
+    let row = listed.body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == "acme.restated")
+        .unwrap();
+    assert!(row.get("tables").is_none(), "{row}");
+}
+
+async fn read_back_tables(instance: &Instance, id: &str) -> Value {
+    let read = instance
+        .local(Method::GET, &format!("/types/{id}"), None)
+        .await;
+    read.body["tables"].clone()
+}
+
+#[tokio::test]
+async fn a_replacement_keeps_tables_it_names_and_drops_those_it_leaves_out_for_a_schema_writer_only()
+ {
+    let instance = Instance::start().await;
+    assert_eq!(
+        instance.register(ledger(lines())).await.status,
+        StatusCode::CREATED
+    );
+    let key = instance
+        .key(json!({
+            "label": "writer",
+            "source": "writer",
+            "permissions": [],
+            "metadata_permissions": { "types": "write" },
+            "type_permissions": { "acme.ledger": "write" },
+        }))
+        .await;
+    let put = |tables: Option<Value>| {
+        let mut body = json!({ "id": "acme.ledger", "fields": { "title": { "type": "string" } } });
+        if let Some(tables) = tables {
+            body["tables"] = tables;
+        }
+        body
+    };
+    let mut wider = lines();
+    wider["lines"]["columns"]["note"] = json!({ "type": "string" });
+    wider["audit"] = json!({ "columns": { "at": { "type": "datetime", "required": true } } });
+    let added = instance
+        .call(
+            &key,
+            Method::PUT,
+            "/types/acme.ledger",
+            Some(put(Some(wider))),
+        )
+        .await;
+    assert_eq!(added.status, StatusCode::OK, "{}", added.body);
+    assert!(added.body["type"]["tables"]["audit"].is_object());
+
+    let mut required = lines();
+    required["lines"]["columns"]["note"] = json!({ "type": "string", "required": true });
+    required["audit"] = json!({ "columns": { "at": { "type": "datetime", "required": true } } });
+    let refused = instance
+        .call(
+            &key,
+            Method::PUT,
+            "/types/acme.ledger",
+            Some(put(Some(required))),
+        )
+        .await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.body);
+    assert_eq!(
+        refused.body["error"]["details"]["required_scope"],
+        "schema.write"
+    );
+    assert_eq!(
+        refused.body["error"]["details"]["changes"],
+        json!(["tables.lines.columns.note"])
+    );
+
+    let mut kind = lines();
+    kind["lines"]["columns"]["amount"] = json!({ "type": "string" });
+    let refused = instance
+        .call(
+            &key,
+            Method::PUT,
+            "/types/acme.ledger",
+            Some(put(Some(kind))),
+        )
+        .await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.body);
+
+    let left_out = instance
+        .call(&key, Method::PUT, "/types/acme.ledger", Some(put(None)))
+        .await;
+    assert_eq!(left_out.status, StatusCode::FORBIDDEN, "{}", left_out.body);
+    let held = instance
+        .local(Method::GET, "/types/acme.ledger", None)
+        .await;
+    assert_eq!(held.body["tables"].as_object().unwrap().len(), 2);
+
+    let by_owner = instance
+        .local(Method::PUT, "/types/acme.ledger", Some(put(None)))
+        .await;
+    assert_eq!(by_owner.status, StatusCode::OK, "{}", by_owner.body);
+    assert!(
+        by_owner.body["type"].get("tables").is_none(),
+        "{}",
+        by_owner.body
+    );
+}
+
+#[tokio::test]
+async fn a_definition_read_as_served_is_written_back_with_no_label_it_did_not_have() {
+    let instance = Instance::start().await;
+    assert_eq!(
+        instance.register(ledger(lines())).await.status,
+        StatusCode::CREATED
+    );
+    let mut sent = json!({ "id": "acme.ledger", "fields": { "title": { "type": "string" } } });
+    sent["tables"] = read_back_tables(&instance, "acme.ledger").await;
+    let replaced = instance
+        .local(Method::PUT, "/types/acme.ledger", Some(sent))
+        .await;
+    assert_eq!(replaced.status, StatusCode::OK, "{}", replaced.body);
+    let listed = instance.local(Method::GET, "/types", None).await;
+    let row = listed.body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == "acme.ledger")
+        .unwrap();
+    assert_eq!(row["tables"]["lines"]["label"], "Lines");
+    assert!(
+        row["tables"]["lines"]["columns"]["amount"]
+            .get("label")
+            .is_none(),
+        "{row}"
+    );
+}

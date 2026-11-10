@@ -1547,6 +1547,106 @@ async fn a_type_is_registered_by_a_credential_that_may_register_and_changed_only
 }
 
 #[tokio::test]
+async fn a_type_saved_through_the_tool_carries_tables_that_a_change_adds_replaces_and_removes() {
+    let instance = Instance::start(&[]).await;
+    let writer = instance
+        .key(json!({
+            "type_permissions": { "user.*": "write" },
+            "permissions": ["schema.write"],
+            "metadata_permissions": { "types": "write" },
+        }))
+        .await;
+    let made = instance
+        .tool_at(
+            SCHEMA,
+            &writer,
+            "marfa_save_type",
+            json!({
+                "action": "register",
+                "id": "user.ledger",
+                "fields": { "title": { "type": "string" } },
+                "tables": { "lines": { "columns": { "amount": { "type": "number", "adds_up": "sum", "required": true } } } },
+            }),
+        )
+        .await;
+    assert!(!made.failed, "{}", made.value);
+    assert_eq!(
+        made.payload()["type"]["tables"]["lines"]["columns"]["amount"],
+        json!({ "type": "number", "adds_up": "sum", "required": true })
+    );
+    let refused = instance
+        .tool_at(
+            SCHEMA,
+            &writer,
+            "marfa_save_type",
+            json!({
+                "action": "register",
+                "id": "user.bad",
+                "fields": { "title": { "type": "string" } },
+                "tables": { "lines": { "columns": { "a": { "type": "string", "adds_up": "sum" } } } },
+            }),
+        )
+        .await;
+    assert!(refused.failed, "{}", refused.value);
+    let nulled = instance
+        .tool_at(
+            SCHEMA,
+            &writer,
+            "marfa_save_type",
+            json!({ "action": "register", "id": "user.nulled", "fields": {}, "tables": { "lines": null } }),
+        )
+        .await;
+    assert!(nulled.failed, "{}", nulled.value);
+
+    let changed = instance
+        .tool_at(
+            SCHEMA,
+            &writer,
+            "marfa_save_type",
+            json!({
+                "action": "change",
+                "id": "user.ledger",
+                "tables": {
+                    "notes": { "columns": { "text": { "type": "string" } } },
+                    "lines": { "columns": { "amount": { "type": "integer" } } },
+                },
+            }),
+        )
+        .await;
+    assert!(!changed.failed, "{}", changed.value);
+    let tables = &changed.payload()["type"]["tables"];
+    assert_eq!(
+        tables["lines"]["columns"]["amount"],
+        json!({ "type": "integer" })
+    );
+    assert!(tables["notes"].is_object());
+    let left = instance
+        .tool_at(
+            SCHEMA,
+            &writer,
+            "marfa_save_type",
+            json!({ "action": "change", "id": "user.ledger", "label": "Ledger" }),
+        )
+        .await;
+    assert_eq!(
+        left.payload()["type"]["tables"]
+            .as_object()
+            .map(|t| t.len()),
+        Some(2)
+    );
+    let removed = instance
+        .tool_at(
+            SCHEMA,
+            &writer,
+            "marfa_save_type",
+            json!({ "action": "change", "id": "user.ledger", "tables": { "lines": null, "notes": null } }),
+        )
+        .await;
+    assert!(!removed.failed, "{}", removed.value);
+    assert!(removed.payload()["type"].get("tables").is_none());
+}
+
+#[tokio::test]
 async fn a_view_is_saved_and_changed_from_the_version_read() {
     let instance = Instance::start(&[]).await;
     let token = instance

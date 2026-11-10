@@ -936,7 +936,7 @@ If a key holding `metadata.types:write` and not `schema.write` sends `PUT /types
 
 ### `types/evolve-schema-change`
 
-If a key holding `metadata.types:write` and not `schema.write` sends `PUT /types/{id}` for a type registered at run time its map grants write on, changing anything `types/evolve-free` does not name, then the server MUST answer `403 forbidden`.
+If a key holding `metadata.types:write` and not `schema.write` sends `PUT /types/{id}` for a type registered at run time its map grants write on, changing anything `types/evolve-free` and `tables/evolve-free` do not name, then the server MUST answer `403 forbidden`.
 
 **Reason:** a removed field, a required one, a changed field shape, `parent`, `roles`, `link_field`, `version_policy`, `merge_policy`, `retention_policy` or `compatible_with` each acts beyond the type. Holding back whatever is not named free keeps a member added to the definition later from being opened to every connector's key.
 

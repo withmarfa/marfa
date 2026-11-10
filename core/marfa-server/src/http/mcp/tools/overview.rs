@@ -56,6 +56,48 @@ const FIELD_KEYS: [&str; 9] = [
     "maximum",
 ];
 
+const COLUMN_KEYS: [&str; 8] = [
+    "type",
+    "description",
+    "enum_values",
+    "format",
+    "minimum",
+    "maximum",
+    "type_constraints",
+    "adds_up",
+];
+
+fn compact_tables(given: &Map<String, Value>) -> Map<String, Value> {
+    let mut tables = Map::new();
+    for (name, table) in given {
+        let mut kept = Map::new();
+        if let Some(description) = table.get("description").filter(|d| d.is_string()) {
+            kept.insert("description".into(), description.clone());
+        }
+        let mut columns = Map::new();
+        for (column, definition) in table
+            .get("columns")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+        {
+            let mut held = Map::new();
+            for key in COLUMN_KEYS {
+                if let Some(value) = definition.get(key) {
+                    held.insert(key.into(), value.clone());
+                }
+            }
+            if definition.get("required") == Some(&Value::Bool(true)) {
+                held.insert("required".into(), true.into());
+            }
+            columns.insert(column.clone(), Value::Object(held));
+        }
+        kept.insert("columns".into(), Value::Object(columns));
+        tables.insert(name.clone(), Value::Object(kept));
+    }
+    tables
+}
+
 /// A type with only what an agent writing an item of it needs.
 pub fn compact(schema: &Value) -> Value {
     let mut fields = Map::new();
@@ -80,6 +122,13 @@ pub fn compact(schema: &Value) -> Value {
         }
     }
     out.insert("fields".into(), Value::Object(fields));
+    if let Some(tables) = schema
+        .get("tables")
+        .and_then(Value::as_object)
+        .filter(|tables| !tables.is_empty())
+    {
+        out.insert("tables".into(), Value::Object(compact_tables(tables)));
+    }
     if let Some(link) = schema.get("link_field").filter(|value| value.is_string()) {
         out.insert("link_field".into(), link.clone());
     }

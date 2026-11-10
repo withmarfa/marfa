@@ -16,6 +16,7 @@ The contract has two halves.
 - `items.md`: items, their lifecycle, bulk writes, metadata, tags and extensions, the folder operation that writes `system.folder`, and links and the tombstones a purge leaves.
 - `views.md`: views, the saved lists of items written as `system.view`, their query, sort and group, the operations that create, change and delete them, and the one that lists their items.
 - `types.md`: the type registry, its grammar, inheritance, enforcement levers and a type's link.
+- `tables.md`: the tables a type declares, their columns and how a column totals, down a chain of types, through evolution and into an archive.
 - `edges.md`: edges, edge types, hydration and traversal.
 - `versions.md`: versions, snapshots, the 409 envelopes and server-side merge.
 - `reach.md`: the copy stream, conditional reads, and the reach that certifies what a working copy holds.

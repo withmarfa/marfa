@@ -150,6 +150,43 @@ export interface FieldDefinition {
   format?: string;
 }
 
+/** A column kind: a field's plain kinds, or `item`, the id of an item. */
+export type ColumnType =
+  | "string"
+  | "email"
+  | "url"
+  | "enum"
+  | "boolean"
+  | "integer"
+  | "number"
+  | "date"
+  | "datetime"
+  | "item";
+
+export interface ColumnDefinition {
+  type: ColumnType;
+  label?: string;
+  description?: string;
+  required?: boolean;
+  /** `false` unless set, unlike a field. */
+  searchable?: boolean;
+  enum_values?: string[];
+  format?: string;
+  maxLength?: number;
+  minimum?: number;
+  maximum?: number;
+  /** On an `item` column: the types it accepts. */
+  type_constraints?: string[];
+  /** How the column totals. */
+  adds_up?: "sum" | "average" | "min" | "max" | "count";
+}
+
+export interface TableDefinition {
+  label?: string;
+  description?: string;
+  columns: Record<string, ColumnDefinition>;
+}
+
 export interface RecordedActor {
   kind: "key" | "app" | "browser" | "local" | "server";
   id: string;
@@ -172,6 +209,9 @@ export interface TypeSchema {
   // ancestors for field inheritance and for edge-constraint matching.
   parent?: string;
   fields: Record<string, FieldDefinition>;
+  /** The tables the type declares, by name; `GET /types/{id}` adds those it
+   *  inherits. Absent when there are none. */
+  tables?: Record<string, TableDefinition>;
   /** Structural roles the type plays, its ancestors' included; absent when
    *  it plays none. */
   roles?: string[];
