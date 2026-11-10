@@ -2530,7 +2530,7 @@ If the body of `POST /restore` is empty, then the server MUST answer `400 valida
 
 If an archive lacks `manifest.json`, `instance.ndjson.gz`, `items.ndjson.gz`, `edges.ndjson.gz` or `rows.ndjson.gz`, then the server MUST answer `400 validation_error` naming each missing entry in the message and in `details.entries`.
 
-**Reason:** an export writes all four even when it holds no item (`search-and-filters/archive-entries`), so a missing entry is a damaged archive or a file that is no archive, and an archive of nothing is told from it by its entries being empty (`search-and-filters/restore-nothing`). Without the check a restore answers `200` with counts of zero for a file it never read.
+**Reason:** an export writes all five even when it holds no item (`search-and-filters/archive-entries`), so a missing entry is a damaged archive or a file that is no archive, and an archive of nothing is told from it by its entries being empty (`search-and-filters/restore-nothing`). Without the check a restore answers `200` with counts of zero for a file it never read.
 
 **Tests:** `compliance/restore-archive.test.ts › refuses an archive without %s, naming it, and writes nothing`, `› refuses a tar that is no archive, naming every member it lacks`.
 

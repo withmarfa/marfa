@@ -42,8 +42,7 @@ impl Types {
     }
 }
 
-/// Each row of each carried item, in the order `tables/archive-rows-order` states, as the
-/// reader may read it.
+/// Rows of carried items in archive order, with unreadable references withheld.
 pub(crate) fn archived(
     read: &Reader<'_, '_>,
     carried: impl Fn(i64) -> bool,
@@ -146,7 +145,6 @@ impl<'a, 'u, 'c> Restoring<'a, 'u, 'c> {
         }
     }
 
-    /// Writes a checked line whose item this restore `written`, and counts the rest as skipped.
     pub fn row(&mut self, line: &Value, key: RowKey, written: bool) -> Result<()> {
         if !written {
             self.skipped += 1;
@@ -244,7 +242,6 @@ impl<'a, 'u, 'c> Restoring<'a, 'u, 'c> {
         Ok(())
     }
 
-    /// Announces the open batch of the current table and starts the next.
     fn announce(&mut self) -> Result<()> {
         let tx = self.unit.tx();
         let Some(run) = self.run.as_mut() else {
@@ -281,7 +278,6 @@ impl<'a, 'u, 'c> Restoring<'a, 'u, 'c> {
         Ok(())
     }
 
-    /// Ends the current table: its last batch announced and its summary written.
     fn close(&mut self) -> Result<()> {
         self.announce()?;
         let Some(run) = self.run.take() else {

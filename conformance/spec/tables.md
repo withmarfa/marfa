@@ -834,7 +834,7 @@ When a row holds a value written to a column of type `item` (`tables/rows-item-o
 
 The server MUST write the lines of `rows.ndjson.gz` in ascending order of `item_id`, then `table`, then `id`.
 
-**Reason:** a restore finds a repeated row, and a row cut from its table, by comparing each line with the one before it, without holding a table's ids.
+**Reason:** comparing adjacent lines detects repeated or out-of-order rows without holding a table's IDs.
 
 **Tests:** `compliance/table-rows-archive.test.ts › carries each row of a carried item in rows.ndjson.gz, in table and id order, and counts them in row_count`.
 
@@ -936,7 +936,7 @@ If the `values` of a line of `rows.ndjson.gz`, written as JSON, are longer than 
 
 If a line of `rows.ndjson.gz` does not come after the line before it in the order `tables/archive-rows-order` states, then the server MUST answer `400 validation_error` naming the line.
 
-**Reason:** a line out of that order is a repeated row, or a row cut from its table, which no export writes.
+**Reason:** an export never writes repeated or out-of-order rows. This check does not detect a missing line; `search-and-filters/restore-line-counts` checks the counts.
 
 **Tests:** `compliance/table-rows-archive.test.ts › refuses a row out of order or repeated, naming its line`.
 

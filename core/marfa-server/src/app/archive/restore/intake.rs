@@ -641,7 +641,7 @@ fn not_gzip(file: LineFile) -> Refusal {
 }
 
 impl Intake {
-    /// Opens the three line spools at once, so the body is spooled from its first part.
+    /// Opens the four line spools at once, so the body is spooled from its first part.
     pub fn new(spool: Spool, committed: Arc<Catalog>, cap: usize) -> Result<Intake> {
         let spools = [
             Some(spool.scratch()?),
