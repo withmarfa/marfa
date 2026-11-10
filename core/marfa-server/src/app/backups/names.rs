@@ -29,9 +29,9 @@ fn oldest_kept(now: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::U
     now - Duration::days(1) - Duration::days(DAILY_FOR_DAYS)
 }
 
-/// Whether thinning at `now` deletes a backup taken at `taken` unless it is the newest.
-pub fn past_retention(taken: Stamp, now: Stamp) -> bool {
-    taken.at() <= oldest_kept(now.at())
+/// Whether a backup listings have omitted since `since` has been missing for longer than retention.
+pub fn missing_past_retention(since: Stamp, now: Stamp) -> bool {
+    since.at() < oldest_kept(now.at())
 }
 
 /// Keeps every backup of the last day, the newest of each day for thirty days, and the newest always.
@@ -130,17 +130,17 @@ mod tests {
     }
 
     #[test]
-    fn past_retention_is_what_thinning_deletes_of_a_backup_that_is_not_the_newest() {
+    fn thinning_deletes_a_backup_taken_31_days_ago_and_a_missing_one_is_gone_only_after() {
         let now = at("2026-11-09T12:00:00.000Z");
         let newer = "2026-11-09T11:00:00.000Z.tar".to_string();
-        for (taken, past) in [
-            ("2026-10-09T12:00:00.001Z", false),
-            ("2026-10-09T12:00:00.000Z", true),
-            ("2026-10-01T00:00:00.000Z", true),
+        for (taken, deleted, gone) in [
+            ("2026-10-09T12:00:00.001Z", false, false),
+            ("2026-10-09T12:00:00.000Z", true, false),
+            ("2026-10-09T11:59:59.999Z", true, true),
         ] {
-            assert_eq!(past_retention(at(taken), now), past, "{taken}");
             let names = [newer.clone(), name_of(at(taken))];
-            assert_eq!(doomed(&names, now).len() == 1, past, "{taken}");
+            assert_eq!(doomed(&names, now).len() == 1, deleted, "{taken}");
+            assert_eq!(missing_past_retention(at(taken), now), gone, "{taken}");
         }
     }
 

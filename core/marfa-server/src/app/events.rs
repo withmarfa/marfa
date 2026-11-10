@@ -17,7 +17,7 @@ use super::items::reading;
 use super::query::judge_type;
 use super::refusal::{Refusal, Result};
 
-pub use expiry::expire;
+pub use expiry::{UNREAD, expire};
 pub use frame::{Filter, Head, Judge, Judged, Kind};
 pub use stream::{Hangup, Opening, PING, Viewer, Viewers, open};
 

@@ -25,7 +25,7 @@ use super::refusal::{Code, Refusal, Result};
 use crate::db::Write;
 use crate::settings::registry::BACKUP_INTERVAL_MS;
 
-pub use names::{doomed, instance_of, name_of, parse, past_retention};
+pub use names::{doomed, instance_of, missing_past_retention, name_of, parse};
 
 /// The folder under the object store's prefix that holds a folder of backups per instance.
 pub const FOLDER: &str = "backups";
@@ -239,7 +239,19 @@ async fn hold(
     Ok(())
 }
 
-/// Confirms listed backups; forgets one thinning deleted, or unlisted, superseded and past retention.
+/// How many listings must omit a backup, the first and last over retention apart, before it is gone.
+const OMISSIONS: i64 = 3;
+
+/// A backup as the database records it.
+struct Recorded {
+    seq: i64,
+    name: String,
+    confirmed: bool,
+    missing_since: Option<String>,
+    omissions: i64,
+}
+
+/// Confirms listed backups; forgets one thinning deleted, or one listings have long omitted.
 fn reconcile(
     tx: &Transaction<'_>,
     store: &str,
@@ -247,30 +259,63 @@ fn reconcile(
     deleted: &HashSet<String>,
     now: Stamp,
 ) -> Result<()> {
-    let recorded: Vec<(i64, String, bool)> = tx
-        .prepare_cached("SELECT seq, name, confirmed FROM backups WHERE store_id = ?1")?
-        .query_map([store], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+    let recorded: Vec<Recorded> = tx
+        .prepare_cached(
+            "SELECT seq, name, confirmed, missing_since, omissions FROM backups \
+             WHERE store_id = ?1",
+        )?
+        .query_map([store], |row| {
+            Ok(Recorded {
+                seq: row.get(0)?,
+                name: row.get(1)?,
+                confirmed: row.get(2)?,
+                missing_since: row.get(3)?,
+                omissions: row.get(4)?,
+            })
+        })?
         .collect::<rusqlite::Result<_>>()?;
-    let newest = recorded.iter().map(|(seq, _, _)| *seq).max();
-    let mut confirm = tx.prepare_cached("UPDATE backups SET confirmed = 1 WHERE seq = ?1")?;
+    let newest = recorded.iter().map(|backup| backup.seq).max();
+    let mut shown = tx.prepare_cached(
+        "UPDATE backups SET confirmed = 1, missing_since = NULL, omissions = 0 WHERE seq = ?1",
+    )?;
+    let mut omitted = tx.prepare_cached(
+        "UPDATE backups SET missing_since = coalesce(missing_since, ?2), omissions = ?3 \
+         WHERE seq = ?1",
+    )?;
     let mut forget = tx.prepare_cached("DELETE FROM backups WHERE seq = ?1")?;
-    for (seq, name, confirmed) in recorded {
-        if deleted.contains(&name) {
+    for backup in recorded {
+        let seq = backup.seq;
+        if deleted.contains(&backup.name) {
             forget.execute([seq])?;
-        } else if listed.contains(&name) {
-            if !confirmed {
-                confirm.execute([seq])?;
+        } else if listed.contains(&backup.name) {
+            if !backup.confirmed || backup.missing_since.is_some() || backup.omissions > 0 {
+                shown.execute([seq])?;
             }
         } else if Some(seq) != newest {
-            match parse(&name) {
-                Some(taken) if past_retention(taken, now) => {
-                    forget.execute([seq])?;
-                }
-                Some(_) => {}
-                None => tracing::error!(
-                    backup = %name,
+            if parse(&backup.name).is_none() {
+                tracing::error!(
+                    backup = %backup.name,
                     "A recorded backup's name does not read, so the files it names stay held"
-                ),
+                );
+                continue;
+            }
+            let omissions = backup.omissions.saturating_add(1);
+            let since = match backup.missing_since.as_deref().map(Stamp::parsed) {
+                None => now,
+                Some(Some(since)) => since,
+                Some(None) => {
+                    tracing::error!(
+                        backup = %backup.name,
+                        "When listings began to omit a recorded backup does not read, so the \
+                         files it names stay held"
+                    );
+                    continue;
+                }
+            };
+            if omissions >= OMISSIONS && missing_past_retention(since, now) {
+                forget.execute([seq])?;
+            } else {
+                omitted.execute(params![seq, now, omissions])?;
             }
         }
     }
@@ -946,25 +991,100 @@ mod tests {
     }
 
     #[test]
-    fn a_backup_listings_omit_is_forgotten_once_past_retention_unless_it_is_the_newest() {
+    fn a_kept_backup_one_listing_omits_after_a_failed_attempt_keeps_its_files_past_retention() {
+        let mut conn = database();
+        let tx = conn.transaction().unwrap();
+        let a = hash('a');
+        registered(&tx, &[&a]);
+        let (kept, failed) = (named(0), named(1));
+
+        hold(&tx, BUCKET, &kept, &files(&[&a])).unwrap();
+        record_put(&tx, BUCKET, 0, &kept, at(0)).unwrap();
+        hold(&tx, BUCKET, &failed, &[]).unwrap();
+        settled(&tx, &[], &[], at(0).plus_ms(40 * DAY_MS).unwrap());
+
+        assert_eq!(held_of(&tx, &[&a]), ['a']);
+        assert_eq!(count(&tx, "SELECT COUNT(*) FROM backups"), 2);
+    }
+
+    #[test]
+    fn a_backup_is_forgotten_once_three_listings_over_more_than_retention_omit_it() {
         let mut conn = database();
         let tx = conn.transaction().unwrap();
         let a = hash('a');
         registered(&tx, &[&a]);
         let (lost, next) = (named(0), named(1));
-        let retained = at(0).plus_ms(31 * DAY_MS).unwrap();
 
         hold(&tx, BUCKET, &lost, &files(&[&a])).unwrap();
-        settled(&tx, &[], &[], retained.plus_ms(DAY_MS).unwrap());
+        settled(&tx, &[], &[], at(0).plus_ms(400 * DAY_MS).unwrap());
         assert_eq!(held_of(&tx, &[&a]), ['a']);
 
         hold(&tx, BUCKET, &next, &[]).unwrap();
-        settled(&tx, &[], &[], retained.plus_ms(-1).unwrap());
-        assert_eq!(held_of(&tx, &[&a]), ['a']);
+        let since = at(1);
+        let retained = since.plus_ms(31 * DAY_MS).unwrap();
+        settled(&tx, &[], &[], since);
         settled(&tx, &[], &[], retained);
+        settled(&tx, &[], &[], retained);
+        assert_eq!(held_of(&tx, &[&a]), ['a']);
+        settled(&tx, &[], &[], retained.plus_ms(1).unwrap());
         assert!(held_of(&tx, &[&a]).is_empty());
         assert_eq!(count(&tx, "SELECT COUNT(*) FROM backups"), 1);
         assert_eq!(count(&tx, "SELECT COUNT(*) FROM backup_files"), 0);
+    }
+
+    #[test]
+    fn two_listings_omitting_a_backup_over_more_than_retention_are_not_enough() {
+        let mut conn = database();
+        let tx = conn.transaction().unwrap();
+        let a = hash('a');
+        registered(&tx, &[&a]);
+
+        hold(&tx, BUCKET, &named(0), &files(&[&a])).unwrap();
+        hold(&tx, BUCKET, &named(1), &[]).unwrap();
+        settled(&tx, &[], &[], at(1));
+        settled(&tx, &[], &[], at(1).plus_ms(400 * DAY_MS).unwrap());
+        assert_eq!(held_of(&tx, &[&a]), ['a']);
+    }
+
+    #[test]
+    fn a_listing_that_shows_a_backup_again_restarts_its_absence() {
+        let mut conn = database();
+        let tx = conn.transaction().unwrap();
+        let a = hash('a');
+        registered(&tx, &[&a]);
+        let (lost, next) = (named(0), named(1));
+
+        hold(&tx, BUCKET, &lost, &files(&[&a])).unwrap();
+        hold(&tx, BUCKET, &next, &[]).unwrap();
+        settled(&tx, &[], &[], at(1));
+        settled(&tx, &[], &[], at(2));
+        settled(&tx, &[&lost], &[], at(3));
+        let again = at(1).plus_ms(32 * DAY_MS).unwrap();
+        settled(&tx, &[], &[], again);
+        settled(&tx, &[], &[], again.plus_ms(DAY_MS).unwrap());
+        assert_eq!(held_of(&tx, &[&a]), ['a']);
+
+        settled(&tx, &[], &[], again.plus_ms(31 * DAY_MS + 1).unwrap());
+        assert!(held_of(&tx, &[&a]).is_empty());
+    }
+
+    #[test]
+    fn a_missing_time_that_does_not_read_keeps_its_holds() {
+        let mut conn = database();
+        let tx = conn.transaction().unwrap();
+        let a = hash('a');
+        registered(&tx, &[&a]);
+        let lost = named(0);
+
+        hold(&tx, BUCKET, &lost, &files(&[&a])).unwrap();
+        hold(&tx, BUCKET, &named(1), &[]).unwrap();
+        tx.execute(
+            "UPDATE backups SET missing_since = '0', omissions = 9 WHERE name = ?1",
+            [&lost],
+        )
+        .unwrap();
+        settled(&tx, &[], &[], at(0).plus_ms(400 * DAY_MS).unwrap());
+        assert_eq!(held_of(&tx, &[&a]), ['a']);
     }
 
     #[test]
@@ -999,19 +1119,28 @@ mod tests {
             &tx,
             "SELECT COUNT(*) FROM backup_files WHERE last_seq IS NULL",
         );
-        assert_eq!(recorded, 31 * 24, "{recorded}");
-        assert_eq!(rows, 31 * 24 / 2, "{rows}");
+        let kept = 31 * 24 + 3;
+        assert_eq!(recorded, kept, "{recorded}");
+        assert_eq!(rows, (kept - 1) / 2, "{rows}");
         assert_eq!(open, 0, "{open}");
         assert!(
             held(&tx, BUCKET, &hashes[998..])
                 .unwrap()
                 .contains(&hashes[998])
         );
-        assert!(held(&tx, BUCKET, &hashes[..256]).unwrap().is_empty());
+        let forgotten = 1_000 - kept as usize;
+        assert!(held(&tx, BUCKET, &hashes[..forgotten]).unwrap().is_empty());
+        assert!(
+            held(&tx, BUCKET, &hashes[forgotten..=forgotten + 1])
+                .unwrap()
+                .contains(&hashes[forgotten + 1])
+        );
 
         let last = named(2_000);
         hold(&tx, BUCKET, &last, &[]).unwrap();
-        settled(&tx, &[&last], &[], at(2_000));
+        for hours in [2_000, 2_001, 2_000 + 31 * 24 + 1] {
+            settled(&tx, &[&last], &[], at(hours));
+        }
         assert_eq!(count(&tx, "SELECT COUNT(*) FROM backups"), 1);
         assert_eq!(count(&tx, "SELECT COUNT(*) FROM backup_files"), 0);
     }

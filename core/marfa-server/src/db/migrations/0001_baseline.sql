@@ -1012,6 +1012,9 @@ CREATE TABLE IF NOT EXISTS backups (
     store_id TEXT NOT NULL,
     name TEXT NOT NULL,
     confirmed INTEGER NOT NULL DEFAULT 0 CHECK (confirmed IN (0, 1)),
+    -- Since when, and in how many listings, the store has omitted it while a later backup was recorded.
+    missing_since TEXT,
+    omissions INTEGER NOT NULL DEFAULT 0 CHECK (omissions >= 0),
     UNIQUE (store_id, name)
 ) STRICT;
 
