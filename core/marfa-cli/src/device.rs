@@ -1050,6 +1050,27 @@ pub enum DeviceTablesCommand {
 pub enum DeviceRowsCommand {
     /// One page of a table's rows, as `marfa rows list` answers it.
     List(crate::commands::rows::ListArgs),
+    /// Queue a batch of `put`, `patch` and `delete` operations for a table,
+    /// all of them or none, as `marfa rows write` takes it. Where the copy
+    /// holds the table whole, its rows show the batch at once.
+    Write {
+        /// The item id.
+        item: String,
+        /// The table name.
+        table: String,
+        #[command(flatten)]
+        body: crate::commands::BodySource,
+    },
+    /// Queue an undo of a batch, as `marfa rows undo` sends it. The rows it
+    /// puts back reach the copy with its `rows.changed`.
+    Undo {
+        /// The item id.
+        item: String,
+        /// The table name.
+        table: String,
+        /// The batch id, as a write's answer names it.
+        batch: String,
+    },
     /// One row of a table.
     Get {
         /// The item id.
@@ -1727,6 +1748,29 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 output::report(&fill, json, || fill_line(&fill))
             }
         },
+        DeviceCommand::Rows {
+            command: DeviceRowsCommand::Write { item, table, body },
+        } => {
+            let core = store.open(None)?;
+            let batch = body.read()?;
+            let operations = batch
+                .get("operations")
+                .and_then(serde_json::Value::as_array)
+                .filter(|_| batch.is_object())
+                .ok_or_else(|| {
+                    CliError::Invalid(
+                        "a batch is a JSON object holding `operations`, a list of put, patch and delete operations"
+                            .into(),
+                    )
+                })?;
+            output::queued_one(&core.write_rows(&item, &table, operations)?, json)
+        }
+        DeviceCommand::Rows {
+            command: DeviceRowsCommand::Undo { item, table, batch },
+        } => {
+            let core = store.open(None)?;
+            output::queued_one(&core.undo_rows(&item, &table, &batch)?, json)
+        }
         DeviceCommand::Rows { command } => {
             let core = store.open_with_server(named)?;
             let answer = match command {
@@ -1747,6 +1791,9 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     table,
                     filter,
                 } => core.table_totals(&item, &table, filter.as_deref())?,
+                DeviceRowsCommand::Write { .. } | DeviceRowsCommand::Undo { .. } => {
+                    return Err(CliError::Invalid("a row write is not a read".into()));
+                }
             };
             output::report(&answer, json, || {
                 serde_json::to_string_pretty(&answer).unwrap_or_default()

@@ -2160,7 +2160,7 @@ pub fn held_version(conn: &Connection, id: &str) -> Result<Option<i64>, CoreErro
 const QUEUE_COLUMNS: &str = "id, kind, item_id, target_id, edge_id, namespace, tag, \
      base_version, idempotency_key, depends_on, verdict, reason, answer, \
      conflicted_copy_id, refusals, queued_at, answered_at, blob, follows, payload, \
-     environmental_streak, last_failure";
+     environmental_streak, last_failure, row_table, batched_with, conflicts";
 
 pub struct NewWrite<'a> {
     pub kind: WriteKind,
@@ -3578,6 +3578,9 @@ pub(crate) fn read_writes(
             payload: row.get(19)?,
             environmental_streak: row.get(20)?,
             last_failure: row.get(21)?,
+            row_table: row.get(22)?,
+            batched_with: row.get(23)?,
+            conflicts: row.get(24)?,
         })
     })?;
 
@@ -3635,6 +3638,15 @@ pub(crate) fn read_writes(
                 })
             })
             .transpose()?;
+        let conflicts = match raw.conflicts.as_deref() {
+            Some(json) => serde_json::from_str(json).map_err(|error| {
+                CoreError::Store(format!(
+                    "queued write {} holds conflicts this build cannot read ({error})",
+                    raw.id
+                ))
+            })?,
+            None => Vec::new(),
+        };
         writes.push(QueuedWrite {
             kind: raw.kind.parse()?,
             id: raw.id,
@@ -3657,6 +3669,9 @@ pub(crate) fn read_writes(
             body,
             conflicted_copy_id: raw.conflicted_copy_id,
             refusals: raw.refusals,
+            table: raw.row_table,
+            batched_with: raw.batched_with,
+            conflicts,
             queued_at: raw.queued_at,
             answered_at: raw.answered_at,
         });
@@ -3687,6 +3702,9 @@ struct RawWrite {
     payload: String,
     environmental_streak: i64,
     last_failure: Option<String>,
+    row_table: Option<String>,
+    batched_with: Option<String>,
+    conflicts: Option<String>,
 }
 
 type TypeRow = (
@@ -4678,7 +4696,8 @@ pub fn land_on_held_row(
             WriteKind::AddTag
             | WriteKind::CreateEdge
             | WriteKind::UpdateEdge
-            | WriteKind::CreateItem => false,
+            | WriteKind::CreateItem
+            | WriteKind::WriteRows => false,
             WriteKind::UpdateItem
             | WriteKind::DeleteItem
             | WriteKind::RestoreItem
@@ -4689,7 +4708,7 @@ pub fn land_on_held_row(
             | WriteKind::DeleteExtension => true,
             // Not written against an item's create, so never one of its
             // dependants; refused all the same should one ever be.
-            WriteKind::DeleteEdge | WriteKind::UploadBlob => true,
+            WriteKind::DeleteEdge | WriteKind::UploadBlob | WriteKind::UndoRows => true,
         };
         if replaces {
             let reason = format!(
@@ -6716,7 +6735,9 @@ fn lay_write(
         | WriteKind::DeleteEdge
         | WriteKind::WriteExtension
         | WriteKind::DeleteExtension
-        | WriteKind::UploadBlob => {}
+        | WriteKind::UploadBlob
+        | WriteKind::WriteRows
+        | WriteKind::UndoRows => {}
     }
     Ok(())
 }

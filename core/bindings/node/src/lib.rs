@@ -599,6 +599,8 @@ pub enum WriteKind {
     WriteExtension,
     DeleteExtension,
     UploadBlob,
+    WriteRows,
+    UndoRows,
 }
 
 /// Why a `blocked` write has stopped.
@@ -1093,6 +1095,8 @@ impl From<marfa_core::WriteKind> for WriteKind {
             K::WriteExtension => WriteKind::WriteExtension,
             K::DeleteExtension => WriteKind::DeleteExtension,
             K::UploadBlob => WriteKind::UploadBlob,
+            K::WriteRows => WriteKind::WriteRows,
+            K::UndoRows => WriteKind::UndoRows,
         }
     }
 }
@@ -1195,7 +1199,7 @@ fn crossed(outcome: Option<marfa_core::Outcome>) -> (Option<Verdict>, bool) {
     (Some(verdict), false)
 }
 
-fn queued(env: Env, write: marfa_core::QueuedWrite) -> Result<QueuedWrite> {
+pub(crate) fn queued(env: Env, write: marfa_core::QueuedWrite) -> Result<QueuedWrite> {
     let (verdict, waiting) = crossed(write.outcome().map_err(|error| failure(env, error))?);
     Ok(QueuedWrite {
         verdict,

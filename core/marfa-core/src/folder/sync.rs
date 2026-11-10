@@ -408,6 +408,7 @@ mod tests {
             refusals: 0,
             replayed: false,
             merged_fields: Vec::new(),
+            conflicts: Vec::new(),
         };
         let drained = |verdicts, withdrawn: &[&str]| Drained {
             report: crate::DrainReport {

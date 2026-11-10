@@ -826,6 +826,8 @@ pub enum WriteKind {
     WriteExtension,
     DeleteExtension,
     UploadBlob,
+    WriteRows,
+    UndoRows,
 }
 
 /// Why a `blocked` write has stopped.
@@ -1944,6 +1946,8 @@ impl From<marfa_core::WriteKind> for WriteKind {
             K::WriteExtension => WriteKind::WriteExtension,
             K::DeleteExtension => WriteKind::DeleteExtension,
             K::UploadBlob => WriteKind::UploadBlob,
+            K::WriteRows => WriteKind::WriteRows,
+            K::UndoRows => WriteKind::UndoRows,
         }
     }
 }

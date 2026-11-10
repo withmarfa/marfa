@@ -50,6 +50,7 @@ mod reads;
 #[cfg(test)]
 mod reads_tests;
 mod reclaim;
+mod row_writes;
 #[cfg(test)]
 mod reclaim_tests;
 #[cfg(test)]
@@ -144,7 +145,8 @@ pub use model::{
     Added, Attached, Attachment, BinPage, BlockedReason, CatchUpFailed, CatchUpReport,
     Completeness, Draft, Edge, EdgeDraft, EdgeEdit, EdgeOp, Edit, FieldRefusal, GrantKind,
     GrantLevel, HydrateReport, HydrateRestart, Hydration, Item, ItemState, LastFailure,
-    ListFilters, MetadataWrite, MissingGrant, Outcome, QueuedWrite, Refusal, Rows, SearchFilters,
+    ListFilters, MetadataWrite, MissingGrant, Outcome, QueuedWrite, Refusal, RowConflict, Rows,
+    SearchFilters,
     SearchHit, Shown, SliceTier, Sort, SortDirection, SortField, Status, Tier, UnregisteredType,
     Verdict, WriteKind,
 };
@@ -1178,6 +1180,33 @@ impl Core {
         tables::totals(self, item, table, filter)
     }
 
+    /// Queues one batch of `put`, `patch` and `delete` operations for a table,
+    /// laid over its rows where the copy holds it whole.
+    pub fn write_rows(&self, item: &str, table: &str, operations: &[Value]) -> Result<QueuedWrite> {
+        self.lock.refuse_unless_writer()?;
+        row_writes::write(&mut *self.conn()?, item, table, operations)
+    }
+
+    /// Queues an undo of a batch, which changes no row the copy holds until
+    /// its `rows.changed` arrives.
+    pub fn undo_rows(&self, item: &str, table: &str, batch: &str) -> Result<QueuedWrite> {
+        self.lock.refuse_unless_writer()?;
+        row_writes::undo(&mut *self.conn()?, item, table, batch)
+    }
+
+    /// Lays again the rows whose row writes another call answered or took
+    /// out, where this is the store's writer.
+    pub(crate) fn lay_rows(&self) -> Result<()> {
+        if self.lock.refuse_unless_writer().is_err() {
+            return Ok(());
+        }
+        let mut conn = self.conn()?;
+        let tx = conn.transaction()?;
+        row_writes::flush(&tx)?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// A failure does not say whether the catalog changed before it;
     /// `catch_up_until` does.
     pub fn catch_up(&self) -> Result<CatchUpReport> {
@@ -1846,6 +1875,7 @@ impl Core {
                 self.credential().as_deref(),
             )?;
         }
+        row_writes::flush(&tx)?;
         tx.commit()?;
         Ok(released)
     }
@@ -1875,6 +1905,7 @@ impl Core {
                 self.credential().as_deref(),
             )?;
         }
+        row_writes::flush(&tx)?;
         // One transaction: a release part-way through would leave some rows
         // on a fresh key and some on a spent one.
         tx.commit()?;
@@ -1910,6 +1941,7 @@ impl Core {
             return Ok(false);
         }
         drain::withdraw_read_backs(&tx, &row, &held, &reads)?;
+        row_writes::flush(&tx)?;
         tx.commit()?;
         Ok(true)
     }
@@ -1938,6 +1970,7 @@ impl Core {
         if let Some(item) = row.item_id.as_deref() {
             store::refollow(&tx, item, id)?;
         }
+        row_writes::flush(&tx)?;
         tx.commit()?;
         Ok(true)
     }
@@ -3249,6 +3282,7 @@ impl Core {
         body::rule::after_answers_in(&tx, None)?;
         store::forget_answered(&tx)?;
         let left = store::queued_ids(&tx)?;
+        row_writes::flush(&tx)?;
         tx.commit()?;
         Ok(before
             .into_iter()
@@ -3282,6 +3316,7 @@ impl Core {
         let mut conn = self.conn()?;
         let tx = conn.transaction()?;
         let discarded = store::discard(&tx, id)?;
+        row_writes::flush(&tx)?;
         tx.commit()?;
         Ok(discarded)
     }

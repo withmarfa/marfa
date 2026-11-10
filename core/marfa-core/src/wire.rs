@@ -145,6 +145,7 @@ pub struct EventPayload {
 pub struct RowsEvent {
     pub item: RowsItem,
     pub table: String,
+    pub batch: String,
     pub last_activity_at: String,
     pub rows: Vec<RowChange>,
     #[serde(default = "included")]

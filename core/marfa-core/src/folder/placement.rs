@@ -1000,6 +1000,7 @@ mod tests {
                 refusals: row.refusals,
                 replayed: false,
                 merged_fields: Vec::new(),
+                conflicts: Vec::new(),
             })
             .collect()
     }
