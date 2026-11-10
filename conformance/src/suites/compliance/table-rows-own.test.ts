@@ -257,8 +257,15 @@ describe("the table an item keeps", () => {
     ]);
     const all = await client.rowTotals(own.id, "table");
     expect(all.status, JSON.stringify(all.error)).toBe(200);
-    expect(all.data).toEqual({ row_count: 2, totals: { amount: { sum: 904 } } });
-    const some = await client.rowTotals(own.id, "table", "values.amount lt 100");
+    expect(all.data).toEqual({
+      row_count: 2,
+      totals: { amount: { sum: 904 } },
+    });
+    const some = await client.rowTotals(
+      own.id,
+      "table",
+      "values.amount lt 100",
+    );
     expect(some.data).toEqual({ row_count: 1, totals: { amount: { sum: 4 } } });
   });
 
@@ -327,7 +334,11 @@ describe("rows of the table an item keeps", () => {
     table: string;
     batch: string;
     item: { id: string; type: string };
-    rows: { id: string; values?: Record<string, unknown>; withheld?: string[] }[];
+    rows: {
+      id: string;
+      values?: Record<string, unknown>;
+      withheld?: string[];
+    }[];
   }
 
   it("announces a rows.changed for a batch on the table an item keeps", async () => {
@@ -427,9 +438,9 @@ describe("an item that keeps a table, and the types around it", () => {
       version: own.version,
     });
     expect(moved.status, JSON.stringify(moved.error)).toBe(200);
-    expect((await client.listRows(own.id, "table")).data.data[0]?.values).toEqual(
-      { name: "kept" },
-    );
+    expect(
+      (await client.listRows(own.id, "table")).data.data[0]?.values,
+    ).toEqual({ name: "kept" });
     const empty = await tableItem();
     const free = await client.updateItem(empty.id, {
       type: "core.note",

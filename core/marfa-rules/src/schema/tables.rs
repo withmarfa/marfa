@@ -333,7 +333,11 @@ fn keeps_own_table(definition: &Obj, registry: &Registry) -> bool {
         || text(definition, "parent")
             .filter(|parent| !parent.is_empty())
             .and_then(|parent| chain(registry, parent).ok())
-            .is_some_and(|chain| chain.iter().any(|row| text(row, "id") == Some(OWN_TABLE_TYPE)))
+            .is_some_and(|chain| {
+                chain
+                    .iter()
+                    .any(|row| text(row, "id") == Some(OWN_TABLE_TYPE))
+            })
 }
 
 fn validate_tables(
