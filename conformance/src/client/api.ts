@@ -2,6 +2,11 @@ import { createFetch, ofetch, type FetchOptions } from "ofetch";
 import { localFetch } from "../utils/control-request.js";
 import type {
   ApiResponse,
+  RowBatch,
+  RowBatchAnswer,
+  RowTotals,
+  TableRow,
+  TableSummary,
   MarfaItem,
   MarfaMetadata,
   MarfaVersion,
@@ -206,6 +211,68 @@ export class MarfaClient {
     );
   }
 
+  async listTables(
+    itemId: string,
+  ): Promise<ApiResponse<{ data: TableSummary[] }>> {
+    return this.request<{ data: TableSummary[] }>(`/items/${itemId}/tables`);
+  }
+
+  async writeRows(
+    itemId: string,
+    table: string,
+    body: RowBatch | Record<string, unknown>,
+  ): Promise<ApiResponse<RowBatchAnswer>> {
+    return this.request<RowBatchAnswer>(
+      `/items/${itemId}/tables/${table}/rows`,
+      { method: "POST", body },
+    );
+  }
+
+  async listRows(
+    itemId: string,
+    table: string,
+    query: {
+      limit?: number;
+      cursor?: string;
+      filter?: string;
+      sort?: string;
+      direction?: "asc" | "desc";
+    } = {},
+  ): Promise<ApiResponse<{ data: TableRow[]; next_cursor: string | null }>> {
+    const search = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) {
+      if (value !== undefined) search.set(key, String(value));
+    }
+    const tail = search.size ? `?${search.toString()}` : "";
+    return this.request<{ data: TableRow[]; next_cursor: string | null }>(
+      `/items/${itemId}/tables/${table}/rows${tail}`,
+    );
+  }
+
+  async getRow(
+    itemId: string,
+    table: string,
+    rowId: string,
+  ): Promise<ApiResponse<TableRow>> {
+    return this.request<TableRow>(
+      `/items/${itemId}/tables/${table}/rows/${rowId}`,
+    );
+  }
+
+  async rowTotals(
+    itemId: string,
+    table: string,
+    filter?: string,
+  ): Promise<ApiResponse<RowTotals>> {
+    const tail =
+      filter === undefined
+        ? ""
+        : `?${new URLSearchParams({ filter }).toString()}`;
+    return this.request<RowTotals>(
+      `/items/${itemId}/tables/${table}/totals${tail}`,
+    );
+  }
+
   async listItems(
     filters: {
       type?: string;
@@ -218,7 +285,11 @@ export class MarfaClient {
       updated_after?: string;
       updated_before?: string;
       sort?:
-        "created_at" | "updated_at" | "occurred_at" | `properties.${string}`;
+        | "created_at"
+        | "updated_at"
+        | "occurred_at"
+        | "last_activity_at"
+        | `properties.${string}`;
       direction?: "asc" | "desc";
       limit?: number;
       cursor?: string;
@@ -492,8 +563,10 @@ export class MarfaClient {
   async replaceType(
     typeId: string,
     schema: object,
+    force?: boolean,
   ): Promise<ApiResponse<{ type: TypeSchema }>> {
-    return this.request<{ type: TypeSchema }>(`/types/${typeId}`, {
+    const query = force ? "?force=true" : "";
+    return this.request<{ type: TypeSchema }>(`/types/${typeId}${query}`, {
       method: "PUT",
       body: schema,
     });

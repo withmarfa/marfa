@@ -7,7 +7,7 @@ use url::Url;
 use crate::app::refusal::{Refusal, Result};
 use crate::app::types::missing_field;
 
-pub const EVENTS: [&str; 10] = [
+pub const EVENTS: [&str; 11] = [
     "item.created",
     "item.updated",
     "item.deleted",
@@ -15,6 +15,7 @@ pub const EVENTS: [&str; 10] = [
     "item.purged",
     "item.state_changed",
     "metadata.changed",
+    "rows.changed",
     "edge.created",
     "edge.updated",
     "edge.deleted",

@@ -190,7 +190,7 @@ pub struct KeyCreateArgs {
     /// What the key is for.
     #[arg(long)]
     pub label: String,
-    /// The key's own source, which a row written under the key is keyed by
+    /// The key's own source, which an item written under the key is keyed by
     /// and stamped with unless the write names one the key claims.
     #[arg(long)]
     pub source: String,
@@ -269,7 +269,7 @@ fn hold_nothing(body: &mut Map<String, Value>) {
 /// either, the key takes the caller's claims, as it takes the caller's maps.
 #[derive(Debug, Default, Args)]
 pub struct ClaimArgs {
-    /// A source a write under the key may name, so its rows are keyed by it.
+    /// A source a write under the key may name, so its items are keyed by it.
     /// Repeatable.
     #[arg(long = "claim", value_name = "SOURCE")]
     pub claims: Vec<String>,

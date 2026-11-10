@@ -294,6 +294,7 @@ pub(crate) async fn dry_run(
     crate::app::items::reading(app, caller, move |read| {
         let (caller, tx) = (&read.caller, read.tx);
         judge(caller, &read.catalog, &from, &to)?;
+        crate::app::tables::refuse_moving_type(tx, &read.catalog, &from, &to)?;
         let plan = plan(tx, caller, &from, &to)?;
         if plan.blocked() {
             return Err(plan.refusal(&from));
@@ -393,6 +394,7 @@ fn queue(
     let tx = unit.tx();
     let catalog = catalog::current(cache, tx, Snapshot::Pending)?;
     judge(&unit.caller, &catalog, &from, &asked.to)?;
+    crate::app::tables::refuse_moving_type(tx, &catalog, &from, &asked.to)?;
     let plan = plan(tx, &unit.caller, &from, &asked.to)?;
     if guard.is_none() && plan.blocked() {
         return Err(plan.refusal(&from));

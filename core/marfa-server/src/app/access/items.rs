@@ -21,6 +21,16 @@ impl Caller {
         self.level_on(Axis::Type, name) >= Level::Read
     }
 
+    pub fn may_read_every_type(&self) -> bool {
+        match self {
+            Caller::Local(_) | Caller::Server => true,
+            Caller::Owner(_) => false,
+            Caller::Key(key) | Caller::App { key, .. } => {
+                key.grants.map(Axis::Type).reads_every_name()
+            }
+        }
+    }
+
     pub fn writer(&self) -> Option<Writer> {
         let writer = match self {
             Caller::Server => return None,

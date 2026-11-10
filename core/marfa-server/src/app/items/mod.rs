@@ -80,6 +80,7 @@ pub struct Item {
     pub occurred_at: String,
     pub created_at: String,
     pub updated_at: String,
+    pub last_activity_at: String,
     pub trashed_at: Option<String>,
     pub capture_latitude: Option<f64>,
     pub capture_longitude: Option<f64>,
@@ -141,6 +142,7 @@ struct ItemHead<'a> {
     tier: Option<&'a str>,
     created_at: &'a str,
     updated_at: &'a str,
+    last_activity_at: &'a str,
     occurred_at: &'a str,
     source: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -210,6 +212,7 @@ impl Item {
             tier: self.tier.as_deref(),
             created_at: &self.created_at,
             updated_at: &self.updated_at,
+            last_activity_at: &self.last_activity_at,
             occurred_at: &self.occurred_at,
             source: &self.source,
             source_id: self.source_id.as_deref(),
@@ -312,6 +315,54 @@ impl Snapshot {
 
 fn not_found() -> Refusal {
     Refusal::new(Code::ItemNotFound, "Item not found")
+}
+
+/// An item whose tables a door reads or writes.
+#[derive(Clone, Debug)]
+pub(crate) struct Host {
+    pub seq: i64,
+    pub id: String,
+    pub type_id: String,
+    pub source: String,
+    pub last_activity_at: String,
+}
+
+impl Item {
+    fn host(self) -> Host {
+        Host {
+            seq: self.seq,
+            id: self.id,
+            type_id: self.type_id,
+            source: self.source,
+            last_activity_at: self.last_activity_at,
+        }
+    }
+}
+
+/// Row writes use the item's write gate.
+pub(crate) fn writable_host(
+    unit: &crate::app::unit::Unit<'_, '_>,
+    catalog: &Catalog,
+    id: &str,
+) -> Result<Host> {
+    let gate = plan::Gate {
+        tx: unit.tx(),
+        caller: &unit.caller,
+        catalog,
+        claim: None,
+        server_own: false,
+    };
+    Ok(gate.writable_row(id)?.host())
+}
+
+/// The item a row read names, judged as `GET /items/{id}` judges it.
+pub(crate) fn readable_host(read: &Reader<'_, '_>, id: &str) -> Result<Host> {
+    Ok(read.row(id)?.host())
+}
+
+/// A row batch is activity on its item, which moves nothing else on it.
+pub(crate) fn mark_activity(tx: &Transaction<'_>, seq: i64, at: &str) -> Result<()> {
+    rows::mark_activity(tx, seq, at)
 }
 
 /// The row `id` names when it is of `type_id` and the caller may read that type.
@@ -450,7 +501,12 @@ pub(crate) fn row(tx: &Transaction<'_>, id: &str) -> Result<Option<Item>> {
 }
 
 pub fn type_of(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {
-    Ok(rows::by_id(tx, id)?.map(|row| row.type_id))
+    Ok(rows::type_by_id(tx, id)?.map(|(type_id, _)| type_id))
+}
+
+/// The type of the item outside the bin that holds `id`.
+pub fn live_type_of(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {
+    Ok(rows::type_by_id(tx, id)?.and_then(|(type_id, trashed)| (!trashed).then_some(type_id)))
 }
 
 pub fn mark_type(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {

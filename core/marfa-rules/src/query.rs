@@ -16,6 +16,8 @@ pub enum SortField {
     CreatedAt,
     UpdatedAt,
     OccurredAt,
+    /// The later of an item's last write and its rows' last change.
+    LastActivityAt,
     /// The name after `properties.`: `a` to `z`, `0` to `9` and `_`.
     Property(String),
     /// When each row went to the bin, or its `updated_at` where it has no such time. No caller names it.
@@ -28,6 +30,7 @@ impl fmt::Display for SortField {
             SortField::CreatedAt => f.write_str("created_at"),
             SortField::UpdatedAt => f.write_str("updated_at"),
             SortField::OccurredAt => f.write_str("occurred_at"),
+            SortField::LastActivityAt => f.write_str("last_activity_at"),
             SortField::Property(name) => write!(f, "properties.{name}"),
             SortField::TrashedAt => f.write_str("trashed_at"),
         }
@@ -57,10 +60,11 @@ impl FromStr for SortField {
             "created_at" => Ok(SortField::CreatedAt),
             "updated_at" => Ok(SortField::UpdatedAt),
             "occurred_at" => Ok(SortField::OccurredAt),
+            "last_activity_at" => Ok(SortField::LastActivityAt),
             other => match other.strip_prefix("properties.") {
                 Some(name) => SortField::property(name),
                 None => Err(RuleError::validation(format!(
-                    "Invalid sort field \"{other}\"; expected one of created_at, updated_at, occurred_at or properties.<field>"
+                    "Invalid sort field \"{other}\"; expected one of created_at, updated_at, occurred_at, last_activity_at or properties.<field>"
                 ))),
             },
         }
@@ -95,13 +99,13 @@ pub fn escape_like(text: &str) -> String {
         .replace('_', "\\_")
 }
 
-/// Numbers and booleans by value, then text by its bytes, anything else null, which SQLite's own order gives. `path` is the SQL that gives the JSON path, and its property name must have passed [`SortField::property`].
-pub fn property_sort_expression(table: &str, path: &str) -> String {
+/// Numbers and booleans by value, then text by its bytes, anything else null, which SQLite's own order gives. `source` is the column holding the JSON object; `path` is the SQL that gives the JSON path, and its name must have passed [`SortField::property`].
+pub fn property_sort_expression(source: &str, path: &str) -> String {
     format!(
-        "CASE json_type({table}.properties, {path}) \
-         WHEN 'integer' THEN CAST(json_extract({table}.properties, {path}) AS REAL) \
-         WHEN 'real' THEN CAST(json_extract({table}.properties, {path}) AS REAL) \
-         WHEN 'text' THEN json_extract({table}.properties, {path}) \
+        "CASE json_type({source}, {path}) \
+         WHEN 'integer' THEN CAST(json_extract({source}, {path}) AS REAL) \
+         WHEN 'real' THEN CAST(json_extract({source}, {path}) AS REAL) \
+         WHEN 'text' THEN json_extract({source}, {path}) \
          WHEN 'true' THEN 1.0 WHEN 'false' THEN 0.0 ELSE NULL END"
     )
 }

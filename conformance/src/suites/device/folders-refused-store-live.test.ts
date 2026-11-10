@@ -173,11 +173,9 @@ function untaken(store: string): number {
   }
 }
 
-/** Gives the folder's store a column this build does not make, as a store
- *  another build of the core made. */
+/** Models another build's store; callers must first close every writer. */
 function misshape(folder: CliFolder): void {
-  // A running watch can hold the write lock for a moment.
-  const db = new DatabaseSync(folder.store, { timeout: 10_000 });
+  const db = new DatabaseSync(folder.store);
   try {
     db.exec("ALTER TABLE items ADD COLUMN stray TEXT");
   } finally {
@@ -236,6 +234,25 @@ function filesOf(dir: string): Record<string, string> {
 function storeBytes(folder: CliFolder): string {
   return readFileSync(folder.store).toString("base64");
 }
+
+/** What the watch said of its folder, one JSON value to a line. */
+function said(watch: HeldCommand): Array<Record<string, unknown>> {
+  return watch.stdout
+    .split("\n")
+    .slice(0, -1)
+    .filter((line) => line.startsWith('{"'))
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+const handedOver = (watch: HeldCommand): boolean =>
+  said(watch).some(
+    (line) => line.watching === false && line.code === "handed_over",
+  );
+
+const takenBack = (watch: HeldCommand): boolean =>
+  said(watch).some(
+    (line) => line.watching === true && line.taken_back === true,
+  );
 
 async function exited(command: HeldCommand): Promise<HeldCommand> {
   await command.exited();
@@ -504,18 +521,34 @@ it("replaces a refused store a running watch hands to a push, and the watch take
   const watch = folder.watch();
   held.push(watch);
   await vi.waitFor(() => expect(watch.stderr).toContain("watching"), WAIT);
-  // Another build's store, under a watch that keeps it open, as a watch the
-  // build that made the store started.
+  // Model another build's store only after the watch has closed it.
+  const gate = join(at.base, "gate");
+  const push = folder.hold(["folders", "push", folder.dir], {
+    MARFA_TEST_FAULT: `gate-asked-store=${gate}`,
+  });
+  held.push(push);
+  await vi.waitFor(
+    () => expect(existsSync(`${gate}.ready`), push.stderr).toBe(true),
+    WAIT,
+  );
+  await vi.waitFor(
+    () => expect(handedOver(watch), watch.stdout + watch.stderr).toBe(true),
+    WAIT,
+  );
   misshape(folder);
   rewrite(join(folder.dir, "Handed.md"), `pushed ${ctx.runId}`);
-
-  const push = await exited(folder.hold(["folders", "push", folder.dir]));
+  writeFileSync(`${gate}.release`, "");
+  await exited(push);
   expect(push.exitCode(), push.stderr).toBe(0);
   expect(push.stderr).toContain(REPLACED);
   expect(JSON.stringify((await serverNote(title))?.properties)).toContain(
     `pushed ${ctx.runId}`,
   );
 
+  await vi.waitFor(
+    () => expect(takenBack(watch), watch.stdout + watch.stderr).toBe(true),
+    WAIT,
+  );
   rewrite(join(folder.dir, "Handed.md"), `watched ${ctx.runId}`);
   await vi.waitFor(async () => {
     expect(JSON.stringify((await serverNote(title))?.properties)).toContain(

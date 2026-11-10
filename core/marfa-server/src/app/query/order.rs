@@ -26,7 +26,7 @@ pub struct Order {
 }
 
 pub fn property_key(name: &str) -> Sql {
-    let text = property_sort_expression("i", "?");
+    let text = property_sort_expression("i.properties", "?");
     let mut sql = Sql::new(&text);
     let path = Value::Text(format!("$.{name}"));
     sql.values = vec![path; text.matches('?').count()];
@@ -90,6 +90,9 @@ impl Order {
             }
             Some(SortField::OccurredAt) => {
                 Order::timed(column("occurred_at"), "occurred_at", descending)
+            }
+            Some(SortField::LastActivityAt) => {
+                Order::timed(column("last_activity_at"), "last_activity_at", descending)
             }
             Some(SortField::TrashedAt) => Order::timed(
                 Sql::new("COALESCE(i.trashed_at, i.updated_at)"),
