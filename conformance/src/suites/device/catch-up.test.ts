@@ -2020,6 +2020,8 @@ describe("catch-up replays from the cursor", () => {
       unfilled: 0,
       pages: 0,
       rows: 0,
+      failed: 0,
+      failure: null,
     });
   });
 });

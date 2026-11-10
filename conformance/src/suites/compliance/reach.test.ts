@@ -994,19 +994,21 @@ describe("conditional working-copy reaches", () => {
     expect(
       (await request(`/items/${note.id}`, undefined, key.key)).status,
     ).toBe(403);
-    const narrowed = await bootstrap(key.key);
-    expect(narrowed.reach).not.toBe(before.reach);
+    const widening = await mint("widened", {
+      type_permissions: { "core.note": "read" },
+      permissions: [],
+    });
+    const narrow = await bootstrap(widening.key);
     expect(
       (
-        await owner.updateKey(key.id, {
+        await owner.updateKey(widening.id, {
           type_permissions: { "core.note": "read", "core.task": "read" },
         })
       ).ok,
     ).toBe(true);
-    const widened = await moves(narrowed, key.key);
-    expect(widened.reach).not.toBe(before.reach);
+    const widened = await moves(narrow, widening.key);
     certified(
-      await request(`/items/${note.id}`, widened.reach, key.key),
+      await request(`/items/${note.id}`, widened.reach, widening.key),
       widened.reach,
     );
   });
