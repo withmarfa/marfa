@@ -20,13 +20,7 @@ const NEVER_MS = "31536000000";
 /** The longest the scheduler may go between looks for a job that is due. */
 const POLL_CEILING_MS = "3600000";
 
-/**
- * Settings that keep the scheduler from running a job on its own clock. It
- * looks for due jobs once an hour, and a job's own interval is a year, so a run
- * the fixture asks for leaves the job's next run a year away. The scheduler
- * also looks again whenever a job finishes, and a job whose first run is due by
- * then is claimed, so a fixture that runs jobs by hand starts with `quiet`.
- */
+/** Keeps the scheduler from running jobs a fixture runs by hand; start such a fixture with `quiet`. */
 export const QUIET_SCHEDULE: Record<string, string> = {
   MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: POLL_CEILING_MS,
   MARFA_AUDIT_CLEANUP_INTERVAL_MS: NEVER_MS,
@@ -36,6 +30,7 @@ export const QUIET_SCHEDULE: Record<string, string> = {
   MARFA_VERSION_THINNING_INTERVAL_MS: NEVER_MS,
   MARFA_FEED_EXPIRY_INTERVAL_MS: NEVER_MS,
   MARFA_CREDENTIAL_CLEANUP_INTERVAL_MS: NEVER_MS,
+  MARFA_ENRICHMENT_INTERVAL_MS: NEVER_MS,
 };
 
 export const operatorOf = (server: FreshServer): MarfaClient =>
@@ -68,22 +63,10 @@ export async function runJob(
   }
 }
 
-/**
- * How far from now a job's next run is when a run was asked for ahead of its
- * first one. The scheduler enters each job some seconds after boot (the
- * longest is a minute), whatever the job's interval.
- */
+/** Past the longest first run after boot (a minute), with margin. */
 const FIRST_RUN_REACH_MS = 90_000;
 
-/**
- * Runs each job once, after its first run is due, so a fixture starts from
- * jobs that have each run and found nothing to do, with the next run of each
- * an interval away. A run asked for before the first is due leaves the job
- * due, and the scheduler, which looks again whenever any job finishes, would
- * then run it itself between the fixture's setup and its own run: so a job
- * still due soon is run again once it is. With `QUIET_SCHEDULE` the
- * interval is a year.
- */
+/** Runs each job once its first run is due, so the scheduler has no run of it left to make. */
 export async function quiet(
   server: FreshServer,
   names: readonly string[],
