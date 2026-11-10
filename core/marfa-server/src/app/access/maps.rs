@@ -88,7 +88,7 @@ impl Map {
         }
     }
 
-    /// A type registered later reads too.
+    /// Whether every type reads, one registered later included.
     pub(super) fn reads_every_name(&self) -> bool {
         self.exact("*").is_some_and(|level| level >= Level::Read)
             && self.patterns().all(|(_, level)| level >= Level::Read)

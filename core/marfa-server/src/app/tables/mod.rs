@@ -318,8 +318,8 @@ struct Batch<'a, 'c> {
 }
 
 impl Batch<'_, '_> {
-    /// A put or patch leaves alone each column whose value the writing key may not see, which it
-    /// answers.
+    /// Refuses a put or patch naming a column whose value the writing key may not see, and
+    /// answers those columns.
     fn refuse_withheld(
         &mut self,
         index: usize,
