@@ -575,6 +575,7 @@ impl Folder {
                 if state_dir.entry_identity(Path::new("core.sqlite")).ok() != Some(store) {
                     return Err(not_a_folder(&root));
                 }
+                handover::hold_before_store();
                 lock
             }
         };
