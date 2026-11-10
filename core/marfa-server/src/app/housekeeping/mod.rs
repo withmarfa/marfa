@@ -10,7 +10,7 @@ mod scheduler;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -141,11 +141,18 @@ impl Report {
 }
 
 pub struct Run {
+    pub job: &'static str,
     given_up: Arc<AtomicBool>,
     stopping: watch::Receiver<bool>,
+    kept_unread: Arc<AtomicI64>,
 }
 
 impl Run {
+    /// Notes rows a stage kept because the time it judges them by does not read.
+    pub fn kept_unread(&self, count: i64) {
+        self.kept_unread.fetch_add(count, Ordering::Relaxed);
+    }
+
     /// Asked between two batches. Answers false once the run should end with what it has done:
     /// the server is stopping, or the run has outlived its deadline.
     pub async fn go_on(&self) -> bool {
@@ -315,6 +322,8 @@ pub struct Ended {
     pub outcome: &'static str,
     pub result: Option<Value>,
     pub error: Option<String>,
+    /// Rows the run kept because the time it judges them by does not read.
+    pub kept_unread: i64,
 }
 
 impl Ended {

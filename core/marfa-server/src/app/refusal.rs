@@ -140,6 +140,8 @@ pub struct Refusal {
     pub commit_failed: bool,
     /// The row refused, once its own gates let the caller be told of it.
     pub row: Option<String>,
+    /// A stored value did not read: the row is damaged, not the database.
+    pub unread: bool,
 }
 
 impl Refusal {
@@ -152,6 +154,7 @@ impl Refusal {
             fault: None,
             commit_failed: false,
             row: None,
+            unread: false,
         }
     }
 
@@ -164,6 +167,13 @@ impl Refusal {
         tracing::error!(context, "Internal error");
         let mut refusal = Refusal::new(Code::InternalError, INTERNAL_MESSAGE);
         refusal.fault = Some(Arc::new(Fault::internal(context)));
+        refusal
+    }
+
+    /// A stored value that does not read. `context` goes to the log and nowhere else.
+    pub fn unread(context: &str) -> Refusal {
+        let mut refusal = Refusal::internal(context);
+        refusal.unread = true;
         refusal
     }
 
@@ -233,6 +243,12 @@ pub fn sqlite_code_name(code: ErrorCode) -> &'static str {
 
 impl From<rusqlite::Error> for Refusal {
     fn from(error: rusqlite::Error) -> Refusal {
+        if let rusqlite::Error::FromSqlConversionFailure(..)
+        | rusqlite::Error::InvalidColumnType(..)
+        | rusqlite::Error::IntegralValueOutOfRange(..) = error
+        {
+            return Refusal::unread("a stored value did not read");
+        }
         let code = error.sqlite_error_code();
         match code {
             Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked) => {
@@ -256,6 +272,7 @@ impl From<rusqlite::Error> for Refusal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::clock::Stamp;
 
     #[test]
     fn holds_every_code_the_contract_tables_with_its_status() {
@@ -301,5 +318,28 @@ mod tests {
         let fault = refusal.fault.as_deref().unwrap();
         assert_eq!(fault.database_code(), Some("SQLITE_CONSTRAINT"));
         assert_eq!(Refusal::internal("context").database_code(), None);
+        assert!(!refusal.unread);
+    }
+
+    #[test]
+    fn a_stored_value_that_does_not_read_is_told_apart_from_a_database_fault() {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE t (at TEXT, n INTEGER); INSERT INTO t VALUES ('0', 1)")
+            .unwrap();
+        let time = db
+            .query_row("SELECT at FROM t", [], |row| row.get::<_, Stamp>(0))
+            .unwrap_err();
+        let number = db
+            .query_row("SELECT at FROM t", [], |row| row.get::<_, i64>(0))
+            .unwrap_err();
+        for refused in [Refusal::from(time), Refusal::from(number)] {
+            assert!(refused.unread);
+            assert_eq!(refused.code, Code::InternalError);
+            assert_eq!(refused.database_code(), None);
+        }
+        assert!(Stamp::read("0").unwrap_err().unread);
+        let fault = db.execute("SELECT * FROM gone", []).unwrap_err();
+        assert!(!Refusal::from(fault).unread);
+        assert!(!Refusal::internal("context").unread);
     }
 }

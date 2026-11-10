@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::sync::OnceLock;
 
 use rusqlite::{OptionalExtension, Transaction, params};
@@ -7,6 +7,7 @@ use serde_json::{Map, Value, json};
 use super::App;
 use super::access::Caller;
 use super::items::reading;
+use super::keys;
 use super::oauth::grants;
 use super::query;
 use super::refusal::{Code, Refusal, Result};
@@ -127,14 +128,7 @@ fn set_on(tx: &Transaction<'_>, code: &str) -> Result<Set> {
 
 fn describe(tx: &Transaction<'_>, code: &str, at: &str) -> Result<Value> {
     let (name, mark) = set_on(tx, code)?;
-    let label: Option<String> = tx
-        .query_row(
-            "SELECT label FROM api_keys WHERE source = ?1 AND revoked_at IS NULL \
-             AND (expires_at IS NULL OR expires_at > ?2)",
-            [code, at],
-            |row| row.get(0),
-        )
-        .optional()?;
+    let label = keys::live_label_of_source(tx, code, at)?;
     let (name, name_from) = match (name, grants::name_of_source(tx, code)?, label) {
         (Some(name), _, _) => (name, "set"),
         (None, Some(app), _) => (app, "app"),
@@ -152,16 +146,12 @@ fn describe(tx: &Transaction<'_>, code: &str, at: &str) -> Result<Value> {
 }
 
 fn held(tx: &Transaction<'_>, at: &str) -> Result<Vec<String>> {
-    let mut codes: Vec<String> = tx
-        .prepare(
-            "SELECT source FROM source_names \
-             UNION SELECT source FROM api_keys \
-             WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?1) \
-             UNION SELECT s.source FROM api_key_sources s JOIN api_keys k ON k.id = s.key_id \
-             WHERE k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at > ?1)",
-        )?
-        .query_map([at], |row| row.get(0))?
+    let mut codes: BTreeSet<String> = tx
+        .prepare("SELECT source FROM source_names")?
+        .query_map([], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
+    codes.extend(keys::live_sources(tx, at)?);
+    let mut codes: Vec<String> = codes.into_iter().collect();
     let apps = grants::all_of_owner(tx)?;
     codes.extend(
         apps.iter()

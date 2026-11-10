@@ -228,7 +228,7 @@ impl Item {
     }
 
     pub fn answered(&self, read_only: &ReadOnly, caller: &Caller) -> Result<String> {
-        let read_only = read_only.of(&self.source, &self.type_id);
+        let read_only = read_only.of(&self.source, &self.type_id)?;
         with_properties(
             &self.head(Some(read_only), Marks::To(caller)),
             &self.properties,

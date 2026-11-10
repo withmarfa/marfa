@@ -8,6 +8,7 @@ use rusqlite::Transaction;
 use serde_json::json;
 
 use super::super::access::Caller;
+use super::super::clock::Unread;
 use super::super::keys::reap;
 use super::super::refusal::{Refusal, Result};
 use super::super::{App, audit, events, idempotency, oauth, webhooks};
@@ -53,6 +54,26 @@ async fn expire(
         .await
 }
 
+/// Once a stage is done, what it kept is only what it could not judge.
+async fn report_kept(
+    app: &Arc<App>,
+    run: &Run,
+    retention: Setting<u64>,
+    unit_ms: i64,
+    unread: &'static Unread<'static>,
+) -> Result<()> {
+    let (live, job) = (app.clone(), run.job);
+    let kept = app
+        .db
+        .read(move |tx| match cutoff(tx, &live, retention, unit_ms)? {
+            Some(_) => unread.report(tx, job, []),
+            None => Ok(0),
+        })
+        .await?;
+    run.kept_unread(kept);
+    Ok(())
+}
+
 /// The log keeps what the webhook sender has not yet passed.
 fn expire_events(tx: &Transaction<'_>, before: &str, limit: i64) -> Result<i64> {
     events::expire(tx, before, limit, webhooks::scheduled_through(tx)?)
@@ -68,6 +89,16 @@ pub async fn event_log(app: Arc<App>, run: Run) -> Result<Report> {
         )
     })
     .await?;
+    if records_done {
+        report_kept(
+            &app,
+            &run,
+            EVENT_LOG_RETENTION_HOURS,
+            HOUR_MS,
+            &idempotency::UNREAD,
+        )
+        .await?;
+    }
     let (deleted, events_done) = drain(&run, BATCH, || {
         expire(&app, EVENT_LOG_RETENTION_HOURS, HOUR_MS, expire_events)
     })
@@ -83,6 +114,9 @@ pub async fn audit(app: Arc<App>, run: Run) -> Result<Report> {
         expire(&app, AUDIT_RETENTION_DAYS, DAY_MS, audit::expire)
     })
     .await?;
+    if entries_done {
+        report_kept(&app, &run, AUDIT_RETENTION_DAYS, DAY_MS, &audit::UNREAD).await?;
+    }
     let (deliveries, deliveries_done) = drain(&run, BATCH, || {
         expire(
             &app,
@@ -92,6 +126,16 @@ pub async fn audit(app: Arc<App>, run: Run) -> Result<Report> {
         )
     })
     .await?;
+    if deliveries_done {
+        report_kept(
+            &app,
+            &run,
+            AUDIT_RETENTION_DAYS,
+            DAY_MS,
+            &webhooks::UNREAD_DELIVERIES,
+        )
+        .await?;
+    }
     Ok(Report {
         result: json!({ "deleted": deleted, "deliveries": deliveries }),
         again: !(entries_done && deliveries_done),
@@ -118,7 +162,27 @@ async fn reap_batch(app: &Arc<App>) -> Result<i64> {
 }
 
 async fn revoked_keys(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
-    drain(run, BATCH, || reap_batch(app)).await
+    let (taken, done) = drain(run, BATCH, || reap_batch(app)).await?;
+    if done
+        && app
+            .clock
+            .instant()
+            .earlier_by(reap::KEPT_DAYS * DAY_MS)
+            .is_some()
+    {
+        let job = run.job;
+        let kept = app
+            .db
+            .read(move |tx| {
+                reap::UNREAD
+                    .iter()
+                    .map(|unread| unread.report(tx, job, []))
+                    .sum()
+            })
+            .await?;
+        run.kept_unread(kept);
+    }
+    Ok((taken, done))
 }
 
 #[derive(Default)]

@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use super::super::App;
 use super::super::access::Caller;
 use super::super::catalog::{self, Snapshot};
+use super::super::clock::{Unread, readable};
 use super::super::edges::write::purge_edge;
 use super::super::housekeeping::{DAY_MS, Report, Run, cutoff};
 use super::super::instance;
@@ -35,10 +36,11 @@ fn binned_after(
     after: &Position,
     limit: i64,
 ) -> Result<Vec<Position>> {
-    let mut statement = tx.prepare_cached(
-        "SELECT trashed_at, id FROM items WHERE state = 'trashed' AND trashed_at < ?1 \
+    let mut statement = tx.prepare_cached(&format!(
+        "SELECT trashed_at, id FROM items WHERE state = 'trashed' AND {} AND trashed_at < ?1 \
          AND (trashed_at, id) > (?2, ?3) ORDER BY trashed_at, id LIMIT ?4",
-    )?;
+        readable("trashed_at")
+    ))?;
     Ok(statement
         .query_map(params![before, after.0, after.1, limit], |row| {
             Ok((row.get(0)?, row.get(1)?))
@@ -191,6 +193,28 @@ fn result(deleted: usize, passed_over: usize) -> Value {
     result
 }
 
+const UNREAD: Unread<'static> = Unread {
+    table: "items",
+    time: "trashed_at",
+    scope: "state = 'trashed'",
+};
+
+/// Once nothing is due, what the bin still holds past the cutoff is what could not be judged.
+async fn report_kept(app: &Arc<App>, run: &Run) -> Result<()> {
+    let (live, job) = (app.clone(), run.job);
+    let kept = app
+        .db
+        .read(
+            move |tx| match cutoff(tx, &live, TRASH_RETENTION_DAYS, DAY_MS)? {
+                Some(_) => UNREAD.report(tx, job, []),
+                None => Ok(0),
+            },
+        )
+        .await?;
+    run.kept_unread(kept);
+    Ok(())
+}
+
 pub async fn trash_purge(app: Arc<App>, run: Run) -> Result<Report> {
     let live = app.clone();
     let due = app
@@ -203,11 +227,15 @@ pub async fn trash_purge(app: Arc<App>, run: Run) -> Result<Report> {
         )
         .await?;
     if !due {
+        report_kept(&app, &run).await?;
         return Ok(Report::done(result(0, 0)));
     }
     let mut stopped = Stopped::default();
     let ended = purge_due(&app, &run, &mut stopped).await;
     stopped.report();
+    if ended.as_ref().is_ok_and(|report| !report.again) {
+        report_kept(&app, &run).await?;
+    }
     ended
 }
 

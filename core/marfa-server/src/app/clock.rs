@@ -165,7 +165,7 @@ impl Stamp {
 
     /// Refuses any text but the one form a time is stored in.
     pub fn read(stored: &str) -> refusal::Result<Stamp> {
-        Stamp::parsed(stored).ok_or_else(|| Refusal::internal("a stored time did not read"))
+        Stamp::parsed(stored).ok_or_else(|| Refusal::unread("a stored time did not read"))
     }
 
     /// For a caller that reports an unreadable time itself.
@@ -199,6 +199,51 @@ impl Stamp {
             .then(|| DateTime::from_timestamp_millis(at))
             .flatten()
             .map(Stamp)
+    }
+}
+
+/// Holds only for a time in the stored form, and is never NULL; `strftime` alone would pass an hour of 24.
+pub fn readable(column: &str) -> String {
+    format!(
+        "COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', {column}) = {column} AND substr({column}, 12, 2) < '24', 0)"
+    )
+}
+
+/// Rows a clean-up keeps because the time it judges them by does not read.
+pub struct Unread<'a> {
+    pub table: &'a str,
+    /// A column, or an expression of columns.
+    pub time: &'a str,
+    /// What else makes a row the clean-up's.
+    pub scope: &'a str,
+}
+
+impl Unread<'_> {
+    /// Counts them whatever a cutoff would say, and warns when there are any.
+    pub fn report(
+        &self,
+        db: &rusqlite::Connection,
+        job: &str,
+        args: impl rusqlite::Params,
+    ) -> refusal::Result<i64> {
+        let Unread { table, time, scope } = self;
+        let count: i64 = db.query_row(
+            &format!(
+                "SELECT count(*) FROM {table} WHERE ({scope}) AND {time} IS NOT NULL AND NOT {}",
+                readable(time)
+            ),
+            args,
+            |row| row.get(0),
+        )?;
+        if count > 0 {
+            tracing::warn!(
+                job,
+                table,
+                count,
+                "A clean-up kept rows whose stored time does not read"
+            );
+        }
+        Ok(count)
     }
 }
 
@@ -280,6 +325,96 @@ mod tests {
             "2025-11-09 07:16:20.123Z",
         ] {
             assert!(Stamp::read(stored).is_err(), "{stored}");
+        }
+    }
+
+    #[test]
+    fn reports_every_row_in_scope_whose_time_does_not_read_whichever_way_it_sorts() {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE t (at, kind)").unwrap();
+        let rows: [(rusqlite::types::Value, &str); 8] = [
+            ("2025-01-01T00:00:00.000Z".to_string().into(), "x"),
+            ("2027-01-01T00:00:00.000Z".to_string().into(), "x"),
+            ("0".to_string().into(), "x"),
+            ("0".to_string().into(), "y"),
+            ("z".to_string().into(), "x"),
+            ("2025-01-01T00:00:00Z".to_string().into(), "x"),
+            (5_i64.into(), "x"),
+            (rusqlite::types::Value::Null, "x"),
+        ];
+        for (at, kind) in rows {
+            db.execute("INSERT INTO t VALUES (?1, ?2)", rusqlite::params![at, kind])
+                .unwrap();
+        }
+        let kept = Unread {
+            table: "t",
+            time: "at",
+            scope: "kind = ?1",
+        };
+        assert_eq!(kept.report(&db, "a-job", ["x"]).unwrap(), 4);
+    }
+
+    #[test]
+    fn its_sql_test_agrees_with_reading() {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE t (at)").unwrap();
+        let held: Vec<rusqlite::types::Value> = [
+            "2025-11-09T07:16:20.123Z",
+            "0000-01-01T00:00:00.000Z",
+            "9999-12-31T23:59:59.999Z",
+            "2024-02-29T00:00:00.000Z",
+            "",
+            "0",
+            "z",
+            "soon",
+            "1762672580",
+            "2025-11-09T07:16:20Z",
+            "2025-11-09T07:16:20.1Z",
+            "2025-11-09T07:16:20.123+00:00",
+            "2025-11-09t07:16:20.123z",
+            "2025-11-09T07:16:20.1234Z",
+            "2025-11-09 07:16:20.123Z",
+            " 2025-11-09T07:16:20.123Z",
+            "2025-11-09T07:16:20.123Z ",
+            "2025-02-29T00:00:00.000Z",
+            "2025-13-01T00:00:00.000Z",
+            "2025-11-31T00:00:00.000Z",
+            "2025-11-09T24:00:00.000Z",
+            "2025-11-09T24:59:59.999Z",
+            "2025-11-09T25:00:00.000Z",
+            "2025-11-09T23:59:59.999Z",
+            "2025-11-09T23:60:00.000Z",
+            "2025-11-09T23:59:60.000Z",
+        ]
+        .map(|text| rusqlite::types::Value::Text(text.into()))
+        .into_iter()
+        .chain([
+            rusqlite::types::Value::Integer(1_762_672_580_123),
+            rusqlite::types::Value::Real(2_461_000.5),
+            rusqlite::types::Value::Null,
+        ])
+        .collect();
+        for value in &held {
+            db.execute("DELETE FROM t", []).unwrap();
+            db.execute("INSERT INTO t VALUES (?1)", [value]).unwrap();
+            let passes = |test: String| -> bool {
+                db.query_row(
+                    &format!("SELECT EXISTS (SELECT 1 FROM t WHERE {test})"),
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap()
+            };
+            let reads = match value {
+                rusqlite::types::Value::Text(text) => Stamp::parsed(text).is_some(),
+                _ => false,
+            };
+            assert_eq!(passes(readable("at")), reads, "{value:?}");
+            assert_eq!(
+                passes(format!("NOT {}", readable("at"))),
+                !reads,
+                "{value:?}"
+            );
         }
     }
 

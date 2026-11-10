@@ -10,7 +10,7 @@ use super::limits::{self, spent};
 use super::owner::{self, Details, Owner};
 use super::{Note, Visit, note, password};
 use crate::app::access::Caller;
-use crate::app::clock::Stamp;
+use crate::app::clock::{Stamp, readable};
 use crate::app::keys::digest_of;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::{App, instance};
@@ -126,7 +126,10 @@ fn holds(tx: &Transaction<'_>, kind: &str, digest: &str, now: Stamp) -> Result<b
 
 fn drop_expired(tx: &Transaction<'_>, now: Stamp) -> Result<()> {
     tx.execute(
-        "DELETE FROM setup_proof WHERE expires_at IS NOT NULL AND expires_at <= ?1",
+        &format!(
+            "DELETE FROM setup_proof WHERE {} AND expires_at <= ?1",
+            readable("expires_at")
+        ),
         [now],
     )?;
     Ok(())

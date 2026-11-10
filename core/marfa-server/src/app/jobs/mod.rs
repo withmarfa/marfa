@@ -394,6 +394,14 @@ pub async fn gc(app: Arc<App>, run: Run) -> Result<Report> {
         })
     })
     .await?;
+    if done && super::housekeeping::ago(&app, KEPT_DAYS, DAY_MS).is_some() {
+        let job = run.job;
+        let kept = app
+            .db
+            .read(move |tx| store::UNREAD_ENDED.report(tx, job, []))
+            .await?;
+        run.kept_unread(kept);
+    }
     Ok(Report {
         result: json!({ "removed": removed }),
         again: !done,

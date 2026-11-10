@@ -9,7 +9,7 @@ use super::App;
 use super::access::{Caller, Permission};
 use super::refusal::{Refusal, Result};
 
-pub use expiry::expire;
+pub use expiry::{UNREAD, expire};
 
 const HOUSEKEEPING: [&str; 12] = [
     "items.trash_purged",

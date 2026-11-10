@@ -119,6 +119,16 @@ impl Instance {
         run["result"].clone()
     }
 
+    /// Runs a job and answers how many rows it kept because their stored time does not read.
+    async fn kept_unread(&self, job: &str) -> i64 {
+        if job == "event-log-cleanup" {
+            self.scheduled().await;
+        }
+        let ended = housekeeping::run_now(&self.app, job).await.unwrap();
+        assert_eq!(ended.outcome, "ok", "{job}: {:?}", ended.error);
+        ended.kept_unread
+    }
+
     async fn job(&self, name: &str) -> Value {
         let list = self.ok(Method::GET, "/housekeeping", Value::Null).await;
         let jobs = list["data"].as_array().unwrap();
@@ -584,6 +594,67 @@ async fn credential_cleanup_takes_a_revoked_key_a_second_past_its_thirty_days() 
     assert_eq!(instance.count("SELECT count(*) FROM api_keys"), held - 1);
     let audited = "SELECT count(*) FROM audit_log WHERE action = 'keys.purged'";
     assert_eq!(instance.count(audited), 1);
+}
+
+#[tokio::test]
+async fn every_cleanup_keeps_a_row_whose_stored_time_does_not_read_and_finishes() {
+    let instance = Instance::start(&[("MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES", "true")]).await;
+    let type_id = expiring(&instance).await;
+    let feed = instance.item(feed_item(type_id, "feed")).await;
+    let binned = instance.binned(1).await.remove(0);
+    let body = json!({ "label": "ended", "source": "ended", "permissions": [] });
+    let minted = instance.ok(Method::POST, "/keys", body).await;
+    let key = minted["id"].as_str().unwrap().to_string();
+    let path = format!("/keys/{key}");
+    instance.ok(Method::DELETE, &path, Value::Null).await;
+    instance.dead_delivery().await;
+    let at = instance.app.clock.stamp();
+    let blob = "a".repeat(64);
+    // "0" sorts before any cutoff, so only reading the time keeps these rows.
+    instance
+        .sql(format!(
+            "UPDATE items SET created_at = '0' WHERE id = '{feed}'; \
+             UPDATE items SET trashed_at = '0' WHERE id = '{binned}'; \
+             UPDATE api_keys SET revoked_at = '0' WHERE id = '{key}'; \
+             UPDATE webhook_deliveries SET created_at = '0' WHERE id = 'dead'; \
+             UPDATE audit_log SET created_at = '0' WHERE id = (SELECT min(id) FROM audit_log); \
+             INSERT INTO idempotency_records (credential, idempotency_key, fingerprint, state, \
+             created_at) VALUES ('kept', 'kept', 'kept', 'complete', '0'); \
+             INSERT INTO bulk_jobs (id, action, input, key_id, status, matched, created_at, \
+             finished_at) VALUES ('kept', 'trash', '{{}}', '{key}', 'completed', 0, '{at}', '0'); \
+             INSERT INTO blobs (hash, mime_type, size_bytes, recorded_at) \
+             VALUES ('{blob}', 'text/plain', 1, '{at}'); \
+             INSERT INTO blob_orphans (hash, reported_at) VALUES ('{blob}', '0');"
+        ))
+        .await;
+
+    instance.forward(400 * DAY);
+    for (job, kept) in [
+        ("audit-cleanup", 2),
+        ("trash-purge", 1),
+        ("feed-expiry", 1),
+        ("event-log-cleanup", 1),
+        ("inbound-delivery-cleanup", 0),
+        ("bulk-action-gc", 1),
+        ("credential-cleanup", 1),
+        ("blob-orphans", 1),
+    ] {
+        assert_eq!(instance.kept_unread(job).await, kept, "{job}");
+    }
+    for (table, column) in [
+        ("items", "created_at"),
+        ("items", "trashed_at"),
+        ("api_keys", "revoked_at"),
+        ("webhook_deliveries", "created_at"),
+        ("audit_log", "created_at"),
+        ("idempotency_records", "created_at"),
+        ("bulk_jobs", "finished_at"),
+        ("blob_orphans", "reported_at"),
+    ] {
+        let kept = format!("SELECT count(*) FROM {table} WHERE {column} = '0'");
+        assert_eq!(instance.count(&kept), 1, "{table}.{column}");
+    }
+    assert_eq!(instance.count("SELECT count(*) FROM audit_log"), 1);
 }
 
 async fn expiring(instance: &Instance) -> &'static str {
