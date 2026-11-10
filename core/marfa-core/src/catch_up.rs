@@ -259,8 +259,8 @@ pub struct FollowReport {
     pub cursor: String,
     /// Streams asked for after the first, for any reason.
     pub reconnects: u64,
-    /// Counts failed reads of a row entering the slice as well as failed asks
-    /// for a stream.
+    /// Counts failed reads an event needed (a row entering the slice, a
+    /// table's rows) as well as failed asks for a stream.
     pub failed_opens: u64,
     /// Tables whose read failed, each left to the next stream.
     pub tables_failed: u64,
