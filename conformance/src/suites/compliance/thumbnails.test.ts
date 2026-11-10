@@ -161,6 +161,58 @@ describe("a thumbnail field", () => {
     expect(plain.ok, JSON.stringify(plain.error)).toBe(true);
   });
 
+  async function thumbnailBelowAMiddleType(name: string) {
+    const top = `user.gallery-${ctx.runId}-${name}`;
+    const middle = `${top}-middle`;
+    const leaf = `${middle}.leaf`;
+    expect(
+      (
+        await client.registerType({
+          id: top,
+          fields: { picture: { type: "thumbnail" } },
+        })
+      ).ok,
+    ).toBe(true);
+    const detached = { id: middle, label: "Middle", fields: {} };
+    expect((await client.registerType(detached)).ok).toBe(true);
+    const below = await client.registerType({
+      id: leaf,
+      parent: middle,
+      fields: { [name]: { type: "thumbnail" } },
+    });
+    expect(below.ok, JSON.stringify(below.error)).toBe(true);
+    return { middle, attached: { ...detached, version: 2, parent: top } };
+  }
+
+  it("refuses a replacement that gives a type a parent whose thumbnail a subtype declares another of", async () => {
+    const crowded = await thumbnailBelowAMiddleType("preview");
+    const refused = await client.replaceType(crowded.middle, crowded.attached);
+    expect(
+      refused.status,
+      "a type took a parent with a thumbnail, so its subtype's items carry two and a device reads one of them",
+    ).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_schema");
+    const named = refused.error?.error.details?.errors as
+      Array<{ field: string }> | undefined;
+    expect(named?.map((error) => error.field)).toEqual(["parent"]);
+
+    // The witness: a subtype declaring the parent's own thumbnail is taken.
+    const alike = await thumbnailBelowAMiddleType("picture");
+    const taken = await client.replaceType(alike.middle, alike.attached);
+    expect(taken.status, JSON.stringify(taken.error)).toBe(200);
+  });
+
+  it("changes nothing when it refuses a replacement for the parent it would give a type", async () => {
+    const { middle, attached } = await thumbnailBelowAMiddleType("cover");
+    expect((await client.replaceType(middle, attached)).status).toBe(400);
+    const held = (await client.getType(middle)).data;
+    expect(
+      held,
+      "a refused replacement gave the type a parent",
+    ).not.toHaveProperty("parent");
+    expect(held.label, "a refused replacement changed the type").toBe("Middle");
+  });
+
   it("refuses a parent gaining a thumbnail under a name its child declares as text, and takes one its child declares as a thumbnail", async () => {
     const parent = `user.shelf-${ctx.runId}`;
     expect(

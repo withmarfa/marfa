@@ -1,6 +1,6 @@
 # Tables
 
-What a type declares about the tables an item of it can hold: their names, their columns and how a column totals. A table holds rows, and a row is never an item. A column's value rules and totals apply to rows once they exist; this chapter holds only the declaration.
+What a type declares about the tables an item of it can hold: their names, their columns and how a column totals. A table holds rows, and a row is never an item. This chapter also holds how rows are written, read, announced and undone.
 
 ## Declaring tables
 
@@ -514,7 +514,7 @@ When a batch changes no row, the server MUST answer `batch` `null`.
 
 If a door under `/items/{id}/tables/{table}` names a table the item's type does not declare, then the server MUST answer `404 table_not_found`.
 
-**Tests:** `compliance/table-rows.test.ts › answers table_not_found for a table the type does not declare`.
+**Tests:** `compliance/table-rows.test.ts › answers table_not_found for a table the type does not declare`, `compliance/table-rows-undo.test.ts › answers table_not_found for an undo once a forced change removed the table`.
 
 ## Who may read and write rows
 
@@ -939,6 +939,166 @@ While a stream is a copy stream, the server MUST NOT send it `rows.changed`.
 **Reason:** a copy stream feeds a device's working copy, which holds no rows.
 
 **Tests:** `compliance/table-rows-events.test.ts › sends no rows.changed on a copy stream`.
+
+## The change log and undo
+
+A table keeps a change log: each batch that changed at least one of its rows, with each row as it stood before the batch, for `row_log_retention_days`. An undo is itself a batch, so undoing an undo redoes the batch it undid. A row stands as a batch left it while no later batch has changed it, or every later batch that did has been undone, newest first; a row the batch deleted stands as it left it while the table holds no row with its id. The doors are `POST /items/{id}/tables/{table}/batches/{batch}/undo` and `GET /items/{id}/tables/{table}/batches`.
+
+### `tables/undo`
+
+When a caller sends `POST /items/{id}/tables/{table}/batches/{batch}/undo` and every row the batch changed stands as the batch left it or as it was before the batch, the server MUST leave each of those rows as it was before the batch.
+
+**Reason:** a person takes back a write whole, one batch at a time, from the newest.
+
+**Tests:** `compliance/table-rows-undo.test.ts › undoes a batch, putting back rows it replaced, patched and deleted and removing rows it created`, `› undoes a batch where a later batch left a row as it was before the batch`, `› undoes a run of batches newest first, and redoes them oldest first`, `› undoes an earlier batch once a later batch that left its rows as it found them is undone`.
+
+### `tables/undo-answer`
+
+When an undo changes at least one row, the server MUST answer `200` with the undo's own UUIDv7 in `batch`, the batch it undid in `undoes`, the item's `last_activity_at`, and in `results` each row the undone batch changed, by `id` ascending, with its `outcome`.
+
+**Tests:** `compliance/table-rows-undo.test.ts › answers each row of the undone batch in id order with its outcome, and moves last_activity_at`.
+
+### `tables/undo-outcomes`
+
+The server MUST answer the `outcome` of a row in an undo as `created` where it puts back a row the batch deleted, `replaced` where it puts back values the batch changed, `deleted` where it removes a row the batch created, and `unchanged` where the row already stands as it was before the batch.
+
+**Tests:** `compliance/table-rows-undo.test.ts › answers each row of the undone batch in id order with its outcome, and moves last_activity_at`, `› undoes a batch where a later batch left a row as it was before the batch`.
+
+### `tables/undo-nothing`
+
+When every row an undone batch changed already stands as it was before the batch, the server MUST answer `batch` `null`.
+
+**Reason:** an undo sent again after a lost answer changes nothing.
+
+**Tests:** `compliance/table-rows-undo.test.ts › answers batch null for an undo sent again, changing nothing`.
+
+### `tables/undo-redo`
+
+When the batch an undo names is itself an undo, the server MUST undo it as any batch, leaving each row as the batch that undo undid left it.
+
+**Reason:** redo is the undo of an undo, so one door and one log serve both.
+
+**Tests:** `compliance/table-rows-undo.test.ts › redoes a batch by undoing its undo, and undoes it again`, `› undoes a run of batches newest first, and redoes them oldest first`.
+
+### `tables/undo-conflict`
+
+If a row the undone batch changed stands neither as the batch left it nor as it was before the batch, then the server MUST answer `409 undo_conflict` naming each such row by `id` in `details.rows`.
+
+**Reason:** a later batch changed the row, and an undo over it would drop that work. Undoing the later batches first, newest first, clears the way.
+
+**Tests:** `compliance/table-rows-undo.test.ts › refuses an undo where a later batch changed a row, naming the rows, and changes nothing`, `› takes a row the batch deleted as standing while the table holds no row with its id`.
+
+### `tables/undo-all-or-none`
+
+If the server refuses an undo, then the server MUST change none of the rows of the batch it names.
+
+**Tests:** `compliance/table-rows-undo.test.ts › refuses an undo where a later batch changed a row, naming the rows, and changes nothing`, `› refuses an undo of a row holding a value the key may not read, and removes a created row holding one`, `› refuses an undo to a key that may not read a value a row held before or after the batch, whatever the row holds now`.
+
+### `tables/undo-values-kept`
+
+When an undo puts back a row's values, the server MUST put them back as they were before the batch, whatever the table's columns declare since.
+
+**Reason:** an undo recovers what a person had, as `tables/change-forced` keeps values the declaration no longer takes.
+
+**Tests:** `compliance/table-rows-undo.test.ts › puts back values in a column the type has since removed`.
+
+### `tables/undo-not-found`
+
+If an undo names a batch that the change log of the item's table does not hold, then the server MUST answer `404 batch_not_found`.
+
+**Reason:** a batch of another table, an id no batch has and a batch past `row_log_retention_days` read alike.
+
+**Tests:** `compliance/table-rows-undo.test.ts › answers batch_not_found for a batch of another table or item, and an id no batch has`, `compliance/table-rows-retention.test.ts › removes the batches older than row_log_retention_days at the next table-row-cleanup run, and keeps the newer`.
+
+### `tables/undo-write-access`
+
+If a key that may read an item's type and not write it sends an undo, then the server MUST answer `403 type_not_permitted`.
+
+**Tests:** `compliance/table-rows-undo.test.ts › refuses an undo by a key that may read and not write, and on an item in the bin, and undoes once the item is back`.
+
+### `tables/undo-bin`
+
+When an undo names an item in the bin whose type the key may read, the server MUST answer `404 item_not_found` with `details` of exactly `{ "trashed": true }`.
+
+**Tests:** `compliance/table-rows-undo.test.ts › refuses an undo by a key that may read and not write, and on an item in the bin, and undoes once the item is back`.
+
+### `tables/undo-restored`
+
+When an item has come back from the bin, the server MUST undo a batch of its tables that the change log holds.
+
+**Reason:** the bin keeps an item's rows, and their change log with them.
+
+**Tests:** `compliance/table-rows-undo.test.ts › refuses an undo by a key that may read and not write, and on an item in the bin, and undoes once the item is back`.
+
+### `tables/undo-withheld`
+
+If an undo names a batch that changed a row it did not create, and the row holds now, held before the batch or held after it a value the server would withhold from the undoing key on a read of the row, then the server MUST answer `403 forbidden` with `details.row` naming the row and `details.column` naming the column, whatever else it would answer for the row.
+
+**Reason:** whether an undo puts a row back, finds it unchanged or refuses it as changed since turns on the values it compares, so an answer that differed would tell the key which item a withheld value names. A put back or replaced value is also a reference the key cannot see, which `tables/rows-withheld-write` refuses to a write. A row the batch created is removed or left by whether it is there alone (`tables/undo-withheld-delete`).
+
+**Tests:** `compliance/table-rows-undo.test.ts › refuses an undo of a row holding a value the key may not read, and removes a created row holding one`, `› refuses an undo to a key that may not read a value a row held before or after the batch, whatever the row holds now`.
+
+### `tables/undo-withheld-delete`
+
+When an undo removes a row the undone batch created, the server MUST remove it whatever value it holds that the server would withhold from the undoing key.
+
+**Reason:** removing the row leaves alone the item its value names, as `tables/rows-withheld-delete` allows a delete.
+
+**Tests:** `compliance/table-rows-undo.test.ts › refuses an undo of a row holding a value the key may not read, and removes a created row holding one`.
+
+### `tables/undo-event`
+
+When an undo changes at least one row, the server MUST announce one `rows.changed` with the fields `tables/rows-event` names, and the batch it undid in `undoes`.
+
+**Reason:** a device applies an undo as any batch, and an app can show which write it took back.
+
+**Tests:** `compliance/table-rows-undo.test.ts › announces one rows.changed for an undo naming the batch it undid, and nothing for an undo that changes nothing`.
+
+### `tables/undo-event-none`
+
+When an undo changes no row, the server MUST NOT announce `rows.changed`.
+
+**Tests:** `compliance/table-rows-undo.test.ts › announces one rows.changed for an undo naming the batch it undid, and nothing for an undo that changes nothing`.
+
+### `tables/batches-list`
+
+When a caller that may read an item sends `GET /items/{id}/tables/{table}/batches`, the server MUST answer in `data` the batches the table's change log holds, newest first, each with its `id`, `at`, `rows`, the number of rows it changed, and `undoes`, the batch it undid or `null`.
+
+**Reason:** a person finds the write to take back, such as the one that deleted a row last week, from when it was made and how much it changed.
+
+**Tests:** `compliance/table-rows-undo.test.ts › lists the table's batches newest first, with the rows each changed and what it undid`.
+
+### `tables/batches-page`
+
+When a caller sends `GET /items/{id}/tables/{table}/batches`, the server MUST answer at most `limit` batches, 100 where it names none, with a `next_cursor` that continues the page while more remain.
+
+**Tests:** `compliance/table-rows-undo.test.ts › pages the batches by a signed cursor, and refuses a limit or cursor it did not answer`.
+
+### `tables/batches-limit`
+
+If a listing of batches names a `limit` that is not a whole number from 1 to 1000, then the server MUST answer `400 validation_error` naming `limit`.
+
+**Tests:** `compliance/table-rows-undo.test.ts › pages the batches by a signed cursor, and refuses a limit or cursor it did not answer`.
+
+### `tables/batches-cursor`
+
+If a listing of batches names a `cursor` that was not answered for the same item and table, then the server MUST answer `400 validation_error` naming `cursor`.
+
+**Tests:** `compliance/table-rows-undo.test.ts › pages the batches by a signed cursor, and refuses a limit or cursor it did not answer`.
+
+### `tables/log-retention`
+
+Where `row_log_retention_days` is positive, when the `table-row-cleanup` job runs, the server MUST remove from each table's change log every batch made more than that many days before, up to the oldest batch whose stored time does not read.
+
+**Reason:** the log is for taking back recent writes, not a history, and an old batch could no longer be undone over what came after it anyway.
+
+**Tests:** `compliance/table-rows-retention.test.ts › removes the batches older than row_log_retention_days at the next table-row-cleanup run, and keeps the newer`, `› keeps a batch whose stored time does not read and every batch after it, and removes the older batches before it`.
+
+### `tables/log-retention-zero`
+
+Where `row_log_retention_days` is 0, the server MUST NOT remove a batch from a change log by its age.
+
+**Tests:** `compliance/table-rows-retention.test.ts › keeps every batch while row_log_retention_days is 0, however far the clock moves`.
 
 ## Rows and the life of an item
 

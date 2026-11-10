@@ -116,3 +116,36 @@ pub async fn totals(
     let answer = tables::totals(&app, &caller, id, table, one(&uri, "filter")?).await?;
     Ok(text_answer(StatusCode::OK, answer))
 }
+
+pub async fn batches(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    Named((id, table)): Named<(String, String)>,
+    uri: Uri,
+) -> Answer {
+    caller.require_reach()?;
+    query::only(&uri, &["limit", "cursor"])?;
+    let limit = one(&uri, "limit")?
+        .map(|limit| {
+            limit
+                .parse::<i64>()
+                .map_err(|_| invalid_field("limit", "limit is a whole number from 1 to 1000."))
+        })
+        .transpose()?;
+    check_item_id(&id)?;
+    let answer = tables::batches(&app, &caller, id, table, limit, one(&uri, "cursor")?).await?;
+    Ok(text_answer(StatusCode::OK, answer))
+}
+
+pub async fn undo(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    Named((id, table, batch)): Named<(String, String, String)>,
+    uri: Uri,
+) -> Answer {
+    caller.require_reach()?;
+    query::only(&uri, &[])?;
+    check_item_id(&id)?;
+    let answer = tables::undo(&app, &caller, id, table, batch).await?;
+    Ok(text_answer(StatusCode::OK, answer))
+}

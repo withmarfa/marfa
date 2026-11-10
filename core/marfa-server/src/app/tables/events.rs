@@ -22,6 +22,7 @@ pub(super) struct Announced<'a> {
     pub host: &'a Host,
     pub table: &'a Table,
     pub batch: &'a str,
+    pub undoes: Option<&'a str>,
     pub at: &'a str,
     pub changed: &'a [(String, Changed)],
     pub referenced: &'a HashMap<String, Option<String>>,
@@ -77,8 +78,13 @@ pub(super) fn announce(unit: &Unit<'_, '_>, announced: &Announced<'_>) -> Result
         "last_activity_at": announced.at,
         "rows": rows,
     });
-    if !included && let Some(object) = payload.as_object_mut() {
-        object.insert("values_included".into(), false.into());
+    if let Some(object) = payload.as_object_mut() {
+        if !included {
+            object.insert("values_included".into(), false.into());
+        }
+        if let Some(undoes) = announced.undoes {
+            object.insert("undoes".into(), undoes.into());
+        }
     }
     let printed = marfa_rules::number::to_vec(&payload)
         .ok()

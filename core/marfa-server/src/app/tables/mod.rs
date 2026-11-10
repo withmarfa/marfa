@@ -4,8 +4,9 @@ mod events;
 mod lifecycle;
 mod read;
 mod store;
+mod undo;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use marfa_rules::validation;
 use rusqlite::Transaction;
@@ -24,7 +25,8 @@ pub use events::{ROWS_CHANGED, judged as judged_event};
 pub use lifecycle::{
     cleanup, constraining_columns, doom, held_in_use, refuse_moving_type, refuse_undeclared,
 };
-pub use read::{Page, get, list, page, totals};
+pub use read::{Page, batches, get, list, page, totals};
+pub use undo::undo;
 
 /// A batch of 1000 rows of 1 KB each holds the writer for about 10 ms on the reference machine.
 pub const MAX_OPERATIONS: usize = 1000;
@@ -96,7 +98,7 @@ fn values_of(index: usize, value: Option<&Value>) -> Result<Map<String, Value>> 
 }
 
 /// The row an operation leaves, as JSON, is at most [`MAX_ROW_BYTES`].
-fn refuse_wide(index: usize, values: &Map<String, Value>) -> Result<i64> {
+fn refuse_wide(index: usize, values: &Map<String, Value>) -> Result<()> {
     let bytes = store::printed_len(values);
     if bytes > MAX_ROW_BYTES as i64 {
         return Err(refused_at(
@@ -107,7 +109,7 @@ fn refuse_wide(index: usize, values: &Map<String, Value>) -> Result<i64> {
             ),
         ));
     }
-    Ok(bytes)
+    Ok(())
 }
 
 const OP_FIELDS: [&str; 3] = ["op", "id", "values"];
@@ -310,6 +312,11 @@ struct Batch<'a, 'c> {
     /// The table's key, `None` until the table first holds a row.
     table_seq: Option<i64>,
     batch_id: String,
+    undoes: Option<String>,
+    /// The batch's seq in the log, `None` until it first changes a row.
+    batch_seq: Option<i64>,
+    /// Capture each row only before its first change in the batch.
+    logged: HashSet<String>,
     /// The type of each item a value names, or `None` where no item holds the id.
     referenced: HashMap<String, Option<String>>,
     sight: Sight,
@@ -474,6 +481,81 @@ impl Batch<'_, '_> {
         Ok(seq)
     }
 
+    fn begin(&mut self, id: &str, held: bool, mark: Option<i64>) -> Result<(i64, i64)> {
+        let table = self.table_seq()?;
+        let unit = self.unit;
+        let batch = match self.batch_seq {
+            Some(batch) => batch,
+            None => {
+                let batch = store::open_batch(
+                    unit.tx(),
+                    table,
+                    &self.batch_id,
+                    &unit.at,
+                    self.undoes.as_deref(),
+                )?;
+                self.batch_seq = Some(batch);
+                batch
+            }
+        };
+        if self.logged.insert(id.to_string()) {
+            store::log_before(unit.tx(), batch, table, id, held, mark.unwrap_or(batch))?;
+        }
+        Ok((table, batch))
+    }
+
+    fn store_row(
+        &mut self,
+        id: &str,
+        held: Option<i64>,
+        values: Map<String, Value>,
+        refs: Map<String, Value>,
+        mark: Option<i64>,
+    ) -> Result<()> {
+        let (table, own) = self.begin(id, held.is_some(), mark)?;
+        let batch = mark.unwrap_or(own);
+        let unit = self.unit;
+        let body = Value::Object(values.clone()).to_string();
+        store::put(
+            unit.tx(),
+            &store::Written {
+                table,
+                id,
+                at: &unit.at,
+                batch,
+                body: &body,
+                refs: refs_text(&refs).as_deref(),
+            },
+        )?;
+        let printed = store::printed_len(&values);
+        match held {
+            Some(bytes) => self.bytes += printed - bytes,
+            None => {
+                self.count += 1;
+                self.bytes += printed;
+            }
+        }
+        self.note(id, Changed::Held { values, refs });
+        Ok(())
+    }
+
+    fn remove_row(&mut self, id: &str) -> Result<bool> {
+        let unit = self.unit;
+        let Some(table) = self.table_seq else {
+            return Ok(false);
+        };
+        if store::marker(unit.tx(), table, id)?.is_none() {
+            return Ok(false);
+        }
+        self.begin(id, true, None)?;
+        let bytes = store::delete(unit.tx(), table, id)?
+            .ok_or_else(|| Refusal::internal("a held row did not delete"))?;
+        self.count -= 1;
+        self.bytes -= bytes;
+        self.note(id, Changed::Deleted);
+        Ok(true)
+    }
+
     fn land(&mut self, index: usize, op: Op) -> Result<(String, Outcome)> {
         let tx = self.unit.tx();
         match op {
@@ -500,32 +582,16 @@ impl Batch<'_, '_> {
                         }
                     }
                 }
-                let printed = refuse_wide(index, &values)?;
+                refuse_wide(index, &values)?;
                 if held.as_ref().is_some_and(|held| held.values == values) {
                     return Ok((id, Outcome::Unchanged));
                 }
-                let seq = self.table_seq()?;
-                let body = Value::Object(values.clone()).to_string();
-                store::put(
-                    tx,
-                    seq,
-                    &id,
-                    &self.unit.at,
-                    &body,
-                    refs_text(&refs).as_deref(),
-                )?;
-                let outcome = match &held {
-                    Some(held) => {
-                        self.bytes += printed - held.bytes;
-                        Outcome::Replaced
-                    }
-                    None => {
-                        self.count += 1;
-                        self.bytes += printed;
-                        Outcome::Created
-                    }
+                let held = held.map(|held| held.bytes);
+                self.store_row(&id, held, values, refs, None)?;
+                let outcome = match held {
+                    Some(_) => Outcome::Replaced,
+                    None => Outcome::Created,
                 };
-                self.note(&id, Changed::Held { values, refs });
                 Ok((id, outcome))
             }
             Op::Patch { id, values } => {
@@ -550,31 +616,90 @@ impl Batch<'_, '_> {
                 if next == held.values {
                     return Ok((id, Outcome::Unchanged));
                 }
-                let printed = refuse_wide(index, &next)?;
-                let seq = self.table_seq()?;
-                let body = Value::Object(next.clone()).to_string();
-                store::put(
-                    tx,
-                    seq,
-                    &id,
-                    &self.unit.at,
-                    &body,
-                    refs_text(&refs).as_deref(),
-                )?;
-                self.bytes += printed - held.bytes;
-                self.note(&id, Changed::Held { values: next, refs });
+                refuse_wide(index, &next)?;
+                self.store_row(&id, Some(held.bytes), next, refs, None)?;
                 Ok((id, Outcome::Patched))
             }
-            Op::Delete { id } => match store::delete(tx, self.table_seq, &id)? {
-                Some(bytes) => {
-                    self.count -= 1;
-                    self.bytes -= bytes;
-                    self.note(&id, Changed::Deleted);
-                    Ok((id, Outcome::Deleted))
-                }
-                None => Ok((id, Outcome::Absent)),
+            Op::Delete { id } => match self.remove_row(&id)? {
+                true => Ok((id, Outcome::Deleted)),
+                false => Ok((id, Outcome::Absent)),
             },
         }
+    }
+
+    fn settle(mut self, host: &Host) -> Result<Option<String>> {
+        self.name_referenced()?;
+        let unit = self.unit;
+        let (Some(table), Some(batch), false) =
+            (self.table_seq, self.batch_seq, self.changed.is_empty())
+        else {
+            return Ok(None);
+        };
+        let tx = unit.tx();
+        store::close_batch(tx, batch, self.changed.len() as i64)?;
+        for (id, change) in &self.changed {
+            match change {
+                Changed::Deleted => store::log_removed(tx, batch, id)?,
+                Changed::Held { refs, .. } => {
+                    if let Some(refs) = refs_text(refs) {
+                        store::log_after_refs(tx, batch, id, &refs)?;
+                    }
+                }
+            }
+        }
+        let at = unit.at.as_str();
+        store::summarize(tx, table, self.count, self.bytes, &self.batch_id, at)?;
+        // The item's own write moves the backup counter, once for the batch.
+        items::mark_activity(tx, host.seq, at)?;
+        events::announce(
+            unit,
+            &events::Announced {
+                host,
+                table: self.table,
+                batch: &self.batch_id,
+                undoes: self.undoes.as_deref(),
+                at,
+                changed: &self.changed,
+                referenced: &self.referenced,
+            },
+        )?;
+        let mut audited = json!({
+            "table": self.table.name,
+            "batch": self.batch_id,
+            "rows": self.changed.len(),
+        });
+        if let Some(undoes) = &self.undoes {
+            audited["undoes"] = json!(undoes);
+        }
+        unit.audit("item", &host.id, Some(audited))?;
+        Ok(Some(at.to_string()))
+    }
+}
+
+impl<'a, 'c> Batch<'a, 'c> {
+    fn new(
+        unit: &'a Unit<'a, 'c>,
+        catalog: &'a Catalog,
+        host: &'a Host,
+        table: &'a Table,
+        undoes: Option<String>,
+    ) -> Result<Batch<'a, 'c>> {
+        Ok(Batch {
+            unit,
+            catalog,
+            host,
+            table,
+            table_seq: store::table_seq(unit.tx(), host.seq, &table.name)?,
+            batch_id: Uuid::now_v7().to_string(),
+            undoes,
+            batch_seq: None,
+            logged: HashSet::new(),
+            referenced: HashMap::new(),
+            sight: Sight::of(&unit.caller),
+            changed: Vec::new(),
+            count: 0,
+            bytes: 0,
+        })
     }
 }
 
@@ -591,68 +716,22 @@ pub async fn write(
         let catalog = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
         let host = items::writable_host(unit, &catalog, &item_id)?;
         let table = table_of(&catalog, &host.type_id, &table)?;
-        let mut batch = Batch {
-            unit,
-            catalog: &catalog,
-            host: &host,
-            table: &table,
-            table_seq: store::table_seq(unit.tx(), host.seq, &table.name)?,
-            batch_id: Uuid::now_v7().to_string(),
-            referenced: HashMap::new(),
-            sight: Sight::of(&unit.caller),
-            changed: Vec::new(),
-            count: 0,
-            bytes: 0,
-        };
+        let mut batch = Batch::new(unit, &catalog, &host, &table, None)?;
         let mut results = Vec::with_capacity(ops.len());
         for (index, op) in ops.into_iter().enumerate() {
             let (id, outcome) = batch.land(index, op)?;
             results.push(json!({ "id": id, "outcome": outcome.word() }));
         }
-        batch.name_referenced()?;
-        let Batch {
-            changed,
-            count,
-            bytes,
-            referenced,
-            table_seq,
-            batch_id,
-            ..
-        } = batch;
-        let (Some(seq), false) = (table_seq, changed.is_empty()) else {
-            return Ok(json!({
+        let batch_id = batch.batch_id.clone();
+        let answer = match batch.settle(&host)? {
+            Some(at) => json!({ "batch": batch_id, "last_activity_at": at, "results": results }),
+            None => json!({
                 "batch": null,
                 "last_activity_at": host.last_activity_at,
                 "results": results,
-            })
-            .to_string());
+            }),
         };
-        let at = unit.at.as_str();
-        store::summarize(unit.tx(), seq, count, bytes, &batch_id, at)?;
-        // The item's own write moves the backup counter, once for the batch.
-        items::mark_activity(unit.tx(), host.seq, at)?;
-        events::announce(
-            unit,
-            &events::Announced {
-                host: &host,
-                table: &table,
-                batch: &batch_id,
-                at,
-                changed: &changed,
-                referenced: &referenced,
-            },
-        )?;
-        unit.audit(
-            "item",
-            &host.id,
-            Some(json!({ "table": table.name, "batch": batch_id, "rows": changed.len() })),
-        )?;
-        Ok(json!({
-            "batch": batch_id,
-            "last_activity_at": at,
-            "results": results,
-        })
-        .to_string())
+        Ok(answer.to_string())
     })
     .await
 }

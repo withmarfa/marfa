@@ -3,6 +3,7 @@
 use serde_json::{Map, Value, json};
 
 use super::field::{label_issue, normalize_field, validate_member, vocabulary};
+use super::registry::Lineage;
 use super::resolve::label_member;
 use super::unread::{unread_column_keys, unread_table_keys};
 use super::{Issue, Obj, Registry, as_obj, describe, kind, names, text};
@@ -231,28 +232,22 @@ fn validate_constraints(
     }
 }
 
-/// A type's own tables as stored, judged against the ancestors and descendants `registry` holds.
+/// A type's own tables as stored, judged against the ancestors and descendants of its `lineage`.
 pub(super) fn judge_tables(
     definition: &Obj,
-    registry: &Registry,
+    lineage: &Lineage<'_>,
     type_known: &dyn Fn(&str) -> bool,
 ) -> Result<Obj, Vec<Issue>> {
-    let id = text(definition, "id");
-    let inherited = text(definition, "parent")
-        .filter(|parent| !parent.is_empty() && Some(*parent) != id)
-        .map(|parent| registry.inherited_tables(parent))
-        .unwrap_or_default();
-    let descendants = id.map(|id| registry.descendants(id)).unwrap_or_default();
     let mut errors = Vec::new();
     validate_tables(
         definition.get("tables"),
-        &inherited,
-        &descendants,
+        &lineage.tables,
+        &lineage.descendants,
         type_known,
         &mut errors,
     );
     if errors.is_empty() {
-        Ok(stored_tables(definition.get("tables"), &inherited))
+        Ok(stored_tables(definition.get("tables"), &lineage.tables))
     } else {
         Err(errors)
     }
@@ -293,7 +288,7 @@ pub fn declared_tables(
         let Some(id) = text(definition, "id") else {
             continue;
         };
-        match judge_tables(definition, &stored, type_known) {
+        match judge_tables(definition, &stored.lineage(definition), type_known) {
             Ok(tables) => judged.push((id.to_string(), tables)),
             Err(issues) => found.extend(issues.into_iter().map(|issue| (id.to_string(), issue))),
         }

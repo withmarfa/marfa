@@ -6,8 +6,8 @@ import type { CliContext, ItemEnvelope } from "./harness.js";
 
 /**
  * An agent with a key declares a type with a table, holds an item of it, and
- * writes, reads, filters, totals and deletes the item's rows, all from the
- * terminal.
+ * writes, reads, filters, totals, deletes and undoes the item's rows, all
+ * from the terminal.
  */
 
 interface Row {
@@ -221,6 +221,61 @@ describe("tables and rows from the terminal", () => {
       "lines",
     ]);
     expect(left.data).toHaveLength(2);
+  });
+
+  it("lists the table's batches newest first, undoes one and redoes it by undoing the undo", async () => {
+    const row = uuidv7();
+    const written = await c.cli.json<Batch>([
+      "rows",
+      "put",
+      item,
+      "lines",
+      "--id",
+      row,
+      "--values",
+      JSON.stringify({ amount: 3 }),
+    ]);
+    const listed = await c.cli.json<{
+      data: { id: string; rows: number; undoes: string | null }[];
+      next_cursor: string | null;
+    }>(["rows", "batches", item, "lines", "--limit", "1"]);
+    expect(listed.data).toMatchObject([
+      { id: written.batch, rows: 1, undoes: null },
+    ]);
+    expect(listed.next_cursor).not.toBeNull();
+
+    const undone = await c.cli.json<Batch & { undoes: string }>([
+      "rows",
+      "undo",
+      item,
+      "lines",
+      written.batch!,
+    ]);
+    expect(undone.undoes).toBe(written.batch);
+    expect(undone.results).toEqual([{ id: row, outcome: "deleted" }]);
+    const missing = await c.cli.refused(["rows", "get", item, "lines", row]);
+    expect(missing.envelope.error.server?.code).toBe("row_not_found");
+
+    const redone = await c.cli.json<Batch & { undoes: string }>([
+      "rows",
+      "undo",
+      item,
+      "lines",
+      undone.batch!,
+    ]);
+    expect(redone.results).toEqual([{ id: row, outcome: "created" }]);
+    const back = await c.cli.json<Row>(["rows", "get", item, "lines", row]);
+    expect(back.values).toEqual({ amount: 3 });
+    await c.cli.json(["rows", "delete", item, "lines", row]);
+
+    const unknown = await c.cli.refused([
+      "rows",
+      "undo",
+      item,
+      "lines",
+      uuidv7(),
+    ]);
+    expect(unknown.envelope.error.server?.code).toBe("batch_not_found");
   });
 
   it("refuses a row that is not there, a column the table does not declare and a batch that is not one", async () => {

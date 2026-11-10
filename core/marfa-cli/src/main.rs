@@ -223,7 +223,8 @@ enum Command {
         #[command(subcommand)]
         command: tables::TablesCommand,
     },
-    /// The rows of an item's tables, and what a table adds up to.
+    /// The rows of an item's tables, what a table adds up to, and the batches
+    /// that changed it.
     Rows {
         #[command(subcommand)]
         command: rows::RowsCommand,
