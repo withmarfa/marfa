@@ -276,9 +276,7 @@ pub fn properties(
     refuse(Code::InvalidProperties, faults)
 }
 
-/// Refuses `values` as a row of a table whose columns are `columns`, `complete` where they are the
-/// whole row. A `null` clears a column. A column of kind `item` takes a lowercase UUIDv7; whether
-/// an item holds it is the caller's to judge. Each fault's path is the column's name.
+/// Checks column values; resolving item references belongs to the caller.
 pub fn row_values(
     columns: &Map<String, Value>,
     values: &Map<String, Value>,

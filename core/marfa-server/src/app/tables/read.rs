@@ -1,5 +1,4 @@
-//! Reading rows is reading their item: each read finds the item as `GET /items/{id}` does, in
-//! the snapshot it answers from.
+//! Row reads share their item's access check and snapshot.
 
 use std::collections::HashMap;
 
@@ -21,7 +20,6 @@ const FIRST_PAGE: i64 = 100;
 pub const MAX_PAGE: i64 = 1000;
 const ROWS_SCOPE: &str = "rows";
 
-/// What a page of rows asks for.
 #[derive(Debug, Default)]
 pub struct Page {
     pub limit: Option<i64>,
@@ -89,7 +87,6 @@ fn printed(value: &Value) -> Result<String> {
         .ok_or_else(|| Refusal::internal("an answer did not print"))
 }
 
-/// `GET /items/{id}/tables`.
 pub async fn list(app: &App, caller: &Caller, item_id: String) -> Result<String> {
     reading(app, caller, move |read| {
         let host = items::readable_host(read, &item_id)?;
@@ -338,7 +335,6 @@ fn answered_page(
     printed(&json!({ "data": data, "next_cursor": next }))
 }
 
-/// `GET /items/{id}/tables/{table}/rows`.
 pub async fn page(
     app: &App,
     caller: &Caller,
@@ -352,7 +348,6 @@ pub async fn page(
     .await
 }
 
-/// `GET /items/{id}/tables/{table}/rows/{row}`. An id that is no row's answers as one the table does not hold.
 pub async fn get(
     app: &App,
     caller: &Caller,
@@ -383,8 +378,7 @@ fn numeric(column: &str) -> String {
     )
 }
 
-/// A total's SQL over the selected rows, all of them in one pass. A `datetime` compares by its
-/// instant, which it answers in UTC.
+/// Datetimes compare by instant and return UTC.
 fn aggregate(kind: &str, way: &str, column: &str) -> String {
     let held = format!("json_extract(r.body, '$.{column}')");
     match (way, kind) {
@@ -457,7 +451,6 @@ fn answered_totals(
     }))
 }
 
-/// `GET /items/{id}/tables/{table}/totals`.
 pub async fn totals(
     app: &App,
     caller: &Caller,

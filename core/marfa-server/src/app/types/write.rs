@@ -232,8 +232,7 @@ fn merged(catalog: &Catalog, id: &str, stored: &Obj, merge: Merge) -> Result<Obj
     Ok(definition)
 }
 
-/// Without `schema.write`, only changes that leave stored data valid.
-/// `force` keeps the rows and values of the tables and columns the replacement removes.
+/// Forced schema changes retain stored row values.
 pub async fn replace(
     app: &App,
     caller: &Caller,

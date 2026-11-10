@@ -1,4 +1,4 @@
-//! The only SQL of the row tables.
+//! Row storage and paged cleanup.
 
 use rusqlite::types::Value as Bound;
 use rusqlite::{OptionalExtension, Row, Transaction, params, params_from_iter};
@@ -141,7 +141,6 @@ pub(super) fn page(tx: &Transaction<'_>, sql: &Sql) -> Result<Vec<(Held, Bound)>
         .collect()
 }
 
-/// The first column of the one row `sql` answers.
 pub(super) fn single(tx: &Transaction<'_>, sql: &Sql) -> Result<Vec<Bound>> {
     let mut statement = tx.prepare(&sql.text)?;
     let width = statement.column_count();

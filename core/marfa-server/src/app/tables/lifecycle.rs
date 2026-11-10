@@ -1,5 +1,4 @@
-//! Rows through the life of their item and type: a purge, a move to another type, and a change
-//! to the tables a type declares.
+//! Row retention across item purges and schema changes.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -69,7 +68,6 @@ fn undeclared(catalog: &Catalog, to: &str, held: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-/// Refuses moving item `seq` into `to` while it holds rows in a table `to` does not declare.
 pub fn refuse_undeclared(
     tx: &Transaction<'_>,
     catalog: &Catalog,
@@ -84,7 +82,6 @@ pub fn refuse_undeclared(
     }
 }
 
-/// Refuses moving the items of `from` into `to` while one holds rows in a table `to` does not declare.
 pub fn refuse_moving_type(
     tx: &Transaction<'_>,
     catalog: &Catalog,
@@ -99,8 +96,7 @@ pub fn refuse_moving_type(
     }
 }
 
-/// What a change from `before` to `after` would remove that rows of the `family`'s items hold:
-/// a table as `<table>`, and a removed or retyped column as `<table>.<column>`.
+/// Names held data as `<table>` or `<table>.<column>`.
 pub fn held_in_use(
     tx: &Transaction<'_>,
     before: &Catalog,
@@ -147,7 +143,7 @@ fn after_tables(
         .unwrap_or_default()
 }
 
-/// Each column of another type whose `type_constraints` names `type_id`, as `<type>.<table>.<column>`.
+/// Names referring columns as `<type>.<table>.<column>`.
 pub fn constraining_columns(catalog: &Catalog, type_id: &str) -> Vec<String> {
     let mut found = Vec::new();
     for (owner, definition) in catalog.types.rows() {

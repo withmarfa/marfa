@@ -149,8 +149,7 @@ CREATE INDEX IF NOT EXISTS items_bin_age ON items (trashed_at)
     WHERE state = 'trashed';
 CREATE INDEX IF NOT EXISTS items_activity ON items (last_activity_at, id);
 
--- The rows of an item's tables. `body` is the row's values as JSONB, last so a
--- read of the key stops short of it.
+-- Keep values last so key reads stop before them.
 CREATE TABLE IF NOT EXISTS table_rows (
     item_seq INTEGER NOT NULL,
     table_name TEXT NOT NULL,

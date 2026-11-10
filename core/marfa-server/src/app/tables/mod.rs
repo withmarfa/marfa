@@ -1,5 +1,4 @@
-//! The rows of an item's tables. Every row write goes through [`write`], one transaction per
-//! batch; only `store` holds their SQL.
+//! Row writes share one transaction per batch.
 
 mod events;
 mod lifecycle;
@@ -54,7 +53,6 @@ impl Op {
     }
 }
 
-/// Refuses operation `index` at `path` under it.
 fn refused_at(index: usize, path: &str, message: impl Into<String>) -> Refusal {
     let message = message.into();
     let path = if path.is_empty() {
@@ -116,7 +114,6 @@ fn values_of(index: usize, value: Option<&Value>) -> Result<Map<String, Value>> 
 
 const OP_FIELDS: [&str; 3] = ["op", "id", "values"];
 
-/// The operations of a batch body, judged before the store is read.
 pub fn operations(sent: Option<&Value>) -> Result<Vec<Op>> {
     let Some(Value::Array(sent)) = sent else {
         return Err(whole_batch("operations is a list of operations."));
@@ -195,7 +192,6 @@ impl Table {
     }
 }
 
-/// Every table a type declares, by name.
 pub(crate) fn tables_of(catalog: &Catalog, type_id: &str) -> Vec<Table> {
     let Ok(Some(resolved)) = marfa_rules::schema::resolve(&catalog.types, type_id, false) else {
         return Vec::new();
@@ -224,7 +220,6 @@ pub(crate) fn table_of(catalog: &Catalog, type_id: &str, name: &str) -> Result<T
         .ok_or_else(|| not_found_table(name))
 }
 
-/// What happened to the row an operation named.
 #[derive(Clone, Copy)]
 enum Outcome {
     Created,
@@ -431,7 +426,7 @@ impl Batch<'_, '_> {
     }
 }
 
-/// Applies a batch to one table of one item, all of it or none, deciding access on the state it commits.
+/// Access and changes share the batch's transaction.
 pub async fn write(
     app: &App,
     caller: &Caller,

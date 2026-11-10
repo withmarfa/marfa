@@ -339,8 +339,7 @@ impl Item {
     }
 }
 
-/// The item a row write names, judged as a write to the item is: readable, outside the bin,
-/// and of a type the caller may write.
+/// Row writes use the item's write gate.
 pub(crate) fn writable_host(
     unit: &crate::app::unit::Unit<'_, '_>,
     catalog: &Catalog,

@@ -1,5 +1,4 @@
-//! `rows.changed`: one event per batch, stored with the type of each item a row names so a
-//! frame can withhold that id from a reader of another reach.
+//! Logged item types let each recipient withhold references outside its reach.
 
 use std::collections::HashMap;
 

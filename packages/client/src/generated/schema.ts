@@ -888,7 +888,7 @@ export interface paths {
         post?: never;
         /**
          * Delete a type
-         * @description Deletes a type no item holds and no folder, view or webhook names. With `force=true`, a key keeps the items without their type and leaves the settings as they are; new writes then fail until it's registered again.
+         * @description Deletes a type no item holds and no folder, view, webhook or table column names. With `force=true`, keeps the items, settings and column constraints; new item writes fail until the type is registered again.
          */
         delete: operations["deleteType"];
         options?: never;
@@ -7002,7 +7002,7 @@ export interface components {
                 };
             };
         };
-        /** @description A rows event: one batch of changes to one table of an item. You receive it only if you can read the item's type and, except that a copy stream never receives it, your source filter shows the item. */
+        /** @description One batch of changes to an item's table. You receive it if you can read the item's type and your source filter shows the item. Copy streams never receive it. */
         RowsChangedFrame: {
             /**
              * @description The event, which is also the frame's `event:`.
