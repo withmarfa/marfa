@@ -531,7 +531,9 @@ describe("an undo it cannot make", () => {
 
     // The witness: an undo of a row whose values the key reads goes through.
     const [r4] = ids();
-    await write(item, [{ op: "put", id: r4, values: { amount: 4, about: shown } }]);
+    await write(item, [
+      { op: "put", id: r4, values: { amount: 4, about: shown } },
+    ]);
     const plain = await write(item, [
       { op: "patch", id: r4, values: { amount: 6 } },
     ]);
