@@ -151,7 +151,7 @@ describe("a type declares tables", () => {
   });
 });
 
-async function normalize(body: unknown) {
+async function normalize(body: object) {
   const res = await client.rawRequest<{
     type: { tables: Record<string, { columns: Record<string, unknown> }> };
   }>("/types/normalize", { method: "POST", body });

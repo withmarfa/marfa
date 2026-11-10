@@ -203,3 +203,15 @@ pub fn unread_edge_keys(input: &Obj) -> Vec<Issue> {
     }
     issues
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_column_takes_every_key_a_member_of_an_entry_takes() {
+        for key in MEMBER_KEYS {
+            assert!(COLUMN_KEYS.contains(&key), "{key}");
+        }
+    }
+}

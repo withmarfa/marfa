@@ -806,6 +806,41 @@ mod tests {
         assert_eq!(found[0].code, Some("inheritance_violation"));
     }
 
+    #[test]
+    fn a_declared_read_makes_no_label_and_a_canonical_form_writes_the_defaults_down() {
+        let held = registry();
+        let declared = resolve(&held, "user.base", true).unwrap().unwrap();
+        assert!(
+            declared["tables"]["entries"]["columns"]["note"]
+                .get("label")
+                .is_none()
+        );
+        let canonical = super::super::canonical(declared);
+        assert_eq!(
+            canonical["tables"]["entries"]["columns"]["note"],
+            json!({"type": "string", "required": false, "searchable": false})
+        );
+    }
+
+    #[test]
+    fn a_table_written_back_as_read_keeps_the_labels_it_never_had() {
+        let held = registry();
+        let stored = held.get("user.base").cloned().unwrap_or_default();
+        let read = resolve(&held, "user.base", false).unwrap().unwrap();
+        let submitted = judged(
+            json!({"id": "user.base", "fields": {"title": {"type": "string"}},
+            "tables": read["tables"].clone()}),
+        )
+        .unwrap_or_default();
+        let out = super::super::read_back_free(submitted, &stored, Some(&read), None);
+        assert_eq!(out["tables"]["entries"]["label"], "Entries");
+        assert!(
+            out["tables"]["entries"]["columns"]["note"]
+                .get("label")
+                .is_none()
+        );
+    }
+
     fn evolved(stored: Value, next: Value) -> (Vec<String>, Vec<String>) {
         let stored = judged(stored).unwrap_or_default();
         let next = judged(next).unwrap_or_default();
