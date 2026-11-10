@@ -6240,6 +6240,12 @@ If another program's writes to a folder's store keep a `folders watch` from writ
 
 **Tests:** `device/store-busy-live.test.ts › says once that another program kept the watch's follow from writing to the folder's store, goes on watching and takes the server's next change`, `› says once that another program kept a watch's pass from writing to the folder's store, goes on watching and sends the edit`.
 
+### `folders/watch-store-busy-delay`
+
+While another program's writes keep a folder watch's follow from writing to the folder's store, a device MUST double its delay before each next follow from one second up to thirty seconds.
+
+**Tests:** `device/store-busy-live.test.ts › says once that another program kept the watch's follow from writing to the folder's store, goes on watching and takes the server's next change`.
+
 ### `folders/watch-store-busy-retry`
 
 If another program's writes to a folder's store keep a folder watch from writing to the store, then a device MUST continue watching and make the write again from fresh reads.

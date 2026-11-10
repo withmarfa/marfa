@@ -95,8 +95,14 @@ class Gate {
     }
   }
 
+  /** When each reach was let go, by reach. */
+  readonly releasedAt = new Map<number, number>();
+  /** When `contend` saw each reach, by reach. */
+  readonly seenAt = new Map<number, number>();
+
   /** Lets every reach up to `through` go on. */
   release(through: number): void {
+    this.releasedAt.set(through, Date.now());
     const next = `${this.path}.release.next`;
     writeFileSync(next, String(through));
     renameSync(next, `${this.path}.release`);
@@ -113,11 +119,28 @@ class Gate {
       }, WAIT);
       if (enough()) break;
       reach = this.reached();
+      this.seenAt.set(reach, Date.now());
+      if (enough()) break;
       outsideWrite(store, reach);
       this.release(reach);
     }
     this.release(ALL);
     return reach;
+  }
+
+  /**
+   * The waits of a second or more between letting a reach go and seeing the
+   * next: each one a new attempt after the attempts before it ran out.
+   */
+  restarts(): number[] {
+    const waits: number[] = [];
+    for (const [reach, seen] of this.seenAt) {
+      const released = this.releasedAt.get(reach - 1);
+      if (released !== undefined && seen - released >= 1_000) {
+        waits.push(seen - released);
+      }
+    }
+    return waits;
   }
 }
 
@@ -266,8 +289,14 @@ it("says once that another program kept the watch's follow from writing to the f
   const gate = new Gate(dirname(folder.dir), "gate-catalog-adopt");
   const watch = folder.hold(["folders", "watch", folder.dir], gate.env);
   held.push(watch);
-  await gate.contend(folder.store, () => watch.stderr.includes(BUSY_NOTICE));
+  // Two follows refused at each of their attempts, and a third let through.
+  await gate.contend(folder.store, () => gate.restarts().length >= 2);
   expect(watch.running(), watch.stderr).toBe(true);
+  const [first, second] = gate.restarts();
+  expect(
+    second,
+    `waits ${String(first)} then ${String(second)}`,
+  ).toBeGreaterThanOrEqual(2_000);
 
   const note = await serverNote(title);
   const changed = await client.updateItem(note.id, {
@@ -301,4 +330,76 @@ it("says once that another program kept a watch's pass from writing to the folde
   }, WAIT);
   expect(watch.running(), watch.stderr).toBe(true);
   expect(count(watch.stderr, BUSY_NOTICE), watch.stderr).toBe(1);
+});
+
+/** A device holding one note it made and has not sent. */
+async function queuedNote(
+  label: string,
+  title: string,
+): Promise<{ device: CliDevice; write: string }> {
+  const device = await hydratedDevice(label);
+  const queued = value(
+    await device.create({
+      type: "core.note",
+      source: ctx.source,
+      properties: { title, body: "made on the device" },
+    }),
+  );
+  return { device, write: queued.id };
+}
+
+async function queued(device: CliDevice, write: string) {
+  const row = value(await device.queue()).find((entry) => entry.id === write);
+  expect(row, "the write left the queue").toBeDefined();
+  return row;
+}
+
+it("records the server's answer to a write again when another program wrote to the store as the device recorded it", async () => {
+  const title = `Recorded ${ctx.runId}`;
+  const { device, write } = await queuedNote("busy-receipt", title);
+  const gate = new Gate(dirname(device.store), "gate-drain-receipt");
+  const draining = device.hold(["drain"], "device", gate.env);
+  held.push(draining);
+  await vi.waitFor(() => expect(gate.reached()).toBe(1), WAIT);
+  outsideWrite(device.store, 1);
+  gate.release(ALL);
+  await draining.exited();
+  expect(draining.exitCode(), draining.stderr).toBe(0);
+  // The record is made again from its first read, which reaches the gate.
+  expect(gate.reached()).toBeGreaterThanOrEqual(2);
+  const report = JSON.parse(draining.stdout) as {
+    verdicts: Array<{ id: string; verdict: string | null; refusals: number }>;
+  };
+  expect(
+    report.verdicts.map((entry) => [entry.id, entry.verdict, entry.refusals]),
+  ).toEqual([[write, "accepted", 0]]);
+  const row = await queued(device, write);
+  expect([row?.verdict, row?.refusals]).toEqual(["accepted", 0]);
+  await serverNote(title);
+  expect(outsideValue(device.store)).toBe("1");
+});
+
+it("ends the drain store_busy when another program writes to the store at every attempt to record an answer, counting nothing, and accepts the write on the next drain", async () => {
+  const title = `Unrecorded ${ctx.runId}`;
+  const { device, write } = await queuedNote("busy-receipt-always", title);
+  const gate = new Gate(dirname(device.store), "gate-drain-receipt");
+  const draining = device.hold(["drain"], "device", gate.env);
+  held.push(draining);
+  const reaches = await gate.contend(device.store, () => !draining.running());
+  await draining.exited();
+  expect(reaches).toBeGreaterThan(1);
+  expect(draining.exitCode(), draining.stderr).toBe(3);
+  expect(JSON.parse(draining.stderr).error.code).toBe("store_busy");
+  const row = await queued(device, write);
+  expect(
+    [row?.verdict, row?.refusals],
+    "contention spent the write's count, or gave it a verdict",
+  ).toEqual([null, 0]);
+  // The server took the write the first time; the next drain sends it again
+  // under its key and is answered with that write.
+  await serverNote(title);
+  const again = value(await device.drain());
+  expect(again.verdicts.map((entry) => entry.verdict)).toEqual(["accepted"]);
+  await serverNote(title);
+  expect(outsideValue(device.store)).toBe(String(reaches));
 });

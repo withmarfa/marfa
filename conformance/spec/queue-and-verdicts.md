@@ -1158,6 +1158,22 @@ If the store is full as a device takes the answer to a write, before the write h
 
 **Tests:** `device/classification.test.ts › ends the drain storage_full when the store fills as it takes an answer, counting nothing`.
 
+### `queue-and-verdicts/store-busy-answer-again`
+
+If another program's commit to the store refuses a device's record of the server's answer to a write, then a device MUST make that record again from its first read.
+
+**Reason:** the server holds the write, and only a record made from fresh reads can say so.
+
+**Tests:** `device/store-busy-live.test.ts › records the server's answer to a write again when another program wrote to the store as the device recorded it`.
+
+### `queue-and-verdicts/store-busy-ends-drain`
+
+If another program's writes to the store refuse a device's record of the answer to a write at each of a bounded number of attempts, before the write has a verdict, then a device MUST end the drain `store_busy`, leaving the write with no verdict and no refusal counted.
+
+**Reason:** contention says nothing of the write, and the next drain sends it again under its key, which the server answers as the write it already took.
+
+**Tests:** `device/store-busy-live.test.ts › ends the drain store_busy when another program writes to the store at every attempt to record an answer, counting nothing, and accepts the write on the next drain`.
+
 ## A body over the server's request limit
 
 The root names the largest body a server takes in one request. A server closes the connection on a larger body with the rest unread, and that close can destroy its `413` before a client still sending reads it. A link that drops, or a proxy or server that restarts, looks the same, so a write that meets the close is an environmental failure like any other, and a device holds a write over the limit itself rather than send it.

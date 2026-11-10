@@ -843,9 +843,10 @@ fn follow(
                 .expect("follow health lock")
                 .attempt_failed(error);
         }
+        // A run of failures ends only when the work that failed recovers: a
+        // hydration that ran, or a follow that reached the server's head.
+        let mut recovered = matches!(resumed, Ok(Some(_)));
         let followed = resumed.and_then(|hydrated| {
-            retry = RETRY_FIRST;
-            said = false;
             if hydrated.is_some() || was_failing {
                 let _ = wakes.send(Wake::Server(crate::clock::now(), None));
             }
@@ -866,10 +867,15 @@ fn follow(
                     });
                 },
                 |live| {
+                    recovered |= live;
                     health.lock().expect("follow health lock").observe(live);
                 },
             )
         });
+        if recovered {
+            retry = RETRY_FIRST;
+            said = false;
+        }
         match followed {
             Ok(_) => break,
             Err(CoreError::Canceled) if ended.load(Ordering::SeqCst) => break,
