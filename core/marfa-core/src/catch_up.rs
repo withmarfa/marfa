@@ -147,7 +147,8 @@ fn unexplained(
 /// What a held stream changed in the copy: an event it applied, with the
 /// item or edge it was about, or a catalog that differs from the one held,
 /// naming neither. Or what became of the server: unreachable, with why, once
-/// when a stream cannot be had, and reachable once when one is had again.
+/// when a stream cannot be had or an event it sends cannot be taken, and
+/// reachable once when one is had, or the event taken, again.
 /// Or what became of the queue it drained then. `cursor` is the cursor held
 /// after it.
 #[derive(Debug, Clone, PartialEq)]
@@ -207,8 +208,9 @@ pub enum ChangeEvent {
     Applied(String),
     /// A stream it opened read a catalog that differs from the one held.
     CatalogChanged,
-    /// No stream can be had, for this failure: the network failing, a rate
-    /// limit, a failing server or a refusal naming no contract.
+    /// No stream can be had, or an event it sends cannot be taken, for this
+    /// failure: the network failing, a rate limit, a failing server or a
+    /// refusal naming no contract.
     ServerUnreachable(CoreError),
     ServerReachable,
     /// The queue was drained once a stream was had again, and what that
@@ -605,7 +607,11 @@ pub(crate) fn replay_build(
     stop: &AtomicBool,
     catalog_changed: &mut bool,
 ) -> Result<CatchUpReport> {
-    let (slice, cursor) = start_build(&*core.conn()?)?;
+    let (slice, cursor) = {
+        let conn = core.conn()?;
+        crate::tables::forget_reread(&conn)?;
+        start_build(&conn)?
+    };
     let catalog = ask_unless_stopped(stop, http, Http::catalog)?;
     refuse_if_stopped(stop)?;
     let mut catalog = adopt(core, context, &catalog, catalog_changed)?;
@@ -1071,10 +1077,10 @@ fn follow_paced(
         // other end, so the next stream reads again for a property its type has
         // since made its thumbnail.
         let mut refreshed = HashSet::new();
-        // Unknown until the first stream is asked for, so a follow that never
-        // reaches the server says so, and one that does says nothing, unless
-        // its caller was last told the server could not be reached.
-        let mut reachable: Option<bool> = told_unreachable.then_some(false);
+        let mut told = Told {
+            reachable: told_unreachable.then_some(false),
+            stalled: false,
+        };
         let mut owes_drain = owes_drain;
         let mut synced = None;
         while !stop.load(Ordering::Relaxed) {
@@ -1101,15 +1107,7 @@ fn follow_paced(
                         .retry_after()
                         .map_or(backoff, |named| backoff.max(named));
                     report.last_failure = Some(error.to_string());
-                    if reachable != Some(false) {
-                        reachable = Some(false);
-                        on_change(&Change {
-                            event: ChangeEvent::ServerUnreachable(error.clone()),
-                            item_id: None,
-                            edge_id: None,
-                            cursor: report.cursor.clone(),
-                        });
-                    }
+                    told.lost(&error, &report.cursor, on_change);
                     pause(wait);
                     backoff = (backoff * 2).min(pace.reconnect_most);
                     continue;
@@ -1117,19 +1115,13 @@ fn follow_paced(
                 Err(error) => return Err(error),
             };
             same_instance(core, &instance, context.generation)?;
-            if reachable == Some(false) {
-                on_change(&Change {
-                    event: ChangeEvent::ServerReachable,
-                    item_id: None,
-                    edge_id: None,
-                    cursor: report.cursor.clone(),
-                });
-                recovery.reachable();
-            } else if owes_drain {
-                recovery.reachable();
+            if !told.stalled {
+                if owes_drain && told.reachable != Some(false) {
+                    recovery.reachable();
+                }
+                told.back(&report.cursor, &recovery, on_change);
             }
             owes_drain = false;
-            reachable = Some(true);
             let mut moved = false;
             let catalog = adopt(core, &context, &fetched, &mut moved);
             if moved {
@@ -1156,6 +1148,7 @@ fn follow_paced(
                 &mut synced,
                 &mut look,
                 &recovery,
+                &mut told,
                 on_change,
                 on_live,
             )?;
@@ -1163,6 +1156,15 @@ fn follow_paced(
             match ended {
                 Ended::Stopped => return Ok(report),
                 Ended::Behind => continue,
+                Ended::Stalled(error) => {
+                    refreshed.clear();
+                    told.lost(&error, &report.cursor, on_change);
+                    told.stalled = true;
+                    recovery.tell(&report.cursor, on_change);
+                    pause(backoff);
+                    backoff = (backoff * 2).min(pace.reconnect_most);
+                    continue;
+                }
                 Ended::Over => {}
             }
             refreshed.clear();
@@ -1204,6 +1206,51 @@ fn follow_paced(
         }
     }
     result.map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))
+}
+
+/// What a follow last told its caller of the server: `reachable` is `None`
+/// until the first stream is asked for, so a follow that never reaches the
+/// server says so, and one that does says nothing, unless its caller was last
+/// told the server could not be reached.
+struct Told {
+    reachable: Option<bool>,
+    /// Told `server.unreachable` for an event a stream it had could not take,
+    /// so `server.reachable` waits until a stream takes an event or goes live.
+    stalled: bool,
+}
+
+impl Told {
+    fn lost(&mut self, error: &CoreError, cursor: &str, on_change: &mut dyn FnMut(&Change)) {
+        if self.reachable != Some(false) {
+            self.reachable = Some(false);
+            on_change(&Change {
+                event: ChangeEvent::ServerUnreachable(error.clone()),
+                item_id: None,
+                edge_id: None,
+                cursor: cursor.to_string(),
+            });
+        }
+    }
+
+    fn back(&mut self, cursor: &str, recovery: &Recovery, on_change: &mut dyn FnMut(&Change)) {
+        self.stalled = false;
+        if self.reachable == Some(false) {
+            on_change(&Change {
+                event: ChangeEvent::ServerReachable,
+                item_id: None,
+                edge_id: None,
+                cursor: cursor.to_string(),
+            });
+            recovery.reachable();
+        }
+        self.reachable = Some(true);
+    }
+
+    fn unstalled(&mut self, cursor: &str, recovery: &Recovery, on_change: &mut dyn FnMut(&Change)) {
+        if self.stalled {
+            self.back(cursor, recovery, on_change);
+        }
+    }
 }
 
 /// Raises its flag when dropped, unwinding included.
@@ -1407,6 +1454,8 @@ enum Ended {
     Stopped,
     /// The catalog could not explain an event; reopen at once.
     Behind,
+    /// An event could not be taken for a reason that clears on its own.
+    Stalled(CoreError),
     Over,
 }
 
@@ -1426,6 +1475,7 @@ fn read_stream(
     synced: &mut Option<Instant>,
     look: &mut Look,
     recovery: &Recovery,
+    told: &mut Told,
     on_change: &mut dyn FnMut(&Change),
     on_live: &mut dyn FnMut(bool),
 ) -> Result<Ended> {
@@ -1438,6 +1488,7 @@ fn read_stream(
     {
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;
+        crate::tables::forget_reread(&tx)?;
         crate::tables::reconcile_all(&tx)?;
         tx.commit()?;
     }
@@ -1546,6 +1597,7 @@ fn read_stream(
                     return Ok(ended);
                 }
                 live_confirmed = reach::cursor(&report.cursor).is_some_and(|cursor| cursor >= live);
+                told.unstalled(&report.cursor, recovery, on_change);
                 on_live(live_confirmed);
                 if live_confirmed {
                     mark_synced_while_live(core, context, pace, now, synced)?;
@@ -1570,8 +1622,8 @@ fn read_stream(
                     refreshed.insert(named);
                     return Ok(Ended::Behind);
                 }
-                // A failed read of a row entering the slice reopens the
-                // stream from before this event rather than ending.
+                // A failed read reopens the stream from before this event
+                // rather than ending.
                 let taken = match take(core, context, catalog, slice, &id, kind, &payload) {
                     Err(ref error) if crate::folder::copy_changed(error) => {
                         context.same_copy(&*core.conn()?)?;
@@ -1582,10 +1634,11 @@ fn read_stream(
                     Err(error) if error.is_environmental() => {
                         report.failed_opens += 1;
                         report.last_failure = Some(error.to_string());
-                        return Ok(Ended::Over);
+                        return Ok(Ended::Stalled(error));
                     }
                     other => other?,
                 };
+                told.unstalled(&report.cursor, recovery, on_change);
                 match &taken.change {
                     Some(change) => {
                         report.applied += 1;
@@ -1617,8 +1670,8 @@ fn read_stream(
 }
 
 /// Settles the slice's `beneath` for a follow, telling a settle that changed
-/// the rows held as an edge change. A failure ends the stream as a failed
-/// take does; the settle stays owed, so the next stream makes it.
+/// the rows held as an edge change. A failure ends the stream; the settle
+/// stays owed, so the next stream makes it.
 fn settle_following(
     core: &Core,
     context: &Context,
@@ -2425,6 +2478,63 @@ mod tests {
             [ChangeEvent::ServerReachable],
             "a follow started after the server was told unreachable did not say it came back, once"
         );
+    }
+
+    #[test]
+    fn an_event_it_cannot_take_for_now_tells_the_server_lost_once_and_back_once() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        let payload = item_payload("item.updated", "n1", NOTE, 2);
+        server.on(
+            "/events",
+            vec![stream(
+                vec![connected(), event("11", "item.updated", &payload)],
+                held(),
+            )],
+        );
+        let read: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        let read = serde_json::json!({
+            "item": read["item"], "metadata": read["metadata"], "listed": true
+        });
+        let busy = || crate::scripted::certified(refusal(503, "unavailable"));
+        server.on(
+            "/items/n1",
+            vec![
+                busy(),
+                busy(),
+                busy(),
+                crate::scripted::certified(crate::scripted::json(200, &read.to_string())),
+            ],
+        );
+        let (_dir, core) = hydrated(&server);
+        let run = follow_on(&core, STILL, None);
+        let told: Vec<ChangeEvent> = (0..3)
+            .map(|_| match run.changes.recv_timeout(Duration::from_secs(5)) {
+                Ok(change) => change.event,
+                Err(_) => panic!("no change was told: {:?}", run.ended()),
+            })
+            .collect();
+        run.stop();
+        let report = run.ended().unwrap();
+        assert_eq!(
+            server.seen("/items/n1").len(),
+            4,
+            "the entering row was not read until its read was answered"
+        );
+        assert!(
+            matches!(&told[0], ChangeEvent::ServerUnreachable(error) if error.to_string().contains("503")),
+            "an event a failing server kept from being taken was told as nothing: {told:?}"
+        );
+        assert_eq!(
+            told[1..],
+            [
+                ChangeEvent::ServerReachable,
+                ChangeEvent::Applied("item.updated".into())
+            ],
+            "the server was told back before the event was taken, or lost more than once"
+        );
+        assert!(run.changes.try_iter().next().is_none());
+        assert_eq!(report.cursor, "11");
     }
 
     /// A copy of one row at the head of a held stream, its last look at
@@ -3702,6 +3812,10 @@ mod tests {
                     &mut None,
                     &mut look,
                     &recovery,
+                    &mut Told {
+                        reachable: Some(true),
+                        stalled: false,
+                    },
                     &mut |_| {},
                     &mut |_| {},
                 )

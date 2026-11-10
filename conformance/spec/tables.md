@@ -1076,13 +1076,13 @@ When a `rows.changed` deletes a row of a table a device holds no row of because 
 
 When a device's stream sends `rows.changed` for a table the device holds, a device MUST hold each row the event carries with `values`, with those values and with the event's `last_activity_at` as its `updated_at`.
 
-**Tests:** `device/tables-live.test.ts › applies each rows.changed a follow reads, rows put, patched and deleted`.
+**Tests:** `device/tables-live.test.ts › applies each rows.changed a follow reads, rows put, patched and deleted`, `› applies the rows.changed of an undo and of its redo as any batch`.
 
 ### `tables/device-apply-delete`
 
 When a device's stream sends `rows.changed` for a table the device holds, a device MUST remove each row the event marks `deleted`.
 
-**Tests:** `device/tables-live.test.ts › applies each rows.changed a follow reads, rows put, patched and deleted`.
+**Tests:** `device/tables-live.test.ts › applies each rows.changed a follow reads, rows put, patched and deleted`, `› applies the rows.changed of an undo and of its redo as any batch`.
 
 ### `tables/device-apply-ids`
 
@@ -1129,6 +1129,20 @@ If the server answers `404 item_not_found` or `404 table_not_found` to a read a 
 When a device has removed a table's rows under `tables/device-read-gone` while it applies a `rows.changed`, a device MUST go on to apply the events after it.
 
 **Tests:** `device/tables-live.test.ts › carries on past a rows.changed without values whose item is purged before it reads the rows`.
+
+### `tables/device-read-failed`
+
+If the server answers a read a device makes of the rows a `rows.changed` names, or of rows again under `tables/device-named-purged`, with an error about that read, such as a `5xx` answer or a refusal, then a device MUST remove the rows it holds of that table and fill it again from its first page.
+
+**Reason:** the rows it holds may be stale, or hold a value its key may no longer read, and a read that keeps failing would otherwise hold back every event after it. A fill that fails leaves the table unfilled under `tables/device-fill-failed`.
+
+**Tests:** `device/tables-live.test.ts › empties a table whose rows a rows.changed names it cannot read, fills it again, and applies the events after it`, `› empties a table it cannot read again after a purge, fills it again, and goes on following`.
+
+### `tables/device-read-failed-carries-on`
+
+When a device has removed a table's rows under `tables/device-read-failed`, a device MUST go on to apply the events after it.
+
+**Tests:** `device/tables-live.test.ts › empties a table whose rows a rows.changed names it cannot read, fills it again, and applies the events after it`, `› empties a table it cannot read again after a purge, fills it again, and goes on following`.
 
 ### `tables/device-gap`
 

@@ -3812,9 +3812,25 @@ If a held stream cannot be had for a reason that clears on its own, then a devic
 
 ### `device/follow-reachable`
 
-When a held stream is had again after the device told `server.unreachable`, a device MUST tell its caller `server.reachable` once.
+When a held stream is had again after the device told `server.unreachable` under `device/follow-unreachable`, a device MUST tell its caller `server.reachable` once.
 
 **Tests:** `device/catch-up.test.ts › tells a held stream's caller once that the server cannot be reached, and once that it can again`.
+
+### `device/follow-take-unreachable`
+
+If a held stream sends an event that a device cannot apply for a reason that clears on its own, such as a read the event needs failing, then a device MUST tell its caller `server.unreachable` once, with why and naming no item and no edge, however many attempts follow.
+
+**Reason:** the stream opens each time, so an app told nothing would show a copy that has stopped moving as current.
+
+**Tests:** `device/catch-up.test.ts › tells a held stream's caller once that the server cannot be reached while an event cannot be applied, and once that it can when the event is applied`.
+
+### `device/follow-take-reachable`
+
+When a device applies an event after telling `server.unreachable` under `device/follow-take-unreachable`, a device MUST tell its caller `server.reachable` once, before the change the event made.
+
+**Reason:** each stream opened to try the event again is had, and telling `server.reachable` for it would tell the caller the server came back each time it failed.
+
+**Tests:** `device/catch-up.test.ts › tells a held stream's caller once that the server cannot be reached while an event cannot be applied, and once that it can when the event is applied`.
 
 ### `device/follow-at-once-silent`
 

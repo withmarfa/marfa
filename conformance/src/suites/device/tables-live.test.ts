@@ -688,6 +688,61 @@ describe("applying rows.changed", () => {
     }
   }, 90_000);
 
+  it("applies the rows.changed of an undo and of its redo as any batch", async () => {
+    const type = await tableType();
+    const item = await itemOf(type);
+    const [kept] = await write(item, [
+      { op: "put", values: { count: 1, note: "kept" } },
+    ]);
+    const device = await hydrated([type], "undo");
+    value(await device.holdTable(type, "steps"));
+    const changed = await working.writeRows(item, "steps", {
+      operations: [
+        { op: "patch", id: kept!.id, values: { note: "patched" } },
+        { op: "put", values: { count: 2 } },
+      ],
+    });
+    expect(changed.status, JSON.stringify(changed.error)).toBe(200);
+    const batch = changed.data.batch!;
+    value(await device.catchUp());
+    expect((await deviceRows(device, item)).rows).toHaveLength(2);
+    const tap = await tapStream(server.apiUrl, server.workingKey);
+    let redo: string;
+    try {
+      await tap.until(
+        (seen) => seen.some((e) => e.event === "stream_live"),
+        "the stream going live",
+      );
+      const undone = await working.undoBatch(item, "steps", batch);
+      expect(undone.status, JSON.stringify(undone.error)).toBe(200);
+      redo = undone.data.batch!;
+      await tap.until(
+        (seen) =>
+          seen.some(
+            (e) =>
+              e.event === "rows.changed" &&
+              (e.data as { undoes?: string }).undoes === batch,
+          ),
+        "the undo's rows.changed naming the batch it undid",
+      );
+    } finally {
+      await tap.close();
+    }
+    value(await device.catchUp());
+    const afterUndo = await serverRows(item);
+    expect(afterUndo.map((row) => row.values.note)).toEqual(["kept"]);
+    const read = await deviceRows(device, item);
+    expect(read.held).toEqual([true]);
+    expect(read.rows).toEqual(afterUndo);
+
+    const redone = await working.undoBatch(item, "steps", redo);
+    expect(redone.status, JSON.stringify(redone.error)).toBe(200);
+    value(await device.catchUp());
+    const afterRedo = await serverRows(item);
+    expect(afterRedo).toHaveLength(2);
+    expect((await deviceRows(device, item)).rows).toEqual(afterRedo);
+  });
+
   it("reads the rows a rows.changed names without values, and removes those the server no longer holds", async () => {
     const type = await tableType();
     const item = await itemOf(type);
@@ -877,6 +932,114 @@ describe("applying rows.changed", () => {
     expect((await deviceRows(device, kept)).rows).toEqual(
       await serverRows(kept),
     );
+  });
+
+  it("empties a table whose rows a rows.changed names it cannot read, fills it again, and applies the events after it", async () => {
+    const type = await tableType({ unread: STEPS, steps: STEPS });
+    const item = await itemOf(type);
+    const later = await itemOf(type);
+    await write(item, [{ op: "put", values: { count: 1 } }], "unread");
+    const device = await hydrated([type], "ids-failed");
+    value(await device.holdTable(type, "unread"));
+    value(await device.holdTable(type, "steps"));
+    expect(
+      stateOf(value(await device.heldTables()), item, "unread"),
+    ).toMatchObject({ state: "whole", rows: 1 });
+    const long = "x".repeat(1000);
+    await write(
+      item,
+      Array.from({ length: 100 }, (_, at) => ({
+        op: "put",
+        values: { count: at, note: long },
+      })),
+      "unread",
+    );
+    await write(later, [{ op: "put", values: { count: 7 } }]);
+    await server.setFault("fail:table-rows-page=unread@always");
+    try {
+      const caught = await device.catchUp();
+      expect(caught.ok, JSON.stringify(caught)).toBe(true);
+      expect(value(caught).tables).toMatchObject({ unfilled: 1, failed: 1 });
+      const held = value(await device.heldTables());
+      expect(stateOf(held, item, "unread")).toMatchObject({
+        state: "filling",
+        rows: 0,
+      });
+      expect(stateOf(held, later, "steps")).toMatchObject({
+        state: "whole",
+        rows: 1,
+      });
+    } finally {
+      await server.clearFault();
+    }
+    value(await device.fillTables());
+    expect(
+      stateOf(value(await device.heldTables()), item, "unread"),
+    ).toMatchObject({ state: "whole", rows: 101 });
+  });
+
+  it("empties a table it cannot read again after a purge, fills it again, and goes on following", async () => {
+    const type = await tableType({ unread: NAMED, steps: STEPS });
+    const item = await itemOf(type);
+    const named = await note("purged while unreadable");
+    await write(
+      item,
+      [{ op: "put", values: { count: 1, ref: named } }],
+      "unread",
+    );
+    const narrow = await keyFor({ [type]: "read", "core.note": "read" });
+    const device = await hydratedBinding([type], "purge-unread", narrow.key);
+    value(await device.call("holdTable", type, "unread"));
+    value(await device.call("holdTable", type, "steps"));
+    const before = value(
+      await device.call<Page & { held: boolean }>("tableRows", item, "unread"),
+    );
+    expect(before.held).toBe(true);
+    expect(before.data[0]?.values.ref).toBe(named);
+    await server.setFault("fail:table-rows-page=unread@always");
+    let later = "";
+    const follow = await device.follow();
+    try {
+      await purge(named);
+      later = await itemOf(type);
+      await write(later, [{ op: "put", values: { count: 7 } }]);
+      await until(async () => {
+        const state = stateOf(
+          value(await device.call<HeldTables>("heldTables")),
+          later,
+          "steps",
+        );
+        return state?.state === "whole" && state.rows === 1;
+      }, "the follow going on past the purge");
+      expect(
+        follow.changes.some(
+          (change) =>
+            change.kind === "applied" &&
+            change.event === "rows.changed" &&
+            change.itemId === item,
+        ),
+        "rows.changed was not told for the table emptied",
+      ).toBe(true);
+      expect(
+        follow.changes.filter((change) => change.kind === "serverUnreachable"),
+      ).toEqual([]);
+      const held = stateOf(
+        value(await device.call<HeldTables>("heldTables")),
+        item,
+        "unread",
+      );
+      expect(held?.rows).toBe(0);
+      expect(held?.state).not.toBe("whole");
+    } finally {
+      expect(await follow.stop()).toBeNull();
+      await server.clearFault();
+    }
+    value(await device.call("fillTables"));
+    const page = value(
+      await device.call<Page & { held: boolean }>("tableRows", item, "unread"),
+    );
+    expect(page.held).toBe(true);
+    expect(page.data[0]?.withheld).toEqual(["ref"]);
   });
 
   it("removes the rows of a table it lets go of, and of an item that is purged", async () => {

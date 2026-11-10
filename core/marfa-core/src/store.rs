@@ -4299,7 +4299,8 @@ fn edge_brought(id: &str) -> String {
 /// its end takes out unless the walk or the replay brings it again.
 pub fn start_refill(conn: &Connection) -> Result<(), CoreError> {
     conn.execute_batch(
-        "DELETE FROM meta WHERE key LIKE 'item_listed/%' OR key LIKE 'item_early/%' OR key LIKE 'edge_brought/%';",
+        "DELETE FROM rows_reread;
+         DELETE FROM meta WHERE key LIKE 'item_listed/%' OR key LIKE 'item_early/%' OR key LIKE 'edge_brought/%';",
     )?;
     Ok(())
 }

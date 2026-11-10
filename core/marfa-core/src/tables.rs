@@ -142,15 +142,20 @@ fn wanted(
 }
 
 fn drop_table(conn: &Connection, item: &str, table: &str) -> Result<()> {
-    conn.execute(
+    for sql in [
         "DELETE FROM table_rows WHERE item_id = ?1 AND name = ?2",
-        params![item, table],
-    )?;
-    conn.execute(
+        "DELETE FROM rows_reread WHERE item_id = ?1 AND name = ?2",
         "DELETE FROM item_tables WHERE item_id = ?1 AND name = ?2",
-        params![item, table],
-    )?;
+    ] {
+        conn.execute(sql, params![item, table])?;
+    }
     Ok(())
+}
+
+/// Empties the table and leaves it to be filled again from its first page.
+fn owe_table(conn: &Connection, item: &str, table: &str) -> Result<()> {
+    empty_rows(conn, item, table)?;
+    set_state(conn, item, table, OWED, None)
 }
 
 fn empty_rows(conn: &Connection, item: &str, table: &str) -> Result<()> {
@@ -198,18 +203,31 @@ fn set_state(
 }
 
 pub(crate) fn drop_item(conn: &Connection, item: &str) -> Result<()> {
-    conn.execute("DELETE FROM table_rows WHERE item_id = ?1", [item])?;
-    conn.execute("DELETE FROM item_tables WHERE item_id = ?1", [item])?;
+    for sql in [
+        "DELETE FROM table_rows WHERE item_id = ?1",
+        "DELETE FROM rows_reread WHERE item_id = ?1",
+        "DELETE FROM item_tables WHERE item_id = ?1",
+    ] {
+        conn.execute(sql, [item])?;
+    }
     Ok(())
 }
 
-// A stream gap invalidates every held row and page cursor.
+/// Every held row and page cursor, for a copy that missed events.
 pub(crate) fn owe_again(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "DELETE FROM table_rows;
+         DELETE FROM rows_reread;
          UPDATE item_tables SET state = 'owed', cursor = NULL, rows = 0, bytes = 0
           WHERE state <> 'owed' OR cursor IS NOT NULL OR rows <> 0;",
     )?;
+    Ok(())
+}
+
+/// Only the holder of the stream may call this: a purge it is taking keeps
+/// its re-read here.
+pub(crate) fn forget_reread(conn: &Connection) -> Result<()> {
+    conn.execute("DELETE FROM rows_reread", [])?;
     Ok(())
 }
 
@@ -254,7 +272,9 @@ pub(crate) fn reconcile_all(conn: &Connection) -> Result<()> {
             .optional()?
             .is_some();
         if holds {
-            conn.execute_batch("DELETE FROM table_rows; DELETE FROM item_tables;")?;
+            conn.execute_batch(
+                "DELETE FROM table_rows; DELETE FROM rows_reread; DELETE FROM item_tables;",
+            )?;
         }
         return Ok(());
     }
@@ -292,6 +312,12 @@ pub(crate) fn reconcile_all(conn: &Connection) -> Result<()> {
                 WHERE i.id = item_tables.item_id AND w.name = item_tables.name)"
         ),
         params_from_iter(pairs.iter()),
+    )?;
+    conn.execute(
+        "DELETE FROM rows_reread WHERE NOT EXISTS (
+           SELECT 1 FROM item_tables t
+            WHERE t.item_id = rows_reread.item_id AND t.name = rows_reread.name)",
+        [],
     )?;
     conn.execute(
         &format!(
@@ -654,8 +680,7 @@ fn advance(core: &Core, context: &Context, owed: &Owed, report: &mut FillReport)
             let mut conn = core.conn()?;
             let tx = conn.transaction()?;
             if still(&tx)? {
-                empty_rows(&tx, item, table)?;
-                set_state(&tx, item, table, OWED, None)?;
+                owe_table(&tx, item, table)?;
             }
             tx.commit()?;
             return Ok(());
@@ -726,6 +751,8 @@ pub(crate) fn fill(core: &Core, context: &Context, stop: &AtomicBool) -> Result<
 pub(crate) enum Named {
     Rows(HashMap<String, Value>),
     Gone,
+    /// The server answered the read with an error about this table.
+    Failed,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -848,7 +875,7 @@ pub(crate) fn rows_to_read(
         .map(|row| row.id.clone())
         .collect();
     let mut rows = HashMap::new();
-    let held = read_named(
+    let read = read_named(
         core,
         &context.http(core.http()?),
         &event.item.id,
@@ -857,21 +884,30 @@ pub(crate) fn rows_to_read(
         &mut |id, row| {
             rows.insert(id, row);
         },
-    )?;
-    Ok(Some(if held { Named::Rows(rows) } else { Named::Gone }))
+    );
+    Ok(Some(match read {
+        Ok(true) => Named::Rows(rows),
+        Ok(false) => Named::Gone,
+        Err(error) if fails_one_table(&error) => Named::Failed,
+        Err(error) => return Err(error),
+    }))
 }
 
-/// The tables a purge's re-read found gone; the rows it read wait in `rows_reread`.
+/// The tables a purge's re-read found gone or could not read; the rows it
+/// read wait in `rows_reread`.
 pub(crate) struct Reread {
     gone: Vec<(String, String)>,
+    failed: Vec<(String, String)>,
 }
 
 /// The server withholds a purged item's id from a key that may not read every
 /// type, so the held rows naming `target` are read again, a page at a time,
 /// into `rows_reread`.
 pub(crate) fn reread_naming(core: &Core, context: &Context, target: &str) -> Result<Reread> {
-    core.conn()?.execute("DELETE FROM rows_reread", [])?;
+    forget_reread(&*core.conn()?)?;
     let mut gone: Vec<(String, String)> = Vec::new();
+    let mut failed: Vec<(String, String)> = Vec::new();
+    let mut decided: HashSet<(String, String)> = HashSet::new();
     let mut after = (String::new(), String::new(), String::new());
     let mut http = None;
     loop {
@@ -906,19 +942,26 @@ pub(crate) fn reread_naming(core: &Core, context: &Context, target: &str) -> Res
             }
         }
         for (item, table, ids) in tables {
-            if gone
-                .last()
-                .is_some_and(|(at, name)| *at == item && *name == table)
-            {
+            if decided.contains(&(item.clone(), table.clone())) {
                 continue;
             }
             let mut rows = HashMap::new();
-            let held = read_named(core, http, &item, &table, &ids, &mut |id, row| {
+            let read = read_named(core, http, &item, &table, &ids, &mut |id, row| {
                 rows.insert(id, row);
-            })?;
-            if !held {
-                gone.push((item, table));
-                continue;
+            });
+            match read {
+                Ok(true) => {}
+                Ok(false) => {
+                    decided.insert((item.clone(), table.clone()));
+                    gone.push((item, table));
+                    continue;
+                }
+                Err(error) if fails_one_table(&error) => {
+                    decided.insert((item.clone(), table.clone()));
+                    failed.push((item, table));
+                    continue;
+                }
+                Err(error) => return Err(error),
             }
             let mut conn = core.conn()?;
             let tx = conn.transaction()?;
@@ -935,7 +978,7 @@ pub(crate) fn reread_naming(core: &Core, context: &Context, target: &str) -> Res
         }
         after = last;
     }
-    Ok(Reread { gone })
+    Ok(Reread { gone, failed })
 }
 
 /// Applies a purge's re-read in the purge event's transaction, answering the
@@ -945,6 +988,13 @@ pub(crate) fn take_reread(conn: &Connection, reread: &Reread) -> Result<Vec<(Str
     for (item, table) in &reread.gone {
         if holds_rows(conn, item, table)? {
             drop_table(conn, item, table)?;
+            changed.push((item.clone(), table.clone()));
+        }
+    }
+    // Rows it holds may name the purged item as a key may no longer read it.
+    for (item, table) in &reread.failed {
+        if holds_rows(conn, item, table)? {
+            owe_table(conn, item, table)?;
             changed.push((item.clone(), table.clone()));
         }
     }
@@ -977,7 +1027,7 @@ pub(crate) fn take_reread(conn: &Connection, reread: &Reread) -> Result<Vec<(Str
         }
     }
     drop(read);
-    conn.execute("DELETE FROM rows_reread", [])?;
+    forget_reread(conn)?;
     Ok(changed)
 }
 
@@ -1003,6 +1053,10 @@ pub(crate) fn apply(conn: &Connection, event: &RowsEvent, read: Option<&Named>) 
             drop_table(conn, item, table)?;
             return Ok(true);
         }
+        Some(Named::Failed) => {
+            owe_table(conn, item, table)?;
+            return Ok(true);
+        }
         Some(Named::Rows(read)) => Some(read),
         None => None,
     };
@@ -1026,8 +1080,7 @@ pub(crate) fn apply(conn: &Connection, event: &RowsEvent, read: Option<&Named>) 
         }
         let Some(read) = read else {
             // Owed or online when the rows were read, so they were not.
-            empty_rows(conn, item, table)?;
-            set_state(conn, item, table, OWED, None)?;
+            owe_table(conn, item, table)?;
             return Ok(true);
         };
         match read.get(&row.id) {
