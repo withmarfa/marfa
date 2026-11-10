@@ -67,7 +67,7 @@ async function twoFolders(
     /** More folders' settings the server holds, for folders the fixture adds. */
     others?: FolderSettings[];
     /** Notes the server holds for the first folder when it hydrates. */
-    rows?: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
+    items?: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
   } = {},
 ): Promise<{
   a: FolderHarness;
@@ -78,7 +78,7 @@ async function twoFolders(
   const edges = new EdgeDoor();
   const a = await folderHarness(`${label}-a`, {
     settings: tagged("a"),
-    ...(options.rows === undefined ? {} : { rows: options.rows }),
+    ...(options.items === undefined ? {} : { items: options.items }),
     events: [edges.stream()],
   });
   made.push(a);
@@ -523,7 +523,7 @@ describe("a watch of every folder", () => {
   it("takes a folder up again once the directory it was added at returns after an empty one stood in its place", async () => {
     const seed = "01a00000-0000-7000-8000-00000000e2a1";
     const { a, b } = await twoFolders("every-root-returns", {
-      rows: {
+      items: {
         "core.note": [
           {
             item: { id: seed, properties: { title: "Seed", body: "seed\n" } },

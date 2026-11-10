@@ -4320,7 +4320,7 @@ describe("what a folder takes", () => {
         include,
         first_placement: { "core.note": ".notes/.hidden" },
       },
-      rows: {
+      items: {
         "core.note": [
           { item: { id, properties: { title: "Placed", body: "b\n" } } },
         ],
@@ -6197,14 +6197,14 @@ describe("a folder's first sync", () => {
   async function waiting(
     label: string,
     files: Record<string, string> = {},
-    rows: typeof remote | null = remote,
+    items: typeof remote | null = remote,
   ): Promise<FolderHarness> {
     // The add reads the folder for its plan, which hydrates the copy.
     const made = await folderHarness(label, {
       confirm: false,
       hydrate: false,
       files,
-      ...(rows === null ? {} : { rows }),
+      ...(items === null ? {} : { items }),
     });
     scriptFolderWrites(made);
     return made;

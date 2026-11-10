@@ -207,7 +207,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
 
   /**
    * Two folders on one Mac: one server, one registry, each folder with its
-   * own settings, directory and store. The first holds `rows`; the item
+   * own settings, directory and store. The first holds `items`; the item
    * doors and the stream are the shared server's. `attachments` are
    * `attached-to` edges the server holds already, drawn on their sources.
    */

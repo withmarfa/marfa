@@ -227,7 +227,7 @@ describe("the size of an item or edge an archive carries", () => {
       expect(refused.error?.error.code).toBe("request_too_large");
       expect(refused.error?.error.details).toMatchObject({
         [idField]: kind === "edge" ? over.edge : over.second,
-        row,
+        line: row,
         field,
         limit_bytes: SMALL_CAP,
       });

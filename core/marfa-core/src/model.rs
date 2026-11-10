@@ -1402,7 +1402,7 @@ pub struct QueuedWrite {
     pub idempotency_key: String,
     /// Queue ids. A refusal of one refuses this one too.
     pub depends_on: Vec<String>,
-    /// The queue id of the earlier write to the same row or edge. Any answer
+    /// The queue id of the earlier write to the same item or edge. Any answer
     /// to it releases this one; unlike `depends_on`, its refusal refuses
     /// nothing.
     pub follows: Option<String>,
