@@ -578,24 +578,45 @@ describe("announcing rows", () => {
     }
   });
 
-  it("sends no rows.changed on a copy stream", async () => {
-    const item = await itemOf(await tableType());
-    const copy = await tapStream(apiUrl, apiKey, {
-      query: [
-        ["edges", "all"],
-        ["copy", "1"],
-      ],
-    });
-    const plain = await tapStream(apiUrl, apiKey);
+  it("sends rows.changed on a copy stream, for an item the source filter leaves out too", async () => {
+    const type = await tableType();
+    const item = await itemOf(type);
+    counter += 1;
+    const minted = await client.createKey({
+      label: `rows-events-${counter}`,
+      source: `${ctx.source}-k${counter}`,
+      type_permissions: { [type]: "read", "core.note": "read" },
+      enforcement_override: {
+        source_filter: { types: [type], sources: [`${ctx.source}-elsewhere`] },
+      },
+    } as never);
+    expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+    trackKey(ctx, minted.data.id);
+    const filtered = minted.data.key;
+    const streams = [
+      ["copy", apiKey],
+      ["hidden copy", filtered],
+      ["hidden plain", filtered],
+    ] as const;
+    const taps = await Promise.all(
+      streams.map(([name, key]) =>
+        tapStream(apiUrl, key, {
+          query: name.endsWith("plain")
+            ? []
+            : [
+                ["edges", "all"],
+                ["copy", "1"],
+              ],
+        }),
+      ),
+    );
     try {
-      await copy.until(
-        (seen) => seen.some((e) => e.event === "stream_live"),
-        "the copy stream going live",
-      );
-      await plain.until(
-        (seen) => seen.some((e) => e.event === "stream_live"),
-        "the plain stream going live",
-      );
+      for (const tap of taps) {
+        await tap.until(
+          (seen) => seen.some((e) => e.event === "stream_live"),
+          "the stream going live",
+        );
+      }
       await client.writeRows(item, "steps", {
         operations: [{ op: "put", values: { count: 1 } }],
       });
@@ -604,23 +625,28 @@ describe("announcing rows", () => {
         properties: { title: "after" },
       } as never);
       trackItem(ctx, note.data.item.id);
-      await plain.until(
-        (seen) => seen.some(rowsFor(item)),
-        "the rows frame on the plain stream",
-      );
-      const seen = await copy.until(
-        (got) =>
-          got.some(
-            (e) =>
-              (e.data as { item?: { id?: string } }).item?.id ===
-              note.data.item.id,
+      const [copy, hiddenCopy, hiddenPlain] = await Promise.all(
+        taps.map((tap) =>
+          tap.until(
+            (got) =>
+              got.some(
+                (e) =>
+                  (e.data as { item?: { id?: string } }).item?.id ===
+                  note.data.item.id,
+              ),
+            "the note after the batch",
           ),
-        "the note after the batch on the copy stream",
+        ),
       );
-      expect(seen.filter((e) => e.event === "rows.changed")).toEqual([]);
+      expect(copy!.filter(rowsFor(item))).toHaveLength(1);
+      expect(hiddenCopy!.filter(rowsFor(item))).toHaveLength(1);
+      // The witness that the filter leaves the item out of the key's plain stream.
+      expect(hiddenPlain!.filter(rowsFor(item))).toEqual([]);
+      const frame = copy!.find(rowsFor(item))!.data as RowsFrame;
+      expect(frame.item.id).toBe(item);
+      expect(frame.table).toBe("steps");
     } finally {
-      await copy.close();
-      await plain.close();
+      await Promise.all(taps.map((tap) => tap.close()));
     }
   });
 

@@ -3745,6 +3745,7 @@ pub fn replace_catalog(
         meta_set(conn, META_CATALOG_VERSION, &next.to_string())?;
         // Which types are files is the catalog's to say.
         reconcile_attachments(conn)?;
+        crate::tables::reconcile_all(conn)?;
         Ok(
             if types == CatalogChange::IconsOnly && !edge_types && !local {
                 CatalogChange::IconsOnly
@@ -4204,6 +4205,8 @@ pub fn clear_slice(conn: &Connection) -> Result<(), CoreError> {
          DELETE FROM items_fts;
          DELETE FROM beneath;
          DELETE FROM beneath_reach;
+         DELETE FROM table_rows;
+         DELETE FROM item_tables;
          DELETE FROM meta WHERE key LIKE 'item_listed/%' OR key LIKE 'item_early/%' OR key LIKE 'edge_brought/%';",
     )?;
     Ok(())
@@ -4856,6 +4859,7 @@ fn remove_item(
         changed |= forget_edge(conn, &edge)?;
     }
     let removed = conn.execute("DELETE FROM items WHERE id = ?1", [id])? > 0;
+    crate::tables::drop_item(conn, id)?;
     attachments_changed(conn, &[id], before)?;
     Ok(removed || changed)
 }

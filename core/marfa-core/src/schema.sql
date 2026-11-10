@@ -110,6 +110,40 @@ CREATE TABLE IF NOT EXISTS pins (
   item_id TEXT PRIMARY KEY
 ) WITHOUT ROWID;
 
+-- The tables an app holds, by a type as a slice names one and the table's name.
+CREATE TABLE IF NOT EXISTS table_choices (
+  type TEXT NOT NULL,
+  name TEXT NOT NULL,
+  PRIMARY KEY (type, name)
+) WITHOUT ROWID;
+
+-- One for each table a choice names of an item the copy holds. `owed` holds
+-- no row and waits for the server's size; `filling` sends `cursor` next;
+-- `online` is past the cap and holds no row.
+CREATE TABLE IF NOT EXISTS item_tables (
+  item_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('owed', 'filling', 'whole', 'online')),
+  cursor TEXT,
+  -- What `table_rows` holds of it, so the cap is judged without a scan.
+  rows INTEGER NOT NULL DEFAULT 0,
+  bytes INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (item_id, name)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS item_tables_state ON item_tables (state);
+
+-- `body` is the row's values as the server printed them; `withheld` the
+-- columns the server held back from this key, as a JSON array.
+CREATE TABLE IF NOT EXISTS table_rows (
+  item_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  id TEXT NOT NULL,
+  body TEXT NOT NULL,
+  withheld TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (item_id, name, id)
+) WITHOUT ROWID;
+
 -- Keyed by rowid = items.seq: an FTS5 column cannot be indexed for a lookup,
 -- so deleting by an item_id column would scan the whole index per write.
 -- The columns and the tokenizer are the server's, so a query matches the same

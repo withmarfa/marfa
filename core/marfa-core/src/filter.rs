@@ -219,6 +219,65 @@ fn condition_clause(
     })
 }
 
+/// A row filter of `marfa_rules::filter::parse_rows` over `table_rows r`, as
+/// the server compiles it over its own rows.
+pub(crate) fn row_clause(expression: &Expression, values: &mut Vec<Value>) -> Result<String> {
+    let joiner = if expression.any { " OR " } else { " AND " };
+    let parts = expression
+        .conditions
+        .iter()
+        .map(|condition| {
+            Ok(match &condition.term {
+                Term::System { column, compare } => compared(
+                    &format!("r.{column}"),
+                    *compare,
+                    &system_literal(column, *compare, &condition.value)?,
+                    values,
+                ),
+                Term::Property { name, op } => {
+                    let path = Value::String(format!("$.{name}"));
+                    let extract = "json_extract(r.body, ?)";
+                    values.push(path.clone());
+                    match op {
+                        Op::Compare(compare @ (Compare::Eq | Compare::Neq))
+                            if matches!(condition.value, Literal::Number(_)) =>
+                        {
+                            values.extend([path.clone(), path]);
+                            compared(
+                                &format!(
+                                    "CASE WHEN json_type(r.body, ?) IN ('integer', 'real') THEN CAST({extract} AS REAL) ELSE {extract} END"
+                                ),
+                                *compare,
+                                &condition.value,
+                                values,
+                            )
+                        }
+                        Op::Compare(
+                            compare @ (Compare::Gt | Compare::Gte | Compare::Lt | Compare::Lte),
+                        ) if matches!(condition.value, Literal::Number(_)) => compared(
+                            &format!("CAST({extract} AS REAL)"),
+                            *compare,
+                            &condition.value,
+                            values,
+                        ),
+                        Op::Compare(compare) => {
+                            compared(extract, *compare, &condition.value, values)
+                        }
+                        Op::Exists => format!("{extract} IS NOT NULL"),
+                        Op::NotExists => format!("{extract} IS NULL"),
+                    }
+                }
+                _ => {
+                    return Err(CoreError::Invalid(
+                        "filter: a row filter names columns, id and updated_at".into(),
+                    ));
+                }
+            })
+        })
+        .collect::<Result<Vec<String>>>()?;
+    Ok(format!("({})", parts.join(joiner)))
+}
+
 /// As the server's driver binds it: every number, a boolean included, goes in
 /// as a REAL. It matters against a text column, whose affinity turns `5` into
 /// `'5.0'` rather than `'5'`.

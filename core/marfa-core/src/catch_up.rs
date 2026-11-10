@@ -412,10 +412,25 @@ fn take(
         Context::capture_build(&conn)?
     };
     let entering = entering_row(core, &operation, catalog, slice, kind, payload)?;
+    let read_rows = match &payload.rows {
+        Some(rows) => crate::tables::rows_to_read(core, rows)?,
+        None => None,
+    };
     let mut conn = core.conn()?;
     let tx = conn.transaction()?;
     operation.check(&tx)?;
     reach::cursor(id).ok_or_else(reach::invalid)?;
+    if let Some(rows) = &payload.rows {
+        let applied = crate::tables::apply(&tx, rows, read_rows.as_ref())?;
+        store::meta_set(&tx, store::META_EVENT_CURSOR, id)?;
+        tx.commit()?;
+        return Ok(applied.then(|| Change {
+            event: ChangeEvent::Applied(kind.to_string()),
+            item_id: Some(rows.item.id.clone()),
+            edge_id: None,
+            cursor: id.to_string(),
+        }));
+    }
     // Judged outside the transaction: a row held or pinned since is taken
     // as any held row is, and judged again once taken.
     let outside = entering.outside
@@ -439,6 +454,9 @@ fn take(
         for edge in &entering.edges {
             store::take_server_edge(&tx, edge)?;
         }
+    }
+    if let Some(item) = &payload.item {
+        crate::tables::reconcile_item(&tx, &item.id)?;
     }
     // The last id applied, never the highest seen: where an event is not
     // applied, a high-water mark would step over it forever.
@@ -534,6 +552,7 @@ pub(crate) fn catch_up(
     )
     .or_else(read_only::contained)
     .map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))?;
+    report.tables = crate::tables::fill(core, stop)?;
     Ok(report)
 }
 
@@ -573,6 +592,7 @@ pub(crate) fn replay_build(
         read_only_held: 0,
         cursor: cursor.clone(),
         catalog_changed: false,
+        tables: crate::tables::FillReport::default(),
     };
     let mut reached_head = false;
     let mut head: Option<u64> = None;
@@ -1383,13 +1403,22 @@ fn read_stream(
     let mut greatest = reach::cursor(&report.cursor).unwrap_or(0);
     // A settle a stop or a failure cut short is owed from before this stream.
     let mut unsettled = 1;
+    {
+        let mut conn = core.conn()?;
+        let tx = conn.transaction()?;
+        crate::tables::reconcile_all(&tx)?;
+        tx.commit()?;
+    }
+    let mut filling = crate::tables::owes(&*core.conn()?)?;
+    let mut tried = HashSet::new();
     loop {
         if stop.load(Ordering::Relaxed) {
             return Ok(Ended::Stopped);
         }
         recovery.tell(&report.cursor, on_change);
         look.tell(report, on_change)?;
-        let frame = match frames.recv_timeout(pace.stop_poll) {
+        let wait = if filling { Duration::ZERO } else { pace.stop_poll };
+        let frame = match frames.recv_timeout(wait) {
             Ok(Ok(frame)) => frame,
             Ok(Err(error)) if error.kind() == io::ErrorKind::InvalidData => {
                 return Err(CoreError::Decoding(error.to_string()));
@@ -1399,6 +1428,18 @@ fn read_stream(
                 if now().saturating_duration_since(heard) > pace.silence =>
             {
                 return Ok(Ended::Over);
+            }
+            Err(RecvTimeoutError::Timeout) if filling => {
+                match crate::tables::fill_step(core, &mut tried) {
+                    Ok(more) => filling = more,
+                    Err(error) if error.is_environmental() => {
+                        report.failed_opens += 1;
+                        report.last_failure = Some(error.to_string());
+                        return Ok(Ended::Over);
+                    }
+                    Err(error) => return Err(error),
+                }
+                continue;
             }
             Err(RecvTimeoutError::Timeout) if unsettled > 0 => {
                 unsettled = 0;
@@ -1509,6 +1550,7 @@ fn read_stream(
                     None => report.skipped += 1,
                 }
                 report.cursor = id;
+                filling = filling || crate::tables::owes(&*core.conn()?)?;
                 unsettled += usize::from(may_owe(kind));
                 if unsettled >= SETTLE_EVERY {
                     unsettled = 0;

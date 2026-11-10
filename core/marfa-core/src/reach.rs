@@ -35,6 +35,19 @@ pub(crate) fn event_payload(
     id: Option<&str>,
     data: &str,
 ) -> Result<crate::wire::EventPayload> {
+    if name == Some(crate::tables::ROWS_CHANGED) {
+        let rows: crate::wire::RowsEvent = serde_json::from_str(data).map_err(|error| {
+            match serde_json::from_str::<serde_json::Value>(data) {
+                Err(_) => crate::error::unreadable("an event the stream sent", &error),
+                Ok(_) => invalid(),
+            }
+        })?;
+        return Ok(crate::wire::EventPayload {
+            event_type: crate::tables::ROWS_CHANGED.into(),
+            rows: Some(rows),
+            ..Default::default()
+        });
+    }
     // Data that does not parse as JSON says nothing against the copy's read
     // reach, and reading it again fails the same way. JSON that is not an
     // event is a frame the copy cannot accept, whatever field fails first.
@@ -274,6 +287,7 @@ impl Before {
 
 pub(crate) fn expire(conn: &Connection) -> Result<()> {
     advance_generation(conn)?;
+    crate::tables::owe_again(conn)?;
     store::meta_delete(conn, store::META_EVENT_CURSOR)?;
     store::meta_delete(conn, store::META_HYDRATE_STATE)?;
     store::meta_delete(conn, store::META_ITEMS_EXPECTED)?;

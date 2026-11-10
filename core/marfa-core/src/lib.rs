@@ -73,6 +73,7 @@ mod sse;
 #[cfg(test)]
 mod stop_tests;
 mod store;
+mod tables;
 mod telemetry;
 #[cfg(all(test, feature = "telemetry"))]
 mod telemetry_tests;
@@ -104,6 +105,10 @@ pub use body::{
     BodyLinks, BodyName, BodyTarget, LinkCandidates, LinkPart, LinkParts, LinkState, link_parts,
 };
 pub use catalog::ServerCatalog;
+pub use tables::{
+    BYTE_CAP as TABLE_BYTE_CAP, FillReport, HeldTable, HeldTables, ROW_CAP as TABLE_ROW_CAP,
+    RowsAsked, TableChoice, TableHold,
+};
 pub use catch_up::{Change, ChangeEvent, FollowReport};
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::{
@@ -1089,6 +1094,68 @@ impl Core {
         let pinned = unpin_held(&tx, id)?;
         tx.commit()?;
         Ok(pinned)
+    }
+
+    /// Holds the table `table` of each item the copy holds whose type
+    /// `type_id` names, as a slice's type names one, and fills it now unless
+    /// a catch-up, follow or hydration holds the stream, which fills it.
+    pub fn hold_table(&self, type_id: &str, table: &str) -> Result<TableHold> {
+        self.hold_table_until(type_id, table, &NEVER_STOPPED)
+    }
+
+    pub fn hold_table_until(
+        &self,
+        type_id: &str,
+        table: &str,
+        stop: &AtomicBool,
+    ) -> Result<TableHold> {
+        self.lock.refuse_unless_writer()?;
+        let was_held = tables::choose(&mut *self.conn()?, type_id, table)?;
+        let fill = match self.try_claim_stream(Mover::CatchUp) {
+            Ok(_streaming) if store::hydration_complete(&*self.conn()?)? => {
+                Some(tables::fill(self, stop)?)
+            }
+            _ => None,
+        };
+        Ok(TableHold {
+            type_id: type_id.into(),
+            table: table.into(),
+            was_held,
+            fill,
+        })
+    }
+
+    /// Removes every row the copy holds of the tables `type_id` and `table`
+    /// named; answers whether they were held.
+    pub fn let_go_table(&self, type_id: &str, table: &str) -> Result<bool> {
+        self.lock.refuse_unless_writer()?;
+        tables::let_go(&mut *self.conn()?, type_id, table)
+    }
+
+    pub fn held_tables(&self) -> Result<HeldTables> {
+        tables::held(&*self.conn()?)
+    }
+
+    /// Fills each table the copy holds that is not whole.
+    pub fn fill_tables(&self, stop: &AtomicBool) -> Result<FillReport> {
+        self.lock.refuse_unless_writer()?;
+        let _streaming = self.claim_stream(Mover::CatchUp)?;
+        store::refuse_unless_hydrated(&*self.conn()?)?;
+        tables::fill(self, stop)
+    }
+
+    /// `GET /items/{id}/tables/{table}/rows`, answered from the copy where it
+    /// holds the table whole, with `held` saying which.
+    pub fn table_rows(&self, item: &str, table: &str, asked: &RowsAsked) -> Result<Value> {
+        tables::rows(self, item, table, asked)
+    }
+
+    pub fn table_row(&self, item: &str, table: &str, row: &str) -> Result<Value> {
+        tables::row(self, item, table, row)
+    }
+
+    pub fn table_totals(&self, item: &str, table: &str, filter: Option<&str>) -> Result<Value> {
+        tables::totals(self, item, table, filter)
     }
 
     /// A failure does not say whether the catalog changed before it;

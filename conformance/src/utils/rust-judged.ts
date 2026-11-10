@@ -449,6 +449,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/device/stop.test.ts",
   "src/suites/device/stuck-write.test.ts",
   "src/suites/device/synced-at.test.ts",
+  "src/suites/device/tables-live.test.ts",
   "src/suites/device/time-comparisons-live.test.ts",
   "src/suites/device/types-scaffold-live.test.ts",
   "src/suites/device/types-scaffold.test.ts",
