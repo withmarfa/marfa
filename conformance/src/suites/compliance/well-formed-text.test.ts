@@ -637,7 +637,7 @@ describe("a restore", () => {
         body: JSON.stringify({
           ...JSON.parse(manifest),
           edge_count: 1,
-          row_count: 0,
+          row_count: where === "row value" ? 1 : 0,
           ...(where === "manifest"
             ? {
                 blobs: {
@@ -664,7 +664,18 @@ describe("a restore", () => {
           .join("\n") + "\n",
       ),
       lineFile("edges", `${JSON.stringify(edgeLine)}\n`),
-      lineFile("rows", ""),
+      lineFile(
+        "rows",
+        where === "row value"
+          ? `${JSON.stringify({
+              item_id: ids.first,
+              table: "ledger",
+              id: ids.row,
+              values: { note: `a ${text}` },
+              updated_at: "2026-01-01T00:00:00.000Z",
+            })}\n`
+          : "",
+      ),
     ]);
   }
 
@@ -673,6 +684,7 @@ describe("a restore", () => {
     second: string;
     edge: string;
     type: string;
+    row: string;
   }
 
   it.each([
@@ -683,6 +695,7 @@ describe("a restore", () => {
     ["edge property", "/edge/properties/label", "edge"],
     ["edge lending list", "/lending_blobs/0", "edge"],
     ["type", "/type/label", "type"],
+    ["row value", "/values/note", "row"],
     ["manifest", "/blobs/", "manifest.json"],
   ] as const)(
     "refuses a %s that holds a surrogate escape with no partner, naming the line and where, and takes a pair there",
@@ -694,6 +707,7 @@ describe("a restore", () => {
         second: uuidv7(),
         edge: uuidv7(),
         type: `user.wellformed${hex}`,
+        row: uuidv7(),
       };
       trackItem(ctx, ids.first);
       trackItem(ctx, ids.second);

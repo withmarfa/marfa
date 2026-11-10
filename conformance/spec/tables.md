@@ -876,7 +876,7 @@ When `POST /restore` writes a row, the server MUST NOT refuse it because its ite
 
 ### `tables/restore-rows-summary`
 
-When `POST /restore` writes rows, the server MUST answer each table that holds them on `GET /items/{id}/tables` with the `row_count` and `bytes` of the rows written.
+When `POST /restore` writes rows to a table its item's type declares, the server MUST answer that table on `GET /items/{id}/tables` with the `row_count` and `bytes` of the rows written.
 
 **Tests:** `compliance/table-rows-archive.test.ts › restores each row with its values, refs and updated_at, and the tables' row counts and bytes`.
 
