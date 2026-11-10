@@ -126,7 +126,7 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
             instance::raise_reach(unit.tx())?;
             let after = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
             items::rekey_changed(unit.tx(), &catalog.rules, &after.rules, std::slice::from_ref(&id))?;
-            tables::reorder_types(unit.tx(), &catalog, &after, std::slice::from_ref(&id), &unit.at)?;
+            tables::rekey_types(unit.tx(), &catalog, &after, std::slice::from_ref(&id), &unit.at)?;
             items::relink_changed(unit.tx(), &catalog, &after, std::slice::from_ref(&id))?;
             items::drop_tombstones(unit.tx(), &id)?;
             items::reindex_changed(unit.tx(), &catalog.rules, &after.rules)?;
@@ -323,7 +323,7 @@ async fn replacing(
             }
             let after = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
             items::rekey_changed(unit.tx(), &catalog.rules, &after.rules, &family)?;
-            tables::reorder_types(unit.tx(), &catalog, &after, &family, &unit.at)?;
+            tables::rekey_types(unit.tx(), &catalog, &after, &family, &unit.at)?;
             items::relink_changed(unit.tx(), &catalog, &after, std::slice::from_ref(&id))?;
             items::reindex_changed(unit.tx(), &catalog.rules, &after.rules)?;
             unit.audit("type", &id, None)?;
@@ -426,7 +426,7 @@ pub async fn delete(app: &App, caller: &Caller, id: String, force: bool) -> Resu
         instance::raise_reach(unit.tx())?;
         let after = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
         items::rekey_changed(unit.tx(), &catalog.rules, &after.rules, std::slice::from_ref(&id))?;
-        tables::reorder_types(unit.tx(), &catalog, &after, std::slice::from_ref(&id), &unit.at)?;
+        tables::rekey_types(unit.tx(), &catalog, &after, std::slice::from_ref(&id), &unit.at)?;
         items::relink_changed(unit.tx(), &catalog, &after, std::slice::from_ref(&id))?;
         items::reindex_changed(unit.tx(), &catalog.rules, &after.rules)?;
         unit.audit("type", &id, None)?;
@@ -647,7 +647,7 @@ pub fn write_restored(
     instance::raise_reach(tx)?;
     let after = catalog::current(cache, tx, Snapshot::Pending)?;
     items::rekey_changed(tx, &before.rules, &after.rules, &ids)?;
-    tables::reorder_types(tx, before, &after, &ids, &unit.at)?;
+    tables::rekey_types(tx, before, &after, &ids, &unit.at)?;
     items::relink_changed(tx, before, &after, &ids)?;
     for id in &ids {
         items::drop_tombstones(tx, id)?;

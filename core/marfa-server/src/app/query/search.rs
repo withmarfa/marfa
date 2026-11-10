@@ -1,5 +1,5 @@
-//! `GET /search`. The match, the caller's reach and the row's narrowing are one
-//! query, so a row outside the reach is never counted, ranked or answered.
+//! `GET /search`, over items and table rows. The match, the caller's reach and the item's
+//! narrowing are one query, so a hit outside the reach is never counted, ranked or answered.
 
 use std::collections::HashMap;
 
@@ -15,8 +15,8 @@ use crate::app::access::Caller;
 use crate::app::catalog::Catalog;
 use crate::app::items::{self, Many, Reader, reading};
 use crate::app::refusal::Result;
+use crate::app::tables;
 use marfa_rules::query::SortDirection;
-use rusqlite::OptionalExtension;
 
 const DEPTH: i64 = 10_000;
 const SNIPPET_TOKENS: i64 = 32;
@@ -31,6 +31,47 @@ pub struct Search {
     pub include: Vec<String>,
 }
 
+/// One source of hits: its matches joined to the item each answers, and what a hit names.
+struct Source {
+    fts: &'static str,
+    from: &'static str,
+    named: &'static str,
+}
+
+const SOURCES: [Source; 2] = [
+    Source {
+        fts: "items_fts",
+        from: "items_fts CROSS JOIN items i ON i.seq = items_fts.rowid",
+        named: "0 AS hit, i.seq AS seq, NULL AS tname, NULL AS rid, NULL AS entry, NULL AS columns",
+    },
+    Source {
+        fts: "rows_fts",
+        from: tables::search::HITS_FROM,
+        named: "1 AS hit, i.seq AS seq, s.table_name AS tname, m.id AS rid, m.seq AS entry, \
+             s.searched_by AS columns",
+    },
+];
+
+fn matched(
+    sql: &mut Sql,
+    source: &Source,
+    reach: &Reach,
+    ask: &Ask,
+    catalog: &Catalog,
+    expression: &str,
+) -> Result<()> {
+    sql.push(&format!(
+        " FROM {} WHERE {} MATCH ",
+        source.from, source.fts
+    ));
+    sql.bind(expression.to_string());
+    sql.push(" AND ");
+    sql.append(&selection(reach, ask, catalog, false)?);
+    Ok(())
+}
+
+/// The hits of items and of rows in one ranking: by the order's keys, then the item's id, the
+/// item's own hit before its rows, and its rows by table and id.
 pub(super) fn search_sql(
     reach: &Reach,
     ask: &Ask,
@@ -40,17 +81,20 @@ pub(super) fn search_sql(
     take: i64,
     offset: i64,
 ) -> Result<Sql> {
-    let mut sql = Sql::new("SELECT i.seq, bm25(items_fts), ");
-    order.columns(&mut sql);
-    sql.push(
-        " FROM items_fts CROSS JOIN items i ON i.seq = items_fts.rowid \
-         WHERE items_fts MATCH ",
-    );
-    sql.bind(expression.to_string());
-    sql.push(" AND ");
-    sql.append(&selection(reach, ask, catalog, false)?);
-    order.order_by(&mut sql);
-    sql.push(" LIMIT ");
+    let mut sql = Sql::new("SELECT hit, seq, rank, tname, rid, entry, columns FROM (");
+    for (at, source) in SOURCES.iter().enumerate() {
+        if at > 0 {
+            sql.push(" UNION ALL ");
+        }
+        let rank = format!("bm25({})", source.fts);
+        sql.push(&format!("SELECT {}, {rank} AS rank, ", source.named));
+        order.ranked_by(&rank).columns(&mut sql);
+        sql.push(" AS id");
+        matched(&mut sql, source, reach, ask, catalog, expression)?;
+    }
+    sql.push(")");
+    order.order_by_named(&mut sql, "id");
+    sql.push(", hit, tname, rid LIMIT ");
     sql.bind(take);
     sql.push(" OFFSET ");
     sql.bind(offset);
@@ -63,18 +107,17 @@ fn best_rank(
     ask: &Ask,
     expression: &str,
 ) -> Result<Option<f64>> {
-    let mut sql = Sql::new(
-        "SELECT bm25(items_fts) FROM items_fts CROSS JOIN items i \
-         ON i.seq = items_fts.rowid WHERE items_fts MATCH ",
-    );
-    sql.bind(expression.to_string());
-    sql.push(" AND ");
-    sql.append(&selection(reach, ask, &read.catalog, false)?);
-    sql.push(" ORDER BY bm25(items_fts) LIMIT 1");
+    let mut sql = Sql::new("SELECT min(rank) FROM (");
+    for (at, source) in SOURCES.iter().enumerate() {
+        if at > 0 {
+            sql.push(" UNION ALL ");
+        }
+        sql.push(&format!("SELECT bm25({}) AS rank", source.fts));
+        matched(&mut sql, source, reach, ask, &read.catalog, expression)?;
+    }
+    sql.push(")");
     let mut statement = read.tx.prepare_cached(&sql.text)?;
-    Ok(statement
-        .query_row(rusqlite::params_from_iter(&sql.values), |row| row.get(0))
-        .optional()?)
+    Ok(statement.query_row(rusqlite::params_from_iter(&sql.values), |row| row.get(0))?)
 }
 
 /// A hit's score as a share of the best hit's. `bm25` weighs a word by how often it occurs in the
@@ -88,6 +131,9 @@ fn relevance(rank: f64, top: Option<f64>) -> f64 {
 }
 
 fn snippets(read: &Reader<'_, '_>, expression: &str, seqs: &[i64]) -> Result<HashMap<i64, String>> {
+    if seqs.is_empty() {
+        return Ok(HashMap::new());
+    }
     let mut sql = Sql::new("SELECT rowid, snippet(items_fts, -1, ");
     sql.bind(MARK_OPEN.to_string());
     sql.push(", ");
@@ -109,6 +155,64 @@ fn snippets(read: &Reader<'_, '_>, expression: &str, seqs: &[i64]) -> Result<Has
         Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
     })?;
     Ok(found.collect::<rusqlite::Result<_>>()?)
+}
+
+/// A hit as the ranking found it.
+struct Hit {
+    seq: i64,
+    rank: f64,
+    row: Option<RowHit>,
+}
+
+struct RowHit {
+    table: String,
+    id: String,
+    entry: i64,
+    columns: String,
+}
+
+fn hit_of(row: &rusqlite::Row<'_>) -> rusqlite::Result<Hit> {
+    let named = match row.get::<_, i64>(0)? {
+        0 => None,
+        _ => Some(RowHit {
+            table: row.get(3)?,
+            id: row.get(4)?,
+            entry: row.get(5)?,
+            columns: row.get(6)?,
+        }),
+    };
+    Ok(Hit {
+        seq: row.get(1)?,
+        rank: row.get(2)?,
+        row: named,
+    })
+}
+
+fn excerpt_field(raw: Option<&str>) -> String {
+    raw.map(snippet_html)
+        .filter(|html| !html.is_empty())
+        .map(|html| format!(",\"snippet_html\":{}", Json::from(html)))
+        .unwrap_or_default()
+}
+
+/// The `snippet_html` and `row` of a row hit.
+fn row_fields(read: &Reader<'_, '_>, expression: &str, row: &RowHit) -> Result<String> {
+    let excerpt =
+        tables::search::excerpt(read.tx, row.entry, &row.columns, expression, SNIPPET_TOKENS)?;
+    let column = match &excerpt {
+        Some((column, _)) => column.clone(),
+        None => row
+            .columns
+            .split(',')
+            .next()
+            .unwrap_or_default()
+            .to_string(),
+    };
+    let named = json!({ "table": row.table, "id": row.id, "column": column });
+    Ok(format!(
+        "{},\"row\":{named}",
+        excerpt_field(excerpt.as_ref().map(|(_, raw)| raw.as_str()))
+    ))
 }
 
 fn offset_of(secret: &Secret, scope: &str, cursor: Option<&str>) -> Result<i64> {
@@ -150,45 +254,46 @@ fn page(read: &Reader<'_, '_>, secret: &Secret, search: &Search) -> Result<Strin
         offset,
     )?;
     let mut statement = read.tx.prepare_cached(&sql.text)?;
-    let ranked: Vec<(i64, f64)> = statement
-        .query_map(rusqlite::params_from_iter(&sql.values), |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })?
+    let ranked: Vec<Hit> = statement
+        .query_map(rusqlite::params_from_iter(&sql.values), hit_of)?
         .collect::<rusqlite::Result<_>>()?;
     let best_first = search.sort.field.is_none()
         && !matches!(search.sort.direction, Some(SortDirection::Ascending));
     let top = match ranked.first() {
-        Some((_, rank)) if best_first && offset == 0 => Some(*rank),
+        Some(hit) if best_first && offset == 0 => Some(hit.rank),
         Some(_) => best_rank(read, &reach, &search.ask, &expression)?,
         None => None,
     };
     let more = ranked.len() as i64 > search.limit;
     let next = offset + search.limit;
     let shown = &ranked[..ranked.len().min(search.limit as usize)];
-    let seqs: Vec<i64> = shown.iter().map(|(seq, _)| *seq).collect();
+    let seqs: Vec<i64> = shown.iter().map(|hit| hit.seq).collect();
+    let own: Vec<i64> = shown
+        .iter()
+        .filter(|hit| hit.row.is_none())
+        .map(|hit| hit.seq)
+        .collect();
     read.hydrating();
-    let excerpts = snippets(read, &expression, &seqs)?;
+    let excerpts = snippets(read, &expression, &own)?;
     let include = Many {
         metadata: true,
         ..Many::default()
     };
-    let data: Vec<String> = items::listed_rows(read, &seqs, &include)?
+    let mut data = Vec::with_capacity(shown.len());
+    for ((item, metadata), hit) in items::listed_rows(read, &seqs, &include)?
         .into_iter()
         .zip(shown)
-        .map(|((item, metadata), (seq, rank))| {
-            let score = Json::from(relevance(*rank, top)).to_string();
-            let excerpt = excerpts
-                .get(seq)
-                .map(|raw| snippet_html(raw))
-                .filter(|html| !html.is_empty())
-                .map(|html| format!(",\"snippet_html\":{}", Json::from(html)))
-                .unwrap_or_default();
-            format!(
-                "{{\"item\":{item},\"metadata\":{},\"relevance_score\":{score}{excerpt}}}",
-                metadata.unwrap_or_else(|| "null".to_string())
-            )
-        })
-        .collect();
+    {
+        let score = Json::from(relevance(hit.rank, top)).to_string();
+        let tail = match &hit.row {
+            Some(row) => row_fields(read, &expression, row)?,
+            None => excerpt_field(excerpts.get(&hit.seq).map(String::as_str)),
+        };
+        data.push(format!(
+            "{{\"item\":{item},\"metadata\":{},\"relevance_score\":{score}{tail}}}",
+            metadata.unwrap_or_else(|| "null".to_string())
+        ));
+    }
     let next_cursor = if more && next < DEPTH {
         Json::from(secret.issue(&scope, &json!(next))?).to_string()
     } else {

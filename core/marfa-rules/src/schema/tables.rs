@@ -12,6 +12,8 @@ use crate::grammar;
 
 pub const MAX_TABLES_PER_TYPE: usize = 32;
 pub const MAX_COLUMNS_PER_TABLE: usize = 64;
+/// Each searchable column is a column of the server's row index.
+pub const MAX_SEARCHABLE_COLUMNS: usize = 8;
 /// The kind of a column that holds an item's id.
 pub const ITEM_KIND: &str = "item";
 /// How a column's values total: `count` is the rows that hold a value.
@@ -74,11 +76,41 @@ pub fn validate_columns(
             "A table is narrow. Split it, or move what does not vary by row into a field.",
         ));
     }
+    let searchable = columns
+        .values()
+        .filter(|definition| definition.get("searchable") == Some(&Value::Bool(true)))
+        .count();
+    if searchable > MAX_SEARCHABLE_COLUMNS {
+        errors.push(Issue::new(
+            path,
+            format!("at most {MAX_SEARCHABLE_COLUMNS} searchable columns"),
+            format!("{searchable} searchable columns"),
+            "Mark searchable only the columns a person searches by.",
+        ));
+    }
     for (name, definition) in columns {
         let column = format!("{path}.{name}");
         errors.extend(name_issue(&column, name, "column"));
         validate_column(&column, definition, type_known, errors);
     }
+}
+
+/// The columns a table's rows are searched by, in name order: text columns marked `searchable`.
+pub fn searchable_columns(columns: &Map<String, Value>) -> Vec<String> {
+    let mut found: Vec<String> = columns
+        .iter()
+        .filter(|(_, definition)| {
+            definition.get("searchable") == Some(&Value::Bool(true))
+                && definition
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .is_some_and(|kind| TEXT_KINDS.contains(&kind))
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+    found.sort();
+    found.truncate(MAX_SEARCHABLE_COLUMNS);
+    found
 }
 
 fn validate_column(
@@ -847,6 +879,28 @@ mod tests {
                 "{column}: {found:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_table_marks_at_most_eight_columns_searchable() {
+        let columns = |count: usize| {
+            Value::Object(
+                (0..count)
+                    .map(|at| {
+                        (
+                            format!("c{at}"),
+                            json!({"type": "string", "searchable": true}),
+                        )
+                    })
+                    .collect(),
+            )
+        };
+        assert!(judged(with_columns(columns(super::MAX_SEARCHABLE_COLUMNS))).is_ok());
+        let found = fields_of(with_columns(columns(super::MAX_SEARCHABLE_COLUMNS + 1)));
+        assert!(
+            found.contains(&"tables.lines.columns".to_string()),
+            "{found:?}"
+        );
     }
 
     #[test]

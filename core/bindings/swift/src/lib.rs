@@ -1221,6 +1221,8 @@ pub struct LinkParts {
     /// What the link names. Empty for a link to a heading of the same text.
     pub name: LinkPart,
     pub heading: Option<LinkPart>,
+    /// The row a `#^` names, in place of a heading.
+    pub row: Option<LinkPart>,
     pub alias: Option<LinkPart>,
 }
 
@@ -1251,6 +1253,7 @@ impl From<marfa_core::LinkParts> for LinkParts {
             target: link.target,
             name: link.name.into(),
             heading: link.heading.map(Into::into),
+            row: link.row.map(Into::into),
             alias: link.alias.map(Into::into),
         }
     }

@@ -1347,7 +1347,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             edges::judge_retype(&self.edge_writing(), row, resulting, replaced)?;
             instance::raise_reach(self.unit.tx())?;
             rows::retype_marks(self.unit.tx(), &row.id, resulting)?;
-            crate::app::tables::reorder_item(
+            crate::app::tables::rekey_item(
                 self.unit.tx(),
                 &self.catalog,
                 row.seq,

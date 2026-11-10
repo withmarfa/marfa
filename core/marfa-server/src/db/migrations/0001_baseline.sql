@@ -160,6 +160,8 @@ CREATE TABLE IF NOT EXISTS table_summaries (
     changed_at TEXT NOT NULL,
     -- The `<kind>:<column>` every row's `ord` is the key of; NULL while none or while it is rebuilt.
     ordered_by TEXT,
+    -- The searchable columns `rows_fts` holds every row by, joined by commas; NULL while rebuilt.
+    searched_by TEXT,
     UNIQUE (item_seq, table_name)
 ) STRICT;
 
@@ -183,6 +185,27 @@ CREATE INDEX IF NOT EXISTS table_rows_ordered ON table_rows (table_seq, ord) WHE
 CREATE TABLE IF NOT EXISTS table_rows_reordering (
     table_seq INTEGER PRIMARY KEY,
     target TEXT,
+    after_id TEXT
+) STRICT;
+
+-- The searchable text of each row that holds some, by `row_search.seq`: column `c<n>` holds the
+-- `n`th of the table's searchable columns in name order.
+CREATE VIRTUAL TABLE IF NOT EXISTS rows_fts USING fts5(
+    c0, c1, c2, c3, c4, c5, c6, c7,
+    tokenize = 'porter unicode61'
+);
+
+CREATE TABLE IF NOT EXISTS row_search (
+    seq INTEGER PRIMARY KEY,
+    table_seq INTEGER NOT NULL,
+    id TEXT NOT NULL,
+    UNIQUE (table_seq, id)
+) STRICT;
+
+-- Tables whose `rows_fts` entries `table-row-cleanup` brings to `target`, a page at a time.
+CREATE TABLE IF NOT EXISTS table_rows_reindexing (
+    table_seq INTEGER PRIMARY KEY,
+    target TEXT NOT NULL,
     after_id TEXT
 ) STRICT;
 

@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 use super::events::{self, Announced};
 use super::order::Order;
+use super::search::{self, Searched};
 use super::store::{self, Held};
 use super::{Changed, MAX_OPERATIONS, Sight, refs_text, tables_of};
 use crate::app::archive::checks::RowKey;
@@ -116,6 +117,7 @@ struct Run {
     table: String,
     table_seq: i64,
     order: Option<Order>,
+    searched: Searched,
     batch: String,
     /// The batch last announced, which the table's summary names.
     announced: Option<String>,
@@ -165,15 +167,18 @@ impl<'a, 'u, 'c> Restoring<'a, 'u, 'c> {
             let host = items::host_of(tx, &key.item_id)?
                 .ok_or_else(|| Refusal::internal("a restored row's item is gone"))?;
             let batch = Uuid::now_v7().to_string();
-            let order = tables_of(self.catalog, &host.type_id)
+            let declared = tables_of(self.catalog, &host.type_id)
                 .into_iter()
-                .find(|table| table.name == key.table)
-                .and_then(|table| table.order);
+                .find(|table| table.name == key.table);
+            let (order, searched) = declared
+                .map(|table| (table.order, table.searched))
+                .unwrap_or_default();
             let table_seq = store::open(
                 tx,
                 host.seq,
                 &key.table,
                 order.as_ref(),
+                &searched,
                 &batch,
                 &self.unit.at,
             )?;
@@ -182,6 +187,7 @@ impl<'a, 'u, 'c> Restoring<'a, 'u, 'c> {
                 table: key.table.clone(),
                 table_seq,
                 order,
+                searched,
                 batch,
                 announced: None,
                 changed: Vec::new(),
@@ -233,6 +239,7 @@ impl<'a, 'u, 'c> Restoring<'a, 'u, 'c> {
                 order: run.order.as_ref(),
             },
         )?;
+        search::index(tx, run.table_seq, &key.id, &run.searched, &values, &refs)?;
         run.count += 1;
         run.bytes += body.len() as i64;
         if updated_at > run.changed_at {

@@ -5,6 +5,7 @@ use rusqlite::{OptionalExtension, Row, Transaction, params, params_from_iter};
 use serde_json::{Map, Value};
 
 use super::order::Order;
+use super::search::{self, Searched};
 use crate::app::clock::{Stamp, Unread};
 use crate::app::query::Sql;
 use crate::app::refusal::{Refusal, Result};
@@ -72,15 +73,23 @@ pub(super) fn open(
     seq: i64,
     table: &str,
     order: Option<&Order>,
+    searched: &Searched,
     batch: &str,
     at: &str,
 ) -> Result<i64> {
     tx.prepare_cached(
         "INSERT INTO table_summaries \
-         (item_seq, table_name, row_count, bytes, last_batch, changed_at, ordered_by) \
-         VALUES (?1, ?2, 0, 0, ?3, ?4, ?5) ON CONFLICT (item_seq, table_name) DO NOTHING",
+         (item_seq, table_name, row_count, bytes, last_batch, changed_at, ordered_by, searched_by) \
+         VALUES (?1, ?2, 0, 0, ?3, ?4, ?5, ?6) ON CONFLICT (item_seq, table_name) DO NOTHING",
     )?
-    .execute(params![seq, table, batch, at, order.map(Order::signature)])?;
+    .execute(params![
+        seq,
+        table,
+        batch,
+        at,
+        order.map(Order::signature),
+        searched.signature()
+    ])?;
     table_seq(tx, seq, table)?.ok_or_else(|| Refusal::internal("a table summary did not land"))
 }
 
@@ -485,11 +494,13 @@ pub(super) fn column_held(
 
 /// Forgets a purged item's summaries and leaves its rows and their log for `table-row-cleanup`.
 pub(super) fn doom(tx: &Transaction<'_>, seq: i64) -> Result<bool> {
-    tx.prepare_cached(
-        "DELETE FROM table_rows_reordering WHERE table_seq IN \
-         (SELECT seq FROM table_summaries WHERE item_seq = ?1)",
-    )?
-    .execute([seq])?;
+    for queue in ["table_rows_reordering", "table_rows_reindexing"] {
+        tx.prepare_cached(&format!(
+            "DELETE FROM {queue} WHERE table_seq IN \
+             (SELECT seq FROM table_summaries WHERE item_seq = ?1)"
+        ))?
+        .execute([seq])?;
+    }
     let held = tx
         .prepare_cached(
             "INSERT OR IGNORE INTO table_rows_purging (table_seq) \
@@ -560,12 +571,19 @@ pub(super) fn remove_page(tx: &Transaction<'_>, limit: i64) -> Result<Option<Rem
             rows: 0,
         }));
     }
-    let rows = tx
-        .prepare_cached(
-            "DELETE FROM table_rows WHERE table_seq = ?1 AND id IN \
-             (SELECT id FROM table_rows WHERE table_seq = ?1 LIMIT ?2)",
-        )?
-        .execute(params![table, limit])? as i64;
+    let ids: Vec<String> = tx
+        .prepare_cached("SELECT id FROM table_rows WHERE table_seq = ?1 ORDER BY id LIMIT ?2")?
+        .query_map(params![table, limit], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    for id in &ids {
+        search::forget(tx, table, id)?;
+    }
+    let rows = match ids.last() {
+        Some(last) => tx
+            .prepare_cached("DELETE FROM table_rows WHERE table_seq = ?1 AND id <= ?2")?
+            .execute(params![table, last])? as i64,
+        None => 0,
+    };
     if rows < limit {
         tx.prepare_cached("DELETE FROM table_rows_purging WHERE table_seq = ?1")?
             .execute([table])?;

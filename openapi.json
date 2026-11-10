@@ -5703,7 +5703,7 @@
                 "$ref": "#/components/schemas/Item"
               },
               {
-                "description": "The matching item."
+                "description": "The matching item, or the item whose table row matches."
               }
             ]
           },
@@ -5719,11 +5719,35 @@
           },
           "relevance_score": {
             "type": "number",
-            "description": "How well the item matches `q`: the absolute value of its BM25 score, so higher is better. Scores depend on the items indexed, so compare them only within one search."
+            "description": "How well the result matches `q`, from its BM25 score, so higher is better. Scores depend on what is indexed, so compare them only within one search."
           },
           "snippet_html": {
             "type": "string",
             "description": "An excerpt of at most 32 words from the text that matches best, as escaped HTML with each matched word in `<mark>` tags and `...` where the text is cut. Absent if there is none."
+          },
+          "row": {
+            "type": "object",
+            "properties": {
+              "table": {
+                "type": "string",
+                "description": "The table that holds the row."
+              },
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "description": "The row's ID."
+              },
+              "column": {
+                "type": "string",
+                "description": "The searchable column `snippet_html` is drawn from."
+              }
+            },
+            "required": [
+              "table",
+              "id",
+              "column"
+            ],
+            "description": "The table row that matches, for a result that is a row. Absent for a result that matches the item's own text."
           }
         },
         "required": [
@@ -5731,7 +5755,7 @@
           "metadata",
           "relevance_score"
         ],
-        "description": "A search result is an item that matches the query, with its metadata and how well it matches."
+        "description": "A search result is an item that matches the query, or a row of an item's table that matches it, with the item's metadata and how well it matches."
       },
       "OccurrencePage": {
         "type": "object",
@@ -27637,7 +27661,7 @@
           "Search"
         ],
         "summary": "Search items",
-        "description": "Returns a page of the items you can read whose text properties or tags match `q`, best match first unless you give a `sort`. Items that tie come in ID order.",
+        "description": "Returns a page of the items you can read whose text properties or tags match `q`, and of the rows of their tables whose searchable columns match it, best match first unless you give a `sort`. A row result carries its item and names the row in `row`. Results that tie come in item ID order, an item before its rows, and its rows by table and row ID.",
         "security": [
           {
             "bearerAuth": []
