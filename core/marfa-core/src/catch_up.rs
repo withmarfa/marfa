@@ -2241,6 +2241,7 @@ mod tests {
         (dir, Arc::new(core))
     }
 
+    #[cfg(debug_assertions)]
     fn status_catalog(group: &str) -> WireCatalog {
         WireCatalog {
             types: vec![
