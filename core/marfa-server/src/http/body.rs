@@ -465,6 +465,14 @@ impl ReadBody {
         parsed_object(&self.bytes, Some(bag))
     }
 
+    /// As [`JsonBody::object`] reads it.
+    pub fn declared_object(&self, allowed: &[&str]) -> Result<Map<String, Value>, Refusal> {
+        if !self.declared {
+            return Err(not_json());
+        }
+        only_declared(parsed_object(&self.bytes, None)?, allowed)
+    }
+
     pub fn refuse_inexact_numbers(&self, bag: Bag) -> Result<(), Refusal> {
         match std::str::from_utf8(&self.bytes) {
             Ok(text) => bag.refuse_inexact_numbers(text),

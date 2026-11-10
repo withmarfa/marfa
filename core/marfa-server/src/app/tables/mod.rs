@@ -18,6 +18,8 @@ use uuid::Uuid;
 use super::App;
 use super::access::Caller;
 use super::catalog::{self, Catalog, Snapshot};
+use super::idempotency::{self, Claim};
+use super::items::write::Done;
 use super::items::{self, Host};
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
@@ -712,18 +714,19 @@ impl<'a, 'c> Batch<'a, 'c> {
     }
 }
 
-/// Access and changes share the batch's transaction.
+/// Access, changes and the claim's record share the batch's transaction.
 pub async fn write(
     app: &App,
     caller: &Caller,
+    claim: Option<Claim>,
     item_id: String,
     table: String,
     ops: Vec<Op>,
-) -> Result<String> {
+) -> Result<Done> {
     let cache = app.catalog_handle();
     app.write(caller, "rows.write", move |unit| {
         let catalog = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
-        let host = items::writable_host(unit, &catalog, &item_id)?;
+        let host = items::writable_host(unit, &catalog, claim.as_ref(), &item_id)?;
         let table = table_of(&catalog, &host.type_id, &table)?;
         let mut batch = Batch::new(unit, &catalog, &host, &table, None)?;
         let mut results = Vec::with_capacity(ops.len());
@@ -740,7 +743,14 @@ pub async fn write(
                 "results": results,
             }),
         };
-        Ok(answer.to_string())
+        completed(unit, claim.as_ref(), answer.to_string())
     })
     .await
+}
+
+fn completed(unit: &Unit<'_, '_>, claim: Option<&Claim>, body: String) -> Result<Done> {
+    if let Some(claim) = claim {
+        idempotency::complete(unit, claim, 200, body.as_bytes())?;
+    }
+    Ok(Done { status: 200, body })
 }

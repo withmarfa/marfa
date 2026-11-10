@@ -343,13 +343,14 @@ impl Item {
 pub(crate) fn writable_host(
     unit: &crate::app::unit::Unit<'_, '_>,
     catalog: &Catalog,
+    claim: Option<&crate::app::idempotency::Claim>,
     id: &str,
 ) -> Result<Host> {
     let gate = plan::Gate {
         tx: unit.tx(),
         caller: &unit.caller,
         catalog,
-        claim: None,
+        claim,
         server_own: false,
     };
     Ok(gate.writable_row(id)?.host())

@@ -13385,7 +13385,10 @@ export interface operations {
     writeTableRows: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it. */
+                "Idempotency-Key"?: string;
+            };
             path: {
                 /** @description The ID of the item. */
                 id: string;
@@ -14135,7 +14138,10 @@ export interface operations {
     undoTableBatch: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it. */
+                "Idempotency-Key"?: string;
+            };
             path: {
                 /** @description The ID of the item. */
                 id: string;
