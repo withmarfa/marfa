@@ -621,6 +621,18 @@ fn tables_and_rows_are_reached_at_their_doors() {
         query(&rows::totals_request("i", "lines", None), "filter"),
         None
     );
+    let page = PageArgs {
+        limit: Some(2),
+        cursor: Some("c".into()),
+    };
+    let batches = rows::batches_request("i", "lines", &page);
+    assert_eq!(batches.method, Method::Get);
+    assert_eq!(batches.path(), "/items/i/tables/lines/batches");
+    assert_eq!(query(&batches, "limit").as_deref(), Some("2"));
+    assert_eq!(query(&batches, "cursor").as_deref(), Some("c"));
+    let undo = rows::undo_request("i", "lines", "b");
+    assert_eq!(undo.method, Method::Post);
+    assert_eq!(undo.path(), "/items/i/tables/lines/batches/b/undo");
 }
 
 #[test]
