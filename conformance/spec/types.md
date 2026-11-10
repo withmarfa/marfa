@@ -348,7 +348,7 @@ When a replacement of a type does not declare a field that a type below it decla
 
 **Reason:** the owner has to be able to edit or move the types between a conflict and its source before the source registers again. The same holds for a status word (`types/status-word-reparented`) and a thumbnail (`types/thumbnail-one-reparented`).
 
-**Tests:** `compliance/type-standing-conflicts.test.ts › takes a move between parents that give the same, and a relabel, for %s`, `› refuses a replacement that declares what the type below holds, for %s`.
+**Tests:** `compliance/type-standing-conflicts.test.ts › takes a move between parents that give the same, and a relabel, for %s`, `› takes a replacement that declares something no type below holds, for %s`, `› refuses a replacement that declares what the type below declares, for %s`.
 
 ### `types/child-range`
 
@@ -836,11 +836,11 @@ If a type would carry two thumbnail fields, counting one it inherits and one a t
 
 ### `types/thumbnail-one-reparented`
 
-If a replacement of a type would give it a parent whose chain gives a thumbnail field, and a type below it declares a thumbnail under another name, and that type below does not already hold two thumbnails against the types above the replaced type, then the server MUST answer `400 invalid_schema` naming the type's `parent`.
+If a replacement of a type would give a type below it two or more thumbnail names, and the replacement declares a thumbnail or a name among them is not one the type below already holds against the types above the replaced type, then the server MUST answer `400 invalid_schema` naming the type's `parent`.
 
-**Reason:** attaching a type under an ancestor is judged against every type below it, as adding a thumbnail to it is (`types/thumbnail-one`). A type below that already holds two is not refused unless the replacement declares a thumbnail (`types/child-shape-standing-kept`).
+**Reason:** attaching a type under an ancestor is judged against every type below it, as adding a thumbnail to it is (`types/thumbnail-one`). A type below that already holds two is refused only when the replacement declares a thumbnail or brings a name it did not hold, so the owner can still edit or move the types between a conflict and its source (`types/child-shape-standing-kept`).
 
-**Tests:** `compliance/thumbnails.test.ts › refuses a replacement that gives a type a parent whose thumbnail a subtype declares another of`.
+**Tests:** `compliance/thumbnails.test.ts › refuses a replacement that gives a type a parent whose thumbnail a subtype declares another of`, `compliance/type-standing-conflicts.test.ts › refuses a move to a parent that gives a thumbnail the type below does not already hold`.
 
 ### `types/thumbnail-one-reparented-unchanged`
 

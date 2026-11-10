@@ -28,6 +28,8 @@ interface Case {
   parentFields: Record<string, unknown>;
   held: Record<string, unknown>;
   declaresItself: Record<string, unknown>;
+  adds: Record<string, unknown>;
+  elsewhere?: Record<string, unknown>;
   refusedAs: string;
 }
 
@@ -37,6 +39,7 @@ const CASES: Case[] = [
     parentFields: { count: { type: "integer" } },
     held: { count: { type: "string" } },
     declaresItself: { count: { type: "integer" } },
+    adds: { other: { type: "string" } },
     refusedAs: "inheritance_violation",
   },
   {
@@ -50,10 +53,19 @@ const CASES: Case[] = [
     held: {
       stage: {
         type: "status",
-        status_values: [{ value: "open", group: "completed" }],
+        status_values: [
+          { value: "open", group: "completed" },
+          { value: "closed", group: "in_progress" },
+        ],
       },
     },
     declaresItself: {
+      stage: {
+        type: "status",
+        status_values: [{ value: "closed", group: "in_progress" }],
+      },
+    },
+    adds: {
       stage: {
         type: "status",
         status_values: [{ value: "waiting", group: "in_progress" }],
@@ -66,9 +78,20 @@ const CASES: Case[] = [
     parentFields: { picture: { type: "thumbnail" } },
     held: { preview: { type: "thumbnail" } },
     declaresItself: { picture: { type: "thumbnail" } },
+    adds: { other: { type: "string" } },
+    elsewhere: { cover: { type: "thumbnail" } },
     refusedAs: "invalid_schema",
   },
 ];
+
+const CONTROL: Case = {
+  name: "no conflict below",
+  parentFields: CASES[1]!.parentFields,
+  held: { spare: { type: "string" } },
+  declaresItself: {},
+  adds: CASES[1]!.adds,
+  refusedAs: "inheritance_violation",
+};
 
 const NAMED = CASES.map((held, index) => [held.name, index] as const);
 
@@ -77,6 +100,7 @@ const ids = (index: number) => {
   return {
     first,
     second: `standing${String(index)}.second`,
+    third: `standing${String(index)}.third`,
     middle: `standing${String(index)}.middle`,
     leaf: `standing${String(index)}.middle.leaf`,
   };
@@ -88,12 +112,19 @@ beforeAll(async () => {
     baseUrl: server.apiUrl,
     apiKey: server.workingKey,
   });
-  for (const [index, held] of CASES.entries()) {
-    const { first, second, middle, leaf } = ids(index);
+  for (const [index, held] of [...CASES, CONTROL].entries()) {
+    const { first, second, third, middle, leaf } = ids(index);
     for (const parent of [first, second]) {
       const made = await arranging.registerType({
         id: parent,
         fields: held.parentFields as never,
+      });
+      expect(made.status, JSON.stringify(made.error)).toBe(201);
+    }
+    if (held.elsewhere) {
+      const made = await arranging.registerType({
+        id: third,
+        fields: held.elsewhere as never,
       });
       expect(made.status, JSON.stringify(made.error)).toBe(201);
     }
@@ -175,7 +206,19 @@ describe("a replacement of a type above one that holds what its chain would refu
   );
 
   it.each(NAMED)(
-    "refuses a replacement that declares what the type below holds, for %s",
+    "takes a replacement that declares something no type below holds, for %s",
+    async (_name, index) => {
+      const { first, middle } = ids(index);
+      const added = await client.replaceType(middle, {
+        parent: first,
+        fields: CASES[index]!.adds as never,
+      });
+      expect(added.status, JSON.stringify(added.error)).toBe(200);
+    },
+  );
+
+  it.each(NAMED)(
+    "refuses a replacement that declares what the type below declares, for %s",
     async (_name, index) => {
       const { first, middle } = ids(index);
       const held = CASES[index]!;
@@ -187,4 +230,35 @@ describe("a replacement of a type above one that holds what its chain would refu
       expect(refused.error?.error.code).toBe(held.refusedAs);
     },
   );
+
+  it("refuses a move to a parent that gives a thumbnail the type below does not already hold", async () => {
+    const index = CASES.findIndex((held) => held.elsewhere !== undefined);
+    const { second, third, middle } = ids(index);
+    const refused = await client.replaceType(middle, {
+      parent: third,
+      fields: {},
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_schema");
+    const named = refused.error?.error.details?.errors as
+      Array<{ field: string }> | undefined;
+    expect(named?.map((error) => error.field)).toEqual(["parent"]);
+    // The witness: a parent that gives the thumbnail the type below already holds is taken.
+    const taken = await client.replaceType(middle, {
+      parent: second,
+      fields: {},
+    });
+    expect(taken.status, JSON.stringify(taken.error)).toBe(200);
+  });
+});
+
+describe("a replacement of a type above one that holds no conflict", () => {
+  it("takes a replacement that declares a status word", async () => {
+    const { first, middle } = ids(CASES.length);
+    const taken = await client.replaceType(middle, {
+      parent: first,
+      fields: CONTROL.adds as never,
+    });
+    expect(taken.status, JSON.stringify(taken.error)).toBe(200);
+  });
 });

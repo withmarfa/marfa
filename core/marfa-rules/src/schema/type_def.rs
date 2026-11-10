@@ -1187,7 +1187,10 @@ fn validate_status_fields(
         }
         let standing = word_repeats(registry, child);
         for (field, word) in word_repeats(&replaced.after, child) {
-            if own.iter().any(|(n, _)| n.as_str() == field) {
+            let declared_here = own
+                .iter()
+                .any(|(n, def)| n.as_str() == field && words(def).iter().any(|(w, _)| *w == word));
+            if declared_here {
                 errors.push(
                     Issue::new(
                         format!("fields.{field}.status_values"),
@@ -1580,21 +1583,26 @@ mod tests {
     }
 
     #[test]
-    fn a_replacement_is_not_refused_for_a_status_word_repeated_below_it_that_it_does_not_bring() {
-        let words = |word: &str| json!({"type": "status", "status_values": [{"value": word, "group": "completed"}]});
+    fn a_replacement_is_refused_only_for_a_status_word_it_declares_that_a_type_below_declares() {
+        let words = |values: &[&str]| {
+            let values: Vec<Value> = values
+                .iter()
+                .map(|word| json!({"value": word, "group": "completed"}))
+                .collect();
+            json!({"type": "status", "status_values": values})
+        };
         let held = rows(vec![
-            json!({"id": "user.top", "version": 0, "fields": {"stage": words("open")}}),
+            json!({"id": "user.top", "version": 0, "fields": {"stage": words(&["open"])}}),
             json!({"id": "user.top.middle", "parent": "user.top", "version": 0, "fields": {}}),
             json!({"id": "user.top.middle.leaf", "parent": "user.top.middle", "version": 0,
-                   "fields": {"stage": words("open")}}),
+                   "fields": {"stage": words(&["open", "closed"])}}),
         ]);
-        let relabelled = json!({"id": "user.top.middle", "parent": "user.top",
-                                "label": "Middle", "fields": {}});
-        assert!(validate_type(&relabelled, &held).is_ok());
-        let declared = json!({"id": "user.top.middle", "parent": "user.top",
-                              "fields": {"stage": words("other")}});
+        let replacing = |fields: Value| json!({"id": "user.top.middle", "parent": "user.top", "fields": fields});
+        assert!(validate_type(&replacing(json!({})), &held).is_ok());
+        let adds = validate_type(&replacing(json!({"stage": words(&["extra"])})), &held);
+        assert!(adds.is_ok(), "{:?}", adds.err());
         assert_eq!(
-            found(&declared, &held),
+            found(&replacing(json!({"stage": words(&["closed"])})), &held),
             [(
                 "fields.stage.status_values".to_string(),
                 Some("inheritance_violation")
@@ -1635,6 +1643,25 @@ mod tests {
         let relabelled = json!({"id": "user.top.middle", "parent": "user.top",
                                 "label": "Middle", "fields": {}});
         assert!(validate_type(&relabelled, &held).is_ok());
+    }
+
+    #[test]
+    fn a_replacement_is_refused_unless_every_thumbnail_below_it_is_one_it_already_holds() {
+        let held = rows(vec![
+            json!({"id": "user.top", "version": 0, "fields": {"picture": {"type": "thumbnail"}}}),
+            json!({"id": "user.top2", "version": 0, "fields": {"cover": {"type": "thumbnail"}}}),
+            json!({"id": "user.top3", "version": 0, "fields": {"picture": {"type": "thumbnail"}}}),
+            json!({"id": "user.top.middle", "parent": "user.top", "version": 0, "fields": {}}),
+            json!({"id": "user.top.middle.leaf", "parent": "user.top.middle", "version": 0,
+                   "fields": {"preview": {"type": "thumbnail"}}}),
+        ]);
+        let under = |parent: &str| json!({"id": "user.top.middle", "parent": parent, "fields": {}});
+        assert_eq!(
+            found(&under("user.top2"), &held),
+            [("parent".to_string(), None)]
+        );
+        assert!(validate_type(&under("user.top3"), &held).is_ok());
+        assert!(validate_type(&under("user.top"), &held).is_ok());
     }
 
     #[test]
