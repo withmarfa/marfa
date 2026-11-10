@@ -266,10 +266,10 @@ struct Batch<'a, 'c> {
     catalog: &'a Catalog,
     host: &'a Host,
     table: &'a Table,
-    /// Started once the batch first creates a row in a table that has never held one.
+    /// The table's key, `None` until the table first holds a row.
     table_seq: Option<i64>,
     batch_id: String,
-    /// Each item a value names, as the writing key may see it: its type, or none.
+    /// The type of each item a value names, or `None` where no item holds the id.
     referenced: HashMap<String, Option<String>>,
     changed: Vec<(String, Changed)>,
     count: i64,
