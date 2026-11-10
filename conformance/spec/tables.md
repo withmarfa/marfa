@@ -846,7 +846,21 @@ When a catch-up has applied the events it read, when a follow has no frame waiti
 
 **Reason:** a hydration reports once its items are whole; the tables of those items fill at the catch-up or follow after it.
 
-**Tests:** `device/tables-live.test.ts › fills a table whole across pages, and answers it from the copy with the server out of reach`, `› applies each rows.changed a follow reads, rows put, patched and deleted`, `› fills a table again each time a follow sees it come back within the cap`.
+**Tests:** `device/tables-live.test.ts › fills a table whole across pages, and answers it from the copy with the server out of reach`, `› applies each rows.changed a follow reads, rows put, patched and deleted`, `› fills a table again each time a follow sees it come back within the cap`, `› fills a table held while a follow holds the stream, with no event to wake the follow`.
+
+### `tables/device-fill-failed`
+
+If the server answers a read a device makes to fill one table with an error about that read, such as a `5xx` answer or a refusal, then a device MUST leave the table unfilled for the rest of that fill and go on to fill its other tables.
+
+**Reason:** one table whose read keeps failing would otherwise hold back every table after it.
+
+**Tests:** `device/tables-live.test.ts › fills every other table, and ends no catch-up or follow, while one table's page read keeps failing`.
+
+### `tables/device-fill-failed-carries-on`
+
+When a device has left a table unfilled under `tables/device-fill-failed`, a device MUST go on with the catch-up or the follow whose fill it was.
+
+**Tests:** `device/tables-live.test.ts › fills every other table, and ends no catch-up or follow, while one table's page read keeps failing`.
 
 ### `tables/device-fill-reach`
 
@@ -858,9 +872,9 @@ When a device reads a table's size or its rows to hold them, a device MUST send 
 
 ### `tables/device-fill-report`
 
-When a catch-up ends on its live marker, a device MUST report in `tables` how many tables its fill left `whole`, found past the cap as `online` and left `unfilled`, and the `pages` and `rows` it read.
+When a catch-up ends on its live marker, a device MUST report in `tables` how many tables its fill left `whole`, found past the cap as `online`, left `unfilled` and left because a read `failed`, the last such `failure`, and the `pages` and `rows` it read.
 
-**Tests:** `device/tables-live.test.ts › reads a table past the cap from the server, holding none of its rows, and holds it whole once a delete brings it within`, `device/catch-up.test.ts › reports what a catch-up carried, and refuses one that stopped short`.
+**Tests:** `device/tables-live.test.ts › reads a table past the cap from the server, holding none of its rows, and holds it whole once a delete brings it within`, `› fills every other table, and ends no catch-up or follow, while one table's page read keeps failing`, `device/catch-up.test.ts › reports what a catch-up carried, and refuses one that stopped short`.
 
 ### `tables/device-fill-resumes`
 
@@ -933,6 +947,14 @@ When an item is purged that a value of a row a device holds names, a device MUST
 **Reason:** once no item holds the id, the server withholds it from every key that may not read every type (`tables/rows-item-gone`), whether or not the copy held the item.
 
 **Tests:** `device/tables-live.test.ts › answers a row naming a purged item as the server does, withheld unless its key reads every type`.
+
+### `tables/device-named-purged-told`
+
+While a device holds a stream open, when reading rows again under `tables/device-named-purged` changes a table the device holds, a device MUST tell its caller `rows.changed` with the table's item.
+
+**Reason:** the purged item is often outside the copy, so the purge's own event tells the caller nothing of the rows that changed.
+
+**Tests:** `device/tables-live.test.ts › tells a follow rows.changed for each table that reading rows again after a purge changes`.
 
 ### `tables/device-read-gone`
 
