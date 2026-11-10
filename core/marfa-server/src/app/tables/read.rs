@@ -581,7 +581,11 @@ fn answered_batches(
     let more = found.len() as i64 > limit;
     let shown = &found[..found.len().min(limit as usize)];
     let next = match shown.last().filter(|_| more) {
-        Some(last) => Value::String(read.cursors.issue_at(&scope, &last.seq.to_string(), &last.id)?),
+        Some(last) => Value::String(read.cursors.issue_at(
+            &scope,
+            &last.seq.to_string(),
+            &last.id,
+        )?),
         None => Value::Null,
     };
     let data: Vec<Value> = shown

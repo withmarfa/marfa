@@ -167,8 +167,7 @@ CREATE TABLE IF NOT EXISTS table_rows (
     table_seq INTEGER NOT NULL,
     id TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    -- The `row_batches.seq` of the batch whose values the row holds; an undo puts back the one
-    -- it held before, so a batch an undo has cleared the way for can be undone in turn.
+    -- Undo restores the prior mark so earlier batches remain undoable.
     batch INTEGER NOT NULL,
     refs BLOB,
     body BLOB NOT NULL,
@@ -176,8 +175,7 @@ CREATE TABLE IF NOT EXISTS table_rows (
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS table_rows_updated ON table_rows (table_seq, updated_at);
 
--- A table's change log, one entry per batch that changed a row. AUTOINCREMENT: a change outlives
--- its batch until `table-row-cleanup` removes it, so a seq is never given again.
+-- Never reuse a sequence: logged changes can outlive their batch.
 CREATE TABLE IF NOT EXISTS row_batches (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
@@ -188,8 +186,7 @@ CREATE TABLE IF NOT EXISTS row_batches (
 ) STRICT;
 CREATE INDEX IF NOT EXISTS row_batches_table ON row_batches (table_seq, seq);
 
--- Each row a batch changed as it stood before, with `table_rows.batch` before and after: no
--- `body` or `before_batch` where the batch created the row, no `after_batch` where it removed it.
+-- A missing before or after mark means the row did not exist then.
 CREATE TABLE IF NOT EXISTS row_changes (
     batch INTEGER NOT NULL,
     id TEXT NOT NULL,

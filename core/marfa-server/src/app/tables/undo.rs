@@ -25,7 +25,6 @@ enum Step {
     PutBack(Before),
 }
 
-/// Whether row `held` is as `before` holds it, by its values and the item ids it names.
 fn as_before(held: Option<&Held>, before: Option<&Before>) -> bool {
     match (held, before) {
         (None, None) => true,
@@ -34,7 +33,6 @@ fn as_before(held: Option<&Held>, before: Option<&Before>) -> bool {
     }
 }
 
-/// The columns whose value or mark differs between the row held and the row put back.
 fn changed_columns(
     held: Option<&Held>,
     values: &Map<String, Value>,
@@ -54,8 +52,6 @@ fn changed_columns(
 }
 
 impl Batch<'_, '_> {
-    /// Refuses a put-back that would change a column whose value, now or put back, the key may
-    /// not see.
     fn refuse_withheld_undo(
         &mut self,
         id: &str,
@@ -82,8 +78,6 @@ impl Batch<'_, '_> {
         }
     }
 
-    /// What the undo does to the row `change` logs, or `None` where it no longer stands as the
-    /// batch left it.
     fn plan(&self, table: i64, change: Change) -> Result<Option<(String, Option<Held>, Step)>> {
         let tx = self.unit.tx();
         let held = store::row(tx, Some(table), &change.id)?;
@@ -105,7 +99,6 @@ impl Batch<'_, '_> {
     }
 }
 
-/// Undoes batch `batch` of an item's table as a new batch, in one transaction.
 pub async fn undo(
     app: &App,
     caller: &Caller,
@@ -151,7 +144,11 @@ pub async fn undo(
                     "deleted"
                 }
                 Step::PutBack(before) => {
-                    let outcome = if held.is_some() { "replaced" } else { "created" };
+                    let outcome = if held.is_some() {
+                        "replaced"
+                    } else {
+                        "created"
+                    };
                     let held = held.map(|held| held.bytes);
                     let Before {
                         batch,

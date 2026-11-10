@@ -123,7 +123,6 @@ pub(super) fn delete(tx: &Transaction<'_>, table: i64, id: &str) -> Result<Optio
         .transpose()
 }
 
-/// The batch that last changed row `id`, while the table holds it.
 pub(super) fn marker(tx: &Transaction<'_>, table: i64, id: &str) -> Result<Option<i64>> {
     Ok(tx
         .prepare_cached("SELECT batch FROM table_rows WHERE table_seq = ?1 AND id = ?2")?
@@ -131,7 +130,6 @@ pub(super) fn marker(tx: &Transaction<'_>, table: i64, id: &str) -> Result<Optio
         .optional()?)
 }
 
-/// Starts a batch's entry in the log and answers its seq.
 pub(super) fn open_batch(
     tx: &Transaction<'_>,
     table: i64,
@@ -153,8 +151,7 @@ pub(super) fn close_batch(tx: &Transaction<'_>, batch: i64, rows: i64) -> Result
     Ok(())
 }
 
-/// Logs row `id` as it stands before `batch` first changes it, and `after` as the mark the batch
-/// leaves on it; the row write calls it once a row per batch, before the change.
+/// Call once per row, before its first change in the batch.
 pub(super) fn log_before(
     tx: &Transaction<'_>,
     batch: i64,
@@ -203,7 +200,6 @@ fn logged_of(row: &Row<'_>) -> rusqlite::Result<Logged> {
     })
 }
 
-/// Batch `id` of table `table`, while the log holds it.
 pub(super) fn batch(tx: &Transaction<'_>, table: i64, id: &str) -> Result<Option<Logged>> {
     Ok(tx
         .prepare_cached(
@@ -213,7 +209,6 @@ pub(super) fn batch(tx: &Transaction<'_>, table: i64, id: &str) -> Result<Option
         .optional()?)
 }
 
-/// Up to `limit` batches of table `table`, newest first, older than seq `before` where given.
 pub(super) fn batches(
     tx: &Transaction<'_>,
     table: i64,
@@ -224,10 +219,8 @@ pub(super) fn batches(
         "SELECT seq, id, at, rows, undoes FROM row_batches \
          WHERE table_seq = ?1 AND seq < ?2 ORDER BY seq DESC LIMIT ?3",
     )?;
-    let found = statement.query_map(
-        params![table, before.unwrap_or(i64::MAX), limit],
-        logged_of,
-    )?;
+    let found =
+        statement.query_map(params![table, before.unwrap_or(i64::MAX), limit], logged_of)?;
     Ok(found.collect::<rusqlite::Result<_>>()?)
 }
 
@@ -247,7 +240,6 @@ pub(super) struct Change {
     pub after: Option<i64>,
 }
 
-/// The rows `batch` changed, by id.
 pub(super) fn changes(tx: &Transaction<'_>, batch: i64) -> Result<Vec<Change>> {
     let mut statement = tx.prepare_cached(
         "SELECT id, before_batch, after_batch, json(body), json(refs) FROM row_changes \
@@ -403,7 +395,6 @@ pub(super) fn doom(tx: &Transaction<'_>, seq: i64) -> Result<bool> {
     Ok(held)
 }
 
-/// What one page of `table-row-cleanup` removed.
 #[derive(Default)]
 pub(super) struct Removed {
     pub rows: i64,
@@ -411,8 +402,6 @@ pub(super) struct Removed {
     pub changes: i64,
 }
 
-/// Removes up to `limit` of one purged table's log entries, then its rows; `None` once no purged
-/// table has anything left.
 pub(super) fn remove_page(tx: &Transaction<'_>, limit: i64) -> Result<Option<Removed>> {
     let Some(table) = tx
         .prepare_cached("SELECT table_seq FROM table_rows_purging ORDER BY table_seq LIMIT 1")?
@@ -461,8 +450,6 @@ pub(super) fn remove_page(tx: &Transaction<'_>, limit: i64) -> Result<Option<Rem
     }))
 }
 
-/// Removes up to `limit` of the oldest batches made before `cutoff`, then up to `limit` changes
-/// no batch holds any longer; `None` once neither is left.
 pub(super) fn expire_page(
     tx: &Transaction<'_>,
     cutoff: &str,
@@ -472,7 +459,9 @@ pub(super) fn expire_page(
     let mut statement =
         tx.prepare_cached("SELECT seq, at FROM row_batches ORDER BY seq LIMIT ?1")?;
     let oldest = statement
-        .query_map([limit], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?
+        .query_map([limit], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let through = oldest
         .iter()

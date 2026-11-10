@@ -56,7 +56,6 @@ impl Tally {
     }
 }
 
-/// Removes purged items' rows and their log, then the log's batches past their retention.
 pub async fn cleanup(app: Arc<App>, run: Run) -> Result<Report> {
     let mut tally = Tally::default();
     loop {

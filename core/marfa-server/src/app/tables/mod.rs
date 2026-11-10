@@ -311,11 +311,10 @@ struct Batch<'a, 'c> {
     /// The table's key, `None` until the table first holds a row.
     table_seq: Option<i64>,
     batch_id: String,
-    /// The batch an undo takes back.
     undoes: Option<String>,
     /// The batch's seq in the log, `None` until it first changes a row.
     batch_seq: Option<i64>,
-    /// The rows whose state before the batch the log holds.
+    /// Capture each row only before its first change in the batch.
     logged: HashSet<String>,
     /// The type of each item a value names, or `None` where no item holds the id.
     referenced: HashMap<String, Option<String>>,
@@ -481,8 +480,6 @@ impl Batch<'_, '_> {
         Ok(seq)
     }
 
-    /// The table's key and the batch's seq, logging row `id` as it stands before its first change
-    /// and `mark`, or the batch's own seq, as the mark the change leaves on it.
     fn begin(&mut self, id: &str, held: bool, mark: Option<i64>) -> Result<(i64, i64)> {
         let table = self.table_seq()?;
         let unit = self.unit;
@@ -506,8 +503,6 @@ impl Batch<'_, '_> {
         Ok((table, batch))
     }
 
-    /// Writes row `id`, which held `held` bytes of values where the table held it, marked as the
-    /// values of batch `mark`, or of this batch.
     fn store_row(
         &mut self,
         id: &str,
@@ -543,7 +538,6 @@ impl Batch<'_, '_> {
         Ok(())
     }
 
-    /// Removes row `id`, answering whether the table held it.
     fn remove_row(&mut self, id: &str) -> Result<bool> {
         let unit = self.unit;
         let Some(table) = self.table_seq else {
@@ -632,8 +626,6 @@ impl Batch<'_, '_> {
         }
     }
 
-    /// Closes the batch in the log, keeps the summary, moves the item's activity, and announces
-    /// and audits the batch; `None` where it changed no row.
     fn settle(mut self, host: &Host) -> Result<Option<String>> {
         self.name_referenced()?;
         let unit = self.unit;
