@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use super::super::App;
 use super::super::access::Caller;
 use super::super::catalog::{self, Snapshot};
-use super::super::clock::readable;
+use super::super::clock::{Unread, readable};
 use super::super::edges::write::purge_edge;
 use super::super::housekeeping::{DAY_MS, Report, Run, cutoff};
 use super::super::instance;
@@ -193,6 +193,25 @@ fn result(deleted: usize, passed_over: usize) -> Value {
     result
 }
 
+const UNREAD: Unread<'static> = Unread {
+    table: "items",
+    time: "trashed_at",
+    scope: "state = 'trashed'",
+};
+
+/// Once nothing is due, what the bin still holds past the cutoff is what could not be judged.
+async fn report_kept(app: &Arc<App>, run: &Run) -> Result<()> {
+    let (live, job) = (app.clone(), run.job);
+    app.db
+        .read(move |tx| {
+            if let Some(before) = cutoff(tx, &live, TRASH_RETENTION_DAYS, DAY_MS)? {
+                UNREAD.report(tx, job, [before])?;
+            }
+            Ok(())
+        })
+        .await
+}
+
 pub async fn trash_purge(app: Arc<App>, run: Run) -> Result<Report> {
     let live = app.clone();
     let due = app
@@ -205,11 +224,15 @@ pub async fn trash_purge(app: Arc<App>, run: Run) -> Result<Report> {
         )
         .await?;
     if !due {
+        report_kept(&app, &run).await?;
         return Ok(Report::done(result(0, 0)));
     }
     let mut stopped = Stopped::default();
     let ended = purge_due(&app, &run, &mut stopped).await;
     stopped.report();
+    if ended.as_ref().is_ok_and(|report| !report.again) {
+        report_kept(&app, &run).await?;
+    }
     ended
 }
 

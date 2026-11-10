@@ -4,7 +4,7 @@ use rusqlite::{OptionalExtension, Transaction, params};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::app::clock::{Stamp, readable};
+use crate::app::clock::{Stamp, Unread, readable};
 use crate::app::keys::digest_of;
 use crate::app::refusal::{Refusal, Result};
 
@@ -58,6 +58,12 @@ fn new_token() -> Result<String> {
 fn looks_like_a_token(text: &str) -> bool {
     text.len() == TOKEN_BYTES * 2 && text.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
+
+pub const UNREAD: Unread<'static> = Unread {
+    table: "auth_passkey_challenge",
+    time: "expires_at",
+    scope: "1",
+};
 
 fn make_room(tx: &Transaction<'_>, now: Stamp, purpose: Purpose) -> Result<()> {
     let ends = readable("expires_at");

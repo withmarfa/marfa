@@ -3,7 +3,7 @@
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 
 use crate::app::access::Maker;
-use crate::app::clock::{Stamp, readable};
+use crate::app::clock::{Stamp, Unread, readable};
 use crate::app::refusal::{Refusal, Result};
 
 #[derive(Clone, Debug)]
@@ -659,6 +659,12 @@ pub fn redeliver(tx: &Transaction<'_>, seq: i64, due_at: i64, at: &str) -> Resul
     )?;
     Ok(())
 }
+
+pub const UNREAD_DELIVERIES: Unread<'static> = Unread {
+    table: "webhook_deliveries",
+    time: "created_at",
+    scope: "status <> 'pending'",
+};
 
 /// Settled deliveries created before `before`, oldest first.
 pub fn expire(tx: &Transaction<'_>, before: &str, limit: i64) -> Result<i64> {

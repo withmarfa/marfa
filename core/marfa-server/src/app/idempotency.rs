@@ -22,7 +22,7 @@ use super::{edges, items};
 use crate::app::clock::Stamp;
 use crate::db::Write;
 
-pub use expiry::expire;
+pub use expiry::{UNREAD, expire};
 
 pub const MAX_KEY_CHARACTERS: usize = 255;
 const LEASE_MS: i64 = 60_000;
@@ -272,7 +272,7 @@ async fn replay(app: &App, caller: &Caller, key: &str, record: Held) -> Result<K
                     &read_only::current(&marked, tx, &at, Snapshot::Committed)?,
                     status,
                     body,
-                ),
+                )?,
             })
         })
         .await
@@ -367,19 +367,19 @@ fn authorize(tx: &Transaction<'_>, caller: &Caller, mut needs: Vec<Need>) -> Res
 }
 
 /// A kept answer's `read_only` is the one thing judged at replay.
-fn with_current_read_only(read_only: &ReadOnly, status: u16, body: Vec<u8>) -> Vec<u8> {
+fn with_current_read_only(read_only: &ReadOnly, status: u16, body: Vec<u8>) -> Result<Vec<u8>> {
     if !(200..300).contains(&status) {
-        return body;
+        return Ok(body);
     }
     let Ok(Value::Object(answer)) = serde_json::from_slice::<Value>(&body) else {
-        return body;
+        return Ok(body);
     };
     let Some(item) = answer.get("item") else {
-        return body;
+        return Ok(body);
     };
     let text = |name: &str| item.get(name).and_then(Value::as_str).unwrap_or_default();
-    let now = read_only.of(text("source"), text("type"));
-    read_only_set(body, now)
+    let now = read_only.of(text("source"), text("type"))?;
+    Ok(read_only_set(body, now))
 }
 
 /// Sets the first `read_only`, which is the item's: its own fields come before

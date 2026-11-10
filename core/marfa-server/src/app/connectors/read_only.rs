@@ -9,10 +9,17 @@ use crate::app::access::{Axis, Level};
 use crate::app::catalog::Snapshot;
 use crate::app::clock::Stamp;
 use crate::app::keys;
-use crate::app::refusal::Result;
+use crate::app::refusal::{Refusal, Result};
+
+#[derive(Clone, Copy)]
+enum End {
+    Never,
+    At(i64),
+    Unread,
+}
 
 struct Holding {
-    until: Option<i64>,
+    end: End,
     declared: HashSet<String>,
 }
 
@@ -33,25 +40,34 @@ impl Registry {
     fn load(tx: &Transaction<'_>, generation: i64) -> Result<Registry> {
         let mut holdings: HashMap<String, Vec<Holding>> = HashMap::new();
         for (key_id, declared) in store::declared_by_keys(tx)? {
-            let Some(key) = keys::unrevoked_by_id(tx, &key_id)? else {
-                continue;
+            let key = match keys::unrevoked_by_id(tx, &key_id) {
+                Ok(Some(key)) => key,
+                Ok(None) => continue,
+                Err(_) => {
+                    for source in keys::reach_of_unrevoked(tx, &key_id)? {
+                        holdings.entry(source).or_default().push(Holding {
+                            end: End::Unread,
+                            declared: HashSet::new(),
+                        });
+                    }
+                    continue;
+                }
             };
             let map = key.grants.map(Axis::Type);
             let declared: HashSet<String> = declared
                 .into_iter()
                 .filter(|name| Axis::Type.level(map, name) == Level::Write)
                 .collect();
-            let until = key
-                .expires_at
-                .as_deref()
-                .map(|at| Stamp::read(at).map(Stamp::ms))
-                .transpose()?;
+            let end = match key.expires_at.as_deref() {
+                None => End::Never,
+                Some(at) => Stamp::parsed(at).map_or(End::Unread, |at| End::At(at.ms())),
+            };
             let reached: HashSet<&String> = std::iter::once(&key.source)
                 .chain(&key.grants.sources)
                 .collect();
             for source in reached {
                 holdings.entry(source.clone()).or_default().push(Holding {
-                    until,
+                    end,
                     declared: declared.clone(),
                 });
             }
@@ -80,15 +96,27 @@ pub struct ReadOnly {
 }
 
 impl ReadOnly {
-    pub fn of(&self, source: &str, type_id: &str) -> bool {
+    /// Refuses only a source a key reaches whose stored row does not read.
+    pub fn of(&self, source: &str, type_id: &str) -> Result<bool> {
         let Some(held) = self.registry.holdings.get(source) else {
-            return false;
+            return Ok(false);
         };
-        let mut live = held
-            .iter()
-            .filter(|holding| holding.until.is_none_or(|until| until > self.now))
-            .peekable();
-        live.peek().is_some() && live.all(|holding| holding.declared.contains(type_id))
+        let mut live = Vec::new();
+        for holding in held {
+            match holding.end {
+                End::Unread => {
+                    return Err(Refusal::internal(
+                        "a key that registered a connector has a stored value that does not read",
+                    ));
+                }
+                End::At(until) if until <= self.now => {}
+                End::Never | End::At(_) => live.push(holding),
+            }
+        }
+        Ok(!live.is_empty()
+            && live
+                .iter()
+                .all(|holding| holding.declared.contains(type_id)))
     }
 }
 
@@ -134,7 +162,7 @@ mod tests {
         let holdings = held
             .iter()
             .map(|(until, declared)| Holding {
-                until: *until,
+                end: until.map_or(End::Never, End::At),
                 declared: declared.iter().map(|name| name.to_string()).collect(),
             })
             .collect();
@@ -149,24 +177,40 @@ mod tests {
 
     #[test]
     fn a_source_nobody_registered_is_never_read_only() {
-        assert!(!registry(&[]).of("other", "rss.entry"));
-        assert!(!registry(&[]).of("rss", "rss.entry"));
+        assert!(!registry(&[]).of("other", "rss.entry").unwrap());
+        assert!(!registry(&[]).of("rss", "rss.entry").unwrap());
     }
 
     #[test]
     fn every_live_holding_must_list_the_type() {
         let both = registry(&[(None, &["rss.entry"]), (None, &["rss.entry", "x"])]);
-        assert!(both.of("rss", "rss.entry"));
+        assert!(both.of("rss", "rss.entry").unwrap());
         let one = registry(&[(None, &["rss.entry"]), (None, &["other"])]);
-        assert!(!one.of("rss", "rss.entry"));
+        assert!(!one.of("rss", "rss.entry").unwrap());
     }
 
     #[test]
     fn an_expired_holding_no_longer_counts() {
         let lapsed = NOW - 86_400_000;
         let beside = registry(&[(Some(lapsed), &[]), (None, &["rss.entry"])]);
-        assert!(beside.of("rss", "rss.entry"));
+        assert!(beside.of("rss", "rss.entry").unwrap());
         let alone = registry(&[(Some(lapsed), &["rss.entry"])]);
-        assert!(!alone.of("rss", "rss.entry"));
+        assert!(!alone.of("rss", "rss.entry").unwrap());
+    }
+
+    #[test]
+    fn a_holding_whose_end_does_not_read_refuses_its_source_alone() {
+        let mut beside = registry(&[(None, &["rss.entry"])]);
+        Arc::get_mut(&mut beside.registry)
+            .unwrap()
+            .holdings
+            .get_mut("rss")
+            .unwrap()
+            .push(Holding {
+                end: End::Unread,
+                declared: HashSet::new(),
+            });
+        assert!(beside.of("rss", "rss.entry").is_err());
+        assert!(!beside.of("other", "rss.entry").unwrap());
     }
 }

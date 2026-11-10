@@ -245,6 +245,7 @@ pub async fn supervise(
     let given_up = Arc::new(AtomicBool::new(false));
     let deadline = app.faults.deadline(job.name).unwrap_or(job.deadline);
     let run = Run {
+        job: job.name,
         given_up: given_up.clone(),
         stopping: app.housekeeping.stopping.subscribe(),
     };

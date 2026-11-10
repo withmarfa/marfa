@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use super::Queued;
 use crate::app::access::Maker;
-use crate::app::clock::readable;
+use crate::app::clock::{Unread, readable};
 use crate::app::items::Selected;
 use crate::app::refusal::{Refusal, Result};
 
@@ -257,6 +257,12 @@ pub fn end(
     tx.execute("DELETE FROM bulk_job_notes WHERE job_id = ?1", [id])?;
     Ok(())
 }
+
+pub const UNREAD_ENDED: Unread<'static> = Unread {
+    table: "bulk_jobs",
+    time: "finished_at",
+    scope: "1",
+};
 
 /// Removes up to `limit` jobs that ended before `before`.
 pub fn remove_ended(tx: &Transaction<'_>, before: &str, limit: i64) -> Result<i64> {

@@ -2,7 +2,7 @@
 
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 
-use crate::app::clock::{Stamp, readable};
+use crate::app::clock::{Stamp, Unread, readable};
 use crate::app::refusal::Result;
 
 pub struct Endpoint {
@@ -334,6 +334,18 @@ pub struct Expired {
     pub seq: i64,
     pub charge: i64,
 }
+
+pub const UNREAD_HANDLED: Unread<'static> = Unread {
+    table: "inbound_deliveries",
+    time: "handled_at",
+    scope: "handled_at IS NOT NULL",
+};
+
+pub const UNREAD_PENDING: Unread<'static> = Unread {
+    table: "inbound_deliveries",
+    time: "received_at",
+    scope: "handled_at IS NULL",
+};
 
 /// A `None` cutoff keeps that class regardless of age.
 pub fn expired(

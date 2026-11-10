@@ -3,6 +3,7 @@ mod request;
 mod secret;
 mod usage;
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use rusqlite::{OptionalExtension, Row, Transaction, params};
@@ -144,17 +145,17 @@ pub fn live_by_id(tx: &Transaction<'_>, id: &str, at: &str) -> Result<Option<Key
     Ok(unrevoked_where(tx, "id", id)?.filter(|key| key.lives_at(at)))
 }
 
-/// Reads the stored expiry of each row, so one that does not read refuses the request.
-fn live_ids(
+/// Rows of `(id, text, expires_at)` whose key lives at `at`. A stored expiry that does not read refuses.
+fn live_rows(
     tx: &Transaction<'_>,
     sql: &str,
-    value: &str,
+    args: impl rusqlite::Params,
     at: &str,
 ) -> Result<Vec<(String, String)>> {
     let now = Stamp::read(at)?;
     let mut statement = tx.prepare(sql)?;
     let rows = statement
-        .query_map([value], |row| {
+        .query_map(args, |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -171,7 +172,7 @@ fn live_ids(
 
 /// The live keys whose type map names `type_id` outright, as `(id, label)`. An app's keys are its grant's.
 pub fn naming_type(tx: &Transaction<'_>, type_id: &str, at: &str) -> Result<Vec<(String, String)>> {
-    live_ids(
+    live_rows(
         tx,
         &format!(
             "SELECT k.id, k.label, k.expires_at FROM api_keys k \
@@ -179,9 +180,68 @@ pub fn naming_type(tx: &Transaction<'_>, type_id: &str, at: &str) -> Result<Vec<
              AND EXISTS (SELECT 1 FROM json_each(k.type_permissions) WHERE key = ?1) \
              ORDER BY k.created_at, k.id"
         ),
-        type_id,
+        [type_id],
         at,
     )
+}
+
+/// The label of the oldest live key whose own source is `source`.
+pub fn live_label_of_source(
+    tx: &Transaction<'_>,
+    source: &str,
+    at: &str,
+) -> Result<Option<String>> {
+    Ok(live_rows(
+        tx,
+        &format!(
+            "SELECT k.id, k.label, k.expires_at FROM api_keys k \
+             WHERE {UNREVOKED} AND k.source = ?1 ORDER BY k.created_at, k.id"
+        ),
+        [source],
+        at,
+    )?
+    .into_iter()
+    .next()
+    .map(|(_, label)| label))
+}
+
+/// Every source a live key holds as its own or claims, each once, in order.
+pub fn live_sources(tx: &Transaction<'_>, at: &str) -> Result<Vec<String>> {
+    let held: BTreeSet<String> = live_rows(
+        tx,
+        &format!(
+            "SELECT k.id, k.source, k.expires_at FROM api_keys k WHERE {UNREVOKED} \
+             UNION ALL SELECT k.id, s.source, k.expires_at FROM api_key_sources s \
+             JOIN api_keys k ON k.id = s.key_id WHERE {UNREVOKED}"
+        ),
+        [],
+        at,
+    )?
+    .into_iter()
+    .map(|(_, source)| source)
+    .collect();
+    Ok(held.into_iter().collect())
+}
+
+pub fn live_count(tx: &Transaction<'_>, at: &str) -> Result<i64> {
+    let live = live_rows(
+        tx,
+        &format!("SELECT k.id, k.id, k.expires_at FROM api_keys k WHERE {UNREVOKED}"),
+        [],
+        at,
+    )?;
+    Ok(i64::try_from(live.len()).unwrap_or(i64::MAX))
+}
+
+/// The sources an unrevoked key reaches, read without its times, for a key whose row does not read.
+pub fn reach_of_unrevoked(tx: &Transaction<'_>, id: &str) -> Result<Vec<String>> {
+    let mut statement = tx.prepare(
+        "SELECT source FROM api_keys WHERE id = ?1 AND revoked_at IS NULL \
+         UNION SELECT s.source FROM api_key_sources s JOIN api_keys k ON k.id = s.key_id \
+         WHERE k.id = ?1 AND k.revoked_at IS NULL",
+    )?;
+    let rows = statement.query_map([id], |row| row.get(0))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
 /// Whether the key is neither revoked nor expired at `at`.
@@ -295,13 +355,13 @@ fn replace(tx: &Transaction<'_>, key: &Key) -> Result<()> {
 }
 
 fn claimed_by_a_live_key(tx: &Transaction<'_>, source: &str, at: &str) -> Result<bool> {
-    Ok(!live_ids(
+    Ok(!live_rows(
         tx,
         &format!(
             "SELECT k.id, k.label, k.expires_at FROM api_key_sources s \
              JOIN api_keys k ON k.id = s.key_id WHERE {UNREVOKED} AND s.source = ?1"
         ),
-        source,
+        [source],
         at,
     )?
     .is_empty())
@@ -646,7 +706,35 @@ mod tests {
             assert!(naming_type(&tx, "core.note", &now).is_err(), "{stored}");
             store_claims(&tx, "odd", &["odd".to_string()]).unwrap();
             assert!(claimed_by_a_live_key(&tx, "odd", &now).is_err(), "{stored}");
+            assert!(live_label_of_source(&tx, "odd", &now).is_err(), "{stored}");
+            assert!(live_sources(&tx, &now).is_err(), "{stored}");
+            assert!(live_count(&tx, &now).is_err(), "{stored}");
+            assert_eq!(reach_of_unrevoked(&tx, "odd").unwrap(), ["odd"], "{stored}");
         }
+    }
+
+    #[test]
+    fn a_source_a_key_holds_counts_only_while_the_key_lives() {
+        let mut db = keys();
+        let tx = db.transaction().unwrap();
+        keyed(&tx, "open", None, None);
+        keyed(&tx, "end", Some(&at(NOW)), None);
+        keyed(&tx, "revoked", None, Some(&at(NOW - 1)));
+        store_claims(&tx, "open", &["claimed".to_string()]).unwrap();
+        store_claims(&tx, "end", &["lapsed".to_string()]).unwrap();
+        let now = at(NOW);
+        assert_eq!(live_sources(&tx, &now).unwrap(), ["claimed", "open"]);
+        assert_eq!(live_count(&tx, &now).unwrap(), 1);
+        assert_eq!(
+            live_label_of_source(&tx, "open", &now).unwrap().as_deref(),
+            Some("open")
+        );
+        assert_eq!(live_label_of_source(&tx, "end", &now).unwrap(), None);
+        assert_eq!(
+            reach_of_unrevoked(&tx, "open").unwrap(),
+            ["claimed", "open"]
+        );
+        assert!(reach_of_unrevoked(&tx, "revoked").unwrap().is_empty());
     }
 
     #[test]

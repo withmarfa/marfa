@@ -8,9 +8,10 @@ use serde_json::json;
 
 use super::grant;
 use crate::app::access::Caller;
-use crate::app::auth::session;
-use crate::app::clock::{Stamp, readable};
+use crate::app::auth::{passkeys, session};
+use crate::app::clock::{Stamp, Unread, readable};
 use crate::app::housekeeping::{Run, drain};
+use crate::app::mcp::confirm;
 use crate::app::refusal::Result;
 use crate::app::{App, stored};
 use crate::db::Write;
@@ -39,6 +40,60 @@ fn withdrawn_consents() -> String {
          WHERE {} AND withdrawn_at < ?1 LIMIT ?2",
         readable("withdrawn_at")
     )
+}
+
+const IDLE_UNREAD: [Unread<'static>; 1] = [Unread {
+    table: "auth_oauth_consent",
+    time: "COALESCE(last_used_at, updated_at)",
+    scope: "withdrawn_at IS NULL",
+}];
+const WITHDRAWN_UNREAD: [Unread<'static>; 1] = [Unread {
+    table: "auth_oauth_consent",
+    time: "withdrawn_at",
+    scope: "1",
+}];
+const CLIENT_UNREAD: [Unread<'static>; 2] = [
+    Unread {
+        table: "auth_oauth_client",
+        time: "created_at",
+        scope: "1",
+    },
+    Unread {
+        table: "auth_oauth_client",
+        time: "offered_at",
+        scope: "1",
+    },
+];
+/// Swept only in passing by the writes that make them, so this stage reports them.
+const SWEPT_IN_PASSING: [Unread<'static>; 2] = [passkeys::UNREAD_CHALLENGES, confirm::UNREAD];
+
+/// Once a stage is done, what it kept past the cutoff is only what it could not judge.
+async fn report_kept(
+    app: &Arc<App>,
+    run: &Run,
+    cutoff: Cutoff,
+    unread: impl IntoIterator<Item = Unread<'static>> + Send + 'static,
+) -> Result<()> {
+    let (live, job) = (app.clone(), run.job);
+    app.db
+        .read(move |tx| {
+            let before = match cutoff {
+                Cutoff::At(at) => Some(at),
+                Cutoff::Kept(retention) => cutoff_of(tx, &live, retention)?,
+            };
+            if let Some(before) = before {
+                for unread in unread {
+                    unread.report(tx, job, [before])?;
+                }
+            }
+            Ok(())
+        })
+        .await
+}
+
+enum Cutoff {
+    At(Stamp),
+    Kept(Setting<u64>),
 }
 
 /// Read from `tx`, since the live settings lag a change the writer has committed.
@@ -117,7 +172,12 @@ async fn idle_clients(app: &Arc<App>) -> Result<i64> {
 
 /// Anything a client holds spares it.
 pub async fn remove_idle_clients(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
-    drain(run, BATCH, || idle_clients(app)).await
+    let (taken, done) = drain(run, BATCH, || idle_clients(app)).await?;
+    if done {
+        let cutoff = Cutoff::Kept(DCR_CLIENT_RETENTION_DAYS);
+        report_kept(app, run, cutoff, CLIENT_UNREAD).await?;
+    }
+    Ok((taken, done))
 }
 
 async fn retire_one(app: &Arc<App>) -> Result<i64> {
@@ -149,7 +209,12 @@ async fn retire_one(app: &Arc<App>) -> Result<i64> {
 
 /// Each is a write of its own, since one ends every credential of the grant and rewrites its item.
 pub async fn retire_idle_grants(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
-    drain(run, 1, || retire_one(app)).await
+    let (taken, done) = drain(run, 1, || retire_one(app)).await?;
+    if done {
+        let cutoff = Cutoff::Kept(GRANT_INACTIVITY_DAYS);
+        report_kept(app, run, cutoff, IDLE_UNREAD).await?;
+    }
+    Ok((taken, done))
 }
 
 async fn withdrawn_grants(app: &Arc<App>) -> Result<i64> {
@@ -178,7 +243,12 @@ async fn withdrawn_grants(app: &Arc<App>) -> Result<i64> {
 
 /// So a client they alone kept can go.
 pub async fn purge_withdrawn_grants(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
-    drain(run, BATCH, || withdrawn_grants(app)).await
+    let (taken, done) = drain(run, BATCH, || withdrawn_grants(app)).await?;
+    if done {
+        let cutoff = Cutoff::Kept(REVOKED_GRANT_RETENTION_DAYS);
+        report_kept(app, run, cutoff, WITHDRAWN_UNREAD).await?;
+    }
+    Ok((taken, done))
 }
 
 async fn expired_in(
@@ -219,6 +289,11 @@ async fn expired_sessions(app: &Arc<App>) -> Result<i64> {
 /// removes it sooner.
 pub async fn sweep_expired(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
     let (mut deleted, mut done) = drain(run, BATCH, || expired_sessions(app)).await?;
+    if done {
+        let now = Cutoff::At(app.clock.instant());
+        let unread = [session::UNREAD].into_iter().chain(SWEPT_IN_PASSING);
+        report_kept(app, run, now, unread).await?;
+    }
     for (table, key, kept_ms) in [
         ("auth_oauth_code", "digest", 0),
         ("auth_oauth_device_code", "device_code", MS_PER_DAY),
@@ -232,6 +307,14 @@ pub async fn sweep_expired(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
         let (taken, finished) = drain(run, BATCH, || expired_in(app, table, key, kept_ms)).await?;
         deleted += taken;
         done = finished;
+        if let (true, Some(before)) = (done, app.clock.instant().earlier_by(kept_ms)) {
+            let unread = Unread {
+                table,
+                time: "expires_at",
+                scope: "1",
+            };
+            report_kept(app, run, Cutoff::At(before), [unread]).await?;
+        }
     }
     Ok((deleted, done))
 }

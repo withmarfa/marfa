@@ -166,11 +166,21 @@ pub fn pass(tx: &Transaction<'_>, context: &Context<'_>) -> Result<Pass> {
 }
 
 /// Active subscriptions whose credential stands and manages webhooks, judged once a pass.
+/// One whose standing cannot be judged is passed over, so the rest are still sent.
 fn entitled(tx: &Transaction<'_>, at: &str) -> Result<Vec<Entitled>> {
     let mut entitled = Vec::new();
     for subscription in store::active(tx)? {
-        let Some(caller) = standing_maker(tx, &subscription.maker, at)? else {
-            continue;
+        let caller = match standing_maker(tx, &subscription.maker, at) {
+            Ok(Some(caller)) => caller,
+            Ok(None) => continue,
+            Err(refused) => {
+                tracing::warn!(
+                    webhook = %subscription.id,
+                    error = %refused,
+                    "A webhook's credential could not be judged; it is sent nothing"
+                );
+                continue;
+            }
         };
         entitled.push(Entitled {
             subscription,

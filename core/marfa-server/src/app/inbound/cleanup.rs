@@ -29,9 +29,9 @@ fn chosen(expired: Vec<store::Expired>) -> Vec<i64> {
     seqs
 }
 
-pub async fn delivery_cleanup(app: Arc<App>, _run: Run) -> Result<Report> {
+pub async fn delivery_cleanup(app: Arc<App>, run: Run) -> Result<Report> {
     let faults = app.faults.clone();
-    let live = app.clone();
+    let (live, job) = (app.clone(), run.job);
     let (deleted, remaining) = app
         .db
         .write(Write::own(), move |tx| {
@@ -52,6 +52,16 @@ pub async fn delivery_cleanup(app: Arc<App>, _run: Run) -> Result<Report> {
             }
             let remaining =
                 store::any_expired(tx, handled_before.as_deref(), pending_before.as_deref())?;
+            if !remaining {
+                for (unread, before) in [
+                    (&store::UNREAD_HANDLED, handled_before),
+                    (&store::UNREAD_PENDING, pending_before),
+                ] {
+                    if let Some(before) = before {
+                        unread.report(tx, job, [before])?;
+                    }
+                }
+            }
             Ok((seqs.len(), remaining))
         })
         .await?;

@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, it } from "vitest";
+import { MarfaClient } from "../../client/api.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -6,6 +7,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
+import { startReceiver } from "../../utils/webhook-receiver.js";
 
 // The damage is written into the database as a hand edit would leave it: no
 // door stores a time in any other form.
@@ -92,6 +94,13 @@ const mintKey = async (
   return { id: id as string, key: body.key };
 };
 
+const expiringAt = (server: FreshServer, id: string, value: string) =>
+  withInstanceDatabase(server.sqlitePath, (db) =>
+    db
+      .prepare("UPDATE api_keys SET expires_at = ? WHERE id = ?")
+      .run(value, id),
+  );
+
 describe("a time the server keeps", () => {
   it(
     "keeps every time in its database as UTC text with milliseconds",
@@ -139,12 +148,7 @@ describe("a time the server keeps", () => {
     async () => {
       const server = await bootFreshServer("stored-times-key");
       const { id, key } = await mintKey(server);
-      const expiring = (value: string) =>
-        withInstanceDatabase(server.sqlitePath, (db) =>
-          db
-            .prepare("UPDATE api_keys SET expires_at = ? WHERE id = ?")
-            .run(value, id),
-        );
+      const expiring = (value: string) => expiringAt(server, id, value);
       expect((await send(server, "/keys/current", { key })).status).toBe(200);
       // The witness: the stored expiry decides, and one that reads as past refuses 401.
       expiring("2000-01-01T00:00:00.000Z");
@@ -203,6 +207,166 @@ describe("a time the server keeps", () => {
         (await send(server, "/owner/passkeys", { cookie: server.ownerCookie }))
           .status,
       ).toBe(200);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "answers 500 internal_error to GET /sources while a key's stored expiry does not read, and answers again once it reads",
+    async () => {
+      const server = await bootFreshServer("stored-times-sources");
+      const { id } = await mintKey(server);
+      const listed = async () => {
+        const answer = await send(server, "/sources", {
+          key: server.managementKey,
+        });
+        expect(answer.status).toBe(200);
+        const body = (await answer.json()) as { data: { source: string }[] };
+        return body.data.map((entry) => entry.source);
+      };
+      expect(await listed()).toContain("expiring");
+      // The witness: the stored expiry decides, and a source held only by a key past its end goes.
+      expiringAt(server, id, "2000-01-01T00:00:00.000Z");
+      expect(await listed()).not.toContain("expiring");
+
+      for (const damaged of ["0", "z", "soon", "2099-01-01T00:00:00Z"]) {
+        expiringAt(server, id, damaged);
+        const refused = await send(server, "/sources", {
+          key: server.managementKey,
+        });
+        expect(refused.status, damaged).toBe(500);
+        expect(await refused.json()).toEqual(INTERNAL);
+      }
+
+      expiringAt(server, id, "2099-01-01T00:00:00.000Z");
+      expect(await listed()).toContain("expiring");
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "goes on delivering to every other webhook while one webhook's key has a stored expiry that does not read",
+    async () => {
+      const server = await bootFreshServer("stored-times-webhooks");
+      const receiver = await startReceiver({ status: 200 });
+      try {
+        const admin = new MarfaClient({
+          baseUrl: server.apiUrl,
+          apiKey: server.workingKey,
+        });
+        const subscribe = async (label: string) => {
+          const minted = await admin.createKey({
+            label,
+            source: label,
+            permissions: ["webhooks.manage"],
+            type_permissions: { "core.note": "read" },
+          });
+          expect(minted.status).toBe(201);
+          const hook = await new MarfaClient({
+            baseUrl: server.apiUrl,
+            apiKey: minted.data.key,
+          }).createWebhook({
+            url: receiver.hookUrl(label),
+            events: ["item.created"],
+          });
+          expect(hook.status).toBe(201);
+          return minted.data.id;
+        };
+        await subscribe("kept");
+        const damagedKey = await subscribe("damaged");
+        const note = async (body: string) => {
+          const made = await admin.createItem({
+            type: "core.note",
+            properties: { body },
+          });
+          expect(made.status).toBe(201);
+          return made.data.item.id;
+        };
+        const reaches = (label: string, id: string) =>
+          receiver.waitFor(
+            (r) => r.path === `/hook/${label}` && r.body.includes(id),
+          );
+
+        // The witness: both webhooks are sent what they subscribe to.
+        const before = await note("before");
+        await reaches("kept", before);
+        await reaches("damaged", before);
+
+        expiringAt(server, damagedKey, "0");
+        const during = await note("during");
+        await reaches("kept", during);
+
+        expiringAt(server, damagedKey, "2099-01-01T00:00:00.000Z");
+        const after = await note("after");
+        await reaches("kept", after);
+        await reaches("damaged", after);
+        expect(
+          receiver.received.filter(
+            (r) => r.path === "/hook/damaged" && r.body.includes(during),
+          ),
+        ).toEqual([]);
+      } finally {
+        await receiver.close();
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "answers items of every other source while a connector key's stored expiry does not read, and 500 internal_error for its own",
+    async () => {
+      const server = await bootFreshServer("stored-times-read-only");
+      const admin = new MarfaClient({
+        baseUrl: server.apiUrl,
+        apiKey: server.workingKey,
+      });
+      const minted = await admin.createKey({
+        label: "connector",
+        source: "connector",
+        type_permissions: { "core.note": "write" },
+      });
+      expect(minted.status).toBe(201);
+      const connector = new MarfaClient({
+        baseUrl: server.apiUrl,
+        apiKey: minted.data.key,
+      });
+      expect(
+        (
+          await connector.registerConnector({
+            name: "connector",
+            read_only_types: ["core.note"],
+          })
+        ).status,
+      ).toBe(201);
+      const written = async (by: MarfaClient) => {
+        const made = await by.createItem({
+          type: "core.note",
+          properties: { body: "kept" },
+        });
+        expect(made.status).toBe(201);
+        return made.data.item.id;
+      };
+      const held = await written(connector);
+      const other = await written(admin);
+      // The witness: the connector key's registration marks its own items.
+      const read = await admin.getItem(held);
+      expect(read.status).toBe(200);
+      expect(read.data.item.read_only).toBe(true);
+
+      for (const damaged of ["0", "z", "soon", "2099-01-01T00:00:00Z"]) {
+        expiringAt(server, minted.data.id, damaged);
+        const answered = await admin.getItem(other);
+        expect(answered.status, damaged).toBe(200);
+        expect(answered.data.item.read_only, damaged).toBe(false);
+        const refused = await send(server, `/items/${held}`, {
+          key: server.workingKey,
+        });
+        expect(refused.status, damaged).toBe(500);
+        expect(await refused.json()).toEqual(INTERNAL);
+      }
+
+      expiringAt(server, minted.data.id, "2099-01-01T00:00:00.000Z");
+      expect((await admin.getItem(held)).data.item.read_only).toBe(true);
     },
     FRESH_SERVER_TIMEOUT_MS,
   );

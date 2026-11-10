@@ -13,6 +13,7 @@ use super::s3::S3;
 use super::store::{self, Answer, Failed, Store};
 use super::{App, Hash, room, rows};
 use crate::app::access::Caller;
+use crate::app::clock::Stamp;
 use crate::app::faults::{FAIL_BLOB_READ, HOLD_BLOB_PURGE, HOLD_BLOB_READ, Lie};
 use crate::app::housekeeping::{Report, Run};
 use crate::app::refusal::Result;
@@ -502,18 +503,22 @@ fn purgeable(tx: &rusqlite::Transaction<'_>, app: &App) -> Result<Vec<Hash>> {
     Ok(found)
 }
 
-fn past_grace(tx: &rusqlite::Transaction<'_>, app: &App) -> Result<Vec<Hash>> {
+fn grace_cutoff(tx: &rusqlite::Transaction<'_>, app: &App) -> Result<Option<String>> {
     let seeds = app.settings.seeds();
     if stored::deciding(tx, &seeds, BLOB_CLEANUP_INTERVAL_MS)? == 0 {
-        return Ok(Vec::new());
+        return Ok(None);
     }
     let grace = stored::deciding(tx, &seeds, BLOB_CLEANUP_GRACE_MS)?;
-    match app
+    Ok(app
         .clock
         .instant()
         .earlier_by(i64::try_from(grace).unwrap_or(i64::MAX))
-    {
-        Some(cutoff) => rows::purge_candidates(tx, &cutoff.text()),
+        .map(Stamp::text))
+}
+
+fn past_grace(tx: &rusqlite::Transaction<'_>, app: &App) -> Result<Vec<Hash>> {
+    match grace_cutoff(tx, app)? {
+        Some(cutoff) => rows::purge_candidates(tx, &cutoff),
         None => Ok(Vec::new()),
     }
 }
@@ -525,12 +530,15 @@ pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
     let mut unreachable = BTreeSet::new();
     app.retry_deletions(&run, LEFTOVERS, true, &mut unreachable)
         .await?;
-    let (live, at) = (app.clone(), app.clock.stamp());
+    let (live, at, job) = (app.clone(), app.clock.stamp(), run.job);
     let candidates = app
         .db
         .write(Write::own(), move |tx| {
             // Chosen before this run reports, so only an earlier run's report is purged.
             let candidates = purgeable(tx, &live)?;
+            if let Some(cutoff) = grace_cutoff(tx, &live)? {
+                rows::UNREAD_ORPHANS.report(tx, job, [cutoff])?;
+            }
             rows::report_orphans(tx, &at)?;
             Ok(candidates)
         })

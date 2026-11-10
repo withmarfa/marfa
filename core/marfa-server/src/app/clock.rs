@@ -211,6 +211,44 @@ pub fn readable(column: &str) -> String {
     )
 }
 
+/// Rows a clean-up keeps because the time it judges them by does not read.
+pub struct Unread<'a> {
+    pub table: &'a str,
+    /// A column, or an expression of columns.
+    pub time: &'a str,
+    /// What else makes a row the clean-up's, beside its time before the cutoff `?1`.
+    pub scope: &'a str,
+}
+
+impl Unread<'_> {
+    /// Counts them among the rows before the cutoff, and warns when there are any.
+    pub fn report(
+        &self,
+        db: &rusqlite::Connection,
+        job: &str,
+        args: impl rusqlite::Params,
+    ) -> refusal::Result<i64> {
+        let Unread { table, time, scope } = self;
+        let count: i64 = db.query_row(
+            &format!(
+                "SELECT count(*) FROM {table} WHERE {scope} AND {time} < ?1 AND NOT {}",
+                readable(time)
+            ),
+            args,
+            |row| row.get(0),
+        )?;
+        if count > 0 {
+            tracing::warn!(
+                job,
+                table,
+                count,
+                "A clean-up kept rows whose stored time does not read"
+            );
+        }
+        Ok(count)
+    }
+}
+
 impl fmt::Display for Stamp {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.text())
@@ -290,6 +328,35 @@ mod tests {
         ] {
             assert!(Stamp::read(stored).is_err(), "{stored}");
         }
+    }
+
+    #[test]
+    fn reports_only_rows_before_the_cutoff_whose_time_does_not_read() {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE t (at, kind)").unwrap();
+        let rows: [(rusqlite::types::Value, &str); 8] = [
+            ("2025-01-01T00:00:00.000Z".to_string().into(), "x"),
+            ("2027-01-01T00:00:00.000Z".to_string().into(), "x"),
+            ("0".to_string().into(), "x"),
+            ("0".to_string().into(), "y"),
+            ("z".to_string().into(), "x"),
+            ("2025-01-01T00:00:00Z".to_string().into(), "x"),
+            (5_i64.into(), "x"),
+            (rusqlite::types::Value::Null, "x"),
+        ];
+        for (at, kind) in rows {
+            db.execute("INSERT INTO t VALUES (?1, ?2)", rusqlite::params![at, kind])
+                .unwrap();
+        }
+        let kept = Unread {
+            table: "t",
+            time: "at",
+            scope: "kind = ?2",
+        };
+        let count = kept
+            .report(&db, "a-job", ("2026-01-01T00:00:00.000Z", "x"))
+            .unwrap();
+        assert_eq!(count, 3);
     }
 
     #[test]

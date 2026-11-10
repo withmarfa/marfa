@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use rusqlite::{Transaction, params};
+use rusqlite::Transaction;
 use serde_json::{Map, Value, json};
 use tokio::sync::Semaphore;
 
@@ -10,6 +10,7 @@ use super::App;
 use super::clock::Stamp;
 use super::faults::HOLD_METRICS;
 use super::instance::VERSION;
+use super::keys;
 use super::refusal::{Refusal, Result};
 
 pub struct Counts {
@@ -60,12 +61,7 @@ fn count(tx: &Transaction<'_>, now: Stamp) -> Result<Counts> {
         blob_bytes,
         platform_types: types("platform")?,
         user_types: types("user")?,
-        keys: tx.query_row(
-            "SELECT count(*) FROM api_keys \
-             WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?1)",
-            params![now],
-            |row| row.get(0),
-        )?,
+        keys: keys::live_count(tx, &now.text())?,
         webhooks: one(tx, "SELECT count(*) FROM webhooks")?,
         versions: one(tx, "SELECT count(*) FROM item_versions")?,
         events: one(tx, "SELECT count(*) FROM event_log")?,

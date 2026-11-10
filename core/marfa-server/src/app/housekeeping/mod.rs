@@ -141,6 +141,7 @@ impl Report {
 }
 
 pub struct Run {
+    pub job: &'static str,
     given_up: Arc<AtomicBool>,
     stopping: watch::Receiver<bool>,
 }

@@ -9,7 +9,7 @@ use serde_json::Value;
 use super::Blob;
 use super::hash::Hash;
 use super::references::Row;
-use crate::app::clock::readable;
+use crate::app::clock::{Unread, readable};
 use crate::app::refusal::{Refusal, Result};
 
 /// What the read rule asks of a row that lends a blob.
@@ -752,6 +752,12 @@ pub fn report_size(tx: &Transaction<'_>) -> Result<u64> {
     let count: i64 = tx.query_row("SELECT COUNT(*) FROM blob_orphans", [], |row| row.get(0))?;
     size_of(count)
 }
+
+pub const UNREAD_ORPHANS: Unread<'static> = Unread {
+    table: "blob_orphans",
+    time: "reported_at",
+    scope: "1",
+};
 
 /// Blobs reported at or before `cutoff` that the index says nothing references.
 pub fn purge_candidates(tx: &Transaction<'_>, cutoff: &str) -> Result<Vec<Hash>> {

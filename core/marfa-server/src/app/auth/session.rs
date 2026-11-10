@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use super::{Note, Visit, names, note};
 use crate::app::access::{Caller, Standing, unauthorized};
-use crate::app::clock::{Stamp, readable};
+use crate::app::clock::{Stamp, Unread, readable};
 use crate::app::faults::{FAIL_SESSION_DELETE, FAIL_SESSION_LOOKUP, FAIL_SESSION_USE};
 use crate::app::keys::digest_of;
 use crate::app::refusal::{Code, Refusal, Result};
@@ -340,6 +340,12 @@ pub(super) fn end_all(
     }
     Ok(())
 }
+
+pub const UNREAD: Unread<'static> = Unread {
+    table: "auth_session",
+    time: "expires_at",
+    scope: "1",
+};
 
 /// Removes up to `batch` sessions past their end, which no cookie opens any more.
 pub fn remove_expired(tx: &Transaction<'_>, now: Stamp, batch: i64) -> Result<i64> {

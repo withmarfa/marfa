@@ -127,7 +127,7 @@ impl Judge<'_> {
         }
         let with_type = item.remove("trashed_with_type");
         self.named_to_readers(item, "trashed_with", with_type);
-        let read_only = self.read_only.of(entry.source, entry.type_id);
+        let read_only = self.read_only.of(entry.source, entry.type_id)?;
         *item = before_properties(std::mem::take(item), read_only);
         let with_type = body.remove("restored_with_type");
         self.named_to_readers(body, "restored_with", with_type);

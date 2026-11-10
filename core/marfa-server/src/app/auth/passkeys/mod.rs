@@ -17,8 +17,8 @@ use webauthn_rs::prelude::{
     RegisterPublicKeyCredential, Url, Uuid, Webauthn, WebauthnBuilder, WebauthnError,
 };
 
-pub use self::challenge::LIFE_MS as CHALLENGE_LIFE_MS;
 use self::challenge::Purpose;
+pub use self::challenge::{LIFE_MS as CHALLENGE_LIFE_MS, UNREAD as UNREAD_CHALLENGES};
 pub use self::store::Listed;
 use super::limits::{hold_to, passkey_challenge_lanes};
 use super::owner::{self, Owner, checked_name};

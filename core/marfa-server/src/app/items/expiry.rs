@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use super::super::App;
 use super::super::access::Caller;
 use super::super::catalog::{self, Catalog, Snapshot};
-use super::super::clock::readable;
+use super::super::clock::{Unread, readable};
 use super::super::housekeeping::{DAY_MS, Report, Run, ago};
 use super::super::refusal::{Code, Result};
 use super::super::unit::Unit;
@@ -83,16 +83,20 @@ fn is_expired(app: &App, tx: &Transaction<'_>, catalog: &Catalog, item: &Item) -
     Ok(statement.query_row(params![item.id, before], |row| row.get(0))?)
 }
 
-fn types_due(app: &App, tx: &Transaction<'_>) -> Result<Vec<String>> {
-    let catalog = catalog::current(&app.catalog_handle(), tx, Snapshot::Committed)?;
+fn expirable_types(tx: &Transaction<'_>) -> Result<Vec<String>> {
     let mut statement = tx.prepare_cached(&format!(
         "SELECT DISTINCT type FROM items WHERE {EXPIRABLE}"
     ))?;
     let types = statement
         .query_map([], |row| row.get::<_, String>(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(types)
+}
+
+fn types_due(app: &App, tx: &Transaction<'_>) -> Result<Vec<String>> {
+    let catalog = catalog::current(&app.catalog_handle(), tx, Snapshot::Committed)?;
     let mut due = Vec::new();
-    for type_id in types {
+    for type_id in expirable_types(tx)? {
         if let Some(before) = cutoff_of(app, &catalog, &type_id)
             && !expired(tx, &type_id, &before, &Position::default(), 1)?.is_empty()
         {
@@ -195,6 +199,28 @@ fn result(moved: usize, held: usize) -> Value {
     json!({ "moved": moved, "held": held })
 }
 
+/// Every expirable type is looked at, since one holding only what could not be judged is never due.
+async fn report_kept(app: &Arc<App>, run: &Run) -> Result<()> {
+    let (live, job) = (app.clone(), run.job);
+    app.db
+        .read(move |tx| {
+            let catalog = catalog::current(&live.catalog_handle(), tx, Snapshot::Committed)?;
+            let scope = format!("type = ?2 AND {EXPIRABLE}");
+            let unread = Unread {
+                table: "items",
+                time: "created_at",
+                scope: &scope,
+            };
+            for type_id in expirable_types(tx)? {
+                if let Some(before) = cutoff_of(&live, &catalog, &type_id) {
+                    unread.report(tx, job, [&before, &type_id])?;
+                }
+            }
+            Ok(())
+        })
+        .await
+}
+
 pub async fn feed_expiry(app: Arc<App>, run: Run) -> Result<Report> {
     let live = app.clone();
     let types = app.db.read(move |tx| types_due(&live, tx)).await?;
@@ -223,5 +249,6 @@ pub async fn feed_expiry(app: Arc<App>, run: Run) -> Result<Report> {
             after = next;
         }
     }
+    report_kept(&app, &run).await?;
     Ok(Report::done(result(moved, held)))
 }

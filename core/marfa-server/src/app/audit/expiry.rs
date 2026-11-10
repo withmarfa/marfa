@@ -1,7 +1,13 @@
 use rusqlite::{Transaction, params};
 
-use super::super::clock::readable;
+use super::super::clock::{Unread, readable};
 use super::super::refusal::Result;
+
+pub const UNREAD: Unread<'static> = Unread {
+    table: "audit_log",
+    time: "created_at",
+    scope: "1",
+};
 
 pub fn expire(tx: &Transaction<'_>, before: &str, limit: i64) -> Result<i64> {
     let removed = tx.execute(

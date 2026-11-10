@@ -3,10 +3,23 @@
 
 use rusqlite::{Transaction, params};
 
-use super::super::clock::readable;
+use super::super::clock::{Unread, readable};
 use super::super::refusal::Result;
 
 pub const KEPT_DAYS: i64 = 30;
+
+pub const UNREAD: [Unread<'static>; 2] = [
+    Unread {
+        table: "api_keys",
+        time: "revoked_at",
+        scope: "1",
+    },
+    Unread {
+        table: "api_keys",
+        time: "expires_at",
+        scope: "revoked_at IS NULL",
+    },
+];
 
 fn ended() -> String {
     format!(
@@ -68,6 +81,11 @@ mod tests {
         assert!(any(&tx, &before).unwrap());
         assert_eq!(remove(&tx, &before, 100).unwrap(), 2);
         assert!(!any(&tx, &before).unwrap());
+        let reported: Vec<i64> = UNREAD
+            .iter()
+            .map(|unread| unread.report(&tx, "credential-cleanup", [&before]).unwrap())
+            .collect();
+        assert_eq!(reported, [1, 1]);
         let left: i64 = tx
             .query_row("SELECT count(*) FROM api_keys", [], |row| row.get(0))
             .unwrap();

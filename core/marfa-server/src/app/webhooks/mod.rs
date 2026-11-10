@@ -27,7 +27,7 @@ use store::{Delivery, Status};
 
 pub use request::{Address, CREATE_FIELDS, Create, UPDATE_FIELDS, Update};
 pub use sender::{Webhooks, start};
-pub use store::Subscription;
+pub use store::{Subscription, UNREAD_DELIVERIES};
 
 const CANCEL_URL: &str = "The subscription was pointed at another URL.";
 const CANCEL_TURNED_OFF: &str = "The subscription was turned off.";

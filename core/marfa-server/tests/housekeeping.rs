@@ -586,6 +586,55 @@ async fn credential_cleanup_takes_a_revoked_key_a_second_past_its_thirty_days() 
     assert_eq!(instance.count(audited), 1);
 }
 
+#[tokio::test]
+async fn every_cleanup_keeps_a_row_whose_stored_time_does_not_read_and_finishes() {
+    let instance = Instance::start(&[("MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES", "true")]).await;
+    let type_id = expiring(&instance).await;
+    let feed = instance.item(feed_item(type_id, "feed")).await;
+    let binned = instance.binned(1).await.remove(0);
+    let body = json!({ "label": "ended", "source": "ended", "permissions": [] });
+    let minted = instance.ok(Method::POST, "/keys", body).await;
+    let key = minted["id"].as_str().unwrap().to_string();
+    let path = format!("/keys/{key}");
+    instance.ok(Method::DELETE, &path, Value::Null).await;
+    instance.dead_delivery().await;
+    // "0" sorts before any cutoff, so only reading the time keeps these rows.
+    instance
+        .sql(format!(
+            "UPDATE items SET created_at = '0' WHERE id = '{feed}'; \
+             UPDATE items SET trashed_at = '0' WHERE id = '{binned}'; \
+             UPDATE api_keys SET revoked_at = '0' WHERE id = '{key}'; \
+             UPDATE webhook_deliveries SET created_at = '0' WHERE id = 'dead'; \
+             UPDATE audit_log SET created_at = '0' WHERE id = (SELECT min(id) FROM audit_log);"
+        ))
+        .await;
+
+    instance.forward(400 * DAY);
+    for job in [
+        "audit-cleanup",
+        "trash-purge",
+        "feed-expiry",
+        "event-log-cleanup",
+        "inbound-delivery-cleanup",
+        "bulk-action-gc",
+        "credential-cleanup",
+        "blob-orphans",
+    ] {
+        instance.run(job).await;
+    }
+    for (table, column) in [
+        ("items", "created_at"),
+        ("items", "trashed_at"),
+        ("api_keys", "revoked_at"),
+        ("webhook_deliveries", "created_at"),
+        ("audit_log", "created_at"),
+    ] {
+        let kept = format!("SELECT count(*) FROM {table} WHERE {column} = '0'");
+        assert_eq!(instance.count(&kept), 1, "{table}.{column}");
+    }
+    assert_eq!(instance.count("SELECT count(*) FROM audit_log"), 1);
+}
+
 async fn expiring(instance: &Instance) -> &'static str {
     let body = json!({
         "id": "user.expiring",
