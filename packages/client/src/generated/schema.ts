@@ -7029,7 +7029,7 @@ export interface components {
              * @enum {boolean}
              */
             values_included?: false;
-            /** @description Each row the batch changed, as the batch left it, or with `deleted` `true` for a removed row. */
+            /** @description Each row the batch changed, as the batch left it, or with `deleted` `true` for a removed row. A row changed at `last_activity_at`. */
             rows: {
                 /** @description The ID of the row. */
                 id: string;
@@ -7037,8 +7037,6 @@ export interface components {
                 values?: {
                     [key: string]: unknown;
                 };
-                /** @description When the row changed, in UTC. */
-                updated_at?: string;
                 /**
                  * @description Present, as `true`, when the batch removed the row.
                  * @enum {boolean}

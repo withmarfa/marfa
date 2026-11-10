@@ -312,7 +312,7 @@ describe("reading rows", () => {
         mean: { average: 3 },
         units: { max: 7 },
         memo: { count: 2 },
-        at: { min: "2026-01-01T10:00:00+02:00" },
+        at: { min: "2026-01-01T08:00:00.000Z" },
         on: { max: "2026-03-01" },
       },
     });

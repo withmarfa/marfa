@@ -46,7 +46,6 @@ fn logged_rows(announced: &Announced<'_>) -> (Vec<Value>, bool) {
                 let mut row = Map::new();
                 row.insert("id".into(), id.clone().into());
                 row.insert("values".into(), Value::Object(values.clone()));
-                row.insert("updated_at".into(), announced.at.into());
                 let named: Map<String, Value> = announced
                     .table
                     .item_columns()

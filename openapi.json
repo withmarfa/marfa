@@ -11469,7 +11469,7 @@
           },
           "rows": {
             "type": "array",
-            "description": "Each row the batch changed, as the batch left it, or with `deleted` `true` for a removed row.",
+            "description": "Each row the batch changed, as the batch left it, or with `deleted` `true` for a removed row. A row changed at `last_activity_at`.",
             "items": {
               "type": "object",
               "description": "A row the batch changed.",
@@ -11482,10 +11482,6 @@
                   "type": "object",
                   "additionalProperties": {},
                   "description": "The row's values after the batch."
-                },
-                "updated_at": {
-                  "type": "string",
-                  "description": "When the row changed, in UTC."
                 },
                 "deleted": {
                   "type": "boolean",

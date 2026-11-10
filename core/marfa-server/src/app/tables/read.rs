@@ -359,17 +359,21 @@ fn numeric(column: &str) -> String {
     )
 }
 
-/// A total's SQL over the selected rows, or `None` for one read by its own query.
-fn aggregate(kind: &str, way: &str, column: &str) -> Option<String> {
-    let instant = matches!(kind, "date" | "datetime");
-    Some(match way {
-        "count" => format!("COUNT(json_extract(r.body, '$.{column}'))"),
-        "sum" => format!("TOTAL({})", numeric(column)),
-        "average" => format!("AVG({})", numeric(column)),
-        "min" if !instant => format!("MIN({})", numeric(column)),
-        "max" if !instant => format!("MAX({})", numeric(column)),
-        _ => return None,
-    })
+/// A total's SQL over the selected rows, all of them in one pass. A `datetime` compares by its
+/// instant, which it answers in UTC.
+fn aggregate(kind: &str, way: &str, column: &str) -> String {
+    let held = format!("json_extract(r.body, '$.{column}')");
+    match (way, kind) {
+        ("count", _) => format!("COUNT({held})"),
+        ("sum", _) => format!("TOTAL({})", numeric(column)),
+        ("average", _) => format!("AVG({})", numeric(column)),
+        ("min" | "max", "date") => format!("{}({held})", way.to_uppercase()),
+        ("min" | "max", "datetime") => format!(
+            "strftime('%Y-%m-%dT%H:%M:%fZ', {}(julianday({held})))",
+            way.to_uppercase()
+        ),
+        _ => format!("{}({})", way.to_uppercase(), numeric(column)),
+    }
 }
 
 fn number(value: f64, integer: bool) -> Value {
@@ -406,28 +410,15 @@ fn answered_totals(read: &Reader<'_, '_>, item_id: &str, table: &str, filter: Op
         .collect();
     let mut sql = Sql::new("SELECT COUNT(*)");
     for (name, kind, way) in &adding {
-        if let Some(text) = aggregate(kind, way, name) {
-            sql.push(", ");
-            sql.push(&text);
-        }
+        sql.push(", ");
+        sql.push(&aggregate(kind, way, name));
     }
     sql.append(&selected);
     let mut found = store::single(read.tx, &sql)?.into_iter();
     let row_count = found.next().unwrap_or(Bound::Integer(0));
     let mut totals = Map::new();
     for (name, kind, way) in &adding {
-        let bound = if aggregate(kind, way, name).is_some() {
-            found.next().unwrap_or(Bound::Null)
-        } else {
-            let mut instant = Sql::new(&format!("SELECT json_extract(r.body, '$.{name}') AS v"));
-            instant.append(&selected);
-            instant.push(&format!(
-                " AND julianday(json_extract(r.body, '$.{name}')) IS NOT NULL \
-                 ORDER BY julianday(json_extract(r.body, '$.{name}')) {}, r.id LIMIT 1",
-                if way == "min" { "ASC" } else { "DESC" }
-            ));
-            store::single(read.tx, &instant)?.into_iter().next().unwrap_or(Bound::Null)
-        };
+        let bound = found.next().unwrap_or(Bound::Null);
         totals.insert(name.clone(), json!({ way: total_value(kind, way, &bound) }));
     }
     printed(&json!({

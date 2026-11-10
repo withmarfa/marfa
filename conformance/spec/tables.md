@@ -536,7 +536,7 @@ When a caller sends `GET /items/{id}/tables/{table}/totals`, the server MUST ans
 
 ### `tables/totals-meaning`
 
-The server MUST answer `sum` as the sum of the column's values, `average` as their mean, `min` and `max` as the smallest and largest, a `date` or `datetime` value by the instant it names, and `count` as how many rows hold a value, answering `sum` and `count` as `0`, and `average`, `min` and `max` as `null`, over rows that hold none.
+The server MUST answer `sum` as the sum of the column's values, `average` as their mean, `min` and `max` as the smallest and largest, a `datetime` compared and answered as its instant in UTC, and `count` as how many rows hold a value, answering `sum` and `count` as `0`, and `average`, `min` and `max` as `null`, over rows that hold none.
 
 **Tests:** `compliance/table-rows-reads.test.ts › totals each column that adds up, over the rows a filter selects`, `› totals nothing as zero or null`.
 
@@ -566,9 +566,9 @@ When `GET /items` names `sort` `last_activity_at`, the server MUST answer the it
 
 ### `tables/rows-event`
 
-When a batch changes at least one row, the server MUST announce one `rows.changed` naming the `item` by `id`, `type` and `source`, the `table`, the `batch`, the item's `last_activity_at`, and in `rows` each row the batch changed, as `{ "id", "values", "updated_at" }` as the batch left it or `{ "id", "deleted": true }`.
+When a batch changes at least one row, the server MUST announce one `rows.changed` naming the `item` by `id`, `type` and `source`, the `table`, the `batch`, the item's `last_activity_at`, and in `rows` each row the batch changed, as `{ "id", "values" }` as the batch left it or `{ "id", "deleted": true }`.
 
-**Reason:** a device applies a batch from one event on the one cursor, without a read.
+**Reason:** a device applies a batch from one event on the one cursor, without a read; each row's `updated_at` is the event's `last_activity_at`.
 
 **Tests:** `compliance/table-rows-events.test.ts › announces one rows.changed per batch to a stream and a webhook`.
 

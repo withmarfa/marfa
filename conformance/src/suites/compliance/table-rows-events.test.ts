@@ -95,7 +95,6 @@ interface RowsFrame {
   rows: {
     id: string;
     values?: Record<string, unknown>;
-    updated_at?: string;
     deleted?: boolean;
     withheld?: string[];
   }[];
@@ -148,11 +147,7 @@ describe("announcing rows", () => {
         last_activity_at: written.data.last_activity_at,
       });
       expect(frame.rows).toEqual([
-        {
-          id: written.data.results[0]!.id,
-          values: { count: 2 },
-          updated_at: written.data.last_activity_at,
-        },
+        { id: written.data.results[0]!.id, values: { count: 2 } },
         { id: gone, deleted: true },
       ]);
       const delivered = await receiver.waitFor(
