@@ -337,12 +337,11 @@ fn reaches_own_table(chain: &[Obj]) -> bool {
         .any(|row| text(row, "id") == Some(OWN_TABLE_TYPE))
 }
 
-/// Whether an item of `type_id` keeps its own table: `core.table` and every type below it.
 pub fn keeps_own_table(registry: &Registry, type_id: &str) -> bool {
     chain(registry, type_id).is_ok_and(|chain| reaches_own_table(&chain))
 }
 
-/// An item's tables by name, labelled: those its type chain declares and, where the type keeps its own, `table` from the item's `columns`.
+/// Its type chain's tables and, from `core.table` down, `table` from the item's `columns`.
 pub fn item_tables(
     registry: &Registry,
     type_id: &str,

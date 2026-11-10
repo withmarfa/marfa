@@ -238,7 +238,6 @@ pub(super) fn item_column_held(
     )?)
 }
 
-/// Each item of `type_id` that holds a row, as its seq and its properties.
 pub(super) fn holders_of_type(tx: &Transaction<'_>, type_id: &str) -> Result<Vec<(i64, String)>> {
     let mut statement = tx.prepare_cached(
         "SELECT i.seq, json(i.properties) FROM items i WHERE i.type = ?1 AND EXISTS \
@@ -249,7 +248,6 @@ pub(super) fn holders_of_type(tx: &Transaction<'_>, type_id: &str) -> Result<Vec
     Ok(found.collect::<rusqlite::Result<_>>()?)
 }
 
-/// Each item of `type_id` that holds `columns`, as its id and its properties.
 pub(super) fn naming_columns(tx: &Transaction<'_>, type_id: &str) -> Result<Vec<(String, String)>> {
     let mut statement = tx.prepare_cached(
         "SELECT id, json(properties) FROM items \

@@ -68,10 +68,8 @@ fn parsed(text: &str) -> Result<Map<String, Value>> {
     }
 }
 
-/// A type and the properties an item holds under it.
 pub type Shape<'a> = (&'a str, &'a Map<String, Value>);
 
-/// A write that retypes an item or changes its columns leaves no held table behind, and reshapes a table the item keeps only with `schema.write`.
 pub fn judge_item_change(
     tx: &Transaction<'_>,
     catalog: &Catalog,
@@ -135,7 +133,6 @@ pub fn refuse_moving_type(
     }
 }
 
-/// Adds to `found` each held table `after` lacks, as `<table>`, and each column holding a value whose `type` it changes, as `<table>.<column>`.
 fn lost(
     before: &Map<String, Value>,
     after: &Map<String, Value>,
@@ -206,7 +203,7 @@ pub fn held_in_use(
     Ok(found.into_iter().collect())
 }
 
-/// The items of each type of `family` that `after` first places at or below `core.table`, whose `columns` a table cannot take, by type.
+/// Counts, by type, the items `after` first places under `core.table` whose `columns` a table cannot take.
 pub fn unkept_columns(
     tx: &Transaction<'_>,
     before: &Registry,

@@ -62,7 +62,7 @@ fn column_changes(was: &Obj, is: &Obj, prefix: &str) -> Vec<String> {
     needs
 }
 
-/// The columns only a schema writer may change, of each table an item has both before and after a write: `columns.<column>` for the item's own table after it, `tables.<table>.columns.<column>` for one its type declares.
+/// Named where the column lives after the write: `columns.<column>` in the item's own table, `tables.<table>.columns.<column>` in a declared one.
 pub fn item_table_changes(before: &Obj, after: &Obj, keeps_own: bool) -> Vec<String> {
     let columns = |table: &Value| as_obj(table.get("columns")).cloned().unwrap_or_default();
     let mut needs = Vec::new();

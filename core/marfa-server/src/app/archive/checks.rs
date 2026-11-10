@@ -321,7 +321,7 @@ pub fn item(catalog: &Catalog, cap: usize, line: &Value, row: usize) -> Result<(
     shape(catalog, &at, type_id, properties.unwrap_or(&empty))
 }
 
-/// A shipped type holds its items to it; whatever the type, a schedule or recurrence must unfold in a calendar read, and the columns of `core.table` and below must be ones a table takes.
+/// A shipped type holds its items to it; any type's schedule, recurrence and kept columns must still read.
 fn shape(
     catalog: &Catalog,
     at: &At<'_>,

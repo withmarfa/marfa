@@ -195,7 +195,6 @@ fn unread_tables() -> Refusal {
     Refusal::internal("a stored item's tables do not read")
 }
 
-/// An item's tables by name, as `marfa_rules::schema::item_tables` gives them.
 pub(crate) fn tables_by_name(
     types: &Registry,
     type_id: &str,

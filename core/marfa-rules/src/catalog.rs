@@ -835,7 +835,7 @@ pub struct Catalog {
 
 const MAX_PARENT_WALK: usize = 64;
 
-/// Which types a column's `type_constraints` may name: a write names registered ones, and an item already held keeps any a forced delete left.
+/// A write names registered types; an item already held keeps any a forced delete left.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Naming {
     Registered,
@@ -950,7 +950,6 @@ impl Catalog {
         type_id == OWN_TABLE_TYPE || self.descends_from(type_id, OWN_TABLE_TYPE)
     }
 
-    /// Judges the `columns` that `properties` name for an item of `core.table` or below, if they name any.
     pub fn judge_kept_columns(
         &self,
         type_id: &str,
