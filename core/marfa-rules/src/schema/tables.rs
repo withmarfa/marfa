@@ -1117,4 +1117,35 @@ mod tests {
         let dropped = json!({"id": "user.ledger", "fields": {"title": {"type": "string"}}});
         assert_eq!(evolved(before, dropped).0, vec!["tables.lines".to_string()]);
     }
+
+    #[test]
+    fn a_type_that_keeps_its_own_table_declares_none_named_table() {
+        let kept = Registry::new(
+            [
+                json!({"id": "core.table", "version": 0, "fields": {"title": {"type": "string"}}}),
+                json!({"id": "user.sheet", "parent": "core.table", "version": 0,
+                       "fields": {"title": {"type": "string"}}}),
+            ]
+            .into_iter()
+            .filter_map(|row| row.as_object().cloned()),
+        );
+        let tables = json!({"table": {"columns": {"a": {"type": "string"}}}});
+        let declared = |id: &str, parent: &str| {
+            let mut input = json!({"id": id, "fields": {"title": {"type": "string"}},
+                                   "tables": tables});
+            if !parent.is_empty() {
+                input["parent"] = json!(parent);
+            }
+            validate_type(&input, &kept)
+                .err()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|issue| issue.field)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(declared("user.plain", ""), Vec::<String>::new());
+        assert_eq!(declared("user.below", "core.table"), vec!["tables.table"]);
+        assert_eq!(declared("user.deeper", "user.sheet"), vec!["tables.table"]);
+        assert_eq!(declared("core.table", ""), vec!["tables.table"]);
+    }
 }

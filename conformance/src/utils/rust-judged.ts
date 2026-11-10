@@ -267,6 +267,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/table-own-columns.test.ts",
   "src/suites/compliance/table-rows-events.test.ts",
   "src/suites/compliance/table-rows-lifecycle.test.ts",
+  "src/suites/compliance/table-rows-own.test.ts",
   "src/suites/compliance/table-rows-reads.test.ts",
   "src/suites/compliance/table-rows.test.ts",
   "src/suites/compliance/telemetry-exception-alone.test.ts",

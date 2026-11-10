@@ -187,7 +187,6 @@ pub(super) fn single(tx: &Transaction<'_>, sql: &Sql) -> Result<Vec<Bound>> {
     Ok(found.unwrap_or_default())
 }
 
-/// The tables of item `seq` that hold a row.
 pub(super) fn held_tables(tx: &Transaction<'_>, seq: i64) -> Result<Vec<String>> {
     let mut statement = tx.prepare_cached(
         "SELECT table_name FROM table_summaries WHERE item_seq = ?1 AND row_count > 0 \
@@ -197,7 +196,6 @@ pub(super) fn held_tables(tx: &Transaction<'_>, seq: i64) -> Result<Vec<String>>
     Ok(found.collect::<rusqlite::Result<_>>()?)
 }
 
-/// The tables that hold a row of an item of `type_id`.
 pub(super) fn held_tables_of_type(tx: &Transaction<'_>, type_id: &str) -> Result<Vec<String>> {
     let mut statement = tx.prepare_cached(
         "SELECT DISTINCT s.table_name FROM table_summaries s JOIN items i ON i.seq = s.item_seq \
@@ -207,7 +205,6 @@ pub(super) fn held_tables_of_type(tx: &Transaction<'_>, type_id: &str) -> Result
     Ok(found.collect::<rusqlite::Result<_>>()?)
 }
 
-/// Whether a row of an item of `type_id` in `table` holds a value for `column`.
 pub(super) fn column_held(
     tx: &Transaction<'_>,
     type_id: &str,
