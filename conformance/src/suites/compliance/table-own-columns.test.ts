@@ -275,6 +275,40 @@ describe("a table a person keeps", () => {
     });
   });
 
+  it("refuses an order sent beside an item's own columns and takes the same write without it", async () => {
+    const columns = { at: { type: "datetime" }, note: { type: "string" } };
+    const count = async () =>
+      (await client.listItems({ type: "core.table", source: ctx.source })).data
+        .data.length;
+    const held = await count();
+
+    const refused = await client.createItem({
+      type: "core.table",
+      source: ctx.source,
+      properties: { title: "Log", columns, order: "at" },
+    });
+    expect(refused.status, JSON.stringify(refused.data)).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_properties");
+    expect(errorFields(refused)).toEqual(["order"]);
+    expect(await count(), "a refused create left an item").toBe(held);
+
+    const id = await made(columns);
+    expect(await count(), "the same create without an order").toBe(held + 1);
+    const before = (await client.getItem(id)).data.item;
+    const updated = await change(client, id, { properties: { order: "at" } });
+    expect(updated.status, JSON.stringify(updated.data)).toBe(400);
+    expect(updated.error?.error.code).toBe("invalid_properties");
+    expect(errorFields(updated)).toEqual(["order"]);
+    const after = (await client.getItem(id)).data.item;
+    expect(after.properties).toEqual(before.properties);
+    expect(after.version).toBe(before.version);
+
+    const renamed = await change(client, id, {
+      properties: { title: "Log 2" },
+    });
+    expect(renamed.status, JSON.stringify(renamed.data)).toBe(200);
+  });
+
   it("refuses a retype into core.table whose columns are refused", async () => {
     const note = await client.createItem({
       type: "core.note",
@@ -390,7 +424,7 @@ describe("a key changes a table's columns", () => {
       id,
       fields: { title: { type: "string" } },
       tables: { table: { columns } },
-    });
+    } as never);
     expect(res.status, JSON.stringify(res.error)).toBe(201);
     trackType(ctx, id);
     return id;

@@ -11,6 +11,7 @@ use crate::schema::{OWN_COLUMNS, OWN_TABLE_TYPE, judge_item_columns};
 use crate::wire::{WireEdgeType, WireType, label_from_id, label_from_name, plural_from_label};
 
 const TITLE_PROPERTY: &str = "title";
+const OWN_ORDER: &str = "order";
 
 /// Optional fields every type takes, though no read of a type lists them, with each element's type.
 const EVERY_TYPE_TAKES: [(&str, &str); 2] = [("attachments", "object"), ("links", "string")];
@@ -956,12 +957,28 @@ impl Catalog {
         properties: &Map<String, Value>,
         naming: Naming,
     ) -> Result<(), RuleError> {
-        let Some(columns) = properties.get(OWN_COLUMNS) else {
-            return Ok(());
-        };
         if !self.keeps_own_table(type_id) {
             return Ok(());
         }
+        if properties.contains_key(OWN_ORDER)
+            && self
+                .resolved(type_id)
+                .is_ok_and(|declared| !declared.contains_key(OWN_ORDER))
+        {
+            let message =
+                "An item's own columns have no order: only a table a type declares names one.";
+            return Err(
+                RuleError::new(Code::InvalidProperties, format!("{OWN_ORDER}: {message}"))
+                    .with_fields(vec![FieldError::new(
+                        OWN_ORDER,
+                        field_code::INVALID_VALUE,
+                        message,
+                    )]),
+            );
+        }
+        let Some(columns) = properties.get(OWN_COLUMNS) else {
+            return Ok(());
+        };
         let known = |id: &str| match naming {
             Naming::Registered => self.known(id),
             Naming::Any => true,
@@ -1887,6 +1904,36 @@ mod tests {
             "a note's columns are a property like any other"
         );
         assert!(judge("core.table", &json!({"columns": {}})).is_err());
+    }
+
+    #[test]
+    fn an_order_beside_an_item_s_own_columns_is_refused_unless_the_type_declares_the_field() {
+        let catalog = Catalog::from_wire(
+            &held(json!([
+                {"id": "core.table", "fields": {"columns": {"type": "object"}}},
+                {"id": "app.acme.ledger", "parent": "core.table", "fields": {}},
+                {"id": "app.acme.sorted", "parent": "core.table",
+                 "fields": {"order": {"type": "string"}}},
+                {"id": "core.note", "fields": {}}
+            ])),
+            None,
+        );
+        let columns = json!({"a": {"type": "datetime"}});
+        let judge = |type_id: &str, order: Option<&str>| {
+            let mut properties = json!({"title": "T", "columns": columns});
+            if let Some(order) = order {
+                properties["order"] = json!(order);
+            }
+            catalog.validate_properties(type_id, properties.as_object().unwrap(), true)
+        };
+        assert!(judge("core.table", None).is_ok());
+        assert!(judge("core.note", Some("a")).is_ok(), "the witness");
+        assert!(judge("app.acme.sorted", Some("a")).is_ok());
+        for type_id in ["core.table", "app.acme.ledger"] {
+            let refused = judge(type_id, Some("a")).unwrap_err();
+            let paths: Vec<&str> = refused.fields.iter().map(|f| f.path.as_str()).collect();
+            assert_eq!(paths, ["order"], "{type_id}");
+        }
     }
 
     #[test]

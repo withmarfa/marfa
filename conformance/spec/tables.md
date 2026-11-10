@@ -290,11 +290,19 @@ If a caller creates or updates an item of `core.table`, or of a type below it, s
 
 **Tests:** `compliance/table-own-columns.test.ts › refuses columns that are missing, cleared, empty, null or not an object`.
 
+### `tables/own-order-refused`
+
+If a caller creates or updates an item of `core.table`, or of a type below it that declares no `order` field, with an `order` property, then the server MUST answer `400 invalid_properties` naming `order` in `details.errors`.
+
+**Reason:** only a table a type declares names an `order` (`tables/order`), so the server refuses an order sent for an item's own columns rather than ignore it.
+
+**Tests:** `compliance/table-own-columns.test.ts › refuses an order sent beside an item's own columns and takes the same write without it`.
+
 ### `tables/own-columns-unchanged`
 
-When the server refuses a write under `tables/own-columns-refused` or `tables/own-columns-required`, the server MUST NOT create or change the item.
+When the server refuses a write under `tables/own-columns-refused`, `tables/own-columns-required` or `tables/own-order-refused`, the server MUST NOT create or change the item.
 
-**Tests:** `compliance/table-own-columns.test.ts › refuses the columns a declared table would refuse, naming each fault under columns`, `› refuses columns that are missing, cleared, empty, null or not an object`.
+**Tests:** `compliance/table-own-columns.test.ts › refuses the columns a declared table would refuse, naming each fault under columns`, `› refuses columns that are missing, cleared, empty, null or not an object`, `› refuses an order sent beside an item's own columns and takes the same write without it`.
 
 ### `tables/own-evolve-free`
 
