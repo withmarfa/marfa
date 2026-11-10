@@ -3766,7 +3766,7 @@ If the server answers a held stream with a refusal no retry changes, then a devi
 
 If a held stream's write to the store fails because another program committed to the store after the write's transaction first read it, then a device MUST roll that transaction back and make it again from its first read.
 
-**Reason:** SQLite refuses a write on a snapshot that another commit has passed (`SQLITE_BUSY_SNAPSHOT`), and no wait clears it: only a transaction that reads again can write.
+**Reason:** SQLite refuses a write on a snapshot that another commit has passed (its busy-snapshot error, extended code 517), and no wait clears it: only a transaction that reads again can write.
 
 **Tests:** `device/store-busy-live.test.ts › makes a held stream's write again from fresh reads when another program wrote to the store after it read, and goes on following`.
 
