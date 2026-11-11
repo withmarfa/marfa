@@ -500,14 +500,12 @@ fn operation_of(refused: &Answer, writes: &[&QueuedWrite]) -> Option<usize> {
     (at < total).then_some(at)
 }
 
-/// `operations.<at>` or a path inside it, as `operations.<local>`; any other path is `None`.
 fn renumbered_path(path: &str, at: usize, local: usize) -> Option<String> {
     let rest = path.strip_prefix("operations.")?;
     let rest = rest.strip_prefix(&at.to_string())?;
     (rest.is_empty() || rest.starts_with('.')).then(|| format!("operations.{local}{rest}"))
 }
 
-/// Numbers the refused operation as its own write does, in the details, the paths and the message.
 fn renumber(envelope: &mut Value, at: usize, local: usize) {
     let Some(error) = envelope.get_mut("error") else {
         return;
