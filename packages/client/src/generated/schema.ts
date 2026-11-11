@@ -4730,7 +4730,7 @@ export interface components {
         SearchResult: {
             item: components["schemas"]["Item"] & unknown;
             metadata: components["schemas"]["Metadata"] & unknown;
-            /** @description How well the result matches `q`, from its BM25 score, so higher is better. Scores depend on what is indexed, so compare them only within one search. */
+            /** @description How well the result matches `q`, from its BM25 score over the items and rows your key can read, so higher is better. Compare scores only within one search. */
             relevance_score: number;
             /** @description An excerpt of at most 32 words from the text that matches best, as escaped HTML with each matched word in `<mark>` tags and `...` where the text is cut. Absent if there is none. */
             snippet_html?: string;
