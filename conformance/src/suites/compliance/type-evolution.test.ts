@@ -888,6 +888,7 @@ describe("a parent is named only within the key's reach", () => {
     });
     expect(moved.status, JSON.stringify(moved.error)).toBe(200);
     expect((await client.getType(id)).data.parent).toBe(target);
+    trackType(ctx, id, client, target);
   });
 
   it("refuses a key on metadata.types:write alone a change of parent as a schema change", async () => {

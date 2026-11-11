@@ -1158,8 +1158,8 @@ describe("item versioning", () => {
   it("answers an edges-only stale write with the envelope minus its merge half", async () => {
     // The third shape this code is answered in, and the one a client is
     // most likely to be surprised by: there is nothing to merge, so there
-    // is no ancestor and no field list, but `current`
-    // are on every `version_conflict` the server answers.
+    // is no ancestor and no field list, but `current` is on every
+    // `version_conflict` the server answers.
     const r = await client.createItem(
       createNote({
         source: ctx.source,
