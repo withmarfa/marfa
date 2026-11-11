@@ -12,7 +12,8 @@ import { createServer } from "node:net";
  * The server listens on IPv4 loopback, on `--port`, else `MARFA_PORT`, else a
  * free port this script picks. On a port it picks, the server is reached at
  * `http://localhost:<port>`, which is also its sign-in address: passkeys
- * refuse an IP address. A named port leaves the sign-in address unset, and so
+ * refuse an IP address. A named port keeps the address the last boot of the
+ * same state had on that port, and otherwise leaves it unset, and so
  * do `--env MARFA_SIGN_IN_ADDRESS=` and a server without its test hooks, which
  * reads no seed; a server with no sign-in address, or one elsewhere, is
  * reached at `127.0.0.1`.
@@ -718,9 +719,13 @@ async function startServer(args: BootOptions): Promise<Started> {
     MARFA_DATABASE_PATH: p.db,
     MARFA_BLOB_PATH: p.blobs,
     // Passkeys need a host name, and an instance people reach has its
-    // sign-in address set. A port the caller names is left as it is.
+    // sign-in address set. A port the caller names keeps what the last boot
+    // of this state had there.
     MARFA_SIGN_IN_ADDRESS:
-      named === undefined ? `http://localhost:${port}` : undefined,
+      named === undefined ||
+      retainedEnv.MARFA_API_URL === `http://localhost:${port}`
+        ? `http://localhost:${port}`
+        : undefined,
     // Enrichment rewrites file items in the background, which would make
     // exact-property assertions on blobs depend on timing. Off unless the
     // caller says otherwise, as the limiter below is, so a fixture about

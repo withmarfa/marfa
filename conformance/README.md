@@ -116,7 +116,9 @@ system for a free one, starts on it, and starts again on another if a
 different process took it first; the server is then reached, and signs people
 in, at `http://localhost:<port>`, its sign-in address, since passkeys refuse an
 IP address. On a port given with `--port` or `MARFA_PORT` it is reached at
-`127.0.0.1` with no sign-in address set. It reads the port from
+`127.0.0.1` with no sign-in address set, unless the last boot of the same
+state was reached at `localhost` on that port, as a restart on the same port
+is. It reads the port from
 this boot's readiness log record before requesting `/health`. A restart
 ignores earlier readiness records. An explicitly occupied IPv4 port fails the
 boot instead of accepting another listener's health response.
