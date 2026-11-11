@@ -1664,7 +1664,7 @@ async fn a_copy_that_runs_out_of_time_aborts_its_multipart_upload() {
 async fn a_file_whose_grace_ends_while_a_sweep_waits_to_choose_keeps_its_object_store_copy() {
     let s3 = FakeS3::start().await;
     let mut env = s3.settings(BUCKET, "blobs");
-    env.push(("MARFA_BLOB_CLEANUP_GRACE_MS".into(), "1000".into()));
+    env.push(("MARFA_BLOB_CLEANUP_GRACE_SECONDS".into(), "1".into()));
     let instance = Instance::start(&pairs(&env)).await;
     let hash = instance
         .replicated(&s3, b"its grace ends while the sweep waits")
