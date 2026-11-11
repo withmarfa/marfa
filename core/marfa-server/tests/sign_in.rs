@@ -384,25 +384,52 @@ async fn a_seeded_address_counts_as_set_under_test_hooks() {
 }
 
 #[tokio::test]
-async fn a_caller_from_elsewhere_signs_in_only_once_a_sign_in_address_is_set() {
-    let origin = "http://127.0.0.1:8600";
+async fn a_loopback_listener_excuses_no_caller_from_elsewhere() {
     for hooks in ["false", "true"] {
         let held = [
             ("MARFA_LISTEN_HOST", "127.0.0.1"),
             ("MARFA_TEST_HOOKS", hooks),
         ];
         let instance = Instance::claimed_with(&held).await;
-        let refused = send(instance.public.clone(), from(AWAY, sign_in_at(origin))).await;
+        let refused = send(instance.public.clone(), from(AWAY, sign_in_at(ORIGIN))).await;
         assert_eq!(refused.status, StatusCode::FORBIDDEN, "hooks {hooks}");
     }
-    let set = [
-        ("MARFA_LISTEN_HOST", "127.0.0.1"),
-        ("MARFA_TEST_HOOKS", "true"),
-        ("MARFA_SIGN_IN_ADDRESS", origin),
-    ];
-    let instance = Instance::claimed_with(&set).await;
-    let away = send(instance.public.clone(), from(AWAY, sign_in_at(origin))).await;
-    assert_eq!(away.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_caller_is_on_this_machine_only_by_its_own_connection() {
+    let forwarded = |peer: &str, named: &str| {
+        let mut request = from(peer, sign_in_at(NO_ADDRESS_ORIGIN));
+        request
+            .headers_mut()
+            .insert("x-client", named.parse().unwrap());
+        request
+    };
+    for trust in [
+        vec![("MARFA_TRUSTED_PROXY_HEADER", "X-Client")],
+        vec![("MARFA_TRUSTED_PROXY_CIDRS", "0.0.0.0/0")],
+        vec![
+            ("MARFA_TRUSTED_PROXY_HEADER", "X-Client"),
+            ("MARFA_TRUSTED_PROXY_CIDRS", "0.0.0.0/0"),
+        ],
+    ] {
+        let instance = Instance::claimed_with(&trust).await;
+        let mut named_here = forwarded(AWAY, "127.0.0.1");
+        named_here
+            .headers_mut()
+            .insert("x-forwarded-for", "127.0.0.1".parse().unwrap());
+        let refused = send(instance.public.clone(), named_here).await;
+        assert_eq!(refused.status, StatusCode::FORBIDDEN, "{trust:?}");
+        let mut through_an_edge = forwarded("127.0.0.1", AWAY);
+        through_an_edge
+            .headers_mut()
+            .insert("x-forwarded-for", AWAY.parse().unwrap());
+        let refused = send(instance.public.clone(), through_an_edge).await;
+        assert_eq!(refused.status, StatusCode::FORBIDDEN, "{trust:?}");
+        // The witness: this machine, named as itself, gets past.
+        let here = send(instance.public.clone(), forwarded("127.0.0.1", "127.0.0.1")).await;
+        assert_eq!(here.status, StatusCode::OK, "{trust:?}");
+    }
 }
 
 #[tokio::test]

@@ -34,6 +34,7 @@ pub struct Notes {
 #[derive(Clone)]
 pub struct RequestContext {
     pub transport: Transport,
+    pub peer: Option<IpAddr>,
     pub caller_address: Option<IpAddr>,
     pub notes: Arc<Notes>,
 }
@@ -108,6 +109,7 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
     let transport = observed.listener.transport;
     request.extensions_mut().insert(RequestContext {
         transport,
+        peer: peer.map(|peer| peer.to_canonical()),
         caller_address,
         notes: notes.clone(),
     });

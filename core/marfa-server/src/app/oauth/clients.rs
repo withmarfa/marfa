@@ -393,6 +393,7 @@ mod tests {
 
     fn visit() -> Visit {
         Visit {
+            peer: Some(IpAddr::from([203, 0, 113, 7])),
             address: Some(IpAddr::from([203, 0, 113, 7])),
             user_agent: None,
         }

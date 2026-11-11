@@ -37,12 +37,10 @@ impl FromRequestParts<Arc<App>> for Visit {
             .get(header::USER_AGENT)
             .and_then(|value| value.to_str().ok())
             .map(|value| value.chars().take(USER_AGENT_CHARS).collect());
-        let address = parts
-            .extensions
-            .get::<RequestContext>()
-            .and_then(|context| context.caller_address);
+        let context = parts.extensions.get::<RequestContext>();
         Ok(Visit {
-            address,
+            peer: context.and_then(|context| context.peer),
+            address: context.and_then(|context| context.caller_address),
             user_agent,
         })
     }

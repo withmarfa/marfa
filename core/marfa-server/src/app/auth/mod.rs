@@ -24,6 +24,9 @@ use crate::settings::registry::{CORS_ORIGINS, SIGN_IN_ADDRESS};
 
 #[derive(Clone, Debug, Default)]
 pub struct Visit {
+    /// The connection's own address; `None` on the private socket.
+    pub peer: Option<IpAddr>,
+    /// The caller's address as the listener believes it, which may come from a proxy's header.
     pub address: Option<IpAddr>,
     pub user_agent: Option<String>,
 }
@@ -38,11 +41,12 @@ pub fn carries_sessions(address: &Address) -> bool {
     address.is_https() || matches!(address.host(), "localhost" | "127.0.0.1" | "[::1]")
 }
 
-/// A connection with no network address counts as on this machine.
+/// A caller is local only by its own connection, and a forwarded address must be local too.
 pub fn require_set_address(app: &App, visit: &Visit) -> Result<()> {
-    let here = visit
-        .address
-        .is_none_or(|address| address.to_canonical().is_loopback());
+    let loopback = |address: Option<IpAddr>| {
+        address.is_none_or(|address| address.to_canonical().is_loopback())
+    };
+    let here = loopback(visit.peer) && loopback(visit.address);
     if here || app.settings.live().get(SIGN_IN_ADDRESS).is_some() {
         return Ok(());
     }
