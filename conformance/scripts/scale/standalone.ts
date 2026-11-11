@@ -1,8 +1,3 @@
-/**
- * What the steps that boot servers of their own share: one connector's calls
- * through the public API, the state directory's env file, and the table of
- * figures against goals that each prints at the end.
- */
 import { readFileSync, statSync } from "node:fs";
 import { cpus, loadavg } from "node:os";
 import { join } from "node:path";
@@ -79,7 +74,6 @@ interface WriteAnswer {
   results: { id: string; outcome: string }[];
 }
 
-/** What a rows write created, and why not every row of it was. */
 export function judgeWrite(
   answer: { status: number; text: string; json: () => unknown },
   size: number,
@@ -129,7 +123,6 @@ export const recordedOnly = (text: string): Goal => ({
   verdict: () => null,
 });
 
-/** A step's figures with the goal each is judged by, and the machine's load while it ran. */
 export class Scoreboard {
   readonly figures: Figure[] = [];
   private readonly goals = new Map<string, Goal>();
@@ -158,7 +151,6 @@ export class Scoreboard {
     if (this.sampler !== null) clearInterval(this.sampler);
   }
 
-  /** Prints each figure against its goal; a figure with errors fails the process. */
   report(): void {
     const sorted = [...this.loads].sort((a, b) => a - b);
     console.log("");

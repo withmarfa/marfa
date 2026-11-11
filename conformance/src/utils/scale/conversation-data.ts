@@ -6,12 +6,7 @@ const ATTACH_EVERY = 10;
 
 const mod = (n: number, size: number) => ((n % size) + size) % size;
 
-/**
- * The message numbered `n`. Numbers from 0 are sent one second apart in the
- * order of their numbers; a negative number is a late arrival, sent before
- * message 0 and so placed first by `sent_at` whenever it was written. Every
- * tenth message names a file.
- */
+// Negative numbers model late arrivals that belong before the messages already held.
 export function messageOf(
   n: number,
   files: readonly string[],
@@ -27,7 +22,6 @@ export function messageOf(
   };
 }
 
-/** The number a generated message was made from, or null for values that are not one. */
 export function messageNumber(
   values: unknown,
   files: readonly string[],
@@ -56,20 +50,12 @@ export type Direction = "asc" | "desc";
 
 export interface MessagePlan {
   files: readonly string[];
-  /** The number of the message the walk reads first. */
   first: number;
   direction: Direction;
-  /** How many messages the walk should read in all. */
   total: number;
   limit: number;
 }
 
-/**
- * Judges a walk over a conversation's messages by `sent_at`, one page at a
- * time. Messages are numbered in the order they were sent, so each row must
- * be the next number up or down from the one before it, with the values
- * written.
- */
 export class MessageWalk {
   readonly problems: string[] = [];
   problemCount = 0;
@@ -85,7 +71,6 @@ export class MessageWalk {
     return this.count;
   }
 
-  /** A hash of the ids read, in the order read. */
   digest(): string {
     return this.hash.copy().digest("hex");
   }
@@ -97,7 +82,6 @@ export class MessageWalk {
     }
   }
 
-  /** Judges one page; `cursor` is the one the request carried, null for the first. */
   page(body: unknown, cursor: string | null): void {
     const { files, first, direction, limit } = this.plan;
     const answer = body as { data?: unknown; next_cursor?: unknown } | null;
@@ -144,7 +128,6 @@ export class MessageWalk {
     this.pages++;
   }
 
-  /** Judges what the whole walk covered; call once, after the last page. */
   finish(): void {
     if (this.count !== this.plan.total) {
       this.fail(
@@ -154,19 +137,13 @@ export class MessageWalk {
   }
 }
 
-/** The numbers `0..count-1` in an order that is not their own, by a stride coprime with `count`. */
 export function scrambled(count: number): number[] {
   const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
   const stride = [7919, 7907, 7901].find((s) => gcd(s, count) === 1) ?? 1;
   return Array.from({ length: count }, (_, i) => (i * stride) % count);
 }
 
-/**
- * Why a listing of conversations is not the expected one, or null when it is.
- * `expected` holds the `last_activity_at` each conversation's last append was
- * answered with. Appends in the same millisecond tie, so the order is judged
- * by those times: every conversation once with its time, latest first.
- */
+// Appends can share a millisecond, so their receipt order does not determine the listing.
 export function judgeListing(
   listed: readonly { id: string; last_activity_at: string }[],
   expected: ReadonlyMap<string, string>,

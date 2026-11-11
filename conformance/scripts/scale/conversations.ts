@@ -120,14 +120,12 @@ export async function conversations(): Promise<void> {
   process.env.MARFA_SERVER_BIN = opts.server;
   const settings = { MARFA_TEST_HOOKS: "false" };
 
-  /** Message `n` of the long conversation is number `n`; the late ones are `-1` to `-LATE`. */
   const inOrder = opts.messages - LATE;
   const files: string[] = [];
 
   const latestPath = (id: string, limit: number) =>
     `/items/${id}/tables/${TABLE}/rows?sort=values.sent_at&direction=desc&limit=${limit}`;
 
-  /** Reads the latest messages of the conversation and judges each answer against what was written. */
   const readLatest = async (
     connection: Connection,
     id: string,
@@ -169,7 +167,6 @@ export async function conversations(): Promise<void> {
     return result;
   };
 
-  /** Reads the conversation's messages by `sent_at` from the earliest, by cursor, and judges each page. */
   const walkMessages = async (
     connection: Connection,
     id: string,
@@ -310,8 +307,7 @@ export async function conversations(): Promise<void> {
       return (made.json() as { item: { id: string } }).item.id;
     };
     const long = await makeConversation("The long conversation");
-    // The bulk pages list their messages latest first, so ids rise against the
-    // time sent and a read in id order would answer wrongly.
+    // Reversed bulk pages expose reads that use id order instead of sent_at.
     const putBody = (numbers: number[]) =>
       JSON.stringify({
         operations: numbers.map((n) => ({
@@ -319,13 +315,10 @@ export async function conversations(): Promise<void> {
           values: messageOf(n, files),
         })),
       });
-    // Every conversation's last write is answered a time, and the listing must
-    // carry exactly that time.
     const activity = new Map<string, string>();
     let written = 0;
     let writeErrors = 0;
     let failedPages = 0;
-    /** Writes messages to a conversation; the milliseconds it took, or null if any was not created. */
     const write = async (
       id: string,
       numbers: number[],
@@ -386,8 +379,7 @@ export async function conversations(): Promise<void> {
       recordedOnly("recorded"),
     );
 
-    // The long conversation's appends come in the middle of the others' last
-    // writes, so it lands in the middle of the list.
+    // Interleaving appends exposes a listing that special-cases the long conversation.
     const small: string[] = [];
     for (let i = 0; i < opts.conversations - 1; i++) {
       small.push(await makeConversation(`Conversation ${i}`));
@@ -460,7 +452,6 @@ export async function conversations(): Promise<void> {
     );
 
     const latest = await readLatest(connection, long, READ_RUNS);
-    // The cursor of a latest page must lead to the earlier messages.
     const deeper = await walkMessages(
       connection,
       long,
