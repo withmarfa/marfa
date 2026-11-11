@@ -163,60 +163,6 @@ function storeOf(harness: FolderHarness): string {
   return join(harness.dir, ".marfa", "core.sqlite");
 }
 
-function holdsCopyChanges(store: string): boolean {
-  const db = new DatabaseSync(store, { readOnly: true });
-  try {
-    return (
-      db
-        .prepare("SELECT 1 FROM sqlite_master WHERE name = 'copy_changes'")
-        .get() !== undefined
-    );
-  } finally {
-    db.close();
-  }
-}
-
-function holdsReadOnly(store: string): boolean {
-  const db = new DatabaseSync(store, { readOnly: true });
-  try {
-    return (
-      db
-        .prepare(
-          "SELECT 1 FROM pragma_table_info('items') WHERE name = 'read_only'",
-        )
-        .get() !== undefined
-    );
-  } finally {
-    db.close();
-  }
-}
-
-function dropReadOnly(store: string): void {
-  const db = new DatabaseSync(store);
-  try {
-    db.exec(
-      "DROP INDEX items_read_only; ALTER TABLE items DROP COLUMN read_only",
-    );
-  } finally {
-    db.close();
-  }
-}
-
-function dropCopyChanges(store: string): void {
-  const db = new DatabaseSync(store);
-  try {
-    const triggers = db
-      .prepare(
-        "SELECT name FROM sqlite_master WHERE type = 'trigger' AND sql LIKE '%copy_changes%'",
-      )
-      .all() as Array<{ name: string }>;
-    for (const { name } of triggers) db.exec(`DROP TRIGGER "${name}"`);
-    db.exec("DROP TABLE copy_changes");
-  } finally {
-    db.close();
-  }
-}
-
 /** The store's bytes and its write-ahead log's, which hold any write. */
 function bytesOf(store: string): string[] {
   return [store, `${store}-wal`].map((file) =>
@@ -266,53 +212,11 @@ describe("a watch of every folder", () => {
     }
   });
 
-  it("watches every folder whose store lacks a table this build makes, adding the table", async () => {
-    const { a, b } = await twoFolders("every-lacking");
+  it("leaves a folder's store untouched while another process holds its folder, and takes the folder up once it is let go", async () => {
+    const { a, b } = await twoFolders("every-held");
     const stores = [a, b].map(storeOf);
-    for (const store of stores) dropCopyChanges(store);
-    expect(stores.map(holdsCopyChanges)).toEqual([false, false]);
-
     put(a, "Disk A.md", "---\ntitle: Disk A\n---\nwritten in a\n");
     put(b, "Disk B.md", "---\ntitle: Disk B\n---\nwritten in b\n");
-    const watch = hold(a.folder.watchEvery());
-    await vi.waitFor(() => {
-      for (const harness of [a, b]) {
-        expect(
-          watching(watch, harness.dir),
-          `${watch.stdout}${watch.stderr}`,
-        ).toBe(true);
-      }
-      expect(sentTitles(a).sort()).toEqual(["Disk A", "Disk B"]);
-    }, WAIT);
-    expect(stores.map(holdsCopyChanges)).toEqual([true, true]);
-  });
-
-  it("watches every folder whose store lacks a column this build makes, adding the column", async () => {
-    const { a, b } = await twoFolders("every-lacking-column");
-    const stores = [a, b].map(storeOf);
-    for (const store of stores) dropReadOnly(store);
-    expect(stores.map(holdsReadOnly)).toEqual([false, false]);
-
-    put(a, "Disk A.md", "---\ntitle: Disk A\n---\nwritten in a\n");
-    put(b, "Disk B.md", "---\ntitle: Disk B\n---\nwritten in b\n");
-    const watch = hold(a.folder.watchEvery());
-    await vi.waitFor(() => {
-      for (const harness of [a, b]) {
-        expect(
-          watching(watch, harness.dir),
-          `${watch.stdout}${watch.stderr}`,
-        ).toBe(true);
-      }
-      expect(sentTitles(a).sort()).toEqual(["Disk A", "Disk B"]);
-    }, WAIT);
-    expect(stores.map(holdsReadOnly)).toEqual([true, true]);
-  });
-
-  it("leaves a store that lacks a table untouched while another process holds its folder, and adds the table once it is let go", async () => {
-    const { a, b } = await twoFolders("every-lacking-held");
-    const stores = [a, b].map(storeOf);
-    for (const store of stores) dropCopyChanges(store);
-    expect(stores.map(holdsCopyChanges)).toEqual([false, false]);
     const before = stores.map(bytesOf);
     // Another process holds each folder's writer role.
     const locks = [a, b].map((harness) => {
@@ -358,7 +262,10 @@ describe("a watch of every folder", () => {
       },
       { ...WAIT, timeout: 60_000 },
     );
-    expect(stores.map(holdsCopyChanges)).toEqual([true, true]);
+    // The witness: once taken up, each folder sends its file.
+    await vi.waitFor(() => {
+      expect(sentTitles(a).sort()).toEqual(["Disk A", "Disk B"]);
+    }, WAIT);
   });
 
   it("says once why a listed folder cannot be watched, goes on with the others, and takes it up once it can be", async () => {

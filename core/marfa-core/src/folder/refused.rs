@@ -45,7 +45,7 @@ pub(super) fn opened(
     lock: Arc<WriterLock>,
     adding: bool,
 ) -> Result<(Core, Option<String>)> {
-    // Before the open, which adds a table the store lacks.
+    // Before the open, which may replace the store.
     lock.refuse_unless_writer()?;
     let reason = match Core::open_claimed(state, label, server.clone(), Arc::clone(&lock)) {
         Ok(core) => return Ok((core, None)),
@@ -64,18 +64,9 @@ pub(super) fn opened(
     Ok((core, Some(reason)))
 }
 
-/// Whether the folder's store lacks a table or a column this build makes,
-/// which the folder's writer adds on open.
-pub(super) fn behind(state: &Directory) -> bool {
-    crate::directory_vfs::DirectoryVfs::new(state.file())
-        .and_then(|vfs| store::folder_store_behind(&vfs))
-        .unwrap_or(false)
-}
-
 /// The origin the folder's store was hydrated from and whether its first
 /// sync waits, read from a store this build refuses `wrong_schema` while it
-/// holds nothing unsent, which the folder's writer replaces on open, or from
-/// one that lacks a table or a column the writer adds.
+/// holds nothing unsent, which the folder's writer replaces on open.
 pub(super) fn recorded(state: &Directory) -> Result<(Option<String>, bool)> {
     let vfs = crate::directory_vfs::DirectoryVfs::new(state.file())?;
     let mut held =
@@ -130,8 +121,7 @@ mod tests {
         }
         let conn = rusqlite::Connection::open(&path).unwrap();
         conn.execute_batch(sql).unwrap();
-        conn.execute_batch("ALTER TABLE items ADD COLUMN stray TEXT")
-            .unwrap();
+        conn.execute_batch("PRAGMA user_version = 0").unwrap();
         (dir, path)
     }
 
@@ -161,11 +151,12 @@ mod tests {
         .collect()
     }
 
-    fn stray(path: &Path) -> bool {
+    fn left_refused(path: &Path) -> bool {
         rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .unwrap()
-            .prepare("SELECT stray FROM items")
-            .is_ok()
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap()
+            == 0
     }
 
     fn made_left(dir: &Path) -> Vec<String> {
@@ -194,7 +185,7 @@ mod tests {
         assert!(
             folder
                 .replaced_store()
-                .is_some_and(|reason| reason.contains("items")),
+                .is_some_and(|reason| reason.contains("schema version 0")),
             "{:?}",
             folder.replaced_store()
         );
@@ -208,7 +199,10 @@ mod tests {
             Some(ORIGIN.to_string())
         );
         drop(folder);
-        assert!(!stray(&path), "the store another build made was kept");
+        assert!(
+            !left_refused(&path),
+            "the store another build made was kept"
+        );
         assert_eq!(recorded(&path), record, "the folder's record was not kept");
         assert!(made_left(dir.path()).is_empty());
         assert!(
@@ -233,7 +227,10 @@ mod tests {
             "{:?}",
             failed.err()
         );
-        assert!(stray(&path), "the refused store was not left where it was");
+        assert!(
+            left_refused(&path),
+            "the refused store was not left where it was"
+        );
         assert!(
             made_left(dir.path()).is_empty(),
             "{:?}",
@@ -267,14 +264,16 @@ mod tests {
         assert!(!said.contains("next push"), "{said}");
         assert!(said.contains("marfa folders add"), "{said}");
         assert_eq!(std::fs::read(&path).unwrap(), before);
-        assert!(stray(&path));
+        assert!(left_refused(&path));
     }
 
     #[test]
     fn a_refused_store_whose_record_of_its_files_is_of_another_shape_is_left_alone() {
         let (dir, path) = refused_folder(
             true,
-            &format!("{RECORD} ALTER TABLE folder_journal ADD COLUMN since_build TEXT;"),
+            &format!(
+                "{RECORD} ALTER TABLE folder_journal ADD COLUMN since_build TEXT; PRAGMA user_version = 0;"
+            ),
         );
         let before = std::fs::read(&path).unwrap();
         let refused = Folder::open(dir.path(), None).err().unwrap();

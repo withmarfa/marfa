@@ -165,14 +165,14 @@ fn a_store_of_another_schema_is_removed_under_its_own_count() {
     let (_dir, path) = store_with_one_unsent();
     Connection::open(&path)
         .unwrap()
-        .execute_batch("ALTER TABLE queue RENAME COLUMN follows TO after_write")
+        .execute_batch("PRAGMA user_version = 0")
         .unwrap();
     let Err(CoreError::WrongSchema {
         unsent: Some(shown),
         ..
     }) = Core::open(&path, None)
     else {
-        panic!("the reshaped store was not refused wrong_schema");
+        panic!("the store at another version was not refused wrong_schema");
     };
     assert_eq!(shown, 1);
 

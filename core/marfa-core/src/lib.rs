@@ -659,11 +659,6 @@ impl Core {
             Some(server) => Some(Arc::new(http::Http::new(&server.url, &server.key)?)),
             None => None,
         };
-        // Only the writer may replace triggers: another build's writer may
-        // hold the store with its own triggers (`device/reading-handle-refuses`).
-        if lock.handle() == Handle::Writer {
-            store::hold_triggers(&conn)?;
-        }
         let relocation = if let Some(http) = &http
             && let Some(expected) = store::meta_get(&conn, store::META_SERVER_ORIGIN)?
             && expected != http.origin()
@@ -9345,19 +9340,27 @@ mod tests {
         std::fs::write(&words, "words, not a database. ".repeat(40)).unwrap();
         assert!(not_a_store(&words).contains("has no schema to read"));
 
-        let odd = made("odd.sqlite", "CREATE TABLE meta (key TEXT);");
-        assert!(
-            matches!(refusal(&odd), CoreError::WrongSchema { reason, .. } if reason.contains("meta")),
-            "a store of another shape was not refused by name"
-        );
-
         let meta = "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);";
         let older = made(
             "older.sqlite",
-            &format!("{meta} INSERT INTO meta VALUES ('schema_version', '1');"),
+            &format!("{meta} INSERT INTO meta VALUES ('schema_version', '0');"),
         );
         let unversioned = made("unversioned.sqlite", meta);
-        for (path, found) in [(&older, "schema 1"), (&unversioned, "no schema version")] {
+        let newer = made(
+            "newer.sqlite",
+            &format!(
+                "{meta} PRAGMA user_version = {};",
+                store::SCHEMA_VERSION + 1
+            ),
+        );
+        for (path, found) in [
+            (&older, "schema version 0".to_string()),
+            (&unversioned, "schema version 0".to_string()),
+            (
+                &newer,
+                format!("schema version {}", store::SCHEMA_VERSION + 1),
+            ),
+        ] {
             match refusal(path) {
                 CoreError::WrongSchema {
                     path: named,
@@ -9367,7 +9370,7 @@ mod tests {
                 } => {
                     assert!(folder.is_none(), "a device store was refused as a folder's");
                     assert_eq!(named, path.display().to_string());
-                    assert!(reason.contains(found), "{reason}");
+                    assert!(reason.contains(&found), "{reason}");
                     assert_eq!(unsent, None, "a store with no queue was counted");
                 }
                 other => panic!("{} was refused as {other:?}", path.display()),
