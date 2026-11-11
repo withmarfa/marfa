@@ -166,10 +166,90 @@ const TYPESCRIPT_SETTING_NAMES: ReadonlyMap<string, string> = new Map([
   ].map((name): [string, string] => [`MARFA_${name}`, name]),
 ]);
 
+/** The timings `MARFA_TEST_TUNING` names, by the setting the TypeScript server reads each as. */
+const TUNING_NAMES: ReadonlyMap<string, string> = new Map([
+  ["housekeeping_poll_ms", "MARFA_HOUSEKEEPING_POLL_INTERVAL_MS"],
+  ["write_wait_ms", "MARFA_WRITE_WAIT_MS"],
+  ["upload_idle_ms", "MARFA_UPLOAD_IDLE_TIMEOUT_MS"],
+  ["blob_read_idle_ms", "MARFA_BLOB_READ_IDLE_TIMEOUT_MS"],
+  ["inbound_idle_ms", "MARFA_INBOUND_READ_TIMEOUT_MS"],
+  ["connector_hold_ms", "MARFA_CONNECTOR_HOLD_MS"],
+  ["enrichment_batch", "MARFA_ENRICHMENT_BATCH_SIZE"],
+  ["blob_replicate_batch", "MARFA_BLOB_REPLICATE_BATCH"],
+  ["blob_replicate_batch_bytes", "MARFA_BLOB_REPLICATE_BATCH_BYTES"],
+  ["blob_integrity_batch", "MARFA_BLOB_INTEGRITY_BATCH"],
+  ["blob_integrity_batch_bytes", "MARFA_BLOB_INTEGRITY_BATCH_BYTES"],
+]);
+
+/** The jobs whose interval the TypeScript server takes as a setting, by that setting. */
+const JOB_INTERVAL_NAMES: ReadonlyMap<string, string> = new Map([
+  ["heartbeat", "MARFA_HEARTBEAT_INTERVAL_MS"],
+  ["enrichment-sweep", "MARFA_ENRICHMENT_INTERVAL_MS"],
+  ["audit-cleanup", "MARFA_AUDIT_CLEANUP_INTERVAL_MS"],
+  ["trash-purge", "MARFA_TRASH_PURGE_INTERVAL_MS"],
+  ["version-thinning", "MARFA_VERSION_THINNING_INTERVAL_MS"],
+  ["feed-expiry", "MARFA_FEED_EXPIRY_INTERVAL_MS"],
+  ["event-log-cleanup", "MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS"],
+  ["inbound-delivery-cleanup", "MARFA_INBOUND_CLEANUP_INTERVAL_MS"],
+  ["credential-cleanup", "MARFA_CREDENTIAL_CLEANUP_INTERVAL_MS"],
+  ["blob-replicate", "MARFA_BLOB_REPLICATE_INTERVAL_MS"],
+  ["blob-orphans", "MARFA_BLOB_CLEANUP_INTERVAL_MS"],
+  ["blob-integrity", "MARFA_BLOB_INTEGRITY_INTERVAL_MS"],
+]);
+
+/** Settings the contract gives in seconds that the TypeScript server reads in milliseconds. */
+const SECONDS_AS_MILLISECONDS: ReadonlyMap<string, string> = new Map([
+  ["MARFA_BACKUP_INTERVAL_SECONDS", "MARFA_BACKUP_INTERVAL_MS"],
+  ["MARFA_BLOB_CLEANUP_GRACE_SECONDS", "MARFA_BLOB_CLEANUP_GRACE_MS"],
+  ["MARFA_RATE_LIMIT_WINDOW_SECONDS", "MARFA_RATE_LIMIT_WINDOW_MS"],
+  ["MARFA_MCP_FETCH_TIMEOUT_SECONDS", "MARFA_MCP_FETCH_TIMEOUT_MS"],
+]);
+
+/** The settings the TypeScript server has under another shape than the contract's. */
+function reshapedForTypeScript(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  const tuned = new Map<string, string>();
+  const everyJob = new Map<string, string>();
+  for (const [name, value] of Object.entries(env)) {
+    const seconds = SECONDS_AS_MILLISECONDS.get(name);
+    if (name === "MARFA_TEST_TUNING" && value !== undefined) {
+      for (const pair of value.split(",").filter((text) => text.trim())) {
+        const [key = "", given = ""] = pair.trim().split("=");
+        if (key.startsWith("interval.")) {
+          const job = key.slice("interval.".length);
+          if (job === "*") {
+            for (const setting of JOB_INTERVAL_NAMES.values()) {
+              everyJob.set(setting, given);
+            }
+          } else {
+            const setting = JOB_INTERVAL_NAMES.get(job);
+            if (setting !== undefined) tuned.set(setting, given);
+          }
+        } else {
+          const setting = TUNING_NAMES.get(key);
+          if (setting !== undefined) tuned.set(setting, given);
+        }
+      }
+    } else if (seconds !== undefined) {
+      out[seconds] = value === undefined ? value : String(Number(value) * 1000);
+    } else if (name === "MARFA_BLOB_CLEANUP_ENABLED") {
+      if (value !== undefined && /^(false|0|no|off)$/i.test(value)) {
+        out.MARFA_BLOB_CLEANUP_INTERVAL_MS = "0";
+      }
+    } else {
+      out[name] = value;
+    }
+  }
+  for (const [name, value] of everyJob) out[name] ??= value;
+  for (const [name, value] of tuned) out[name] = value;
+  return out;
+}
+
 /** The environment with each setting under the name the TypeScript server reads. */
 export function typeScriptSettingNames(
-  env: NodeJS.ProcessEnv,
+  environment: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv {
+  const env = reshapedForTypeScript(environment);
   const out: NodeJS.ProcessEnv = {};
   const renamed: [string, string | undefined][] = [];
   for (const [name, value] of Object.entries(env)) {
@@ -606,8 +686,9 @@ async function startServer(args: BootOptions): Promise<Started> {
     // wake and the fixture's runs nothing copies on a clock of its own.
     // Overridable, as the limiter is below: a fixture about a positive grace
     // boots a server of its own with one, and `marfa:up` pins zero outright.
-    MARFA_BLOB_CLEANUP_GRACE_MS: process.env.MARFA_BLOB_CLEANUP_GRACE_MS || "0",
-    MARFA_BLOB_REPLICATE_INTERVAL_MS: "3600000",
+    MARFA_BLOB_CLEANUP_GRACE_SECONDS:
+      process.env.MARFA_BLOB_CLEANUP_GRACE_SECONDS || "0",
+    MARFA_TEST_TUNING: "interval.blob-replicate=3600000",
     // Off unless the caller says otherwise. A fixture about the limiter
     // boots a server of its own with it on, and this literal sits after
     // the spread — pinned, it would overwrite what such a fixture asked
@@ -630,8 +711,19 @@ async function startServer(args: BootOptions): Promise<Started> {
   // A throwaway server reports nothing, whatever the shell sets; a setting the
   // caller names below still wins.
   silenceTelemetry(env);
-  // What the caller names wins over every default above.
+  // What the caller names wins over every default above, but for the tuning,
+  // which adds to the defaults, and only where the hooks are on.
+  const defaultTuning = env.MARFA_TEST_TUNING;
   Object.assign(env, args.env);
+  const hooksOn = /^(true|1|yes|on)$/i.test(env.MARFA_TEST_HOOKS ?? "");
+  const tuning = [
+    hooksOn ? defaultTuning : undefined,
+    args.env?.MARFA_TEST_TUNING,
+  ]
+    .filter((text) => text)
+    .join(",");
+  if (tuning === "") delete env.MARFA_TEST_TUNING;
+  else env.MARFA_TEST_TUNING = tuning;
   // The command-line port wins over the environment, including --env MARFA_PORT.
   env.MARFA_PORT = String(port);
   // A restart inherits the latest move, never the original boot setting.

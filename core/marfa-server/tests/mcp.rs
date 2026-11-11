@@ -1213,7 +1213,7 @@ async fn a_body_over_the_limit_is_refused_declared_or_not_and_nothing_is_stored(
 async fn a_body_that_stops_arriving_ends_at_the_time_limit() {
     let instance = Instance::start(&[]).await;
     instance
-        .stored(json!({ "mcp_fetch_timeout_ms": 400 }))
+        .stored(json!({ "mcp_fetch_timeout_seconds": 1 }))
         .await;
     let token = instance.writer().await;
     let server = files().await;

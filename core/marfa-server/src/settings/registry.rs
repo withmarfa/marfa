@@ -251,17 +251,17 @@ macro_rules! registry {
     };
 }
 
-const INTERVAL: Rule = Rule::Whole {
-    min: 1,
-    max: rule::YEAR_MS,
-};
 const UP_TO_A_DAY: Rule = Rule::Whole {
     min: 1,
-    max: rule::DAY_MS,
+    max: rule::DAY_SECONDS,
 };
 const UP_TO_AN_HOUR: Rule = Rule::Whole {
     min: 1,
-    max: rule::HOUR_MS,
+    max: rule::HOUR_SECONDS,
+};
+const UP_TO_A_YEAR_OR_NONE: Rule = Rule::Whole {
+    min: 0,
+    max: rule::YEAR_SECONDS,
 };
 const BYTES: Rule = Rule::Whole {
     min: 1,
@@ -284,22 +284,14 @@ registry! {
     MAX_REQUEST_BYTES: u64 = "max_request_bytes", BYTES, "1048576", "The largest request body the server accepts, in bytes.";
     MAX_BULK_REQUEST_BYTES: u64 = "max_bulk_request_bytes", BYTES, "16777216", "The largest body the bulk operations accept, in bytes. A restore refuses a row larger than this.";
     DISK_RESERVE_BYTES: u64 = "disk_reserve_bytes", BYTES_OR_NONE, "134217728", "Free disk space on the blob volume that an upload must leave, and below which health reports the disk as degraded, in bytes.";
-    UPLOAD_IDLE_TIMEOUT_MS: u64 = "upload_idle_timeout_ms", UP_TO_A_DAY, "60000", "How long a blob upload may go without receiving a byte, in milliseconds, before the server ends it.";
-    BLOB_READ_IDLE_TIMEOUT_MS: u64 = "blob_read_idle_timeout_ms", UP_TO_A_DAY, "30000", "How long a blob download may make no progress, in milliseconds, before the server closes it.";
     BLOB_MIN_COPIES: u64 = "blob_min_copies", COUNT, "1", "The fewest live copies the server keeps of each blob.";
-    BLOB_REPLICATE_INTERVAL_MS: u64 = "blob_replicate_interval_ms", INTERVAL, "60000", "How often the `blob-replicate` job gives every attached store its copies, in milliseconds.";
-    BLOB_REPLICATE_BATCH: u64 = "blob_replicate_batch", COUNT, "100", "The most blobs one replication run copies.";
-    BLOB_REPLICATE_BATCH_BYTES: u64 = "blob_replicate_batch_bytes", BYTES, "1073741824", "The most bytes one replication run copies.";
-    BLOB_INTEGRITY_INTERVAL_MS: u64 = "blob_integrity_interval_ms", INTERVAL, "3600000", "How often the `blob-integrity` job checks the copies, in milliseconds.";
-    BLOB_INTEGRITY_BATCH: u64 = "blob_integrity_batch", COUNT, "500", "The most copies one integrity run checks.";
-    BLOB_INTEGRITY_BATCH_BYTES: u64 = "blob_integrity_batch_bytes", BYTES, "1073741824", "The most bytes one integrity run checks.";
-    BLOB_CLEANUP_INTERVAL_MS: u64 = "blob_cleanup_interval_ms", Rule::Whole { min: 0, max: rule::YEAR_MS }, "86400000", "How often the `blob-orphans` job sweeps for blobs nothing references, in milliseconds. 0 turns the sweep off.";
-    BLOB_CLEANUP_GRACE_MS: u64 = "blob_cleanup_grace_ms", Rule::Whole { min: 0, max: rule::YEAR_MS }, "86400000", "How long a blob nothing references stands in the orphan report before a later run purges it, in milliseconds.";
-    BACKUP_INTERVAL_MS: u64 = "backup_interval_ms", Rule::Whole { min: 0, max: rule::YEAR_MS }, "3600000", "How often the `backup` job puts a backup in the object store when anything it holds has changed, in milliseconds. 0 turns scheduled backups off.";
+    BLOB_CLEANUP_ENABLED: bool = "blob_cleanup_enabled", Rule::Boolean, "true", "Whether the `blob-orphans` job sweeps for blobs nothing references and purges them once they have stood in the orphan report for the grace.";
+    BLOB_CLEANUP_GRACE_SECONDS: u64 = "blob_cleanup_grace_seconds", UP_TO_A_YEAR_OR_NONE, "86400", "How long a blob nothing references stands in the orphan report before a later run purges it, in seconds.";
+    BACKUP_INTERVAL_SECONDS: u64 = "backup_interval_seconds", UP_TO_A_YEAR_OR_NONE, "3600", "How often the `backup` job puts a backup in the object store when anything it holds has changed, in seconds. 0 turns scheduled backups off.";
     RATE_LIMIT_ENABLED: bool = "rate_limit_enabled", Rule::Boolean, "true", "Whether the rate limiter is on for the requests a key or app makes, app registrations, device code requests, passkey sign-in challenges and deliveries to inbound addresses.";
     RATE_LIMIT_REQUESTS: u64 = "rate_limit_requests", COUNT, "4000", "How many requests one key or app may make in each window, across every operation.";
     RATE_LIMIT_KEYS_REQUESTS: u64 = "rate_limit_keys_requests", COUNT, "200", "How many requests one key may make in each window to the operations under `/keys`.";
-    RATE_LIMIT_WINDOW_MS: u64 = "rate_limit_window_ms", UP_TO_A_DAY, "60000", "How long one rate-limit window lasts, in milliseconds.";
+    RATE_LIMIT_WINDOW_SECONDS: u64 = "rate_limit_window_seconds", UP_TO_A_DAY, "60", "How long one rate-limit window lasts, in seconds.";
     ERROR_REPORTING_ENABLED: bool = "error_reporting_enabled", Rule::Boolean, "true", "Whether the server reports its own errors to the receiver set where it runs.";
     AUDIT_RETENTION_DAYS: u64 = "audit_retention_days", Rule::Whole { min: 0, max: 36_500 }, "90", "How many days the audit log is kept. 0 keeps it for ever.";
     DCR_CLIENT_RETENTION_DAYS: u64 = "dcr_client_retention_days", Rule::Whole { min: 0, max: 36_500 }, "1", "How many days an app that registered itself and holds no grant is kept. 0 keeps it for ever.";
@@ -314,39 +306,25 @@ registry! {
     VERSION_MAX_VERSIONS: u64 = "version_max_versions", COUNT, "500", "The most versions kept for one item.";
     ENRICHMENT_ENABLED: bool = "enrichment_enabled", Rule::Boolean, "true", "Whether the server reads text, sizes and lengths out of files.";
     ENRICHMENT_OCR_ENABLED: bool = "enrichment_ocr_enabled", Rule::Boolean, "true", "Whether the server reads text out of pictures with OCR. Turning it on reads again the pictures it had left.";
-    ENRICHMENT_INTERVAL_MS: u64 = "enrichment_interval_ms", INTERVAL, "30000", "How often the `enrichment-sweep` job runs, in milliseconds. A file that is added or changed brings the next run forward.";
-    ENRICHMENT_BATCH_SIZE: u64 = "enrichment_batch_size", COUNT, "8", "The most files one run of the enrichment sweep reads.";
-    ENRICHMENT_ITEM_TIMEOUT_MS: u64 = "enrichment_item_timeout_ms", UP_TO_A_DAY, "60000", "How long reading one file may take, in milliseconds.";
     ENRICHMENT_MAX_BLOB_BYTES: u64 = "enrichment_max_blob_bytes", BYTES, "20971520", "The largest file the server reads whole to extract its text, in bytes. A larger one is skipped unread. A sound or a video is read from its headers whatever its size.";
     ENRICHMENT_MAX_TEXT_CHARS: u64 = "enrichment_max_text_chars", Rule::Whole { min: 1, max: 100_000_000 }, "100000", "The most Unicode characters of extracted text the server keeps, counted as characters, not UTF-16 code units. Longer text is cut short.";
     ENRICHMENT_MAX_INFLATED_BYTES: u64 = "enrichment_max_inflated_bytes", BYTES, "67108864", "The most a document may inflate to when the server extracts its text, all of its parts together, in bytes. A document that inflates past it is skipped.";
     ENRICHMENT_MAX_MEMORY_BYTES: u64 = "enrichment_max_memory_bytes", BYTES, "1073741824", "The most memory the process that reads one file may take, in bytes. A file that needs more is skipped.";
     ENRICHMENT_MAX_ATTEMPTS: u64 = "enrichment_max_attempts", Rule::Whole { min: 1, max: 100 }, "3", "How many times the server tries to read a file that fails, or that stops the server, before it stops.";
-    CONNECTOR_HOLD_MS: u64 = "connector_hold_ms", Rule::Whole { min: 1_000, max: rule::HOUR_MS }, "180000", "How long a connector's hold on its registration lasts after its last take or renewal, in milliseconds.";
     HEARTBEAT_ENABLED: bool = "heartbeat_enabled", Rule::Boolean, "true", "Whether the server sends a heartbeat to the receiver set where it runs.";
-    HOUSEKEEPING_POLL_INTERVAL_MS: u64 = "housekeeping_poll_interval_ms", UP_TO_AN_HOUR, "1000", "How often the scheduler looks for jobs that are due, in milliseconds.";
-    AUDIT_CLEANUP_INTERVAL_MS: u64 = "audit_cleanup_interval_ms", INTERVAL, "86400000", "How often the `audit-cleanup` job runs, in milliseconds.";
-    CREDENTIAL_CLEANUP_INTERVAL_MS: u64 = "credential_cleanup_interval_ms", INTERVAL, "3600000", "How often the `credential-cleanup` job runs, in milliseconds.";
     SSE_MAX_VIEWERS: u64 = "sse_max_viewers", COUNT_OR_NONE, "0", "The most event-stream viewers one server serves at once. 0 sets no limit.";
     MCP_FETCH_ENABLED: bool = "mcp_fetch_enabled", Rule::Boolean, "true", "Whether MCP tools fetch a file from a web address, or a file a chat attached, to save it. When off, a tool asked to fetch one is refused.";
     MCP_FETCH_MAX_BYTES: u64 = "mcp_fetch_max_bytes", BYTES, "52428800", "The largest file an MCP tool fetches from a web address to save, in bytes. A larger file is refused and nothing is stored.";
-    MCP_FETCH_TIMEOUT_MS: u64 = "mcp_fetch_timeout_ms", UP_TO_AN_HOUR, "60000", "How long an MCP tool's fetch of a file from a web address may take, from connecting to the last byte, in milliseconds.";
-    EVENT_LOG_CLEANUP_INTERVAL_MS: u64 = "event_log_cleanup_interval_ms", INTERVAL, "3600000", "How often the `event-log-cleanup` job runs, in milliseconds.";
-    FEED_EXPIRY_INTERVAL_MS: u64 = "feed_expiry_interval_ms", INTERVAL, "3600000", "How often the `feed-expiry` job runs, in milliseconds.";
-    HEARTBEAT_INTERVAL_MS: u64 = "heartbeat_interval_ms", INTERVAL, "60000", "How often the `heartbeat` job runs, in milliseconds.";
-    TRASH_PURGE_INTERVAL_MS: u64 = "trash_purge_interval_ms", INTERVAL, "86400000", "How often the `trash-purge` job runs, in milliseconds.";
-    VERSION_THINNING_INTERVAL_MS: u64 = "version_thinning_interval_ms", INTERVAL, "3600000", "How often the `version-thinning` job runs, in milliseconds.";
+    MCP_FETCH_TIMEOUT_SECONDS: u64 = "mcp_fetch_timeout_seconds", UP_TO_AN_HOUR, "60", "How long an MCP tool's fetch of a file from a web address may take, from connecting to the last byte, in seconds.";
     INBOUND_MAX_BYTES: u64 = "inbound_max_bytes", BYTES, "26214400", "The largest inbound webhook delivery the server stores, in bytes.";
     RATE_LIMIT_INBOUND_REQUESTS: u64 = "rate_limit_inbound_requests", COUNT, "600", "How many requests one inbound endpoint's address takes in each rate-limit window, whatever each is answered.";
     INBOUND_IN_FLIGHT_BYTES: u64 = "inbound_in_flight_bytes", BYTES, "104857600", "The most bytes of inbound webhook deliveries the server holds in memory at once. One source holds at most half.";
-    INBOUND_READ_TIMEOUT_MS: u64 = "inbound_read_timeout_ms", Rule::Whole { min: 1, max: 300_000 }, "30000", "How long an inbound webhook delivery's body has to arrive whole, in milliseconds.";
     INBOUND_BACKLOG_DELIVERIES: u64 = "inbound_backlog_deliveries", COUNT, "10000", "The unhandled deliveries one registration may hold before the server refuses more for it.";
     INBOUND_BACKLOG_BYTES: u64 = "inbound_backlog_bytes", BYTES, "1073741824", "The bytes of unhandled deliveries one registration may hold before the server refuses more for it.";
     INBOUND_RETAINED_DELIVERIES: u64 = "inbound_retained_deliveries", COUNT, "10000", "The most deliveries one registration retains across its live and retired endpoints.";
     INBOUND_RETAINED_BYTES: u64 = "inbound_retained_bytes", BYTES, "1073741824", "The most bytes of bodies, headers and queries one registration retains across its live and retired endpoints.";
     INBOUND_HANDLED_RETENTION_DAYS: u64 = "inbound_handled_retention_days", Rule::Whole { min: 0, max: 36_500 }, "7", "How many days a handled inbound delivery is kept after it was handled. 0 keeps it for ever.";
     INBOUND_PENDING_RETENTION_DAYS: u64 = "inbound_pending_retention_days", Rule::Whole { min: 0, max: 36_500 }, "30", "How many days an unhandled inbound delivery is kept after it arrived. 0 keeps it for ever.";
-    INBOUND_CLEANUP_INTERVAL_MS: u64 = "inbound_cleanup_interval_ms", INTERVAL, "60000", "How often the `inbound-delivery-cleanup` job runs, in milliseconds.";
     ADDRESSES: Vec<Address> = "addresses", Rule::Addresses, "[]", "The addresses people reach this instance at, such as https://marfa.example.";
     CORS_ORIGINS: Vec<Address> = "cors_origins", Rule::Addresses, "[]", "The browser origins allowed to call the API across origins, beside the web pages the owner approves, and trusted by the sign-in forms.";
     SIGN_IN_ADDRESS: Option<Address> = "sign_in_address", Rule::Address, "", "The address people sign in at. Leave it empty to use this computer's own address.";
@@ -433,6 +411,10 @@ impl Snapshot {
 
     pub fn get<T: Kind>(&self, setting: Setting<T>) -> T {
         T::from_value(&self.values[setting.entry.key]).expect("a setting reads as its rule's kind")
+    }
+
+    pub fn rate_limit_window_ms(&self) -> u64 {
+        self.get(RATE_LIMIT_WINDOW_SECONDS) * 1_000
     }
 
     pub fn stored(&self, entry: &Entry) -> Option<&Value> {
@@ -525,10 +507,45 @@ mod tests {
     }
 
     #[test]
-    fn a_body_may_take_at_most_five_minutes_to_arrive() {
-        let timeout = INBOUND_READ_TIMEOUT_MS.entry;
-        assert!(timeout.parse("300000").is_ok());
-        assert!(timeout.parse("300001").is_err());
+    fn a_duration_a_person_sets_is_in_seconds_hours_or_days() {
+        for entry in ENTRIES {
+            let key = entry.key;
+            let timed = ["interval", "timeout", "window", "grace"]
+                .iter()
+                .any(|word| key.contains(word));
+            assert!(!key.ends_with("_ms"), "{key}");
+            assert!(!timed || key.ends_with("_seconds"), "{key}");
+        }
+    }
+
+    #[test]
+    fn a_seconds_setting_is_refused_one_past_its_bound_and_taken_at_it() {
+        for (setting, most) in [
+            (BACKUP_INTERVAL_SECONDS.entry, rule::YEAR_SECONDS),
+            (BLOB_CLEANUP_GRACE_SECONDS.entry, rule::YEAR_SECONDS),
+            (RATE_LIMIT_WINDOW_SECONDS.entry, rule::DAY_SECONDS),
+            (MCP_FETCH_TIMEOUT_SECONDS.entry, rule::HOUR_SECONDS),
+        ] {
+            assert!(setting.parse(&most.to_string()).is_ok(), "{}", setting.key);
+            assert!(
+                setting.parse(&(most + 1).to_string()).is_err(),
+                "{}",
+                setting.key
+            );
+        }
+        for setting in [
+            BACKUP_INTERVAL_SECONDS.entry,
+            BLOB_CLEANUP_GRACE_SECONDS.entry,
+        ] {
+            assert!(setting.parse("0").is_ok(), "{}", setting.key);
+        }
+        for setting in [
+            RATE_LIMIT_WINDOW_SECONDS.entry,
+            MCP_FETCH_TIMEOUT_SECONDS.entry,
+        ] {
+            assert!(setting.parse("1").is_ok(), "{}", setting.key);
+            assert!(setting.parse("0").is_err(), "{}", setting.key);
+        }
     }
 
     #[test]

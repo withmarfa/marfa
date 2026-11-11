@@ -47,7 +47,7 @@ beforeAll(async () => {
   );
   server = await bootFreshServer("target-interface", {
     NODE_OPTIONS: `--require ${preload}`,
-    MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: SCHEDULER_NEVER_POLLS_MS,
+    MARFA_TEST_TUNING: `housekeeping_poll_ms=${SCHEDULER_NEVER_POLLS_MS}`,
   });
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
@@ -73,7 +73,7 @@ describe("the clock", () => {
       const day = 24 * HOUR_MS;
       const own = await bootFreshServer("clock-boot-restart", {
         MARFA_TEST_CLOCK_OFFSET_MS: String(day),
-        MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: SCHEDULER_NEVER_POLLS_MS,
+        MARFA_TEST_TUNING: `housekeeping_poll_ms=${SCHEDULER_NEVER_POLLS_MS}`,
       });
       try {
         await own.advanceClock(HOUR_MS);

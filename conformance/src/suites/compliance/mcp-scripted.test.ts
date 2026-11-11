@@ -461,12 +461,12 @@ describe("marfa_create's fetches", () => {
       expect(
         toolError(await callTool(mcp, "marfa_create", { url })),
       ).toMatchObject({ code: "file_not_fetched", reason: "disabled" });
-      await change({ mcp_fetch_enabled: true, mcp_fetch_timeout_ms: 30_000 });
+      await change({ mcp_fetch_enabled: true, mcp_fetch_timeout_seconds: 30 });
       toolResult(await callTool(mcp, "marfa_create", { url }));
       for (const refused of [
         { mcp_fetch_max_bytes: 0 },
-        { mcp_fetch_timeout_ms: 0 },
-        { mcp_fetch_timeout_ms: 3_600_001 },
+        { mcp_fetch_timeout_seconds: 0 },
+        { mcp_fetch_timeout_seconds: 3_601 },
         { mcp_fetch_enabled: "sometimes" },
       ]) {
         const patched = await owner().patchConfig(refused);

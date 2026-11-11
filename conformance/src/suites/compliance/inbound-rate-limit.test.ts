@@ -31,7 +31,7 @@ beforeAll(async () => {
   server = await bootFreshServer("inbound-rate-window", {
     MARFA_RATE_LIMIT_ENABLED: "true",
     MARFA_RATE_LIMIT_INBOUND_REQUESTS: String(REQUESTS),
-    MARFA_RATE_LIMIT_WINDOW_MS: String(WINDOW_MS),
+    MARFA_RATE_LIMIT_WINDOW_SECONDS: String(WINDOW_MS / 1000),
     MARFA_INBOUND_MAX_BYTES: String(MAX_BYTES),
   });
   minter = new MarfaClient({
@@ -109,7 +109,7 @@ describe("the inbound rate window", () => {
     expect(codeOf(retired)).toBe("not_found");
   });
 
-  it("ends a window after MARFA_RATE_LIMIT_WINDOW_MS, and tells a refused sender how long is left", async () => {
+  it("ends a window after rate_limit_window_seconds, and tells a refused sender how long is left", async () => {
     const { endpoint } = await liveEndpoint();
     for (let i = 0; i < REQUESTS; i++) {
       idOf(await send(server.apiUrl, endpoint.path, "x"));
@@ -268,7 +268,7 @@ describe("the inbound rate window across a successor key", () => {
     server = await bootFreshServer("inbound-rate-takeover", {
       MARFA_RATE_LIMIT_ENABLED: "true",
       MARFA_RATE_LIMIT_INBOUND_REQUESTS: "3",
-      MARFA_RATE_LIMIT_WINDOW_MS: "600000",
+      MARFA_RATE_LIMIT_WINDOW_SECONDS: "600",
     });
   }, 2 * FRESH_SERVER_TIMEOUT_MS);
 

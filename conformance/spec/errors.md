@@ -316,9 +316,9 @@ When a `GET` that names a path no operation serves carries `X-Marfa-Reach`, the 
 
 ### `errors/contention`
 
-If a write cannot get the store's write lock within the instance's write wait (`MARFA_WRITE_WAIT_MS`), and the lock is not held by a bulk page that `errors/contention-bulk-wait` describes, then the server MUST answer `503 write_contention`.
+If a write cannot get the store's write lock within the instance's write wait of five seconds, and the lock is not held by a bulk page that `errors/contention-bulk-wait` describes, then the server MUST answer `503 write_contention`.
 
-**Reason:** a device retries a `5xx` without counting it against the write (`queue-and-verdicts/environmental-uncounted`), and contention is the case that retry exists for. A `500` would name the wrong cause, and a `409` would stop a write that the next attempt would land. The budget is the instance's `MARFA_WRITE_WAIT_MS`.
+**Reason:** a device retries a `5xx` without counting it against the write (`queue-and-verdicts/environmental-uncounted`), and contention is the case that retry exists for. A `500` would name the wrong cause, and a `409` would stop a write that the next attempt would land. The budget is the instance's write wait.
 
 **Tests:** `compliance/write-contention.test.ts › answers 503 write_contention, never 500`, `compliance/bulk-page-answers-others.test.ts › is still refused 503 write_contention behind a lock held for longer than the budget`.
 
@@ -788,7 +788,7 @@ Every code the server answers over HTTP is a row of the table below, and a serve
 | `table_not_found`                    | 404                 | The item's type declares no table of this name.                                                                                                                                                           |
 | `type_not_found`                     | 404                 | No registered type has this identifier.                                                                                                                                                                   |
 | `webhook_not_found`                  | 404                 | No webhook subscription the caller can reach has this id.                                                                                                                                                 |
-| `request_timeout`                    | 408                 | A body did not arrive in time: an inbound webhook delivery did not finish before its deadline, or a restore or a blob upload received no bytes for the upload idle limit.                                 |
+| `request_timeout`                    | 408                 | A body did not arrive in time: an inbound webhook delivery, a restore or a blob upload received no bytes for its idle limit.                                                                              |
 | `ancestor_unavailable`               | 409                 | The write names a version that has no snapshot the caller may merge against.                                                                                                                              |
 | `conflict`                           | 409                 | The request collides with the current state in a way that no other code names.                                                                                                                            |
 | `connector_held`                     | 409                 | Another process holds the connector's registration until `details.expires_at`.                                                                                                                            |

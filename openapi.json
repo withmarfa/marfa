@@ -1575,7 +1575,7 @@
                   "no_bucket",
                   "turned_off"
                 ],
-                "description": "Why backups are `off`: `no_bucket` when the instance has no object store, `turned_off` when `backup_interval_ms` is 0."
+                "description": "Why backups are `off`: `no_bucket` when the instance has no object store, `turned_off` when `backup_interval_seconds` is 0."
               },
               "last_backup": {
                 "type": [
@@ -31609,7 +31609,7 @@
             }
           },
           "408": {
-            "description": "- `request_timeout`: no bytes arrived for 60 seconds, or for the time `MARFA_UPLOAD_IDLE_TIMEOUT_MS` sets. Marfa stores nothing. An upload has no other time limit while bytes keep arriving.",
+            "description": "- `request_timeout`: no bytes arrived for 60 seconds. Marfa stores nothing. An upload has no other time limit while bytes keep arriving.",
             "content": {
               "application/json": {
                 "schema": {
@@ -54141,6 +54141,13 @@
                       "type": "number",
                       "description": "How many settings Marfa skipped because the instance already stores them."
                     },
+                    "settings_dropped": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The names of the settings the archive carried that this instance does not have. Marfa left them out and stored nothing for them."
+                    },
                     "connector_states_added": {
                       "type": "number",
                       "description": "How many connector state documents Marfa stored, for sources the instance held none for."
@@ -54190,6 +54197,7 @@
                     "sources_skipped_reasons",
                     "settings_added",
                     "settings_skipped",
+                    "settings_dropped",
                     "connector_states_added",
                     "connector_states_skipped",
                     "connector_agreements_added",
@@ -54274,7 +54282,7 @@
             }
           },
           "408": {
-            "description": "- `request_timeout`: no bytes of the archive arrived for 60 seconds, or for the time `MARFA_UPLOAD_IDLE_TIMEOUT_MS` sets. Nothing was written. An upload has no other time limit while bytes keep arriving.",
+            "description": "- `request_timeout`: no bytes of the archive arrived for 60 seconds. Nothing was written. An upload has no other time limit while bytes keep arriving.",
             "content": {
               "application/json": {
                 "schema": {
@@ -55007,6 +55015,13 @@
                       "type": "number",
                       "description": "How many settings Marfa skipped because the instance already stores them."
                     },
+                    "settings_dropped": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The names of the settings the archive carried that this instance does not have. Marfa left them out and stored nothing for them."
+                    },
                     "connector_states_added": {
                       "type": "number",
                       "description": "How many connector state documents Marfa stored, for sources the instance held none for."
@@ -55075,6 +55090,7 @@
                     "sources_skipped_reasons",
                     "settings_added",
                     "settings_skipped",
+                    "settings_dropped",
                     "connector_states_added",
                     "connector_states_skipped",
                     "connector_agreements_added",

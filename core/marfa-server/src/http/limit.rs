@@ -12,7 +12,7 @@ use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::limiter::{Lane, REQUESTS, retry_seconds};
 use crate::app::refusal::{Code, Refusal};
-use crate::settings::registry::{RATE_LIMIT_ENABLED, RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW_MS};
+use crate::settings::registry::{RATE_LIMIT_ENABLED, RATE_LIMIT_REQUESTS};
 
 pub async fn requests(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
     let live = app.settings.live();
@@ -26,7 +26,7 @@ pub async fn requests(State(app): State<Arc<App>>, request: Request, next: Next)
                 REQUESTS,
                 &caller.credential_handle(),
                 live.get(RATE_LIMIT_REQUESTS),
-                live.get(RATE_LIMIT_WINDOW_MS),
+                live.rate_limit_window_ms(),
             );
             app.limiter.admit(app.clock.now_ms(), &[lane])
         }

@@ -18,16 +18,14 @@ use crate::app::refusal::Result;
 use crate::app::stored;
 use crate::db::Write;
 use crate::settings::registry::{
-    BLOB_CLEANUP_GRACE_MS, BLOB_CLEANUP_INTERVAL_MS, BLOB_INTEGRITY_BATCH,
-    BLOB_INTEGRITY_BATCH_BYTES, BLOB_REPLICATE_BATCH, BLOB_REPLICATE_BATCH_BYTES,
-    DISK_RESERVE_BYTES,
+    BLOB_CLEANUP_ENABLED, BLOB_CLEANUP_GRACE_SECONDS, DISK_RESERVE_BYTES,
 };
 
 /// The most leftover deletions of purged blobs one sweep retries.
 const LEFTOVERS: u64 = 500;
 
 pub fn sweeps(app: &App) -> bool {
-    app.settings.live().get(BLOB_CLEANUP_INTERVAL_MS) > 0
+    app.settings.live().get(BLOB_CLEANUP_ENABLED)
 }
 
 impl App {
@@ -197,10 +195,10 @@ async fn written_by_target(app: &App, target: &Store, blob: &super::Blob, object
 
 /// Failed copies yield to less-tried copies so one failure cannot monopolize the batch.
 pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
-    let live = app.settings.live();
+    let tuning = &app.settings.start.tuning;
     let (batch, batch_bytes) = (
-        live.get(BLOB_REPLICATE_BATCH),
-        live.get(BLOB_REPLICATE_BATCH_BYTES),
+        tuning.blob_replicate_batch,
+        tuning.blob_replicate_batch_bytes,
     );
     if app.blobs.attached().len() < 2 {
         return Ok(Report {
@@ -364,10 +362,10 @@ async fn check(app: &App, store: &Store, copy: &rows::ToCheck) -> Checked {
 /// Finishes queued deletions, then checks the copies never checked and the least recently
 /// checked, striking each one found missing or altered.
 pub async fn integrity(app: Arc<App>, run: Run) -> Result<Report> {
-    let live = app.settings.live();
+    let tuning = &app.settings.start.tuning;
     let (batch, batch_bytes) = (
-        live.get(BLOB_INTEGRITY_BATCH),
-        live.get(BLOB_INTEGRITY_BATCH_BYTES),
+        tuning.blob_integrity_batch,
+        tuning.blob_integrity_batch_bytes,
     );
     let mut unreachable = BTreeSet::new();
     app.retry_deletions(&run, batch, false, &mut unreachable)
@@ -503,14 +501,14 @@ fn purgeable(tx: &rusqlite::Transaction<'_>, app: &App) -> Result<Vec<Hash>> {
 
 fn grace_cutoff(tx: &rusqlite::Transaction<'_>, app: &App) -> Result<Option<String>> {
     let seeds = app.settings.seeds();
-    if stored::deciding(tx, &seeds, BLOB_CLEANUP_INTERVAL_MS)? == 0 {
+    if !stored::deciding(tx, &seeds, BLOB_CLEANUP_ENABLED)? {
         return Ok(None);
     }
-    let grace = stored::deciding(tx, &seeds, BLOB_CLEANUP_GRACE_MS)?;
+    let grace = stored::deciding(tx, &seeds, BLOB_CLEANUP_GRACE_SECONDS)?;
     Ok(app
         .clock
         .instant()
-        .earlier_by(i64::try_from(grace).unwrap_or(i64::MAX))
+        .earlier_by(i64::try_from(grace.saturating_mul(1_000)).unwrap_or(i64::MAX))
         .map(Stamp::text))
 }
 

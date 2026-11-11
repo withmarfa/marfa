@@ -15,9 +15,7 @@ use crate::app::access::{Caller, Permission};
 use crate::app::keys::{self, MINT_FIELDS, Mint, UPDATE_FIELDS, Update};
 use crate::app::limiter::{KEY_OPERATIONS, Lane, retry_seconds};
 use crate::app::refusal::{Code, Refusal};
-use crate::settings::registry::{
-    RATE_LIMIT_ENABLED, RATE_LIMIT_KEYS_REQUESTS, RATE_LIMIT_WINDOW_MS,
-};
+use crate::settings::registry::{RATE_LIMIT_ENABLED, RATE_LIMIT_KEYS_REQUESTS};
 
 /// Takes one key operation from the caller's allowance, shared by every door that
 /// reaches the key operations, and answers the seconds to wait when none is left.
@@ -30,7 +28,7 @@ pub fn key_operation_wait(app: &App, caller: &Caller) -> Option<i64> {
         KEY_OPERATIONS,
         &caller.credential_handle(),
         live.get(RATE_LIMIT_KEYS_REQUESTS),
-        live.get(RATE_LIMIT_WINDOW_MS),
+        live.rate_limit_window_ms(),
     );
     app.limiter
         .admit(app.clock.now_ms(), &[lane])

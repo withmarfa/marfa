@@ -302,10 +302,7 @@ async fn the_preference_is_read_for_each_fault() {
 #[tokio::test]
 async fn a_receiver_that_never_answers_changes_nothing_for_a_request() {
     let (host, _) = receiver(true);
-    let pairs = settings(
-        &host,
-        &[("MARFA_ERROR_WEBHOOK_TIMEOUT_MS", "60000".to_string())],
-    );
+    let pairs = settings(&host, &[]);
     let (instance, guard) = Instance::start(&borrowed(&pairs)).await;
     instance.break_writes();
 

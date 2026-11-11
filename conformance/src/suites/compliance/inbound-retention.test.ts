@@ -436,7 +436,7 @@ describe("the repeat of a delivery whose first was removed by age", () => {
 
 describe("the cleanup job's interval", () => {
   it(
-    "lists inbound-delivery-cleanup every 60000 milliseconds, or at the interval the instance names",
+    "lists inbound-delivery-cleanup every 60000 milliseconds",
     async () => {
       const own = await bootFreshServer("inbound-cleanup-interval");
       try {
@@ -451,10 +451,6 @@ describe("the cleanup job's interval", () => {
           )?.interval_ms;
         };
         expect(await interval()).toBe(60_000);
-        await own.restart({
-          env: { MARFA_INBOUND_CLEANUP_INTERVAL_MS: "123456" },
-        });
-        expect(await interval()).toBe(123_456);
       } finally {
         await own.stop();
       }

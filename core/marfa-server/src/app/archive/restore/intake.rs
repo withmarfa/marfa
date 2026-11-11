@@ -91,6 +91,8 @@ pub struct Registrations {
     pub icons: Vec<(String, Option<String>)>,
     pub sources: Vec<sources::Archived>,
     pub settings: Vec<(String, String)>,
+    /// Names of settings this instance does not have, which the restore leaves out.
+    pub dropped_settings: Vec<String>,
     pub states: Vec<(String, Map<String, Value>)>,
 }
 
@@ -367,7 +369,10 @@ impl Rows {
                     ))
                     .with_detail("key", key.as_str()));
                 }
-                registrations.settings.push((key, text));
+                match text {
+                    Some(text) => registrations.settings.push((key, text)),
+                    None => registrations.dropped_settings.push(key),
+                }
             }
             "connector_state" => {
                 let source = body.get("source").and_then(Value::as_str);

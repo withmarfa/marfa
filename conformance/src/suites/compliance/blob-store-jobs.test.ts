@@ -35,7 +35,7 @@ let working: MarfaClient;
 beforeAll(async () => {
   server = await bootFreshServer("blob-store-jobs", {
     ...DISK_ONLY,
-    MARFA_BLOB_CLEANUP_GRACE_MS: "0",
+    MARFA_BLOB_CLEANUP_GRACE_SECONDS: "0",
   });
   ({ operator, working } = clientsFor(server));
   await waitFor(

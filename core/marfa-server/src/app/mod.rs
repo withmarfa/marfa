@@ -108,7 +108,7 @@ impl App {
         let faults = Arc::<Faults>::default();
         let options = Options {
             path: start.database.clone(),
-            write_wait: start.write_wait,
+            write_wait: start.tuning.write_wait,
             readers: READERS,
             migrations: MIGRATIONS,
             reserve: settings
@@ -122,6 +122,7 @@ impl App {
         let unreadable = |error| Failure::start(format!("The database could not be read: {error}"));
         let rows = db.read(stored::rows).await.map_err(unreadable)?;
         settings.apply_stored(&rows);
+        stored::report_unknown(&rows);
         let instance_id = instance::identity(&db).await.map_err(unreadable)?;
         let cursor_secret = instance::cursor_secret(&db).await.map_err(unreadable)?;
         let mcp = mcp::Mcp::new(&start.auth_secret)

@@ -23,7 +23,7 @@ use super::faults::{HOLD_BACKUP_PUT, HOLD_BACKUP_READ};
 use super::housekeeping::{self, Report, Run};
 use super::refusal::{Code, Refusal, Result};
 use crate::db::Write;
-use crate::settings::registry::BACKUP_INTERVAL_MS;
+use crate::settings::registry::BACKUP_INTERVAL_SECONDS;
 
 pub use names::{doomed, instance_of, missing_past_retention, name_of, parse};
 
@@ -415,7 +415,7 @@ fn not_found(instance: &str, name: &str) -> Refusal {
 
 /// Whether the schedule runs backups here: an object store is set and the interval is not 0.
 pub fn scheduled(app: &App) -> bool {
-    app.blobs.s3().is_some() && app.settings.live().get(BACKUP_INTERVAL_MS) > 0
+    app.blobs.s3().is_some() && app.settings.live().get(BACKUP_INTERVAL_SECONDS) > 0
 }
 
 fn key_of(instance: &str, name: &str) -> String {
@@ -597,7 +597,7 @@ impl App {
         let status = if self.blobs.s3().is_none() {
             health.insert("reason".into(), "no_bucket".into());
             "off"
-        } else if self.settings.live().get(BACKUP_INTERVAL_MS) == 0 {
+        } else if self.settings.live().get(BACKUP_INTERVAL_SECONDS) == 0 {
             health.insert("reason".into(), "turned_off".into());
             "off"
         } else {

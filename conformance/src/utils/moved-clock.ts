@@ -2,6 +2,7 @@ import { expect } from "vitest";
 import { MarfaClient } from "../client/api.js";
 import type { HousekeepingJobRow, HousekeepingRun } from "../client/types.js";
 import type { FreshServer } from "./fresh-server.js";
+import { QUIET_TUNING, tuning } from "./tuning.js";
 
 /**
  * What a fixture that moves a server's clock shares: clients over a fresh
@@ -14,24 +15,8 @@ export const MINUTE_MS = 60 * 1000;
 export const HOUR_MS = 60 * MINUTE_MS;
 export const DAY_MS = 24 * HOUR_MS;
 
-/** An interval no clock a fixture reaches gets past. */
-const NEVER_MS = "31536000000";
-
-/** The longest the scheduler may go between looks for a job that is due. */
-const POLL_CEILING_MS = "3600000";
-
 /** Keeps the scheduler from running jobs a fixture runs by hand; start such a fixture with `quiet`. */
-export const QUIET_SCHEDULE: Record<string, string> = {
-  MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: POLL_CEILING_MS,
-  MARFA_AUDIT_CLEANUP_INTERVAL_MS: NEVER_MS,
-  MARFA_TRASH_PURGE_INTERVAL_MS: NEVER_MS,
-  MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS: NEVER_MS,
-  MARFA_INBOUND_CLEANUP_INTERVAL_MS: NEVER_MS,
-  MARFA_VERSION_THINNING_INTERVAL_MS: NEVER_MS,
-  MARFA_FEED_EXPIRY_INTERVAL_MS: NEVER_MS,
-  MARFA_CREDENTIAL_CLEANUP_INTERVAL_MS: NEVER_MS,
-  MARFA_ENRICHMENT_INTERVAL_MS: NEVER_MS,
-};
+export const QUIET_SCHEDULE: Record<string, string> = tuning(...QUIET_TUNING);
 
 export const operatorOf = (server: FreshServer): MarfaClient =>
   new MarfaClient({ baseUrl: server.apiUrl, apiKey: server.managementKey });

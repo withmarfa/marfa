@@ -1141,12 +1141,11 @@ async fn start_clears_an_unfinished_run_and_moves_no_schedule_later() {
 }
 
 #[tokio::test]
-async fn the_scheduler_follows_a_shortened_interval_and_repairs_a_schedule() {
-    let instance = Instance::start(&[
-        ("MARFA_HOUSEKEEPING_POLL_INTERVAL_MS", "5"),
-        ("MARFA_AUDIT_CLEANUP_INTERVAL_MS", "31536000000"),
-        ("MARFA_TRASH_PURGE_INTERVAL_MS", "31536000000"),
-    ])
+async fn the_scheduler_brings_a_schedule_past_its_interval_forward_and_repairs_an_unreadable_one() {
+    let instance = Instance::start(&[(
+        "MARFA_TEST_TUNING",
+        "housekeeping_poll_ms=5,interval.audit-cleanup=20,interval.trash-purge=31536000000",
+    )])
     .await;
     instance.app.clock.pause(false);
     instance.forward(0);
@@ -1165,10 +1164,6 @@ async fn the_scheduler_follows_a_shortened_interval_and_repairs_a_schedule() {
             instance.job("trash-purge").await["last_outcome"] == "ok"
         })
         .await;
-    let audit = instance.job("audit-cleanup").await;
-    assert!(audit["last_started_at"].is_null(), "{audit}");
-
-    instance.store("audit_cleanup_interval_ms", "20").await;
     instance
         .when("a run on the shortened interval", async |instance| {
             instance.job("audit-cleanup").await["last_outcome"] == "ok"
@@ -1186,17 +1181,13 @@ async fn the_scheduler_follows_a_shortened_interval_and_repairs_a_schedule() {
 }
 
 #[tokio::test]
-async fn the_credential_job_lists_the_interval_the_instance_sets() {
+async fn a_job_lists_the_interval_it_runs_at() {
     let instance = Instance::start(&[]).await;
     assert_eq!(
         instance.job("credential-cleanup").await["interval_ms"],
         3_600_000
     );
-    instance
-        .store("credential_cleanup_interval_ms", "60000")
-        .await;
-    assert_eq!(
-        instance.job("credential-cleanup").await["interval_ms"],
-        60_000
-    );
+    let tuned =
+        Instance::start(&[("MARFA_TEST_TUNING", "interval.credential-cleanup=60000")]).await;
+    assert_eq!(tuned.job("credential-cleanup").await["interval_ms"], 60_000);
 }

@@ -33,7 +33,7 @@ let own: string;
 beforeAll(async () => {
   server = await bootFreshServer("backup-thinning", {
     ...store,
-    MARFA_BACKUP_INTERVAL_MS: "0",
+    MARFA_BACKUP_INTERVAL_SECONDS: "0",
   });
   own = `${folder}/${await instanceIdOf(server)}`;
 }, FRESH_SERVER_TIMEOUT_MS);
