@@ -49,9 +49,8 @@ impl Syncing {
         Ok(())
     }
 
-    /// Syncing the log syncs every frame before it, so one commit made while syncing covers the
-    /// deferred ones. Setting the application id rewrites the header page, which changes nothing
-    /// the server reads.
+    /// A synced commit covers every frame before it. Setting the application id rewrites the
+    /// header page and changes nothing the server reads.
     fn flush(&self, conn: &Connection) -> rusqlite::Result<()> {
         if !self.unsynced.load(Ordering::Relaxed) {
             return Ok(());

@@ -544,10 +544,14 @@ which `src/utils/store-faults.ts` wraps. With `?hash=<sha256:...>` it answers ea
 name), without a `lose:blob` or `damage:blob` fault changing the answer. It always answers
 `spool`, the name and size in bytes of each file the disk store keeps while it receives bytes.
 
+`GET /_control/test/database` answers the `journal_mode`, `synchronous`, `fullfsync`,
+`checkpoint_fullfsync` and `foreign_keys` settings of the writer connection and of each reader
+connection, as numbers where SQLite answers one.
+
 ### Who can reach the hooks
 
-The clock, fault and blob-store routes (`/_control/test/clock`, `/_control/test/faults`
-and `/_control/test/blob-stores`) exist only on the private control socket, and only when `MARFA_TEST_HOOKS` is
+The clock, fault, blob-store and database routes (`/_control/test/clock`, `/_control/test/faults`,
+`/_control/test/blob-stores` and `/_control/test/database`) exist only on the private control socket, and only when `MARFA_TEST_HOOKS` is
 `true`. They are never on the HTTP listener, and a Rust server built without the
 `test-hooks` feature, as a release is, refuses to start with the setting. It logs
 a warning at boot when the hooks are on. `spec/instance.md`, "Test hooks", holds
