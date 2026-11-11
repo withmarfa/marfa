@@ -39,10 +39,7 @@ fn frame(kind: &str, item: Value) -> String {
 fn replay(events: &[(&str, String)]) -> Answer {
     let first = events.first().map_or("10", |(id, _)| id);
     let last = events.last().map_or("10", |(id, _)| id);
-    let mut frames = vec![
-        scripted::connected(),
-        scripted::copy_marker("stream_cursor", first),
-    ];
+    let mut frames = vec![scripted::copy_marker("stream_cursor", first)];
     frames.extend(events.iter().map(|(id, payload)| {
         let kind = serde_json::from_str::<Value>(payload).unwrap();
         scripted::event(id, kind["event_type"].as_str().unwrap(), payload)
@@ -834,7 +831,6 @@ fn a_row_in_the_bin_takes_the_flag_of_its_source_and_type() {
         "/events",
         vec![scripted::stream(
             vec![
-                scripted::connected(),
                 scripted::copy_marker("stream_cursor", "11"),
                 scripted::copy_marker("stream_live", "11"),
             ],

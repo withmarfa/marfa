@@ -2284,7 +2284,7 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
 
     use super::*;
-    use crate::scripted::{Answer, Scripted, Then, connected, event, refusal};
+    use crate::scripted::{Answer, Scripted, Then, event, refusal};
     use crate::{CatchUpFailed, Server};
 
     fn types(entries: &[(&str, Option<&str>)]) -> Answer {
@@ -2636,7 +2636,7 @@ mod tests {
             server.on(
                 "/events",
                 vec![stream(
-                    vec![connected(), stream_cursor("10"), stream_live(Some("10"))],
+                    vec![stream_cursor("10"), stream_live(Some("10"))],
                     Then::End,
                 )],
             );
@@ -2665,10 +2665,7 @@ mod tests {
         let payload = item_payload("item.updated", "n1", NOTE, 2);
         server.on(
             "/events",
-            vec![stream(
-                vec![connected(), event("11", "item.updated", &payload)],
-                held(),
-            )],
+            vec![stream(vec![event("11", "item.updated", &payload)], held())],
         );
         let read: serde_json::Value = serde_json::from_str(&payload).unwrap();
         let read = serde_json::json!({
@@ -2722,10 +2719,7 @@ mod tests {
         let payload = item_payload("item.updated", "n1", NOTE, 2);
         server.on(
             "/events",
-            vec![stream(
-                vec![connected(), event("11", "item.updated", &payload)],
-                held(),
-            )],
+            vec![stream(vec![event("11", "item.updated", &payload)], held())],
         );
         let read: serde_json::Value = serde_json::from_str(&payload).unwrap();
         let read = serde_json::json!({
@@ -2779,7 +2773,7 @@ mod tests {
         server.on(
             "/events",
             vec![stream(
-                vec![connected(), stream_cursor("10"), stream_live(Some("10"))],
+                vec![stream_cursor("10"), stream_live(Some("10"))],
                 Then::Hold {
                     keepalive,
                     lasting: None,
@@ -2847,7 +2841,7 @@ mod tests {
         server.on(
             "/events",
             vec![stream(
-                vec![connected(), stream_cursor("10"), stream_live(Some("10"))],
+                vec![stream_cursor("10"), stream_live(Some("10"))],
                 Then::Later {
                     keepalive: MS(5),
                     after: MS(50),
@@ -2929,7 +2923,7 @@ mod tests {
         server.on(
             "/events",
             vec![stream(
-                vec![connected(), stream_cursor("10"), stream_live(Some("10"))],
+                vec![stream_cursor("10"), stream_live(Some("10"))],
                 Then::Later {
                     keepalive: MS(5),
                     after: MS(50),
@@ -3103,7 +3097,7 @@ mod tests {
     }
 
     fn held_open() -> Answer {
-        stream(vec![connected()], held())
+        stream(vec![], held())
     }
 
     /// The bodies of the creates the server was sent, in order.
@@ -3342,7 +3336,7 @@ mod tests {
             vec![
                 refusal(503, "unavailable"),
                 stream(
-                    vec![connected()],
+                    vec![],
                     Then::WaitFor {
                         entered: Arc::new(AtomicBool::new(false)),
                         ready: Arc::clone(&in_flight),
@@ -3440,7 +3434,7 @@ mod tests {
                 vec![
                     refusal(503, "unavailable"),
                     stream(
-                        vec![connected()],
+                        vec![],
                         Then::WaitFor {
                             entered: Arc::new(AtomicBool::new(false)),
                             ready: Arc::clone(&back_again),
@@ -3515,14 +3509,14 @@ mod tests {
             vec![took_first, refusal(503, "unavailable"), took_second],
         );
         let gone = || refusal(503, "unavailable");
-        let ended = || stream(vec![connected()], Then::End);
+        let ended = || stream(vec![], Then::End);
         let second_back = Arc::new(AtomicBool::new(false));
         server.on(
             "/events",
             vec![
                 gone(),
                 stream(
-                    vec![connected()],
+                    vec![],
                     Then::WaitFor {
                         entered: Arc::new(AtomicBool::new(false)),
                         ready: Arc::clone(&second_back),
@@ -3601,7 +3595,7 @@ mod tests {
             vec![
                 gone(),
                 stream(
-                    vec![connected()],
+                    vec![],
                     Then::WaitFor {
                         entered: Arc::new(AtomicBool::new(false)),
                         ready: Arc::clone(&in_flight),
@@ -3693,7 +3687,7 @@ mod tests {
     fn a_stream_that_ends_at_once_is_asked_for_again_after_a_wait_doubling_to_the_most() {
         let server = Scripted::start();
         server.on("/types", vec![types(&[(NOTE, None)])]);
-        server.on("/events", vec![stream(vec![connected()], Then::End)]);
+        server.on("/events", vec![stream(vec![], Then::End)]);
         let (_dir, core) = hydrated(&server);
         let run = follow_on(&core, QUICK, Some(5));
         let report = run.ended().unwrap();
@@ -3729,7 +3723,7 @@ mod tests {
     fn a_stream_held_as_long_as_the_most_wait_resets_it() {
         let server = Scripted::start();
         server.on("/types", vec![types(&[(NOTE, None)])]);
-        let ended = || stream(vec![connected()], Then::End);
+        let ended = || stream(vec![], Then::End);
         server.on("/events", vec![ended(), ended(), ended(), ended()]);
         let (_dir, core) = hydrated(&server);
         // `follow_paced` reads the clock once when a stream opens and once
@@ -3823,7 +3817,7 @@ mod tests {
         server.on(
             "/events",
             vec![stream(
-                vec![connected()],
+                vec![],
                 Then::Hold {
                     keepalive: Some(MS(20)),
                     lasting: None,
@@ -3846,7 +3840,7 @@ mod tests {
         server.on(
             "/events",
             vec![stream(
-                vec![connected()],
+                vec![],
                 Then::Hold {
                     keepalive: None,
                     lasting: None,
@@ -3903,8 +3897,8 @@ mod tests {
         server.on(
             "/events",
             vec![
-                stream(vec![connected(), incomplete()], held()),
-                stream(vec![connected(), created("n1", "11")], held()),
+                stream(vec![incomplete()], held()),
+                stream(vec![created("n1", "11")], held()),
             ],
         );
         let (_dir, core) = hydrated(&server);
@@ -3933,13 +3927,13 @@ mod tests {
             "/events",
             vec![
                 stream(
-                    vec![connected()],
+                    vec![],
                     Then::Hold {
                         keepalive: None,
                         lasting: None,
                     },
                 ),
-                stream(vec![connected(), created("n1", "11")], held()),
+                stream(vec![created("n1", "11")], held()),
             ],
         );
         let (_dir, core) = hydrated(&server);
@@ -4081,8 +4075,8 @@ mod tests {
         server.on(
             "/events",
             vec![
-                stream(vec![connected()], Then::Break),
-                stream(vec![connected(), created("n1", "11")], held()),
+                stream(vec![], Then::Break),
+                stream(vec![created("n1", "11")], held()),
             ],
         );
         let (_dir, core) = hydrated(&server);
@@ -4105,16 +4099,13 @@ mod tests {
         server.on(
             "/events",
             vec![
-                stream(vec![connected()], Then::End),
+                stream(vec![], Then::End),
                 stream(
-                    vec![
-                        connected(),
-                        event(
-                            "11",
-                            "item.created",
-                            &item_payload("item.created", "late", "user.late", 1),
-                        ),
-                    ],
+                    vec![event(
+                        "11",
+                        "item.created",
+                        &item_payload("item.created", "late", "user.late", 1),
+                    )],
                     held(),
                 ),
             ],
@@ -4160,7 +4151,6 @@ mod tests {
             "/events",
             vec![stream(
                 vec![
-                    connected(),
                     stream_cursor("14"),
                     event(
                         "11",
@@ -4215,10 +4205,7 @@ mod tests {
         let edge = r#"{"event_type":"edge.created","edge":{"id":"e1","source_id":"row","target_id":"other","edge_type":"references","properties":{},"version":1,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}}"#;
         server.on(
             "/events",
-            vec![stream(
-                vec![connected(), event("11", "edge.created", edge)],
-                held(),
-            )],
+            vec![stream(vec![event("11", "edge.created", edge)], held())],
         );
         let (_dir, core) = hydrated(&server);
         {
@@ -4256,10 +4243,7 @@ mod tests {
     fn a_listener_told_of_a_change_can_read_the_row_it_names() {
         let server = Scripted::start();
         server.on("/types", vec![types(&[(NOTE, None)])]);
-        server.on(
-            "/events",
-            vec![stream(vec![connected(), created("n1", "11")], held())],
-        );
+        server.on("/events", vec![stream(vec![created("n1", "11")], held())]);
         let (_dir, core) = hydrated(&server);
         let (read, rows) = mpsc::channel();
         let reader = Arc::clone(&core);
@@ -4279,10 +4263,7 @@ mod tests {
     fn a_fault_on_the_follows_thread_ends_it_as_a_fault_and_frees_the_stream() {
         let server = Scripted::start();
         server.on("/types", vec![types(&[(NOTE, None)])]);
-        server.on(
-            "/events",
-            vec![stream(vec![connected(), created("n1", "11")], held())],
-        );
+        server.on("/events", vec![stream(vec![created("n1", "11")], held())]);
         let (_dir, core) = hydrated(&server);
         let ended = core.follow(&AtomicBool::new(false), false, |_| {
             panic!("a listener fault")
@@ -4468,10 +4449,10 @@ mod tests {
         server.on(
             "/events",
             vec![
-                stream(vec![connected(), first.clone()], held()),
-                stream(vec![connected(), first], Then::End),
-                stream(vec![connected(), second.clone()], held()),
-                stream(vec![connected(), second], held()),
+                stream(vec![first.clone()], held()),
+                stream(vec![first], Then::End),
+                stream(vec![second.clone()], held()),
+                stream(vec![second], held()),
             ],
         );
         let (_dir, core) = hydrated(&server);
@@ -4500,7 +4481,7 @@ mod tests {
         server.on(
             "/events",
             vec![stream(
-                vec![connected(), stream_cursor("10"), stream_live(Some("10"))],
+                vec![stream_cursor("10"), stream_live(Some("10"))],
                 Then::End,
             )],
         );
@@ -4547,7 +4528,7 @@ mod tests {
                     ],
                     Then::End,
                 ),
-                stream(vec![connected(), created("n1", "11")], held()),
+                stream(vec![created("n1", "11")], held()),
             ],
         )
     }
@@ -4737,7 +4718,7 @@ mod tests {
         for holder in [crate::Mover::Hydration, crate::Mover::CatchUp] {
             let server = Scripted::start();
             server.on("/types", vec![types(&[(NOTE, None)])]);
-            server.on("/events", vec![stream(vec![connected()], held())]);
+            server.on("/events", vec![stream(vec![], held())]);
             let (_dir, core) = hydrated(&server);
             {
                 let conn = core.conn().unwrap();
@@ -4792,7 +4773,7 @@ mod tests {
 
     fn at_head() -> Answer {
         stream(
-            vec![connected(), stream_cursor("10"), stream_live(Some("10"))],
+            vec![stream_cursor("10"), stream_live(Some("10"))],
             Then::End,
         )
     }
@@ -4820,7 +4801,6 @@ mod tests {
     fn system_events() -> Answer {
         stream(
             vec![
-                connected(),
                 event(
                     "11",
                     "item.created",
@@ -4881,7 +4861,6 @@ mod tests {
                 vec![
                     stream(
                         vec![
-                            connected(),
                             event(
                                 "11",
                                 "item.created",
@@ -4893,7 +4872,6 @@ mod tests {
                     ),
                     stream(
                         vec![
-                            connected(),
                             event(
                                 "12",
                                 "item.updated",
@@ -4989,7 +4967,7 @@ mod tests {
     fn a_catch_up_that_fails_after_changing_the_catalog_says_it_changed() {
         let silent = || {
             stream(
-                vec![connected(), stream_cursor("10")],
+                vec![stream_cursor("10")],
                 Then::Hold {
                     keepalive: Some(MS(5)),
                     lasting: None,
@@ -4999,7 +4977,6 @@ mod tests {
         let unknown_then_cut = || {
             stream(
                 vec![
-                    connected(),
                     stream_cursor("12"),
                     event(
                         "11",
@@ -5013,7 +4990,6 @@ mod tests {
         let aged = || {
             stream(
                 vec![
-                    connected(),
                     "event: catchup_too_old\ndata: {\"event_type\":\"catchup_too_old\",\"min_retained_id\":\"50\"}\n\n".into(),
                 ],
                 Then::End,
@@ -5065,7 +5041,6 @@ mod tests {
     /// after its marker, as a real server does.
     fn withheld_head(live: Option<&str>) -> Answer {
         let mut frames = vec![
-            connected(),
             stream_cursor("14"),
             event(
                 "11",
@@ -5224,7 +5199,6 @@ mod tests {
             "/events",
             vec![stream(
                 vec![
-                    connected(),
                     stream_cursor("14"),
                     event(
                         "11",
@@ -5254,7 +5228,6 @@ mod tests {
             "/events",
             vec![stream(
                 vec![
-                    connected(),
                     stream_cursor("14"),
                     event(
                         "11",
@@ -5309,10 +5282,7 @@ mod tests {
         server.on("/types", vec![types(&[(NOTE, None)])]);
         server.on(
             "/events",
-            vec![stream(
-                vec![connected(), stream_cursor("11"), eleven(false)],
-                Then::End,
-            )],
+            vec![stream(vec![stream_cursor("11"), eleven(false)], Then::End)],
         );
         let (_dir, core) = hydrated(&server);
         match core.catch_up() {
@@ -5328,12 +5298,7 @@ mod tests {
         server.on(
             "/events",
             vec![stream(
-                vec![
-                    connected(),
-                    stream_cursor("11"),
-                    eleven(true),
-                    stream_live(Some("11")),
-                ],
+                vec![stream_cursor("11"), eleven(true), stream_live(Some("11"))],
                 Then::End,
             )],
         );
@@ -5347,10 +5312,7 @@ mod tests {
         server.on("/types", vec![types(&[(NOTE, None)])]);
         server.on(
             "/events",
-            vec![stream(
-                vec![connected(), stream_cursor("11"), eleven(false)],
-                held(),
-            )],
+            vec![stream(vec![stream_cursor("11"), eleven(false)], held())],
         );
         let (_dir, core) = hydrated(&server);
         let run = follow_on(&core, QUICK, None);
@@ -5365,12 +5327,7 @@ mod tests {
         server.on(
             "/events",
             vec![stream(
-                vec![
-                    connected(),
-                    stream_cursor("11"),
-                    eleven(true),
-                    stream_live(Some("11")),
-                ],
+                vec![stream_cursor("11"), eleven(true), stream_live(Some("11"))],
                 held(),
             )],
         );
@@ -5413,9 +5370,7 @@ mod tests {
         for frames in frames {
             let server = Scripted::start();
             server.on("/types", vec![types(&[(NOTE, None)])]);
-            let mut sent = vec![connected()];
-            sent.extend(frames.clone());
-            server.on("/events", vec![stream(sent, Then::End)]);
+            server.on("/events", vec![stream(frames.clone(), Then::End)]);
             let (_dir, core) = hydrated(&server);
             expired(core.catch_up(), &core, "reach_invalid");
         }
@@ -5430,9 +5385,9 @@ mod tests {
     #[test]
     fn a_catch_up_expires_the_copy_where_the_log_ends_behind_its_cursor() {
         for frames in [
-            vec![connected(), stream_cursor("9"), cursor_ahead("10", "9")],
-            vec![connected(), cursor_ahead("10", "9")],
-            vec![connected(), stream_live(Some("9"))],
+            vec![stream_cursor("9"), cursor_ahead("10", "9")],
+            vec![cursor_ahead("10", "9")],
+            vec![stream_live(Some("9"))],
         ] {
             let server = Scripted::start();
             server.on("/types", vec![types(&[(NOTE, None)])]);
@@ -5447,7 +5402,7 @@ mod tests {
         server.on(
             "/events",
             vec![stream(
-                vec![connected(), stream_cursor("10"), stream_live(Some("10"))],
+                vec![stream_cursor("10"), stream_live(Some("10"))],
                 Then::End,
             )],
         );
@@ -5459,8 +5414,8 @@ mod tests {
     #[test]
     fn a_follow_expires_the_copy_where_the_log_ends_behind_its_cursor() {
         for frames in [
-            vec![connected(), stream_cursor("9"), stream_live(Some("9"))],
-            vec![connected(), cursor_ahead("10", "9")],
+            vec![stream_cursor("9"), stream_live(Some("9"))],
+            vec![cursor_ahead("10", "9")],
         ] {
             let server = Scripted::start();
             server.on("/types", vec![types(&[(NOTE, None)])]);
@@ -5479,7 +5434,7 @@ mod tests {
         server.on(
             "/events",
             vec![stream(
-                vec![connected(), stream_cursor("40"), stream_live(Some("40"))],
+                vec![stream_cursor("40"), stream_live(Some("40"))],
                 Then::End,
             )],
         );
@@ -5514,7 +5469,6 @@ mod tests {
                 "/events",
                 vec![stream(
                     vec![
-                        connected(),
                         stream_cursor("10"),
                         if completed {
                             stream_live(Some("10"))
@@ -5564,7 +5518,7 @@ mod tests {
         server.on(
             "/events",
             vec![stream(
-                vec![connected(), stream_cursor("10"), stream_live(Some("10"))],
+                vec![stream_cursor("10"), stream_live(Some("10"))],
                 held(),
             )],
         );
@@ -5589,7 +5543,7 @@ mod tests {
             server.on(
                 "/events",
                 vec![stream(
-                    vec![connected(), stream_cursor("10"), stream_live(Some("10"))],
+                    vec![stream_cursor("10"), stream_live(Some("10"))],
                     held(),
                 )],
             );
