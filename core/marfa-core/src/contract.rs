@@ -21,6 +21,8 @@ pub const KEYED_WRITES: &[(&str, &str)] = &[
     ("DELETE", "/items/{id}/tags/{tag}"),
     ("PUT", "/items/{id}/extensions/{namespace}"),
     ("DELETE", "/items/{id}/extensions/{namespace}"),
+    ("POST", "/items/{id}/tables/{table}/rows"),
+    ("POST", "/items/{id}/tables/{table}/batches/{batch}/undo"),
     ("POST", "/edges"),
     ("PATCH", "/edges/{id}"),
     ("DELETE", "/edges/{id}"),
