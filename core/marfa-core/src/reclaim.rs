@@ -163,7 +163,7 @@ const CONNECTION_WAIT: Duration = Duration::from_secs(5);
 
 /// Runs `work` with the connection refusing to wait for a lock, and gives it
 /// its wait back after, whether `work` succeeded or not.
-fn without_waiting<T>(
+pub(crate) fn without_waiting<T>(
     conn: &Connection,
     work: impl FnOnce() -> Result<T, CoreError>,
 ) -> Result<T, CoreError> {
@@ -179,7 +179,7 @@ fn without_waiting<T>(
 /// went: a reader that holds an older view stops the checkpoint short, which
 /// SQLite reports in the result row (`busy`, then the log's pages and the
 /// pages checkpointed) and not as an error.
-fn checkpointed(conn: &Connection) -> Result<bool, CoreError> {
+pub(crate) fn checkpointed(conn: &Connection) -> Result<bool, CoreError> {
     match conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
         Ok((
             row.get::<_, i64>(0)?,

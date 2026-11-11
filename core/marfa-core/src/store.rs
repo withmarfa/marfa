@@ -663,14 +663,12 @@ fn tune(conn: &Connection) -> Result<(), CoreError> {
     Ok(())
 }
 
-/// The pages the log may reach during a hydration before SQLite copies it
-/// into the store. At the default a page of rows is checkpointed several
-/// times over, and each checkpoint writes the same interior pages again and
-/// waits on the disk.
+/// The pages the log may hold during a hydration. At the default, each
+/// checkpoint writes the same pages again.
 const HYDRATION_LOG_PAGES: i64 = 32_768;
 
-/// Lets the log grow to `HYDRATION_LOG_PAGES` and answers the interval it
-/// replaces, for `restore_log_interval`.
+/// Raises the checkpoint interval to `HYDRATION_LOG_PAGES` and answers the
+/// one it replaces, for `restore_log_interval`.
 pub(crate) fn lengthen_log_interval(conn: &Connection) -> Result<i64, CoreError> {
     let kept: i64 = conn.query_row("PRAGMA wal_autocheckpoint", [], |row| row.get(0))?;
     conn.execute_batch(&format!(
@@ -679,9 +677,8 @@ pub(crate) fn lengthen_log_interval(conn: &Connection) -> Result<i64, CoreError>
     Ok(kept)
 }
 
-/// Gives back the interval `kept`, and where `done`, copies the log into the
-/// store and empties it, so the copy is one file. A reader that holds the log
-/// leaves it for the next checkpoint.
+/// Gives back the interval `kept` and, where `done`, empties the log into the
+/// store without waiting on a reader that holds it.
 pub(crate) fn restore_log_interval(
     conn: &Connection,
     kept: i64,
@@ -689,17 +686,7 @@ pub(crate) fn restore_log_interval(
 ) -> Result<(), CoreError> {
     conn.execute_batch(&format!("PRAGMA wal_autocheckpoint = {kept}"))?;
     if done {
-        match conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())) {
-            Err(error)
-                if !matches!(
-                    error.sqlite_error_code(),
-                    Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
-                ) =>
-            {
-                return Err(error.into());
-            }
-            _ => {}
-        }
+        crate::reclaim::without_waiting(conn, || crate::reclaim::checkpointed(conn))?;
     }
     Ok(())
 }
@@ -3022,9 +3009,8 @@ fn attachments_touching(conn: &Connection, ids: &[&str]) -> Result<Vec<Attachmen
         return Ok(Vec::new());
     }
     let marks = vec!["?"; ids.len()].join(", ");
-    // A file is an attachment only with an `attached-to` edge, so where none
-    // starts or ends at `ids` there is nothing to find, which the two indexes
-    // on `edges` answer without reading a row.
+    // No `attached-to` edge at `ids` means no attachment, which the edge
+    // indexes answer without reading a row.
     let attached: bool = conn
         .prepare_cached(&format!(
             "SELECT EXISTS (SELECT 1 FROM edges WHERE edge_type = '{ATTACHED_TO}' AND source_id IN ({marks}))
@@ -4085,14 +4071,8 @@ fn index_row(
     Ok(())
 }
 
-/// Replaces the index entry of the row at `seq`, leaving it out where `text`
-/// is `None`.
-fn write_index(
-    conn: &Connection,
-    seq: i64,
-    id: &str,
-    text: Option<marfa_rules::search::FtsText>,
-) -> Result<(), CoreError> {
+/// Replaces the index entry of the row at `seq`.
+fn write_index(conn: &Connection, seq: i64, id: &str, text: IndexEntry) -> Result<(), CoreError> {
     conn.prepare_cached("DELETE FROM items_fts WHERE rowid = ?1")?
         .execute([seq])?;
     if let Some(text) = text {
@@ -4114,18 +4094,18 @@ fn write_index(
     Ok(())
 }
 
+/// What a row is indexed by, or `None` for a row left out of the index.
+type IndexEntry = Option<marfa_rules::search::FtsText>;
+
 thread_local! {
-    /// The index entries a page write holds back, by the row's `seq`.
-    static HELD_INDEX: std::cell::RefCell<Option<std::collections::BTreeMap<i64, Option<marfa_rules::search::FtsText>>>> =
+    /// The entries a page write holds back, by the row's `seq`.
+    static HELD_INDEX: std::cell::RefCell<Option<std::collections::BTreeMap<i64, IndexEntry>>> =
         const { std::cell::RefCell::new(None) };
 }
 
 /// Holds the entry back while a page write is open on this thread, answering
 /// `None`; hands it back to be written at once otherwise.
-fn hold_index(
-    seq: i64,
-    text: Option<marfa_rules::search::FtsText>,
-) -> Option<Option<marfa_rules::search::FtsText>> {
+fn hold_index(seq: i64, text: IndexEntry) -> Option<IndexEntry> {
     HELD_INDEX.with(|held| match held.borrow_mut().as_mut() {
         Some(held) => {
             held.insert(seq, text);
@@ -4144,10 +4124,9 @@ impl IndexHold {
         IndexHold
     }
 
-    /// Writes the entries held, those of rows the copy still holds, in `seq`
-    /// order. An entry written beside every other statement of the page
-    /// would have the index flush its pending rows as a segment of their own
-    /// at each statement that can fail partway, which is nearly every one.
+    /// Writes the held entries together, for the rows the copy still holds. The
+    /// index flushes its pending rows as a segment at each statement that can
+    /// fail partway, so one entry per row would make a segment per row.
     fn write(&self, conn: &Connection) -> Result<(), CoreError> {
         let held = HELD_INDEX
             .with(|held| held.borrow_mut().as_mut().map(std::mem::take))
@@ -4176,7 +4155,7 @@ impl Drop for IndexHold {
 }
 
 /// `with_journals_in_memory` for a page of a server's rows, which indexes the
-/// rows the page wrote once all of it is written.
+/// rows once the page is written.
 pub(crate) fn with_page_write<T>(
     conn: &mut Connection,
     write: impl FnOnce(&rusqlite::Transaction) -> Result<T, CoreError>,
