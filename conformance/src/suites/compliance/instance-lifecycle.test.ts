@@ -379,7 +379,7 @@ it(
       const open = await bootUnclaimedServer({ state: server.stateDir });
       await expect(
         authenticateOwner(open.url, undefined, TEST_OWNER),
-      ).rejects.toThrow("401");
+      ).rejects.toThrow("error=invalid_credentials");
       expect(
         await authenticateOwner(open.url, undefined, {
           email: TEST_OWNER.email,

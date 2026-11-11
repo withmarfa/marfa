@@ -310,6 +310,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/search-ordering.test.ts",
   "src/suites/compliance/session-cookie-https.test.ts",
   "src/suites/compliance/settings-seed.test.ts",
+  "src/suites/compliance/sign-in-door-limits.test.ts",
   "src/suites/compliance/sign-in-limits.test.ts",
   "src/suites/compliance/sign-in-surface.test.ts",
   "src/suites/compliance/signed-in-apps.test.ts",

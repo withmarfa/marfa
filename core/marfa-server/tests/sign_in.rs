@@ -384,17 +384,23 @@ async fn a_seeded_address_counts_as_set_under_test_hooks() {
 }
 
 #[tokio::test]
-async fn only_test_hooks_excuse_a_caller_named_behind_a_loopback_listener() {
-    let held = [("MARFA_LISTEN_HOST", "127.0.0.1")];
-    let instance = Instance::claimed_with(&held).await;
+async fn a_caller_from_elsewhere_signs_in_only_once_a_sign_in_address_is_set() {
     let origin = "http://127.0.0.1:8600";
-    let refused = send(instance.public.clone(), from(AWAY, sign_in_at(origin))).await;
-    assert_eq!(refused.status, StatusCode::FORBIDDEN);
-    let hooked = [
+    for hooks in ["false", "true"] {
+        let held = [
+            ("MARFA_LISTEN_HOST", "127.0.0.1"),
+            ("MARFA_TEST_HOOKS", hooks),
+        ];
+        let instance = Instance::claimed_with(&held).await;
+        let refused = send(instance.public.clone(), from(AWAY, sign_in_at(origin))).await;
+        assert_eq!(refused.status, StatusCode::FORBIDDEN, "hooks {hooks}");
+    }
+    let set = [
         ("MARFA_LISTEN_HOST", "127.0.0.1"),
         ("MARFA_TEST_HOOKS", "true"),
+        ("MARFA_SIGN_IN_ADDRESS", origin),
     ];
-    let instance = Instance::claimed_with(&hooked).await;
+    let instance = Instance::claimed_with(&set).await;
     let away = send(instance.public.clone(), from(AWAY, sign_in_at(origin))).await;
     assert_eq!(away.status, StatusCode::OK);
 }
