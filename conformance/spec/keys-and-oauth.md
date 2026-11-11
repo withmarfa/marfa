@@ -1295,6 +1295,15 @@ When a native client's registration names an `http` redirect URI on the loopback
 
 **Tests:** `compliance/oauth.test.ts › registers a native client dynamically and issues a client_id`, `compliance/oauth-registration-schema.test.ts › describes the public metadata registration accepts and echoes`.
 
+
+### `keys-and-oauth/redirect-loopback-any-port`
+
+When an authorization request names an `http` redirect URI on the loopback that differs from one the client registered on the loopback only in its port, the server MUST take it as the registered redirect URI.
+
+**Reason:** A native app listens on whatever port the system gives it when it signs in (RFC 8252, section 7.3), so it cannot register the port in advance.
+
+**Tests:** `compliance/sign-in-door-limits.test.ts › takes a loopback redirect URI on any port for one registered on the loopback`.
+
 ### `keys-and-oauth/register-native-private-use`
 
 When a native client's registration names a redirect URI in a private-use scheme that is a reverse domain name, with a path and no authority, such as `com.example.app:/callback`, the server MUST register it.
@@ -1989,6 +1998,15 @@ When the server issues an access token, the server MUST accept that token at its
 
 **Tests:** `compliance/oauth-tokens.test.ts › accepts a token at the API and at /mcp, whichever of the server's resources it was issued for`.
 
+
+### `keys-and-oauth/access-token-lifetime`
+
+When the server issues an access token, the server MUST answer `expires_in` of 3600.
+
+**Reason:** An app refreshes, or asks again, within the hour, so a token that leaks is good for an hour at most.
+
+**Tests:** `compliance/sign-in-door-limits.test.ts › issues an access token that lasts an hour`.
+
 ### `keys-and-oauth/resource-one-value`
 
 If a token request names `resource` more than once, then the server MUST answer `400 invalid_target`.
@@ -2509,6 +2527,31 @@ The server MUST count an IPv6 address by its /64 for the password sign-in limits
 
 **Tests:** `compliance/sign-in-limits.test.ts › counts an IPv6 address as its /64`.
 
+
+### `keys-and-oauth/sign-in-other-emails-limit`
+
+If one address has made ten password sign-in attempts in fifteen minutes at emails that are not the owner's, then the server MUST answer its next attempt at an email that is not the owner's `429` with `Retry-After`, before it judges the password.
+
+**Reason:** Every email but the owner's has no account to guess, so all of them share one count, and an address cannot spread its attempts over made-up emails.
+
+**Tests:** `compliance/sign-in-door-limits.test.ts › counts password sign-ins at every email but the owner's together, and still judges the owner's password`.
+
+### `keys-and-oauth/register-address-limit`
+
+Where `rate_limit_enabled` is `true`, if one address has sent ten `POST /auth/oauth2/register` requests in a minute, then the server MUST answer its next one `429` with `Retry-After`.
+
+**Reason:** Registration needs no credential, and each one stores a client.
+
+**Tests:** `compliance/sign-in-door-limits.test.ts › answers the eleventh client registration from one address in a minute 429`.
+
+### `keys-and-oauth/device-code-address-limit`
+
+Where `rate_limit_enabled` is `true`, if one address has sent thirty `POST /auth/device/code` requests in a minute, then the server MUST answer its next one `429` with `Retry-After`.
+
+**Reason:** A device code request needs no credential, and each one stores a code a person may be asked to type.
+
+**Tests:** `compliance/sign-in-door-limits.test.ts › answers the thirty-first device code from one address in a minute 429`.
+
 ### `keys-and-oauth/device-lookup-address-limit`
 
 If one address has made ten device code lookups without the owner's live browser session in fifteen minutes, across the entry form, the consent screen and its decision, then the server MUST redirect its next lookup without that authority with `error=too_many_attempts` before the code is looked up.
@@ -2550,6 +2593,15 @@ When `GET /auth/device` carries `error=expired_code`, the server MUST answer a p
 The server MUST say, on the page where a device code is typed, that codes end after 10 minutes, the `expires_in` of 600 it issues them with.
 
 **Tests:** `compliance/sign-in-surface.test.ts › says how long codes last`.
+
+
+### `keys-and-oauth/device-page-code`
+
+When `GET /auth/device` carries `user_code`, the server MUST answer a page whose code field holds it.
+
+**Reason:** `verification_uri_complete` carries the code, so a person who follows it only checks the code against the device.
+
+**Tests:** `compliance/sign-in-door-limits.test.ts › fills the device page's code field with the user_code it is opened with`.
 
 ### `keys-and-oauth/device-lookup-instance-limit`
 

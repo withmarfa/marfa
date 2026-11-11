@@ -64,6 +64,15 @@ When a passkey authentication challenge has already been consumed by an accepted
 
 **Tests:** `compliance/passkeys.test.ts › refuses wrong credentials and keeps password attempts independent`.
 
+
+### `authentication/passkey-challenge-limit`
+
+Where `rate_limit_enabled` is `true`, if one address has sent thirty `POST /auth/passkeys/sign-in/options` requests in a minute, then the server MUST answer its next one `429` with `Retry-After`.
+
+**Reason:** A challenge needs no credential, and each one is stored until it is used or ends.
+
+**Tests:** `compliance/sign-in-door-limits.test.ts › answers the thirty-first passkey sign-in challenge from one address in a minute 429`.
+
 ### `authentication/passkey-password-counters`
 
 When a caller attempts passkey authentication, the server MUST leave password-attempt counters unchanged.

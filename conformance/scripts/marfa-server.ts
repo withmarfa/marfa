@@ -12,7 +12,9 @@ import { createServer } from "node:net";
  * The server listens on IPv4 loopback, on `--port`, else `MARFA_PORT`, else a
  * free port this script picks, and is reached at `http://localhost:<port>`,
  * which is also its sign-in address: passkeys refuse an IP address. Port zero
- * leaves the sign-in address unset, and so does `--env MARFA_SIGN_IN_ADDRESS=`.
+ * leaves the sign-in address unset, and so does `--env MARFA_SIGN_IN_ADDRESS=`;
+ * a server with no sign-in address, or one elsewhere, is reached at
+ * `127.0.0.1`.
  * Readiness comes from this boot's log before any health request is sent. Each `--env K=V` is a setting for the boot
  * (`conformance/README.md` lists the ones a fixture may pass), and wins over
  * the script's own defaults and the caller's environment.
@@ -581,7 +583,7 @@ async function waitForHealth(
         );
         if (match) {
           const port = Number(match[1]);
-          if (port > 0 && port <= 65_535) url = `http://localhost:${port}`;
+          if (port > 0 && port <= 65_535) url = `http://${started.host}:${port}`;
         }
       }
     }
@@ -619,6 +621,8 @@ interface Started {
   authSecret: string;
   /** Whether this script chose the port, so a taken one is worth another try. */
   picked: boolean;
+  /** The host the server is reached at: its sign-in address's, where that is this machine's name. */
+  host: string;
 }
 
 /** A port the system has just handed out on loopback and taken back. */
@@ -821,6 +825,9 @@ async function startServer(args: BootOptions): Promise<Started> {
     controlSocket,
     authSecret,
     picked: named === undefined,
+    host: env.MARFA_SIGN_IN_ADDRESS?.startsWith("http://localhost:")
+      ? "localhost"
+      : "127.0.0.1",
   };
 }
 

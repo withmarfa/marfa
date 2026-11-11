@@ -59,27 +59,22 @@ export const JOBS = [
   // `fault-injection`, which make a child crash, hang and misbehave. `Core
   // checks` runs the same tests on macOS, where the sandbox is other code.
   "core-fault-injection",
-  // The contract's suites, run against a server booted from this checkout,
-  // and the offline lane that needs none. `ci.yml` runs the three groups of
-  // server fixtures as shards, each on a runner of its own, and `Conformance`
-  // collects them into one verdict. See `CONFORMANCE_GROUPS`.
+  // The contract's offline lane, which needs no server. `Conformance`
+  // collects it and MCP conformance into one verdict.
   "conformance-offline",
-  "conformance-correctness-sync",
-  "conformance-compliance",
-  "conformance-device",
-  // The server's log of each shard, merged, held to what the document
-  // declares. A declared status no request drew can be told only from the
-  // whole selection, so this runs only when every group does.
-  "conformance-statuses",
   // The contract run against the Rust server (`core/marfa-server/`): the
   // release build, the fixtures of every server project in shards, and the
   // score. It reads what the Rust program is built from, the fixtures and the
   // meter, and never the TypeScript server's code in `packages/`.
   "rust-contract",
-  // The MCP project's conformance tool, against `/mcp` on a server booted
-  // from this checkout.
+  // The device and CLI fixtures against the Rust server on macOS, for file
+  // watching, name case, Finder packages and a real keychain. Only the
+  // nightly and a dispatch with `macos` run it.
+  "rust-contract-macos",
+  // The MCP project's conformance tool, against `/mcp` on the Rust server's
+  // release build, and the restore drill, which throws a Rust server away
+  // and restores it from its bucket. Both need that build.
   "mcp-conformance",
-  "cli-scenarios",
   "restore-drill",
   // The image job builds and boots the shipped image from the release programs.
   "image",
@@ -100,64 +95,11 @@ export type Job = (typeof JOBS)[number];
 const ALL: readonly Job[] = JOBS;
 
 /**
- * A group of the contract's server fixtures, run over `shards` runners of
- * their own. The fixtures isolate themselves by credential and share no
- * state between files, so a runner takes any part of a group and boots its
- * own server and object store.
+ * Every job the TypeScript server's code can change the result of, but
+ * `core`: its own build and tests, and the offline lane, which builds the
+ * packages it is built from. No contract job boots it.
  */
-export interface ConformanceGroup {
-  readonly job: Job;
-  /** The vitest projects the group runs. */
-  readonly projects: readonly string[];
-  /** How many runners the group is split over; 1 runs it whole. */
-  readonly shards: number;
-  /** Whether the fixtures drive the `marfa` binary, which a runner then builds or restores. */
-  readonly device: boolean;
-}
-
-export const CONFORMANCE_GROUPS: readonly ConformanceGroup[] = [
-  {
-    job: "conformance-correctness-sync",
-    projects: ["correctness", "sync"],
-    shards: 1,
-    device: false,
-  },
-  {
-    job: "conformance-compliance",
-    projects: ["compliance"],
-    shards: 8,
-    device: false,
-  },
-  {
-    job: "conformance-device",
-    projects: ["device"],
-    shards: 1,
-    device: true,
-  },
-];
-
-const CONFORMANCE_SHARDS: readonly Job[] = CONFORMANCE_GROUPS.map(
-  (group) => group.job,
-);
-
-/**
- * Every conformance job a change to the server, or to what every fixture
- * shares, can change the result of. `conformance-statuses` is not named: it
- * is added by `classify` when all the groups are.
- */
-const CONFORMANCE: readonly Job[] = [
-  "conformance-offline",
-  ...CONFORMANCE_SHARDS,
-];
-
-/** Every job the server's code can change the result of, but `core`. */
-const SERVER: readonly Job[] = [
-  "workspace",
-  ...CONFORMANCE,
-  "mcp-conformance",
-  "cli-scenarios",
-  "restore-drill",
-];
+const SERVER: readonly Job[] = ["workspace", "conformance-offline"];
 
 /**
  * What the page system's styles, browser script and tests can change: the
@@ -167,29 +109,24 @@ const SERVER: readonly Job[] = [
 const PAGE_ASSETS_AND_TESTS: readonly Job[] = ["workspace"];
 
 /**
- * What a page's markup can change: the workspace, the compliance fixtures,
- * which read pages as a person does, and the offline lane, which boots a
- * server from the source. The device fixtures, the correctness and sync
- * fixtures and the restore drill never read a page.
+ * Every job that boots the Rust server: the contract run, MCP conformance and
+ * the restore drill.
  */
-const PAGE_MARKUP: readonly Job[] = [
-  "workspace",
-  "conformance-offline",
-  "conformance-compliance",
+const RUST_SERVER: readonly Job[] = [
+  "rust-contract",
+  "mcp-conformance",
+  "restore-drill",
 ];
 
 /**
  * Every job that builds the `marfa` binary and runs on Linux, and the core's
- * own checks there. Of the conformance jobs only the device fixtures drive
- * the binary. The Rust contract jobs build the binary for the device and CLI
- * fixtures, and the server crate from the same workspace.
+ * own checks there. The Rust contract jobs build the binary for the device
+ * and CLI fixtures, and the server crate from the same workspace.
  */
 const RUST_LINUX: readonly Job[] = [
   "core-checks-linux",
   "conformance-offline",
-  "conformance-device",
-  "cli-scenarios",
-  "rust-contract",
+  ...RUST_SERVER,
 ];
 
 /**
@@ -200,11 +137,10 @@ const RUST_LINUX: readonly Job[] = [
 const ENRICHMENT: readonly Job[] = ["core-native", "core-fault-injection"];
 
 /**
- * The jobs that run the fixtures: the TypeScript server's shards and the Rust
- * contract jobs. A change to a fixture or to what every fixture shares
- * reaches both.
+ * The jobs that run the fixtures: the offline lane, which holds the citations
+ * to them, and the Rust contract jobs.
  */
-const CONTRACT: readonly Job[] = [...CONFORMANCE, "rust-contract"];
+const CONTRACT: readonly Job[] = ["conformance-offline", "rust-contract"];
 
 /**
  * The jobs that run on macOS for a pull request: the core's checks and its
@@ -225,7 +161,6 @@ const WORKSPACE: readonly Job[] = [
   "control-socket",
   ...CONTRACT,
   "mcp-conformance",
-  "cli-scenarios",
   "restore-drill",
   "types-freshness",
   "version-fields",
@@ -269,22 +204,11 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // table of `housekeeping.md`, so those chapters reach it.
   [
     /^conformance\/spec\/errors\.md$/,
-    [
-      "workspace",
-      "conformance-offline",
-      "conformance-compliance",
-      "core-checks-linux",
-      "rust-contract",
-    ],
+    ["workspace", "conformance-offline", "core-checks-linux", "rust-contract"],
   ],
   [
     /^conformance\/spec\/coverage\.md$/,
-    [
-      "workspace",
-      "conformance-offline",
-      "conformance-compliance",
-      "rust-contract",
-    ],
+    ["workspace", "conformance-offline", "rust-contract"],
   ],
   [
     /^conformance\/spec\/(instance|housekeeping)\.md$/,
@@ -296,14 +220,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // fixtures read it.
   [
     /^conformance\/fixtures\/item-display\.json$/,
-    [
-      "workspace",
-      "core-checks-linux",
-      "conformance-offline",
-      "conformance-compliance",
-      "conformance-device",
-      "rust-contract",
-    ],
+    ["workspace", "core-checks-linux", "conformance-offline", "rust-contract"],
   ],
   // The filter expressions both implementations are held to: the core's
   // unit tests, the Node binding's tests and the server's workspace test
@@ -317,12 +234,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // read it.
   [
     /^conformance\/fixtures\/name-fold\.json$/,
-    [
-      "workspace",
-      "core-checks-linux",
-      "conformance-compliance",
-      "rust-contract",
-    ],
+    ["workspace", "core-checks-linux", "rust-contract"],
   ],
   // The binary's command reference is generated from its command tree, and
   // a unit test in `marfa-cli` holds the committed file to it. Only the core
@@ -345,9 +257,6 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // Agent instructions, settings and Git hooks. No job runs or reads them.
   [/^\.(agents|claude|codex|githooks)\//, []],
 
-  // The drill runs Litestream's configuration, which the offline lane's own
-  // test reads too. It is not in the image.
-  [/^deploy\/litestream\.yml$/, ["restore-drill", ...CONFORMANCE]],
   // The Dockerfile is the image; `ci/test-hooks-release.test.ts` reads it.
   [/^deploy\/Dockerfile$/, ["workspace", "image"]],
   [/^deploy\//, []],
@@ -391,22 +300,6 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^packages\/server\/src\/pages\/(test-fixture\.tsx|reading\.ts)$/,
     PAGE_ASSETS_AND_TESTS,
   ],
-  // The device approval screen's markup: the parts, the renderer and the
-  // views it is built from. The CLI scenario that signs a device in reads its
-  // fields, so a change here reaches that scenario too.
-  [
-    /^packages\/server\/src\/(pages\/(parts\/|render\.ts$|icons\.tsx$)|routes\/(device-approval|access-choices|access-notes|access-view)\.tsx$)/,
-    [...PAGE_MARKUP, "cli-scenarios"],
-  ],
-  // The other page views under `routes/`: one file for each page, rendered
-  // by a handler that is not in it. Only the compliance fixtures read their
-  // HTML, and the offline lane boots a server from the source. Not
-  // `http-error-page.tsx`, whose `prefersHtml` decides for every refusal
-  // whether the body is a page or JSON, and not a test.
-  [
-    /^packages\/server\/src\/routes\/(?!http-error-page\.)[^/]+(?<!\.test)\.tsx$/,
-    PAGE_MARKUP,
-  ],
   // The UI viewer, a development script no server code imports, and the test
   // that every page has an example in it.
   [
@@ -414,12 +307,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     PAGE_ASSETS_AND_TESTS,
   ],
   [/^packages\/server\//, SERVER],
-  // The server imports the client at runtime: the MCP tools call the API
-  // through it.
-  [
-    /^packages\/client\//,
-    ["workspace", "clients-freshness", ...CONFORMANCE, "mcp-conformance"],
-  ],
+  [/^packages\/client\//, ["workspace", "clients-freshness"]],
 
   [/^conformance\/scripts\/restore-drill\.ts$/, ["workspace", "restore-drill"]],
   [
@@ -432,72 +320,15 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     ["workspace", "conformance-offline", "rust-contract"],
   ],
   // Spec citations name fixture files anywhere under `src/`, so every
-  // change there reaches the offline lane. A device fixture imports the CLI
-  // harness, and a fixture reaches only the group its folder runs in.
-  [
-    /^conformance\/src\/suites\/cli\/harness\.ts$/,
-    [
-      "workspace",
-      "conformance-offline",
-      "conformance-device",
-      "cli-scenarios",
-      "rust-contract",
-    ],
-  ],
-  [
-    /^conformance\/src\/suites\/cli\//,
-    ["workspace", "conformance-offline", "cli-scenarios", "rust-contract"],
-  ],
-  [
-    /^conformance\/src\/suites\/device\/harness\.ts$/,
-    [
-      "workspace",
-      "conformance-offline",
-      "conformance-device",
-      "cli-scenarios",
-      "rust-contract",
-    ],
-  ],
-  [
-    /^conformance\/src\/suites\/device\//,
-    ["workspace", "conformance-offline", "conformance-device", "rust-contract"],
-  ],
-  [
-    /^conformance\/src\/suites\/compliance\//,
-    [
-      "workspace",
-      "conformance-offline",
-      "conformance-compliance",
-      "rust-contract",
-    ],
-  ],
-  [
-    /^conformance\/src\/suites\/(correctness|sync)\//,
-    [
-      "workspace",
-      "conformance-offline",
-      "conformance-correctness-sync",
-      "rust-contract",
-    ],
-  ],
+  // change there reaches the offline lane.
   // Off the gate: `benchmarks.yml` runs them.
   [
     /^conformance\/src\/suites\/(load|performance|hydration)\//,
     ["workspace", "conformance-offline"],
   ],
-  [/^conformance\/src\/suites\//, ["workspace", ...CONTRACT]],
-  // The device suites' adapters and scripted server. A CLI scenario imports
-  // one, and the offline lane tests the scripted server.
-  [
-    /^conformance\/src\/device\//,
-    [
-      "workspace",
-      "conformance-offline",
-      "conformance-device",
-      "cli-scenarios",
-      "rust-contract",
-    ],
-  ],
+  // The fixtures of every server project, and the device suites' adapters
+  // and scripted server, which the offline lane also tests.
+  [/^conformance\/src\/(suites|device)\//, ["workspace", ...CONTRACT]],
   // The nightly scale benchmark's figures, comparison and driver. Only
   // `benchmarks.yml` runs the driver; the offline lane tests the figures.
   [
@@ -512,34 +343,16 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   ],
   [
     /^conformance\/src\/utils\//,
-    [
-      "workspace",
-      ...CONTRACT,
-      "cli-scenarios",
-      "restore-drill",
-      "mcp-conformance",
-    ],
+    ["workspace", ...CONTRACT, "restore-drill", "mcp-conformance"],
   ],
   [
     /^conformance\/src\/client\/owner-session\.ts$/,
-    [
-      "workspace",
-      ...CONTRACT,
-      "cli-scenarios",
-      "restore-drill",
-      "mcp-conformance",
-    ],
+    ["workspace", ...CONTRACT, "restore-drill", "mcp-conformance"],
   ],
-  [/^conformance\/src\//, ["workspace", ...CONTRACT, "cli-scenarios"]],
+  [/^conformance\/src\//, ["workspace", ...CONTRACT]],
   [
     /^conformance\//,
-    [
-      "workspace",
-      ...CONTRACT,
-      "cli-scenarios",
-      "restore-drill",
-      "mcp-conformance",
-    ],
+    ["workspace", ...CONTRACT, "restore-drill", "mcp-conformance"],
   ],
 
   // `ci/` tests read the contract version the core is generated with, the
@@ -596,18 +409,12 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // the crate.
   [
     /^core\/bindings\/node\/(package\.json|pnpm-lock\.yaml)$/,
-    ["core", "conformance-device", "rust-contract"],
+    ["core", "rust-contract"],
   ],
   [/^core\/bindings\/node\/(index\.js|index\.d\.ts|tsconfig\.json)$/, ["core"]],
   [
     /^core\/bindings\/node\/(src\/|Cargo\.toml$|build\.rs$)/,
-    [
-      "core-checks",
-      "core-checks-linux",
-      "core",
-      "conformance-device",
-      "rust-contract",
-    ],
+    ["core-checks", "core-checks-linux", "core", "rust-contract"],
   ],
   [/^core\/bindings\//, ["core-checks", "core-checks-linux", "core"]],
   // `marfa-enrichment`. The scripts, pins, patches and the C++ shim that build
@@ -638,22 +445,23 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // macOS-only calls.
   [
     /^core\/marfa-server\/src\/(control_socket|app\/metrics|open_files)\.rs$/,
-    ["core-checks", "core-checks-linux", "rust-contract"],
+    ["core-checks", "core-checks-linux", ...RUST_SERVER],
   ],
   // A background read lowers its thread's priority each system's own way.
   [
     /^core\/marfa-server\/src\/db\/reader\.rs$/,
-    ["core-checks", "core-checks-linux", "rust-contract"],
+    ["core-checks", "core-checks-linux", ...RUST_SERVER],
   ],
   // The settings are what the Dockerfile's environment names.
   [
     /^core\/marfa-server\/src\/settings\//,
-    ["core-checks-linux", "rust-contract", "image"],
+    ["core-checks-linux", ...RUST_SERVER, "image"],
   ],
   // The rest of the server is built and tested on Linux, and its contract is
-  // run by the Rust contract jobs, with the real `marfa` binary; the live
+  // run by the Rust contract jobs, with the real `marfa` binary, and by MCP
+  // conformance and the restore drill; the live
   // job on macOS boots it too but waits for the push to `main`.
-  [/^core\/marfa-server\//, ["core-checks-linux", "rust-contract"]],
+  [/^core\/marfa-server\//, ["core-checks-linux", ...RUST_SERVER]],
   // A crate's tests are not in the binary, but they may exercise a macOS-only
   // side (a keychain, a watched folder) that nothing here names, so a Mac
   // runs them too.
@@ -688,13 +496,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // read the committed document.
   [
     /^openapi\.json$/,
-    [
-      "workspace",
-      "core-checks-linux",
-      ...CONTRACT,
-      "cli-scenarios",
-      "clients-freshness",
-    ],
+    ["workspace", "core-checks-linux", ...CONTRACT, "clients-freshness"],
   ],
 
   [/^scripts\/check-image\.sh$/, ["workspace", "image"]],
@@ -721,7 +523,6 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
       "version-fields",
       "control-socket",
       ...CONTRACT,
-      "cli-scenarios",
       "restore-drill",
       "mcp-conformance",
     ],
@@ -782,10 +583,6 @@ export function classify(paths: readonly string[]): Record<Job, boolean> {
   for (const path of paths) {
     for (const job of affected(path)) jobs.add(job);
   }
-  // A status no request drew shows only in the log of the whole selection.
-  if (CONFORMANCE_SHARDS.every((job) => jobs.has(job))) {
-    jobs.add("conformance-statuses");
-  }
   return Object.fromEntries(JOBS.map((job) => [job, jobs.has(job)])) as Record<
     Job,
     boolean
@@ -805,16 +602,15 @@ export function forDraft(answer: Record<Job, boolean>): Record<Job, boolean> {
 
 /**
  * What the nightly run does: only what needs a Mac, because every push to
- * `main` already runs the rest on Linux. The device fixtures drive the
- * `marfa` binary on macOS's file watching, name case, Finder packages and
- * keychain, the CLI scenarios drive it as a person does, the core's checks run
+ * `main` already runs the rest on Linux. The device and CLI fixtures drive
+ * the `marfa` binary against the Rust server on macOS's file watching, name
+ * case, Finder packages and keychain, the core's checks run
  * its macOS-only code, the control socket has macOS-only behavior and the
  * Swift package builds only on a Mac.
  * `core.yml` runs the core's live checks on the same night.
  */
 export const NIGHTLY_JOBS: readonly Job[] = [
-  "conformance-device",
-  "cli-scenarios",
+  "rust-contract-macos",
   "core-checks",
   "control-socket",
   "swift-package",
@@ -834,53 +630,6 @@ export function forNightly(): Record<Job, boolean> {
  */
 export function documentationOnly(answer: Record<Job, boolean>): boolean {
   return JOBS.every((job) => job === "ci-sqlite" || !answer[job]);
-}
-
-/** One runner of the conformance matrix in `ci.yml`. */
-export interface ConformanceShard {
-  /** Names the job and, with the slug, the artifact that keeps its server log. */
-  name: string;
-  slug: string;
-  /** What `vitest run` is given. */
-  args: string;
-  /** Whether the runner builds or restores the `marfa` binary. */
-  device: boolean;
-}
-
-/**
- * The matrix of runners an answer starts: every shard of each group it runs,
- * and none for a group it skips. `ci.yml` repeats the whole layout for a
- * classifier that did not answer, and `ci/conformance-gate.test.ts` holds the
- * two together. A group with more than one shard splits its files with
- * `conformance/src/utils/shard-sequencer.ts`.
- */
-export function conformanceShards(
-  answer: Record<Job, boolean>,
-): ConformanceShard[] {
-  return CONFORMANCE_GROUPS.filter((group) => answer[group.job]).flatMap(
-    (group) => {
-      const projects = group.projects
-        .map((project) => `--project ${project}`)
-        .join(" ");
-      const label = group.job.replace("conformance-", "");
-      if (group.shards === 1) {
-        return [
-          {
-            name: label.replaceAll("-", " and "),
-            slug: label,
-            args: projects,
-            device: group.device,
-          },
-        ];
-      }
-      return Array.from({ length: group.shards }, (_, i) => ({
-        name: `${label} ${String(i + 1)}/${String(group.shards)}`,
-        slug: `${label}-${String(i + 1)}`,
-        args: `${projects} --shard=${String(i + 1)}/${String(group.shards)}`,
-        device: group.device,
-      }));
-    },
-  );
 }
 
 interface PullRequestEvent {
@@ -1014,7 +763,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   appendFileSync(
     process.env.GITHUB_OUTPUT ?? "",
     JOBS.map((job) => `${job}=${String(answer[job])}\n`).join("") +
-      `conformance-shards=${JSON.stringify(conformanceShards(answer))}\n` +
       `full=${String(!draft)}\n`,
   );
   for (const job of JOBS) {

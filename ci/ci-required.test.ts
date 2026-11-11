@@ -21,7 +21,6 @@ import { parse } from "yaml";
 import {
   affected,
   classify,
-  conformanceShards,
   documentationOnly,
   DRAFT_JOBS,
   forDraft,
@@ -39,37 +38,20 @@ function runs(paths: string[]): Job[] {
   return JOBS.filter((job) => answer[job]);
 }
 
-/** The lane that needs no server, and the three groups of server shards. */
+/** The lane that needs no server. */
 const OFFLINE: Job[] = ["conformance-offline"];
-const SHARDS: Job[] = [
-  "conformance-correctness-sync",
-  "conformance-compliance",
-  "conformance-device",
-];
-/** Every conformance job. The status check joins the shards only when all three groups run. */
-const CONFORMANCE: Job[] = [...OFFLINE, ...SHARDS, "conformance-statuses"];
-/** The fixtures run against the TypeScript server's shards and the Rust contract jobs. */
-const CONTRACT: Job[] = [...CONFORMANCE, "rust-contract"];
-const SERVER: Job[] = [
-  "ci-sqlite",
-  "workspace",
-  ...CONFORMANCE,
+/** The fixtures: the offline lane holds the citations, and the Rust contract jobs run them. */
+const CONTRACT: Job[] = [...OFFLINE, "rust-contract"];
+/** The TypeScript server's code reaches its own build and tests, and the offline lane. */
+const SERVER: Job[] = ["ci-sqlite", "workspace", ...OFFLINE];
+/** Every job that boots the Rust server. */
+const RUST_SERVER: Job[] = [
+  "rust-contract",
   "mcp-conformance",
-  "cli-scenarios",
   "restore-drill",
 ];
-/**
- * Only the device fixtures drive the `marfa` binary, so only they read the
- * core, and the Rust contract jobs build the binary for the device and CLI
- * fixtures.
- */
-const RUST_LINUX: Job[] = [
-  "core-checks-linux",
-  ...OFFLINE,
-  "conformance-device",
-  "cli-scenarios",
-  "rust-contract",
-];
+/** The Rust contract jobs build the binary for the device and CLI fixtures. */
+const RUST_LINUX: Job[] = ["core-checks-linux", ...OFFLINE, ...RUST_SERVER];
 /** The two jobs that run on a Mac, which a pull request runs only for what a Mac alone can break. */
 const MACOS: Job[] = ["core-checks", "core"];
 const RUST: Job[] = [...RUST_LINUX, ...MACOS];
@@ -176,7 +158,6 @@ describe("what a change runs", () => {
         "ci-sqlite",
         "workspace",
         ...OFFLINE,
-        "conformance-compliance",
         "core-checks-linux",
         "rust-contract",
       ],
@@ -184,13 +165,7 @@ describe("what a change runs", () => {
     [
       "the coverage table, which a compliance fixture reads at run time",
       ["conformance/spec/coverage.md"],
-      [
-        "ci-sqlite",
-        "workspace",
-        ...OFFLINE,
-        "conformance-compliance",
-        "rust-contract",
-      ],
+      ["ci-sqlite", "workspace", ...OFFLINE, "rust-contract"],
     ],
     ["a server-only change", ["packages/server/src/routes/items.ts"], SERVER],
     [
@@ -211,23 +186,13 @@ describe("what a change runs", () => {
       ["ci-sqlite", "workspace"],
     ],
     [
-      "a page part, which the device approval screen is built from",
-      ["packages/server/src/pages/parts/rows.tsx"],
+      "a page part or page view, which no contract job reads",
       [
-        "ci-sqlite",
-        "workspace",
-        ...OFFLINE,
-        "conformance-compliance",
-        "cli-scenarios",
-      ],
-    ],
-    [
-      "a console or sign-in page view",
-      [
+        "packages/server/src/pages/parts/rows.tsx",
         "packages/server/src/routes/sign-in-page.tsx",
         "packages/server/src/routes/key-pages.tsx",
       ],
-      ["ci-sqlite", "workspace", ...OFFLINE, "conformance-compliance"],
+      SERVER,
     ],
     [
       "the UI viewer, a development script",
@@ -268,15 +233,9 @@ describe("what a change runs", () => {
       [...RUST_LINUX, "core", "clients-freshness", "workspace", "ci-sqlite"],
     ],
     [
-      "a client-only change, which the server imports at runtime",
+      "a client-only change, which no contract job reads",
       ["packages/client/src/client.ts"],
-      [
-        "ci-sqlite",
-        "workspace",
-        "clients-freshness",
-        ...CONFORMANCE,
-        "mcp-conformance",
-      ],
+      ["ci-sqlite", "workspace", "clients-freshness"],
     ],
     [
       "a Rust-only change",
@@ -382,20 +341,13 @@ describe("what a change runs", () => {
         "core-checks",
         "core-checks-linux",
         "core",
-        "conformance-device",
         "rust-contract",
       ],
     ],
     [
       "the Node module's manifest, which its build reads",
       ["core/bindings/node/package.json"],
-      [
-        "ci-sqlite",
-        "core",
-        "conformance-device",
-        "rust-contract",
-        "version-fields",
-      ],
+      ["ci-sqlite", "core", "rust-contract", "version-fields"],
     ],
     [
       "the Node module's JavaScript",
@@ -410,38 +362,23 @@ describe("what a change runs", () => {
         "workspace",
         "core-checks-linux",
         ...CONTRACT,
-        "cli-scenarios",
         "clients-freshness",
       ],
     ],
     [
       "a CLI scenario",
       ["conformance/src/suites/cli/folder.test.ts"],
-      ["ci-sqlite", "workspace", ...OFFLINE, "cli-scenarios", "rust-contract"],
+      ["ci-sqlite", "workspace", ...CONTRACT],
     ],
     [
       "the CLI harness, which a device fixture imports",
       ["conformance/src/suites/cli/harness.ts"],
-      [
-        "ci-sqlite",
-        "workspace",
-        ...OFFLINE,
-        "conformance-device",
-        "cli-scenarios",
-        "rust-contract",
-      ],
+      ["ci-sqlite", "workspace", ...CONTRACT],
     ],
     [
       "the device harness shared by CLI scenarios",
       ["conformance/src/suites/device/harness.ts"],
-      [
-        "ci-sqlite",
-        "workspace",
-        ...OFFLINE,
-        "conformance-device",
-        "cli-scenarios",
-        "rust-contract",
-      ],
+      ["ci-sqlite", "workspace", ...CONTRACT],
     ],
     [
       "the device suites' adapters and scripted server, which a CLI scenario imports",
@@ -449,14 +386,7 @@ describe("what a change runs", () => {
         "conformance/src/device/cli-adapter.ts",
         "conformance/src/device/scripted-server.ts",
       ],
-      [
-        "ci-sqlite",
-        "workspace",
-        ...OFFLINE,
-        "conformance-device",
-        "cli-scenarios",
-        "rust-contract",
-      ],
+      ["ci-sqlite", "workspace", ...CONTRACT],
     ],
     [
       "a test beside the helpers, which only the offline lane runs",
@@ -481,7 +411,6 @@ describe("what a change runs", () => {
         "ci-sqlite",
         "workspace",
         ...CONTRACT,
-        "cli-scenarios",
         "restore-drill",
         "mcp-conformance",
       ],
@@ -489,24 +418,12 @@ describe("what a change runs", () => {
     [
       "a device fixture",
       ["conformance/src/suites/device/folders.test.ts"],
-      [
-        "ci-sqlite",
-        "workspace",
-        ...OFFLINE,
-        "conformance-device",
-        "rust-contract",
-      ],
+      ["ci-sqlite", "workspace", ...CONTRACT],
     ],
     [
       "the helpers the folder fixtures share",
       ["conformance/src/suites/device/folders.shared.ts"],
-      [
-        "ci-sqlite",
-        "workspace",
-        ...OFFLINE,
-        "conformance-device",
-        "rust-contract",
-      ],
+      ["ci-sqlite", "workspace", ...CONTRACT],
     ],
     [
       "the item names and previews the server and the core share",
@@ -516,8 +433,6 @@ describe("what a change runs", () => {
         "workspace",
         "core-checks-linux",
         ...OFFLINE,
-        "conformance-compliance",
-        "conformance-device",
         "rust-contract",
       ],
     ],
@@ -529,46 +444,22 @@ describe("what a change runs", () => {
     [
       "the name fold the server and the core share",
       ["conformance/fixtures/name-fold.json"],
-      [
-        "ci-sqlite",
-        "workspace",
-        "core-checks-linux",
-        "conformance-compliance",
-        "rust-contract",
-      ],
+      ["ci-sqlite", "workspace", "core-checks-linux", "rust-contract"],
     ],
     [
       "a compliance fixture",
       ["conformance/src/suites/compliance/owner.test.ts"],
-      [
-        "ci-sqlite",
-        "workspace",
-        ...OFFLINE,
-        "conformance-compliance",
-        "rust-contract",
-      ],
+      ["ci-sqlite", "workspace", ...CONTRACT],
     ],
     [
       "a correctness fixture",
       ["conformance/src/suites/correctness/items.test.ts"],
-      [
-        "ci-sqlite",
-        "workspace",
-        ...OFFLINE,
-        "conformance-correctness-sync",
-        "rust-contract",
-      ],
+      ["ci-sqlite", "workspace", ...CONTRACT],
     ],
     [
       "a sync fixture",
       ["conformance/src/suites/sync/streams.test.ts"],
-      [
-        "ci-sqlite",
-        "workspace",
-        ...OFFLINE,
-        "conformance-correctness-sync",
-        "rust-contract",
-      ],
+      ["ci-sqlite", "workspace", ...CONTRACT],
     ],
     [
       "a suite off the gate",
@@ -582,32 +473,10 @@ describe("what a change runs", () => {
     [
       "a suite folder no rule names",
       ["conformance/src/suites/new/items.test.ts"],
-      [
-        "ci-sqlite",
-        "workspace",
-        ...OFFLINE,
-        ...SHARDS,
-        "conformance-statuses",
-        "rust-contract",
-      ],
+      ["ci-sqlite", "workspace", ...CONTRACT],
     ],
     [
-      "fixtures of two groups, which together reach no more than their own",
-      [
-        "conformance/src/suites/compliance/owner.test.ts",
-        "conformance/src/suites/device/folders.test.ts",
-      ],
-      [
-        "ci-sqlite",
-        "workspace",
-        ...OFFLINE,
-        "conformance-compliance",
-        "conformance-device",
-        "rust-contract",
-      ],
-    ],
-    [
-      "fixtures of every group, which run the whole selection and so hold every status to a request",
+      "fixtures of several projects, which reach the same jobs as one",
       [
         "conformance/src/suites/compliance/owner.test.ts",
         "conformance/src/suites/device/folders.test.ts",
@@ -622,7 +491,6 @@ describe("what a change runs", () => {
         "ci-sqlite",
         "workspace",
         ...CONTRACT,
-        "cli-scenarios",
         "restore-drill",
         "mcp-conformance",
       ],
@@ -637,7 +505,6 @@ describe("what a change runs", () => {
         "ci-sqlite",
         "workspace",
         ...CONTRACT,
-        "cli-scenarios",
         "restore-drill",
         "mcp-conformance",
       ],
@@ -649,7 +516,6 @@ describe("what a change runs", () => {
         "ci-sqlite",
         "workspace",
         ...CONTRACT,
-        "cli-scenarios",
         "restore-drill",
         "mcp-conformance",
       ],
@@ -678,11 +544,6 @@ describe("what a change runs", () => {
       ["ci-sqlite", "workspace", "image"],
     ],
     [
-      "the Litestream configuration, which the offline lane also reads",
-      ["deploy/litestream.yml"],
-      ["ci-sqlite", ...CONFORMANCE, "restore-drill"],
-    ],
-    [
       "the script that builds the release's programs, which the image is made from",
       ["scripts/release/build-programs.sh"],
       ["ci-sqlite", "workspace", "image"],
@@ -695,7 +556,7 @@ describe("what a change runs", () => {
     [
       "the settings, whose names the Dockerfile sets",
       ["core/marfa-server/src/settings/start.rs"],
-      ["ci-sqlite", "core-checks-linux", "rust-contract", "image"],
+      ["ci-sqlite", "core-checks-linux", ...RUST_SERVER, "image"],
     ],
     [
       "the script that boots the image",
@@ -726,7 +587,6 @@ describe("what a change runs", () => {
         "workspace",
         ...CONTRACT,
         "mcp-conformance",
-        "cli-scenarios",
         "restore-drill",
         "types-freshness",
         "version-fields",
@@ -801,25 +661,20 @@ describe("what a change runs", () => {
         "core-checks",
         "core-checks-linux",
         ...OFFLINE,
-        "conformance-device",
-        "cli-scenarios",
         "clients-freshness",
-        ...SHARDS,
-        "conformance-statuses",
-        "mcp-conformance",
         "core",
-        "rust-contract",
+        ...RUST_SERVER,
       ],
     ],
     [
       "the Rust server alone",
       ["core/marfa-server/src/lib.rs", "core/marfa-server/tests/config.rs"],
-      ["ci-sqlite", "core-checks-linux", "rust-contract"],
+      ["ci-sqlite", "core-checks-linux", ...RUST_SERVER],
     ],
     [
       "the Rust server's manifest",
       ["core/marfa-server/Cargo.toml"],
-      ["ci-sqlite", "core-checks-linux", "rust-contract", "version-fields"],
+      ["ci-sqlite", "core-checks-linux", ...RUST_SERVER, "version-fields"],
     ],
     [
       "an icon set the rules crate embeds",
@@ -922,7 +777,6 @@ describe("what a change runs", () => {
             ? [
                 "workspace",
                 "conformance-offline",
-                "conformance-compliance",
                 "core-checks-linux",
                 "rust-contract",
               ]
@@ -934,12 +788,7 @@ describe("what a change runs", () => {
                   "rust-contract",
                 ]
               : READ_AT_RUN_TIME.includes(chapter)
-                ? [
-                    "workspace",
-                    "conformance-offline",
-                    "conformance-compliance",
-                    "rust-contract",
-                  ]
+                ? ["workspace", "conformance-offline", "rust-contract"]
                 : ["workspace", "conformance-offline"],
         );
       } else if (path === "core/marfa-cli/COMMANDS.md") {
@@ -1122,69 +971,7 @@ const gate = (output: string) =>
 const coreGate =
   "${{ !cancelled() && github.event_name == 'pull_request' && (needs.changes.result != 'success' || needs.changes.outputs.core != 'false') }}";
 
-/** The status check reads the logs of every shard, so it needs all of them to have passed. */
-const statusesGate =
-  "${{ !cancelled() && needs.conformance-shards.result == 'success' && (needs.changes.result != 'success' || needs.changes.outputs.conformance-statuses != 'false') }}";
-
-describe("the conformance shards", () => {
-  it("lay out one runner for correctness and sync, eight for compliance and one for the device", () => {
-    const all = conformanceShards(classify([]));
-    expect(all.map((shard) => shard.name)).toEqual([
-      "correctness and sync",
-      ...[1, 2, 3, 4, 5, 6, 7, 8].map((i) => `compliance ${String(i)}/8`),
-      "device",
-    ]);
-    expect(all.map((shard) => shard.args)).toEqual([
-      "--project correctness --project sync",
-      ...[1, 2, 3, 4, 5, 6, 7, 8].map(
-        (i) => `--project compliance --shard=${String(i)}/8`,
-      ),
-      "--project device",
-    ]);
-    // Only the device fixtures need the binary built from the core.
-    expect(
-      all.filter((shard) => shard.device).map((shard) => shard.name),
-    ).toEqual(["device"]);
-  });
-
-  it("name each artifact and job apart, in characters an artifact name may hold", () => {
-    const all = conformanceShards(classify([]));
-    expect(new Set(all.map((shard) => shard.slug)).size).toBe(all.length);
-    expect(new Set(all.map((shard) => shard.name)).size).toBe(all.length);
-    for (const shard of all) expect(shard.slug).toMatch(/^[a-z0-9-]+$/);
-  });
-
-  it("run only the groups the answer names, and none for a draft or documentation", () => {
-    const names = (paths: string[]) =>
-      conformanceShards(classify(paths)).map((shard) => shard.name);
-    expect(names(["conformance/src/suites/sync/streams.test.ts"])).toEqual([
-      "correctness and sync",
-    ]);
-    expect(names(["conformance/src/suites/device/folders.test.ts"])).toEqual([
-      "device",
-    ]);
-    expect(names(["conformance/spec/items.md"])).toEqual([]);
-    expect(names(["README.md"])).toEqual([]);
-    expect(conformanceShards(forDraft(classify([])))).toEqual([]);
-    // The offline lane alone is not a shard.
-    expect(runs(["conformance/spec/items.md"])).toContain(
-      "conformance-offline",
-    );
-  });
-
-  it("hold every status to a request only for a selection that reaches every shard", () => {
-    const statuses = (paths: string[]) =>
-      classify(paths)["conformance-statuses"];
-    expect(statuses(["packages/server/src/runtime.ts"])).toBe(true);
-    expect(statuses(["conformance/src/utils/setup.ts"])).toBe(true);
-    expect(statuses(["conformance/src/suites/device/folders.test.ts"])).toBe(
-      false,
-    );
-    expect(statuses(["core/marfa-core/src/store.rs"])).toBe(false);
-    expect(statuses(["conformance/spec/items.md"])).toBe(false);
-    expect(statuses([])).toBe(true);
-  });
-
+describe("the contract's chapters", () => {
   it("read every chapter a server fixture reads while it runs", () => {
     // The witness for the spec rule: a fixture that reads a chapter at run
     // time is red or green by what the chapter says. A new reader of the
@@ -1208,7 +995,7 @@ describe("the conformance shards", () => {
     ]);
     for (const chapter of READ_AT_RUN_TIME) {
       expect([...affected(`conformance/spec/${chapter}`)], chapter).toContain(
-        "conformance-compliance",
+        "rust-contract",
       );
     }
   });
@@ -1219,7 +1006,8 @@ describe("the page system's lanes", () => {
   const production = (file: string) =>
     /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file);
   /** A page file whose change reaches the whole server, as the rules leave it. */
-  const wholeServer = (file: string) => affected(file).has("restore-drill");
+  const wholeServer = (file: string) =>
+    affected(file).has("conformance-offline");
 
   /** The local files a source file imports by value, and the rest by type. */
   function imports(file: string): { value: string[]; type: string[] } {
@@ -1259,68 +1047,6 @@ describe("the page system's lanes", () => {
       .filter((file) => !file.includes("status-declarations"))
       .filter((file) => reader.test(readFileSync(join(ROOT, file), "utf8")));
     expect(readers).toEqual([]);
-  });
-
-  it("are read as HTML by the compliance fixtures and, for the device approval screen, one CLI scenario", () => {
-    const helpers = /utils\/(page-html|approval-form)/;
-    const reads = walk("conformance/src/suites")
-      .filter((file) => /\.tsx?$/.test(file))
-      .filter((file) => helpers.test(readFileSync(join(ROOT, file), "utf8")))
-      .map((file) => relative("conformance/src/suites", file));
-    // Witness: the helpers are used, by the fixtures that read pages.
-    expect(reads.length).toBeGreaterThan(0);
-    expect(
-      [...new Set(reads.map((file) => file.split("/")[0]))].sort(),
-    ).toEqual(["cli", "compliance"]);
-    expect(reads.filter((file) => file.startsWith("cli/"))).toEqual([
-      "cli/login.test.ts",
-    ]);
-  });
-
-  it("hold every file the device approval screen is built from to the CLI scenarios", () => {
-    const view = (file: string) =>
-      /^packages\/server\/src\/(pages\/(parts\/|render\.ts$|icons\.tsx$)|routes\/[^/]+\.tsx$)/.test(
-        file,
-      );
-    const seen = new Set<string>();
-    const stack = [`${SERVER_SRC}/routes/device-approval.tsx`];
-    for (let file = stack.pop(); file !== undefined; file = stack.pop()) {
-      if (seen.has(file)) continue;
-      seen.add(file);
-      const next = imports(file);
-      stack.push(...next.value.filter(view), ...next.type.filter(view));
-    }
-    expect(seen.size).toBeGreaterThan(10);
-    expect(
-      [...seen]
-        // `prefersHtml` keeps it among the whole server's files.
-        .filter((file) => !wholeServer(file))
-        .filter((file) => !affected(file).has("cli-scenarios")),
-    ).toEqual([]);
-    // The views no CLI scenario reads do not run them.
-    expect(affected(`${SERVER_SRC}/routes/sign-in-page.tsx`)).not.toContain(
-      "cli-scenarios",
-    );
-  });
-
-  it("keep a page view from being a route, so its change reaches no handler", () => {
-    const registers =
-      /new (OpenAPI)?Hono\b|createRoute\(|\.(get|post|put|patch|delete|all|use)\(\s*["'`]\//;
-    // Witness: a file that does register routes matches.
-    expect(
-      registers.test(
-        readFileSync(join(ROOT, SERVER_SRC, "routes/auth-pages.ts"), "utf8"),
-      ),
-    ).toBe(true);
-    const views = walk(`${SERVER_SRC}/routes`).filter(
-      (file) => /\/[^/]+\.tsx$/.test(file) && production(file),
-    );
-    expect(views.length).toBeGreaterThan(10);
-    expect(
-      views.filter((file) =>
-        registers.test(readFileSync(join(ROOT, file), "utf8")),
-      ),
-    ).toEqual([]);
   });
 
   it("leave the whole server every page file that code outside the pages reads", () => {
@@ -1389,15 +1115,14 @@ describe("what a draft runs", () => {
 });
 
 /**
- * The jobs of `ci.yml` that are not one job of the classifier's: the
- * conformance shards run as one matrix job, `Conformance` collects them into
- * one verdict, the workspace's tests run as three shards of one job that
- * reads the answers for `workspace` and `full`, `Full CI` collects every job
- * for the ruleset and `report-failure` reports a failed night.
+ * The jobs of `ci.yml` that are not one job of the classifier's:
+ * `Conformance` collects the offline lane and MCP conformance into one
+ * verdict, the workspace's tests run as three shards of one job that reads
+ * the answers for `workspace` and `full`, `Full CI` collects every job for
+ * the ruleset and `report-failure` reports a failed night.
  * `ci/sqlite-shards.test.ts`, `ci/full-ci-gate.test.ts` and
  * `ci/nightly-report.test.ts` pin the last three.
  */
-const CONFORMANCE_SHARD_JOB = "conformance-shards";
 const CONFORMANCE_GATE = "conformance";
 const QUICK_JOBS = ["typecheck", "lint"];
 const STOP_JOBS = [
@@ -1418,6 +1143,18 @@ const NOT_CLASSIFIED = [
   ...STOP_JOBS,
 ];
 
+/** The jobs that boot the Rust server's release build wait for it to pass. */
+const afterBuild = (output: string) =>
+  `\${{ !cancelled() && needs.rust-contract.result == 'success' && (needs.changes.result != 'success' || needs.changes.outputs.${output} != 'false') }}`;
+
+/** The build runs for any job that boots it. */
+const buildGate =
+  "${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract != 'false' || needs.changes.outputs.mcp-conformance != 'false' || needs.changes.outputs.restore-drill != 'false') }}";
+
+/** The macOS run of the device and CLI fixtures is for the nightly and a dispatch that asks. */
+const macGate =
+  "${{ !cancelled() && (github.event_name == 'schedule' || inputs.macos) && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract-macos != 'false') }}";
+
 describe("each job reads its own answer", () => {
   it("ci.yml runs a job only when the classifier says so, and every one when it cannot tell", () => {
     const { jobs } = workflow("ci.yml");
@@ -1425,44 +1162,35 @@ describe("each job reads its own answer", () => {
       (name) => name !== "changes" && !NOT_CLASSIFIED.includes(name),
     );
     expect(gated.sort()).toEqual(
-      [
-        ...JOBS.filter(
-          (job) =>
-            job !== "workspace" &&
-            job !== "swift-package" &&
-            !SHARDS.includes(job),
-        ),
-        CONFORMANCE_SHARD_JOB,
-      ].sort(),
+      JOBS.filter(
+        (job) => job !== "workspace" && job !== "swift-package",
+      ).sort(),
     );
     expect(jobs.changes?.outputs).toEqual(
       Object.fromEntries(
-        [...JOBS, "conformance-shards", "full"].map((job) => [
+        [...JOBS, "full"].map((job) => [
           job,
           `\${{ steps.classify.outputs.${job} }}`,
         ]),
       ),
     );
-    for (const name of gated.filter((name) => name !== CONFORMANCE_SHARD_JOB)) {
+    const booted = ["mcp-conformance", "restore-drill"];
+    for (const name of gated) {
       expect(jobs[name]?.needs, name).toEqual(
-        name === "conformance-statuses"
-          ? ["changes", CONFORMANCE_SHARD_JOB, "rust-contract-shards"]
-          : "changes",
+        booted.includes(name) ? ["changes", "rust-contract"] : "changes",
       );
       expect(jobs[name]?.if, name).toBe(
-        name === "conformance-statuses"
-          ? statusesGate
-          : name === "core"
-            ? coreGate
-            : gate(name),
+        booted.includes(name)
+          ? afterBuild(name)
+          : name === "rust-contract"
+            ? buildGate
+            : name === "rust-contract-macos"
+              ? macGate
+              : name === "core"
+                ? coreGate
+                : gate(name),
       );
     }
-    // The shards are skipped when the matrix is empty, and run from the
-    // whole layout when the classifier did not answer.
-    expect(jobs[CONFORMANCE_SHARD_JOB]?.needs).toBe("changes");
-    expect(jobs[CONFORMANCE_SHARD_JOB]?.if).toBe(
-      "${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.conformance-shards != '[]') }}",
-    );
     // A push asks whether this workflow passed on the commit before it.
     expect(jobs.changes?.permissions).toEqual({
       contents: "read",
@@ -1691,7 +1419,7 @@ describe("CodeQL", () => {
 });
 
 describe("what a job reads reaches it", () => {
-  it("every file the CLI scenarios load runs them", async () => {
+  it("every file the CLI fixtures load runs the Rust contract", async () => {
     const { default: config } =
       (await import("../conformance/vitest.config.js")) as {
         default: {
@@ -1707,10 +1435,9 @@ describe("what a job reads reaches it", () => {
       ...(cli?.test.globalSetup ?? []).map((f) => join("conformance", f)),
       "conformance/vitest.config.ts",
       "conformance/scripts/marfa-server.ts",
-      "conformance/scripts/check-statuses.ts",
     ]);
     expect(files).toContain("conformance/src/utils/setup.ts");
-    expect(files.filter((f) => !affected(f).has("cli-scenarios"))).toEqual([]);
+    expect(files.filter((f) => !affected(f).has("rust-contract"))).toEqual([]);
   });
 
   it("every file the restore drill loads runs it", () => {
@@ -1720,8 +1447,7 @@ describe("what a job reads reaches it", () => {
       "conformance/scripts/marfa-server.ts",
     ]);
     expect(files).toContain("conformance/src/utils/drill.ts");
-    const read = [...files, "deploy/litestream.yml"];
-    expect(read.filter((f) => !affected(f).has("restore-drill"))).toEqual([]);
+    expect(files.filter((f) => !affected(f).has("restore-drill"))).toEqual([]);
   });
 
   it("every file the MCP conformance job loads runs it", () => {
@@ -1779,7 +1505,7 @@ describe("what a job reads reaches it", () => {
     ]);
 
     const { jobs } = workflow("ci.yml");
-    for (const job of [CONFORMANCE_SHARD_JOB, "cli-scenarios"]) {
+    for (const job of ["rust-contract-shards"]) {
       const steps = jobs[job]?.steps ?? [];
       const run = steps.find((s) => s.id === "device-key")?.run ?? "";
       const globs = [...run.matchAll(/'([^']+)'/g)].map((m) => m[1] ?? "");
@@ -1801,30 +1527,24 @@ describe("what a job reads reaches it", () => {
       // that leave the device alone neither restore nor build it.
       const restore = steps.find((s) => s.id === "device");
       expect(restore?.if).toBe(
-        job === CONFORMANCE_SHARD_JOB
-          ? "${{ matrix.device && github.event_name == 'pull_request' }}"
-          : "${{ github.event_name == 'pull_request' }}",
+        "${{ matrix.binary && github.event_name == 'pull_request' }}",
       );
       expect(restore?.with?.key).toBe("${{ steps.device-key.outputs.key }}");
       expect(
         steps.find((s) => s.run === "touch core/target/debug/marfa")?.if,
       ).toBe(
-        job === CONFORMANCE_SHARD_JOB
-          ? "${{ matrix.device && steps.device.outputs.cache-hit == 'true' }}"
-          : "${{ steps.device.outputs.cache-hit == 'true' }}",
+        "${{ matrix.binary && steps.device.outputs.cache-hit == 'true' }}",
       );
       for (const crate of crates) {
         expect(
-          affected(`core/${crate}/src/lib.rs`).has(
-            job === CONFORMANCE_SHARD_JOB ? "conformance-device" : (job as Job),
-          ),
+          affected(`core/${crate}/src/lib.rs`).has("rust-contract"),
           crate,
         ).toBe(true);
       }
     }
   });
   it("the cached device module is keyed on every source it is built from, and the shards that drive it run when they change", () => {
-    const steps = workflow("ci.yml").jobs[CONFORMANCE_SHARD_JOB]?.steps ?? [];
+    const steps = workflow("ci.yml").jobs["rust-contract-shards"]?.steps ?? [];
     const run = steps.find((s) => s.id === "module-key")?.run ?? "";
     const globs = [...run.matchAll(/'([^']+)'/g)].map((m) => m[1] ?? "");
     expect(globs).toContain("core/**");
@@ -1847,7 +1567,7 @@ describe("what a job reads reaches it", () => {
         `the module is keyed without ${source}`,
       ).toEqual([]);
       expect(
-        affected(source).has("conformance-device"),
+        affected(source).has("rust-contract"),
         `${source} does not run the shards that drive the module`,
       ).toBe(true);
     }
@@ -1868,13 +1588,13 @@ describe("what a job reads reaches it", () => {
     // which the device suite refuses a module for not being.
     const restore = steps.find((s) => s.id === "module");
     expect(restore?.if).toBe(
-      "${{ matrix.device && github.event_name == 'pull_request' }}",
+      "${{ matrix.module && github.event_name == 'pull_request' }}",
     );
     expect(restore?.with?.key).toBe("${{ steps.module-key.outputs.key }}");
     expect(restore?.with?.path).toBe("core/bindings/node/*.node");
     expect(
       steps.find((s) => s.run === "touch core/bindings/node/*.node")?.if,
-    ).toBe("${{ matrix.device && steps.module.outputs.cache-hit == 'true' }}");
+    ).toBe("${{ matrix.module && steps.module.outputs.cache-hit == 'true' }}");
     // Built where it is not restored, and told to the suite.
     expect(
       steps.find((s) => s.name === "Build the Node module under test")?.run,
@@ -1999,8 +1719,6 @@ describe("the classifier as CI runs it", () => {
 
   const every = (value: string) => ({
     ...Object.fromEntries(JOBS.map((job) => [job, value])),
-    "conformance-shards":
-      value === "true" ? JSON.stringify(conformanceShards(classify([]))) : "[]",
     full: "true",
   });
 
@@ -2020,20 +1738,16 @@ describe("the classifier as CI runs it", () => {
     expect(JOBS.filter((job) => server[job] === "true")).toEqual(
       JOBS.filter((job) => SERVER.includes(job)),
     );
-    // The shards a diff names are written as the matrix that runs them.
-    expect(JSON.parse(server["conformance-shards"] ?? "[]")).toEqual(
-      conformanceShards(classify(["packages/server/src/runtime.ts"])),
-    );
     const fixture = outputs(
       "pull_request",
       commits.noted ?? "",
       commits.fixture ?? "",
     );
-    expect(
-      (
-        JSON.parse(fixture["conformance-shards"] ?? "[]") as { name: string }[]
-      ).map((shard) => shard.name),
-    ).toEqual([1, 2, 3, 4, 5, 6, 7, 8].map((i) => `compliance ${String(i)}/8`));
+    expect(JOBS.filter((job) => fixture[job] === "true")).toEqual(
+      JOBS.filter((job) =>
+        ["ci-sqlite", "workspace", ...CONTRACT].includes(job),
+      ),
+    );
   });
 
   it("runs only the quick jobs for a draft and every one once it is ready", () => {
@@ -2047,7 +1761,6 @@ describe("the classifier as CI runs it", () => {
     );
     expect(quick(server)).toEqual(["ci-sqlite", "workspace"]);
     expect(server.full).toBe("false");
-    expect(server["conformance-shards"]).toBe("[]");
     // Documentation names no quick job but the format check, which CI (SQLite)
     // runs for every change.
     const docs = outputs(
@@ -2070,8 +1783,7 @@ describe("the classifier as CI runs it", () => {
       outputs("pull_request", "invalid", commits.docs ?? "", true),
     ).toMatchObject({
       "ci-sqlite": "true",
-      "conformance-device": "false",
-      "conformance-shards": "[]",
+      "rust-contract": "false",
       full: "false",
     });
   });
@@ -2083,7 +1795,7 @@ describe("the classifier as CI runs it", () => {
       commits.rename ?? "",
     );
     expect(renamed.workspace).toBe("true");
-    expect(renamed["conformance-compliance"]).toBe("true");
+    expect(renamed["conformance-offline"]).toBe("true");
   });
 
   it("runs every job when the diff cannot be read or is empty", () => {
@@ -2101,23 +1813,17 @@ describe("the classifier as CI runs it", () => {
     ).toEqual(every("true"));
   });
 
-  it("runs on the nightly only what needs a Mac, and the device shards alone of the conformance matrix", () => {
+  it("runs on the nightly only what needs a Mac", () => {
     const night = outputs("schedule", commits.base ?? "", commits.docs ?? "");
     expect(JOBS.filter((job) => night[job] === "true")).toEqual(
       JOBS.filter((job) => NIGHTLY_JOBS.includes(job)),
     );
     expect(NIGHTLY_JOBS).toEqual([
-      "conformance-device",
-      "cli-scenarios",
+      "rust-contract-macos",
       "core-checks",
       "control-socket",
       "swift-package",
     ]);
-    expect(
-      (
-        JSON.parse(night["conformance-shards"] ?? "[]") as { name: string }[]
-      ).map((shard) => shard.name),
-    ).toEqual(["device"]);
     // The pull request's lanes are untouched by the nightly's answer.
     expect(forNightly()).toEqual(
       Object.fromEntries(JOBS.map((job) => [job, NIGHTLY_JOBS.includes(job)])),

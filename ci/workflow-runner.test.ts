@@ -1,6 +1,6 @@
 /**
  * Literal routing keeps public pull requests off personal and paid runners.
- * The one expression is the nightly macOS choice of two jobs, pinned whole.
+ * The only expression is a per-architecture matrix's runner, pinned whole.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -17,25 +17,11 @@ const WORKFLOWS = resolve(
 
 const MAC_JOBS = new Set([
   "ci.yml:core-checks",
+  "ci.yml:rust-contract-macos",
   "core-live.yml:live",
   "release.yml:programs-macos",
   "release.yml:sign",
   "ci.yml:control-socket",
-]);
-
-// Ubuntu for a pull request, a push and a dispatch that does not ask, macOS
-// for the nightly and a dispatch that does. The nightly runs only what needs
-// a Mac, so of the conformance shards it is the device ones alone.
-const NIGHTLY_MAC_RUNNER =
-  "${{ (github.event_name == 'schedule' || inputs.macos) && 'macos-26' || 'ubuntu-latest' }}";
-const DEVICE_MAC_RUNNER =
-  "${{ matrix.device && (github.event_name == 'schedule' || inputs.macos) && 'macos-26' || 'ubuntu-latest' }}";
-
-// The offline lane, the statuses job and `Conformance`, the check that
-// collects the others, need no Mac, so they run on Ubuntu.
-const NIGHTLY_MAC_JOBS = new Set([
-  "ci.yml:conformance-shards",
-  "ci.yml:cli-scenarios",
 ]);
 
 // The server image is built, each Linux archive is run, and the install is
@@ -109,13 +95,7 @@ describe("jobs use standard GitHub-hosted runners", () => {
         expect(config.concurrency, key).toBeUndefined();
         continue;
       }
-      const expected = MAC_JOBS.has(key)
-        ? "macos-26"
-        : key === "ci.yml:conformance-shards"
-          ? DEVICE_MAC_RUNNER
-          : NIGHTLY_MAC_JOBS.has(key)
-            ? NIGHTLY_MAC_RUNNER
-            : "ubuntu-latest";
+      const expected = MAC_JOBS.has(key) ? "macos-26" : "ubuntu-latest";
       expect(config["runs-on"], `${file}: ${job}`).toEqual(expected);
       expect(config.concurrency, `${file}: ${job}`).toBeUndefined();
     }
@@ -161,7 +141,7 @@ describe("jobs use standard GitHub-hosted runners", () => {
   });
 
   it("finds every macOS job named by the policy", () => {
-    for (const key of [...MAC_JOBS, ...NIGHTLY_MAC_JOBS]) {
+    for (const key of MAC_JOBS) {
       const [file = "", job = ""] = key.split(":");
       expect(
         jobsOf(readFileSync(join(WORKFLOWS, file), "utf8"))[job],

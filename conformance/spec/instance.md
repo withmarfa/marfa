@@ -1974,6 +1974,15 @@ When the private local process sends `confirm_sign_in_address_change` set to `tr
 
 **Tests:** `compliance/instance-addresses.test.ts › is not moved, and the answer names the consequences, until a write confirms it`.
 
+
+### `instance/sign-in-needs-address`
+
+While no sign-in address is set, if a caller whose address is not on the loopback sends `POST /auth/sign-in`, then the server MUST answer `403 forbidden` with a message that says how to set the sign-in address.
+
+**Reason:** Until the owner says where people reach the instance, the server cannot tell a sign-in through the owner's own proxy from one through anyone else's.
+
+**Tests:** `compliance/sign-in-door-limits.test.ts › refuses a password sign-in from a caller off this machine 403, and answers one from this machine`.
+
 ### `instance/address-check`
 
 When a key holding `config.manage` sends `POST /config/address-check` with `sign_in_address`, `addresses` or both, the server MUST answer `200` with the `sign_in_address` and the `addresses` as they would be after the change, `requires_confirmation`, and `consequences`, each of them `code`, `sentence` and `count`.

@@ -2,7 +2,9 @@
  * The contract judged with the Rust server: a release build, shards that boot
  * it through the meter and run the server projects, and a score that fails
  * when a file the Rust server judges did not pass or a shard wrote no report.
- * `Full CI` waits for the score.
+ * `Full CI` waits for the score. MCP conformance and the restore drill boot
+ * the same build, and the nightly runs the device and CLI fixtures against a
+ * build of its own on macOS.
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -59,6 +61,12 @@ function projectsOf(args: string): { projects: string[]; shard?: string } {
 }
 
 describe("the Rust server's release build", () => {
+  it("runs for the contract, MCP conformance or the restore drill", () => {
+    expect(build?.if).toBe(
+      "${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract != 'false' || needs.changes.outputs.mcp-conformance != 'false' || needs.changes.outputs.restore-drill != 'false') }}",
+    );
+  });
+
   it("is the release build of marfa-server with the file readers linked in, on a standard Linux runner, and is uploaded for the shards", () => {
     expect(build?.["runs-on"]).toBe("ubuntu-latest");
     expect(build?.env?.TARGET).toBe("x86_64-unknown-linux-musl");
@@ -104,13 +112,13 @@ describe("the Rust contract shards", () => {
   it("wait for the build and run only when it passed", () => {
     expect(needsOf(shards)).toEqual(["changes", "rust-contract"]);
     expect(shards?.if).toBe(
-      "${{ !cancelled() && needs.rust-contract.result == 'success' }}",
+      "${{ !cancelled() && needs.rust-contract.result == 'success' && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract != 'false') }}",
     );
     expect(shards?.["runs-on"]).toBe("ubuntu-latest");
     expect(shards?.strategy?.["fail-fast"]).toBe(false);
   });
 
-  it("run each of the five server projects once, as the TypeScript shards do, and no other", () => {
+  it("run each of the five server projects once, and no other", () => {
     const whole = new Map<string, number>();
     const split = new Map<string, string[]>();
     for (const entry of matrix) {
@@ -235,6 +243,86 @@ describe("the Rust contract score", () => {
           name,
         );
       }
+    }
+  });
+});
+
+describe("MCP conformance and the restore drill", () => {
+  it.each(["mcp-conformance", "restore-drill"])(
+    "%s boots the Rust server's release build, and nothing built for the TypeScript server",
+    (name) => {
+      const job = jobs[name];
+      expect(needsOf(job)).toEqual(["changes", "rust-contract"]);
+      expect(job?.if).toContain("needs.rust-contract.result == 'success'");
+      expect(job?.if).toContain(`needs.changes.outputs.${name} != 'false'`);
+      expect(
+        job?.steps.some(
+          (candidate) =>
+            candidate.uses?.startsWith("actions/download-artifact") &&
+            candidate.with?.name === "rust-contract-server",
+        ),
+      ).toBe(true);
+      expect(step(job, "Name the server under test").run).toContain(
+        "MARFA_SERVER_BIN=",
+      );
+      const text = JSON.stringify(job?.steps);
+      expect(text).not.toContain("@withmarfa/server...");
+      expect(text).not.toContain("litestream");
+    },
+  );
+});
+
+describe("the Rust contract on macOS", () => {
+  const mac = jobs["rust-contract-macos"];
+  const entries = (mac?.strategy?.matrix?.include ?? []) as unknown as {
+    args: string;
+  }[];
+
+  it("runs only on the nightly and a dispatch that asks for macOS", () => {
+    expect(mac?.["runs-on"]).toBe("macos-26");
+    expect(mac?.if).toContain(
+      "(github.event_name == 'schedule' || inputs.macos)",
+    );
+  });
+
+  it("runs the CLI fixtures whole and every shard of the device fixtures once", () => {
+    const whole: string[] = [];
+    const device: string[] = [];
+    for (const entry of entries) {
+      const { projects, shard } = projectsOf(entry.args);
+      expect(projects).toHaveLength(1);
+      if (shard === undefined) whole.push(...projects);
+      else if (projects[0] === "device") device.push(shard);
+    }
+    expect(whole).toEqual(["cli"]);
+    const count = Number(device[0]?.split("/")[1]);
+    expect(device.sort()).toEqual(
+      Array.from(
+        { length: count },
+        (_, i) => `${String(i + 1)}/${String(count)}`,
+      ),
+    );
+  });
+
+  it("builds the server with its test hooks, leaves the login keychain as it was, and fails on a failed test", () => {
+    const built = step(
+      mac,
+      "Build the server, the device and the Node module under test",
+    ).run;
+    expect(built).toContain(
+      "cargo build --locked --release -p marfa-server --features test-hooks",
+    );
+    const run = step(mac, "Run the shard").run ?? "";
+    expect(run).toContain("../core/scripts/login-keychain-unchanged.sh");
+    expect(run).toContain("--retry=0");
+    expect(run).not.toContain("|| status");
+    expect(step(mac, "Stop the server").if).toBe("always()");
+    expect(step(mac, "Stop the object store").if).toBe("always()");
+  });
+
+  it("is waited for by Full CI and by the report of a failed night", () => {
+    for (const waiter of ["gate", "report-failure"]) {
+      expect(needsOf(jobs[waiter])).toContain("rust-contract-macos");
     }
   });
 });

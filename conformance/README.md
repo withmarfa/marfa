@@ -27,9 +27,8 @@ trip, an export, a connector's registration and runs, instance management operat
 six exit codes, and a coverage scenario that reads `marfa operations` from the
 binary and holds it against the document the server serves, so an operation
 published without a command is red here. Every published operation is driven
-past its help. It is its own job in `ci.yml`, beside the referee rather than
-inside it, and `pnpm test:cli` runs it with the same environment the device
-fixtures take.
+past its help. CI runs it as a shard of the Rust contract, and `pnpm test:cli`
+runs it with the same environment the device fixtures take.
 
 ## Quick start
 
@@ -42,7 +41,10 @@ root:
 pnpm garage:up
 set -a; . .marfa-state/garage/garage.env; set +a
 
-# Boot the server in this checkout on SQLite, mint its first key, write an env file
+# Build the Rust server with its test hooks, then boot it on SQLite, mint its
+# first keys and write an env file
+(cd ../core && cargo build --release -p marfa-server --features test-hooks)
+export MARFA_SERVER_BIN="$PWD/../core/target/release/marfa-server"
 pnpm marfa:up
 
 # Build the device under test. The device fixtures drive this binary, and
@@ -85,11 +87,13 @@ server attaches an object store when `S3_BUCKET` is set, and the fixtures in
 `pnpm garage:down` stops the node and removes its state.
 
 `pnpm drill:restore` is the restore drill, which needs the same `S3_*` values
-plus `litestream` and `sqlite3` on the path: it boots an instance under
-`.marfa-drill/` with Litestream streaming its database to the bucket, writes
-to it, restores a second instance from the bucket alone and compares the two
-to the byte, then removes what it wrote to the bucket. The report goes to
-`reports/restore-drill.md`, and `deploy/README.md` is what it proves.
+and `MARFA_SERVER_BIN`: it boots a server under `.marfa-drill/` on the
+bucket, writes a type with a table, rows, notes with a history, one in the
+trash, files, edges and a setting, and takes a backup. It then deletes that
+server's data directory, restores the backup into a fresh server on the same
+bucket, and compares every instance, item, edge and row line of an archive
+export and every file's bytes, then removes what it wrote to the bucket. The
+report goes to `reports/restore-drill.md`.
 
 `pnpm mcp:conformance` runs the MCP project's conformance tool, at the version
 `package.json` pins, against `/mcp` on the server `marfa:up` booted. The tool
@@ -100,17 +104,20 @@ fail by design pinned in `scripts/mcp-conformance.ts`, each with its reason.
 Any other failing check fails the run, and so does a pinned check that passes,
 until its pin is removed.
 
-`pnpm marfa:up` builds the workspace packages if they are not built, starts
-the server as a direct Node child with the tsx loader (never watch mode), waits for `/health`, claims the owner through the private socket using the
+`pnpm marfa:up` starts the program `MARFA_SERVER_BIN` names under a small
+supervisor (with it unset, the TypeScript server's sources through the tsx
+loader, never watch mode), waits for `/health`, claims the owner through the private socket using the
 production claim service, signs in, mints explicit ordinary fixture keys,
 and writes `.marfa-state/env`. The state directory holds the
 SQLite file, the disk store, the server log, what the server printed to stderr, the pid, the clock offset and the env file; pass
 `--state <dir>` to put it elsewhere and `--port <n>` to choose the port.
-By default the server binds port 0 on `127.0.0.1`, keeping the assigned listener
-open. The adapter reads the assigned port from this boot's readiness log record
-before requesting `/health`; it does not probe and release a free port.
-A restart ignores earlier readiness records. An explicitly occupied IPv4 port
-fails the boot instead of accepting another listener's health response.
+The server listens on `127.0.0.1` and is reached, and signs people in, at
+`http://localhost:<port>`, since passkeys refuse an IP address. With no port
+given, the adapter asks the system for a free one and starts on it, and starts
+again on another if a different process took it first. It reads the port from
+this boot's readiness log record before requesting `/health`. A restart
+ignores earlier readiness records. An explicitly occupied IPv4 port fails the
+boot instead of accepting another listener's health response.
 
 `pnpm marfa:down` stops the server and removes its instance state, so every `up` is
 a fresh instance. A database that outlives the bucket it was pointed at
@@ -778,11 +785,11 @@ JSON report, so run with `--reporter=json --outputFile=<vitest.json>`.
 ### Which files the Rust server judges
 
 `RUST_JUDGED` in `src/utils/rust-judged.ts` lists, by path from `conformance/`,
-the contract test files that the Rust server must pass whole. A file joins it
-once the Rust server passes that file whole. A listed file runs
-in the Rust contract jobs only. `vitest.config.ts` leaves it out of the
-TypeScript server's shards, which run with `MARFA_SERVER_BIN` unset, so one
-file is judged by one server. A test checks that every listed path exists.
+the contract test files that the Rust server must pass whole: every file of
+the five server projects. A new file joins it once the Rust server passes it
+whole. A run with `MARFA_SERVER_BIN` unset, against the TypeScript server,
+leaves the listed files out (`vitest.config.ts`); no CI job runs one. A test
+checks that every listed path exists.
 
 ### How the score is counted
 
@@ -914,52 +921,45 @@ such as the owner, boots its own server with `bootFreshServer` in
 
 ## CI
 
-The contract's gate is `Conformance` in `.github/workflows/ci.yml`, on every pull
-request that can affect it and every push to `main`, on Ubuntu. The nightly
-runs only what needs a Mac, the device shards and the CLI scenarios, on macOS,
-and a dispatch with `macos` runs those two there too. It is a
-check that collects the jobs below and passes when every one that ran passed,
-or when the classifier skipped them all.
+The contract runs in `.github/workflows/ci.yml`, on every pull request that
+can affect it and every push to `main`, on Ubuntu, against the Rust server.
+`Conformance` collects the offline lane and MCP conformance into one verdict,
+and passes when every one that ran passed, or when the classifier skipped them
+all; `Rust contract score` is the verdict on the server's fixtures. The
+nightly runs only what needs a Mac: the device and CLI fixtures on macOS, and
+a dispatch with `macos` runs them there too.
 
-- **Shards.** The server's fixtures run in three groups, each on runners of
-  its own that boot their own object store and server: correctness and sync on
-  one, compliance over eight and the device over six. The fixtures isolate
-  themselves by credential, so a runner takes any part of a group. A group of
-  more than one shard splits its files with `pnpm test:compliance --shard=1/8`,
-  weighed by the seconds each file takes (`src/utils/shard-weights.ts`) rather
-  than by Vitest's own split by path, which can leave one shard with far more
-  of the slow files than another. A file not in the weights is still run, by
-  exactly one shard, at the median time of every file. Each shard compares the
-  time of every file it ran with its weight, warns about a file that took more
-  than half as long again or half as long, and writes the slow files to the job
-  summary (`pnpm check:shard-drift`); update the weight when it does. Only the
-  device shards build or restore the `marfa` binary and the Node module.
-- **Offline lane.** `pnpm test:generators` runs as a job of its own, with no
-  server.
-- **Statuses.** Each shard holds the statuses its server answered to their
-  declaration and keeps its server log and the document it served.
-  `Conformance statuses` then merges every shard's log and holds the declared
-  statuses no request drew to the list of the ones nothing can draw
-  (`pnpm check:statuses --shards <dir> --complete`). That needs the whole
-  selection, so it runs when the change reaches all three groups; a change to
-  one group's fixtures runs that group, and the push to `main` that follows
-  runs them all.
-- **Rust contract.** Three jobs run the same fixtures against the Rust server.
-  `Rust server (release build)` builds `marfa-server` for x86_64 Linux and
-  uploads it. Sixteen `Rust contract shard` runners download it and boot it
-  through the meter: correctness and sync on one, the scenario suite on one,
-  compliance over eight and the device over six, split as above. A shard writes
+- **Rust contract.** `Rust server (release build)` builds `marfa-server` for
+  x86_64 Linux, with and without its test hooks, and uploads both. Twenty
+  `Rust contract shard` runners download it and boot it through the meter,
+  each with an object store of its own: correctness and sync on one, the
+  scenario suite on one, compliance over twelve and the device over six. The
+  fixtures isolate themselves by credential, so a runner takes any part of a
+  project. A split project's files are weighed by the seconds each takes
+  (`src/utils/shard-weights.ts`) rather than split by path, which can leave
+  one shard with far more of the slow files than another; a file not in the
+  weights is still run, by exactly one shard, at the median time of every
+  file. Each split shard compares the time of every file it ran with its
+  weight, warns about one that took more than half as long again or half as
+  long, and writes the slow files to the job summary
+  (`pnpm check:shard-drift`); update the weight when it does. A shard writes
   Vitest's JSON report as an artifact and fails only when it wrote none, not
   when a test failed. `Rust contract score` counts the reports as described
   above and fails when a file in `RUST_JUDGED` did not pass whole. `Full CI`
-  waits for it. A change under `core/marfa-server/` runs these jobs and
-  `Core checks (Linux)`, and `Core checks` for the private socket's macOS
-  code, and none of the TypeScript server's.
+  waits for it.
+- **On macOS.** `Rust contract on macOS` builds the server natively with its
+  test hooks, and runs the CLI fixtures and the device fixtures over three
+  shards against it, for file watching, name case, Finder packages and the
+  login keychain. A failed test fails the shard.
+- **MCP conformance and the restore drill** boot the release build. The drill
+  is `pnpm drill:restore`, described above.
+- **Offline lane.** `pnpm test:generators` runs as a job of its own, with no
+  server.
 
-`scripts/ci-required.ts` says which groups a change reaches and writes the
-matrix. A change to `spec/` alone runs the offline lane, and the compliance
-shards only for `errors.md` and `coverage.md`, the two chapters a fixture reads
-while it runs.
+`scripts/ci-required.ts` says which jobs a change reaches. A change to `spec/`
+alone runs the offline lane, and the Rust contract only for `errors.md`,
+`coverage.md`, `instance.md` and `housekeeping.md`, which a fixture or a unit
+test of the Rust server reads.
 
 The tree under test is the tree the suite runs against and the device under
 test is the binary built from it: there is no pinned server commit and no
