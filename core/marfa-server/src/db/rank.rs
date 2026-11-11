@@ -1,5 +1,5 @@
-//! `bm25_within(fts, entries, tokens, length, hits per phrase...)`: FTS5's `bm25` over a given corpus, with the
-//! entry's length in tokens where the caller already holds it, and NULL where FTS5 should read it.
+//! `bm25_within(fts, entries, tokens, length, hits per phrase...)`: FTS5's `bm25` over a given corpus.
+//! `length` is the entry's token count, or NULL for FTS5 to read it.
 
 use std::ffi::c_int;
 use std::ptr;

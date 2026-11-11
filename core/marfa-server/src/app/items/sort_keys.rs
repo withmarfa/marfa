@@ -40,8 +40,7 @@ pub fn large(tx: &Transaction<'_>, type_id: &str) -> Result<bool> {
     Ok(held >= MIN_ITEMS)
 }
 
-/// Adds a pair to the ones kept, and says whether it did. Its triggers keep the keys true from here on;
-/// `fill_page` gives the items already written theirs.
+/// Adds a pair to the ones kept, and says whether it did; `fill_page` keys the items already written.
 pub fn add(tx: &Transaction<'_>, type_id: &str, name: &str) -> Result<bool> {
     if standing(tx, type_id, name)? != Standing::Absent {
         return Ok(false);

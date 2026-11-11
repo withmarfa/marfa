@@ -500,11 +500,9 @@ CREATE TABLE IF NOT EXISTS items_fts_stale (
     PRIMARY KEY (type, state)
 ) STRICT, WITHOUT ROWID;
 
--- The (type, property) pairs a sorted listing reads from `item_sort_keys` instead of walking every
--- item of the type. A pair is added when a listing of a large type asks for it, and `filled_through`
--- is how far the walk of `items.seq` that gives the existing items their keys has reached; the
--- triggers below keep every pair's keys true from the moment it is added, so `ready` only says that
--- the walk is over.
+-- The (type, property) pairs a sorted listing reads from `item_sort_keys`. The triggers below keep a
+-- pair's keys true from its first row; `filled_through` and `ready` track the walk that keys the items
+-- already there.
 CREATE TABLE IF NOT EXISTS sort_indexes (
     type TEXT NOT NULL,
     name TEXT NOT NULL,
@@ -513,10 +511,8 @@ CREATE TABLE IF NOT EXISTS sort_indexes (
     PRIMARY KEY (type, name)
 ) STRICT, WITHOUT ROWID;
 
--- The sort value of a property: a number or boolean as a REAL, text as itself, and the empty blob
--- where the item holds none, which sorts after every other value. `item_sort_keys_descending`
--- holds the same keys in descending value order with ids still ascending, the order of a listing
--- sorted down.
+-- A property's sort value: a number or boolean as a REAL, text as itself, else the empty blob, which
+-- sorts last. The descending index keeps ids ascending, as a listing sorted down does.
 CREATE TABLE IF NOT EXISTS item_sort_keys (
     type TEXT NOT NULL,
     name TEXT NOT NULL,

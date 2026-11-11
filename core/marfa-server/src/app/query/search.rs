@@ -33,9 +33,9 @@ pub struct Search {
 struct Source {
     fts: &'static str,
     from: &'static str,
-    /// What `from` reads from for an ask that only the columns of the index's own item table can judge.
+    /// `from` for an ask that the columns of `items_fts_sizes` can judge.
     narrow_from: &'static str,
-    /// The length in tokens of a hit's entry where the join holds it, for the narrow and the wide `from`; NULL where FTS5 reads it.
+    /// A hit's token count in `narrow_from` and in `from`, NULL where FTS5 reads it.
     lengths: (&'static str, &'static str),
     named: &'static str,
     /// Every entry of an item `i`, for a reach to narrow.
@@ -108,7 +108,7 @@ fn counts(read: &Reader<'_, '_>, sql: &Sql, columns: usize) -> Result<Vec<i64>> 
     )
 }
 
-/// BM25's statistics for each index, as `bm25_within` takes them after the table, or none where FTS5's own are the caller's.
+/// Each index's BM25 statistics as `bm25_within` takes them, or none for FTS5's own.
 pub(super) struct Ranking(pub(super) [Option<Vec<i64>>; 2]);
 
 impl Ranking {
