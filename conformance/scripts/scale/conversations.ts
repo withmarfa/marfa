@@ -515,7 +515,7 @@ export async function conversations(): Promise<void> {
     add(
       distribution("conversation_latest_50", "ms", latest.times, {
         errors: latest.errors + deeper.errors,
-        note: `${LATEST} messages, newest first by sent_at, of ${opts.messages}; the ${LATE} written last were sent first; ${DEEP_PAGES} pages by cursor checked too`,
+        note: `${LATEST} messages, newest first by sent_at, of ${opts.messages}; the ${LATE} written last were sent first; each answer's own cursor followed to the next ${LATEST}, and ${DEEP_PAGES} pages of ${WALK_LIMIT} by cursor checked too`,
       }),
       upTo("p95 10 ms"),
     );
