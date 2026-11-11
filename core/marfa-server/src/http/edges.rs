@@ -44,7 +44,7 @@ const SOURCE_VERSION: [&str; 1] = ["source_version"];
 const MAX_ENTRIES: usize = 5000;
 const MAX_EDGE_TYPES: usize = 10;
 const MAX_LIMIT: i64 = 500;
-const DEFAULT_LIMIT: i64 = 100;
+const DEFAULT_LIMIT: i64 = 50;
 
 fn required(sent: &Map<String, Value>, field: &str) -> Result<String> {
     match text_of(sent, field)? {
@@ -144,7 +144,8 @@ pub async fn update(
 ) -> Answer {
     caller.require_reach()?;
     let (door, who) = (app.clone(), caller.clone());
-    keyed(&app, &caller, sent, |claim, _, body| async move {
+    keyed(&app, &caller, sent, |claim, uri, body| async move {
+        query::only(&uri, &[])?;
         write::run(&door, &who, claim, update_of(id, &body)?).await
     })
     .await
@@ -348,8 +349,14 @@ fn asked_of(body: &ReadBody) -> Result<Asked> {
     })
 }
 
-pub async fn write_page(State(app): State<Arc<App>>, caller: Caller, body: JsonBody) -> Answer {
+pub async fn write_page(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    uri: Uri,
+    body: JsonBody,
+) -> Answer {
     caller.require_reach()?;
+    query::only(&uri, &[])?;
     let sent = body.read().await?;
     let asked = asked_of(&sent)?;
     let answer = bulk::write(&app, &caller, asked).await?;

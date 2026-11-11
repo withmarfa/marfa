@@ -28,6 +28,12 @@ const { corpusItems, batchSize } = profile.bench;
 /** Repeats of the full export. Three points give a median without overspending. */
 const EXPORT_REPEATS = 3;
 
+/**
+ * The fewest items that tell a stream from a buffered body: a smaller export
+ * ends within a round trip of its first byte, whatever the server does.
+ */
+const STREAMED_ITEMS = 600;
+
 describe("export stream performance", () => {
   let ctx: TestContext;
   let client: MarfaClient;
@@ -43,7 +49,7 @@ describe("export stream performance", () => {
     ));
     const warmMs = await warmTarget(client);
     const seeded = await seedCorpus(client, ctx, {
-      count: corpusItems,
+      count: Math.max(corpusItems, STREAMED_ITEMS),
       batchSize,
       seed: 4409,
     });

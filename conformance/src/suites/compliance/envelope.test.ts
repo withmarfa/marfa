@@ -8,6 +8,7 @@ import {
   trackEdge,
   trackItem,
   trackKey,
+  trackType,
   trackView,
   trackWebhook,
 } from "../../utils/setup.js";
@@ -39,6 +40,7 @@ let connectorId: string;
 let viewId: string;
 let blobHash: string;
 let title: string;
+let tabled: string;
 
 beforeAll(async () => {
   ({ ctx, client, apiUrl, apiKey } = await createTestContext(
@@ -84,6 +86,21 @@ beforeAll(async () => {
   );
   expect(blob.ok).toBe(true);
   blobHash = blob.data.hash;
+  const tableType = `user.envelope_tables_${ctx.runId.replaceAll("-", "_")}`;
+  const registered = await client.registerType({
+    id: tableType,
+    fields: {},
+    tables: { spend: { columns: { amount: { type: "number" } } } },
+  } as never);
+  expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+  trackType(ctx, tableType, client);
+  const holder = await client.createItem({
+    type: tableType,
+    properties: {},
+  } as never);
+  expect(holder.ok, JSON.stringify(holder.error)).toBe(true);
+  tabled = holder.data.item.id;
+  trackItem(ctx, tabled);
 });
 
 afterAll(async () => {
@@ -125,6 +142,16 @@ describe("one envelope for every list and search", () => {
       siblings: ["retention_days"],
     },
     { template: "/edges", path: () => "/edges" },
+    { template: "/backups", path: () => "/backups", owner: true },
+    { template: "/items/{id}/tables", path: () => `/items/${tabled}/tables` },
+    {
+      template: "/items/{id}/tables/{table}/rows",
+      path: () => `/items/${tabled}/tables/spend/rows`,
+    },
+    {
+      template: "/items/{id}/tables/{table}/batches",
+      path: () => `/items/${tabled}/tables/spend/batches`,
+    },
     { template: "/items/{id}/edges", path: () => `/items/${itemId}/edges` },
     {
       template: "/items/{id}/backrefs",
@@ -194,12 +221,12 @@ describe("one envelope for every list and search", () => {
   const credentialOf = (door: (typeof doors)[number]) =>
     door.owner ? LOCAL : door.operator ? managementKey : apiKey;
 
-  it("names thirty-one doors, every one the document publishes as a page", async () => {
+  it("names thirty-five doors, every one the document publishes as a page", async () => {
     // The derived set holds the items to the document, so a door that starts
     // answering a page without a row here turns this red. The count holds
     // both to the number the specification states, so a new page added with
     // an item beside it turns this red too.
-    expect(doors).toHaveLength(31);
+    expect(doors).toHaveLength(35);
     expect(doors.map((door) => `GET ${door.template}`).sort()).toEqual(
       pageDoors(await servedDocument()).sort(),
     );
@@ -218,7 +245,7 @@ describe("one envelope for every list and search", () => {
             parameter.in === "query" && parameter.name === "cursor",
         ),
     );
-    expect(whole).toHaveLength(16);
+    expect(whole).toHaveLength(18);
     for (const door of whole) {
       const body = (await read(door.path(), credentialOf(door))) as Record<
         string,

@@ -30,9 +30,11 @@ pub async fn rename(
     State(app): State<Arc<App>>,
     Path(id): Path<String>,
     caller: Caller,
+    uri: Uri,
     body: JsonBody,
 ) -> Answer {
     caller.require_local()?;
+    query::only(&uri, &[])?;
     let body = body.object(&NAME_FIELDS).await?;
     let Some(sent) = body.get("name") else {
         return Err(

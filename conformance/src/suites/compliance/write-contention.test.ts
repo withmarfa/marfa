@@ -534,3 +534,62 @@ it("serves a session read without waiting for renewal and keeps its durable idle
   expect(expired.status).toBe(401);
   await expired.body?.cancel();
 }, 120_000);
+
+it("serves a session read promptly while a bulk page holds the writer, and renews once it is let go", async () => {
+  const server = await bootFreshServer("session-use-bulk", {
+    MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: SCHEDULER_NEVER_POLLS_MS,
+  });
+  const read = () =>
+    fetch(`${server.apiUrl}/owner/passkeys`, {
+      headers: { cookie: server.ownerCookie },
+      signal: AbortSignal.timeout(5000),
+    });
+  const lastUsed = async () => {
+    const listed = await controlRequest(
+      server.controlSocket,
+      "/owner/sign-ins",
+    );
+    expect(listed.status).toBe(200);
+    const browsers = (
+      listed.body.data as { kind: string; last_used_at: string }[]
+    ).filter((row) => row.kind === "browser");
+    expect(browsers).toHaveLength(1);
+    return browsers[0]!.last_used_at;
+  };
+  const before = await lastUsed();
+  await server.advanceClock(61_000);
+  await server.setFault("hold:bulk-page=2");
+  const page = fetch(`${server.apiUrl}/items/bulk`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${server.workingKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      mode: "upsert",
+      items: Array.from({ length: 5 }, (_, i) => ({
+        type: "core.note",
+        source_id: `session-use-bulk-${String(i)}`,
+        properties: { title: `held ${String(i)}` },
+      })),
+    }),
+  });
+  try {
+    await server.waitForHold("hold:bulk-page");
+    const started = Date.now();
+    const response = await read();
+    const took = Date.now() - started;
+    expect(response.status).toBe(200);
+    expect(response.headers.get("set-cookie")).toBeNull();
+    await response.body?.cancel();
+    expect(took).toBeLessThan(600);
+    expect(await lastUsed()).toBe(before);
+  } finally {
+    await server.clearFault("hold:bulk-page");
+    expect((await page).status).toBe(200);
+  }
+  const renewed = await read();
+  expect(renewed.status).toBe(200);
+  await renewed.body?.cancel();
+  expect(Date.parse(await lastUsed())).toBeGreaterThan(Date.parse(before));
+}, 120_000);

@@ -60,7 +60,7 @@ When the server answers a refusal with the page of `errors/html-page`, the serve
 
 ### `errors/request-id`
 
-The server MUST carry an `X-Request-ID` header on every answer to `POST /auth/oauth2/register` and to a path outside `/auth/` and `/.well-known/`, a refusal included.
+The server MUST carry an `X-Request-ID` header on every answer, a refusal included.
 
 **Reason:** it is the value a caller quotes to find its request in the server's log.
 
@@ -68,7 +68,7 @@ The server MUST carry an `X-Request-ID` header on every answer to `POST /auth/oa
 
 ### `errors/request-id-echo`
 
-When a request to `POST /auth/oauth2/register` or to a path outside `/auth/`, `/.well-known/` and `/inbound/` carries an `X-Request-ID` of 1 to 128 letters, digits, underscores and hyphens, the server MUST answer with that value in `X-Request-ID`, whether it serves the request or refuses it.
+When a request to a path outside `/inbound/` carries an `X-Request-ID` of 1 to 128 letters, digits, underscores and hyphens, the server MUST answer with that value in `X-Request-ID`, whether it serves the request or refuses it.
 
 **Reason:** a request to `/inbound/` comes from a sender and not a Marfa client, and its headers are content (`inbound-webhooks/request-id-own`).
 
@@ -76,13 +76,13 @@ When a request to `POST /auth/oauth2/register` or to a path outside `/auth/`, `/
 
 ### `errors/request-id-replaced`
 
-If a request to `POST /auth/oauth2/register` or to a path outside `/auth/` and `/.well-known/` carries an `X-Request-ID` of more than 128 characters, or one with a character other than a letter, digit, underscore or hyphen, then the server MUST answer with an `X-Request-ID` of its own, of 1 to 128 letters, digits, underscores and hyphens.
+If a request to a path outside `/inbound/` carries an `X-Request-ID` of more than 128 characters, or one with a character other than a letter, digit, underscore or hyphen, then the server MUST answer with an `X-Request-ID` of its own, of 1 to 128 letters, digits, underscores and hyphens.
 
 **Tests:** `compliance/refusal-headers.test.ts › is one of the server's own, not the caller's, when the caller sent more than 128 characters or one outside letters, digits, underscore and hyphen`.
 
 ### `errors/request-id-fresh`
 
-When a request to `POST /auth/oauth2/register` or to a path outside `/auth/` and `/.well-known/` carries no `X-Request-ID`, the server MUST answer with an `X-Request-ID` that differs from the one it gave every other request that sent none.
+When a request to a path outside `/inbound/` carries no `X-Request-ID`, the server MUST answer with an `X-Request-ID` that differs from the one it gave every other request that sent none.
 
 **Tests:** `compliance/refusal-headers.test.ts › is a different one of the server's own for each request that sent none`.
 
@@ -200,9 +200,9 @@ When `POST /auth/oauth2/register` sends, as JSON, a registration the server acce
 
 ### `errors/register-415-headers`
 
-When the sign-in library answers `POST /auth/oauth2/register` with `415`, the server MUST NOT carry `X-Error-Code` on the answer.
+When the server answers `POST /auth/oauth2/register` with `415`, the server MUST NOT carry `X-Error-Code` on the answer.
 
-**Reason:** the answer is the library's own and is not the envelope, where a refusal of the server's own carries the header.
+**Reason:** the answer is in the registration standard's shape and not the envelope, where a refusal carries the header.
 
 **Tests:** `compliance/refusal-headers.test.ts › answers a body that is not JSON with a 415 that carries X-Request-ID and no X-Error-Code, where Marfa's own doors carry both`.
 

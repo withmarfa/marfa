@@ -54,8 +54,9 @@ pub async fn limited(State(app): State<Arc<App>>, request: Request, next: Next) 
     }
 }
 
-pub async fn mint(State(app): State<Arc<App>>, caller: Caller, body: JsonBody) -> Answer {
+pub async fn mint(State(app): State<Arc<App>>, caller: Caller, uri: Uri, body: JsonBody) -> Answer {
     caller.require(Permission::KeysMint)?;
+    query::only(&uri, &[])?;
     let request = Mint::from_body(&body.object(&MINT_FIELDS).await?)?;
     let (key, secret) = keys::mint(&app, &caller, request).await?;
     let mut answer = key.to_json();
@@ -91,17 +92,25 @@ pub async fn update(
     State(app): State<Arc<App>>,
     caller: Caller,
     Path(id): Path<String>,
+    uri: Uri,
     body: JsonBody,
 ) -> Answer {
     caller.require_key_door()?;
+    query::only(&uri, &[])?;
     keys::check_id(&id)?;
     let request = Update::from_body(&body.object(&UPDATE_FIELDS).await?)?;
     let key = keys::update(&app, &caller, id, request).await?;
     Ok(json_answer(StatusCode::OK, &Value::Object(key.to_json())))
 }
 
-pub async fn revoke(State(app): State<Arc<App>>, caller: Caller, Path(id): Path<String>) -> Answer {
+pub async fn revoke(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    Path(id): Path<String>,
+    uri: Uri,
+) -> Answer {
     caller.require_key_door()?;
+    query::only(&uri, &[])?;
     keys::check_id(&id)?;
     keys::revoke(&app, &caller, id).await?;
     Ok(json_answer(StatusCode::OK, &json!({ "ok": true })))

@@ -197,15 +197,22 @@ impl Writer {
         self.pulse.clone()
     }
 
-    /// A job withdrawn after `budget` never ran; a started job always finishes.
-    pub async fn submit<T, F>(&self, write: Write, budget: Duration, job: F) -> Result<T>
+    /// A job withdrawn after `budget` never ran; a started job always finishes. With a `cap`,
+    /// the wait to start is that long at most, however long the running job beats the pulse.
+    pub async fn submit<T, F>(
+        &self,
+        write: Write,
+        budget: Duration,
+        cap: Option<Duration>,
+        job: F,
+    ) -> Result<T>
     where
         T: Send + 'static,
         F: FnOnce(&Transaction<'_>) -> Result<T> + Send + 'static,
     {
         let started = Instant::now();
         let deadline = started + budget;
-        let mut wait = started + budget.max(QUEUE_FLOOR);
+        let mut wait = started + cap.unwrap_or_else(|| budget.max(QUEUE_FLOOR));
         let ticket = Arc::new(AtomicU8::new(QUEUED));
         let (answer, mut answered) = oneshot::channel();
         let faults = self.faults.clone();
@@ -227,7 +234,7 @@ impl Writer {
             match tokio::time::timeout_at(wait.into(), &mut send).await {
                 Ok(Ok(())) => break,
                 Ok(Err(_)) => return Err(Refusal::internal("the writer has stopped")),
-                Err(_) => match self.waiting_on(budget) {
+                Err(_) => match self.waiting_on(budget, cap) {
                     Some(later) => wait = later,
                     None => return Err(contention()),
                 },
@@ -238,7 +245,7 @@ impl Writer {
             match tokio::time::timeout_at(wait.into(), &mut answered).await {
                 Ok(result) => return result.map_err(lost)?,
                 Err(_) => {
-                    if let Some(later) = self.waiting_on(budget) {
+                    if let Some(later) = self.waiting_on(budget, cap) {
                         wait = later;
                         continue;
                     }
@@ -255,7 +262,10 @@ impl Writer {
         }
     }
 
-    fn waiting_on(&self, budget: Duration) -> Option<Instant> {
+    fn waiting_on(&self, budget: Duration, cap: Option<Duration>) -> Option<Instant> {
+        if cap.is_some() {
+            return None;
+        }
         let until = self.pulse.last() + budget.max(QUEUE_FLOOR);
         (until > Instant::now()).then_some(until)
     }

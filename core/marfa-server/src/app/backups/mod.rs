@@ -446,6 +446,26 @@ enum Outcome {
 }
 
 impl Outcome {
+    /// A housekeeping report holds only numbers, flags and text.
+    fn report(&self) -> Value {
+        match self {
+            Outcome::Put {
+                name,
+                size,
+                removed,
+                unremoved,
+                ..
+            } => json!({
+                "outcome": "put",
+                "backup": name,
+                "size_bytes": size,
+                "removed": removed,
+                "unremoved": unremoved,
+            }),
+            other => other.to_json(),
+        }
+    }
+
     fn to_json(&self) -> Value {
         match self {
             Outcome::Put {
@@ -470,7 +490,7 @@ impl Outcome {
 /// The `backup` housekeeping job.
 pub async fn job(app: Arc<App>, _run: Run) -> Result<Report> {
     let outcome = back_up(&app, false).await?;
-    Ok(Report::done(outcome.to_json()))
+    Ok(Report::done(outcome.report()))
 }
 
 /// Past one part, so a multipart upload has begun before `backup:put` holds.

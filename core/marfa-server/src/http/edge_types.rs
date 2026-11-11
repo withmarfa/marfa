@@ -20,8 +20,14 @@ pub async fn list(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answ
     ))
 }
 
-pub async fn register(State(app): State<Arc<App>>, caller: Caller, body: JsonBody) -> Answer {
+pub async fn register(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    uri: Uri,
+    body: JsonBody,
+) -> Answer {
     caller.require_door(SchemaKind::EdgeTypes, Door::Register)?;
+    query::only(&uri, &[])?;
     let (created, edge_type) =
         edge_types::register(&app, &caller, body.open_object().await?).await?;
     let status = if created {

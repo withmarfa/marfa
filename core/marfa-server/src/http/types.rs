@@ -32,13 +32,25 @@ pub async fn read(
     Ok(json_answer(StatusCode::OK, &types::get(&app, id).await?))
 }
 
-pub async fn normalize(State(app): State<Arc<App>>, _caller: Caller, body: JsonBody) -> Answer {
+pub async fn normalize(
+    State(app): State<Arc<App>>,
+    _caller: Caller,
+    uri: Uri,
+    body: JsonBody,
+) -> Answer {
+    query::only(&uri, &[])?;
     let answer = types::normalize(&app, body.open_object().await?).await?;
     Ok(json_answer(StatusCode::OK, &answer))
 }
 
-pub async fn register(State(app): State<Arc<App>>, caller: Caller, body: JsonBody) -> Answer {
+pub async fn register(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    uri: Uri,
+    body: JsonBody,
+) -> Answer {
     caller.require_door(SchemaKind::Types, Door::Register)?;
+    query::only(&uri, &[])?;
     let created = types::register(&app, &caller, body.open_object().await?).await?;
     Ok(json_answer(
         StatusCode::CREATED,
@@ -77,9 +89,11 @@ pub async fn set_icon(
     State(app): State<Arc<App>>,
     caller: Caller,
     Path(id): Path<String>,
+    uri: Uri,
     body: JsonBody,
 ) -> Answer {
     caller.require_door(SchemaKind::Types, Door::Change)?;
+    query::only(&uri, &[])?;
     let body = body.object(&ICON_FIELDS).await?;
     let answered = types::set_icon(&app, &caller, id, body).await?;
     Ok(json_answer(StatusCode::OK, &json!({ "type": answered })))
@@ -89,8 +103,10 @@ pub async fn clear_icon(
     State(app): State<Arc<App>>,
     caller: Caller,
     Path(id): Path<String>,
+    uri: Uri,
 ) -> Answer {
     caller.require_door(SchemaKind::Types, Door::Change)?;
+    query::only(&uri, &[])?;
     let answered = types::clear_icon(&app, &caller, id).await?;
     Ok(json_answer(StatusCode::OK, &json!({ "type": answered })))
 }

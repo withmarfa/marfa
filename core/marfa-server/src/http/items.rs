@@ -390,6 +390,7 @@ pub(super) fn put_from(
 }
 
 pub async fn create(State(app): State<Arc<App>>, caller: Caller, sent: Sent) -> Answer {
+    caller.require_reach()?;
     let (door, who) = (app.clone(), caller.clone());
     keyed(&app, &caller, sent, |claim, uri, body| async move {
         query::only(&uri, &[])?;
@@ -635,7 +636,13 @@ fn many_of(sent: &Map<String, Value>) -> Result<Many> {
     Ok(many)
 }
 
-pub async fn bulk_get(State(app): State<Arc<App>>, caller: Caller, body: JsonBody) -> Answer {
+pub async fn bulk_get(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    uri: Uri,
+    body: JsonBody,
+) -> Answer {
+    query::only(&uri, &[])?;
     let sent = body.object(&BULK_GET_FIELDS).await?;
     let Some(ids) = sent.get("ids") else {
         return Err(missing_field("ids").into());
@@ -666,7 +673,13 @@ pub async fn bulk_get(State(app): State<Arc<App>>, caller: Caller, body: JsonBod
     Ok(text_answer(StatusCode::OK, answer))
 }
 
-pub async fn titles(State(app): State<Arc<App>>, caller: Caller, body: JsonBody) -> Answer {
+pub async fn titles(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    uri: Uri,
+    body: JsonBody,
+) -> Answer {
+    query::only(&uri, &[])?;
     let sent = body.object(&TITLE_FIELDS).await?;
     let Some(listed) = sent.get("names") else {
         return Err(missing_field("names").into());

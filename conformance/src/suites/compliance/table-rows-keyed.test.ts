@@ -9,6 +9,7 @@ import {
   trackKey,
   cleanup,
 } from "../../utils/setup.js";
+import { expectMatchesSchema } from "../../utils/openapi.js";
 
 /**
  * A row batch and an undo sent again under one `Idempotency-Key`
@@ -103,6 +104,12 @@ async function batches(item: string): Promise<number> {
     `/items/${item}/tables/lines/batches?limit=1000`,
   );
   expect(listed.status, JSON.stringify(listed.error)).toBe(200);
+  await expectMatchesSchema(
+    "GET",
+    "/items/{id}/tables/{table}/batches",
+    200,
+    listed.data,
+  );
   return listed.data.data.length;
 }
 
@@ -167,6 +174,12 @@ describe("row writes under an Idempotency-Key", () => {
     );
     const first = await send();
     expect(first.status, JSON.stringify(first.error)).toBe(200);
+    await expectMatchesSchema(
+      "POST",
+      "/items/{id}/tables/{table}/batches/{batch}/undo",
+      200,
+      first.data,
+    );
     expect(await values(item)).toEqual({ [row]: { amount: 1 } });
     const logged = await batches(item);
 

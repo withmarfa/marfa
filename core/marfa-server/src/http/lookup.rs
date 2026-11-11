@@ -2,13 +2,14 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{StatusCode, Uri};
 use marfa_rules::{time, validation};
 use serde_json::{Map, Value};
 
 use super::answer::{Answer, text_answer};
 use super::body::JsonBody;
 use super::items::{finished, invalid_field, text_of};
+use super::query;
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::items::write::{self, Change};
@@ -109,8 +110,14 @@ fn edges_asked(sent: &Map<String, Value>) -> Result<bool> {
     Ok(!include.is_empty())
 }
 
-pub async fn lookup(State(app): State<Arc<App>>, caller: Caller, body: JsonBody) -> Answer {
+pub async fn lookup(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    uri: Uri,
+    body: JsonBody,
+) -> Answer {
     caller.require_reach()?;
+    query::only(&uri, &[])?;
     let sent = body.object(&LOOKUP_FIELDS).await?;
     let type_id = type_of(&sent)?;
     let selector = selector_of(&sent, true)?;
@@ -119,7 +126,13 @@ pub async fn lookup(State(app): State<Arc<App>>, caller: Caller, body: JsonBody)
     Ok(text_answer(StatusCode::OK, answer))
 }
 
-pub async fn settle(State(app): State<Arc<App>>, caller: Caller, body: JsonBody) -> Answer {
+pub async fn settle(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    uri: Uri,
+    body: JsonBody,
+) -> Answer {
+    query::only(&uri, &[])?;
     let sent = body.object(&SETTLE_FIELDS).await?;
     let type_id = type_of(&sent)?;
     let Some(settled_at) = text_of(&sent, "settled_at")? else {

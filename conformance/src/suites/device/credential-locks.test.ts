@@ -371,6 +371,25 @@ const signIn = (
   revocation_endpoint: revocation,
 });
 
+/**
+ * A status report without the figure that follows the volume's free space,
+ * which moves with whatever else the machine writes.
+ */
+function steady<T extends { ok: boolean }>(outcome: T): T {
+  const held = outcome as unknown as {
+    ok: boolean;
+    value?: { file_cache?: { budget: number | null } };
+  };
+  if (!held.ok || held.value?.file_cache === undefined) return outcome;
+  return {
+    ...outcome,
+    value: {
+      ...held.value,
+      file_cache: { ...held.value.file_cache, budget: null },
+    },
+  };
+}
+
 const ROOT: Answer = {
   kind: "json",
   status: 200,
@@ -523,7 +542,7 @@ describe.runIf(process.platform === "darwin")("a kept credential", () => {
       });
       expect(queued.ok).toBe(true);
       const before = await copy.device.queue();
-      const statusBefore = await copy.device.status();
+      const statusBefore = steady(await copy.device.status());
       const local = await marfaAt(keychain.path, origin, [
         "device",
         "--db",
@@ -588,7 +607,7 @@ describe.runIf(process.platform === "darwin")("a kept credential", () => {
         ).toEqual([`GET ${prefix}`]);
         expect(server.requests.at(-1)!.headers.authorization).toBeUndefined();
         expect(await copy.device.queue()).toEqual(before);
-        expect(await copy.device.status()).toEqual(statusBefore);
+        expect(steady(await copy.device.status())).toEqual(statusBefore);
       }
       badRoot = undefined;
       instance = SCRIPTED_INSTANCE;
@@ -634,7 +653,7 @@ describe.runIf(process.platform === "darwin")("a kept credential", () => {
         "Bearer renewed-fixture",
       );
       expect(await copy.device.queue()).toEqual(before);
-      const after = await copy.device.status();
+      const after = steady(await copy.device.status());
       expect(statusBefore.ok && after.ok && after.value).toEqual(
         statusBefore.ok
           ? { ...statusBefore.value, server_origin: origin }
@@ -656,7 +675,14 @@ describe.runIf(process.platform === "darwin")("a kept credential", () => {
   async function keptFor(
     origin: string,
   ): Promise<{ kind: string; from: string } | null> {
-    server.answer("GET", `${new URL(origin).pathname}/`, ROOT);
+    const at = new URL(origin).pathname;
+    server.answer("GET", `${at}/`, ROOT);
+    // A kept token is asked who it is for, so a dead one is not reported as held.
+    server.answer("GET", `${at}/profile`, {
+      kind: "json",
+      status: 200,
+      body: { name: "Fixture owner" },
+    });
     const out = await marfaAt(keychain.path, origin, ["whoami"]).done;
     expect(out.code, out.stderr).toBe(0);
     return (

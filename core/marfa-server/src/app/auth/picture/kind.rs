@@ -37,7 +37,7 @@ enum Fault {
 impl From<Fault> for Refusal {
     fn from(fault: Fault) -> Refusal {
         let message = match fault {
-            Fault::Unknown => "The body is not a PNG, JPEG or WebP picture.".to_string(),
+            Fault::Unknown => "Use a PNG, JPEG or WebP picture.".to_string(),
             Fault::Damaged => "The picture is cut short or damaged.".to_string(),
             Fault::Frame => {
                 "Only baseline, extended sequential and progressive JPEGs are taken.".to_string()

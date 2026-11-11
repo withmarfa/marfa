@@ -13,6 +13,7 @@ import {
   trackEdge,
   trackEdgeType,
   trackItem,
+  trackType,
   trackView,
   trackWebhook,
 } from "../../utils/setup.js";
@@ -98,6 +99,29 @@ async function notes(count: number, body?: string): Promise<string[]> {
   for (const id of ids) trackItem(ctx, id);
   expect(ids).toHaveLength(count);
   return ids;
+}
+
+let tableType: string | undefined;
+
+async function tableItem(): Promise<string> {
+  if (tableType === undefined) {
+    const type = `user.full_last_page_${ctx.runId.replaceAll("-", "_")}`;
+    answered(
+      await client.registerType({
+        id: type,
+        fields: {},
+        tables: { spend: { columns: { amount: { type: "number" } } } },
+      } as never),
+    );
+    trackType(ctx, type, client);
+    tableType = type;
+  }
+  const type = tableType;
+  const created = answered(
+    await client.createItem({ type, properties: {} } as never),
+  );
+  trackItem(ctx, created.item.id);
+  return created.item.id;
 }
 
 async function edgesFrom(
@@ -231,6 +255,31 @@ const seeds: Record<string, () => Promise<Read>> = {
     );
     return async (page) =>
       answered(await client.listItemEdges(hub!, page)) as Page;
+  },
+  "GET /items/{id}/tables/{table}/rows": async () => {
+    const id = await tableItem();
+    answered(
+      await client.writeRows(id, "spend", {
+        operations: Array.from({ length: LIMIT }, (_, i) => ({
+          op: "put",
+          values: { amount: i },
+        })),
+      }),
+    );
+    return async (page) =>
+      answered(await client.listRows(id, "spend", page)) as unknown as Page;
+  },
+  "GET /items/{id}/tables/{table}/batches": async () => {
+    const id = await tableItem();
+    for (let i = 0; i < LIMIT; i++) {
+      answered(
+        await client.writeRows(id, "spend", {
+          operations: [{ op: "put", values: { amount: i } }],
+        }),
+      );
+    }
+    return async (page) =>
+      answered(await client.listBatches(id, "spend", page)) as unknown as Page;
   },
   "GET /items/{id}/versions": async () => {
     const [id] = await notes(1);
@@ -412,7 +461,7 @@ describe("a full last page answers a null cursor", () => {
         (parameter) => parameter.in === "query" && parameter.name === "cursor",
       );
     });
-    expect(cursorDoors).toHaveLength(15);
+    expect(cursorDoors).toHaveLength(17);
     expect(Object.keys(seeds).sort()).toEqual(cursorDoors.sort());
   });
 

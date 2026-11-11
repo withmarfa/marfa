@@ -45,6 +45,7 @@ let trail = "";
 let hook = "";
 let view = "";
 let connector = "";
+let ledger = "";
 
 const doors: Door[] = [
   {
@@ -78,6 +79,20 @@ const doors: Door[] = [
     capped: true,
     size: 50,
     path: () => `/items/${target}/backrefs`,
+  },
+  {
+    door: "GET /items/{id}/tables/{table}/rows",
+    who: "working",
+    max: 1000,
+    size: 100,
+    path: () => `/items/${ledger}/tables/spend/rows`,
+  },
+  {
+    door: "GET /items/{id}/tables/{table}/batches",
+    who: "working",
+    max: 1000,
+    size: 100,
+    path: () => `/items/${ledger}/tables/spend/batches`,
   },
   {
     door: "GET /search",
@@ -254,6 +269,32 @@ beforeAll(async () => {
   });
   expect(saved.status, JSON.stringify(saved.error)).toBe(201);
   view = saved.data.item.id;
+
+  const kept = await working.registerType({
+    id: `user.page_limits_${String(Date.now())}`,
+    fields: {},
+    tables: { spend: { columns: { amount: { type: "number" } } } },
+  } as never);
+  expect(kept.status, JSON.stringify(kept.error)).toBe(201);
+  const holder = await working.createItem({
+    type: kept.data.type.id,
+    properties: {},
+  } as never);
+  expect(holder.status, JSON.stringify(holder.error)).toBe(201);
+  ledger = holder.data.item.id;
+  const seeded = await working.writeRows(ledger, "spend", {
+    operations: Array.from({ length: DEFAULT_ROWS + 50 }, (_, i) => ({
+      op: "put",
+      values: { amount: i },
+    })),
+  });
+  expect(seeded.status, JSON.stringify(seeded.error)).toBe(200);
+  for (let i = 0; i < 100; i++) {
+    const more = await working.writeRows(ledger, "spend", {
+      operations: [{ op: "put", values: { amount: i } }],
+    });
+    expect(more.status, JSON.stringify(more.error)).toBe(200);
+  }
 
   const registered = await working.registerConnector({ name: "page limits" });
   expect(registered.ok, JSON.stringify(registered.error)).toBe(true);

@@ -17,8 +17,14 @@ use crate::app::connectors::{self, Batch, Lookup, Register, Replace, Run, Take, 
 const PAGE: i64 = 50;
 const MOST: i64 = 200;
 
-pub async fn register(State(app): State<Arc<App>>, caller: Caller, body: JsonBody) -> Answer {
+pub async fn register(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    uri: Uri,
+    body: JsonBody,
+) -> Answer {
     caller.require_registering_key()?;
+    query::only(&uri, &[])?;
     let request = Register::parse(&body.open_object().await?)?;
     let (created, registration) = connectors::register(&app, &caller, request).await?;
     let status = if created {

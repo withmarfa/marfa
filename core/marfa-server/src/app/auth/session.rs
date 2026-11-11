@@ -240,7 +240,7 @@ pub async fn seen(app: &App, session: Session) -> Result<Option<Seen>> {
     let faults = app.faults.clone();
     match app
         .db
-        .write(USE, move |tx| {
+        .write_briefly(USE, move |tx| {
             if faults.fail(FAIL_SESSION_USE, None) {
                 return Err(Refusal::new(
                     Code::WriteContention,
