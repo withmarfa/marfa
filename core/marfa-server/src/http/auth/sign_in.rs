@@ -31,7 +31,6 @@ pub(super) fn refuse_elsewhere(source: Source) -> Result<(), Refusal> {
     Ok(())
 }
 
-/// What every door that opens or ends a browser session answers.
 pub(super) fn done(cookie: HeaderValue) -> Answer {
     Ok(with_cookie(
         json_answer(StatusCode::OK, &json!({ "ok": true })),
@@ -39,8 +38,7 @@ pub(super) fn done(cookie: HeaderValue) -> Answer {
     ))
 }
 
-/// A password sign-in. The sign-in page's form is answered by a redirect, a
-/// JSON body by `{"ok": true}`.
+/// The sign-in page's form gets a redirect; a JSON body gets `{"ok": true}`.
 pub async fn sign_in(
     State(app): State<Arc<App>>,
     headers: HeaderMap,
