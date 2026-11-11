@@ -35,6 +35,7 @@ const ORIGIN: &str = "http://127.0.0.1:8600";
 const EMAIL: &str = "owner@example.test";
 const PASSWORD: &str = "the first password";
 const CALLBACK: &str = "http://127.0.0.1:9/callback";
+const WEB_CALLBACK: &str = "https://app.example/callback";
 const NOTES: &str = "core.note:read";
 const OFFLINE_NOTES: &str = "core.note:write offline_access";
 const VERIFIER: &str = "a-verifier-long-enough-for-the-pkce-rule-of-43-characters";
@@ -211,6 +212,19 @@ impl Instance {
         .await
     }
 
+    async fn register_web(&self, scope: &str) -> String {
+        self.register_with(json!({
+            "client_name": "a fixture web app",
+            "application_type": "web",
+            "redirect_uris": [WEB_CALLBACK],
+            "grant_types": ["authorization_code", "refresh_token"],
+            "response_types": ["code"],
+            "token_endpoint_auth_method": "none",
+            "scope": scope,
+        }))
+        .await
+    }
+
     async fn authorize(&self, client: &str, scope: &str, redirect_uri: &str) -> Reply {
         let query = encoded(&[
             ("response_type", "code"),
@@ -252,7 +266,11 @@ impl Instance {
     }
 
     async fn code(&self, client: &str, scope: &str) -> String {
-        let reply = self.authorize(client, scope, CALLBACK).await;
+        self.code_at(client, scope, CALLBACK).await
+    }
+
+    async fn code_at(&self, client: &str, scope: &str, redirect_uri: &str) -> String {
+        let reply = self.authorize(client, scope, redirect_uri).await;
         if let Some(code) = code_in(&reply) {
             return code;
         }
@@ -2008,12 +2026,12 @@ async fn a_new_sign_in_signs_only_what_the_server_read_of_the_request() {
 #[tokio::test]
 async fn a_request_nothing_can_be_granted_for_goes_to_no_sign_in() {
     let instance = Instance::signed_in().await;
-    let client = instance.register(NOTES).await;
+    let client = instance.register_web(NOTES).await;
     let asked = |scope: &str, prompt: &str| {
         let query = encoded(&[
             ("response_type", "code"),
             ("client_id", &client),
-            ("redirect_uri", CALLBACK),
+            ("redirect_uri", WEB_CALLBACK),
             ("state", "the-state"),
             ("scope", scope),
             ("code_challenge", &challenge()),
@@ -3424,45 +3442,82 @@ fn sent_to_the_error_page(reply: &Reply, error: &str) {
 }
 
 fn sent_to_the_app(reply: &Reply, error: &str) {
+    sent_to(reply, CALLBACK, error);
+}
+
+fn sent_to(reply: &Reply, destination: &str, error: &str) {
     let sent = reply.location().unwrap();
-    assert_eq!(sent.host_str(), Some("127.0.0.1"), "{sent}");
-    assert_eq!(sent.path(), "/callback", "{sent}");
+    let mut asked = sent.clone();
+    asked.set_query(None);
+    assert_eq!(asked.as_str(), destination, "{sent}");
     let named = sent.query_pairs().find(|(name, _)| name == "error");
     assert_eq!(named.unwrap().1, error, "{sent}");
+    let state = sent.query_pairs().find(|(name, _)| name == "state");
+    assert_eq!(state.unwrap().1, "the-state", "{sent}");
+}
+
+fn at_web<'a>(changes: Changes<'a>) -> Vec<(&'a str, Option<&'a str>)> {
+    let mut changed = changes.to_vec();
+    changed.push(("redirect_uri", Some(WEB_CALLBACK)));
+    changed
 }
 
 #[tokio::test]
-async fn a_refusal_reaches_only_an_app_the_person_approved() {
+async fn a_refusal_reaches_a_web_app_only_once_the_person_approved_it() {
     let instance = Instance::signed_in().await;
-    let unknown = instance.register(NOTES).await;
-    let approved = instance.register(NOTES).await;
-    instance.code(&approved, NOTES).await;
+    let unknown = instance.register_web(NOTES).await;
+    let approved = instance.register_web(NOTES).await;
+    instance.code_at(&approved, NOTES, WEB_CALLBACK).await;
     let cookie = Some(instance.cookie.as_str());
 
     for (changes, error) in REFUSED {
-        let path = request_with(&unknown, changes);
+        let path = request_with(&unknown, &at_web(changes));
         sent_to_the_error_page(&instance.send(get(&path, cookie)).await, error);
-        let path = request_with(&approved, changes);
-        sent_to_the_app(&instance.send(get(&path, cookie)).await, error);
+        let path = request_with(&approved, &at_web(changes));
+        sent_to(
+            &instance.send(get(&path, cookie)).await,
+            WEB_CALLBACK,
+            error,
+        );
     }
-    let silent = [("prompt", Some("none"))];
+    let silent = at_web(&[("prompt", Some("none"))]);
     let path = request_with(&unknown, &silent);
     sent_to_the_error_page(&instance.send(get(&path, cookie)).await, "consent_required");
-    let wider = [("prompt", Some("none")), ("scope", Some("core.note:write"))];
+    let wider = at_web(&[("prompt", Some("none")), ("scope", Some("core.note:write"))]);
     let path = request_with(&approved, &wider);
     let reply = instance.send(get(&path, cookie)).await;
+    sent_to(&reply, WEB_CALLBACK, "consent_required");
+}
+
+#[tokio::test]
+async fn a_refusal_reaches_a_program_on_the_device_whoever_asks() {
+    let instance = Instance::signed_in().await;
+    let client = instance.register(NOTES).await;
+    for cookie in [Some(instance.cookie.as_str()), None] {
+        for (changes, error) in REFUSED {
+            let path = request_with(&client, changes);
+            sent_to_the_app(&instance.send(get(&path, cookie)).await, error);
+        }
+    }
+    let silent = [("prompt", Some("none"))];
+    let path = request_with(&client, &silent);
+    sent_to_the_app(&instance.send(get(&path, None)).await, "login_required");
+    let path = request_with(&client, &silent);
+    let reply = instance.send(get(&path, Some(&instance.cookie))).await;
     sent_to_the_app(&reply, "consent_required");
 }
 
 #[tokio::test]
 async fn a_withdrawn_consent_sends_no_refusal_to_the_app() {
     let instance = Instance::signed_in().await;
-    let client = instance.register(OFFLINE_NOTES).await;
-    let issued = instance.tokens(&client, OFFLINE_NOTES).await;
+    let client = instance.register_web(OFFLINE_NOTES).await;
+    let code = instance.code_at(&client, OFFLINE_NOTES, WEB_CALLBACK).await;
+    let reply = instance.exchange_at(&client, &code, WEB_CALLBACK).await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.text);
     instance
-        .revoke(&client, text_at(&issued, "refresh_token"))
+        .revoke(&client, text_at(&reply.json(), "refresh_token"))
         .await;
-    let path = request_with(&client, &[("code_challenge", None)]);
+    let path = request_with(&client, &at_web(&[("code_challenge", None)]));
     let reply = instance.send(get(&path, Some(&instance.cookie))).await;
     sent_to_the_error_page(&reply, "invalid_request");
 }
@@ -3484,15 +3539,16 @@ async fn a_refusal_for_a_destination_nobody_approved_stays_here() {
 #[tokio::test]
 async fn a_signed_out_browser_goes_to_sign_in_only_with_a_valid_request() {
     let instance = Instance::signed_in().await;
-    let client = instance.register(NOTES).await;
+    let client = instance.register_web(NOTES).await;
     for (changes, error) in REFUSED {
-        let path = request_with(&client, changes);
+        let path = request_with(&client, &at_web(changes));
         sent_to_the_error_page(&instance.send(get(&path, None)).await, error);
     }
-    let path = request_with(&client, &[("prompt", Some("none"))]);
+    let path = request_with(&client, &at_web(&[("prompt", Some("none"))]));
     sent_to_the_error_page(&instance.send(get(&path, None)).await, "login_required");
 
-    let reply = instance.send(get(&request_with(&client, &[]), None)).await;
+    let path = request_with(&client, &at_web(&[]));
+    let reply = instance.send(get(&path, None)).await;
     let landed = reply.location().unwrap();
     assert_eq!(landed.path(), "/auth/sign-in", "{landed}");
 }
