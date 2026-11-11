@@ -10,8 +10,8 @@ use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::catalog::{self, Snapshot};
 use crate::app::idempotency::Claim;
-use crate::app::items::write::Done;
 use crate::app::items;
+use crate::app::items::write::Done;
 use crate::app::refusal::{Code, Refusal, Result};
 
 pub(crate) fn not_found_batch() -> Refusal {

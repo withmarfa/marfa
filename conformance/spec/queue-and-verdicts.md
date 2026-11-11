@@ -266,9 +266,9 @@ When the server answers a batch `200`, a device MUST record with each of its wri
 
 ### `queue-and-verdicts/rows-conflicted`
 
-When the server answers a batch `200`, a device MUST give the verdict `conflicted` to each of its writes that set a column, or deleted a row, whose value the copy last took from the server differs from the value the copy showed when the write was made.
+When the server answers a batch `200` before the device has applied the batch's `rows.changed`, a device MUST give the verdict `conflicted` to each write of a table it holds whole that set a column, or deleted a row, whose value the copy last took from the server differs from the value the copy showed when the write was made.
 
-**Reason:** the later write takes a column (`tables/rows-patch`), and the value it replaced stays in the batch's change log, where an undo of the batch puts it back (`tables/undo`). A device judges this only for a table it holds whole.
+**Reason:** the later write takes a column (`tables/rows-patch`), and the value it replaced stays in the batch's change log, where an undo of the batch puts it back (`tables/undo`). Once the batch's own event is applied, the copy no longer holds the value the batch replaced, so it claims no clash it cannot show.
 
 **Tests:** `device/table-writes-live.test.ts › records a write conflicted where it replaced a value the copy had not shown, and the value it replaced stays in the batch's change log`.
 

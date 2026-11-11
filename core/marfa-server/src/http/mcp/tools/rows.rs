@@ -133,7 +133,11 @@ pub async fn write(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value
     item_id(&id)?;
     let table = text(&arguments, "table").unwrap_or_default();
     let operations = tables::operations(arguments.get("operations"), MAX_OPERATIONS)?;
-    parsed(&tables::write(app, caller, None, id, table, operations).await?.body)
+    parsed(
+        &tables::write(app, caller, None, id, table, operations)
+            .await?
+            .body,
+    )
 }
 
 struct Asked {

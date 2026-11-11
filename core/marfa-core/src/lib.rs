@@ -50,7 +50,6 @@ mod reads;
 #[cfg(test)]
 mod reads_tests;
 mod reclaim;
-mod row_writes;
 #[cfg(test)]
 mod reclaim_tests;
 #[cfg(test)]
@@ -64,6 +63,7 @@ mod remove_tests;
 mod replace_tests;
 #[cfg(test)]
 mod request_limit_tests;
+mod row_writes;
 mod scaffold;
 #[cfg(test)]
 mod scripted;
@@ -146,9 +146,8 @@ pub use model::{
     Completeness, Draft, Edge, EdgeDraft, EdgeEdit, EdgeOp, Edit, FieldRefusal, GrantKind,
     GrantLevel, HydrateReport, HydrateRestart, Hydration, Item, ItemState, LastFailure,
     ListFilters, MetadataWrite, MissingGrant, Outcome, QueuedWrite, Refusal, RowConflict, Rows,
-    SearchFilters,
-    SearchHit, Shown, SliceTier, Sort, SortDirection, SortField, Status, Tier, UnregisteredType,
-    Verdict, WriteKind,
+    SearchFilters, SearchHit, Shown, SliceTier, Sort, SortDirection, SortField, Status, Tier,
+    UnregisteredType, Verdict, WriteKind,
 };
 pub use reads::CopyChanges;
 pub use scaffold::{ScaffoldField, scaffold_type};
@@ -1197,7 +1196,7 @@ impl Core {
     /// Lays again the rows whose row writes another call answered or took
     /// out, where this is the store's writer.
     pub(crate) fn lay_rows(&self) -> Result<()> {
-        if self.lock.refuse_unless_writer().is_err() {
+        if self.lock.handle() == Handle::Reader {
             return Ok(());
         }
         let mut conn = self.conn()?;
@@ -8552,6 +8551,17 @@ mod tests {
                 reader.fill_tables(&NEVER_STOPPED).unwrap_err(),
             ),
             (
+                "write_rows",
+                reader
+                    .write_rows(
+                        "x",
+                        "x",
+                        &[serde_json::json!({ "op": "delete", "id": "x" })],
+                    )
+                    .unwrap_err(),
+            ),
+            ("undo_rows", reader.undo_rows("x", "x", "x").unwrap_err()),
+            (
                 "follow",
                 reader
                     .follow(&std::sync::atomic::AtomicBool::new(true), false, |_| {})
@@ -8573,7 +8583,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            58,
+            60,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );

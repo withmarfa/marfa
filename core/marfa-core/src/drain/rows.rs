@@ -57,13 +57,18 @@ pub(super) fn gather(
     if !store::unsent(&conn, &lead.id)? {
         return joined(&conn, &lead.id);
     }
-    let limit = store::request_limit(&conn)?
-        .map_or(REQUEST_LIMIT, |limit| limit.min(REQUEST_LIMIT));
+    let limit =
+        store::request_limit(&conn)?.map_or(REQUEST_LIMIT, |limit| limit.min(REQUEST_LIMIT));
     let mut operations = operations_of(lead).len();
     let mut bytes = lead.body.to_string().len();
     let mut members = Vec::new();
     for next in after {
-        if standing.answers.get(&next.id).and_then(Option::as_ref).is_some() {
+        if standing
+            .answers
+            .get(&next.id)
+            .and_then(Option::as_ref)
+            .is_some()
+        {
             continue;
         }
         let Some(next) = store::queued_write(&conn, &next.id)? else {
@@ -114,7 +119,11 @@ pub(super) fn body(lead: &QueuedWrite, members: &[QueuedWrite]) -> String {
 }
 
 /// In the transaction that marks the batch's first write sent.
-pub(super) fn mark_joined(conn: &Connection, lead: &QueuedWrite, members: &[QueuedWrite]) -> Result<()> {
+pub(super) fn mark_joined(
+    conn: &Connection,
+    lead: &QueuedWrite,
+    members: &[QueuedWrite],
+) -> Result<()> {
     for member in members {
         conn.execute(
             "UPDATE queue SET batched_with = ?2 WHERE id = ?1",
@@ -127,7 +136,10 @@ pub(super) fn mark_joined(conn: &Connection, lead: &QueuedWrite, members: &[Queu
 
 fn unjoin(conn: &Connection, writes: &[&QueuedWrite]) -> Result<()> {
     for write in writes {
-        conn.execute("UPDATE queue SET batched_with = NULL WHERE id = ?1", [&write.id])?;
+        conn.execute(
+            "UPDATE queue SET batched_with = NULL WHERE id = ?1",
+            [&write.id],
+        )?;
     }
     Ok(())
 }
@@ -198,7 +210,10 @@ fn taken(
         .cloned()
         .unwrap_or_default();
     let writes: Vec<&QueuedWrite> = std::iter::once(lead).chain(members).collect();
-    let counts: Vec<usize> = writes.iter().map(|write| operations_of(write).len()).collect();
+    let counts: Vec<usize> = writes
+        .iter()
+        .map(|write| operations_of(write).len())
+        .collect();
     let results = if results.len() == counts.iter().sum::<usize>() {
         results
     } else {
@@ -370,11 +385,19 @@ fn split(
         .unwrap_or_else(|| writes[owner].clone());
     let told = verdict_of(
         &refused_write,
-        &Settled::plain(Some(Verdict::Refused), Some(code.clone()), refused_write.refusals),
+        &Settled::plain(
+            Some(Verdict::Refused),
+            Some(code.clone()),
+            refused_write.refusals,
+        ),
         refused_write.answer.as_deref(),
     );
     if owner == 0 {
-        return Ok(Settled::plain(Some(Verdict::Refused), Some(code), lead.refusals));
+        return Ok(Settled::plain(
+            Some(Verdict::Refused),
+            Some(code),
+            lead.refusals,
+        ));
     }
     Ok(Settled {
         again: true,
@@ -386,8 +409,11 @@ fn split(
 /// The key a refused batch went under, kept with the write so a late answer
 /// to it is not read as an answer to the batch sent next.
 fn spend_key(conn: &Connection, write: &QueuedWrite) -> Result<()> {
-    let spent: Option<String> =
-        conn.query_row("SELECT spent_keys FROM queue WHERE id = ?1", [&write.id], |row| row.get(0))?;
+    let spent: Option<String> = conn.query_row(
+        "SELECT spent_keys FROM queue WHERE id = ?1",
+        [&write.id],
+        |row| row.get(0),
+    )?;
     let mut keys: Vec<String> = match spent {
         Some(json) => serde_json::from_str(&json)?,
         None => Vec::new(),
@@ -395,7 +421,11 @@ fn spend_key(conn: &Connection, write: &QueuedWrite) -> Result<()> {
     keys.push(write.idempotency_key.clone());
     conn.execute(
         "UPDATE queue SET spent_keys = ?2, idempotency_key = ?3 WHERE id = ?1",
-        params![write.id, serde_json::to_string(&keys)?, Uuid::now_v7().to_string()],
+        params![
+            write.id,
+            serde_json::to_string(&keys)?,
+            Uuid::now_v7().to_string()
+        ],
     )?;
     Ok(())
 }
@@ -413,8 +443,11 @@ fn whole(
     let mut settled = super::settle(core, lead, answer, class.clone(), Shape::Rows, pass)?;
     for member in members {
         let own = super::settle(core, member, answer, class.clone(), Shape::Rows, pass)?;
-        let now = store::queued_write(&*core.conn()?, &member.id)?.unwrap_or_else(|| member.clone());
-        settled.joined.push(verdict_of(&now, &own, now.answer.as_deref()));
+        let now =
+            store::queued_write(&*core.conn()?, &member.id)?.unwrap_or_else(|| member.clone());
+        settled
+            .joined
+            .push(verdict_of(&now, &own, now.answer.as_deref()));
     }
     if settled.verdict.is_some() {
         let writes: Vec<&QueuedWrite> = std::iter::once(lead).chain(members).collect();

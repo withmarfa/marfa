@@ -3621,6 +3621,42 @@ marfa device rows list [OPTIONS] <ITEM> <TABLE>
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
+### marfa device rows write
+
+Queue a batch of `put`, `patch` and `delete` operations for a table, all of them or none, as `marfa rows write` takes it. Where the copy holds the table whole, its rows show the batch at once.
+
+```text
+marfa device rows write [OPTIONS] <ITEM> <TABLE>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ITEM>` | The item id. |
+| `<TABLE>` | The table name. |
+
+| Option | Description |
+| --- | --- |
+| `--file <PATH>` | A file holding the JSON body; `-` reads stdin. |
+| `--body <JSON>` | The JSON body inline. |
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
+### marfa device rows undo
+
+Queue an undo of a batch, as `marfa rows undo` sends it. The rows it puts back reach the copy with its `rows.changed`.
+
+```text
+marfa device rows undo [OPTIONS] <ITEM> <TABLE> <BATCH>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ITEM>` | The item id. |
+| `<TABLE>` | The table name. |
+| `<BATCH>` | The batch id, as a write's answer names it. |
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
 ### marfa device rows get
 
 One row of a table.

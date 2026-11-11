@@ -21,9 +21,17 @@ const OP_MEMBERS: [&str; 3] = ["op", "id", "values"];
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Op {
-    Put { id: String, values: Map<String, Value> },
-    Patch { id: String, values: Map<String, Value> },
-    Delete { id: String },
+    Put {
+        id: String,
+        values: Map<String, Value>,
+    },
+    Patch {
+        id: String,
+        values: Map<String, Value>,
+    },
+    Delete {
+        id: String,
+    },
 }
 
 impl Op {
@@ -64,14 +72,22 @@ fn row_id(index: usize, value: Option<&Value>) -> Result<Option<String>> {
         Some(Value::String(id)) if marfa_rules::validation::id("id", id).is_ok() => {
             Ok(Some(id.clone()))
         }
-        Some(_) => Err(refused_at(index, "id", "A row id is a UUIDv7 in lowercase.")),
+        Some(_) => Err(refused_at(
+            index,
+            "id",
+            "A row id is a UUIDv7 in lowercase.",
+        )),
     }
 }
 
 fn values_of(index: usize, value: Option<&Value>) -> Result<Map<String, Value>> {
     match value {
         Some(Value::Object(values)) => Ok(values.clone()),
-        _ => Err(refused_at(index, "values", "values is an object keyed by column.")),
+        _ => Err(refused_at(
+            index,
+            "values",
+            "values is an object keyed by column.",
+        )),
     }
 }
 
@@ -98,12 +114,15 @@ fn operations(sent: &[Value]) -> Result<Vec<Op>> {
                 ));
             };
             if let Some(unknown) = entry.keys().find(|key| !OP_MEMBERS.contains(&key.as_str())) {
-                return Err(refused_at(index, unknown, "An operation names op, id and values."));
+                return Err(refused_at(
+                    index,
+                    unknown,
+                    "An operation names op, id and values.",
+                ));
             }
             let named = || {
-                row_id(index, entry.get("id"))?.ok_or_else(|| {
-                    refused_at(index, "id", "This operation names the row by id.")
-                })
+                row_id(index, entry.get("id"))?
+                    .ok_or_else(|| refused_at(index, "id", "This operation names the row by id."))
             };
             match entry.get("op").and_then(Value::as_str) {
                 Some("put") => Ok(Op::Put {
@@ -132,11 +151,17 @@ pub(crate) fn queued_ops(body: &Value) -> Result<Vec<Op>> {
         .and_then(Value::as_array)
         .ok_or_else(|| CoreError::Store("a queued row write holds no operations".into()))?;
     operations(sent).map_err(|error| {
-        CoreError::Store(format!("a queued row write holds a batch this build cannot read: {error}"))
+        CoreError::Store(format!(
+            "a queued row write holds a batch this build cannot read: {error}"
+        ))
     })
 }
 
-fn judge_values(index: usize, columns: &Map<String, Value>, values: &Map<String, Value>) -> Result<()> {
+fn judge_values(
+    index: usize,
+    columns: &Map<String, Value>,
+    values: &Map<String, Value>,
+) -> Result<()> {
     marfa_rules::validation::row_values(columns, values, false, &[]).map_err(|error| {
         match error.fields.first() {
             Some(field) => refused_at(index, &format!("values.{}", field.path), &field.message),
@@ -170,7 +195,11 @@ fn held_row(conn: &Connection, item: &str, table: &str, id: &str) -> Result<Opti
 fn read_held(body: &str, withheld: Option<&str>, updated_at: String) -> Result<Held> {
     let values = match serde_json::from_str(body)? {
         Value::Object(values) => values,
-        _ => return Err(CoreError::Store("a held row's values are not an object".into())),
+        _ => {
+            return Err(CoreError::Store(
+                "a held row's values are not an object".into(),
+            ));
+        }
     };
     let withheld = match withheld {
         Some(text) => serde_json::from_str(text)?,
@@ -214,7 +243,11 @@ fn columns_of(conn: &Connection, item: &str, table: &str) -> Result<Map<String, 
         .unwrap_or_default())
 }
 
-fn refuse_unheld(conn: &Connection, completeness: crate::model::Completeness, item: &str) -> Result<()> {
+fn refuse_unheld(
+    conn: &Connection,
+    completeness: crate::model::Completeness,
+    item: &str,
+) -> Result<()> {
     if !store::item_held(conn, item)? {
         store::refuse_unless_held(completeness)?;
         return Err(CoreError::NotFound {
@@ -304,7 +337,10 @@ pub(crate) fn write(
         for (index, op) in ops.iter().enumerate() {
             let shown = held_row(&tx, item, table, op.id())?;
             if let (Some(shown), Some(values)) = (&shown, op.values())
-                && let Some(column) = shown.withheld.iter().find(|column| values.contains_key(*column))
+                && let Some(column) = shown
+                    .withheld
+                    .iter()
+                    .find(|column| values.contains_key(*column))
             {
                 return Err(CoreError::Forbidden {
                     code: "forbidden".into(),
@@ -323,15 +359,28 @@ pub(crate) fn write(
     }
     let payload = json!({ "operations": ops.iter().map(Op::printed).collect::<Vec<_>>() });
     let read = laid.then(|| json!({ "rows": read }));
-    let queued = enqueue(&tx, WriteKind::WriteRows, item, table, &payload, read.as_ref())?;
-    let seq: i64 = tx.query_row("SELECT seq FROM queue WHERE id = ?1", [&queued.id], |row| row.get(0))?;
+    let queued = enqueue(
+        &tx,
+        WriteKind::WriteRows,
+        item,
+        table,
+        &payload,
+        read.as_ref(),
+    )?;
+    let seq: i64 = tx.query_row("SELECT seq FROM queue WHERE id = ?1", [&queued.id], |row| {
+        row.get(0)
+    })?;
     let mut named = tx.prepare_cached(
         "INSERT INTO rows_laid (write_id, seq, item_id, name, id, ops, at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
     )?;
     let ids: BTreeSet<&str> = ops.iter().map(Op::id).collect();
     for id in &ids {
-        let on_row: Vec<Value> = ops.iter().filter(|op| op.id() == *id).map(Op::printed).collect();
+        let on_row: Vec<Value> = ops
+            .iter()
+            .filter(|op| op.id() == *id)
+            .map(Op::printed)
+            .collect();
         named.execute(params![
             queued.id,
             seq,
@@ -353,7 +402,12 @@ pub(crate) fn write(
     Ok(queued)
 }
 
-pub(crate) fn undo(conn: &mut Connection, item: &str, table: &str, batch: &str) -> Result<QueuedWrite> {
+pub(crate) fn undo(
+    conn: &mut Connection,
+    item: &str,
+    table: &str,
+    batch: &str,
+) -> Result<QueuedWrite> {
     let completeness = store::refuse_unless_writable(conn)?;
     refuse_unheld(conn, completeness, item)?;
     columns_of(conn, item, table)?;
@@ -361,14 +415,26 @@ pub(crate) fn undo(conn: &mut Connection, item: &str, table: &str, batch: &str) 
         return Err(CoreError::Invalid(format!("{batch} is not a batch id")));
     }
     let tx = conn.transaction()?;
-    let queued = enqueue(&tx, WriteKind::UndoRows, item, table, &json!({ "batch": batch }), None)?;
+    let queued = enqueue(
+        &tx,
+        WriteKind::UndoRows,
+        item,
+        table,
+        &json!({ "batch": batch }),
+        None,
+    )?;
     tx.commit()?;
     Ok(queued)
 }
 
 /// The writes laid over a row, in queue order: waiting, or taken with a
 /// batch whose `rows.changed` has not been applied.
-fn laid_over(conn: &Connection, item: &str, table: &str, id: &str) -> Result<Vec<(i64, Vec<Op>, String)>> {
+fn laid_over(
+    conn: &Connection,
+    item: &str,
+    table: &str,
+    id: &str,
+) -> Result<Vec<(i64, Vec<Op>, String)>> {
     let mut query = conn.prepare_cached(
         "SELECT l.seq, l.ops, l.at FROM rows_laid l LEFT JOIN queue q ON q.id = l.write_id
           WHERE l.item_id = ?1 AND l.name = ?2 AND l.id = ?3
@@ -376,10 +442,13 @@ fn laid_over(conn: &Connection, item: &str, table: &str, id: &str) -> Result<Vec
                  OR (q.id IS NOT NULL AND (q.verdict IS NULL OR q.verdict = ?4)))
           ORDER BY l.seq",
     )?;
-    let rows = query.query_map(
-        params![item, table, id, Verdict::Blocked.as_str()],
-        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
-    )?;
+    let rows = query.query_map(params![item, table, id, Verdict::Blocked.as_str()], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
     let mut laid = Vec::new();
     for row in rows {
         let (seq, ops, at) = row?;
@@ -431,13 +500,21 @@ fn beneath(conn: &Connection, item: &str, table: &str, id: &str) -> Result<Optio
         })
         .optional()?;
     row.map(|(body, withheld, updated_at)| match body {
-        Some(body) => read_held(&body, withheld.as_deref(), updated_at.unwrap_or_default()).map(Some),
+        Some(body) => {
+            read_held(&body, withheld.as_deref(), updated_at.unwrap_or_default()).map(Some)
+        }
         None => Ok(None),
     })
     .transpose()
 }
 
-fn set_beneath(conn: &Connection, item: &str, table: &str, id: &str, row: Option<&Held>) -> Result<()> {
+fn set_beneath(
+    conn: &Connection,
+    item: &str,
+    table: &str,
+    id: &str,
+    row: Option<&Held>,
+) -> Result<()> {
     let (body, withheld, updated_at) = match row {
         Some(row) => (
             Some(Value::Object(row.values.clone()).to_string()),
@@ -461,7 +538,15 @@ fn set_beneath(conn: &Connection, item: &str, table: &str, id: &str, row: Option
 fn hold(conn: &Connection, item: &str, table: &str, id: &str, row: Option<&Held>) -> Result<()> {
     match row {
         Some(row) => {
-            tables::hold_row(conn, item, table, id, &row.values, &row.withheld, &row.updated_at)?;
+            tables::hold_row(
+                conn,
+                item,
+                table,
+                id,
+                &row.values,
+                &row.withheld,
+                &row.updated_at,
+            )?;
         }
         None => {
             tables::delete_row(conn, item, table, id)?;
@@ -499,9 +584,8 @@ fn lay(conn: &Connection, item: &str, table: &str, id: &str) -> Result<()> {
 }
 
 fn laid_ids(conn: &Connection, item: &str, table: &str) -> Result<Vec<String>> {
-    let mut query = conn.prepare_cached(
-        "SELECT DISTINCT id FROM rows_laid WHERE item_id = ?1 AND name = ?2",
-    )?;
+    let mut query =
+        conn.prepare_cached("SELECT DISTINCT id FROM rows_laid WHERE item_id = ?1 AND name = ?2")?;
     let rows = query.query_map(params![item, table], |row| row.get(0))?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
@@ -550,7 +634,9 @@ pub(crate) fn take_server_row(
     row: Option<(&Map<String, Value>, &[String], &str)>,
 ) -> Result<bool> {
     let named = conn
-        .prepare_cached("SELECT 1 FROM rows_laid WHERE item_id = ?1 AND name = ?2 AND id = ?3 LIMIT 1")?
+        .prepare_cached(
+            "SELECT 1 FROM rows_laid WHERE item_id = ?1 AND name = ?2 AND id = ?3 LIMIT 1",
+        )?
         .query_row(params![item, table, id], |_| Ok(()))
         .optional()?
         .is_some();
@@ -618,7 +704,9 @@ pub(crate) fn applied_batch(conn: &Connection, item: &str, table: &str, batch: &
                 "SELECT 1 FROM queue WHERE kind = ?1 AND item_id = ?2 AND row_table = ?3
                    AND sent = 1 AND verdict IS NULL LIMIT 1",
             )?
-            .query_row(params![WriteKind::WriteRows.as_str(), item, table], |_| Ok(()))
+            .query_row(params![WriteKind::WriteRows.as_str(), item, table], |_| {
+                Ok(())
+            })
             .optional()?
             .is_some();
         if waiting {
@@ -719,14 +807,22 @@ pub(crate) fn taken(
 /// The columns `write` set, or the rows it deleted, whose value the copy last
 /// took from the server, with the writes taken before it laid over it,
 /// differs from what the copy showed when the write was made.
-fn clashes(conn: &Connection, item: &str, table: &str, write: &QueuedWrite, ops: &[Op]) -> Result<Vec<RowConflict>> {
+fn clashes(
+    conn: &Connection,
+    item: &str,
+    table: &str,
+    write: &QueuedWrite,
+    ops: &[Op],
+) -> Result<Vec<RowConflict>> {
     let Some(read) = store::read_of(conn, &write.id)?
         .and_then(|read| serde_json::from_str::<Value>(&read).ok())
         .and_then(|read| read.get("rows").and_then(Value::as_object).cloned())
     else {
         return Ok(Vec::new());
     };
-    let seq: i64 = conn.query_row("SELECT seq FROM queue WHERE id = ?1", [&write.id], |row| row.get(0))?;
+    let seq: i64 = conn.query_row("SELECT seq FROM queue WHERE id = ?1", [&write.id], |row| {
+        row.get(0)
+    })?;
     let mut clashed = Vec::new();
     let mut judged = BTreeSet::new();
     for op in ops {
@@ -759,7 +855,10 @@ fn clashes(conn: &Connection, item: &str, table: &str, write: &QueuedWrite, ops:
                 }
             }
         }
-        let withheld = before.as_ref().map(|row| row.withheld.clone()).unwrap_or_default();
+        let withheld = before
+            .as_ref()
+            .map(|row| row.withheld.clone())
+            .unwrap_or_default();
         for column in columns.keys() {
             if withheld.iter().any(|held| held == column) {
                 continue;
@@ -795,7 +894,10 @@ mod tests {
         };
         let patched = apply(
             None,
-            &[Op::Patch { id: id.into(), values: values(json!({ "count": 2 })) }],
+            &[Op::Patch {
+                id: id.into(),
+                values: values(json!({ "count": 2 })),
+            }],
             id,
             "now",
         );
@@ -803,8 +905,14 @@ mod tests {
         let put = apply(
             Some(held),
             &[
-                Op::Put { id: id.into(), values: values(json!({ "count": 3, "note": null })) },
-                Op::Patch { id: id.into(), values: values(json!({ "note": "a" })) },
+                Op::Put {
+                    id: id.into(),
+                    values: values(json!({ "count": 3, "note": null })),
+                },
+                Op::Patch {
+                    id: id.into(),
+                    values: values(json!({ "note": "a" })),
+                },
             ],
             id,
             "now",
@@ -824,6 +932,9 @@ mod tests {
             json!({ "op": "delete", "id": ops[0].id(), "values": {} }),
         ])
         .unwrap_err();
-        assert!(refused.to_string().contains("operations.1.values"), "{refused}");
+        assert!(
+            refused.to_string().contains("operations.1.values"),
+            "{refused}"
+        );
     }
 }
