@@ -18,6 +18,8 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
+import type { SseEvent } from "../../utils/sse.js";
+import { collectUntil, withStream } from "../../utils/stream.js";
 
 const NOTE = "core.note";
 const SOURCE = "durability";
@@ -175,6 +177,77 @@ describe("a write the server confirmed survives a power cut", () => {
   }, 600_000);
 });
 
+describe("an announcement of a write", () => {
+  /** The frames a stream resumed after `cursor` replays, up to `stream_live`. */
+  async function replayAfter(cursor: string): Promise<SseEvent[]> {
+    return withStream(
+      server.apiUrl,
+      server.workingKey,
+      { lastEventId: cursor },
+      async (stream) =>
+        (
+          await collectUntil(
+            stream,
+            (events) => events.some((event) => event.event === "stream_live"),
+            "stream_live",
+          )
+        ).events,
+    );
+  }
+
+  const bodyOf = (event: SseEvent) =>
+    (event.data as { item?: { properties?: { body?: string } } }).item
+      ?.properties?.body;
+
+  it("sends no event for an entry of a best-effort page until the page is answered", async () => {
+    const client = clientOf();
+    const cursor = await withStream(
+      server.apiUrl,
+      server.workingKey,
+      {},
+      async (stream) => {
+        const { events } = await collectUntil(
+          stream,
+          (seen) => seen.some((event) => event.event === "stream_cursor"),
+          "stream_cursor",
+        );
+        const opened = events.find((event) => event.event === "stream_cursor");
+        return (opened?.data as { cursor: string }).cursor;
+      },
+    );
+    const tag = `announced-${String(Date.now())}`;
+    await server.setFault("hold:bulk-page=2");
+    const page = client.bulkItems({
+      atomic: false,
+      items: [0, 1].map((n) => ({
+        type: NOTE,
+        source_id: `${tag}-${String(n)}`,
+        properties: { body: `${tag}-${String(n)}` },
+      })),
+    });
+    try {
+      await server.waitForHold("hold:bulk-page");
+      // The first entry is written and the page holds before its second.
+      const held = await replayAfter(cursor);
+      expect(held.filter((event) => bodyOf(event)?.startsWith(tag))).toEqual(
+        [],
+      );
+    } finally {
+      await server.clearFault("hold:bulk-page");
+    }
+    const answered = await page;
+    expect(answered.status).toBe(200);
+    expect(answered.data.counts.created).toBe(2);
+    // The witness: once the page is answered, the same replay carries its entries.
+    const after = await replayAfter(cursor);
+    expect(
+      after
+        .map((event) => bodyOf(event))
+        .filter((body) => body?.startsWith(tag)),
+    ).toEqual([`${tag}-0`, `${tag}-1`]);
+  }, 120_000);
+});
+
 describe("a database file with damaged pages", () => {
   it("answers 500 for what reads them, reports the database down, and keeps serving", async () => {
     const client = clientOf();
@@ -214,13 +287,17 @@ describe("a database file with damaged pages", () => {
 
     const damaged = await clientOf().listItems({ limit: 1 });
     expect(damaged.status).toBe(500);
+    expect(damaged.error?.error.code).toBe("internal_error");
     const health = await fetch(`${server.apiUrl}/health`);
     const report = (await health.json()) as {
       components: { database: { status: string } };
     };
     expect(health.status).toBe(503);
     expect(report.components.database.status).toBe("down");
-    // Still answering, never gone: the fault is reported and the process stays up.
-    expect((await fetch(`${server.apiUrl}/health`)).status).toBe(503);
+    // Still serving: a read that meets no damaged page answers as before.
+    const types = await fetch(`${server.apiUrl}/types`, {
+      headers: { Authorization: `Bearer ${server.workingKey}` },
+    });
+    expect(types.status).toBe(200);
   }, 120_000);
 });
