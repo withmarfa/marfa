@@ -571,25 +571,22 @@ describe("the instance from the terminal", () => {
     expect(options.status).toBe(200);
     const challenge = (await options.json()) as { challenge: string };
     const name = unique("cli-passkey");
-    const registered = await fetch(
-      `${origin}/auth/passkeys/registration`,
-      {
-        method: "POST",
-        headers: {
-          origin,
-          cookie: [ownerCookie, cookies(options)].filter(Boolean).join("; "),
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          name,
-          response: testAuthenticator().registration(
-            challenge.challenge,
-            origin,
-            new URL(origin).hostname,
-          ),
-        }),
+    const registered = await fetch(`${origin}/auth/passkeys/registration`, {
+      method: "POST",
+      headers: {
+        origin,
+        cookie: [ownerCookie, cookies(options)].filter(Boolean).join("; "),
+        "content-type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        name,
+        response: testAuthenticator().registration(
+          challenge.challenge,
+          origin,
+          new URL(origin).hostname,
+        ),
+      }),
+    });
     expect(registered.status).toBe(201);
     const { id } = (await registered.json()) as { id: string };
     interface Passkey {

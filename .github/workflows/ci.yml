@@ -620,12 +620,7 @@ jobs:
   # classifier skipped them all; it fails when any of them ended in anything
   # but success or skipped, or was owed a run and skipped.
   conformance:
-    needs:
-      [
-        changes,
-        conformance-offline,
-        mcp-conformance,
-      ]
+    needs: [changes, conformance-offline, mcp-conformance]
     if: ${{ !cancelled() }}
     name: Conformance
     timeout-minutes: 3

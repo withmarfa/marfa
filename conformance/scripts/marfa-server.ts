@@ -584,7 +584,8 @@ async function waitForHealth(
         );
         if (match) {
           const port = Number(match[1]);
-          if (port > 0 && port <= 65_535) url = `http://${started.host}:${port}`;
+          if (port > 0 && port <= 65_535)
+            url = `http://${started.host}:${port}`;
         }
       }
     }

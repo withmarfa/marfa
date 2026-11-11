@@ -389,10 +389,14 @@ async function main(): Promise<void> {
     const source = await serverAt(sourceState);
     const { files, bytes } = await fill(source.everything, id);
     const copied = await replicateToZero(source.owner);
-    const sourceId = expectOk("reading the instance", await source.owner.root())
-      .instance_id;
-    const backup = expectOk("taking a backup", await source.owner.runBackup())
-      .backup;
+    const sourceId = expectOk(
+      "reading the instance",
+      await source.owner.root(),
+    ).instance_id;
+    const backup = expectOk(
+      "taking a backup",
+      await source.owner.runBackup(),
+    ).backup;
     say(
       `Source \`${sourceId}\`: ${String(ROWS)} rows, ${String(NOTES)} notes, ${String(files.length)} files of ${String(bytes)} bytes, ${String(copied)} copies made to the bucket; backup \`${backup.name}\`, ${String(backup.size_bytes)} bytes.`,
     );
@@ -441,7 +445,9 @@ async function main(): Promise<void> {
         before.lines[name],
         after.lines[name],
       );
-      const was = new Set(before.lines[name].map((line) => JSON.stringify(line)));
+      const was = new Set(
+        before.lines[name].map((line) => JSON.stringify(line)),
+      );
       const is = new Set(after.lines[name].map((line) => JSON.stringify(line)));
       for (const line of [...was].filter((line) => !is.has(line)).slice(0, 5))
         say(`  - only on the source: \`${line.slice(0, 400)}\``);
