@@ -123,7 +123,11 @@ pub fn record(
         if !held {
             rows::record_found(tx, &copy.blob, at)?;
         }
-        if let Some(silent) = copy.replaces.as_deref().filter(|silent| *silent != copy.object) {
+        if let Some(silent) = copy
+            .replaces
+            .as_deref()
+            .filter(|silent| *silent != copy.object)
+        {
             rows::remove_copy(tx, &copy.blob.hash, &copy.store_id, silent, at)?;
         }
         let written = copy.object.is_empty()
@@ -481,7 +485,10 @@ mod tests {
         assert!(rows::queued(&tx, &kept.hash, "bucket", &silent.object).unwrap());
         let held = rows::holders(&tx, &kept.hash).unwrap();
         assert_eq!(held.len(), 1);
-        assert_eq!((held[0].object.as_str(), held[0].written), (own.object.as_str(), true));
+        assert_eq!(
+            (held[0].object.as_str(), held[0].written),
+            (own.object.as_str(), true)
+        );
 
         // Another server's object is recorded as held, and the silent copy this server did not
         // write is only dropped from the record.
@@ -496,6 +503,9 @@ mod tests {
         record(&tx, std::slice::from_ref(&other), false, "holder", AT).unwrap();
         assert!(!rows::queued(&tx, &shared.hash, "bucket", &theirs.object).unwrap());
         let held = rows::holders(&tx, &shared.hash).unwrap();
-        assert_eq!((held[0].object.as_str(), held[0].written), (other.object.as_str(), false));
+        assert_eq!(
+            (held[0].object.as_str(), held[0].written),
+            (other.object.as_str(), false)
+        );
     }
 }
