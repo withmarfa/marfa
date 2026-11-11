@@ -268,7 +268,7 @@ When the server answers a batch `200`, a device MUST record with each of its wri
 
 When the server answers a batch `200` before the device has applied the batch's `rows.changed`, a device MUST give the verdict `conflicted` to each write of a table it holds whole that set a column, or deleted a row, whose value the copy last took from the server differs from the value the copy showed when the write was made.
 
-**Reason:** the later write takes a column (`tables/rows-patch`), and the value it replaced stays in the batch's change log, where an undo of the batch puts it back (`tables/undo`). Once the batch's own event is applied, the copy no longer holds the value the batch replaced, so it claims no clash it cannot show.
+**Reason:** the later write takes a column (`tables/rows-patch`), and the value it replaced stays in the batch's change log, where an undo of the batch puts it back (`tables/undo`), together with every other write the device sent in that batch. Once the batch's own event is applied, the copy no longer holds the value the batch replaced, so it claims no clash it cannot show.
 
 **Tests:** `device/table-writes-live.test.ts › records a write conflicted where it replaced a value the copy had not shown, and the value it replaced stays in the batch's change log`.
 
@@ -276,7 +276,7 @@ When the server answers a batch `200` before the device has applied the batch's 
 
 When a device takes a row from the server by a read or a fill after a `write_rows` write that names the row was sent, a device MUST NOT give that write the verdict `conflicted` for the row.
 
-**Reason:** a row read once the write may have reached the server can hold the write itself, so it says nothing of the value the write replaced. A `rows.changed` that carries its rows says what each batch left in turn, so it stays the device's evidence.
+**Reason:** a row read once the write may have reached the server can hold the write itself, so it says nothing of the value the write replaced. A `rows.changed` that carries its rows says what each batch left in turn, so it stays the device's evidence. A real clash in that window goes unreported, since claiming one could tell a person that their own edit replaced someone else's. The value the write replaced stays in the batch's change log for `row_log_retention_days`, and an undo of the batch puts it back once every later batch that changed the row is undone (`tables/undo`, `tables/undo-conflict`).
 
 **Tests:** `device/table-writes-live.test.ts › judges no conflict from a fill made after a write was sent whose answer was lost, taking the write as its own`.
 
