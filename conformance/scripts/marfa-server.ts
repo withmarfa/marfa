@@ -541,6 +541,13 @@ function logTail(p: ReturnType<typeof paths>): string {
   return err === "" ? out : `${out}\n--- stderr ---\n${err}`;
 }
 
+/** What this boot alone wrote to the log and to stderr. */
+function bootOutput(started: Started, p: ReturnType<typeof paths>): string {
+  const since = (path: string, start: number) =>
+    existsSync(path) ? readFileSync(path).subarray(start).toString("utf8") : "";
+  return `${since(p.log, started.logStart)}\n${since(p.stderr, started.errStart)}`;
+}
+
 /** How the server ended, as the supervisor recorded it. */
 function describeExit(exitFile: string): string {
   return existsSync(exitFile)
@@ -618,6 +625,8 @@ interface Started {
   child: ChildProcess;
   /** Where in the log this boot begins, in bytes. */
   logStart: number;
+  /** Where its stderr file ended before this boot. */
+  errStart: number;
   /** Whether the supervisor has ended, which it does when the server does. */
   ended: () => boolean;
   controlSocket: string;
@@ -628,20 +637,37 @@ interface Started {
   host: string;
 }
 
-/** A port the system has just handed out on loopback and taken back. */
-function freePort(): Promise<number> {
-  return new Promise((resolvePort, reject) => {
+/** Whether `port` can be bound on `host` now; a host this machine lacks counts as free. */
+function bindable(port: number, host: string): Promise<boolean> {
+  return new Promise((resolveBindable) => {
     const probe = createServer();
-    probe.once("error", reject);
-    probe.listen(0, "127.0.0.1", () => {
-      const address = probe.address();
-      probe.close(() => {
-        if (address !== null && typeof address === "object")
-          resolvePort(address.port);
-        else reject(new Error("no port was handed out"));
+    probe.once("error", (error: NodeJS.ErrnoException) =>
+      resolveBindable(
+        error.code === "EADDRNOTAVAIL" || error.code === "EAFNOSUPPORT",
+      ),
+    );
+    probe.listen(port, host, () => probe.close(() => resolveBindable(true)));
+  });
+}
+
+/** A port the system has just handed out on loopback and taken back, free on `::1` too. */
+async function freePort(): Promise<number> {
+  for (let tries = 0; tries < 20; tries++) {
+    const port = await new Promise<number>((resolvePort, reject) => {
+      const probe = createServer();
+      probe.once("error", reject);
+      probe.listen(0, "127.0.0.1", () => {
+        const address = probe.address();
+        probe.close(() => {
+          if (address !== null && typeof address === "object")
+            resolvePort(address.port);
+          else reject(new Error("no port was handed out"));
+        });
       });
     });
-  });
+    if (await bindable(port, "::1")) return port;
+  }
+  throw new Error("no port was free on both loopback addresses");
 }
 
 /** The offset the last `clock advance` left, in ms; zero when none did. */
@@ -801,6 +827,7 @@ async function startServer(args: BootOptions): Promise<Started> {
   // `check:statuses` reads. Whatever else the process prints, a Node warning
   // or a trace, goes to its own file.
   const logStart = existsSync(p.log) ? statSync(p.log).size : 0;
+  const errStart = existsSync(p.stderr) ? statSync(p.stderr).size : 0;
   const logFd = openSync(p.log, "a");
   const errFd = openSync(p.stderr, "a");
   // The supervisor leads the group and the server joins it, so the group's
@@ -834,6 +861,7 @@ async function startServer(args: BootOptions): Promise<Started> {
   return {
     child,
     logStart,
+    errStart,
     ended: () => ended,
     controlSocket,
     authSecret,
@@ -857,7 +885,8 @@ async function startAndWait(
     try {
       return { started, url: await waitForHealth(started, p) };
     } catch (error) {
-      const taken = started.picked && logTail(p).includes("EADDRINUSE");
+      const taken =
+        started.picked && bootOutput(started, p).includes("EADDRINUSE");
       if (!taken || attempt === PORT_ATTEMPTS) throw error;
       console.log(
         "[marfa-server] the chosen port was taken first; starting on another",
