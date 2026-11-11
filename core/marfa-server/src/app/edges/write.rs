@@ -1225,8 +1225,11 @@ pub(crate) fn copy_edges(
             },
             By::Copy(edge.seq),
         );
+        // Only a refusal of this edge leaves the copy going; a failed store ends it.
         match made {
-            Err(refusal) if refusal.code == Code::InternalError => return Err(refusal),
+            Err(refusal) if refusal.code.status() >= 500 || writing.tx().is_autocommit() => {
+                return Err(refusal);
+            }
             _ => {}
         }
     }
