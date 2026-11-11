@@ -1,6 +1,5 @@
 import { createWriteStream, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { statSync } from "node:fs";
-import { cpus, loadavg, tmpdir } from "node:os";
+import { loadavg, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -14,7 +13,6 @@ import {
   scalar,
   type Figure,
 } from "../../src/utils/scale/figures.js";
-import { timedAnswer } from "../../src/utils/scale/answer.js";
 import { readServerMemory } from "../../src/utils/scale/memory.js";
 import { StartedServers } from "../../src/utils/scale/servers.js";
 import {
@@ -31,15 +29,20 @@ import {
   type Ordering,
 } from "../../src/utils/scale/table-walk.js";
 import { Tasks } from "../../src/utils/scale/tasks.js";
-import { percentile } from "../../src/utils/timing.js";
+import { log, ok, Recorder, sleep, type Connection } from "./context.js";
 import {
-  log,
-  ok,
-  Recorder,
-  sleep,
-  type Answer,
-  type Connection,
-} from "./context.js";
+  connectionOf,
+  type Goal,
+  megabytes,
+  mustOk,
+  recordedOnly,
+  judgeWrite,
+  Scoreboard,
+  send,
+  supervisor,
+  upTo,
+  whole,
+} from "./standalone.js";
 
 const TABLE = "readings";
 const POLL_GAP_MS = 20;
@@ -52,32 +55,6 @@ const PURGE_NUDGE_MS = 60_000;
 const PURGE_LIMIT_MS = 600_000;
 const WRITE_FLOOR = 20_000;
 const FRAME_WAIT_MS = 10_000;
-
-// A refusal is counted, never retried, so it cannot pass as a slow answer.
-async function send(
-  method: "GET" | "POST" | "DELETE",
-  path: string,
-  body: string | object | undefined,
-  connection: Connection,
-): Promise<Answer> {
-  const payload =
-    body === undefined || typeof body === "string"
-      ? body
-      : JSON.stringify(body);
-  return timedAnswer(() =>
-    fetch(`${connection.url}${path}`, {
-      method,
-      headers: {
-        Authorization: `Bearer ${connection.key}`,
-        ...(payload === undefined
-          ? {}
-          : { "Content-Type": "application/json" }),
-      },
-      body: payload,
-      signal: AbortSignal.timeout(900_000),
-    }),
-  );
-}
 
 interface Options {
   rows: number;
@@ -98,15 +75,6 @@ function options(): Options {
       state: { type: "string" },
     },
   });
-  const whole = (name: string, raw: string, least: number) => {
-    const value = Number(raw);
-    if (!Number.isSafeInteger(value) || value < least) {
-      throw new Error(
-        `--${name} is ${raw}; it needs a whole number of ${least} or more`,
-      );
-    }
-    return value;
-  };
   const page = whole("page", values.page, 1);
   if (page > 1000)
     throw new Error("--page is at most 1000, the most rows a batch holds");
@@ -224,33 +192,6 @@ const tableBody = (first: number, count: number, buckets: number) =>
     })),
   });
 
-interface WriteAnswer {
-  batch: string | null;
-  results: { id: string; outcome: string }[];
-}
-
-function judgeWrite(
-  answer: { status: number; text: string; json: () => unknown },
-  size: number,
-) {
-  if (answer.status !== 200) {
-    return {
-      written: [] as string[],
-      batch: null,
-      errors: size,
-      note: `${answer.status}: ${answer.text.slice(0, 160)}`,
-    };
-  }
-  const parsed = answer.json() as WriteAnswer;
-  const created = parsed.results.filter((r) => r.outcome === "created");
-  return {
-    written: created.map((r) => r.id),
-    batch: parsed.batch,
-    errors: size - created.length,
-    note: null as string | null,
-  };
-}
-
 interface Walk {
   times: number[];
   /** Pages refused, plus every way the traversal was wrong. */
@@ -348,56 +289,11 @@ async function walk(
   return result;
 }
 
-function connectionOf(
-  state: string,
-  key: "MARFA_API_KEY" | "MARFA_MANAGEMENT_KEY",
-): Connection {
-  const env = parseEnvFile(readFileSync(join(state, "env"), "utf8"));
-  const url = env.MARFA_API_URL;
-  const secret = env[key];
-  if (!url || !secret)
-    throw new Error(`${state}/env names no server and ${key}`);
-  return { url: url.replace(/\/$/, ""), key: secret };
-}
-
-const supervisor = (state: string) =>
-  Number(readFileSync(join(state, "server.pid"), "utf8").trim());
-const megabytes = (path: string) => {
-  try {
-    return statSync(path).size / 1_048_576;
-  } catch {
-    return 0;
-  }
-};
-
-async function mustOk(
-  what: string,
-  answer: { status: number; text: string },
-  status = 200,
-) {
-  if (answer.status !== status) {
-    throw new Error(
-      `${what} answered ${answer.status}: ${answer.text.slice(0, 300)}`,
-    );
-  }
-}
-
-interface Goal {
-  text: string;
-  verdict: (figure: Figure) => boolean | null;
-}
-
 export async function tables(): Promise<void> {
   const opts = options();
   const recorder = new Recorder("tables");
-  const goals = new Map<string, Goal>();
-  const figures: Figure[] = [];
-  const add = (figure: Figure, goal: Goal) => {
-    figures.push(recorder.add(figure));
-    goals.set(figure.name, goal);
-  };
-  const upTo = (text: string) => ({ text, verdict: (f: Figure) => f.passed });
-  const recordedOnly = (text: string) => ({ text, verdict: () => null });
+  const board = new Scoreboard(recorder);
+  const add = (figure: Figure, goal: Goal) => board.add(figure, goal);
 
   const work = opts.state ?? mkdtempSync(join(tmpdir(), "marfa-scale-tables-"));
   const stateA = join(work, "a");
@@ -408,43 +304,7 @@ export async function tables(): Promise<void> {
   process.env.MARFA_SERVER_BIN = opts.server;
   const settings = { MARFA_TEST_HOOKS: "false" };
 
-  const loads: number[] = [];
-  const sample = () => loads.push(loadavg()[0] ?? 0);
-  sample();
-  const sampler = setInterval(sample, 10_000);
-  log(
-    `load average at the start: ${loadavg()
-      .map((n) => n.toFixed(2))
-      .join(" ")} on ${cpus().length} cores`,
-  );
-
-  const report = () => {
-    const sorted = [...loads].sort((a, b) => a - b);
-    console.log("");
-    console.log(
-      `load average (1 minute) while it ran: mean ${(loads.reduce((a, b) => a + b, 0) / loads.length).toFixed(1)}, p95 ${percentile(sorted, 95).toFixed(1)}, max ${(sorted.at(-1) ?? 0).toFixed(1)} on ${cpus().length} cores`,
-    );
-    console.log(
-      "| figure | p50 | value (p95 for a distribution) | goal | verdict |",
-    );
-    console.log("|---|---|---|---|---|");
-    for (const figure of figures) {
-      const goal = goals.get(figure.name);
-      const verdict = goal?.verdict(figure);
-      const text =
-        figure.errors > 0
-          ? `ERRORS ${figure.errors}`
-          : verdict === null || verdict === undefined
-            ? "recorded"
-            : verdict
-              ? "met"
-              : "MISSED";
-      console.log(
-        `| ${figure.name} | ${figure.p50 === null ? "" : figure.p50.toFixed(2)} | ${figure.value.toFixed(2)} ${figure.unit} | ${goal?.text ?? ""} | ${text}${figure.note === null ? "" : ` (${figure.note})`} |`,
-      );
-    }
-    if (figures.some((figure) => figure.errors > 0)) process.exitCode = 1;
-  };
+  board.startLoad();
 
   try {
     started.starting(stateA);
@@ -477,7 +337,7 @@ export async function tables(): Promise<void> {
       },
       connection,
     );
-    await mustOk("registering the type", registered, 201);
+    mustOk("registering the type", registered, 201);
     const makeItem = async (title: string) => {
       const made = await send(
         "POST",
@@ -485,7 +345,7 @@ export async function tables(): Promise<void> {
         { type, properties: { title } },
         connection,
       );
-      await mustOk("creating an item", made, 201);
+      mustOk("creating an item", made, 201);
       return (made.json() as { item: { id: string } }).item.id;
     };
     let minted = 0;
@@ -501,7 +361,7 @@ export async function tables(): Promise<void> {
         },
         connection,
       );
-      await mustOk("minting a reader's key", made, 201);
+      mustOk("minting a reader's key", made, 201);
       readerKeys.push({
         url: connection.url,
         key: (made.json() as { key: string }).key,
@@ -635,7 +495,7 @@ export async function tables(): Promise<void> {
       undefined,
       connection,
     );
-    await mustOk("listing the tables", summary);
+    mustOk("listing the tables", summary);
     const held = (
       summary.json() as { data: { name: string; row_count: number }[] }
     ).data.find((t) => t.name === TABLE)?.row_count;
@@ -864,7 +724,7 @@ export async function tables(): Promise<void> {
     );
 
     // An export leaves out a trashed item, so the export below is of one table.
-    await mustOk(
+    mustOk(
       "trashing the 100,000-row table's item",
       await send("DELETE", `/items/${hundred}`, undefined, connection),
     );
@@ -901,7 +761,7 @@ export async function tables(): Promise<void> {
         undefined,
         connection,
       );
-      await mustOk("listing the tables", listed);
+      mustOk("listing the tables", listed);
       return (
         listed.json() as { data: { name: string; row_count: number }[] }
       ).data.find((t) => t.name === TABLE)?.row_count;
@@ -1045,7 +905,7 @@ export async function tables(): Promise<void> {
       undefined,
       connection,
     );
-    await mustOk("totalling the table after the undos", totalsAnswer);
+    mustOk("totalling the table after the undos", totalsAnswer);
     const wrongTotals = judgeTotals(totalsAnswer.json(), whole);
     if (wrongTotals !== null) {
       throw new Error(`after the undos the totals are wrong: ${wrongTotals}`);
@@ -1099,7 +959,7 @@ export async function tables(): Promise<void> {
       undefined,
       restoreInto,
     );
-    await mustOk("listing the restored tables", restoredTables);
+    mustOk("listing the restored tables", restoredTables);
     const restoredCount = (
       restoredTables.json() as { data: { name: string; row_count: number }[] }
     ).data.find((t) => t.name === TABLE)?.row_count;
@@ -1109,7 +969,7 @@ export async function tables(): Promise<void> {
       undefined,
       restoreInto,
     );
-    await mustOk("totalling the restored table", restoredTotals);
+    mustOk("totalling the restored table", restoredTotals);
     const restoredProblems: string[] = [];
     if (restoredCount !== opts.rows) {
       restoredProblems.push(
@@ -1156,7 +1016,7 @@ export async function tables(): Promise<void> {
       tableBody(0, Math.min(1000, opts.rows), buckets),
       connection,
     );
-    await mustOk("writing the other item's rows", otherWrite);
+    mustOk("writing the other item's rows", otherWrite);
     const purgeReaders = startReaders({
       item: { connection: reader(), path: () => `/items/${other}` },
       row_page: {
@@ -1165,7 +1025,7 @@ export async function tables(): Promise<void> {
       },
     });
     const stopPurgeReaders = tasks.own(purgeReaders.stop);
-    await mustOk(
+    mustOk(
       "trashing the item",
       await send("DELETE", `/items/${itemId}`, undefined, connection),
     );
@@ -1178,7 +1038,7 @@ export async function tables(): Promise<void> {
       connection,
     );
     const purgeRequest = purged.ms;
-    await mustOk("purging the item", purged);
+    mustOk("purging the item", purged);
     let removed = 0;
     let cleaned = false;
     let nudged = false;
@@ -1250,7 +1110,7 @@ export async function tables(): Promise<void> {
     purgeRead("row_page", "tables_read_row_page_during_purge");
     recorder.finish();
   } finally {
-    clearInterval(sampler);
+    board.stopLoad();
     for (const failure of await tasks.stopAll()) {
       log(`stopping a reader or the stream: ${failure}`);
     }
@@ -1260,6 +1120,6 @@ export async function tables(): Promise<void> {
       log(`stopping a server: ${failure}`);
     }
     if (opts.state === null) rmSync(work, { recursive: true, force: true });
-    report();
+    board.report();
   }
 }
