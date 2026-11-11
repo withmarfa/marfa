@@ -121,7 +121,9 @@ async function serverRows(item: string): Promise<Record<string, unknown>> {
     `/items/${item}/tables/steps/rows?limit=1000`,
   );
   expect(answer.status, JSON.stringify(answer.error)).toBe(200);
-  return Object.fromEntries(answer.data.data.map((row) => [row.id, row.values]));
+  return Object.fromEntries(
+    answer.data.data.map((row) => [row.id, row.values]),
+  );
 }
 
 async function devicePage(device: CliDevice, item: string): Promise<Page> {
@@ -320,7 +322,10 @@ describe("a write the copy shows at once", () => {
       [[{ op: "move", id: row }], "operations.0.op"],
       [[{ op: "put", id: "not-a-row" }], "operations.0.id"],
       [[{ op: "delete", id: row, values: {} }], "operations.0.values"],
-      [[{ op: "patch", id: row, version: 1, values: {} }], "operations.0.version"],
+      [
+        [{ op: "patch", id: row, version: 1, values: {} }],
+        "operations.0.version",
+      ],
       [[{ op: "put", values: "count" }], "operations.0.values"],
       [
         [
@@ -363,7 +368,9 @@ describe("a write laid over what the server sends", () => {
     const type = await tableType();
     const item = await itemOf(type);
     const row = uuidv7();
-    await write(item, [{ op: "put", id: row, values: { count: 1, note: "a" } }]);
+    await write(item, [
+      { op: "put", id: row, values: { count: 1, note: "a" } },
+    ]);
     const device = await holding(type, "over-event");
     const mine = value(
       await device.writeRows(item, "steps", [
@@ -404,7 +411,9 @@ describe("a write laid over what the server sends", () => {
     const type = await tableType();
     const item = await itemOf(type);
     const row = uuidv7();
-    await write(item, [{ op: "put", id: row, values: { count: 1, note: "a" } }]);
+    await write(item, [
+      { op: "put", id: row, values: { count: 1, note: "a" } },
+    ]);
     const device = deviceFor("over-fill");
     value(await device.hydrate([type], "library"));
     value(
@@ -465,7 +474,9 @@ describe("a write laid over what the server sends", () => {
     const one = await past.tableRead<Row>(["get", big, "steps", added]);
     expect(one.ok).toBe(false);
     expect(verdictOf(value(await past.drain()), online.id)).toBe("accepted");
-    const after = value(await past.tableRead<Row>(["get", big, "steps", added]));
+    const after = value(
+      await past.tableRead<Row>(["get", big, "steps", added]),
+    );
     expect(after).toMatchObject({ values: { count: 9 }, held: false });
   });
 
@@ -506,7 +517,9 @@ describe("what a verdict does to the rows a copy holds", () => {
     const type = await tableType();
     const item = await itemOf(type);
     const row = uuidv7();
-    await write(item, [{ op: "put", id: row, values: { count: 1, note: "a" } }]);
+    await write(item, [
+      { op: "put", id: row, values: { count: 1, note: "a" } },
+    ]);
     counter += 1;
     const store = newStore(`table-writes-kept-${String(counter)}`);
     const gate = new Gate(dirname(store), "gate-rows-event");
@@ -554,13 +567,10 @@ describe("what a verdict does to the rows a copy holds", () => {
       );
       expect(await shown()).toEqual({ [row]: { count: 5, note: "mine" } });
       gate.release("all");
-      await until(
-        async () => {
-          const held = value(await device.call<QueuedWrite[]>("queue"));
-          return held.length === 1;
-        },
-        "the queue holding the answered write",
-      );
+      await until(async () => {
+        const held = value(await device.call<QueuedWrite[]>("queue"));
+        return held.length === 1;
+      }, "the queue holding the answered write");
       expect(await shown()).toEqual({ [row]: { count: 5, note: "mine" } });
     } finally {
       gate.release("all");
@@ -572,7 +582,9 @@ describe("what a verdict does to the rows a copy holds", () => {
     const type = await tableType();
     const item = await itemOf(type);
     const row = uuidv7();
-    await write(item, [{ op: "put", id: row, values: { count: 1, note: "a" } }]);
+    await write(item, [
+      { op: "put", id: row, values: { count: 1, note: "a" } },
+    ]);
     const device = await holding(type, "unchanged");
     await write(item, [{ op: "patch", id: row, values: { note: "same" } }]);
     const mine = value(
@@ -595,7 +607,9 @@ describe("what a verdict does to the rows a copy holds", () => {
     const type = await tableType();
     const item = await itemOf(type);
     const row = uuidv7();
-    await write(item, [{ op: "put", id: row, values: { count: 1, note: "a" } }]);
+    await write(item, [
+      { op: "put", id: row, values: { count: 1, note: "a" } },
+    ]);
     const device = await holding(type, "refused");
     const mine = value(
       await device.writeRows(item, "steps", [
@@ -772,10 +786,9 @@ describe("how a drain sends row writes", () => {
       ]),
     );
     const report = value(await device.drain());
-    expect([verdictOf(report, before.id), verdictOf(report, after.id)]).toEqual([
-      "accepted",
-      "accepted",
-    ]);
+    expect([verdictOf(report, before.id), verdictOf(report, after.id)]).toEqual(
+      ["accepted", "accepted"],
+    );
     const [one, two] = [
       await queued(device, before.id),
       await queued(device, after.id),

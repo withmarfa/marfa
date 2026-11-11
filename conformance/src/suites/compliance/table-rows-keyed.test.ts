@@ -76,7 +76,11 @@ async function writer(type: string): Promise<Writer> {
 
 type Answer = Awaited<ReturnType<MarfaClient["rawRequest"]>>;
 
-function keyed(by: Writer, path: string, body?: unknown): () => Promise<Answer> {
+function keyed(
+  by: Writer,
+  path: string,
+  body?: unknown,
+): () => Promise<Answer> {
   const headers = { "Idempotency-Key": `rows-${randomUUID()}` };
   return () =>
     by.client.rawRequest<unknown>(path, {
@@ -130,7 +134,9 @@ describe("row writes under an Idempotency-Key", () => {
     const logged = await batches(item);
 
     expectReplay(await send(), first);
-    expect(await values(item)).toEqual({ [row]: { amount: 1, memo: "between" } });
+    expect(await values(item)).toEqual({
+      [row]: { amount: 1, memo: "between" },
+    });
     expect(await batches(item), "the repeat logged a batch").toBe(logged);
 
     const narrowed = await client.updateKey(actor.id, {
@@ -166,6 +172,8 @@ describe("row writes under an Idempotency-Key", () => {
 
     expectReplay(await send(), first);
     expect(await values(item)).toEqual({ [row]: { amount: 1 } });
-    expect(await batches(item), "the repeat undid the batch again").toBe(logged);
+    expect(await batches(item), "the repeat undid the batch again").toBe(
+      logged,
+    );
   });
 });
