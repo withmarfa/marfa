@@ -125,7 +125,7 @@ impl From<CoreError> for Cut {
 pub struct DrainVerdict {
     pub id: String,
     pub kind: WriteKind,
-    /// An edge write's source; otherwise the row written to.
+    /// An edge write's source; otherwise the item written to.
     pub item_id: Option<String>,
     pub edge_id: Option<String>,
     /// `None` where the write was sent and not answered.
@@ -529,7 +529,7 @@ fn first_succeeded(answer: &Answer) -> bool {
 
 /// Only some doors answer with an item: tags, metadata and extensions answer
 /// the sidecar they changed, a delete answers `{"ok": true}`, an edge the
-/// edge, and an upload the hash.
+/// edge, an upload the hash, and a row write each operation's outcome.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Shape {
     Item,
@@ -2566,10 +2566,9 @@ struct Settled {
     /// pass ends here.
     unavailable: Option<String>,
     conflicts: Vec<RowConflict>,
-    /// The writes sent in this one's batch, each as its share of the answer settled it.
+    /// The other writes of this one's batch.
     joined: Vec<DrainVerdict>,
-    /// The batch was refused for another write's operation, and this one goes
-    /// again at once in a batch of its own.
+    /// Refused for another write's operation, so this one goes again at once.
     again: bool,
 }
 

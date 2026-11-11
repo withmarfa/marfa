@@ -860,7 +860,7 @@ pub struct Attached {
 pub struct DrainVerdict {
     pub id: String,
     pub kind: WriteKind,
-    /// An edge write's source; otherwise the row written to.
+    /// An edge write's source; otherwise the item written to.
     pub item_id: Option<String>,
     pub edge_id: Option<String>,
     pub verdict: Option<Verdict>,

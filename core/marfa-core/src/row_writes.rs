@@ -1,9 +1,4 @@
-//! Row writes: each one batch for one table of one item, queued as the
-//! table's door takes it and laid over the rows of a table the copy holds
-//! whole (`device.md`, "Writing a table on a device").
-//!
-//! A row a laid write names keeps the server's row in `rows_beneath`, and
-//! `table_rows` holds the row with every laid write applied in queue order.
+//! Row writes, queued as a table's door takes them and laid over a table held whole.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -91,8 +86,7 @@ fn values_of(index: usize, value: Option<&Value>) -> Result<Map<String, Value>> 
     }
 }
 
-/// The operations as the server's door reads them, with an id minted for each
-/// `put` that names none, so the queued batch is the one sent every time.
+/// An id-less `put` is given one here, so every send is the same batch.
 fn operations(sent: &[Value]) -> Result<Vec<Op>> {
     if sent.is_empty() {
         return Err(CoreError::Invalid(
@@ -144,7 +138,6 @@ fn operations(sent: &[Value]) -> Result<Vec<Op>> {
         .collect()
 }
 
-/// A queued batch, which the queue holds only once judged.
 pub(crate) fn queued_ops(body: &Value) -> Result<Vec<Op>> {
     let sent = body
         .get("operations")
@@ -170,7 +163,6 @@ fn judge_values(
     })
 }
 
-/// A row as the copy holds it.
 #[derive(Clone, Debug, PartialEq)]
 struct Held {
     values: Map<String, Value>,
@@ -216,7 +208,7 @@ fn whole(conn: &Connection, item: &str, table: &str) -> Result<bool> {
     Ok(tables::state(conn, item, table)?.as_deref() == Some(tables::WHOLE))
 }
 
-/// The tables an item holds, by its type and, under `core.table`, its own columns.
+/// Its type's tables and, under `core.table`, its own.
 fn declared(conn: &Connection, item: &str) -> Result<Map<String, Value>> {
     let (type_id, properties): (String, String) = conn.query_row(
         "SELECT type, properties FROM items WHERE id = ?1",
@@ -258,8 +250,7 @@ fn refuse_unheld(
     Ok(())
 }
 
-/// The latest row write to the table not answered as taken, which this one
-/// goes after (`queue-and-verdicts/follows-write-ahead`).
+/// The row write this one follows (`queue-and-verdicts/follows-write-ahead`).
 fn row_write_ahead(conn: &Connection, item: &str, table: &str) -> Result<Option<String>> {
     Ok(conn
         .query_row(
@@ -313,8 +304,6 @@ fn enqueue(
         .ok_or_else(|| CoreError::Store("the queued write vanished".into()))
 }
 
-/// Judges the batch as the server would, against the copy's catalog and the
-/// rows it holds, and queues it laid over the table where the copy holds it whole.
 pub(crate) fn write(
     conn: &mut Connection,
     item: &str,
@@ -427,8 +416,7 @@ pub(crate) fn undo(
     Ok(queued)
 }
 
-/// The writes laid over a row, in queue order: waiting, or taken with a
-/// batch whose `rows.changed` has not been applied.
+/// Waiting, or taken with a batch whose `rows.changed` is not yet applied.
 fn laid_over(
     conn: &Connection,
     item: &str,
@@ -555,7 +543,6 @@ fn hold(conn: &Connection, item: &str, table: &str, id: &str, row: Option<&Held>
     Ok(())
 }
 
-/// Lays the writes laid over one row of a table held whole over the server's row.
 fn lay(conn: &Connection, item: &str, table: &str, id: &str) -> Result<()> {
     let laid = laid_over(conn, item, table, id)?;
     let under = beneath(conn, item, table, id)?;
@@ -598,8 +585,7 @@ pub(crate) fn lay_table(conn: &Connection, item: &str, table: &str) -> Result<()
     Ok(())
 }
 
-/// Lays again each row whose laid writes changed since, in the transaction
-/// that changed them or the next writer's.
+/// In a writer's transaction, after a row write's verdict changed.
 pub(crate) fn flush(conn: &Connection) -> Result<()> {
     let dirty: Vec<(String, String, String)> = {
         let mut query = conn.prepare_cached("SELECT item_id, name, id FROM rows_dirty")?;
@@ -623,9 +609,7 @@ pub(crate) fn flush(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// A row the server gave, from a `rows.changed` or a read of the rows one
-/// names, into a table the copy holds whole: beneath the writes laid over it,
-/// where there are any (`device/table-write-over-server`).
+/// Beneath the writes laid over the row, where any are (`device/table-write-over-server`).
 pub(crate) fn take_server_row(
     conn: &Connection,
     item: &str,
@@ -664,7 +648,6 @@ pub(crate) fn take_server_row(
     }
 }
 
-/// The table's rows are gone from the copy, so nothing is beneath them.
 pub(crate) fn forget_table(conn: &Connection, item: &str, table: &str) -> Result<()> {
     conn.execute(
         "DELETE FROM rows_beneath WHERE item_id = ?1 AND name = ?2",
@@ -688,8 +671,7 @@ pub(crate) fn forget_all(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// After applying a `rows.changed`: the writes laid until it are let go, and
-/// one a sent write is waiting to hear of is kept for its answer.
+/// A batch no laid write names is kept while a sent write awaits its answer.
 pub(crate) fn applied_batch(conn: &Connection, item: &str, table: &str, batch: &str) -> Result<()> {
     let released: Vec<String> = {
         let mut query = conn.prepare_cached(
@@ -724,16 +706,12 @@ pub(crate) fn applied_batch(conn: &Connection, item: &str, table: &str, batch: &
     Ok(())
 }
 
-/// One write's share of a batch's answer.
 pub(crate) struct Taken<'a> {
     pub write: &'a QueuedWrite,
     pub results: &'a [Value],
 }
 
-/// What a batch the server answered `200` leaves of each of its writes, sent
-/// and unanswered, and the columns each replaced unseen. `batch` is `None`
-/// where the batch changed no row, and `results` empty where the answer was
-/// not kept.
+/// `batch` is `None` where no row changed, `results` empty where no answer was kept.
 pub(crate) fn taken(
     conn: &Connection,
     item: &str,
@@ -804,9 +782,7 @@ pub(crate) fn taken(
     Ok(conflicts)
 }
 
-/// The columns `write` set, or the rows it deleted, whose value the copy last
-/// took from the server, with the writes taken before it laid over it,
-/// differs from what the copy showed when the write was made.
+/// Where the server's value before `write` differs from what the copy showed it.
 fn clashes(
     conn: &Connection,
     item: &str,

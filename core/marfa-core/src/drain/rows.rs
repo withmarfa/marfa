@@ -1,7 +1,4 @@
-//! Row writes on a table's door (`queue-and-verdicts.md`, "Row writes"). The
-//! writes to one table queued straight after each other go in one batch
-//! under the first one's key, and the batch is recorded on them before it is
-//! sent, so a batch sent again is the same request.
+//! Row writes in batches recorded before they go, so a resend is the same request.
 
 use std::collections::{HashMap, HashSet};
 
@@ -19,7 +16,6 @@ use crate::model::{QueuedWrite, RowConflict, Verdict, WriteKind};
 use crate::row_writes::{self, MAX_OPERATIONS, Taken};
 use crate::{Core, Result, store};
 
-/// What the pass has decided, which says which writes can join a batch.
 pub(super) struct Standing<'a> {
     pub rows: &'a HashMap<&'a str, &'a QueuedWrite>,
     pub answers: &'a HashMap<String, Option<Verdict>>,
@@ -36,14 +32,11 @@ fn operations_of(write: &QueuedWrite) -> Vec<Value> {
         .unwrap_or_default()
 }
 
-/// The writes sent in `lead`'s batch beside it, in queue order.
 pub(super) fn joined(conn: &Connection, lead: &str) -> Result<Vec<QueuedWrite>> {
     store::read_writes(conn, "WHERE batched_with = ?1", [lead])
 }
 
-/// The writes that go in `lead`'s batch beside it: those it was sent with,
-/// or, for a batch never sent, the row writes to the same table queued
-/// straight after it that are ready and never sent, within the bounds.
+/// As sent, or the ready row writes to the table queued straight after it.
 pub(super) fn gather(
     core: &Core,
     lead: &QueuedWrite,
@@ -109,7 +102,6 @@ pub(super) fn gather(
     Ok(members)
 }
 
-/// One request's body: the operations of each write, in order.
 pub(super) fn body(lead: &QueuedWrite, members: &[QueuedWrite]) -> String {
     let operations: Vec<Value> = std::iter::once(lead)
         .chain(members)
@@ -118,7 +110,7 @@ pub(super) fn body(lead: &QueuedWrite, members: &[QueuedWrite]) -> String {
     json!({ "operations": operations }).to_string()
 }
 
-/// In the transaction that marks the batch's first write sent.
+/// In the transaction that marks `lead` sent.
 pub(super) fn mark_joined(
     conn: &Connection,
     lead: &QueuedWrite,
@@ -316,8 +308,7 @@ fn operation_of(refused: &Answer) -> Option<usize> {
     usize::try_from(at).ok()
 }
 
-/// The server wrote none of the batch, so the write whose operation it
-/// refused is refused alone, and the others go again under a fresh key.
+/// The server wrote none of the batch, so only the named write is refused.
 fn split(
     core: &Core,
     lead: &QueuedWrite,
@@ -406,8 +397,7 @@ fn split(
     })
 }
 
-/// The key a refused batch went under, kept with the write so a late answer
-/// to it is not read as an answer to the batch sent next.
+/// Kept so a late answer to the refused batch is not read as the next one's.
 fn spend_key(conn: &Connection, write: &QueuedWrite) -> Result<()> {
     let spent: Option<String> = conn.query_row(
         "SELECT spent_keys FROM queue WHERE id = ?1",
@@ -430,8 +420,7 @@ fn spend_key(conn: &Connection, write: &QueuedWrite) -> Result<()> {
     Ok(())
 }
 
-/// An answer about the batch as a whole settles each write as it would one
-/// sent on its own.
+/// Settles each write as one sent alone.
 fn whole(
     core: &Core,
     lead: &QueuedWrite,

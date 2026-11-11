@@ -1179,22 +1179,18 @@ impl Core {
         tables::totals(self, item, table, filter)
     }
 
-    /// Queues one batch of `put`, `patch` and `delete` operations for a table,
-    /// laid over its rows where the copy holds it whole.
+    /// Laid over the table where the copy holds it whole.
     pub fn write_rows(&self, item: &str, table: &str, operations: &[Value]) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         row_writes::write(&mut *self.conn()?, item, table, operations)
     }
 
-    /// Queues an undo of a batch, which changes no row the copy holds until
-    /// its `rows.changed` arrives.
+    /// Changes no held row until its `rows.changed` arrives.
     pub fn undo_rows(&self, item: &str, table: &str, batch: &str) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         row_writes::undo(&mut *self.conn()?, item, table, batch)
     }
 
-    /// Lays again the rows whose row writes another call answered or took
-    /// out, where this is the store's writer.
     pub(crate) fn lay_rows(&self) -> Result<()> {
         if self.lock.handle() == Handle::Reader {
             return Ok(());

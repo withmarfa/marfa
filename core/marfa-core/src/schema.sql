@@ -166,10 +166,8 @@ CREATE TABLE IF NOT EXISTS rows_reread (
   PRIMARY KEY (item_id, name, id)
 ) WITHOUT ROWID;
 
--- Each row a row write names, with the write's operations on it. A write is
--- laid over the rows it names while it waits, and once taken with a batch
--- until the `rows.changed` naming that batch is applied, whether or not the
--- queue still holds it: `ops` and `seq` are kept here for that.
+-- Laid while its write waits, and once taken until the event naming `batch`,
+-- whether or not the queue still holds the write, so `ops` and `seq` are here.
 CREATE TABLE IF NOT EXISTS rows_laid (
   write_id TEXT NOT NULL,
   seq INTEGER NOT NULL,
@@ -184,8 +182,7 @@ CREATE TABLE IF NOT EXISTS rows_laid (
 CREATE INDEX IF NOT EXISTS rows_laid_row ON rows_laid (item_id, name, id);
 CREATE INDEX IF NOT EXISTS rows_laid_batch ON rows_laid (batch) WHERE batch IS NOT NULL;
 
--- The server's row beneath the writes laid over a row of a table held whole,
--- as the copy last took it. `body` is NULL where the server holds no row.
+-- The server's row beneath laid writes; `body` is NULL where it holds none.
 CREATE TABLE IF NOT EXISTS rows_beneath (
   item_id TEXT NOT NULL,
   name TEXT NOT NULL,
@@ -196,8 +193,7 @@ CREATE TABLE IF NOT EXISTS rows_beneath (
   PRIMARY KEY (item_id, name, id)
 ) WITHOUT ROWID;
 
--- The rows whose laid writes changed since they were last laid, laid again
--- before the next read of the copy (`row_writes::flush`).
+-- Laid again by `row_writes::flush`.
 CREATE TABLE IF NOT EXISTS rows_dirty (
   item_id TEXT NOT NULL,
   name TEXT NOT NULL,
@@ -205,8 +201,7 @@ CREATE TABLE IF NOT EXISTS rows_dirty (
   PRIMARY KEY (item_id, name, id)
 ) WITHOUT ROWID;
 
--- The batches of `rows.changed` a copy applied while a row write it had sent
--- was unanswered, so its answer naming one of them lays nothing to wait for it.
+-- Events applied while a sent row write was unanswered, so its answer waits for none.
 CREATE TABLE IF NOT EXISTS rows_seen (
   batch TEXT PRIMARY KEY,
   item_id TEXT NOT NULL,
@@ -275,9 +270,7 @@ CREATE TABLE IF NOT EXISTS queue (
   blob TEXT,
   -- The table a row write or an undo names.
   row_table TEXT,
-  -- The row write whose batch this one was sent in, set when it is sent, so a
-  -- batch sent again is the same, and cleared where a refusal or a block
-  -- leaves each write of it to go on its own.
+  -- The write whose batch this one went in; cleared when each goes on its own.
   batched_with TEXT,
   base_version INTEGER,
   -- `UNIQUE` because the server answers a reused key from the first write's
