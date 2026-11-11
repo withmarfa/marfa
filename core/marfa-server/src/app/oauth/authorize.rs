@@ -60,8 +60,7 @@ struct Asked {
 }
 
 impl Asked {
-    /// RFC 9700 section 4.11.2: open registration lets anyone name a web address, so an error goes
-    /// there only once the person's consent to it stands. Elsewhere the page names nothing of it.
+    /// RFC 9700 section 4.11.2: an unapproved web address gets a page naming none of the request.
     fn refused(&self, standing: bool, problem: &Problem) -> String {
         if !standing && !self.destination.reaches_no_website() {
             return format!("/auth/error?error={}", problem.error);
