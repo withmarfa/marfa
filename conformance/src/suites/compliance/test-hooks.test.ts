@@ -1,3 +1,4 @@
+import { signInOwnerWithPassword } from "../../client/owner-session.js";
 import { afterAll, describe, expect, it } from "vitest";
 import { controlRequest } from "../../utils/control-request.js";
 import {
@@ -165,13 +166,7 @@ describe("the test hooks", () => {
       try {
         const createdAt = async (server: FreshServer): Promise<number> => {
           const origin = new URL(server.apiUrl).origin;
-          const signedIn = await fetch(`${server.apiUrl}/auth/sign-in/email`, {
-            method: "POST",
-            headers: { "content-type": "application/json", origin },
-            body: JSON.stringify(TEST_OWNER),
-          });
-          expect(signedIn.status).toBe(200);
-          await signedIn.body?.cancel();
+          await signInOwnerWithPassword(server.apiUrl, origin, TEST_OWNER);
           const listed = await controlRequest(
             server.controlSocket,
             "/owner/sign-ins",
@@ -182,7 +177,7 @@ describe("the test hooks", () => {
           ).filter((row) => row.kind === "browser");
           return Math.max(...browsers.map((row) => Date.parse(row.created_at)));
         };
-        // The witness: with no offset the library's time is the system's.
+        // The witness: with no offset the sign-in's time is the system's.
         expect(Math.abs((await createdAt(level)) - Date.now())).toBeLessThan(
           10_000,
         );

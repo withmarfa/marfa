@@ -138,6 +138,44 @@ describe("a grant made or ended without the person asking", () => {
   });
 });
 
+describe("a sign-in's audit entry", () => {
+  it("names the owner as the resource of a sign-in and its refusal, and the sign-in as the resource of its end", async () => {
+    const count = async (action: string, resourceType: string) => {
+      const page = await management.listAudit({
+        action,
+        resource_type: resourceType,
+        limit: 200,
+      });
+      expect(page.status, JSON.stringify(page.error)).toBe(200);
+      return page.data.data.length;
+    };
+    const failedBefore = await count("auth.sign_in.failed", "owner");
+    const signedBefore = await count("auth.sign_in.success", "owner");
+    const endedBefore = await count("auth.session.delete", "sign_in");
+
+    const failed = await fetch(`${server.apiUrl}/auth/sign-in`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin },
+      body: JSON.stringify({ email: OWNER.email, password: "not it" }),
+    });
+    expect(failed.status).toBe(401);
+    const session = await signIn(server, origin);
+    const ended = await fetch(`${server.apiUrl}/auth/sign-out`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin, cookie: session },
+      body: "{}",
+    });
+    expect(ended.status).toBe(200);
+    expect(await ended.json()).toEqual({ ok: true });
+
+    expect(await count("auth.sign_in.failed", "owner")).toBe(failedBefore + 1);
+    expect(await count("auth.sign_in.success", "owner")).toBe(signedBefore + 1);
+    expect(await count("auth.session.delete", "sign_in")).toBe(endedBefore + 1);
+    // The filter narrows: no sign-in entry is filed under another resource.
+    expect(await count("auth.session.delete", "owner")).toBe(0);
+  });
+});
+
 describe("a security observation", () => {
   it("is in the audit log when a request a standing consent covers answers with a code", async () => {
     const app = await registerApp(server, NOTES);
@@ -151,7 +189,7 @@ describe("a security observation", () => {
 
   it("is in the audit log when the refusal of a failed sign-in answers", async () => {
     const before = await logged("auth.sign_in.failed");
-    const failed = await fetch(`${server.apiUrl}/auth/sign-in/email`, {
+    const failed = await fetch(`${server.apiUrl}/auth/sign-in`, {
       method: "POST",
       headers: { "content-type": "application/json", origin },
       body: JSON.stringify({ email: OWNER.email, password: "not it" }),

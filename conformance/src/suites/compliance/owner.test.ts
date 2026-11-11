@@ -74,7 +74,7 @@ describe("claiming the one owner", () => {
     expect(noProofOwner.status).toBe(401);
     expect(await errorCode(noProofOwner)).toBe("setup_proof_invalid");
     expect(
-      (await post("/auth/sign-in/email", OWNER, { origin: server.url })).status,
+      (await post("/auth/sign-in", OWNER, { origin: server.url })).status,
     ).toBe(401);
     expect((await fetch(`${server.url}/_control/setup/status`)).status).toBe(
       404,
@@ -375,7 +375,7 @@ describe("claiming the one owner", () => {
       owner_id: ownerId,
     });
     expect(Number.isNaN(Date.parse(owner.created_at))).toBe(false);
-    const login = await post("/auth/sign-in/email", OWNER, {
+    const login = await post("/auth/sign-in", OWNER, {
       origin: server.url,
     });
     expect(login.status).toBe(200);
@@ -435,7 +435,7 @@ describe("claiming the one owner", () => {
 
   it("recovers the existing owner and ends the old browser session", async () => {
     const password = "replacement owner password";
-    const other = await post("/auth/sign-in/email", OWNER, {
+    const other = await post("/auth/sign-in", OWNER, {
       origin: server.url,
     });
     expect(other.status).toBe(200);
@@ -451,15 +451,15 @@ describe("claiming the one owner", () => {
       expect(
         (
           await post(
-            "/auth/sign-in/email",
+            "/auth/sign-in",
             { ...OWNER, password: "incorrect owner password" },
             lockedAddress,
           )
         ).status,
       ).toBe(401);
-    expect(
-      (await post("/auth/sign-in/email", OWNER, lockedAddress)).status,
-    ).toBe(429);
+    expect((await post("/auth/sign-in", OWNER, lockedAddress)).status).toBe(
+      429,
+    );
     expect((await local("/_control/owner/recover", { password })).status).toBe(
       200,
     );
@@ -468,12 +468,12 @@ describe("claiming the one owner", () => {
         .status,
     ).toBe(401);
     expect(
-      (await post("/auth/sign-in/email", OWNER, { origin: server.url })).status,
+      (await post("/auth/sign-in", OWNER, { origin: server.url })).status,
     ).toBe(401);
     expect(
       (
         await post(
-          "/auth/sign-in/email",
+          "/auth/sign-in",
           { ...OWNER, password },
           { origin: server.url },
         )
@@ -487,7 +487,7 @@ describe("claiming the one owner", () => {
       ).status,
     ).toBe(401);
     expect(
-      (await post("/auth/sign-in/email", { ...OWNER, password }, lockedAddress))
+      (await post("/auth/sign-in", { ...OWNER, password }, lockedAddress))
         .status,
     ).toBe(200);
     expect(
@@ -513,7 +513,7 @@ describe("claiming the one owner", () => {
     expect(
       (
         await post(
-          "/auth/sign-in/email",
+          "/auth/sign-in",
           { ...OWNER, password: "replacement owner password" },
           { origin: server.url },
         )
@@ -564,7 +564,7 @@ async function withFreshInstance(
 const sessionCookies = (response: Response): string[] =>
   response.headers
     .getSetCookie()
-    .filter((value) => /session_token=/.test(value));
+    .filter((value) => value.includes("marfa_session="));
 const cookieHeader = (cookies: string[]): string =>
   cookies.map((value) => value.split(";")[0]).join("; ");
 /** What a cookie's attributes say, apart from its value and its clock-dependent expiry. */
@@ -625,7 +625,7 @@ describe("signing the owner in at the claim", () => {
           (await controlRequest(instance.controlSocket, "/owner")).body,
         ).toEqual(owner);
 
-        const login = await fetch(`${instance.url}/auth/sign-in/email`, {
+        const login = await fetch(`${instance.url}/auth/sign-in`, {
           method: "POST",
           headers: { "content-type": "application/json", origin },
           body: JSON.stringify(OWNER),
@@ -682,7 +682,7 @@ describe("signing the owner in at the claim", () => {
         expect(
           claimed.headers
             .getSetCookie()
-            .some((value) => /^marfa\.setup=;.*Max-Age=0/i.test(value)),
+            .some((value) => /^marfa_setup=;.*Max-Age=0/i.test(value)),
         ).toBe(true);
         const read = await fetch(`${instance.url}/owner/passkeys`, {
           headers: { cookie: cookieHeader(session) },
@@ -709,7 +709,7 @@ describe("signing the owner in at the claim", () => {
         expect(claimed.status).toBe(201);
         expect(sessionCookies(claimed)).toEqual([]);
         // The owner exists, so the missing cookie is the rule and not a failed claim.
-        const login = await fetch(`${instance.url}/auth/sign-in/email`, {
+        const login = await fetch(`${instance.url}/auth/sign-in`, {
           method: "POST",
           headers: {
             "content-type": "application/json",
@@ -733,7 +733,7 @@ describe("a claim whose sign-in fails", () => {
         const origin = instance.url;
         const address = { "x-conformance-client": "192.0.2.230" };
         const signIn = (password: string, headers: Record<string, string>) =>
-          fetch(`${instance.url}/auth/sign-in/email`, {
+          fetch(`${instance.url}/auth/sign-in`, {
             method: "POST",
             headers: { "content-type": "application/json", origin, ...headers },
             body: JSON.stringify({ ...OWNER, password }),

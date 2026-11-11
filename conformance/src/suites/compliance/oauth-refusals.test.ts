@@ -87,13 +87,13 @@ describe("GET /auth/device/consent", () => {
     verificationUri: string,
   ): Promise<{ origin: string; cookie: string }> {
     const origin = new URL(verificationUri).origin;
-    const signIn = await fetch(`${origin}/auth/sign-in/email`, {
+    const signIn = await fetch(`${origin}/auth/sign-in`, {
       method: "POST",
       headers: { "content-type": "application/json", origin },
       body: JSON.stringify(OWNER),
     });
     expect(signIn.status, `sign-in at ${server.apiUrl}`).toBe(200);
-    const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
+    const cookie = /(?:^|,\s*)([\w.-]*marfa_session=[^;]+)/.exec(
       signIn.headers.get("set-cookie") ?? "",
     )?.[1];
     expect(cookie, "the sign-in set no session cookie").toBeDefined();

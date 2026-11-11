@@ -62,7 +62,7 @@ async function signedIn(cookie: string): Promise<boolean> {
 function clearsSession(response: Response): boolean {
   return response.headers
     .getSetCookie()
-    .some((c) => /session_token=;|session_token=.*max-age=0/i.test(c));
+    .some((c) => /marfa_session=;|marfa_session=.*max-age=0/i.test(c));
 }
 
 /**

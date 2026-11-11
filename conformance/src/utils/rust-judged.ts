@@ -244,7 +244,6 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/search-matching.test.ts",
   "src/suites/compliance/search-ordering.test.ts",
   "src/suites/compliance/settings-seed.test.ts",
-  "src/suites/compliance/sign-in-library-routes.test.ts",
   "src/suites/compliance/sign-in-limits.test.ts",
   "src/suites/compliance/sign-in-surface.test.ts",
   "src/suites/compliance/source-filter-missing-source.test.ts",

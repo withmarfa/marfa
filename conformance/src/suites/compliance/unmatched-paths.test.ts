@@ -55,6 +55,19 @@ async function ask(
 
 const asKey = () => ({ Authorization: `Bearer ${apiKey}` });
 
+/** Like {@link ask}, for a path whose answer may not be JSON when it fails. */
+async function askAny(
+  method: string,
+  path: string,
+  headers: Record<string, string> = {},
+): Promise<{ status: number; code: string | undefined }> {
+  const res = await fetch(`${apiUrl}${path}`, { method, headers });
+  const body = (await res.json().catch(() => ({}))) as {
+    error?: { code?: string };
+  };
+  return { status: res.status, code: body.error?.code };
+}
+
 describe("a request no door serves", () => {
   it("answers a GET to a path no door serves 404 not_found in the envelope, to a caller with a credential and to one without", async () => {
     // The witness: a door that is served answers the same caller.
@@ -84,6 +97,27 @@ describe("a request no door serves", () => {
       const answer = await ask(method, path, headers);
       expect(answer.status, `${method} ${path}`).toBe(404);
       expect(answer.code, `${method} ${path}`).toBe("not_found");
+    }
+  });
+
+  it("answers a GET or POST under /auth/ that no door serves 404 not_found, and a method no door serves there", async () => {
+    // The witness: a door under /auth/ that is served answers.
+    expect((await askAny("GET", "/auth/sign-in")).status).toBe(200);
+
+    for (const [method, path] of [
+      ["GET", "/auth/no-such-door"],
+      ["POST", "/auth/no-such-door"],
+      ["GET", "/auth/get-session"],
+      ["POST", "/auth/sign-in/email"],
+      ["GET", "/auth/passkey/generate-authenticate-options"],
+      ["GET", "/auth/sign-out"],
+      ["GET", "/auth/passkeys/sign-in/options"],
+    ] as const) {
+      for (const headers of [{}, asKey()]) {
+        const answer = await askAny(method, path, headers);
+        expect(answer.status, `${method} ${path}`).toBe(404);
+        expect(answer.code, `${method} ${path}`).toBe("not_found");
+      }
     }
   });
 

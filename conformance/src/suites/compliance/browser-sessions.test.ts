@@ -60,7 +60,7 @@ afterAll(async () => {
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 async function signIn(userAgent = "browser-sessions"): Promise<string> {
-  const response = await fetch(`${server!.apiUrl}/auth/sign-in/email`, {
+  const response = await fetch(`${server!.apiUrl}/auth/sign-in`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -70,7 +70,7 @@ async function signIn(userAgent = "browser-sessions"): Promise<string> {
     body: JSON.stringify({ email: OWNER.email, password: OWNER.password }),
   });
   expect(response.status).toBe(200);
-  const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
+  const cookie = /(?:^|,\s*)([\w.-]*marfa_session=[^;]+)/.exec(
     response.headers.get("set-cookie") ?? "",
   )?.[1];
   expect(cookie, "sign-in set no session cookie").toBeTruthy();

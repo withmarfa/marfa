@@ -25,7 +25,7 @@ beforeAll(async () => {
     },
   });
   expect(moved.status, JSON.stringify(moved.body)).toBe(200);
-  const signedIn = await fetch(`${home.origin}/auth/sign-in/email`, {
+  const signedIn = await fetch(`${home.origin}/auth/sign-in`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: home.origin },
     body: JSON.stringify(TEST_OWNER),
@@ -72,10 +72,10 @@ function onLocalhost(): URL {
 async function registerPasskey(): Promise<void> {
   const base = onLocalhost();
   const origin = base.origin;
-  const asked = await fetch(
-    `${origin}/auth/passkey/generate-register-options`,
-    { headers: { Origin: origin, Cookie: ownerCookie } },
-  );
+  const asked = await fetch(`${origin}/auth/passkeys/registration/options`, {
+    method: "POST",
+    headers: { Origin: origin, Cookie: ownerCookie },
+  });
   expect(asked.status, await asked.clone().text()).toBe(200);
   const { challenge } = (await asked.json()) as { challenge: string };
   const cookies = [
@@ -83,7 +83,7 @@ async function registerPasskey(): Promise<void> {
     ...asked.headers.getSetCookie().map((value) => value.split(";")[0]),
   ].join("; ");
   const device = testAuthenticator();
-  const registered = await fetch(`${origin}/auth/passkey/verify-registration`, {
+  const registered = await fetch(`${origin}/auth/passkeys/registration`, {
     method: "POST",
     headers: {
       Origin: origin,
@@ -95,7 +95,7 @@ async function registerPasskey(): Promise<void> {
       response: device.registration(challenge, origin, base.hostname),
     }),
   });
-  expect(registered.status, await registered.clone().text()).toBe(200);
+  expect(registered.status, await registered.clone().text()).toBe(201);
 }
 
 const ELSEWHERE = "https://elsewhere.example";

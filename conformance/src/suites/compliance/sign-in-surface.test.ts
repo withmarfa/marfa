@@ -67,7 +67,7 @@ function postForm(
 }
 
 function signIn(password: string, address: string): Promise<Response> {
-  return fetch(`${server!.apiUrl}/auth/sign-in/email`, {
+  return fetch(`${server!.apiUrl}/auth/sign-in`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -158,6 +158,42 @@ describe("the sign-in surface", () => {
     );
   });
 
+  it("answers a password sign-in sent as JSON with only ok, and its session cookie", async () => {
+    const signedIn = await signIn(OWNER.password, "192.0.2.3");
+    expect(signedIn.status).toBe(200);
+    expect(await signedIn.json()).toEqual({ ok: true });
+    const line = signedIn.headers.get("set-cookie") ?? "";
+    expect(line).toMatch(/^marfa_session=[^;]+;/);
+    expect(line).toMatch(/;\s*HttpOnly/i);
+    expect(line).toMatch(/;\s*SameSite=Lax/i);
+    const cookie = line.split(";")[0];
+    const passkeys = await fetch(`${server!.apiUrl}/owner/passkeys`, {
+      headers: { cookie },
+    });
+    expect(passkeys.status).toBe(200);
+  });
+
+  it("refuses a password sign-in sent as JSON with a field it does not take, and sets no cookie", async () => {
+    const refused = await fetch(`${server!.apiUrl}/auth/sign-in`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin,
+        [CLIENT_HEADER]: "192.0.2.4",
+      },
+      body: JSON.stringify({ ...OWNER, rememberMe: false }),
+    });
+    expect(refused.status).toBe(400);
+    const body = (await refused.json()) as ErrorResponse & {
+      error: { details?: { unknown_body_fields?: string[] } };
+    };
+    expect(body.error.code).toBe("validation_error");
+    expect(body.error.details?.unknown_body_fields).toEqual(["rememberMe"]);
+    expect(refused.headers.get("set-cookie")).toBeNull();
+    // The witness: the same body without the field signs in.
+    expect((await signIn(OWNER.password, "192.0.2.4")).status).toBe(200);
+  });
+
   it("holds one address to ten attempts at an account, and leaves the owner signing in from another", async () => {
     const guesser = "203.0.113.10";
     for (let i = 0; i < 10; i++) {
@@ -220,7 +256,7 @@ describe("the sign-in surface", () => {
 
     const signedIn = await signIn(OWNER.password, "198.51.100.31");
     expect(signedIn.status).toBe(200);
-    const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
+    const cookie = /(?:^|,\s*)([\w.-]*marfa_session=[^;]+)/.exec(
       signedIn.headers.get("set-cookie") ?? "",
     )?.[1];
     expect(cookie).toBeDefined();
@@ -270,7 +306,7 @@ const NAVIGATION = {
 async function sessionCookie(address: string): Promise<string> {
   const signedIn = await signIn(OWNER.password, address);
   expect(signedIn.status).toBe(200);
-  const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
+  const cookie = /(?:^|,\s*)([\w.-]*marfa_session=[^;]+)/.exec(
     signedIn.headers.get("set-cookie") ?? "",
   )?.[1];
   expect(cookie).toBeDefined();

@@ -1002,10 +1002,10 @@ describe("the sign-in routes", () => {
   });
 
   it.each([
-    ["GET", "/auth/passkey/generate-register-options", 400],
-    ["GET", "/auth/passkey/generate-authenticate-options", 200],
-    ["POST", "/auth/passkey/verify-registration", 409],
-    ["POST", "/auth/passkey/verify-authentication", 500],
+    ["POST", "/auth/passkeys/registration/options", 400],
+    ["POST", "/auth/passkeys/sign-in/options", 200],
+    ["POST", "/auth/passkeys/registration", 409],
+    ["POST", "/auth/passkeys/sign-in", 500],
     ["GET", "/auth/owner/passkeys", 403],
     ["GET", "/auth/static/pages.js", 200],
   ])("recognises %s %s and its %i response", (method, path, status) => {

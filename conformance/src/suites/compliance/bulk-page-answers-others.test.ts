@@ -201,7 +201,7 @@ describe("a write that waits behind a bulk page", () => {
     );
 
     const attempt = track(
-      fetch(`${server.apiUrl}/auth/sign-in/email`, {
+      fetch(`${server.apiUrl}/auth/sign-in`, {
         method: "POST",
         headers: { "content-type": "application/json", origin },
         body: JSON.stringify({
