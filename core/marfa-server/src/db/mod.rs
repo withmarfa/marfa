@@ -62,7 +62,7 @@ impl Write {
     }
 }
 
-/// How long bookkeeping waits for a busy writer.
+/// The most bookkeeping waits for a busy writer, a long job running on it included.
 const BRIEF_WAIT: Duration = Duration::from_millis(100);
 
 pub struct Db {
@@ -134,7 +134,7 @@ impl Db {
         T: Send + 'static,
         F: FnOnce(&Transaction<'_>) -> Result<T> + Send + 'static,
     {
-        self.write_within(self.budget, write, job).await
+        self.write_within(self.budget, None, write, job).await
     }
 
     /// As `write`, for bookkeeping no request should wait on: a busy writer costs the write.
@@ -143,11 +143,17 @@ impl Db {
         T: Send + 'static,
         F: FnOnce(&Transaction<'_>) -> Result<T> + Send + 'static,
     {
-        self.write_within(self.budget.min(BRIEF_WAIT), write, job)
+        self.write_within(self.budget.min(BRIEF_WAIT), Some(BRIEF_WAIT), write, job)
             .await
     }
 
-    async fn write_within<T, F>(&self, budget: Duration, write: Write, job: F) -> Result<T>
+    async fn write_within<T, F>(
+        &self,
+        budget: Duration,
+        cap: Option<Duration>,
+        write: Write,
+        job: F,
+    ) -> Result<T>
     where
         T: Send + 'static,
         F: FnOnce(&Transaction<'_>) -> Result<T> + Send + 'static,
@@ -171,7 +177,7 @@ impl Db {
             ));
         }
         self.writer
-            .submit(write, budget, job)
+            .submit(write, budget, cap, job)
             .await
             .map_err(|refusal| self.with_budget(refusal, budget))
     }
