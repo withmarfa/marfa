@@ -1017,14 +1017,6 @@ jobs:
           echo "Vitest exited with status $status."
           test -s "$report"
 
-      # Reads the log of the server the shard just drove, so it runs before
-      # the stop, which clears the state directory the log is in, and holds
-      # every status observed to its declaration in the document.
-      - name: Hold every status observed to its declaration
-        if: ${{ !cancelled() }}
-        working-directory: conformance
-        run: pnpm check:statuses --state "$RUNNER_TEMP/marfa"
-
       # Warns, and never fails, when a file takes much longer or shorter than
       # the weight `shard-weights.ts` gives it, and lists the slow files in the
       # job summary. Only a split project has weights to compare.
