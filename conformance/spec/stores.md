@@ -112,6 +112,12 @@ While a copy sits in a store the configuration no longer names, the server MUST 
 
 **Tests:** `compliance/blob-store-folders.test.ts › keeps one store through a folder that holds its marker, and detaches it for a fresh folder`.
 
+### `stores/held-not-live`
+
+While a copy's object is one the server did not write, the server MUST NOT count it among the live copies a drop keeps at `min_copies`.
+
+**Tests:** `compliance/bucket-sharing.test.ts › refuses to drop the disk copy of each file a restore found in the bucket until it writes a copy of its own, and then drops it`.
+
 ### `stores/min-copies-reported`
 
 When a caller authorized by `instance.read` or local authority sends `GET /blobs/stores`, the server MUST answer `min_copies` as the instance's `blob_min_copies`, which is 1 unless set.
@@ -284,9 +290,9 @@ When a run of `blob-replicate` finds a blob that an attached store lacks and ano
 
 When a run of `blob-replicate` finds an attached object store whose copy of a blob is an object the server did not write, the server MUST write its own copy of the blob to that store.
 
-**Reason:** a copy whose object the server did not write does not count toward `min_copies` (`stores/drop-confirms-copies`).
+**Reason:** a copy whose object the server did not write does not count toward `min_copies` (`stores/held-not-live`).
 
-**Tests:** `compliance/bucket-sharing.test.ts › writes a copy of its own of each file a restore found in the bucket, and then drops the disk copy`.
+**Tests:** `compliance/bucket-sharing.test.ts › refuses to drop the disk copy of each file a restore found in the bucket until it writes a copy of its own, and then drops it`.
 
 ### `stores/replicate-verifies`
 
@@ -380,7 +386,7 @@ While a write or a deletion of a blob's bytes that the server stopped waiting fo
 
 ### `stores/drop-allowed`
 
-When a caller authorized by `blobs.manage` or local authority sends `DELETE /blobs/{hash}/copies/{store}` for a copy that an attached store holds, and at least `min_copies` live copies would remain, the server MUST answer `200`.
+When a caller authorized by `blobs.manage` or local authority sends `DELETE /blobs/{hash}/copies/{store}` for a copy that an attached store holds, and at least `min_copies` live copies, counted under `stores/detached-not-live` and `stores/held-not-live`, would remain, the server MUST answer `200`.
 
 **Tests:** `compliance/blob-rules.test.ts › drops a copy while the minimum holds and refuses the drop that would break it`, `› answers the drop door's refusals in their order`.
 
@@ -420,7 +426,7 @@ When the server answers a drop with `409 copies_below_minimum`, the server MUST 
 
 If a caller authorized by `blobs.manage` or local authority sends `DELETE /blobs/{hash}/copies/{store}`, and fewer than `min_copies` of the other live copies are confirmed by their stores, each asked within 15 seconds, then the server MUST answer `409 copies_below_minimum`.
 
-**Reason:** the copy record can name a copy its store no longer holds, such as one removed from the store by hand or lost with a disk. A drop that trusted the copy record could remove the last copy that holds the bytes. A store that fails or does not answer confirms nothing, and neither does an object store that answers with another store's marker (`stores/object-store-itself`) or for an object that does not name it (`stores/object-answer-names-store`). A copy whose object the server did not write confirms nothing either (`stores/delete-only-written`).
+**Reason:** the copy record can name a copy its store no longer holds, such as one removed from the store by hand or lost with a disk. A drop that trusted the copy record could remove the last copy that holds the bytes. A store that fails or does not answer confirms nothing, and neither does an object store that answers with another store's marker (`stores/object-store-itself`) or for an object that does not name it (`stores/object-answer-names-store`). A copy whose object the server did not write confirms nothing either (`stores/held-not-live`).
 
 **Tests:** `compliance/blob-rules.test.ts › refuses a drop the copy record allows when the other copy is gone from its store, and keeps the copy`.
 

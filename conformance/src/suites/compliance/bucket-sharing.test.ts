@@ -19,8 +19,9 @@ import {
  * Two servers on one prefix of one bucket, as when a server replaces another
  * that may still run, and a server started again on an image of its data
  * directory: each deletes only the objects it wrote (`stores/delete-only-written`
- * and `instance/backup-thinning-only-backups`), writes its own copy of a file a
- * restore found (`stores/replicate-own-copy`), and keeps the files a backup
+ * and `instance/backup-thinning-only-backups`), counts a file a restore found toward
+ * the minimum only once it writes its own copy (`stores/held-not-live` and
+ * `stores/replicate-own-copy`), and keeps the files a backup
  * in its folder names though its database never recorded that backup
  * (`instance/backup-found-keeps-files`).
  */
@@ -279,7 +280,7 @@ describe("two servers on one prefix", () => {
     }
   });
 
-  it("writes a copy of its own of each file a restore found in the bucket, and then drops the disk copy", async () => {
+  it("refuses to drop the disk copy of each file a restore found in the bucket until it writes a copy of its own, and then drops it", async () => {
     const store = ownObjectStore();
     const bucket = bucketAt(store.S3_PREFIX);
     const first = await boot("bucket-own-first", store);
@@ -299,21 +300,30 @@ describe("two servers on one prefix", () => {
     expect(firsts.length).toBe(1);
 
     const second = await boot("bucket-own-second", store);
+    const { operator } = clientsFor(second);
+    const stores = (await operator.listBlobStores()).data.data;
+    const disk = stores.find((found) => found.kind === "disk")!;
+    const s3 = stores.find((found) => found.kind === "s3")!;
+    // The restore wakes replication, which waits here until the drop is refused.
+    await second.setFault("hold:housekeeping:blob-replicate");
     const restored = await ownerOf(second).restoreBackup(
       firstId,
       backup.data.backup.name,
     );
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
     expect(restored.data.blobs_missing).toEqual([]);
-    const { operator } = clientsFor(second);
+    await second.waitForHold("hold:housekeeping:blob-replicate");
+    const early = await operator.deleteBlobCopy(kept.hash, disk.id);
+    expect(early.status).toBe(409);
+    expect(early.error?.error.code).toBe("copies_below_minimum");
+    expect(await objects()).toEqual(firsts);
+    await second.clearFault();
+
     await replicated(operator);
     const both = await objects();
     expect(both.length).toBe(2);
     expect(both).toEqual(expect.arrayContaining(firsts));
 
-    const stores = (await operator.listBlobStores()).data.data;
-    const disk = stores.find((found) => found.kind === "disk")!;
-    const s3 = stores.find((found) => found.kind === "s3")!;
     const drop = await operator.deleteBlobCopy(kept.hash, disk.id);
     expect(drop.status, JSON.stringify(drop.error)).toBe(200);
     expect(await download(second, kept.hash)).toEqual({
