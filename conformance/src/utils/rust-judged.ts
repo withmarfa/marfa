@@ -37,6 +37,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/archive-scalars.test.ts",
   "src/suites/compliance/attendees.test.ts",
   "src/suites/compliance/audit-jobs.test.ts",
+  "src/suites/compliance/audit-server-writes.test.ts",
   "src/suites/compliance/audit.test.ts",
   "src/suites/compliance/auth-grants.test.ts",
   "src/suites/compliance/auth.test.ts",

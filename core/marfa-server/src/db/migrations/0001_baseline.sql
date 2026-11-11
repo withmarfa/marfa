@@ -857,8 +857,8 @@ BEGIN
     WHERE kind = 'edge' AND seq = NEW.seq;
 END;
 
--- Digests an open `update_properties` job's patch names: each keeps its blob as a reference
--- does, and lends no read.
+-- Digests the properties an open `update_properties` or `type_move` job writes name: each keeps
+-- its blob as a reference does, and lends no read.
 CREATE TABLE IF NOT EXISTS blob_job_holds (
     hash TEXT NOT NULL,
     job_id TEXT NOT NULL REFERENCES bulk_jobs (id) ON DELETE CASCADE,

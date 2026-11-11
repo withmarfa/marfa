@@ -731,7 +731,7 @@ pub fn verified(
     Ok(stamped > 0)
 }
 
-/// Whether something keeps the blob `{hash}` names: a row's reference or an open job's patch.
+/// Whether something keeps the blob `{hash}` names: a row's reference or an open job's properties.
 fn kept(hash: &str) -> String {
     format!(
         "(EXISTS (SELECT 1 FROM blob_references r WHERE r.hash = {hash}) \
@@ -739,7 +739,7 @@ fn kept(hash: &str) -> String {
     )
 }
 
-/// The job's patch keeps each digest it names until the job ends.
+/// An open job's properties keep each digest they name until the job ends.
 pub fn hold_for_job(tx: &Transaction<'_>, job_id: &str, hash: &str) -> Result<()> {
     tx.prepare_cached(
         "INSERT INTO blob_job_holds (hash, job_id) VALUES (?1, ?2) \

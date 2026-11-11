@@ -3,7 +3,7 @@
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 use serde_json::Value;
 
-use super::{Action, Queued};
+use super::Queued;
 use crate::app::access::Maker;
 use crate::app::blobs::references;
 use crate::app::clock::{Unread, readable};
@@ -130,7 +130,7 @@ pub fn insert(
             at
         ],
     )?;
-    if let Action::UpdateProperties { patch } = &queued.action {
+    if let Some(patch) = queued.action.patch() {
         references::hold_for_job(tx, id, patch)?;
     }
     let mut statement = tx.prepare_cached(
