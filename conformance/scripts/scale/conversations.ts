@@ -306,6 +306,7 @@ export async function conversations(): Promise<void> {
             "Content-Type": "text/plain",
           },
           body: text,
+          signal: AbortSignal.timeout(900_000),
         }),
       );
       mustOk("uploading a file", blob, 201);
@@ -691,6 +692,7 @@ export async function conversations(): Promise<void> {
       const bytes = await timedAnswer(() =>
         fetch(`${restoreInto.url}/blobs/${content.hash}`, {
           headers: { Authorization: `Bearer ${restoreInto.key}` },
+          signal: AbortSignal.timeout(900_000),
         }),
       );
       const wrong = judgeBlob(bytes, content.text);
