@@ -677,16 +677,20 @@ pub(crate) fn lengthen_log_interval(conn: &Connection) -> Result<i64, CoreError>
     Ok(kept)
 }
 
-/// Gives back the interval `kept` and, where `done`, empties the log into the
-/// store without waiting on a reader that holds it.
-pub(crate) fn restore_log_interval(
-    conn: &Connection,
-    kept: i64,
-    done: bool,
-) -> Result<(), CoreError> {
+/// Gives back the interval `kept` and empties the log into the store without
+/// waiting on a reader that holds it. Emptying the log only saves its size, so
+/// a failure there is a warning and never the caller's.
+pub(crate) fn restore_log_interval(conn: &Connection, kept: i64) -> Result<(), CoreError> {
     conn.execute_batch(&format!("PRAGMA wal_autocheckpoint = {kept}"))?;
-    if done {
-        crate::reclaim::without_waiting(conn, || crate::reclaim::checkpointed(conn))?;
+    let emptied = (|| {
+        #[cfg(debug_assertions)]
+        if crate::fault::fails(|| "hydration-checkpoint") {
+            return Err(CoreError::Store("hydration-checkpoint".into()));
+        }
+        crate::reclaim::without_waiting(conn, || crate::reclaim::checkpointed(conn))
+    })();
+    if let Err(error) = &emptied {
+        crate::telemetry::unemptied!(error);
     }
     Ok(())
 }
@@ -7407,7 +7411,7 @@ mod tests {
             std::fs::metadata(&log).unwrap().len() > 4_000_000,
             "the log held what was written"
         );
-        super::restore_log_interval(&conn, kept, true).unwrap();
+        super::restore_log_interval(&conn, kept).unwrap();
         assert_eq!(interval(&conn), kept);
         assert_eq!(std::fs::metadata(&log).unwrap().len(), 0);
     }

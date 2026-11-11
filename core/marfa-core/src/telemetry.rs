@@ -58,6 +58,15 @@ pub(crate) mod live {
         );
     }
 
+    /// A log that could not be emptied into the store after a hydration, which
+    /// only leaves it larger than it need be.
+    pub(crate) fn unemptied(error: &CoreError) {
+        tracing::warn!(
+            code = error.code(),
+            "the log could not be emptied into the store"
+        );
+    }
+
     /// Ends the span of one request that got no answer. An error that ends
     /// the operation is recorded by the operation, once; one it carries on
     /// past is a warning here.
@@ -197,7 +206,22 @@ macro_rules! unrelinked {
     }};
 }
 
-pub(crate) use {degraded, ended, operation, record, unrelinked, unsynced};
+/// A log that could not be emptied into the store, given as a `&CoreError`.
+#[cfg(feature = "telemetry")]
+macro_rules! unemptied {
+    ($error:expr) => {
+        $crate::telemetry::live::unemptied($error)
+    };
+}
+
+#[cfg(not(feature = "telemetry"))]
+macro_rules! unemptied {
+    ($error:expr) => {{
+        let _ = $error;
+    }};
+}
+
+pub(crate) use {degraded, ended, operation, record, unemptied, unrelinked, unsynced};
 
 /// The subscriber of the thread that made it, for work it hands to a thread
 /// of its own: a host that installed one for that thread alone would

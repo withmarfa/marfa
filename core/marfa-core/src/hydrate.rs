@@ -768,7 +768,7 @@ fn attempt(
     })();
     let settled = core
         .conn()
-        .and_then(|conn| store::restore_log_interval(&conn, kept_interval, result.is_ok()));
+        .and_then(|conn| store::restore_log_interval(&conn, kept_interval));
     let attempt =
         result.map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))?;
     settled?;
