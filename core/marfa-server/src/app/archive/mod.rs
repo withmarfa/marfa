@@ -416,6 +416,7 @@ fn select(
             break;
         };
         after = *last;
+        read.hydrating();
         let rows = items::archived(read.tx, caller, catalog, &read.read_only, &seqs, true)?;
         for row in rows {
             let line = line_value(&row.line)?;

@@ -89,9 +89,9 @@ pub fn refuse_inexact_integers(text: &str) -> Result<(), RuleError> {
     }
 }
 
-/// A path is named from inside the bag; `bag` of `None` covers the whole object.
+/// The first such number is named, its path from inside the bag; `bag` of `None` covers the whole object.
 pub fn refuse_inexact_integers_in(text: &str, bag: Option<&str>) -> Result<(), RuleError> {
-    let found = inexact_integers(text, bag.as_ref().map(std::slice::from_ref), false);
+    let found = inexact_integers(text, bag.as_ref().map(std::slice::from_ref), true);
     if found.is_empty() {
         return Ok(());
     }
@@ -100,7 +100,7 @@ pub fn refuse_inexact_integers_in(text: &str, bag: Option<&str>) -> Result<(), R
 
 /// As [`refuse_inexact_integers_in`], for a bag nested at `bag`, a path of member names from the root.
 pub fn refuse_inexact_integers_under(text: &str, bag: &[&str]) -> Result<(), RuleError> {
-    let found = inexact_integers(text, Some(bag), false);
+    let found = inexact_integers(text, Some(bag), true);
     if found.is_empty() {
         return Ok(());
     }
@@ -279,11 +279,11 @@ mod tests {
     }
 
     #[test]
-    fn a_bag_is_judged_alone_and_each_path_is_named_from_inside_it() {
+    fn a_bag_is_judged_alone_and_the_first_path_is_named_from_inside_it() {
         let text = r#"{"version": 9007199254740993, "properties": {"a": [1, 1152921504606846976], "b": -0}, "capture_latitude": -0}"#;
         let refused = refuse_inexact_integers_in(text, Some("properties")).unwrap_err();
         let paths: Vec<&str> = refused.fields.iter().map(|f| f.path.as_str()).collect();
-        assert_eq!(paths, ["a.1", "b"]);
+        assert_eq!(paths, ["a.1"]);
         assert!(
             refuse_inexact_integers_in(r#"{"version": -0, "properties": {}}"#, Some("properties"))
                 .is_ok()
@@ -292,7 +292,7 @@ mod tests {
     }
 
     #[test]
-    fn a_nested_bag_is_judged_alone_and_each_path_is_named_from_inside_it() {
+    fn a_nested_bag_is_judged_alone_and_the_first_path_is_named_from_inside_it() {
         let text = r#"{"id": 1152921504606846976, "params": {"arguments": {"version": 9007199254740993, "properties": {"a": [1, 1152921504606846976]}}}}"#;
         let bag = ["params", "arguments", "properties"];
         let refused = refuse_inexact_integers_under(text, &bag).unwrap_err();

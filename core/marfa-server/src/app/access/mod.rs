@@ -442,12 +442,12 @@ impl Caller {
         match self {
             Caller::Local(_) => json!({ "kind": "local", "id": "local", "name": "Local command" }),
             Caller::Server => json!({ "kind": "server", "id": "server", "name": "Marfa" }),
-            Caller::Key(key) => json!({ "kind": "key", "id": key.id, "name": key.label }),
+            Caller::Key(key) => json!({ "kind": "key", "id": key.id, "name": key.shown_name() }),
             Caller::Owner(session) => {
                 json!({ "kind": "browser", "id": session.id, "name": session.name() })
             }
             Caller::App { key, grant } => {
-                json!({ "kind": "app", "id": grant.grant_id, "name": key.label })
+                json!({ "kind": "app", "id": grant.grant_id, "name": key.shown_name() })
             }
         }
     }

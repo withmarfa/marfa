@@ -157,10 +157,10 @@ describe("tags", () => {
     expect(await selected([red, blue])).toEqual([both]);
   });
 
-  it("ignores a blank entry of a tags list on the search", async () => {
+  it("ignores a blank entry of a tags list on the listing, the stats and the search", async () => {
     const word = `tagsblank${ctx.runId}`;
-    const red = `red-${ctx.runId}`;
-    const blue = `blue-${ctx.runId}`;
+    const red = `blank-red-${ctx.runId}`;
+    const blue = `blank-blue-${ctx.runId}`;
     const seed = async (tags: string[]): Promise<string> => {
       const made = await client.createItem(
         createNote({
@@ -177,7 +177,21 @@ describe("tags", () => {
     const onlyRed = await seed([red]);
     await seed([]);
 
-    const hits = async (tags: string): Promise<string[]> => {
+    const listed = async (tags: string): Promise<string[]> => {
+      const page = await client.rawRequest<{ data: { id: string }[] }>(
+        `/items?tags=${tags}`,
+      );
+      expect(page.status, tags).toBe(200);
+      return page.data.data.map((row) => row.id).sort();
+    };
+    const counted = async (tags: string): Promise<number> => {
+      const stats = await client.rawRequest<Record<string, number>>(
+        `/items/stats?tags=${tags}`,
+      );
+      expect(stats.status, tags).toBe(200);
+      return Object.values(stats.data).reduce((sum, count) => sum + count, 0);
+    };
+    const searched = async (tags: string): Promise<string[]> => {
       const page = await client.rawRequest<{
         data: { item: { id: string } }[];
       }>(`/search?q=${word}&tags=${tags}`);
@@ -186,12 +200,21 @@ describe("tags", () => {
     };
     const tagged = [both, onlyRed].sort();
     const name = encodeURIComponent(red);
-    expect(await hits(name)).toEqual(tagged);
+    // The witness: the list with no blank entry selects the tagged items on
+    // each door, so an empty answer below is the blank entry's doing.
+    expect(await listed(name)).toEqual(tagged);
+    expect(await counted(name)).toBe(tagged.length);
+    expect(await searched(name)).toEqual(tagged);
     for (const tags of [`${name},`, `,${name}`, `${name},,`, `${name},%20`]) {
-      expect(await hits(tags), tags).toEqual(tagged);
+      expect(await listed(tags), tags).toEqual(tagged);
+      expect(await counted(tags), tags).toBe(tagged.length);
+      expect(await searched(tags), tags).toEqual(tagged);
     }
     // A real entry beside the blank one still narrows.
-    expect(await hits(`${name},${encodeURIComponent(blue)},`)).toEqual([both]);
+    const narrowed = `${name},${encodeURIComponent(blue)},`;
+    expect(await listed(narrowed)).toEqual([both]);
+    expect(await counted(narrowed)).toBe(1);
+    expect(await searched(narrowed)).toEqual([both]);
   });
 
   it("tags persist across getItem calls", async () => {

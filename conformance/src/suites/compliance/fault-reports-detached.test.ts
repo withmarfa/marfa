@@ -1,5 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { MarfaClient } from "../../client/api.js";
+import { controlRequest } from "../../utils/control-request.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -53,10 +55,41 @@ async function logged(): Promise<Record<string, unknown>[]> {
     .map((text) => JSON.parse(text) as Record<string, unknown>);
 }
 
+function reportsFailure(entry: Record<string, unknown>): boolean {
+  return JSON.stringify(entry).includes("Database operation failed");
+}
+
 describe("a fault that ends a response body after the response began", () => {
   it("logs a database failure after the response began with its SQLite code, and none of the statement, the driver's message or the values", async () => {
     // A filter value that only the statement holds: it is bound to the read.
     const sentinel = `source-${randomBytes(9).toString("hex")}`;
+    // Enough items for the export to read several pages, so a later page is
+    // read once the response has begun.
+    const minted = await controlRequest(server!.controlSocket, "/keys", {
+      method: "POST",
+      body: {
+        label: "detached writer",
+        source: sentinel,
+        permissions: [],
+        type_permissions: { "*": "write" },
+      },
+    });
+    expect(minted.status, JSON.stringify(minted.body)).toBe(201);
+    const writing = new MarfaClient({
+      baseUrl: server!.apiUrl,
+      apiKey: minted.body.key as string,
+    });
+    for (const first of [0, 500]) {
+      const written = await writing.bulkItems({
+        atomic: false,
+        items: Array.from({ length: 500 }, (_, index) => ({
+          type: "core.note",
+          properties: { body: `detached ${String(first + index)}` },
+        })),
+      });
+      expect(written.ok, JSON.stringify(written.error)).toBe(true);
+      expect(written.data.counts.created).toBe(500);
+    }
     const exportOf = () =>
       fetch(`${server!.apiUrl}/export?source=${sentinel}`, {
         headers: { Authorization: `Bearer ${server!.workingKey}` },
@@ -66,12 +99,14 @@ describe("a fault that ends a response body after the response began", () => {
     // nothing of a failure.
     const served = await exportOf();
     expect(served.status).toBe(200);
-    await served.text();
     expect(
-      (await logged()).some((line) => line.message === "Export stream failed"),
-    ).toBe(false);
+      (await served.text())
+        .split("\n")
+        .filter((text) => text.includes('"item"')).length,
+    ).toBe(1_000);
+    expect((await logged()).some(reportsFailure)).toBe(false);
 
-    await server!.setFault("fail:export-read");
+    await server!.setFault("fail:export-read=2");
     const response = await exportOf();
     // The response has begun: its status is out, and the failure ends the body.
     expect(response.status).toBe(200);
@@ -82,12 +117,9 @@ describe("a fault that ends a response body after the response began", () => {
     expect(acted?.fired).toBe(1);
 
     const line = await until("the export's log line", async () =>
-      (await logged()).find(
-        (entry) => entry.message === "Export stream failed",
-      ),
+      (await logged()).find(reportsFailure),
     );
     expect(line.level).toBe("error");
-    expectFixedFailure(String(line.error), CODE, FORBIDDEN);
     expectFixedFailure(JSON.stringify(line), CODE, FORBIDDEN);
     const log = await serverLog();
     expect(log).not.toContain(sentinel);

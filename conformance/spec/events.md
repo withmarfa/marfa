@@ -1722,6 +1722,81 @@ While the subscriptions of one maker have receivers that do not answer, the serv
 
 `GET /audit` lists what the server recorded about the writes the events above announce, and about the exports it accepts.
 
+Each entry names what it records in `action`. The table gives the `action` of each write the audit log records for items, edges, types, sources, keys, settings, webhooks, connectors, exports and tables, and of each job the server runs on itself, with the `kind` that `events/audit-kind` sorts it under. The actions of a sign-in, of an OAuth client and of the owner's account (its profile, its passkeys and its setup code) are not in it, and `events/audit-kind` sorts them by their first part.
+
+| Action                       | Written when                                                                    | Kind           |
+| ---------------------------- | ------------------------------------------------------------------------------- | -------------- |
+| `item.create`                | A write creates an item.                                                        | `data`         |
+| `item.update`                | A write changes an item.                                                        | `data`         |
+| `item.tag`                   | A tag operation adds tags to an item.                                           | `data`         |
+| `item.untag`                 | A tag operation removes a tag from an item.                                     | `data`         |
+| `item.metadata.replace`      | A tag operation replaces the tags of an item.                                   | `data`         |
+| `extension.set`              | A write sets an extension namespace of an item.                                 | `data`         |
+| `extension.delete`           | A write deletes an extension namespace of an item.                              | `data`         |
+| `item.transition`            | A transition moves an item to another state.                                    | `data`         |
+| `item.delete`                | A delete moves an item to the bin.                                              | `data`         |
+| `items.trash`                | A request moves items to the bin by their IDs.                                  | `data`         |
+| `item.restore`               | A restore takes an item out of the bin.                                         | `data`         |
+| `item.purge`                 | A purge destroys an item.                                                       | `data`         |
+| `items.bulk`                 | A write of `POST /items/bulk` commits an entry or an atomic page.               | `data`         |
+| `items.tombstones`           | A request settles the tombstones of a source's items.                           | `data`         |
+| `edge.create`                | A write creates an edge.                                                        | `data`         |
+| `edge.update`                | A write changes an edge.                                                        | `data`         |
+| `edge.delete`                | A write deletes an edge.                                                        | `data`         |
+| `edges.bulk`                 | A write of `POST /edges/bulk` commits an entry or an atomic page.               | `data`         |
+| `rows.write`                 | A batch changes the rows of a table.                                            | `data`         |
+| `rows.undo`                  | An undo puts back the rows a batch changed.                                     | `data`         |
+| `type.register`              | A write registers a type.                                                       | `data`         |
+| `type.replace`               | A write replaces a type.                                                        | `data`         |
+| `type.delete`                | A write deletes a type.                                                         | `data`         |
+| `type.icon.set`              | The owner sets the icon of a type.                                              | `data`         |
+| `type.icon.clear`            | The owner clears the icon of a type.                                            | `data`         |
+| `edge_type.register`         | A write registers an edge type.                                                 | `data`         |
+| `edge_type.update`           | A write changes an edge type.                                                   | `data`         |
+| `edge_type.delete`           | A write deletes an edge type.                                                   | `data`         |
+| `source.update`              | A write changes a source.                                                       | `data`         |
+| `export.run`                 | The server accepts an export.                                                   | `data`         |
+| `restore_archive`            | The owner restores an archive.                                                  | `data`         |
+| `blob.upload`                | A caller uploads a blob.                                                        | `data`         |
+| `mcp.file_fetch`             | An MCP tool fetches a file from an address.                                     | `data`         |
+| `items.bulk_action`          | A bulk action is queued.                                                        | `data`         |
+| `items.bulk_action.chunk`    | A bulk action commits a chunk.                                                  | `data`         |
+| `items.bulk_action.cancel`   | A queued bulk action is cancelled.                                              | `data`         |
+| `key.create`                 | A key is created.                                                               | `access`       |
+| `key.update`                 | A key is changed.                                                               | `access`       |
+| `key.revoke`                 | A key is revoked.                                                               | `access`       |
+| `owner.claimed`              | The owner claims the instance.                                                  | `access`       |
+| `config.update`              | A write changes the instance's configuration.                                   | `settings`     |
+| `webhook.create`             | A webhook is created.                                                           | `settings`     |
+| `webhook.update`             | A webhook is changed.                                                           | `settings`     |
+| `webhook.delete`             | A webhook is deleted.                                                           | `settings`     |
+| `webhook.delivery.redeliver` | A failed delivery is queued again.                                              | `settings`     |
+| `connector.register`         | A connector is registered.                                                      | `settings`     |
+| `connector.delete`           | A connector is deleted.                                                         | `settings`     |
+| `connector_state.delete`     | A connector's state is deleted.                                                 | `settings`     |
+| `inbound_endpoint.create`    | An inbound endpoint is created.                                                 | `settings`     |
+| `inbound_endpoint.retire`    | An inbound endpoint is retired.                                                 | `settings`     |
+| `items.trash_purged`         | The trash retention job purges items that stayed in the bin past the retention. | `housekeeping` |
+| `items.feed_expired`         | The feed expiry job moves expired feed items to the bin.                        | `housekeeping` |
+| `item.versions_thinned`      | The version thinning job removes versions of an item.                           | `housekeeping` |
+| `item.enrich`                | The enrichment sweep writes what it read from a file to an item.                | `housekeeping` |
+| `keys.purged`                | The credential clean-up removes keys revoked long ago.                          | `housekeeping` |
+| `blob.purge`                 | The blob orphan sweep purges a blob no item holds.                              | `housekeeping` |
+| `blob.copy_struck`           | The server strikes a copy of a blob that a store lost or damaged.               | `housekeeping` |
+| `blob.copy_dropped`          | A caller with `blobs.manage` drops a blob's copy from a store.                  | `housekeeping` |
+| `blob.copy_replicated`       | The server places a copy of a blob in another store.                            | `housekeeping` |
+| `auth.grants.purged`         | The credential clean-up removes grants withdrawn long ago.                      | `housekeeping` |
+| `auth.grant.retired`         | The credential clean-up retires a grant left idle.                              | `housekeeping` |
+| `auth.clients.purged`        | The credential clean-up removes idle OAuth clients that registered themselves.  | `housekeeping` |
+
+### `events/audit-action-names`
+
+When the server records an audit entry for a write or a job in the table above, the server MUST give the entry the `action` the table names for it.
+
+**Reason:** a client filters `GET /audit` by `action` (`events/audit-filter`), and a second server that names an action otherwise answers a different log.
+
+**Tests:** `compliance/audit.test.ts › records a write with the acting key, the resource and the action`, `› filters by action and resource type with an excluded control`, `› records export.run before the export's stream begins, and none for an export it refuses`, `compliance/audit-actions.test.ts › names each write of an item with the action the table gives it`, `› names a transition and a bulk write with the action the table gives it`, `› names each write of an edge and of an edge type with the action the table gives it`, `› names each write of a type with the action the table gives it`, `› names the writes of a key and of a webhook with the action the table gives it`, `› names the writes of a connector and of an upload with the action the table gives it`, `› names an export with the action the table gives it`, `compliance/type-icons.test.ts › records the owner's icon change in the audit log`, `compliance/audit-jobs.test.ts › records the enqueue and each committed chunk of a job, and nothing for a dry run`, `› records the cancellation of a queued job, and none for a cancel that changes nothing`.
+
 ### `events/audit-records-write`
 
 When a credential's write commits, other than a connector's heartbeat, run report, hold, hold release, state write or agreement write, a folder-copy status report (`PUT /folders/{id}/status`), or an inbound delivery's receipt or handled mark, the server MUST record an entry at `GET /audit` naming the credential as `key_id` (`owner:<session ID>` for an owner browser session, `local:process` for the private local process), the `action`, the `resource_type`, the `resource_id` and the `details`.
@@ -1868,7 +1943,7 @@ The server MUST filter `GET /audit` by `action`, `resource_type` and `resource_i
 
 ### `events/audit-kind`
 
-The server MUST filter `GET /audit` by `kind`, which sorts every entry into one of `access`, `data`, `settings` or `housekeeping` from its `action`, so that each entry is of exactly one kind.
+The server MUST filter `GET /audit` by `kind`, which sorts every entry into one of `access`, `data`, `settings` or `housekeeping` from its `action`, as the table of audit actions gives, and by the part of the `action` before its first period for an action the table does not list: `access` for `auth`, `owner`, `key`, `keys`, `instance`, `profile` and `folder`, `settings` for `config`, `webhook`, `connector`, `connector_state` and `inbound_endpoint`, and `data` for the rest, so that each entry is of exactly one kind.
 
 **Reason:** `kind` lets a reader ask for one area of activity at a time. `access` holds sign-ins, accounts, keys, folders and the owner's profile; `settings` holds configuration, webhooks and connectors; `housekeeping` holds what Marfa does on its own; `data` holds the rest.
 

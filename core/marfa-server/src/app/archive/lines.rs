@@ -62,6 +62,7 @@ async fn item_page(
         let seqs: Vec<i64> = chosen[..taken].iter().map(|next| next.seq).collect();
         let mut whole = true;
         let mut text = String::new();
+        read.hydrating();
         let rows = items::archived(
             read.tx,
             &admitted,

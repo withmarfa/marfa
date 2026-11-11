@@ -314,11 +314,11 @@ When `GET /items`, `GET /items/stats`, `GET /search` or `POST /items/bulk-action
 
 ### `search-and-filters/tags-blank-search`
 
-When `GET /search` names a `tags` list that holds a blank entry beside a tag, the server MUST ignore the blank entry.
+When `GET /items`, `GET /items/stats` or `GET /search` names a `tags` list that holds a blank entry beside a tag, the server MUST ignore the blank entry.
 
-**Reason:** a client that builds the list by joining values can leave a trailing comma, and an empty page would read as no item carrying the tag.
+**Reason:** a client that builds the list by joining values can leave a trailing comma, and an empty page or an empty count would read as no item carrying the tag.
 
-**Tests:** `correctness/tags.test.ts › ignores a blank entry of a tags list on the search`.
+**Tests:** `correctness/tags.test.ts › ignores a blank entry of a tags list on the listing, the stats and the search`.
 
 ### `search-and-filters/tier-narrows`
 

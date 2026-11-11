@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use axum::extract::State;
 use axum::http::{StatusCode, Uri};
-use marfa_rules::error::{Code as RuleCode, FieldError, RuleError};
 use marfa_rules::integers;
 use serde_json::{Map, Value};
 
@@ -28,31 +27,7 @@ fn refuse_inexact_defaults(body: &ReadBody) -> Result<()> {
     let Ok(text) = std::str::from_utf8(body.bytes()) else {
         return Ok(());
     };
-    let Err(error) = integers::refuse_inexact_integers_in(text, None) else {
-        return Ok(());
-    };
-    let inside: Vec<FieldError> = error
-        .fields
-        .into_iter()
-        .filter_map(|field| {
-            let path = field.path.strip_prefix("defaults.properties.")?;
-            Some(FieldError::new(path, field.code, field.message))
-        })
-        .collect();
-    if inside.is_empty() {
-        return Ok(());
-    }
-    let listed: Vec<String> = inside
-        .iter()
-        .map(|field| format!("{}: {}", field.path, field.message))
-        .collect();
-    Err(ruled(
-        RuleError::new(
-            RuleCode::InvalidProperties,
-            format!("Invalid properties: {}", listed.join("; ")),
-        )
-        .with_fields(inside),
-    ))
+    integers::refuse_inexact_integers_under(text, &["defaults", "properties"]).map_err(ruled)
 }
 
 fn declared(body: &ReadBody, allowed: &[&str]) -> Result<Map<String, Value>> {

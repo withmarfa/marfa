@@ -47,7 +47,7 @@ fn kind_of(action: &str) -> &'static str {
         "housekeeping"
     } else if ACCESS_FAMILIES.contains(&family) {
         "access"
-    } else if SETTINGS_FAMILIES.contains(&family) || action == "blob.stores_configured" {
+    } else if SETTINGS_FAMILIES.contains(&family) {
         "settings"
     } else {
         "data"
@@ -293,7 +293,6 @@ mod tests {
             ("owner.claimed", "access"),
             ("keys.purged", "housekeeping"),
             ("config.update", "settings"),
-            ("blob.stores_configured", "settings"),
             ("blob.purge", "housekeeping"),
             ("source.update", "data"),
             ("item.create", "data"),

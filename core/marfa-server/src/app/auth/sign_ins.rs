@@ -3,9 +3,9 @@ use std::sync::Arc;
 use rusqlite::Transaction;
 use serde_json::{Value, json};
 
+use super::Visit;
 use super::owner::checked_name;
 use super::session::{self, ENDED, Session};
-use super::{Visit, names};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::clock::Stamp;
@@ -84,9 +84,7 @@ fn key_of(key: &Key, apps: &[Consent]) -> Result<SignIn> {
     Ok(SignIn {
         id: key.id.clone(),
         kind: "key",
-        name: names::usable(Some(&key.label))
-            .unwrap_or(&key.id)
-            .to_string(),
+        name: key.shown_name().to_string(),
         created: Stamp::read(&key.created_at)?,
         created_at: key.created_at.clone(),
         last_used_at: key.last_used_at.clone(),

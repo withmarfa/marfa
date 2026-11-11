@@ -5128,19 +5128,11 @@ When a device queues a write that names, in a property, a whole number that a 64
 
 ### `device/url-trimmed`
 
-When a write names a value for a `url` field, an element of an array of `url` or a `url` member of an entry of a list, a device MUST judge the value and queue and show it as `types/url-value`, `types/url-punycode`, `types/url-idna`, `types/url-host-refused` and `types/url-stored` have the server do, except as `device/url-idna-unassigned` states.
+When a write names a value for a `url` field, an element of an array of `url` or a `url` member of an entry of a list, a device MUST judge the value and queue and show it as `types/url-value`, `types/url-punycode`, `types/url-idna`, `types/url-host-refused` and `types/url-stored` have the server do.
 
 **Reason:** a value the server takes after trimming must not be refused offline, and the item shown before the answer must be the item stored after it.
 
 **Tests:** `device/property-validation-live.test.ts › treats %s in a url the same on both paths and stores the same value`, `› refuses the url %j on both paths`.
-
-### `device/url-idna-unassigned`
-
-If a write names a `url` value of a special scheme whose host has a code point that is unassigned in the Unicode version of the IDNA tables the device uses, then a device MUST refuse `validation` the write naming the field, and queue nothing, whether or not the server takes the value.
-
-**Reason:** the tables are those of the `idna` crate, which this repository does not own and does not copy, so `http://Ⴍ𿣍ꡨ֮.Ⴞ/` and `https://𾢬.ܩ.쯙5/` are taken by the server and refused by the device. The device refuses and does not change the text, so nothing is lost, and the server takes the same value written online.
-
-**Tests:** `device/property-validation-edges.test.ts › refuses the url %j on the device where the server takes it`.
 
 ### `device/range-checked`
 

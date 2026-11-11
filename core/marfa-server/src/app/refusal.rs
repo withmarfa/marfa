@@ -221,6 +221,14 @@ impl Refusal {
     pub fn database_code(&self) -> Option<&'static str> {
         self.fault.as_deref().and_then(Fault::database_code)
     }
+
+    /// What a log line or a job's error may say of the refusal.
+    pub fn cause(&self) -> String {
+        match self.database_code() {
+            Some(code) => format!("Database operation failed ({code})"),
+            None => self.message.to_string(),
+        }
+    }
 }
 
 /// The name of SQLite's primary result code, which is all of a failed

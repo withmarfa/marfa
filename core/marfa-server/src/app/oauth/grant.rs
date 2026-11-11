@@ -64,11 +64,15 @@ pub(super) fn shown_scopes(tx: &Connection, id: &str) -> Result<Option<ScopeSet>
 }
 
 pub(super) fn own_name(tx: &Connection, id: &str) -> Result<Option<String>> {
-    Ok(shown(tx, id)?
-        .as_ref()
-        .and_then(|fields| fields.get("name"))
-        .and_then(Value::as_str)
-        .map(str::to_string))
+    Ok(tx
+        .query_row(
+            "SELECT CASE WHEN json_type(properties, '$.name') = 'text' \
+             THEN properties ->> '$.name' END FROM items WHERE id = ?1",
+            [id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten())
 }
 
 fn properties(pairs: Value) -> Map<String, Value> {

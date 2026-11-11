@@ -36,7 +36,7 @@ fn caller_of(tx: &Connection, token: AccessToken, now: Stamp) -> Result<Option<(
         return Ok(None);
     };
     let key = Key {
-        label: client.name(),
+        label: grants::named(tx, &consent, Some(&client))?,
         source: grants::source_of(&token.client_id, &token.owner_id),
         default_tier: DEFAULT_TIER.to_string(),
         oauth_client_id: Some(token.client_id.clone()),
@@ -71,7 +71,7 @@ pub fn grant_caller(tx: &Transaction<'_>, grant_id: &str) -> Result<Option<Calle
         return Ok(None);
     };
     let key = Key {
-        label: client.name(),
+        label: grants::named(tx, &consent, Some(&client))?,
         source: grants::source_of(&consent.client_id, &consent.owner_id),
         default_tier: DEFAULT_TIER.to_string(),
         oauth_client_id: Some(consent.client_id.clone()),

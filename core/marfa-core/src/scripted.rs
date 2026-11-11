@@ -468,10 +468,6 @@ fn read_chunked(reader: &mut impl BufRead) -> Vec<u8> {
     }
 }
 
-pub fn connected() -> String {
-    ": connected\n\n".into()
-}
-
 pub fn event(id: &str, name: &str, payload: &str) -> String {
     format!("id: {id}\nevent: {name}\ndata: {payload}\n\n")
 }

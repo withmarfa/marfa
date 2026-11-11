@@ -114,9 +114,8 @@ mod tests {
     }
 
     #[test]
-    fn parses_the_prologue_a_replay_and_a_ping() {
-        let text = ": connected\n\n\
-                    event: stream_cursor\ndata: {\"event_type\":\"stream_cursor\",\"cursor\":\"42\"}\n\n\
+    fn parses_a_cursor_a_replay_and_a_ping() {
+        let text = "event: stream_cursor\ndata: {\"event_type\":\"stream_cursor\",\"cursor\":\"42\"}\n\n\
                     id: 41\nevent: item.created\ndata: {\"event_type\":\"item.created\"}\n\n\
                     :ping\n\n\
                     id: 42\nevent: edge.deleted\ndata: {\"a\":1,\n\
@@ -124,7 +123,6 @@ mod tests {
         assert_eq!(
             frames(text),
             vec![
-                Frame::Comment("connected".into()),
                 Frame::Event {
                     id: None,
                     name: Some("stream_cursor".into()),

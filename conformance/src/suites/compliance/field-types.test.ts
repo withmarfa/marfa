@@ -414,6 +414,11 @@ describe("an array field", () => {
       { sites: ["http://bücher.xn--"] },
       "sites.0",
     ],
+    [
+      "a url array with a host holding code points the IDNA tables leave unassigned",
+      { sites: ["http://Ⴍ𿣍ꡨ֮.Ⴞ/", "https://𾢬.ܩ.쯙5/"] },
+      "sites.0",
+    ],
     ["an object array with a string", { things: [{}, "text"] }, "things.1"],
     ["an object array with an array", { things: [[]] }, "things.0"],
     ["a universal links array with a number", { links: [1] }, "links.0"],

@@ -949,11 +949,11 @@ async function probeEdgeEventsUnderFilter(args: {
  * writes on an unfiltered stream would otherwise read as an announcement.
  *
  * **`absent` here fails every test that requires the rule, so it may not rest
- * on a quiet window.** The `: connected` comment is written synchronously as
- * the response opens, so waiting for it separates a closed socket from an open
- * one and nothing else — it cannot tell "no announcement" from "not yet", and
- * a late frame would fail every one of those tests with an evidence line that
- * reads as a finding about the server.
+ * on a quiet window.** The response's headers arrive as it opens, so they
+ * separate a closed socket from an open one and nothing else. They cannot
+ * tell "no announcement" from "not yet", and a late frame would fail every one
+ * of those tests with an evidence line that reads as a finding about the
+ * server.
  *
  * So the probe writes a marker and waits for the marker's own event. An
  * announcement names the point the stream starts from, so it can only precede
