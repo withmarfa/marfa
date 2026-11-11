@@ -63,6 +63,11 @@ pub async fn set_fault(State(app): State<Arc<App>>, body: JsonBody) -> Answer {
     Ok(faults_answer(&app))
 }
 
+pub async fn read_database(State(app): State<Arc<App>>) -> Answer {
+    let settings = app.db.connection_settings().await?;
+    Ok(json_answer(StatusCode::OK, &settings))
+}
+
 #[derive(Deserialize)]
 pub struct Inspecting {
     hash: Option<String>,

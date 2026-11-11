@@ -12,7 +12,7 @@ use crate::app::access::{Caller, Level};
 use crate::app::catalog::{self, Snapshot as Reading};
 use crate::app::faults::{Faults, HOLD_BULK_PAGE};
 use crate::app::idempotency::Need;
-use crate::app::items::bulk::{Counts, Entered, refused_entry, rollback};
+use crate::app::items::bulk::{Counts, Entered, refused_entry, rollback, unconfirm_unless_synced};
 use crate::app::items::{self, Reader, reading};
 use crate::app::refusal::{Refusal, Result};
 use crate::db::Pulse;
@@ -222,7 +222,7 @@ pub async fn write(app: &App, caller: &Caller, asked: Asked) -> Result<String> {
                 let cache = cache.clone();
                 let operation = operation.clone();
                 let written = app
-                    .write(caller, ACTION, move |unit| {
+                    .write_deferred(caller, ACTION, move |unit| {
                         unit.fanning(fanout, |unit| {
                             let catalog = catalog::current(&cache, unit.tx(), Reading::Pending)?;
                             let writing = Writing::page(unit, &catalog);
@@ -257,5 +257,6 @@ pub async fn write(app: &App, caller: &Caller, asked: Asked) -> Result<String> {
             || result["error"]["details"]["write_outcome"] == "unknown";
         results.push(result);
     }
+    unconfirm_unless_synced(app, &mut counts, &mut results).await;
     Ok(json!({ "counts": counts, "results": results }).to_string())
 }

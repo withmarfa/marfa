@@ -152,6 +152,35 @@ impl App {
         T: Send + 'static,
         F: FnOnce(&Unit<'_, '_>) -> Result<T> + Send + 'static,
     {
+        self.write_as(caller, action, false, job).await
+    }
+
+    /// As `write`, but the commit is not synced until `Db::flush`: for the entries of one
+    /// request, which confirm nothing until it has been called.
+    pub async fn write_deferred<T, F>(
+        &self,
+        caller: &Caller,
+        action: &'static str,
+        job: F,
+    ) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Unit<'_, '_>) -> Result<T> + Send + 'static,
+    {
+        self.write_as(caller, action, true, job).await
+    }
+
+    async fn write_as<T, F>(
+        &self,
+        caller: &Caller,
+        action: &'static str,
+        deferred: bool,
+        job: F,
+    ) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Unit<'_, '_>) -> Result<T> + Send + 'static,
+    {
         let caller = caller.clone();
         let clock = self.clock.clone();
         let origin = provenance::current();
@@ -162,6 +191,7 @@ impl App {
         } else {
             Write::caller(action)
         };
+        let write = if deferred { write.deferred() } else { write };
         self.db
             .write(write, move |tx| {
                 let instant = clock.instant();

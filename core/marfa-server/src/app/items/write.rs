@@ -279,6 +279,17 @@ pub async fn run(app: &App, caller: &Caller, claim: Option<Claim>, change: Chang
     .await
 }
 
+/// A best-effort page's entry: committed, not yet synced, so the page calls `Db::flush` before
+/// it answers.
+pub(super) async fn run_deferred(app: &App, caller: &Caller, change: Change) -> Result<Done> {
+    let cache = app.catalog_handle();
+    let action = change.action();
+    app.write_deferred(caller, action, move |unit| {
+        apply(unit, &cache, None, change)
+    })
+    .await
+}
+
 pub fn apply(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,

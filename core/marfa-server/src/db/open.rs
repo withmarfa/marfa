@@ -16,6 +16,8 @@ use crate::settings::registry::{DISK_RESERVE_BYTES, Seeds, Snapshot};
 const HEADER: &[u8; 16] = b"SQLite format 3\0";
 /// What the log is cut back to once a checkpoint has moved it into the file.
 const JOURNAL_SIZE_LIMIT: i64 = 64 * 1024 * 1024;
+/// Each checkpoint syncs the log and the file in full, so they come about every 32 MiB of log.
+const AUTOCHECKPOINT_PAGES: i64 = 8192;
 
 #[derive(Debug)]
 pub struct Options {
@@ -254,17 +256,27 @@ fn copy_before_upgrade(
     Ok(())
 }
 
+/// A commit reaches stable storage before it is confirmed. On macOS a plain `fsync` leaves the
+/// data in the drive's cache, so the full flush is asked for, at commit and at checkpoint.
+fn make_durable(conn: &Connection) -> rusqlite::Result<()> {
+    conn.pragma_update(None, "synchronous", "FULL")?;
+    conn.pragma_update(None, "fullfsync", true)?;
+    conn.pragma_update(None, "checkpoint_fullfsync", true)
+}
+
 fn prepare_writer(conn: &Connection, options: &Options) -> rusqlite::Result<()> {
     conn.busy_timeout(options.write_wait)?;
     conn.pragma_update_and_check(None, "journal_mode", "WAL", |_| Ok(()))?;
-    conn.pragma_update(None, "synchronous", "NORMAL")?;
+    make_durable(conn)?;
     conn.pragma_update(None, "foreign_keys", true)?;
     conn.pragma_update(None, "journal_size_limit", JOURNAL_SIZE_LIMIT)?;
+    conn.pragma_update(None, "wal_autocheckpoint", AUTOCHECKPOINT_PAGES)?;
     super::rank::register(conn)
 }
 
 fn prepare_reader(conn: &Connection, options: &Options) -> rusqlite::Result<()> {
     conn.busy_timeout(options.write_wait)?;
+    make_durable(conn)?;
     conn.pragma_update(None, "foreign_keys", true)?;
     conn.pragma_update(None, "query_only", true)?;
     super::rank::register(conn)

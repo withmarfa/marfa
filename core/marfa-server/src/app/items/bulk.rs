@@ -233,7 +233,7 @@ pub async fn write(app: &App, caller: &Caller, asked: Asked) -> Result<String> {
                     operation: operation.clone(),
                 };
                 let entry = Box::new(entry);
-                match write::run(app, caller, None, Change::Entry { entry, note }).await {
+                match write::run_deferred(app, caller, Change::Entry { entry, note }).await {
                     Ok(done) => serde_json::from_str(&done.body)
                         .map_err(|_| Refusal::internal("an entry's answer did not read"))?,
                     Err(refusal) => refused_entry(index, &refusal, landed)?,
@@ -246,5 +246,32 @@ pub async fn write(app: &App, caller: &Caller, asked: Asked) -> Result<String> {
             || result["error"]["details"]["write_outcome"] == "unknown";
         results.push(result);
     }
+    unconfirm_unless_synced(app, &mut counts, &mut results).await;
     Ok(json!({ "counts": counts, "results": results }).to_string())
+}
+
+/// An entry that landed is confirmed only once the log is synced; if it cannot be, each of
+/// them may or may not survive, and answers so.
+pub(crate) async fn unconfirm_unless_synced(app: &App, counts: &mut Counts, results: &mut [Value]) {
+    if app.db.flush().await.is_ok() {
+        return;
+    }
+    let unknown = json!({
+        "code": Code::InternalError.wire(),
+        "message": UNKNOWN_OUTCOME,
+        "details": { "write_outcome": "unknown" },
+    });
+    for result in results.iter_mut() {
+        let outcome = result["outcome"].as_str().unwrap_or_default();
+        if !matches!(outcome, "created" | "updated") {
+            continue;
+        }
+        counts.add("errored");
+        match outcome {
+            "created" => counts.created -= 1,
+            _ => counts.updated -= 1,
+        }
+        result["outcome"] = json!("errored");
+        result["error"] = unknown.clone();
+    }
 }

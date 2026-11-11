@@ -23,6 +23,7 @@ pub(super) const ENDED: &str = "auth.session.delete";
 const USE: Write = Write {
     action: Some("auth.session.use"),
     for_caller: false,
+    deferred: false,
 };
 
 #[derive(Clone, Debug)]

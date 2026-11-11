@@ -455,6 +455,7 @@ fn control_doors(app: &Arc<App>) -> Routes {
                     .put(test_hooks::set_fault)
                     .delete(test_hooks::clear_faults),
             )
+            .route("/_control/test/database", get(test_hooks::read_database))
             .route(
                 "/_control/test/blob-stores",
                 get(test_hooks::inspect_stores),

@@ -170,10 +170,12 @@ impl Sender {
             // The pass sees every commit counted so far, and its own commit wakes nothing.
             let before = *self.commits.borrow_and_update();
             let app = self.app.clone();
+            // Its place is derived from commits that are already durable, so a power cut that
+            // loses it only has the pass made again.
             let passed = self
                 .app
                 .db
-                .write(Write::own(), move |tx| {
+                .write(Write::own().deferred(), move |tx| {
                     let catalog =
                         catalog::current(&app.catalog_handle(), tx, catalog::Snapshot::Committed)?;
                     let pulse = app.db.pulse();

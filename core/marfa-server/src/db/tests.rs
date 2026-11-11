@@ -894,3 +894,62 @@ async fn a_reader_woken_by_a_commit_never_misses_one_that_follows() {
         .unwrap();
     assert_eq!(reached, 40);
 }
+
+fn synchronous(tx: &Transaction<'_>) -> Result<i64> {
+    Ok(tx.pragma_query_value(None, "synchronous", |row| row.get(0))?)
+}
+
+#[tokio::test]
+async fn every_connection_syncs_each_commit_in_full() {
+    let place = folder();
+    let db = open(&place.file);
+    let settings = db.connection_settings().await.unwrap();
+    let full = serde_json::json!({
+        "journal_mode": "wal",
+        "synchronous": 2,
+        "fullfsync": 1,
+        "checkpoint_fullfsync": 1,
+        "foreign_keys": 1,
+    });
+    assert_eq!(settings["writer"], full);
+    let readers = settings["readers"].as_array().unwrap();
+    assert_eq!(readers.len(), 2);
+    for reader in readers {
+        assert_eq!(reader["synchronous"], 2);
+        assert_eq!(reader["fullfsync"], 1);
+        assert_eq!(reader["checkpoint_fullfsync"], 1);
+    }
+}
+
+#[tokio::test]
+async fn a_deferred_write_waits_for_the_flush_and_a_durable_write_needs_none() {
+    let place = folder();
+    let db = open(&place.file);
+    let during = db
+        .write(WRITE.deferred(), |tx| {
+            add(tx, 1)?;
+            synchronous(tx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(during, 1);
+    let log = std::fs::metadata(wal(&place.file)).unwrap().len();
+    db.flush().await.unwrap();
+    assert!(
+        std::fs::metadata(wal(&place.file)).unwrap().len() > log,
+        "the flush committed nothing"
+    );
+    let after = db.write(WRITE, synchronous).await.unwrap();
+    assert_eq!(after, 2);
+
+    db.write(WRITE.deferred(), |tx| add(tx, 2)).await.unwrap();
+    db.write(WRITE, |tx| add(tx, 3)).await.unwrap();
+    let log = std::fs::metadata(wal(&place.file)).unwrap().len();
+    db.flush().await.unwrap();
+    assert_eq!(
+        std::fs::metadata(wal(&place.file)).unwrap().len(),
+        log,
+        "a durable commit left the flush work to do"
+    );
+    assert_eq!(ids(&db).await, [1, 2, 3]);
+}
