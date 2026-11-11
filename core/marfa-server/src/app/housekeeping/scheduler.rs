@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::task::Poll;
 use std::time::Duration;
 
+use futures_util::FutureExt;
 use tokio::sync::watch;
 
 use super::super::App;
@@ -114,6 +115,8 @@ pub fn start(app: Arc<App>) {
         watch_schedule(&app).await;
         let longest = app.settings.start.tuning.housekeeping_poll;
         while !*stopping.borrow() {
+            // A wake that is already here is answered by the read this pass makes.
+            let _ = app.housekeeping.wake.notified().now_or_never();
             moves.borrow_and_update();
             let left = match caught(pass(&app)).await {
                 Ok(Ok(Some(left))) => left,
