@@ -732,8 +732,8 @@ pnpm marfa:down --state /tmp/marfa
 
 The build needs the `test-hooks` feature: the fixtures turn the test hooks on,
 and a server built without it refuses to start with them on. A run that
-measures a release build sets `CONFORMANCE_SERVER_HOOK_FREE=true` and gives `marfa:up` a
-build without the feature (the nightly benchmarks do). Setting
+measures a release build sets `CONFORMANCE_SERVER_HOOK_FREE=true` and gives
+`marfa:up` a build without the feature (the nightly benchmarks do). Setting
 `MARFA_SERVER_BIN` also stops `vitest.config.ts` leaving out the files
 listed in `src/utils/rust-judged.ts` (see below). Do not set it together with
 `MARFA_SERVER_BUILT`. The object-store half of the blob chapters needs an
@@ -828,8 +828,8 @@ CI runs the same projects as shards.
 every night and on request in `.github/workflows/benchmarks.yml`, the load
 suites at the `smoke` profile. The workflow builds the Rust server the way a
 release does, with no test hooks, and boots it through `MARFA_SERVER_BIN` with
-`CONFORMANCE_SERVER_HOOK_FREE=true`, so the figures are those of the program a person
-runs. No other workflow runs these three projects, so that server is the one
+`CONFORMANCE_SERVER_HOOK_FREE=true`, so the figures are those of the program a
+person runs. No other workflow runs these three projects, so that server is the one
 that judges them: a file that does not pass fails the night, and they are not
 listed in `src/utils/rust-judged.ts`, which lists the files the gate's shards
 hold the Rust server to. A server without test hooks reads no setting from the

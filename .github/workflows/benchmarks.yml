@@ -1,10 +1,10 @@
 name: Benchmarks
 
 # The conformance suite's performance, load and hydration projects, and the
-# scale benchmark, against the Rust server, off the gate: their budgets measure a shared runner as much as the server, so a
-# slow night should not block a merge, but a failure still has to land
-# somewhere it is seen. A scheduled run that fails opens an issue, or
-# comments on the one that is open.
+# scale benchmark, against the Rust server, off the gate: their budgets measure
+# a shared runner as much as the server, so a slow night should not block a
+# merge, but a failure still has to land somewhere it is seen. A scheduled run
+# that fails opens an issue, or comments on the one that is open.
 on:
   schedule:
     - cron: "43 4 * * *"
@@ -31,8 +31,8 @@ jobs:
   # in and no test hooks, built the way `Rust server (release build)` builds
   # it in `ci.yml`. The figures are those of a program with no clock shim or
   # fault routes, and the suites below set what the hooks would have
-  # (`CONFORMANCE_SERVER_HOOK_FREE=true`: the boot turns the limiter and file reading
-  # off through `PATCH /config`).
+  # (`CONFORMANCE_SERVER_HOOK_FREE=true`: the boot turns the limiter and file
+  # reading off through `PATCH /config`).
   server:
     name: Rust server (release build)
     timeout-minutes: 60
@@ -191,8 +191,8 @@ jobs:
   # and they add up, with room for the report, the upload and the verdict, to
   # no more than the job's. On the Rust server the seed took 5 minutes and the
   # whole run about 12 on a Mac; a hosted runner is slower, and the first
-  # night's own figures set the limits down further; the device and folder steps stay above their
-  # own 20-minute stops.
+  # night's own figures set the limits down further. The device and folder
+  # steps stay above their own 20-minute stops.
   # Each step writes a fragment under conformance/reports/scale/, so a step
   # that crashes or times out keeps the figures of the others. The `finish`
   # step merges them, compares them with the previous night's artifact and

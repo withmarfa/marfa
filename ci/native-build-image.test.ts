@@ -42,6 +42,9 @@ const action = load("actions/native-build-image/action.yml") as {
 };
 const ci = load("workflows/ci.yml") as { jobs: Record<string, Job> };
 const release = load("workflows/release.yml") as { jobs: Record<string, Job> };
+const benchmarks = load("workflows/benchmarks.yml") as {
+  jobs: Record<string, Job>;
+};
 
 describe("the build image's cache", () => {
   const steps = action.runs.steps;
@@ -84,6 +87,7 @@ describe("the jobs that build in the image", () => {
     ["rust-contract", ci.jobs, "Build the Rust server", "ci.yml"],
     ["image", ci.jobs, "Build and check the programs", "ci.yml"],
     ["programs-linux", release.jobs, "Build the programs", "release.yml"],
+    ["server", benchmarks.jobs, "Build the Rust server", "benchmarks.yml"],
   ];
   it.each(cases)(
     "%s gets the image from the cache before its first build",

@@ -8,15 +8,19 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
+import { RUST_JUDGED } from "../conformance/src/utils/rust-judged.js";
 
 interface Step {
   name?: string;
+  "continue-on-error"?: boolean;
+  if?: string;
   uses?: string;
   run?: string;
   with?: Record<string, string>;
 }
 interface Job {
   needs?: string | string[];
+  if?: string;
   env?: Record<string, string>;
   steps: Step[];
 }
@@ -74,5 +78,25 @@ describe("the nightly benchmarks", () => {
     expect(step("scale", "Stop the object store").run).toContain(
       "pnpm garage:down",
     );
+  });
+
+  it("fail the night, and open its issue, when a project that only they run fails", () => {
+    for (const name of ["Performance", "Load", "Hydration"]) {
+      const run = step("benchmarks", name);
+      expect(run["continue-on-error"], name).toBeUndefined();
+      expect(run.run, name).toMatch(/^pnpm test:(performance|load|hydration)$/);
+    }
+    const report = jobs["report-failure"];
+    expect([report?.needs ?? []].flat()).toContain("benchmarks");
+    expect(report?.if).toContain("failure()");
+    expect(report?.if).toContain("schedule");
+    // Their only verdict is the job's exit status, so none of their files may
+    // sit in the list the gate's shards judge.
+    expect(RUST_JUDGED.length).toBeGreaterThan(0);
+    expect(
+      RUST_JUDGED.filter((file) =>
+        /^src\/suites\/(performance|load|hydration)\//.test(file),
+      ),
+    ).toEqual([]);
   });
 });

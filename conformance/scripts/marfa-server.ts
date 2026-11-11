@@ -71,10 +71,11 @@ import { tmpdir } from "node:os";
  * directory and log, and with the state directory as its working directory.
  * Nothing in the workspace is built for it. It must carry its test hooks (a
  * Rust server built with `--features test-hooks`), which the settings below
- * switch on, unless the run's environment sets `CONFORMANCE_SERVER_HOOK_FREE=true`: then
- * it is a release build started as a person starts it, and the boot turns
- * the limiter and file reading off through `PATCH /config`. The claim and the keys go through
- * the private socket as for this server. A target whose sign-in door answers
+ * switch on, unless the run's environment sets
+ * `CONFORMANCE_SERVER_HOOK_FREE=true`: then it is a release build started as a
+ * person starts it, and the boot turns the limiter and file reading off
+ * through `PATCH /config`. The claim and the keys go through the private
+ * socket as for this server. A target whose sign-in door answers
  * `404 not_found` has no owner sign-in, and the env file then carries no
  * owner cookie or session file. `clock` and `fault` fail plainly against a
  * target without the hooks.
@@ -726,7 +727,7 @@ async function startServer(args: BootOptions): Promise<Started> {
   };
   // The built TypeScript server is started as a person starts it, without the
   // hooks. Any other target is built with them, unless the run says it is a
-  // release build: `MARFA_TEST_HOOKS=false` in the run's own environment.
+  // release build with `CONFORMANCE_SERVER_HOOK_FREE=true`.
   const hooks = !built && !(program !== undefined && hookFreeRun());
   env.MARFA_TEST_HOOKS = String(hooks);
   delete env.MARFA_TEST_CLOCK_OFFSET_MS;
