@@ -72,17 +72,19 @@ function signIn(
   });
 }
 
-/** How many of `count` calls were answered before the first `429`, and that refusal. */
+/** The statuses of `count` calls answered before the first `429`, and that refusal. */
 async function untilRefused(
   count: number,
   call: (n: number) => Promise<Response>,
-): Promise<{ answered: number; refused?: Response }> {
+): Promise<{ answered: number[]; refused?: Response }> {
+  const answered: number[] = [];
   for (let n = 0; n < count; n++) {
     const response = await call(n);
-    if (response.status === 429) return { answered: n, refused: response };
+    if (response.status === 429) return { answered, refused: response };
+    answered.push(response.status);
     await response.body?.cancel();
   }
-  return { answered: count };
+  return { answered };
 }
 
 describe("the limits one address is held to", () => {
@@ -91,7 +93,7 @@ describe("the limits one address is held to", () => {
     const { answered, refused } = await untilRefused(11, (n) =>
       signIn(limited, `stranger-${String(n)}@example.test`, "wrong", address),
     );
-    expect(answered).toBe(10);
+    expect(answered).toEqual(Array<number>(10).fill(401));
     expect(Number(refused?.headers.get("retry-after"))).toBeGreaterThan(0);
     // The witness: the owner's own email, from the same address, is still
     // answered on the password.
@@ -121,7 +123,7 @@ describe("the limits one address is held to", () => {
         }),
       });
     const { answered, refused } = await untilRefused(11, register);
-    expect(answered).toBe(10);
+    expect(answered).toEqual(Array<number>(10).fill(201));
     expect(Number(refused?.headers.get("retry-after"))).toBeGreaterThan(0);
   });
 
@@ -145,7 +147,7 @@ describe("the limits one address is held to", () => {
     const first = await code();
     expect(first.status, await first.clone().text()).toBe(200);
     const { answered, refused } = await untilRefused(30, code);
-    expect(answered).toBe(29);
+    expect(answered).toEqual(Array<number>(29).fill(200));
     expect(Number(refused?.headers.get("retry-after"))).toBeGreaterThan(0);
   });
 
@@ -157,7 +159,7 @@ describe("the limits one address is held to", () => {
         headers: { origin, [CLIENT_HEADER]: address },
       });
     const { answered, refused } = await untilRefused(31, challenge);
-    expect(answered).toBe(30);
+    expect(answered).toEqual(Array<number>(30).fill(200));
     expect(Number(refused?.headers.get("retry-after"))).toBeGreaterThan(0);
   });
 });
