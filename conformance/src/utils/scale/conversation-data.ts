@@ -57,7 +57,6 @@ export interface MessagePlan {
   files: readonly string[];
   first: number;
   direction: Direction;
-  /** Messages this walk reads. */
   total: number;
   /** Messages the conversation holds, when the walk reads only the first of them. */
   held?: number;
@@ -74,7 +73,6 @@ export class MessageWalk {
   private readonly hash = createHash("sha256");
   private count = 0;
   private pages = 0;
-  /** Set once a cursor came back that an earlier page already answered. */
   cursorStuck = false;
 
   constructor(private readonly plan: MessagePlan) {}
@@ -188,7 +186,6 @@ const MIN_GAP_MS = 2;
  */
 export class ActivityLog {
   readonly latest = new Map<string, string>();
-  /** Writes proved to have moved the activity on. */
   advances = 0;
   private readonly received = new Map<string, number>();
 
@@ -233,7 +230,6 @@ export class ListingWalk {
     private readonly limit: number,
   ) {}
 
-  /** The next cursor, or null at the end; a problem ends the walk. */
   page(
     body: unknown,
     cursor: string | null,
@@ -265,7 +261,6 @@ export class ListingWalk {
   }
 }
 
-/** A download counts only with a successful status and the bytes uploaded. */
 export function judgeBlob(
   answer: { status: number; text: string },
   expected: string,
