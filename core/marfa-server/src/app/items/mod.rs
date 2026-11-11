@@ -559,13 +559,12 @@ pub fn held_names(tx: &Transaction<'_>, types: &[String], names: &[String]) -> R
 pub fn reindex_changed(tx: &Transaction<'_>, before: &Rules, after: &Rules) -> Result<()> {
     index::queue_changed(tx, before, after)?;
     index::reindex_page(tx, after, index::REINDEX_PAGE)?;
+    sort_keys::drop_undeclared(tx, after)?;
     Ok(())
 }
 
 pub fn reindex_page(tx: &Transaction<'_>, rules: &Rules) -> Result<bool> {
-    let indexing = index::reindex_page(tx, rules, index::REINDEX_PAGE)?;
-    let sorting = sort_keys::fill_page(tx)?;
-    Ok(indexing || sorting)
+    index::reindex_page(tx, rules, index::REINDEX_PAGE)
 }
 
 pub fn rekey_changed(

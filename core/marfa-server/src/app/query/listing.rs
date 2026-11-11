@@ -10,6 +10,7 @@ use super::reach::Reach;
 use super::sorted::{self, Reading};
 use crate::app::App;
 use crate::app::access::Caller;
+use crate::app::catalog::{self, Snapshot};
 use crate::app::items::{self, Many, Reader, reading, sort_keys};
 use crate::app::refusal::Result;
 use crate::db::Write;
@@ -131,12 +132,14 @@ pub async fn list(app: &App, caller: &Caller, listing: Listing) -> Result<String
                 Position::from_payload(&payload, order.width())
             })
             .transpose()?;
-        let served = match (&sort.field, &ask.updated_after) {
-            (Some(SortField::Property(name)), None) => sorted::reading(read, &reach, ask, name)?,
-            _ => Reading::Scan(None),
+        let served = match &sort.field {
+            Some(SortField::Property(name)) => {
+                Some((name, sorted::reading(read, &reach, ask, name)?))
+            }
+            _ => None,
         };
-        let (rows, add) = match (served, &sort.field) {
-            (Reading::Keys(type_id), Some(SortField::Property(name))) => {
+        let (rows, add) = match served {
+            Some((name, Reading::Keys(type_id))) => {
                 let selected = selection(&reach, ask, &read.catalog, true)?;
                 let descending = order.keys.first().is_some_and(|key| key.descending);
                 let pair = (type_id.as_str(), name.as_str());
@@ -150,13 +153,13 @@ pub async fn list(app: &App, caller: &Caller, listing: Listing) -> Result<String
                 )?;
                 (rows, None)
             }
-            (served, _) => {
+            other => {
+                let add = match other {
+                    Some((name, Reading::Scan(Some(type_id)))) => Some((type_id, name.to_string())),
+                    _ => None,
+                };
                 let selected = selection(&reach, ask, &read.catalog, order.walked())?;
                 let sql = page_sql(&selected, ask, &order, position.as_ref(), *limit);
-                let add = match served {
-                    Reading::Scan(add) => add,
-                    Reading::Keys(_) => None,
-                };
                 (found(read.tx, &sql, order.width())?, add)
             }
         };
@@ -178,9 +181,13 @@ pub async fn list(app: &App, caller: &Caller, listing: Listing) -> Result<String
 
 /// A refusal here costs a later listing its speed and nothing else, so the listing that asked does not fail.
 async fn keep_sort_keys(app: &App, type_id: String, name: String) {
+    let cache = app.catalog_handle();
     let added = app
         .db
-        .write(Write::own(), move |tx| sort_keys::add(tx, &type_id, &name))
+        .write(Write::own(), move |tx| {
+            let catalog = catalog::current(&cache, tx, Snapshot::Pending)?;
+            sort_keys::add(tx, &catalog.rules, &type_id, &name)
+        })
         .await;
     match added {
         Ok(true) => app.reindexing.notify_one(),

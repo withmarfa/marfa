@@ -1,5 +1,6 @@
 //! A listing sorted by a property of one large type, read from `item_sort_keys` in index order.
 
+use marfa_rules::catalog::Catalog as Rules;
 use rusqlite::Transaction;
 use rusqlite::types::Value;
 
@@ -13,8 +14,8 @@ use crate::app::refusal::Result;
 pub(super) enum Reading {
     /// The pair's keys are complete: read them in order.
     Keys(String),
-    /// Read every item of the type, and add the pair so later listings need not.
-    Scan(Option<(String, String)>),
+    /// Read every item of the type; where the type is named, ask for the pair to be kept so later listings need not.
+    Scan(Option<String>),
 }
 
 /// An ask whose other conditions leave most keys standing, so that a walk of the keys in order ends soon.
@@ -31,7 +32,37 @@ fn walkable(ask: &Ask) -> bool {
         && ask.tier.is_none()
         && ask.occurred_after.is_none()
         && ask.occurred_before.is_none()
+        && ask.updated_after.is_none()
         && ask.updated_before.is_none()
+}
+
+/// What the pair stands at, and whether a listing that finds it absent may ask for it to be kept.
+struct Held {
+    standing: sort_keys::Standing,
+    addable: bool,
+}
+
+fn choose(
+    rules: &Rules,
+    reach: &Reach,
+    ask: &Ask,
+    held: impl FnOnce(&str) -> Result<Held>,
+) -> Result<Reading> {
+    let narrowed = reach.narrowed(|type_id| keeps_type(rules, &ask.types, ask.system, type_id));
+    let Some(type_id) = narrowed.only_type().filter(|_| walkable(ask)) else {
+        return Ok(Reading::Scan(None));
+    };
+    Ok(match held(type_id)? {
+        Held {
+            standing: sort_keys::Standing::Ready,
+            ..
+        } => Reading::Keys(type_id.to_string()),
+        Held {
+            standing: sort_keys::Standing::Absent,
+            addable: true,
+        } => Reading::Scan(Some(type_id.to_string())),
+        _ => Reading::Scan(None),
+    })
 }
 
 pub(super) fn reading(
@@ -41,16 +72,13 @@ pub(super) fn reading(
     name: &str,
 ) -> Result<Reading> {
     let rules = &read.catalog.rules;
-    let narrowed = reach.narrowed(|type_id| keeps_type(rules, &ask.types, ask.system, type_id));
-    let Some(type_id) = narrowed.only_type().filter(|_| walkable(ask)) else {
-        return Ok(Reading::Scan(None));
-    };
-    Ok(match sort_keys::standing(read.tx, type_id, name)? {
-        sort_keys::Standing::Ready => Reading::Keys(type_id.to_string()),
-        sort_keys::Standing::Filling => Reading::Scan(None),
-        sort_keys::Standing::Absent => Reading::Scan(
-            sort_keys::large(read.tx, type_id)?.then(|| (type_id.to_string(), name.to_string())),
-        ),
+    choose(rules, reach, ask, |type_id| {
+        let standing = sort_keys::standing(read.tx, type_id, name)?;
+        let addable = standing == sort_keys::Standing::Absent
+            && sort_keys::declares(rules, type_id, name)
+            && sort_keys::room(read.tx, rules)?
+            && sort_keys::large(read.tx, type_id)?;
+        Ok(Held { standing, addable })
     })
 }
 
@@ -178,7 +206,8 @@ mod tests {
     use rusqlite::{Connection, params};
 
     use super::*;
-    use crate::app::items::sort_keys;
+    use crate::app::items::sort_keys::{self, Standing};
+    use crate::app::query::compile::Filter;
     use crate::db::migrate::MIGRATIONS;
     use marfa_rules::query::property_sort_expression;
 
@@ -353,5 +382,125 @@ mod tests {
         put(&conn, 95, "core.note", r#"{"p":"late"}"#);
         fill(&conn);
         check(&conn);
+    }
+
+    fn held(standing: Standing, addable: bool) -> impl FnOnce(&str) -> Result<Held> {
+        move |_| Ok(Held { standing, addable })
+    }
+
+    fn chosen(reach: &Reach, ask: &Ask, standing: Standing, addable: bool) -> Option<Reading> {
+        choose(&Rules::empty(), reach, ask, held(standing, addable)).ok()
+    }
+
+    fn open() -> Reach {
+        Reach::testing(&["core.note"], &[], &[])
+    }
+
+    fn is_scan(reading: Option<Reading>, add: Option<&str>) -> bool {
+        matches!(reading, Some(Reading::Scan(held)) if held.as_deref() == add)
+    }
+
+    #[test]
+    fn ready_keys_are_read_and_a_walk_under_way_is_not() {
+        let ask = Ask::default();
+        assert!(matches!(
+            chosen(&open(), &ask, Standing::Ready, false),
+            Some(Reading::Keys(type_id)) if type_id == "core.note"
+        ));
+        assert!(is_scan(
+            chosen(&open(), &ask, Standing::Filling, true),
+            None
+        ));
+    }
+
+    #[test]
+    fn a_reach_held_to_sources_never_reads_keys() {
+        let held_reach = Reach::testing(&[], &["core.note"], &["s"]);
+        let mixed = Reach::testing(&["core.note"], &["core.task"], &["s"]);
+        let two = Reach::testing(&["core.note", "core.task"], &[], &[]);
+        for reach in [held_reach, mixed, two] {
+            assert!(is_scan(
+                chosen(&reach, &Ask::default(), Standing::Ready, true),
+                None
+            ));
+        }
+    }
+
+    #[test]
+    fn an_ask_that_leaves_few_keys_standing_reads_by_scan() {
+        let text = "source eq \"a\"";
+        let others = [
+            Ask {
+                filter: Some(Filter {
+                    text: text.to_string(),
+                    expression: marfa_rules::filter::parse(text).unwrap(),
+                }),
+                ..Ask::default()
+            },
+            Ask {
+                tags: vec!["a".to_string()],
+                ..Ask::default()
+            },
+            Ask {
+                beneath: Some("id".to_string()),
+                ..Ask::default()
+            },
+            Ask {
+                source: Some("s".to_string()),
+                ..Ask::default()
+            },
+            Ask {
+                tier: Some("feed".to_string()),
+                ..Ask::default()
+            },
+            Ask {
+                occurred_after: Some("t".to_string()),
+                ..Ask::default()
+            },
+            Ask {
+                occurred_before: Some("t".to_string()),
+                ..Ask::default()
+            },
+            Ask {
+                updated_after: Some("t".to_string()),
+                ..Ask::default()
+            },
+            Ask {
+                updated_before: Some("t".to_string()),
+                ..Ask::default()
+            },
+            Ask {
+                states: States::Named(vec!["trashed".to_string(), "archived".to_string()]),
+                ..Ask::default()
+            },
+        ];
+        for ask in &others {
+            assert!(
+                is_scan(chosen(&open(), ask, Standing::Ready, true), None),
+                "{ask:?}"
+            );
+        }
+        let active = Ask {
+            states: States::Named(vec!["trashed".to_string(), "active".to_string()]),
+            types: vec!["core.note".to_string()],
+            ..Ask::default()
+        };
+        assert!(matches!(
+            chosen(&open(), &active, Standing::Ready, false),
+            Some(Reading::Keys(_))
+        ));
+    }
+
+    #[test]
+    fn an_absent_pair_is_asked_for_only_where_it_may_be_added() {
+        let ask = Ask::default();
+        assert!(is_scan(
+            chosen(&open(), &ask, Standing::Absent, true),
+            Some("core.note")
+        ));
+        assert!(is_scan(
+            chosen(&open(), &ask, Standing::Absent, false),
+            None
+        ));
     }
 }
