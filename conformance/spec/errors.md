@@ -278,15 +278,15 @@ When the server answers `422 idempotency_result_not_retained`, the server MUST N
 
 ### `errors/unmatched-path`
 
-When a request other than `OPTIONS` names a path no operation serves, and is neither a `GET` or `POST` under `/auth/`, which the sign-in library answers, nor a `GET` that carries `X-Marfa-Reach`, the server MUST answer `404 not_found`, to a caller with a credential and to one without.
+When a request other than `OPTIONS` names a path no operation serves, and is not a `GET` that carries `X-Marfa-Reach`, the server MUST answer `404 not_found`, to a caller with a credential and to one without.
 
-**Tests:** `compliance/unmatched-paths.test.ts › answers a GET to a path no door serves 404 not_found in the envelope, to a caller with a credential and to one without`, `› answers a method other than GET to a path no door serves 404 not_found even when it carries X-Marfa-Reach`, `compliance/instance.test.ts › answers 404 not_found in the standard envelope for a path it does not serve`.
+**Tests:** `compliance/unmatched-paths.test.ts › answers a GET to a path no door serves 404 not_found in the envelope, to a caller with a credential and to one without`, `› answers a method other than GET to a path no door serves 404 not_found even when it carries X-Marfa-Reach`, `› answers a GET or POST under /auth/ that no door serves 404 not_found, and a method no door serves there`, `compliance/instance.test.ts › answers 404 not_found in the standard envelope for a path it does not serve`.
 
 ### `errors/unmatched-method`
 
-When a request other than `OPTIONS` names a method no operation serves on a path that another method serves, and is not a `GET` or `POST` under `/auth/`, which the sign-in library answers, the server MUST answer `404 not_found` and not `405`.
+When a request other than `OPTIONS` names a method no operation serves on a path that another method serves, the server MUST answer `404 not_found` and not `405`.
 
-**Tests:** `compliance/unmatched-paths.test.ts › answers a method no door serves on a path another method serves 404 not_found, not 405`, `› answers a PATCH to an item's metadata 404 not_found, under an Idempotency-Key it then keeps no record of, and writes nothing`, `› answers a method no door serves 404 not_found whatever instance it names`.
+**Tests:** `compliance/unmatched-paths.test.ts › answers a method no door serves on a path another method serves 404 not_found, not 405`, `› answers a PATCH to an item's metadata 404 not_found, under an Idempotency-Key it then keeps no record of, and writes nothing`, `› answers a method no door serves 404 not_found whatever instance it names`, `› answers a GET or POST under /auth/ that no door serves 404 not_found, and a method no door serves there`.
 
 ### `errors/unmatched-options`
 

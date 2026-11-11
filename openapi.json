@@ -10,8 +10,8 @@
       "ownerSession": {
         "type": "apiKey",
         "in": "cookie",
-        "name": "marfa.auth.session_token",
-        "description": "The owner's browser sign-in, which only the sign-in pages read: here, the passkey doors. Writes require this instance's Origin, and changes require authentication within five minutes. Apps cannot use this authority."
+        "name": "__Host-marfa_session",
+        "description": "The owner's browser sign-in, which only the sign-in pages read: here, the passkey doors. On plain HTTP on this machine, the cookie is `marfa_session`. Writes require this instance's Origin, and changes require authentication within five minutes. Apps cannot use this authority."
       },
       "bearerAuth": {
         "type": "http",

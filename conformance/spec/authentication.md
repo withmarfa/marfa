@@ -216,7 +216,7 @@ If a browser session created more than five minutes ago asks for passkey registr
 
 ## Where a browser session counts
 
-The owner's browser session is the caller of the sign-in pages and of what they post: setup and its claim (`/setup`, `/setup/exchange` and `/setup/claim`), sign-in (`/auth/sign-in` and `/auth/sign-in/email`), `POST /auth/sign-out`, the confirmation dialog's `POST /auth/confirm`, the consent screen (`/auth/oauth2/authorize`, `/auth/authorize` and `/auth/authorize/decision`), device approval (`/auth/device` and `/auth/device/consent`), and the passkey page (`/auth/owner/passkeys`, the doors under `/auth/passkey/` and `/owner/passkeys`). Every other operation is reached with a key, an app's access token or the private local command.
+The owner's browser session is the caller of the sign-in pages and of what they post: setup and its claim (`/setup`, `/setup/exchange` and `/setup/claim`), sign-in (`/auth/sign-in`), `POST /auth/sign-out`, the confirmation dialog's `POST /auth/confirm`, the consent screen (`/auth/oauth2/authorize`, `/auth/authorize` and `/auth/authorize/decision`), device approval (`/auth/device` and `/auth/device/consent`), and the passkey page (`/auth/owner/passkeys`, the doors under `/auth/passkeys/` and `/owner/passkeys`). Every other operation is reached with a key, an app's access token or the private local command.
 
 ### `authentication/session-pages-only`
 
