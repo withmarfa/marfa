@@ -55,7 +55,10 @@ fn store(tx: &Transaction<'_>, id: &str, schema: &Obj, at: &str) -> Result<()> {
 }
 
 /// The grant that reaches an identifier nothing has registered yet.
-const NAMESPACE_WILDCARD: &str = "user.*:write";
+fn namespace_wildcard(id: &str) -> Option<String> {
+    let (root, _) = id.split_once('.')?;
+    Some(format!("{root}.*:write"))
+}
 
 pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
     if !body.contains_key("fields") {
@@ -82,10 +85,11 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
             let catalog = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
             if let Some(id) = &named {
                 caller.require_type(id, Level::Write).map_err(|refusal| {
-                    if catalog.holds(id) {
-                        refusal
-                    } else {
-                        refusal.with_detail("required_scope", NAMESPACE_WILDCARD)
+                    match namespace_wildcard(id) {
+                        Some(scope) if !catalog.holds(id) => {
+                            refusal.with_detail("required_scope", scope)
+                        }
+                        _ => refusal,
                     }
                 })?;
             }

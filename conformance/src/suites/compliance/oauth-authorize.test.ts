@@ -212,6 +212,47 @@ describe("the request an app sends", () => {
     expect(sent?.searchParams.get("error")).toBe("invalid_request");
   });
 
+  it("sends a refusal for a web app nobody approved to the error page, and to its redirect URI once the person approves it", async () => {
+    const web = "https://app.example/callback";
+    const app = await registerApp(server, NOTES, {
+      application_type: "web",
+      redirect_uris: [web],
+    });
+    const asked = (proof: ReturnType<typeof pkce> | undefined) => {
+      const query = authorizeQuery(app.clientId, NOTES, proof);
+      query.set("redirect_uri", web);
+      return query;
+    };
+    const ownPage = new URL(server.apiUrl).origin;
+    for (const [query, as, error] of [
+      [asked(undefined), cookie, "invalid_request"],
+      [
+        (() => {
+          const silent = asked(pkce());
+          silent.set("prompt", "none");
+          return silent;
+        })(),
+        null,
+        "login_required",
+      ],
+    ] as const) {
+      const sent = await landing(query, as);
+      expect(sent?.origin, String(sent)).toBe(ownPage);
+      expect(sent?.pathname).toBe("/auth/error");
+      expect(sent?.searchParams.get("error")).toBe(error);
+    }
+    // The witness: once the person approves the app there, the same refusal goes to it.
+    const consent = await consentScreen(asked(pkce()));
+    const approved = await decide(server, origin, cookie, consent, true, [
+      NOTES,
+    ]);
+    expect(approved?.href.startsWith(web), String(approved)).toBe(true);
+    const sent = await landing(asked(undefined));
+    expect(sent?.href.startsWith(web), String(sent)).toBe(true);
+    expect(sent?.searchParams.get("error")).toBe("invalid_request");
+    expect(sent?.searchParams.get("state")).toBe("signed-in-fixture");
+  });
+
   it("is sent to the error page, never to a redirect URI the app did not register", async () => {
     const app = await registerApp(server, NOTES);
     const query = authorizeQuery(app.clientId, NOTES, pkce());

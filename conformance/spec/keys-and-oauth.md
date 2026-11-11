@@ -1479,13 +1479,13 @@ When an app refreshes a token that was issued for types chosen in place of an al
 
 ### `keys-and-oauth/authorize-nothing-grantable`
 
-If an authorization request names no scope the instance can grant, then the server MUST send the browser to the redirect URI with `error=invalid_scope`.
+Where the redirect URI is on the loopback or in a private-use scheme, or the signed-in person's standing consent to the app covers it, if an authorization request names no scope the instance can grant, then the server MUST send the browser to the redirect URI with `error=invalid_scope`.
 
 **Tests:** `compliance/oauth-authorize.test.ts › sends a request in which no scope can be granted to the redirect URI as invalid_scope`.
 
 ### `keys-and-oauth/authorize-pkce`
 
-If an authorization request carries no PKCE challenge, then the server MUST send the browser to the redirect URI with `error=invalid_request`.
+Where the redirect URI is on the loopback or in a private-use scheme, or the signed-in person's standing consent to the app covers it, if an authorization request carries no PKCE challenge, then the server MUST send the browser to the redirect URI with `error=invalid_request`.
 
 **Tests:** `compliance/oauth-authorize.test.ts › is refused at the redirect URI without a PKCE challenge`.
 
@@ -1495,6 +1495,14 @@ If an authorization request names a redirect URI the client did not register, th
 
 **Tests:** `compliance/oauth-authorize.test.ts › is sent to the error page, never to a redirect URI the app did not register`, `› sends a request naming a private-use redirect URI the app did not register to the error page`.
 
+### `keys-and-oauth/authorize-error-web-unapproved`
+
+If an authorization request is refused for a redirect URI the client registered that is a web address off the loopback, and the signed-in person's standing consent to the app does not cover that URI, then the server MUST send the browser to its own `/auth/error` page with the error, never to that URI.
+
+**Reason:** RFC 9700 section 4.11.2: anyone can register an app with a web address, so sending an error there would make the server an open redirector. A loopback or private-use URI reaches a program on the person's device, and a standing consent means the person chose that address.
+
+**Tests:** `compliance/oauth-authorize.test.ts › sends a refusal for a web app nobody approved to the error page, and to its redirect URI once the person approves it`.
+
 ### `keys-and-oauth/authorize-private-use`
 
 When a person accepts an authorization request that names a private-use redirect URI the client registered, the server MUST send the browser to that URI, with the scheme and path as registered, carrying the code and the request's `state`.
@@ -1503,13 +1511,13 @@ When a person accepts an authorization request that names a private-use redirect
 
 ### `keys-and-oauth/prompt-none-login`
 
-If an authorization request naming `prompt=none` comes from nobody signed in, then the server MUST send the browser to the redirect URI with `error=login_required` and the request's `state`.
+Where the redirect URI is on the loopback or in a private-use scheme, if an authorization request naming `prompt=none` comes from nobody signed in, then the server MUST send the browser to the redirect URI with `error=login_required` and the request's `state`.
 
 **Tests:** `compliance/oauth-authorize.test.ts › sends a request from nobody signed in to the redirect URI as login_required`, `compliance/signed-in-apps.test.ts › is answered login_required under prompt=none from nobody signed in, and is not caught up`.
 
 ### `keys-and-oauth/prompt-none-consent`
 
-If a signed-in person's authorization request naming `prompt=none` names a scope no standing consent covers, then the server MUST send the browser to the redirect URI with `error=consent_required` and the request's `state`.
+Where the redirect URI is on the loopback or in a private-use scheme, or the signed-in person's standing consent to the app covers it, if a signed-in person's authorization request naming `prompt=none` names a scope no standing consent covers, then the server MUST send the browser to the redirect URI with `error=consent_required` and the request's `state`.
 
 **Tests:** `compliance/oauth-authorize.test.ts › sends a request no consent covers to the redirect URI as consent_required`.
 
@@ -1975,7 +1983,7 @@ If a token request names `resource` more than once, then the server MUST answer 
 
 ### `keys-and-oauth/resource-authorize-refused`
 
-If an authorization request names as `resource` anything other than this server's origin or one of its MCP endpoints, with a redirect URI the client registered or its client ID metadata document lists, then the server MUST send the browser to that redirect URI with `error=invalid_target`, the request's `state` and no code.
+Where the redirect URI is on the loopback or in a private-use scheme, or the signed-in person's standing consent to the app covers it, if an authorization request names as `resource` anything other than this server's origin or one of its MCP endpoints, with a redirect URI the client registered or its client ID metadata document lists, then the server MUST send the browser to that redirect URI with `error=invalid_target`, the request's `state` and no code.
 
 **Tests:** `compliance/oauth-tokens.test.ts › is refused at authorization to the redirect URI the app registered, with the request's state`.
 

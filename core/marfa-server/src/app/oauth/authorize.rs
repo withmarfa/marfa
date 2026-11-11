@@ -60,10 +60,10 @@ struct Asked {
 }
 
 impl Asked {
-    /// To the app only if the person's consent to it stands, otherwise to a page that names nothing
-    /// of the request.
+    /// RFC 9700 section 4.11.2: open registration lets anyone name a web address, so an error goes
+    /// there only once the person's consent to it stands. Elsewhere the page names nothing of it.
     fn refused(&self, standing: bool, problem: &Problem) -> String {
-        if !standing {
+        if !standing && !self.destination.reaches_no_website() {
             return format!("/auth/error?error={}", problem.error);
         }
         to_app(
@@ -293,8 +293,7 @@ async fn answer_signed_in(app: &Arc<App>, owner: &Caller, asked: Asked) -> Resul
     let shared = app.clone();
     app.write(owner, CODE_WRITE, move |unit| {
         let Some(client) = store::client(unit.tx(), &asked.client_id)? else {
-            let gone = Problem::new("invalid_client", "This client is gone.");
-            return Ok(asked.refused(false, &gone));
+            return Ok(NO_CLIENT.to_string());
         };
         let Some(destination) = Destination::of(
             &client.registration.redirect_uris,
