@@ -1,6 +1,4 @@
-//! Backups in this instance's folder that the database never recorded, such as those put after
-//! the data directory it was restored from was copied. The server never deletes one, and keeps
-//! every file one names while the store lists it.
+//! Backups in this instance's folder that the database never recorded, never deleted.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;

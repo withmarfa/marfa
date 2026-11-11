@@ -489,9 +489,8 @@ pub async fn integrity(app: Arc<App>, run: Run) -> Result<Report> {
     })))
 }
 
-/// Read from `tx`, since the live settings lag a committed change. Unless this instance's backups
-/// were `surveyed`, a file the object store holds a copy of stays, since a backup the database
-/// never recorded may name it.
+/// Read from `tx`, since the live settings lag a committed change. Unless `surveyed`, a file
+/// with an object store copy stays.
 fn purgeable(tx: &rusqlite::Transaction<'_>, app: &App, surveyed: bool) -> Result<Vec<Hash>> {
     let mut found = past_grace(tx, app)?;
     if let Some(bucket) = app.blobs.s3()
