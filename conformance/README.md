@@ -148,6 +148,7 @@ corrupts a copy under it.
 | `MARFA_DEVICE_BIN`          | The built `marfa` binary the device fixtures, scenario suite and hydration benchmark drive.                    |
 | `MARFA_DEVICE_MODULE`       | The built Node module, a debug build, the binding fixtures (`binding-*.test.ts`) drive.                        |
 | `MARFA_HYDRATION_ROWS`      | Rows in each set of the hydration benchmark. 2,000 when unset.                                                 |
+| `MARFA_TWO_DEVICES_REPORT`  | File the two-devices scenario writes its timings and load averages to.                                         |
 | `MARFA_LOAD_PROFILE`        | Sizes the load suites. `smoke` when unset; `src/suites/load/profiles.ts` has the rest.                         |
 
 `pnpm marfa:up` writes the server URL, both ordinary keys, owner cookie and private socket path. Set `MARFA_DEVICE_BIN` to the binary and `MARFA_DEVICE_MODULE` to the module you built before running `pnpm test:conformance`. Required fixture credentials, the binary and the module fail explicitly when missing; they do not skip tests. The state file contains credentials and must remain private to the test account.
