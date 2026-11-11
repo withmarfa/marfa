@@ -229,6 +229,102 @@ describe("a server whose test hooks are off", () => {
   });
 });
 
+describe("the environment names a server does not read", () => {
+  const warned = (output: string, name: string) =>
+    output
+      .split("\n")
+      .filter((line) => line.includes('"level":"warn"') && line.includes(name));
+
+  it("warns once of each MARFA_ or S3_ variable it does not read, names the setting it is near, and starts", async () => {
+    const value = "leftover-value-never-logged";
+    const free = start(folder("marfa-hf-data-"), {
+      MARFA_BLOB_CLEANUP_GRACE_MS: value,
+      S3_BUCKT: value,
+      MARFA_NOT_ANY_SETTING_AT_ALL: value,
+      MARFA_API_KEY: value,
+      MARFA_PORT: "0",
+    });
+    await listening(free);
+    await stop(free);
+    const output = free.output();
+
+    const [grace] = warned(output, "MARFA_BLOB_CLEANUP_GRACE_MS");
+    expect(warned(output, "MARFA_BLOB_CLEANUP_GRACE_MS")).toHaveLength(1);
+    expect(grace).toContain("blob_cleanup_grace_seconds");
+    expect(grace).toContain("a stored setting");
+    expect(grace).toContain("PATCH /config");
+    // A server that ignores seed names never offers one as the correction.
+    expect(grace).not.toContain("MARFA_BLOB_CLEANUP_GRACE_SECONDS");
+    const [bucket] = warned(output, "S3_BUCKT");
+    expect(warned(output, "S3_BUCKT")).toHaveLength(1);
+    expect(bucket).toContain("S3_BUCKET");
+    const [stray] = warned(output, "MARFA_NOT_ANY_SETTING_AT_ALL");
+    expect(warned(output, "MARFA_NOT_ANY_SETTING_AT_ALL")).toHaveLength(1);
+    expect(stray).not.toContain("did you mean");
+    expect(output).not.toContain(value);
+
+    // The witnesses: a name the server reads, and one the command line reads, draw none.
+    expect(warned(output, "MARFA_PORT")).toEqual([]);
+    expect(warned(output, "MARFA_API_KEY")).toEqual([]);
+  });
+
+  it("refuses a variable a letter from the name of a secret, which the server would replace, and starts without it", async () => {
+    const data = folder("marfa-hf-data-");
+    for (const [wrong, meant] of [
+      ["MARFA_AUTH_SECRT", "MARFA_AUTH_SECRET"],
+      ["marfa_key_salt", "MARFA_KEY_SALT"],
+      ["MARF_AUTH_SECRET", "MARFA_AUTH_SECRET"],
+      ["MRFA_KEY_SALT", "MARFA_KEY_SALT"],
+      ["MARFA-AUTH-SECRET", "MARFA_AUTH_SECRET"],
+    ] as const) {
+      const refused = start(data, { [wrong]: randomBytes(32).toString("hex") });
+      const code = await within(
+        EXIT_BUDGET_MS,
+        "the server exited",
+        refused.exit,
+      );
+      expect(code, wrong).not.toBe(0);
+      expect(refused.output(), wrong).toContain(wrong);
+      expect(refused.output(), wrong).toContain(meant);
+      expect(refused.output(), wrong).not.toContain("Marfa server listening");
+    }
+    expect(existsSync(resolve(data, "marfa.secrets"))).toBe(false);
+
+    // The witness: the same variable, spelled as the server reads it, starts.
+    const spelled = start(data, {
+      MARFA_AUTH_SECRET: randomBytes(32).toString("hex"),
+    });
+    await listening(spelled);
+    await stop(spelled);
+  });
+
+  it("starts, and warns of the near name, when the secret itself is set", async () => {
+    const data = folder("marfa-hf-data-");
+    const secret = randomBytes(32).toString("hex");
+    const run = start(data, {
+      MARFA_AUTH_SECRET: secret,
+      MARF_AUTH_SECRET: randomBytes(32).toString("hex"),
+      MARFA_AUTH_SECRT: randomBytes(32).toString("hex"),
+    });
+    await listening(run);
+    await stop(run);
+    const output = run.output();
+    expect(warned(output, "MARFA_AUTH_SECRT")).toHaveLength(1);
+    expect(output).not.toContain(secret);
+  });
+
+  it("logs no warning when another setting refuses the start", async () => {
+    const run = start(folder("marfa-hf-data-"), {
+      MARFA_NOT_ANY_SETTING_AT_ALL: "x",
+      MARFA_PORT: "not-a-port",
+    });
+    const code = await within(EXIT_BUDGET_MS, "the server exited", run.exit);
+    expect(code).not.toBe(0);
+    expect(warned(run.output(), "MARFA_NOT_ANY_SETTING_AT_ALL")).toEqual([]);
+    expect(run.output()).toContain("MARFA_PORT");
+  });
+});
+
 describe("the secrets of a server that was not configured by hand", () => {
   const secretsOf = (data: string) => resolve(data, "marfa.secrets");
 

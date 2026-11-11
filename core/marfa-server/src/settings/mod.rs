@@ -8,6 +8,7 @@ pub mod start;
 pub mod start_only;
 pub mod together;
 pub mod tuning;
+mod unknown;
 
 use std::fmt;
 use std::sync::Arc;
@@ -44,11 +45,17 @@ pub struct Accepted {
     given: Given,
     seeds: Seeds,
     start_only: Vec<start_only::Listed>,
+    unknown: Vec<unknown::Unknown>,
 }
 
 impl Accepted {
     pub fn fixed(&self) -> &Fixed {
         &self.fixed
+    }
+
+    /// Logged once nothing else refuses the start, so a refused start shows its refusal alone.
+    pub fn warn_of_unknown(&self) {
+        unknown::warn(&self.unknown);
     }
 
     /// Makes the secrets file on a first start; the server holds the control socket's claim before this.
@@ -112,7 +119,9 @@ impl Settings {
     /// only in place of its default.
     pub fn read(environment: Environment) -> Result<Accepted, Refused> {
         let mut problems = Vec::new();
+        let unknown = unknown::find(&environment);
         let read = Fixed::read(&environment, &mut problems);
+        problems.extend(unknown::refusals(&unknown));
         #[cfg(feature = "test-hooks")]
         let seeds = if Fixed::hooks_on(&environment) {
             registry::seeds(&environment, &mut problems)
@@ -142,6 +151,7 @@ impl Settings {
             given,
             seeds,
             start_only,
+            unknown,
         })
     }
 

@@ -7,6 +7,7 @@ pub mod catalog;
 pub mod conflict;
 pub mod display;
 pub mod edges;
+pub mod environment;
 pub mod error;
 pub mod filter;
 pub mod folder;

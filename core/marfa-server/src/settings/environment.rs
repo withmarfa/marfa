@@ -40,6 +40,10 @@ impl Environment {
         }
     }
 
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.values.keys().map(String::as_str)
+    }
+
     pub fn get(&self, name: &str) -> Option<&str> {
         self.values.get(name).map(String::as_str)
     }
