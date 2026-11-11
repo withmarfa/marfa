@@ -296,15 +296,26 @@ pub fn parse_document(
             "A metadata document must not offer {method}."
         )));
     }
-    let registration = client::read(object, Source::Document, allowed)?;
-    if !supported.is_empty()
-        && object.contains_key("token_endpoint_auth_method")
-        && !supported.contains(&registration.token_endpoint_auth_method.word())
+    let stated = object
+        .get("token_endpoint_auth_method")
+        .and_then(Value::as_str);
+    if let Some(method) = stated
+        && !supported.is_empty()
+        && !supported.contains(&method)
     {
         return Err(RegistrationError::metadata(
             "token_endpoint_auth_method must be among token_endpoint_auth_methods_supported.",
         ));
     }
+    // The plural field lists every method the client can use, and this server
+    // takes only none; the singular is a preference (MCP SEP-3149).
+    let registration = if stated.is_some() && supported.contains(&"none") {
+        let mut public = object.clone();
+        public.remove("token_endpoint_auth_method");
+        client::read(&public, Source::Document, allowed)?
+    } else {
+        client::read(object, Source::Document, allowed)?
+    };
     if registration
         .client_name
         .as_deref()
@@ -337,7 +348,7 @@ mod tests {
     use serde_json::json;
     use ureq::tls::{Certificate, RootCerts};
 
-    use super::super::client::{GrantType, ResponseType};
+    use super::super::client::{AuthMethod, GrantType, ResponseType};
     use super::super::redirect::AppKind;
     use super::*;
 
@@ -901,6 +912,35 @@ mod tests {
             json!(["tls_client_auth"]),
         );
         assert!(parse(&unstated).is_ok());
+    }
+
+    #[test]
+    fn a_document_that_can_use_none_registers_public_whatever_it_prefers() {
+        // ChatGPT's published document, under this test's URL.
+        let published = json!({
+            "client_id": ID,
+            "client_uri": "https://chatgpt.com/",
+            "client_name": "ChatGPT",
+            "redirect_uris": ["https://chatgpt.com/connector_platform_oauth_redirect"],
+            "token_endpoint_auth_method": "private_key_jwt",
+            "token_endpoint_auth_methods_supported": ["none", "private_key_jwt"],
+            "grant_types": [
+                "authorization_code",
+                "refresh_token",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+            ],
+            "response_types": ["code"],
+            "token_endpoint_auth_signing_alg": "RS256",
+            "jwks_uri": "https://chatgpt.com/jwks.json",
+        });
+        let registered = parse(&published).expect("registered");
+        assert_eq!(registered.token_endpoint_auth_method, AuthMethod::None);
+        let without_none = with(
+            published,
+            "token_endpoint_auth_methods_supported",
+            json!(["private_key_jwt"]),
+        );
+        assert!(parse(&without_none).is_err());
     }
 
     #[test]
