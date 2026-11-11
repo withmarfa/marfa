@@ -173,11 +173,8 @@ fn lead_with_joined(mut told: Vec<(Settled, crate::drain::DrainVerdict)>) -> Res
     Ok(lead)
 }
 
-/// `resent` where the batch went out before this request. A refusal the server
-/// answers from its key's record is the refusal of an attempt that wrote none
-/// of the batch, since a success completes the record in its own transaction.
-/// Any other refusal of a batch resent comes once that record is gone, and says
-/// nothing of what an earlier attempt wrote.
+/// `resent` where the batch went out before this request: only a refusal from
+/// the key's record then says no attempt under the record wrote the batch.
 pub(super) fn settle(
     core: &Core,
     row: &QueuedWrite,

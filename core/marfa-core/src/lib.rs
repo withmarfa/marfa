@@ -1854,8 +1854,8 @@ impl Core {
     }
 
     /// Under a fresh idempotency key, but a row write, released with every
-    /// write of its batch under the batch's key unless it was blocked
-    /// `key_spent`. Answers `false` for a row that is not
+    /// write of its batch under the batch's key, and an undo, under its own,
+    /// unless blocked `key_spent`. Answers `false` for a row that is not
     /// blocked, dead or refused without being sent, for one held behind
     /// another write, and for one refused because what it waited for was
     /// withdrawn.

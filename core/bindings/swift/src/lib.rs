@@ -3081,8 +3081,9 @@ impl Core {
         drained(self.inner.drain_until(&flag_of(stop))?)
     }
 
-    /// Sends a blocked or dead write again, under a fresh idempotency key.
-    /// Answers whether the row was one a release applies to.
+    /// Sends a blocked or dead write again, under a fresh idempotency key but
+    /// for a row write or an undo, which keeps its key unless blocked
+    /// `key_spent`. Answers whether the row was one a release applies to.
     pub fn release(&self, id: String) -> Result<bool, MarfaError> {
         Ok(self.inner.release(&id)?)
     }

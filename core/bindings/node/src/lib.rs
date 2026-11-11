@@ -3265,8 +3265,9 @@ impl MarfaCore {
             }))
     }
 
-    /// Sends a blocked or dead write again, under a fresh idempotency key.
-    /// Answers whether the row was one a release applies to.
+    /// Sends a blocked or dead write again, under a fresh idempotency key but
+    /// for a row write or an undo, which keeps its key unless blocked
+    /// `key_spent`. Answers whether the row was one a release applies to.
     #[napi]
     pub fn release(&self, env: Env, id: String) -> Result<bool> {
         self.inner.release(&id).map_err(|error| failure(env, error))

@@ -296,7 +296,7 @@ If the server refuses a batch the device had not sent before, or answers a batch
 
 When the server refuses a batch the device had not sent before, or answers a batch with a refusal from its record, naming an operation of one of its writes, a device MUST send the batch's other writes again in the same drain, in a batch of their own under a fresh key.
 
-**Reason:** the server wrote none of the batch in the request it refused (`tables/rows-all-or-none`). A refusal answered from the record (`items/idempotency-replay`) is the only answer the server kept under the key, and a success is kept in the transaction that writes it, so no attempt under the key wrote any of the batch. One write's refusal then says nothing of the others, and an edit refused only for sharing a batch would be lost.
+**Reason:** the server wrote none of the batch in the request it refused (`tables/rows-all-or-none`). A refusal answered from the record (`items/idempotency-replay`) is the only answer the server kept under the key since it made the record, and a success is kept in the transaction that writes it, so no attempt under the key wrote any of the batch in that time. One write's refusal then says nothing of the others, and an edit refused only for sharing a batch would be lost.
 
 **Tests:** `device/table-writes-live.test.ts › refuses only the write whose operation the server refuses, and sends the batch's other writes again in the same drain`, `› refuses only the write whose operation the server refuses from its record for a batch it sent before, and sends the others again in the same drain`.
 
@@ -1714,7 +1714,7 @@ If a caller withdraws an id the queue does not hold, then a device MUST refuse i
 
 When a caller withdraws a write blocked `ancestor_unavailable`, `conflict_unresolved`, `failing_alone` or `instance_changed`, a device MUST take it out of the queue.
 
-**Reason:** a release sends a write again under a fresh idempotency key but on the version it already names. The server refuses a `conflict_unresolved` write the same way every time, because versions only advance, and an `ancestor_unavailable` write the same way unless the credential it is sent with has come to read the snapshot it names. Meanwhile the write stays laid over its item and the copy goes on showing what the server will never take. A write that fails alone is one a person has judged will never go, and a write made against another instance is one a person has judged does not belong on this one.
+**Reason:** a release sends a write again on the version it already names. The server refuses a `conflict_unresolved` write the same way every time, because versions only advance, and an `ancestor_unavailable` write the same way unless the credential it is sent with has come to read the snapshot it names. Meanwhile the write stays laid over its item and the copy goes on showing what the server will never take. A write that fails alone is one a person has judged will never go, and a write made against another instance is one a person has judged does not belong on this one.
 
 **Tests:** `device/classification.test.ts › withdraws a write blocked ancestor_unavailable or conflict_unresolved, and puts the item back as the server holds it`, `device/stuck-write.test.ts › withdraws a write set aside, and sends nothing for it after`, `device/queue.test.ts › holds the writes queued against another instance once hydrated from the one now there, sending none until released`.
 

@@ -288,13 +288,13 @@ pub enum DeviceCommand {
         #[arg(value_name = "ID")]
         id: String,
     },
-    /// Send a blocked, dead or unsent refused write again, under a fresh key.
+    /// Send a blocked, dead or unsent refused write again.
     ///
     /// A write blocked `awaiting_dependency` is released only by the answer
-    /// to the write it waits behind, never by this command. A row write goes
-    /// again with every write sent in its batch, as they went, under the
-    /// batch's key, and an undo under its own key, unless it was blocked
-    /// `key_spent`.
+    /// to the write it waits behind, never by this command. A released write
+    /// goes under a fresh idempotency key. A row write instead goes again with
+    /// every write sent in its batch, as they went, under the batch's key, and
+    /// an undo under its own key, unless either was blocked `key_spent`.
     Release {
         /// The queued write to release.
         #[arg(
@@ -311,11 +311,10 @@ pub enum DeviceCommand {
     /// `failing_alone` or `instance_changed` out of the queue, and put the
     /// copy back to what the server holds.
     ///
-    /// A release sends a write again under a fresh idempotency key but on the
-    /// version it already names. A write blocked `conflict_unresolved` is
-    /// refused the same way each time, and one blocked `ancestor_unavailable`
-    /// too, unless the credential it is sent with has come to read the
-    /// snapshot it names. The writes held for the withdrawn write are refused
+    /// A release sends a write again on the version it already names. A write
+    /// blocked `conflict_unresolved` is refused the same way each time, and
+    /// one blocked `ancestor_unavailable` too, unless the credential it is
+    /// sent with has come to read the snapshot it names. The writes held for the withdrawn write are refused
     /// unsent. A row write goes with every write sent in its batch.
     Withdraw {
         /// The queued write to withdraw.
@@ -2016,6 +2015,8 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 if released == 0 {
                     "nothing to release: a write is released only where it is blocked, dead or refused unsent, and never while it waits behind another write"
                         .into()
+                } else if let Some(id) = &id {
+                    format!("released {id}")
                 } else {
                     format!("released {released} write(s)")
                 }
