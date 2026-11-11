@@ -282,6 +282,14 @@ fn prepare_reader(conn: &Connection, options: &Options) -> rusqlite::Result<()> 
     super::rank::register(conn)
 }
 
+/// A new or upgraded file holds its schema without its log, which the first checkpoint would
+/// otherwise leave until much later.
+fn move_schema_into_file(conn: &Connection) {
+    if let Err(error) = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)") {
+        tracing::warn!(error = %error, "The database log was not moved into its file");
+    }
+}
+
 /// Nothing is written until the judgment has passed.
 pub fn open(options: &Options, faults: &Faults) -> Result<Opened, Failure> {
     let target = Target::of(&options.path);
@@ -322,9 +330,11 @@ pub fn open(options: &Options, faults: &Faults) -> Result<Opened, Failure> {
         Standing::Current => {}
         Standing::Unfinished => {
             migrate::complete(&mut writer, options.migrations).map_err(refused)?;
+            move_schema_into_file(&writer);
         }
         Standing::Behind(from) => {
             migrate::upgrade(&mut writer, options.migrations, from).map_err(refused)?;
+            move_schema_into_file(&writer);
         }
     }
 
