@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
+import { signInOwnerWithPassword } from "../../client/owner-session.js";
 import {
   archiveLines,
   archiveManifest,
@@ -45,6 +46,7 @@ const store = ownObjectStore();
 const bucket = bucketAt(store.S3_PREFIX);
 let origin: FreshServer;
 let originId: string;
+let signedIn: string;
 let fresh: FreshServer | undefined;
 
 beforeAll(async () => {
@@ -54,6 +56,11 @@ beforeAll(async () => {
     MARFA_AUTH_SECRET: AUTH_SECRET,
   });
   originId = await instanceIdOf(origin);
+  signedIn = await signInOwnerWithPassword(
+    origin.apiUrl,
+    new URL(origin.apiUrl).origin,
+    TEST_OWNER,
+  );
 }, FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
@@ -234,6 +241,7 @@ describe("a backup in the object store", () => {
       origin.workingKey,
       origin.managementKey,
       TEST_OWNER.password,
+      signedIn.split("=").slice(1).join("="),
       AUTH_SECRET,
       process.env.S3_ACCESS_KEY_ID!,
       process.env.S3_SECRET_ACCESS_KEY!,
