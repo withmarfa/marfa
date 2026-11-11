@@ -15,7 +15,7 @@ use tokio::sync::Mutex;
 
 use super::App;
 use super::access::Caller;
-use super::archive::Backup;
+use super::archive::{self, Backup};
 use super::blobs::Hash;
 use super::blobs::s3::S3;
 use super::clock::Stamp;
@@ -43,6 +43,8 @@ pub struct Backups {
 struct State {
     changes: i64,
     backed_up: Option<i64>,
+    /// The archive version of the last backup put.
+    backed_up_version: Option<i64>,
     last_backup: Option<String>,
     last_backup_at: Option<String>,
     failures: i64,
@@ -62,18 +64,19 @@ pub fn changes(tx: &Transaction<'_>) -> Result<i64> {
 fn state(tx: &Transaction<'_>) -> Result<State> {
     let found = tx
         .prepare_cached(
-            "SELECT changes, backed_up, last_backup, last_backup_at, failures, last_error, \
-             last_failed_at FROM backup_state WHERE id = 1",
+            "SELECT changes, backed_up, backed_up_version, last_backup, last_backup_at, failures, \
+             last_error, last_failed_at FROM backup_state WHERE id = 1",
         )?
         .query_row([], |row| {
             Ok(State {
                 changes: row.get(0)?,
                 backed_up: row.get(1)?,
-                last_backup: row.get(2)?,
-                last_backup_at: row.get(3)?,
-                failures: row.get(4)?,
-                last_error: row.get(5)?,
-                last_failed_at: row.get(6)?,
+                backed_up_version: row.get(2)?,
+                last_backup: row.get(3)?,
+                last_backup_at: row.get(4)?,
+                failures: row.get(5)?,
+                last_error: row.get(6)?,
+                last_failed_at: row.get(7)?,
             })
         })
         .optional()?;
@@ -90,11 +93,12 @@ fn record_put(
     tx.prepare_cached("UPDATE backups SET confirmed = 1 WHERE store_id = ?1 AND name = ?2")?
         .execute(params![store, name])?;
     tx.execute(
-        "INSERT INTO backup_state (id, backed_up, last_backup, last_backup_at) \
-         VALUES (1, ?1, ?2, ?3) ON CONFLICT (id) DO UPDATE SET \
-         backed_up = max(coalesce(backed_up, ?1), ?1), last_backup = ?2, last_backup_at = ?3, \
+        "INSERT INTO backup_state (id, backed_up, backed_up_version, last_backup, last_backup_at) \
+         VALUES (1, ?1, ?4, ?2, ?3) ON CONFLICT (id) DO UPDATE SET \
+         backed_up = max(coalesce(backed_up, ?1), ?1), backed_up_version = ?4, \
+         last_backup = ?2, last_backup_at = ?3, \
          failures = 0, last_error = NULL, last_failed_at = NULL",
-        params![changes, name, at],
+        params![changes, name, at, archive::VERSION as i64],
     )?;
     Ok(())
 }
@@ -632,14 +636,16 @@ impl App {
     }
 }
 
-/// Runs one backup: skipped when nothing a backup holds has changed, unless `forced`.
+/// Runs one backup: skipped when nothing has changed since one written at this archive version, unless `forced`.
 async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
     let bucket = app.bucket()?;
     let Ok(_running) = app.backups.running.try_lock() else {
         return Ok(Outcome::Running);
     };
     let held = app.db.read(state).await?;
-    if !forced && held.failures == 0 && held.backed_up == Some(held.changes) {
+    let current = held.backed_up == Some(held.changes)
+        && held.backed_up_version == Some(archive::VERSION as i64);
+    if !forced && held.failures == 0 && current {
         return Ok(Outcome::Unchanged);
     }
     wake_replication(app).await;

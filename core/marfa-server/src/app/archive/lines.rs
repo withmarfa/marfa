@@ -19,11 +19,11 @@ use crate::db::io_refusal;
 /// The most items one credential check selects.
 const PAGE: i64 = 100;
 
-/// A page stops taking items once its text reaches this; one item can pass it.
+/// A page takes items while their stored size is under this, and always at least one.
 const PAGE_BYTES: usize = 256 * 1024;
 
-/// The most items read at once, so a run of large items cannot all be held together.
-const READ_AT_ONCE: usize = 16;
+/// What an item's line takes beyond its stored properties and extensions.
+const LINE_BYTES: usize = 1024;
 
 /// One page: its lines, where the next begins, and whether the credential now reads all of it.
 struct Page {
@@ -49,40 +49,36 @@ async fn item_page(
         }
         let admitted = admitted.unwrap_or_else(|| read.caller.clone());
         let selecting = read.as_caller(admitted.clone());
-        let seqs = query::selected(&selecting, &ask, after, PAGE)?;
+        let chosen = query::selected(&selecting, &ask, after, PAGE)?;
+        let mut held = 0;
+        let taken = chosen
+            .iter()
+            .position(|next| {
+                let full = held >= PAGE_BYTES;
+                held += next.stored + LINE_BYTES;
+                full
+            })
+            .unwrap_or(chosen.len());
+        let seqs: Vec<i64> = chosen[..taken].iter().map(|next| next.seq).collect();
         let mut whole = true;
         let mut text = String::new();
-        let (mut taken, mut longest) = (0, 1);
-        while taken < seqs.len() && text.len() < PAGE_BYTES {
-            let fit = (PAGE_BYTES - text.len()) / longest;
-            let count = if taken == 0 {
-                1
+        let rows = items::archived(
+            read.tx,
+            &admitted,
+            &read.catalog,
+            &read.read_only,
+            &seqs,
+            false,
+        )?;
+        for row in rows {
+            whole &= reads_row(read, &row)?;
+            if text.is_empty() {
+                text = row.line;
             } else {
-                fit.clamp(1, READ_AT_ONCE)
-            };
-            let end = (taken + count).min(seqs.len());
-            let rows = items::archived(
-                read.tx,
-                &admitted,
-                &read.catalog,
-                &read.read_only,
-                &seqs[taken..end],
-                false,
-            )?;
-            for row in rows {
-                whole &= reads_row(read, &row)?;
-                longest = longest.max(row.line.len() + 1);
-                if text.is_empty() {
-                    text = row.line;
-                    text.reserve(PAGE_BYTES.saturating_sub(text.len()).max(1));
-                } else {
-                    text.push_str(&row.line);
-                }
-                text.push('\n');
+                text.push_str(&row.line);
             }
-            taken = end;
+            text.push('\n');
         }
-        let seqs = seqs[..taken].to_vec();
         Ok((
             read.caller.clone(),
             Page {

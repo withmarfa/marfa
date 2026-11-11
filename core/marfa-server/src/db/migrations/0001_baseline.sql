@@ -1115,6 +1115,7 @@ CREATE TABLE IF NOT EXISTS backup_state (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     changes INTEGER NOT NULL DEFAULT 0,
     backed_up INTEGER,
+    backed_up_version INTEGER,
     last_backup TEXT,
     last_backup_at TEXT,
     failures INTEGER NOT NULL DEFAULT 0,

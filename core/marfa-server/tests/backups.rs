@@ -392,6 +392,36 @@ async fn a_scheduled_backup_runs_after_a_failed_one_when_nothing_has_changed() {
 }
 
 #[tokio::test]
+async fn a_scheduled_backup_runs_when_the_last_one_was_written_at_another_archive_version() {
+    let store = FakeS3::start().await;
+    let instance = Instance::backing_up_to(&store).await;
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["outcome"], "put");
+
+    let outcome = || async {
+        let (status, body) = instance
+            .local(Method::POST, "/housekeeping/backup/run", None)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["result"]["outcome"].clone()
+    };
+    assert_eq!(outcome().await, "unchanged");
+
+    instance
+        .app
+        .db
+        .write(Write::own(), |tx| {
+            tx.execute("UPDATE backup_state SET backed_up_version = 0", [])?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert_eq!(outcome().await, "put");
+    assert_eq!(outcome().await, "unchanged");
+}
+
+#[tokio::test]
 async fn health_says_backups_are_failing_when_their_state_does_not_read() {
     let store = FakeS3::start().await;
     let instance = Instance::backing_up_to(&store).await;

@@ -408,7 +408,10 @@ fn select(
         if read.faults().fail(FAIL_EXPORT_READ, None) {
             return Err(io_refusal());
         }
-        let seqs = query::selected(read, ask, after, PAGE)?;
+        let seqs: Vec<i64> = query::selected(read, ask, after, PAGE)?
+            .into_iter()
+            .map(|chosen| chosen.seq)
+            .collect();
         let Some(last) = seqs.last() else {
             break;
         };

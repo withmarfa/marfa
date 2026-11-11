@@ -21,6 +21,8 @@ const NOTES = 300;
 const BIG_BYTES = 990_000;
 /** Well under the 390 MiB a count of items held for 300 notes this size. */
 const BOUND_MIB = 64;
+/** A page is sized by what its items store, so it holds a quarter MiB plus one item, not sixteen. */
+const MIXED_BOUND_MIB = 16;
 
 let server: FreshServer | undefined;
 let working: MarfaClient;
@@ -148,6 +150,44 @@ describe("what an NDJSON export does with one item among small ones that is far 
         read.find((item) => item.id === big)?.properties.body,
       ).toHaveLength(BIG_BYTES);
       expect(serverRssMiB(server.stateDir) - before).toBeLessThan(BOUND_MIB);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+});
+
+describe("what an NDJSON export holds when one small item is followed by sixteen large ones, again and again", () => {
+  it(
+    "holds a fixed amount while the client reads nothing, and loses no item, in order",
+    async () => {
+      server = await bootFreshServer("export-memory-mixed");
+      ({ working } = clientsFor(server));
+      const made: string[] = [];
+      for (let group = 0; group < 6; group += 1) {
+        made.push(await note(`small ${group}`, 200));
+        for (let at = 0; at < 16; at += 1)
+          made.push(await note(`mixed ${group}.${at}`, BIG_BYTES));
+      }
+
+      const before = serverRssMiB(server.stateDir);
+      const stalled = await open(server);
+      expect(stalled.status).toBe(200);
+      await pause(2000);
+      const held = serverRssMiB(server.stateDir);
+      console.info(
+        `export memory: ${before.toFixed(1)} MiB before, ${held.toFixed(1)} MiB with a mixed export nobody reads`,
+      );
+      expect(held - before).toBeLessThan(MIXED_BOUND_MIB);
+      await stalled.body?.cancel();
+
+      const response = await open(server);
+      const lines = (await response.text())
+        .split("\n")
+        .filter((line) => line !== "");
+      expect(
+        lines.map(
+          (line) => (JSON.parse(line) as { item: { id: string } }).item.id,
+        ),
+      ).toEqual(made);
     },
     FRESH_SERVER_TIMEOUT_MS,
   );
