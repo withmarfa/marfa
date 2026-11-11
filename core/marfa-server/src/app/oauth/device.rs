@@ -83,7 +83,7 @@ pub async fn request(app: &Arc<App>, form: &Form, visit: &Visit) -> Result<Answe
         scopes,
         destinations: destinations_digest(app, &client)?,
         status: DeviceStatus::Pending,
-        user_id: None,
+        owner_id: None,
         interval_seconds: DEVICE_INTERVAL_SECONDS,
         last_polled_at: None,
         expires_at: now.plus_ms(DEVICE_CODE_SECONDS * MS_PER_SECOND)?,
@@ -126,7 +126,7 @@ pub fn admit_lookup(app: &App, address: Option<IpAddr>, owner: Option<&Caller>) 
         Some(session) => admit(
             app,
             &device_owner_lanes(
-                &session.user_id,
+                &session.owner_id,
                 app.faults.limit(DEVICE_OWNER_INSTANCE_LANE),
             ),
         ),
@@ -172,9 +172,9 @@ pub async fn screen(
     owner: &Caller,
 ) -> Result<std::result::Result<Box<Offer>, Blocked>> {
     let digest = digest_of_typed(app, typed)?;
-    let user_id = owner
+    let owner_id = owner
         .session()
-        .map(|session| session.user_id.clone())
+        .map(|session| session.owner_id.clone())
         .ok_or_else(|| Refusal::internal("an approval has no browser session"))?;
     let cache = app.catalog_handle();
     let now = app.clock.instant();
@@ -192,7 +192,7 @@ pub async fn screen(
             let catalog = catalog::current(&cache, tx, Snapshot::Pending)?;
             let registries = Registries::of(&catalog);
             let named = narrow(&code.scopes, &registries.allowed()).kept;
-            let held = store::held_scopes(tx, &client.id, &user_id)?;
+            let held = store::held_scopes(tx, &client.id, &owner_id)?;
             let choosable = registries.choosable_types();
             let request = Request {
                 named: &named,
@@ -238,13 +238,13 @@ pub async fn answer(
         let (Lookup::Pending, Some(code)) = (lookup, found) else {
             return Ok(Answer::Code(lookup));
         };
-        let user_id = unit
+        let owner_id = unit
             .caller
             .session()
-            .map(|session| session.user_id.clone())
+            .map(|session| session.owner_id.clone())
             .ok_or_else(|| Refusal::internal("an approval has no browser session"))?;
         let deny = |scopes: &ScopeSet| {
-            store::decide_device_code(tx, &code.digest, DeviceStatus::Denied, &user_id, scopes)?;
+            store::decide_device_code(tx, &code.digest, DeviceStatus::Denied, &owner_id, scopes)?;
             Ok(Answer::Denied)
         };
         if !approve {
@@ -254,7 +254,7 @@ pub async fn answer(
             .ok_or_else(|| Refusal::new(RefusalCode::InvalidClient, "This app is gone."))?;
         let registries = registries_in(unit, &cache)?;
         let named = narrow(&code.scopes, &registries.allowed()).kept;
-        let held = store::held_scopes(tx, &client.id, &user_id)?;
+        let held = store::held_scopes(tx, &client.id, &owner_id)?;
         let choosable = registries.choosable_types();
         let request = Request {
             named: &named,
@@ -278,12 +278,12 @@ pub async fn answer(
         }
         let lacking = ceiling_lacks(&client, &approved, &registries)?;
         clients::catch_up(unit, &client, &lacking, "device")?;
-        let stood = grant::stand(unit, &cache, &client, &user_id, &approved, DEVICE_SOURCE)?;
+        let stood = grant::stand(unit, &cache, &client, &owner_id, &approved, DEVICE_SOURCE)?;
         store::decide_device_code(
             tx,
             &code.digest,
             DeviceStatus::Approved,
-            &user_id,
+            &owner_id,
             &approved,
         )?;
         unit.audit_also(
@@ -292,7 +292,7 @@ pub async fn answer(
             &client.id,
             Some(json!({
                 "client_id": client.id,
-                "user_id": user_id,
+                "owner_id": owner_id,
                 "scopes": code.scopes.literals(),
                 "approved_scopes": approved.literals(),
                 "resulting_scopes": stood.scopes.literals(),

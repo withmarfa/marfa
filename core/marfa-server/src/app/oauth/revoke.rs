@@ -50,7 +50,7 @@ pub async fn revoke(app: &Arc<App>, form: Form, visit: &Visit) -> Result<Answere
                     action: TOKEN_REVOKED,
                     resource_type: "oauth_client",
                     resource_id: Some(&client.id),
-                    details: Some(json!({ "client_id": client.id, "user_id": found.user_id })),
+                    details: Some(json!({ "client_id": client.id, "owner_id": found.owner_id })),
                 },
             )
         })
@@ -66,7 +66,7 @@ pub async fn revoke(app: &Arc<App>, form: Form, visit: &Visit) -> Result<Answere
             }) else {
                 return Ok(());
             };
-            if !grant::end(unit, &cache, &client.id, &found.user_id)? {
+            if !grant::end(unit, &cache, &client.id, &found.owner_id)? {
                 return Ok(());
             }
             audit::record_from(
@@ -78,7 +78,7 @@ pub async fn revoke(app: &Arc<App>, form: Form, visit: &Visit) -> Result<Answere
                     action: GRANT_REVOKED,
                     resource_type: "oauth_grant",
                     resource_id: Some(&client.id),
-                    details: Some(json!({ "client_id": client.id, "user_id": found.user_id })),
+                    details: Some(json!({ "client_id": client.id, "owner_id": found.owner_id })),
                 },
             )
         })

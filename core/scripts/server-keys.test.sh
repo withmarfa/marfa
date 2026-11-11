@@ -27,13 +27,12 @@ check_owner() {
 issuer = urlparse(json.load(sys.stdin)["issuer"])
 print(f"{issuer.scheme}://{issuer.netloc}")')"
   body="$(python3 -c 'import json,os; print(json.dumps({"email":os.environ["MARFA_TEST_OWNER_EMAIL"],"password":os.environ["MARFA_TEST_OWNER_PASSWORD"]}))')"
-  curl -fsS --max-time 10 -X POST "${MARFA_TEST_URL}/auth/sign-in/email" \
+  curl -fsS --max-time 10 -X POST "${MARFA_TEST_URL}/auth/sign-in" \
     -H 'Content-Type: application/json' \
     -H "Origin: ${origin}" \
     --data-binary @- <<<"${body}" |
     python3 -c 'import json,sys
-answer = json.load(sys.stdin)
-assert answer.get("user", {}).get("email") == sys.argv[1], "the owner did not sign in"' "${MARFA_TEST_OWNER_EMAIL}"
+assert json.load(sys.stdin) == {"ok": True}, "the owner did not sign in"' 
 }
 
 up() {

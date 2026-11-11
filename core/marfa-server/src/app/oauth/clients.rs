@@ -462,13 +462,13 @@ mod tests {
         app.db
             .write(Write::own(), move |tx| {
                 tx.execute(
-                    "INSERT INTO auth_user (id, name, email, created_at, updated_at) \
-                     VALUES ('u', 'u', 'u@example.test', '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z')",
+                    "INSERT INTO owner (id, name, email, password, created_at, updated_at) \
+                     VALUES ('u', 'u', 'u@example.test', 'x', '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z')",
                     [],
                 )?;
                 tx.execute(
-                    "INSERT INTO auth_oauth_consent \
-                     (client_id, user_id, grant_id, scopes, created_at, updated_at) \
+                    "INSERT INTO oauth_consents \
+                     (client_id, owner_id, grant_id, scopes, created_at, updated_at) \
                      VALUES (?1, 'u', 'g', '[]', '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z')",
                     [&client.id],
                 )?;

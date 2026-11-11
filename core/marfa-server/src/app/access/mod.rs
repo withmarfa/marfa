@@ -513,7 +513,7 @@ mod tests {
             key: Box::new(wide.clone()),
             grant: Box::new(oauth::Granted {
                 client_id: "client".into(),
-                user_id: "owner".into(),
+                owner_id: "owner".into(),
                 grant_id: "grant".into(),
             }),
         };

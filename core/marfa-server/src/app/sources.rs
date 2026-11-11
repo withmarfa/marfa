@@ -155,7 +155,7 @@ fn held(tx: &Transaction<'_>, at: &str) -> Result<Vec<String>> {
     let apps = grants::all_of_owner(tx)?;
     codes.extend(
         apps.iter()
-            .map(|consent| grants::source_of(&consent.client_id, &consent.user_id)),
+            .map(|consent| grants::source_of(&consent.client_id, &consent.owner_id)),
     );
     Ok(codes)
 }

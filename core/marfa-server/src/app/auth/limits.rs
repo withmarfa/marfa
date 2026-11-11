@@ -87,9 +87,9 @@ pub fn device_lookup_lanes(address: Option<IpAddr>) -> [Lane; 2] {
     ]
 }
 
-pub fn device_owner_lanes(user_id: &str, instance_limit: Option<i64>) -> [Lane; 2] {
+pub fn device_owner_lanes(owner_id: &str, instance_limit: Option<i64>) -> [Lane; 2] {
     [
-        Lane::pinned(DEVICE_OWNER, user_id.to_string(), 10, 15 * MINUTE_MS),
+        Lane::pinned(DEVICE_OWNER, owner_id.to_string(), 10, 15 * MINUTE_MS),
         Lane::pinned(
             DEVICE_OWNER_INSTANCE,
             ALL.to_string(),

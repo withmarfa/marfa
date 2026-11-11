@@ -60,7 +60,7 @@ fn looks_like_a_token(text: &str) -> bool {
 }
 
 pub const UNREAD: Unread<'static> = Unread {
-    table: "auth_passkey_challenge",
+    table: "passkey_challenges",
     time: "expires_at",
     scope: "1",
 };
@@ -68,13 +68,13 @@ pub const UNREAD: Unread<'static> = Unread {
 fn make_room(tx: &Transaction<'_>, now: Stamp, purpose: Purpose) -> Result<()> {
     let ends = readable("expires_at");
     tx.execute(
-        &format!("DELETE FROM auth_passkey_challenge WHERE {ends} AND expires_at <= ?1"),
+        &format!("DELETE FROM passkey_challenges WHERE {ends} AND expires_at <= ?1"),
         params![now],
     )?;
     tx.execute(
         &format!(
-            "DELETE FROM auth_passkey_challenge WHERE digest IN (SELECT digest \
-             FROM auth_passkey_challenge WHERE purpose = ?2 AND {ends} \
+            "DELETE FROM passkey_challenges WHERE digest IN (SELECT digest \
+             FROM passkey_challenges WHERE purpose = ?2 AND {ends} \
              ORDER BY expires_at DESC LIMIT -1 OFFSET ?1)"
         ),
         params![MOST_UNDER_WAY - 1, purpose.word()],
@@ -93,7 +93,7 @@ pub fn issue<S: Serialize>(
     let state = serde_json::to_string(new.state)
         .map_err(|_| Refusal::internal("a passkey challenge did not write"))?;
     tx.execute(
-        "INSERT INTO auth_passkey_challenge (digest, purpose, origin, session_id, state, \
+        "INSERT INTO passkey_challenges (digest, purpose, origin, session_id, state, \
          expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![
             digest_of(salt, &token)?,
@@ -119,7 +119,7 @@ pub fn take(
     };
     let found: Option<(String, Stamp, Taken)> = tx
         .query_row(
-            "DELETE FROM auth_passkey_challenge WHERE digest = ?1 \
+            "DELETE FROM passkey_challenges WHERE digest = ?1 \
              RETURNING purpose, expires_at, origin, session_id, state",
             params![digest_of(salt, token)?],
             |row| {
@@ -188,7 +188,7 @@ mod tests {
             let tx = db.transaction().unwrap();
             let token = issued(&tx);
             tx.execute(
-                "UPDATE auth_passkey_challenge SET expires_at = ?1",
+                "UPDATE passkey_challenges SET expires_at = ?1",
                 [stored],
             )
             .unwrap();

@@ -73,32 +73,25 @@ const UNPUBLISHED: &[(&str, &str)] = &[
         "answers 405: the endpoint holds no session",
     ),
     ("GET /auth/sign-in", "the sign-in page"),
-    ("POST /auth/sign-in", "its form post"),
-    (
-        "POST /auth/sign-in/email",
-        "password sign-in, which the sign-in page calls",
-    ),
+    ("POST /auth/sign-in", "password sign-in, by its form or by JSON"),
     ("POST /auth/sign-out", "a browser's sign-out"),
     (
         "POST /auth/confirm",
         "the dialog's answer, which renews a stale browser session",
     ),
     (
-        "GET /auth/passkey/generate-register-options",
+        "POST /auth/passkeys/registration/options",
         "the owner's passkey registration challenge",
     ),
     (
-        "POST /auth/passkey/verify-registration",
+        "POST /auth/passkeys/registration",
         "the owner's passkey registration",
     ),
     (
-        "GET /auth/passkey/generate-authenticate-options",
+        "POST /auth/passkeys/sign-in/options",
         "a passkey sign-in challenge",
     ),
-    (
-        "POST /auth/passkey/verify-authentication",
-        "passkey sign-in",
-    ),
+    ("POST /auth/passkeys/sign-in", "passkey sign-in"),
     ("GET /auth/owner/passkeys", "the owner's passkeys page"),
     (
         "GET /auth/error",

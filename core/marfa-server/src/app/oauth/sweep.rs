@@ -28,7 +28,7 @@ const GRANT_RETIRED: &str = "auth.grant.retired";
 fn idle_consents() -> String {
     let last = "COALESCE(last_used_at, updated_at)";
     format!(
-        "SELECT client_id, user_id FROM auth_oauth_consent WHERE withdrawn_at IS NULL \
+        "SELECT client_id, owner_id FROM oauth_consents WHERE withdrawn_at IS NULL \
          AND {} AND {last} < ?1 LIMIT ?2",
         readable(last)
     )
@@ -36,30 +36,30 @@ fn idle_consents() -> String {
 
 fn withdrawn_consents() -> String {
     format!(
-        "SELECT client_id, user_id FROM auth_oauth_consent \
+        "SELECT client_id, owner_id FROM oauth_consents \
          WHERE {} AND withdrawn_at < ?1 LIMIT ?2",
         readable("withdrawn_at")
     )
 }
 
 const IDLE_UNREAD: [Unread<'static>; 1] = [Unread {
-    table: "auth_oauth_consent",
+    table: "oauth_consents",
     time: "COALESCE(last_used_at, updated_at)",
     scope: "withdrawn_at IS NULL",
 }];
 const WITHDRAWN_UNREAD: [Unread<'static>; 1] = [Unread {
-    table: "auth_oauth_consent",
+    table: "oauth_consents",
     time: "withdrawn_at",
     scope: "1",
 }];
 const CLIENT_UNREAD: [Unread<'static>; 2] = [
     Unread {
-        table: "auth_oauth_client",
+        table: "oauth_clients",
         time: "created_at",
         scope: "1",
     },
     Unread {
-        table: "auth_oauth_client",
+        table: "oauth_clients",
         time: "offered_at",
         scope: "1",
     },
@@ -148,14 +148,14 @@ async fn idle_clients(app: &Arc<App>) -> Result<i64> {
         let offered = "COALESCE(offered_at, created_at)";
         let count = unit.tx().execute(
             &format!(
-                "DELETE FROM auth_oauth_client WHERE client_id IN ( \
-             SELECT client_id FROM auth_oauth_client AS c \
+                "DELETE FROM oauth_clients WHERE client_id IN ( \
+             SELECT client_id FROM oauth_clients AS c \
              WHERE {} AND created_at < ?1 AND {} AND {offered} < ?1 \
-             AND NOT EXISTS (SELECT 1 FROM auth_oauth_consent AS x \
+             AND NOT EXISTS (SELECT 1 FROM oauth_consents AS x \
                              WHERE x.client_id = c.client_id) \
-             AND NOT EXISTS (SELECT 1 FROM auth_oauth_access_token AS x \
+             AND NOT EXISTS (SELECT 1 FROM oauth_access_tokens AS x \
                              WHERE x.client_id = c.client_id) \
-             AND NOT EXISTS (SELECT 1 FROM auth_oauth_refresh_token AS x \
+             AND NOT EXISTS (SELECT 1 FROM oauth_refresh_tokens AS x \
                              WHERE x.client_id = c.client_id) \
              LIMIT ?2)",
                 readable("created_at"),
@@ -194,14 +194,14 @@ async fn retire_one(app: &Arc<App>) -> Result<i64> {
             return Ok(0);
         };
         let idle = consents_in(unit.tx(), &idle_consents(), cutoff, 1)?;
-        for (client_id, user_id) in &idle {
-            grant::end(unit, &cache, client_id, user_id)?;
+        for (client_id, owner_id) in &idle {
+            grant::end(unit, &cache, client_id, owner_id)?;
             unit.audit(
                 "oauth_grant",
                 client_id,
                 Some(json!({
                     "client_id": client_id,
-                    "user_id": user_id,
+                    "owner_id": owner_id,
                     "cutoff": cutoff,
                 })),
             )?;
@@ -231,8 +231,8 @@ async fn withdrawn_grants(app: &Arc<App>) -> Result<i64> {
             return Ok(0);
         };
         let withdrawn = consents_in(unit.tx(), &withdrawn_consents(), cutoff, BATCH)?;
-        for (client_id, user_id) in &withdrawn {
-            grant::forget(unit, &cache, client_id, user_id)?;
+        for (client_id, owner_id) in &withdrawn {
+            grant::forget(unit, &cache, client_id, owner_id)?;
         }
         if !withdrawn.is_empty() {
             unit.audit_set(
@@ -297,11 +297,11 @@ pub async fn sweep_expired(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
         report_kept(app, run, now, unread).await?;
     }
     for (table, key, kept_ms) in [
-        ("auth_oauth_code", "digest", 0),
+        ("oauth_codes", "digest", 0),
         // A day longer, so a device polling after the code expired is told so.
-        ("auth_oauth_device_code", "device_code", MS_PER_DAY),
-        ("auth_oauth_access_token", "id", 0),
-        ("auth_oauth_refresh_token", "id", 0),
+        ("oauth_device_codes", "device_code", MS_PER_DAY),
+        ("oauth_access_tokens", "id", 0),
+        ("oauth_refresh_tokens", "id", 0),
         ("setup_proof", "digest", 0),
     ] {
         if !done {

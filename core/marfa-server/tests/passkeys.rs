@@ -189,7 +189,7 @@ impl Reply {
 
     fn session_cookie(&self) -> Option<String> {
         self.cookie()
-            .filter(|cookie| cookie.contains("session_token"))
+            .filter(|cookie| cookie.contains("marfa_session="))
     }
 }
 
@@ -290,6 +290,11 @@ impl Instance {
         send(self.public.clone(), request).await
     }
 
+    async fn ask(&self, path: &str, cookie: &str) -> Reply {
+        let request = request(Method::POST, path, cookie, &self.origin);
+        send(self.public.clone(), request.body(Body::empty()).unwrap()).await
+    }
+
     async fn delete(&self, path: &str, cookie: &str) -> Reply {
         let request = request(Method::DELETE, path, cookie, &self.origin);
         send(self.public.clone(), request.body(Body::empty()).unwrap()).await
@@ -297,13 +302,13 @@ impl Instance {
 
     async fn signed_in(&self) -> String {
         let body = json!({ "email": EMAIL, "password": PASSWORD });
-        let reply = self.post("/auth/sign-in/email", "", &body).await;
+        let reply = self.post("/auth/sign-in", "", &body).await;
         assert_eq!(reply.status, StatusCode::OK, "{:?}", reply.body);
         reply.cookie().unwrap()
     }
 
     async fn asked(&self, door: &str, cookie: &str) -> Asked {
-        let reply = self.get(door, cookie).await;
+        let reply = self.ask(door, cookie).await;
         assert_eq!(reply.status, StatusCode::OK, "{}", reply.text);
         Asked {
             challenge: reply.body["challenge"].as_str().unwrap().to_string(),
@@ -312,24 +317,24 @@ impl Instance {
     }
 
     async fn asked_to_add(&self) -> Asked {
-        self.asked("/auth/passkey/generate-register-options", &self.owner)
+        self.asked("/auth/passkeys/registration/options", &self.owner)
             .await
     }
 
     async fn asked_to_prove(&self) -> Asked {
-        self.asked("/auth/passkey/generate-authenticate-options", "")
+        self.asked("/auth/passkeys/sign-in/options", "")
             .await
     }
 
     async fn verify_registration(&self, cookie: &str, response: Value) -> Reply {
         let body = json!({ "name": "A device", "response": response });
-        self.post("/auth/passkey/verify-registration", cookie, &body)
+        self.post("/auth/passkeys/registration", cookie, &body)
             .await
     }
 
     async fn verify_assertion(&self, cookie: &str, response: Value) -> Reply {
         let body = json!({ "response": response });
-        self.post("/auth/passkey/verify-authentication", cookie, &body)
+        self.post("/auth/passkeys/sign-in", cookie, &body)
             .await
     }
 
@@ -337,7 +342,7 @@ impl Instance {
         let asked = self.asked_to_add().await;
         let response = device.registration(&asked.challenge, &self.saying());
         let reply = self.verify_registration(&asked.cookie, response).await;
-        assert_eq!(reply.status, StatusCode::OK, "{}", reply.text);
+        assert_eq!(reply.status, StatusCode::CREATED, "{}", reply.text);
         reply.body["id"].as_str().unwrap().to_string()
     }
 
@@ -401,7 +406,7 @@ async fn a_passkey_added_signs_in_and_the_table_holds_no_token() {
     let instance = Instance::claimed().await;
     let device = Device::new();
     let reply = instance
-        .get("/auth/passkey/generate-register-options", &instance.owner)
+        .ask("/auth/passkeys/registration/options", &instance.owner)
         .await;
     assert_eq!(reply.status, StatusCode::OK);
     let options = &reply.body;
@@ -420,7 +425,7 @@ async fn a_passkey_added_signs_in_and_the_table_holds_no_token() {
         .app
         .db
         .read(|tx| {
-            let mut statement = tx.prepare("SELECT digest FROM auth_passkey_challenge")?;
+            let mut statement = tx.prepare("SELECT digest FROM passkey_challenges")?;
             let rows = statement.query_map([], |row| row.get(0))?;
             Ok(rows.collect::<rusqlite::Result<_>>()?)
         })
@@ -431,7 +436,7 @@ async fn a_passkey_added_signs_in_and_the_table_holds_no_token() {
 
     let id = instance.add(&device).await;
     let excluded = instance
-        .get("/auth/passkey/generate-register-options", &instance.owner)
+        .ask("/auth/passkeys/registration/options", &instance.owner)
         .await;
     assert_eq!(
         excluded.body["excludeCredentials"][0]["id"],
@@ -439,7 +444,7 @@ async fn a_passkey_added_signs_in_and_the_table_holds_no_token() {
     );
 
     let proving = instance
-        .get("/auth/passkey/generate-authenticate-options", "")
+        .ask("/auth/passkeys/sign-in/options", "")
         .await;
     assert_eq!(proving.body["rpId"], HOST);
     assert_eq!(proving.body["userVerification"], "required");
@@ -447,6 +452,7 @@ async fn a_passkey_added_signs_in_and_the_table_holds_no_token() {
 
     let signed = instance.sign_in_with(&device, 1).await;
     assert_eq!(signed.status, StatusCode::OK, "{}", signed.text);
+    assert_eq!(signed.body, json!({ "ok": true }));
     let session = signed.session_cookie().unwrap();
     assert_eq!(
         instance.get("/owner/passkeys", &session).await.status,
@@ -495,7 +501,7 @@ async fn a_refused_assertion_spends_its_challenge_and_moves_nothing() {
     assert_eq!(instance.listed().await[0]["last_used_at"], Value::Null);
     let after = instance.verify_assertion(&asked.cookie, good).await;
     assert_eq!(after.status, StatusCode::BAD_REQUEST);
-    assert_eq!(instance.count("auth_passkey_challenge").await, 0);
+    assert_eq!(instance.count("passkey_challenges").await, 0);
 }
 
 #[tokio::test]
@@ -532,7 +538,7 @@ async fn a_challenge_from_before_an_address_change_is_spent() {
     let refused = instance.verify_assertion(&asked.cookie, response).await;
     assert_eq!(refused.status, StatusCode::BAD_REQUEST);
     assert!(refused.session_cookie().is_none());
-    assert_eq!(instance.count("auth_passkey_challenge").await, 0);
+    assert_eq!(instance.count("passkey_challenges").await, 0);
     let signed = instance.sign_in_with(&device, 1).await;
     assert_eq!(signed.status, StatusCode::OK, "{}", signed.text);
 }
@@ -567,9 +573,9 @@ async fn a_new_sign_in_host_says_how_many_passkeys_it_strands() {
 #[tokio::test]
 async fn a_page_the_cors_origins_setting_names_may_open_a_passkey_ceremony() {
     let mut instance = Instance::claimed().await;
-    let door = "/auth/passkey/generate-authenticate-options";
+    let door = "/auth/passkeys/sign-in/options";
     instance.origin = "https://named.example".to_string();
-    let refused = instance.get(door, "").await;
+    let refused = instance.ask(door, "").await;
     assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.text);
 
     let named = json!(["https://named.example"]).to_string();
@@ -577,7 +583,7 @@ async fn a_page_the_cors_origins_setting_names_may_open_a_passkey_ceremony() {
         .app
         .settings
         .apply_stored(&[("cors_origins".to_string(), named)]);
-    let answered = instance.get(door, "").await;
+    let answered = instance.ask(door, "").await;
     assert_eq!(answered.status, StatusCode::OK, "{}", answered.text);
 }
 
@@ -596,12 +602,12 @@ async fn a_passkey_of_another_host_cannot_sign_in_and_stays_listed() {
     assert_eq!(stranded_by("marfa.example").await.unwrap(), 1);
     instance.move_to("https://marfa.example");
     let asked = instance
-        .asked("/auth/passkey/generate-authenticate-options", "")
+        .asked("/auth/passkeys/sign-in/options", "")
         .await;
     assert!(
         asked
             .cookie
-            .contains("__Host-marfa.auth.passkey_challenge=")
+            .contains("__Host-marfa_passkey_challenge=")
     );
     let saying = Saying {
         host: "marfa.example".to_string(),
@@ -673,7 +679,7 @@ async fn a_challenge_whose_commit_is_unknown_sets_no_cookie() {
         .set("fail:commit-full", Some("auth.passkey.challenge"))
         .unwrap();
     let unknown = instance
-        .get("/auth/passkey/generate-authenticate-options", "")
+        .ask("/auth/passkeys/sign-in/options", "")
         .await;
     assert!(unknown.status.is_server_error());
     assert!(unknown.cookie().is_none());
@@ -693,10 +699,10 @@ async fn a_registration_whose_commit_is_unknown_can_be_made_again() {
         .verify_registration(&asked.cookie, response.clone())
         .await;
     assert!(unknown.status.is_server_error());
-    assert_eq!(instance.count("auth_passkey").await, 0);
+    assert_eq!(instance.count("passkeys").await, 0);
     faults.clear(None);
     let again = instance.verify_registration(&asked.cookie, response).await;
-    assert_eq!(again.status, StatusCode::OK, "{}", again.text);
+    assert_eq!(again.status, StatusCode::CREATED, "{}", again.text);
 }
 
 #[tokio::test]
@@ -717,8 +723,8 @@ async fn two_registrations_of_one_credential_at_once_store_one_passkey() {
     );
     let mut statuses = [first.status.as_u16(), second.status.as_u16()];
     statuses.sort_unstable();
-    assert_eq!(statuses, [200, 409]);
-    assert_eq!(instance.count("auth_passkey").await, 1);
+    assert_eq!(statuses, [201, 409]);
+    assert_eq!(instance.count("passkeys").await, 1);
 }
 
 #[tokio::test]
@@ -785,7 +791,7 @@ async fn an_unverified_user_is_refused_at_both_ceremonies() {
     let response = device.registration(&asked.challenge, &unverified);
     let refused = instance.verify_registration(&asked.cookie, response).await;
     assert_eq!(refused.status, StatusCode::BAD_REQUEST);
-    assert_eq!(instance.count("auth_passkey").await, 0);
+    assert_eq!(instance.count("passkeys").await, 0);
 
     instance.add(&device).await;
     let asked = instance.asked_to_prove().await;
@@ -878,7 +884,7 @@ async fn a_challenge_serves_only_its_own_ceremony_and_session() {
         .verify_registration(&cookie, device.registration(&adding.challenge, &saying))
         .await;
     assert_eq!(refused.status, StatusCode::BAD_REQUEST);
-    assert_eq!(instance.count("auth_passkey").await, 0);
+    assert_eq!(instance.count("passkeys").await, 0);
 }
 
 #[tokio::test]
@@ -894,7 +900,7 @@ async fn a_registration_rechecks_the_recent_sign_in_when_it_finishes() {
         refused.body["error"]["message"],
         "Sign in again to perform this operation"
     );
-    assert_eq!(instance.count("auth_passkey").await, 0);
+    assert_eq!(instance.count("passkeys").await, 0);
 }
 
 #[tokio::test]
@@ -906,7 +912,7 @@ async fn a_refused_confirmation_leaves_the_session_and_a_good_one_replaces_it() 
     instance.app.clock.advance(6 * MINUTE_MS).unwrap();
 
     let asked = instance
-        .asked("/auth/passkey/generate-authenticate-options", &stale)
+        .asked("/auth/passkeys/sign-in/options", &stale)
         .await;
     let body = json!({ "passkey": Device::new().assertion(&asked.challenge, &instance.saying()) });
     let refused = instance.post("/auth/confirm", &asked.cookie, &body).await;
@@ -922,7 +928,7 @@ async fn a_refused_confirmation_leaves_the_session_and_a_good_one_replaces_it() 
     assert_eq!(spent.status, StatusCode::BAD_REQUEST);
 
     let asked = instance
-        .asked("/auth/passkey/generate-authenticate-options", &stale)
+        .asked("/auth/passkeys/sign-in/options", &stale)
         .await;
     let body = json!({ "passkey": device.assertion(&asked.challenge, &instance.saying()) });
     let confirmed = instance.post("/auth/confirm", &asked.cookie, &body).await;
@@ -946,26 +952,26 @@ async fn a_passkey_signs_in_through_a_password_lockout_and_leaves_it_in_place() 
     let wrong = json!({ "email": EMAIL, "password": "not the password" });
     // The owner's first sign-in spent one of the ten.
     for _ in 0..9 {
-        let refused = instance.post("/auth/sign-in/email", "", &wrong).await;
+        let refused = instance.post("/auth/sign-in", "", &wrong).await;
         assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
     }
     let right = json!({ "email": EMAIL, "password": PASSWORD });
-    let held = instance.post("/auth/sign-in/email", "", &right).await;
+    let held = instance.post("/auth/sign-in", "", &right).await;
     assert_eq!(held.status, StatusCode::TOO_MANY_REQUESTS);
 
     let signed = instance.sign_in_with(&device, 1).await;
     assert_eq!(signed.status, StatusCode::OK, "{}", signed.text);
     assert!(signed.session_cookie().is_some());
 
-    let still = instance.post("/auth/sign-in/email", "", &right).await;
+    let still = instance.post("/auth/sign-in", "", &right).await;
     assert_eq!(still.status, StatusCode::TOO_MANY_REQUESTS);
 }
 
 #[tokio::test]
 async fn an_ip_address_or_plain_http_has_no_passkeys_and_says_why() {
     let instance = Instance::at("http://127.0.0.1:8600").await;
-    let door = "/auth/passkey/generate-authenticate-options";
-    let reply = instance.get(door, "").await;
+    let door = "/auth/passkeys/sign-in/options";
+    let reply = instance.ask(door, "").await;
     assert_eq!(reply.status, StatusCode::FORBIDDEN);
     assert!(
         reply.body["error"]["message"]
@@ -974,9 +980,9 @@ async fn an_ip_address_or_plain_http_has_no_passkeys_and_says_why() {
             .contains("IP address")
     );
     assert!(reply.cookie().is_none());
-    assert_eq!(instance.count("auth_passkey_challenge").await, 0);
+    assert_eq!(instance.count("passkey_challenges").await, 0);
     let adding = instance
-        .get("/auth/passkey/generate-register-options", &instance.owner)
+        .ask("/auth/passkeys/registration/options", &instance.owner)
         .await;
     assert_eq!(adding.status, StatusCode::FORBIDDEN);
     let page = instance.get("/auth/owner/passkeys", &instance.owner).await;
@@ -985,7 +991,7 @@ async fn an_ip_address_or_plain_http_has_no_passkeys_and_says_why() {
 
     let mut instance = Instance::claimed().await;
     instance.move_to("http://marfa.example");
-    let reply = instance.get(door, "").await;
+    let reply = instance.ask(door, "").await;
     assert_eq!(reply.status, StatusCode::FORBIDDEN);
     assert!(
         reply.body["error"]["message"]
@@ -999,13 +1005,13 @@ async fn an_ip_address_or_plain_http_has_no_passkeys_and_says_why() {
 async fn a_foreign_page_cannot_start_or_finish_a_sign_in() {
     let instance = Instance::claimed().await;
     let foreign = "https://foreign.example";
-    let door = "/auth/passkey/generate-authenticate-options";
-    let asked = request(Method::GET, door, "", foreign);
+    let door = "/auth/passkeys/sign-in/options";
+    let asked = request(Method::POST, door, "", foreign);
     let reply = send(instance.public.clone(), asked.body(Body::empty()).unwrap()).await;
     assert_eq!(reply.status, StatusCode::FORBIDDEN);
     let finish = request(
         Method::POST,
-        "/auth/passkey/verify-authentication",
+        "/auth/passkeys/sign-in",
         "",
         foreign,
     )
@@ -1025,7 +1031,7 @@ async fn a_flood_of_challenges_stays_bounded_and_the_newest_still_works() {
     for _ in 0..1100 {
         instance.asked_to_prove().await;
     }
-    assert_eq!(instance.count("auth_passkey_challenge").await, 1024);
+    assert_eq!(instance.count("passkey_challenges").await, 1024);
     let signed = instance.sign_in_with(&device, 1).await;
     assert_eq!(signed.status, StatusCode::OK, "{}", signed.text);
 }
@@ -1041,7 +1047,7 @@ async fn a_flood_of_sign_in_challenges_leaves_an_add_challenge_alive() {
     }
     let response = device.registration(&asked.challenge, &instance.saying());
     let added = instance.verify_registration(&asked.cookie, response).await;
-    assert_eq!(added.status, StatusCode::OK, "{}", added.text);
+    assert_eq!(added.status, StatusCode::CREATED, "{}", added.text);
 }
 
 #[tokio::test]
@@ -1050,11 +1056,11 @@ async fn one_address_is_held_to_thirty_sign_in_challenges_a_minute() {
     for _ in 0..30 {
         instance.asked_to_prove().await;
     }
-    let door = "/auth/passkey/generate-authenticate-options";
-    let refused = instance.get(door, "").await;
+    let door = "/auth/passkeys/sign-in/options";
+    let refused = instance.ask(door, "").await;
     assert_eq!(refused.status, StatusCode::TOO_MANY_REQUESTS);
     assert!(refused.headers.contains_key(header::RETRY_AFTER));
-    assert_eq!(instance.count("auth_passkey_challenge").await, 30);
+    assert_eq!(instance.count("passkey_challenges").await, 30);
     instance.app.clock.advance(MINUTE_MS).unwrap();
     instance.asked_to_prove().await;
 }
@@ -1069,9 +1075,9 @@ async fn the_page_escapes_a_name_and_sends_a_stranger_to_sign_in() {
         "response": device.registration(&asked.challenge, &instance.saying()),
     });
     let added = instance
-        .post("/auth/passkey/verify-registration", &asked.cookie, &body)
+        .post("/auth/passkeys/registration", &asked.cookie, &body)
         .await;
-    assert_eq!(added.status, StatusCode::OK);
+    assert_eq!(added.status, StatusCode::CREATED);
     let page = instance.get("/auth/owner/passkeys", &instance.owner).await;
     assert_eq!(page.status, StatusCode::OK);
     assert!(page.text.contains("Password and passkeys"));

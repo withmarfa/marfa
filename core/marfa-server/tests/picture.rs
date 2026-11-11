@@ -225,7 +225,7 @@ impl Instance {
     async fn cookie(&self) -> String {
         let body = json!({ "email": EMAIL, "password": PASSWORD });
         let reply = self
-            .json(&self.public, Method::POST, "/auth/sign-in/email", &body)
+            .json(&self.public, Method::POST, "/auth/sign-in", &body)
             .await;
         let line = reply.headers[header::SET_COOKIE].to_str().unwrap();
         line.split(';').next().unwrap().to_string()

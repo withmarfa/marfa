@@ -107,7 +107,7 @@ fn client_of(row: &Row<'_>) -> rusqlite::Result<Client> {
 pub fn client(tx: &Connection, id: &str) -> Result<Option<Client>> {
     Ok(tx
         .query_row(
-            "SELECT * FROM auth_oauth_client WHERE client_id = ?1",
+            "SELECT * FROM oauth_clients WHERE client_id = ?1",
             [id],
             client_of,
         )
@@ -123,7 +123,7 @@ pub fn put_client(
 ) -> Result<()> {
     let words = |list: Vec<&'static str>| Value::from(list).to_string();
     tx.execute(
-        "INSERT INTO auth_oauth_client (client_id, auth_method, application_type, redirect_uris, \
+        "INSERT INTO oauth_clients (client_id, auth_method, application_type, redirect_uris, \
          grant_types, response_types, scopes, client_name, client_uri, logo_uri, tos_uri, \
          policy_uri, contacts, software_id, software_version, created_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16) \
@@ -171,7 +171,7 @@ pub fn put_client(
 
 pub fn set_client_scopes(tx: &Connection, id: &str, scopes: &ScopeSet) -> Result<()> {
     tx.execute(
-        "UPDATE auth_oauth_client SET scopes = ?2 WHERE client_id = ?1",
+        "UPDATE oauth_clients SET scopes = ?2 WHERE client_id = ?1",
         params![id, scopes_text(scopes)],
     )?;
     Ok(())
@@ -179,7 +179,7 @@ pub fn set_client_scopes(tx: &Connection, id: &str, scopes: &ScopeSet) -> Result
 
 pub fn note_offered(tx: &Connection, id: &str, now: Stamp) -> Result<()> {
     tx.execute(
-        "UPDATE auth_oauth_client SET offered_at = ?2 WHERE client_id = ?1",
+        "UPDATE oauth_clients SET offered_at = ?2 WHERE client_id = ?1",
         params![id, now],
     )?;
     Ok(())
@@ -188,7 +188,7 @@ pub fn note_offered(tx: &Connection, id: &str, now: Stamp) -> Result<()> {
 pub fn document_fresh_until(tx: &Connection, id: &str) -> Result<Option<Stamp>> {
     Ok(tx
         .query_row(
-            "SELECT fresh_until FROM auth_oauth_client_document WHERE client_id = ?1",
+            "SELECT fresh_until FROM oauth_client_documents WHERE client_id = ?1",
             [id],
             |row| row.get(0),
         )
@@ -197,7 +197,7 @@ pub fn document_fresh_until(tx: &Connection, id: &str) -> Result<Option<Stamp>> 
 
 pub fn note_document(tx: &Connection, id: &str, now: Stamp, fresh_until: Stamp) -> Result<()> {
     tx.execute(
-        "INSERT INTO auth_oauth_client_document (client_id, fetched_at, fresh_until) \
+        "INSERT INTO oauth_client_documents (client_id, fetched_at, fresh_until) \
          VALUES (?1, ?2, ?3) ON CONFLICT (client_id) DO UPDATE SET \
          fetched_at = excluded.fetched_at, fresh_until = excluded.fresh_until",
         params![id, now, fresh_until],
@@ -208,7 +208,7 @@ pub fn note_document(tx: &Connection, id: &str, now: Stamp, fresh_until: Stamp) 
 #[derive(Clone, Debug)]
 pub struct Consent {
     pub client_id: String,
-    pub user_id: String,
+    pub owner_id: String,
     pub grant_id: String,
     pub scopes: ScopeSet,
     pub created_at: Stamp,
@@ -226,7 +226,7 @@ impl Consent {
 fn consent_of(row: &Row<'_>) -> rusqlite::Result<Consent> {
     Ok(Consent {
         client_id: row.get("client_id")?,
-        user_id: row.get("user_id")?,
+        owner_id: row.get("owner_id")?,
         grant_id: row.get("grant_id")?,
         scopes: scopes_at(row, "scopes")?,
         created_at: row.get("created_at")?,
@@ -236,11 +236,11 @@ fn consent_of(row: &Row<'_>) -> rusqlite::Result<Consent> {
     })
 }
 
-pub fn consent(tx: &Connection, client_id: &str, user_id: &str) -> Result<Option<Consent>> {
+pub fn consent(tx: &Connection, client_id: &str, owner_id: &str) -> Result<Option<Consent>> {
     Ok(tx
         .query_row(
-            "SELECT * FROM auth_oauth_consent WHERE client_id = ?1 AND user_id = ?2",
-            [client_id, user_id],
+            "SELECT * FROM oauth_consents WHERE client_id = ?1 AND owner_id = ?2",
+            [client_id, owner_id],
             consent_of,
         )
         .optional()?)
@@ -249,7 +249,7 @@ pub fn consent(tx: &Connection, client_id: &str, user_id: &str) -> Result<Option
 pub fn consent_by_grant(tx: &Connection, grant_id: &str) -> Result<Option<Consent>> {
     Ok(tx
         .query_row(
-            "SELECT * FROM auth_oauth_consent WHERE grant_id = ?1",
+            "SELECT * FROM oauth_consents WHERE grant_id = ?1",
             [grant_id],
             consent_of,
         )
@@ -259,7 +259,7 @@ pub fn consent_by_grant(tx: &Connection, grant_id: &str) -> Result<Option<Consen
 /// The apps whose standing grant names `type_id` outright in a scope, by client ID.
 pub fn clients_naming_type(tx: &Connection, type_id: &str) -> Result<Vec<String>> {
     let mut statement = tx.prepare(
-        "SELECT * FROM auth_oauth_consent WHERE withdrawn_at IS NULL ORDER BY created_at, client_id",
+        "SELECT * FROM oauth_consents WHERE withdrawn_at IS NULL ORDER BY created_at, client_id",
     )?;
     let consents = statement.query_map([], consent_of)?;
     let mut clients: Vec<String> = Vec::new();
@@ -277,30 +277,30 @@ pub fn clients_naming_type(tx: &Connection, type_id: &str) -> Result<Vec<String>
     Ok(clients)
 }
 
-pub fn standing_grant(tx: &Connection, grant_id: &str, user_id: &str) -> Result<Option<Consent>> {
+pub fn standing_grant(tx: &Connection, grant_id: &str, owner_id: &str) -> Result<Option<Consent>> {
     Ok(tx
         .query_row(
-            "SELECT * FROM auth_oauth_consent \
-             WHERE grant_id = ?1 AND user_id = ?2 AND withdrawn_at IS NULL",
-            [grant_id, user_id],
+            "SELECT * FROM oauth_consents \
+             WHERE grant_id = ?1 AND owner_id = ?2 AND withdrawn_at IS NULL",
+            [grant_id, owner_id],
             consent_of,
         )
         .optional()?)
 }
 
-pub fn standing_consents(tx: &Connection, user_id: &str) -> Result<Vec<Consent>> {
+pub fn standing_consents(tx: &Connection, owner_id: &str) -> Result<Vec<Consent>> {
     let mut query = tx.prepare(
-        "SELECT * FROM auth_oauth_consent WHERE user_id = ?1 AND withdrawn_at IS NULL \
+        "SELECT * FROM oauth_consents WHERE owner_id = ?1 AND withdrawn_at IS NULL \
          ORDER BY updated_at, grant_id",
     )?;
     Ok(query
-        .query_map([user_id], consent_of)?
+        .query_map([owner_id], consent_of)?
         .collect::<rusqlite::Result<_>>()?)
 }
 
 /// Nothing while the consent is withdrawn.
-pub fn held_scopes(tx: &Connection, client_id: &str, user_id: &str) -> Result<ScopeSet> {
-    Ok(consent(tx, client_id, user_id)?
+pub fn held_scopes(tx: &Connection, client_id: &str, owner_id: &str) -> Result<ScopeSet> {
+    Ok(consent(tx, client_id, owner_id)?
         .filter(Consent::stands)
         .map(|consent| consent.scopes)
         .unwrap_or_default())
@@ -308,11 +308,11 @@ pub fn held_scopes(tx: &Connection, client_id: &str, user_id: &str) -> Result<Sc
 
 pub fn insert_consent(tx: &Connection, consent: &Consent) -> Result<()> {
     tx.execute(
-        "INSERT INTO auth_oauth_consent (client_id, user_id, grant_id, scopes, created_at, \
+        "INSERT INTO oauth_consents (client_id, owner_id, grant_id, scopes, created_at, \
          updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
         params![
             consent.client_id,
-            consent.user_id,
+            consent.owner_id,
             consent.grant_id,
             scopes_text(&consent.scopes),
             consent.created_at,
@@ -325,15 +325,15 @@ pub fn insert_consent(tx: &Connection, consent: &Consent) -> Result<()> {
 pub fn renew_consent(
     tx: &Connection,
     client_id: &str,
-    user_id: &str,
+    owner_id: &str,
     scopes: &ScopeSet,
     now: Stamp,
 ) -> Result<()> {
     tx.execute(
-        "UPDATE auth_oauth_consent SET scopes = ?3, updated_at = ?4, withdrawn_at = NULL, \
+        "UPDATE oauth_consents SET scopes = ?3, updated_at = ?4, withdrawn_at = NULL, \
          last_used_at = CASE WHEN withdrawn_at IS NULL THEN last_used_at END \
-         WHERE client_id = ?1 AND user_id = ?2",
-        params![client_id, user_id, scopes_text(scopes), now],
+         WHERE client_id = ?1 AND owner_id = ?2",
+        params![client_id, owner_id, scopes_text(scopes), now],
     )?;
     Ok(())
 }
@@ -342,28 +342,28 @@ pub fn renew_consent(
 pub fn narrow_consent(
     tx: &Connection,
     client_id: &str,
-    user_id: &str,
+    owner_id: &str,
     scopes: &ScopeSet,
 ) -> Result<()> {
     tx.execute(
-        "UPDATE auth_oauth_consent SET scopes = ?3 WHERE client_id = ?1 AND user_id = ?2",
-        params![client_id, user_id, scopes_text(scopes)],
+        "UPDATE oauth_consents SET scopes = ?3 WHERE client_id = ?1 AND owner_id = ?2",
+        params![client_id, owner_id, scopes_text(scopes)],
     )?;
     Ok(())
 }
 
-pub fn approve_destinations(tx: &Connection, client: &Client, user_id: &str) -> Result<()> {
+pub fn approve_destinations(tx: &Connection, client: &Client, owner_id: &str) -> Result<()> {
     tx.execute(
-        "DELETE FROM auth_oauth_consent_destination WHERE client_id = ?1 AND user_id = ?2",
-        [&client.id, user_id],
+        "DELETE FROM oauth_consent_destinations WHERE client_id = ?1 AND owner_id = ?2",
+        [&client.id, owner_id],
     )?;
     let kind = client.registration.application_type;
     for uri in &client.registration.redirect_uris {
         let page_origin = web_origins(kind, std::slice::from_ref(uri)).pop();
         tx.execute(
-            "INSERT INTO auth_oauth_consent_destination \
-             (client_id, user_id, redirect_uri, page_origin) VALUES (?1, ?2, ?3, ?4)",
-            params![client.id, user_id, uri, page_origin],
+            "INSERT INTO oauth_consent_destinations \
+             (client_id, owner_id, redirect_uri, page_origin) VALUES (?1, ?2, ?3, ?4)",
+            params![client.id, owner_id, uri, page_origin],
         )?;
     }
     Ok(())
@@ -372,13 +372,13 @@ pub fn approve_destinations(tx: &Connection, client: &Client, user_id: &str) -> 
 pub fn approved_destinations(
     tx: &Connection,
     client_id: &str,
-    user_id: &str,
+    owner_id: &str,
 ) -> Result<Vec<String>> {
     let mut query = tx.prepare(
-        "SELECT redirect_uri FROM auth_oauth_consent_destination \
-         WHERE client_id = ?1 AND user_id = ?2",
+        "SELECT redirect_uri FROM oauth_consent_destinations \
+         WHERE client_id = ?1 AND owner_id = ?2",
     )?;
-    let rows = query.query_map([client_id, user_id], |row| row.get(0))?;
+    let rows = query.query_map([client_id, owner_id], |row| row.get(0))?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
@@ -389,7 +389,7 @@ pub fn narrow_destinations(
     registration: &Registration,
 ) -> Result<()> {
     tx.execute(
-        "DELETE FROM auth_oauth_consent_destination WHERE client_id = ?1 \
+        "DELETE FROM oauth_consent_destinations WHERE client_id = ?1 \
          AND redirect_uri NOT IN (SELECT value FROM json_each(?2))",
         params![
             client_id,
@@ -398,7 +398,7 @@ pub fn narrow_destinations(
     )?;
     if registration.application_type == AppKind::Native {
         tx.execute(
-            "UPDATE auth_oauth_consent_destination SET page_origin = NULL WHERE client_id = ?1",
+            "UPDATE oauth_consent_destinations SET page_origin = NULL WHERE client_id = ?1",
             [client_id],
         )?;
     }
@@ -407,31 +407,31 @@ pub fn narrow_destinations(
 
 pub fn origin_approved(tx: &Connection, origin: &str) -> Result<bool> {
     Ok(tx.query_row(
-        "SELECT EXISTS (SELECT 1 FROM auth_oauth_consent_destination AS destination \
-         JOIN auth_oauth_consent AS consent USING (client_id, user_id) \
+        "SELECT EXISTS (SELECT 1 FROM oauth_consent_destinations AS destination \
+         JOIN oauth_consents AS consent USING (client_id, owner_id) \
          WHERE destination.page_origin = ?1 AND consent.withdrawn_at IS NULL)",
         [origin],
         |row| row.get(0),
     )?)
 }
 
-pub fn withdraw_consent(tx: &Connection, client_id: &str, user_id: &str, now: Stamp) -> Result<()> {
+pub fn withdraw_consent(tx: &Connection, client_id: &str, owner_id: &str, now: Stamp) -> Result<()> {
     tx.execute(
-        "UPDATE auth_oauth_consent SET withdrawn_at = ?3, updated_at = ?3 \
-         WHERE client_id = ?1 AND user_id = ?2",
-        params![client_id, user_id, now],
+        "UPDATE oauth_consents SET withdrawn_at = ?3, updated_at = ?3 \
+         WHERE client_id = ?1 AND owner_id = ?2",
+        params![client_id, owner_id, now],
     )?;
     tx.execute(
-        "DELETE FROM auth_oauth_consent_destination WHERE client_id = ?1 AND user_id = ?2",
-        [client_id, user_id],
+        "DELETE FROM oauth_consent_destinations WHERE client_id = ?1 AND owner_id = ?2",
+        [client_id, owner_id],
     )?;
     Ok(())
 }
 
-pub fn remove_consent(tx: &Connection, client_id: &str, user_id: &str) -> Result<()> {
+pub fn remove_consent(tx: &Connection, client_id: &str, owner_id: &str) -> Result<()> {
     tx.execute(
-        "DELETE FROM auth_oauth_consent WHERE client_id = ?1 AND user_id = ?2",
-        [client_id, user_id],
+        "DELETE FROM oauth_consents WHERE client_id = ?1 AND owner_id = ?2",
+        [client_id, owner_id],
     )?;
     Ok(())
 }
@@ -439,13 +439,13 @@ pub fn remove_consent(tx: &Connection, client_id: &str, user_id: &str) -> Result
 pub fn note_consent_used(
     tx: &Connection,
     client_id: &str,
-    user_id: &str,
+    owner_id: &str,
     now: Stamp,
 ) -> Result<()> {
     tx.execute(
-        "UPDATE auth_oauth_consent SET last_used_at = ?3 \
-         WHERE client_id = ?1 AND user_id = ?2 AND withdrawn_at IS NULL",
-        params![client_id, user_id, now],
+        "UPDATE oauth_consents SET last_used_at = ?3 \
+         WHERE client_id = ?1 AND owner_id = ?2 AND withdrawn_at IS NULL",
+        params![client_id, owner_id, now],
     )?;
     Ok(())
 }
@@ -454,7 +454,7 @@ pub fn note_consent_used(
 pub struct Code {
     pub digest: String,
     pub client_id: String,
-    pub user_id: String,
+    pub owner_id: String,
     pub session_id: String,
     pub grant_id: String,
     pub redirect_uri: String,
@@ -468,13 +468,13 @@ pub struct Code {
 
 pub fn insert_code(tx: &Connection, code: &Code) -> Result<()> {
     tx.execute(
-        "INSERT INTO auth_oauth_code (digest, client_id, user_id, session_id, grant_id, \
+        "INSERT INTO oauth_codes (digest, client_id, owner_id, session_id, grant_id, \
          redirect_uri, scopes, challenge, resources, expires_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             code.digest,
             code.client_id,
-            code.user_id,
+            code.owner_id,
             code.session_id,
             code.grant_id,
             code.redirect_uri,
@@ -490,13 +490,13 @@ pub fn insert_code(tx: &Connection, code: &Code) -> Result<()> {
 pub fn code(tx: &Connection, digest: &str) -> Result<Option<Code>> {
     Ok(tx
         .query_row(
-            "SELECT * FROM auth_oauth_code WHERE digest = ?1",
+            "SELECT * FROM oauth_codes WHERE digest = ?1",
             [digest],
             |row| {
                 Ok(Code {
                     digest: row.get("digest")?,
                     client_id: row.get("client_id")?,
-                    user_id: row.get("user_id")?,
+                    owner_id: row.get("owner_id")?,
                     session_id: row.get("session_id")?,
                     grant_id: row.get("grant_id")?,
                     redirect_uri: row.get("redirect_uri")?,
@@ -514,7 +514,7 @@ pub fn code(tx: &Connection, digest: &str) -> Result<Option<Code>> {
 
 pub fn spend_code(tx: &Connection, digest: &str, now: Stamp) -> Result<()> {
     tx.execute(
-        "UPDATE auth_oauth_code SET spent_at = ?2 WHERE digest = ?1",
+        "UPDATE oauth_codes SET spent_at = ?2 WHERE digest = ?1",
         params![digest, now],
     )?;
     Ok(())
@@ -522,7 +522,7 @@ pub fn spend_code(tx: &Connection, digest: &str, now: Stamp) -> Result<()> {
 
 pub fn name_code_chain(tx: &Connection, digest: &str, chain_id: Option<&str>) -> Result<()> {
     tx.execute(
-        "UPDATE auth_oauth_code SET chain_id = ?2 WHERE digest = ?1",
+        "UPDATE oauth_codes SET chain_id = ?2 WHERE digest = ?1",
         params![digest, chain_id],
     )?;
     Ok(())
@@ -564,7 +564,7 @@ pub struct DeviceCode {
     pub scopes: ScopeSet,
     pub destinations: String,
     pub status: DeviceStatus,
-    pub user_id: Option<String>,
+    pub owner_id: Option<String>,
     pub interval_seconds: i64,
     pub last_polled_at: Option<Stamp>,
     pub expires_at: Stamp,
@@ -578,7 +578,7 @@ fn device_code_of(row: &Row<'_>) -> rusqlite::Result<DeviceCode> {
         scopes: scopes_at(row, "scopes")?,
         destinations: row.get("destinations")?,
         status: DeviceStatus::from_word(&row.get::<_, String>("status")?),
-        user_id: row.get("user_id")?,
+        owner_id: row.get("owner_id")?,
         interval_seconds: row.get("interval_seconds")?,
         last_polled_at: row.get("last_polled_at")?,
         expires_at: row.get("expires_at")?,
@@ -587,7 +587,7 @@ fn device_code_of(row: &Row<'_>) -> rusqlite::Result<DeviceCode> {
 
 pub fn insert_device_code(tx: &Connection, code: &DeviceCode) -> Result<()> {
     tx.execute(
-        "INSERT INTO auth_oauth_device_code (device_code, user_code, client_id, scopes, \
+        "INSERT INTO oauth_device_codes (device_code, user_code, client_id, scopes, \
          destinations, status, interval_seconds, expires_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
@@ -607,7 +607,7 @@ pub fn insert_device_code(tx: &Connection, code: &DeviceCode) -> Result<()> {
 pub fn device_code(tx: &Connection, digest: &str) -> Result<Option<DeviceCode>> {
     Ok(tx
         .query_row(
-            "SELECT * FROM auth_oauth_device_code WHERE device_code = ?1",
+            "SELECT * FROM oauth_device_codes WHERE device_code = ?1",
             [digest],
             device_code_of,
         )
@@ -617,7 +617,7 @@ pub fn device_code(tx: &Connection, digest: &str) -> Result<Option<DeviceCode>> 
 pub fn device_code_by_user_code(tx: &Connection, digest: &str) -> Result<Option<DeviceCode>> {
     Ok(tx
         .query_row(
-            "SELECT * FROM auth_oauth_device_code WHERE user_code = ?1",
+            "SELECT * FROM oauth_device_codes WHERE user_code = ?1",
             [digest],
             device_code_of,
         )
@@ -629,20 +629,20 @@ pub fn decide_device_code(
     tx: &Connection,
     digest: &str,
     status: DeviceStatus,
-    user_id: &str,
+    owner_id: &str,
     scopes: &ScopeSet,
 ) -> Result<()> {
     tx.execute(
-        "UPDATE auth_oauth_device_code SET status = ?2, user_id = ?3, scopes = ?4, \
+        "UPDATE oauth_device_codes SET status = ?2, owner_id = ?3, scopes = ?4, \
          last_polled_at = NULL WHERE device_code = ?1",
-        params![digest, status.word(), user_id, scopes_text(scopes)],
+        params![digest, status.word(), owner_id, scopes_text(scopes)],
     )?;
     Ok(())
 }
 
 pub fn note_device_poll(tx: &Connection, digest: &str, now: Stamp) -> Result<()> {
     tx.execute(
-        "UPDATE auth_oauth_device_code SET last_polled_at = ?2 WHERE device_code = ?1",
+        "UPDATE oauth_device_codes SET last_polled_at = ?2 WHERE device_code = ?1",
         params![digest, now],
     )?;
     Ok(())
@@ -650,7 +650,7 @@ pub fn note_device_poll(tx: &Connection, digest: &str, now: Stamp) -> Result<()>
 
 pub fn remove_device_code(tx: &Connection, digest: &str) -> Result<()> {
     tx.execute(
-        "DELETE FROM auth_oauth_device_code WHERE device_code = ?1",
+        "DELETE FROM oauth_device_codes WHERE device_code = ?1",
         [digest],
     )?;
     Ok(())
@@ -658,7 +658,7 @@ pub fn remove_device_code(tx: &Connection, digest: &str) -> Result<()> {
 
 pub fn spend_device_code(tx: &Connection, digest: &str) -> Result<()> {
     tx.execute(
-        "UPDATE auth_oauth_device_code SET status = 'spent' WHERE device_code = ?1",
+        "UPDATE oauth_device_codes SET status = 'spent' WHERE device_code = ?1",
         [digest],
     )?;
     Ok(())
@@ -669,7 +669,7 @@ pub struct AccessToken {
     pub id: String,
     pub digest: String,
     pub client_id: String,
-    pub user_id: String,
+    pub owner_id: String,
     pub chain_id: String,
     pub scopes: ScopeSet,
     pub audience: Option<String>,
@@ -679,13 +679,13 @@ pub struct AccessToken {
 
 pub fn insert_access_token(tx: &Connection, token: &AccessToken) -> Result<()> {
     tx.execute(
-        "INSERT INTO auth_oauth_access_token (id, digest, client_id, user_id, chain_id, scopes, \
+        "INSERT INTO oauth_access_tokens (id, digest, client_id, owner_id, chain_id, scopes, \
          audience, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             token.id,
             token.digest,
             token.client_id,
-            token.user_id,
+            token.owner_id,
             token.chain_id,
             scopes_text(&token.scopes),
             token.audience,
@@ -701,7 +701,7 @@ fn access_token_of(row: &Row<'_>) -> rusqlite::Result<AccessToken> {
         id: row.get("id")?,
         digest: row.get("digest")?,
         client_id: row.get("client_id")?,
-        user_id: row.get("user_id")?,
+        owner_id: row.get("owner_id")?,
         chain_id: row.get("chain_id")?,
         scopes: scopes_at(row, "scopes")?,
         audience: row.get("audience")?,
@@ -713,7 +713,7 @@ fn access_token_of(row: &Row<'_>) -> rusqlite::Result<AccessToken> {
 pub fn access_token_by_digest(tx: &Connection, digest: &str) -> Result<Option<AccessToken>> {
     Ok(tx
         .query_row(
-            "SELECT * FROM auth_oauth_access_token WHERE digest = ?1",
+            "SELECT * FROM oauth_access_tokens WHERE digest = ?1",
             [digest],
             access_token_of,
         )
@@ -723,7 +723,7 @@ pub fn access_token_by_digest(tx: &Connection, digest: &str) -> Result<Option<Ac
 pub fn access_token_by_id(tx: &Connection, id: &str) -> Result<Option<AccessToken>> {
     Ok(tx
         .query_row(
-            "SELECT * FROM auth_oauth_access_token WHERE id = ?1",
+            "SELECT * FROM oauth_access_tokens WHERE id = ?1",
             [id],
             access_token_of,
         )
@@ -731,7 +731,7 @@ pub fn access_token_by_id(tx: &Connection, id: &str) -> Result<Option<AccessToke
 }
 
 pub fn delete_access_token(tx: &Connection, id: &str) -> Result<()> {
-    tx.execute("DELETE FROM auth_oauth_access_token WHERE id = ?1", [id])?;
+    tx.execute("DELETE FROM oauth_access_tokens WHERE id = ?1", [id])?;
     Ok(())
 }
 
@@ -740,7 +740,7 @@ pub struct RefreshToken {
     pub id: String,
     pub digest: String,
     pub client_id: String,
-    pub user_id: String,
+    pub owner_id: String,
     pub chain_id: String,
     pub scopes: ScopeSet,
     pub audience: Option<String>,
@@ -752,13 +752,13 @@ pub struct RefreshToken {
 
 pub fn insert_refresh_token(tx: &Connection, token: &RefreshToken) -> Result<()> {
     tx.execute(
-        "INSERT INTO auth_oauth_refresh_token (id, digest, client_id, user_id, chain_id, scopes, \
+        "INSERT INTO oauth_refresh_tokens (id, digest, client_id, owner_id, chain_id, scopes, \
          audience, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             token.id,
             token.digest,
             token.client_id,
-            token.user_id,
+            token.owner_id,
             token.chain_id,
             scopes_text(&token.scopes),
             token.audience,
@@ -772,14 +772,14 @@ pub fn insert_refresh_token(tx: &Connection, token: &RefreshToken) -> Result<()>
 pub fn refresh_token_by_digest(tx: &Connection, digest: &str) -> Result<Option<RefreshToken>> {
     Ok(tx
         .query_row(
-            "SELECT * FROM auth_oauth_refresh_token WHERE digest = ?1",
+            "SELECT * FROM oauth_refresh_tokens WHERE digest = ?1",
             [digest],
             |row| {
                 Ok(RefreshToken {
                     id: row.get("id")?,
                     digest: row.get("digest")?,
                     client_id: row.get("client_id")?,
-                    user_id: row.get("user_id")?,
+                    owner_id: row.get("owner_id")?,
                     chain_id: row.get("chain_id")?,
                     scopes: scopes_at(row, "scopes")?,
                     audience: row.get("audience")?,
@@ -795,7 +795,7 @@ pub fn refresh_token_by_digest(tx: &Connection, digest: &str) -> Result<Option<R
 
 pub fn rotate_refresh_token(tx: &Connection, id: &str, now: Stamp) -> Result<()> {
     tx.execute(
-        "UPDATE auth_oauth_refresh_token SET rotated_at = ?2 WHERE id = ?1",
+        "UPDATE oauth_refresh_tokens SET rotated_at = ?2 WHERE id = ?1",
         params![id, now],
     )?;
     Ok(())
@@ -803,11 +803,11 @@ pub fn rotate_refresh_token(tx: &Connection, id: &str, now: Stamp) -> Result<()>
 
 pub fn end_chain(tx: &Connection, chain_id: &str, now: Stamp) -> Result<()> {
     tx.execute(
-        "DELETE FROM auth_oauth_access_token WHERE chain_id = ?1",
+        "DELETE FROM oauth_access_tokens WHERE chain_id = ?1",
         [chain_id],
     )?;
     tx.execute(
-        "UPDATE auth_oauth_refresh_token SET ended_at = ?2 \
+        "UPDATE oauth_refresh_tokens SET ended_at = ?2 \
          WHERE chain_id = ?1 AND ended_at IS NULL",
         params![chain_id, now],
     )?;
@@ -818,31 +818,31 @@ pub fn end_chain(tx: &Connection, chain_id: &str, now: Stamp) -> Result<()> {
 pub fn usable_tokens(
     tx: &Connection,
     client_id: &str,
-    user_id: &str,
+    owner_id: &str,
 ) -> Result<Vec<(String, ScopeSet)>> {
     let mut query = tx.prepare(
-        "SELECT chain_id, scopes FROM auth_oauth_access_token \
-         WHERE client_id = ?1 AND user_id = ?2 \
-         UNION ALL SELECT chain_id, scopes FROM auth_oauth_refresh_token \
-         WHERE client_id = ?1 AND user_id = ?2 AND ended_at IS NULL AND rotated_at IS NULL",
+        "SELECT chain_id, scopes FROM oauth_access_tokens \
+         WHERE client_id = ?1 AND owner_id = ?2 \
+         UNION ALL SELECT chain_id, scopes FROM oauth_refresh_tokens \
+         WHERE client_id = ?1 AND owner_id = ?2 AND ended_at IS NULL AND rotated_at IS NULL",
     )?;
     Ok(query
-        .query_map([client_id, user_id], |row| {
+        .query_map([client_id, owner_id], |row| {
             Ok((row.get("chain_id")?, scopes_at(row, "scopes")?))
         })?
         .collect::<rusqlite::Result<_>>()?)
 }
 
 /// An approved device code nobody has polled ends as spent.
-pub fn end_outstanding_codes(tx: &Connection, client_id: &str, user_id: &str) -> Result<()> {
+pub fn end_outstanding_codes(tx: &Connection, client_id: &str, owner_id: &str) -> Result<()> {
     tx.execute(
-        "DELETE FROM auth_oauth_code WHERE client_id = ?1 AND user_id = ?2",
-        [client_id, user_id],
+        "DELETE FROM oauth_codes WHERE client_id = ?1 AND owner_id = ?2",
+        [client_id, owner_id],
     )?;
     tx.execute(
-        "UPDATE auth_oauth_device_code SET status = 'spent' \
-         WHERE client_id = ?1 AND user_id = ?2 AND status = 'approved'",
-        [client_id, user_id],
+        "UPDATE oauth_device_codes SET status = 'spent' \
+         WHERE client_id = ?1 AND owner_id = ?2 AND status = 'approved'",
+        [client_id, owner_id],
     )?;
     Ok(())
 }
@@ -851,21 +851,21 @@ pub fn end_outstanding_codes(tx: &Connection, client_id: &str, user_id: &str) ->
 pub fn end_grant_credentials(
     tx: &Connection,
     client_id: &str,
-    user_id: &str,
+    owner_id: &str,
     now: Stamp,
 ) -> Result<()> {
     tx.execute(
-        "DELETE FROM auth_oauth_access_token WHERE client_id = ?1 AND user_id = ?2",
-        [client_id, user_id],
+        "DELETE FROM oauth_access_tokens WHERE client_id = ?1 AND owner_id = ?2",
+        [client_id, owner_id],
     )?;
     tx.execute(
-        "UPDATE auth_oauth_refresh_token SET ended_at = ?3 \
-         WHERE client_id = ?1 AND user_id = ?2 AND ended_at IS NULL",
-        params![client_id, user_id, now],
+        "UPDATE oauth_refresh_tokens SET ended_at = ?3 \
+         WHERE client_id = ?1 AND owner_id = ?2 AND ended_at IS NULL",
+        params![client_id, owner_id, now],
     )?;
     tx.execute(
-        "DELETE FROM auth_oauth_device_code WHERE client_id = ?1 AND status = 'pending'",
+        "DELETE FROM oauth_device_codes WHERE client_id = ?1 AND status = 'pending'",
         [client_id],
     )?;
-    end_outstanding_codes(tx, client_id, user_id)
+    end_outstanding_codes(tx, client_id, owner_id)
 }

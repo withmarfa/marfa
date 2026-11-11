@@ -4,11 +4,11 @@ use crate::app::addresses::Address;
 use crate::app::auth::passkeys::CHALLENGE_LIFE_MS;
 use crate::app::refusal::{Refusal, Result};
 
-const SESSION_ON_HTTPS: &str = "__Host-marfa.auth.session_token";
-const SESSION: &str = "marfa.auth.session_token";
-const SETUP: &str = "marfa.setup";
-const PASSKEY_ON_HTTPS: &str = "__Host-marfa.auth.passkey_challenge";
-const PASSKEY: &str = "marfa.auth.passkey_challenge";
+const SESSION_ON_HTTPS: &str = "__Host-marfa_session";
+const SESSION: &str = "marfa_session";
+const SETUP: &str = "marfa_setup";
+const PASSKEY_ON_HTTPS: &str = "__Host-marfa_passkey_challenge";
+const PASSKEY: &str = "marfa_passkey_challenge";
 const SESSION_MAX_AGE: i64 = 400 * 24 * 3600;
 const SETUP_MAX_AGE: i64 = 15 * 60;
 const PASSKEY_MAX_AGE: i64 = CHALLENGE_LIFE_MS / 1000;
@@ -29,16 +29,11 @@ fn secure(address: &Address) -> &'static str {
     if address.is_https() { "; Secure" } else { "" }
 }
 
-pub fn session(address: &Address, token: &str, remembered: bool) -> Result<HeaderValue> {
+pub fn session(address: &Address, token: &str) -> Result<HeaderValue> {
     let name = session_name(address);
     let secure = secure(address);
-    let age = if remembered {
-        format!("; Max-Age={SESSION_MAX_AGE}")
-    } else {
-        String::new()
-    };
     value(format!(
-        "{name}={token}; Path=/; HttpOnly; SameSite=Lax{age}{secure}"
+        "{name}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={SESSION_MAX_AGE}{secure}"
     ))
 }
 
