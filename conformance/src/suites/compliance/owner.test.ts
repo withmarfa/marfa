@@ -212,6 +212,18 @@ describe("claiming the one owner", () => {
     ).toBe(200);
   });
 
+  it("answers an exchange sent as JSON with only ok, and the setup cookie", async () => {
+    const issued = await local("/_control/setup/ticket", {});
+    const exchanged = await post(
+      "/setup/exchange",
+      { ticket: issued.body.ticket },
+      { origin: server.url },
+    );
+    expect(exchanged.status).toBe(200);
+    expect(await exchanged.json()).toEqual({ ok: true });
+    expect(exchanged.headers.get("set-cookie")).toMatch(/^marfa_setup=[^;]+;/);
+  });
+
   it("expires a handoff after five minutes while its exchanged setup session remains usable", async () => {
     const start = Date.now();
     const expired = await local("/_control/setup/ticket", {});

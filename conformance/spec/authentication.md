@@ -8,6 +8,26 @@ When the owner submits a valid WebAuthn registration with user verification from
 
 **Tests:** `compliance/passkeys.test.ts › registers and lists independent owner credentials`.
 
+### `authentication/passkey-options-post`
+
+The server MUST serve passkey options only to `POST /auth/passkeys/registration/options` and `POST /auth/passkeys/sign-in/options`.
+
+**Reason:** Asking for options stores a challenge, so it is not a read.
+
+**Tests:** `compliance/passkeys.test.ts › gives passkey options only to a POST, answers a registration 201 with the passkey, and a passkey sign-in with only ok and its session cookie`.
+
+### `authentication/passkey-register-answer`
+
+When `POST /auth/passkeys/registration` registers a passkey, the server MUST answer `201` with only the passkey's `id`, `name`, `created_at` and `last_used_at`.
+
+**Tests:** `compliance/passkeys.test.ts › gives passkey options only to a POST, answers a registration 201 with the passkey, and a passkey sign-in with only ok and its session cookie`.
+
+### `authentication/passkey-sign-in-answer`
+
+When `POST /auth/passkeys/sign-in` signs the owner in, the server MUST answer `200` with only `{"ok": true}`.
+
+**Tests:** `compliance/passkeys.test.ts › gives passkey options only to a POST, answers a registration 201 with the passkey, and a passkey sign-in with only ok and its session cookie`.
+
 ### `authentication/passkey-list`
 
 When the owner or private local process lists `GET /owner/passkeys`, the server MUST return every registered owner passkey with only `id`, nullable `name`, UTC `created_at` and nullable UTC `last_used_at`, oldest first, with `next_cursor: null`.

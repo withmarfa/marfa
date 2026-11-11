@@ -29,9 +29,17 @@ async function expectMatchesSchema(
   expect(validate(body), JSON.stringify(validate.errors)).toBe(true);
 }
 
+// Passkeys need a host name, so the instance signs in at localhost.
+const HOST = "localhost";
 let state: string,
   server: { url: string; controlSocket: string },
+  base: string,
   ownerCookie: string;
+function onLocalhost(url: string): string {
+  const own = new URL(url);
+  own.hostname = HOST;
+  return own.origin;
+}
 const owner = {
   email: "owner@example.test",
   password: "correct horse battery",
@@ -45,24 +53,28 @@ const cookie = (response: Response) =>
     .map((value) => value.split(";")[0])
     .join("; ");
 function post(path: string, body: unknown, cookies = "") {
-  return fetch(server.url + path, {
+  return fetch(base + path, {
     method: "POST",
     headers: {
-      origin: server.url,
+      origin: base,
       cookie: cookies,
       "content-type": "application/json",
     },
     body: JSON.stringify(body),
   });
 }
+const OPTIONS = {
+  register: "/auth/passkeys/registration/options",
+  authenticate: "/auth/passkeys/sign-in/options",
+};
 async function options(
   kind: "register" | "authenticate",
   cookies = kind === "register" ? ownerCookie : "",
 ) {
-  const response = await fetch(
-    server.url + "/auth/passkey/generate-" + kind + "-options",
-    { headers: { origin: server.url, cookie: cookies } },
-  );
+  const response = await fetch(base + OPTIONS[kind], {
+    method: "POST",
+    headers: { origin: base, cookie: cookies },
+  });
   expect(response.status).toBe(200);
   return {
     body: (await response.json()) as { challenge: string },
@@ -75,18 +87,14 @@ async function register(
 ) {
   const challenge = await options("register");
   const response = await post(
-    "/auth/passkey/verify-registration",
+    "/auth/passkeys/registration",
     {
       name,
-      response: device.registration(
-        challenge.body.challenge,
-        server.url,
-        new URL(server.url).hostname,
-      ),
+      response: device.registration(challenge.body.challenge, base, HOST),
     },
     challenge.cookie,
   );
-  expect(response.status).toBe(200);
+  expect(response.status).toBe(201);
   return (await response.json()) as { id: string };
 }
 async function signIn(
@@ -95,13 +103,13 @@ async function signIn(
 ) {
   const challenge = await options("authenticate");
   return post(
-    "/auth/passkey/verify-authentication",
+    "/auth/passkeys/sign-in",
     {
       response: device.authentication(
         challenge.body.challenge,
-        server.url,
+        base,
         counter,
-        new URL(server.url).hostname,
+        HOST,
       ),
     },
     challenge.cookie,
@@ -110,8 +118,14 @@ async function signIn(
 beforeAll(async () => {
   state = await mkdtemp(join(tmpdir(), "marfa-passkey-conformance-"));
   server = await bootUnclaimedServer({ state });
+  base = onLocalhost(server.url);
+  const moved = await controlRequest(server.controlSocket, "/config", {
+    method: "PATCH",
+    body: { sign_in_address: base, confirm_sign_in_address_change: true },
+  });
+  expect(moved.status, JSON.stringify(moved.body)).toBe(200);
   document = (await (
-    await fetch(server.url + "/openapi.json")
+    await fetch(base + "/openapi.json")
   ).json()) as OpenApiDocument;
   const setup = await controlRequest(
     server.controlSocket,
@@ -121,7 +135,7 @@ beforeAll(async () => {
   expect(
     (await post("/owner", { ...owner, code: setup.body.code })).status,
   ).toBe(201);
-  const login = await post("/auth/sign-in/email", owner);
+  const login = await post("/auth/sign-in", owner);
   expect(login.status).toBe(200);
   ownerCookie = cookie(login);
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
@@ -140,20 +154,20 @@ describe("owner passkeys", () => {
     const duplicateChallenge = await options("register");
     const response = first.registration(
       duplicateChallenge.body.challenge,
-      server.url,
-      new URL(server.url).hostname,
+      base,
+      HOST,
     );
     response.id = response.rawId = Buffer.from(
       "alternate outer identity",
     ).toString("base64url");
     const duplicate = await post(
-      "/auth/passkey/verify-registration",
+      "/auth/passkeys/registration",
       { response },
       duplicateChallenge.cookie,
     );
     expect(duplicate.status).toBe(409);
-    const list = await fetch(server.url + "/owner/passkeys", {
-      headers: { origin: server.url, cookie: ownerCookie },
+    const list = await fetch(base + "/owner/passkeys", {
+      headers: { origin: base, cookie: ownerCookie },
     });
     expect(list.status).toBe(200);
     const listed = await list.json();
@@ -163,7 +177,7 @@ describe("owner passkeys", () => {
         .map((row) => row.name)
         .sort(),
     ).toEqual(["First", "Second"]);
-    const page = await fetch(server.url + "/auth/owner/passkeys", {
+    const page = await fetch(base + "/auth/owner/passkeys", {
       headers: { cookie: ownerCookie },
     });
     expect(await page.text()).toContain("HTTPS");
@@ -171,11 +185,73 @@ describe("owner passkeys", () => {
     expect(signed.status).toBe(200);
     expect(
       (
-        await fetch(server.url + "/owner/passkeys", {
+        await fetch(base + "/owner/passkeys", {
           headers: { cookie: cookie(signed) },
         })
       ).status,
     ).toBe(200);
+  });
+  it("gives passkey options only to a POST, answers a registration 201 with the passkey, and a passkey sign-in with only ok and its session cookie", async () => {
+    for (const path of Object.values(OPTIONS)) {
+      const asked = await fetch(base + path, {
+        headers: { origin: base, cookie: ownerCookie },
+      });
+      expect(asked.status, path).toBe(404);
+    }
+    const device = testAuthenticator();
+    const challenge = await options("register");
+    const registered = await post(
+      "/auth/passkeys/registration",
+      {
+        name: "Shapes",
+        response: device.registration(challenge.body.challenge, base, HOST),
+      },
+      challenge.cookie,
+    );
+    expect(registered.status).toBe(201);
+    const added = (await registered.json()) as Record<string, unknown>;
+    expect(added).toEqual({
+      id: expect.any(String),
+      name: "Shapes",
+      created_at: expect.any(String),
+      last_used_at: null,
+    });
+    const signed = await signIn(device, 1);
+    expect(signed.status).toBe(200);
+    expect(await signed.json()).toEqual({ ok: true });
+    const line = signed.headers.getSetCookie().join("\n");
+    expect(line).toMatch(/^marfa_session=[^;]+;/m);
+    expect(line).toContain("HttpOnly");
+    const removed = await controlRequest(
+      server.controlSocket,
+      "/owner/passkeys/" + String(added.id),
+      { method: "DELETE" },
+    );
+    expect(removed.status).toBe(200);
+  });
+  it("refuses a passkey sign-in that says neither Origin nor Referer, and opens no session", async () => {
+    const device = testAuthenticator();
+    const id = (await register(device, "Unsaid")).id;
+    const unsaid = await options("authenticate");
+    const refused = await fetch(base + "/auth/passkeys/sign-in", {
+      method: "POST",
+      headers: { cookie: unsaid.cookie, "content-type": "application/json" },
+      body: JSON.stringify({
+        response: device.authentication(unsaid.body.challenge, base, 1, HOST),
+      }),
+    });
+    expect(refused.status).toBe(403);
+    expect(cookie(refused)).not.toContain("marfa_session");
+    // The witness: the same passkey, with the page's Origin, signs in.
+    const signed = await signIn(device, 2);
+    expect(signed.status).toBe(200);
+    expect(cookie(signed)).toContain("marfa_session");
+    const removed = await controlRequest(
+      server.controlSocket,
+      "/owner/passkeys/" + id,
+      { method: "DELETE" },
+    );
+    expect(removed.status).toBe(200);
   });
   it("renames safely through owner and private local authority", async () => {
     const renamed = await controlRequest(
@@ -245,10 +321,10 @@ describe("owner passkeys", () => {
     expect(unknown.body).toMatchObject({
       error: { code: "passkey_not_found" },
     });
-    const missingRename = await fetch(server.url + "/owner/passkeys/missing", {
+    const missingRename = await fetch(base + "/owner/passkeys/missing", {
       method: "PATCH",
       headers: {
-        origin: server.url,
+        origin: base,
         cookie: ownerCookie,
         "content-type": "application/json",
       },
@@ -271,19 +347,19 @@ describe("owner passkeys", () => {
     );
     expect(link.status).toBe(200);
     const url = new URL(String(link.body.url));
-    expect(url.origin).toBe(server.url);
+    expect(url.origin).toBe(base);
     expect(url.pathname).toBe("/auth/sign-in");
     expect(Object.fromEntries(url.searchParams)).toEqual({
       prompt: "login",
       return_to: "/auth/owner/passkeys",
     });
     expect(
-      (await fetch(server.url + "/_control/owner/passkeys/add-url")).status,
+      (await fetch(base + "/_control/owner/passkeys/add-url")).status,
     ).toBe(404);
-    const rename = await fetch(server.url + "/owner/passkeys/" + firstId, {
+    const rename = await fetch(base + "/owner/passkeys/" + firstId, {
       method: "PATCH",
       headers: {
-        origin: server.url,
+        origin: base,
         cookie: ownerCookie,
         "content-type": "application/json",
       },
@@ -295,8 +371,8 @@ describe("owner passkeys", () => {
     const stored = async () =>
       (
         (await (
-          await fetch(server.url + "/owner/passkeys", {
-            headers: { origin: server.url, cookie: ownerCookie },
+          await fetch(base + "/owner/passkeys", {
+            headers: { origin: base, cookie: ownerCookie },
           })
         ).json()) as { data: unknown[] }
       ).data.length;
@@ -304,8 +380,8 @@ describe("owner passkeys", () => {
     const challenge = await options("register");
     const response = testAuthenticator().registration(
       challenge.body.challenge,
-      server.url,
-      new URL(server.url).hostname,
+      base,
+      HOST,
     );
     for (const name of [
       " ",
@@ -315,7 +391,7 @@ describe("owner passkeys", () => {
       "bad\u202ename",
     ]) {
       const refused = await post(
-        "/auth/passkey/verify-registration",
+        "/auth/passkeys/registration",
         { name, response },
         challenge.cookie,
       );
@@ -327,25 +403,25 @@ describe("owner passkeys", () => {
     expect(await stored(), "nothing was stored").toBe(before);
     // The same registration with a name the rule allows is the witness that it was producible.
     const accepted = await post(
-      "/auth/passkey/verify-registration",
+      "/auth/passkeys/registration",
       { name: "Accepted", response },
       challenge.cookie,
     );
-    expect(accepted.status).toBe(200);
+    expect(accepted.status).toBe(201);
     expect(await stored()).toBe(before + 1);
     const id = ((await accepted.json()) as { id: string }).id;
-    const removed = await fetch(server.url + "/owner/passkeys/" + id, {
+    const removed = await fetch(base + "/owner/passkeys/" + id, {
       method: "DELETE",
-      headers: { origin: server.url, cookie: ownerCookie },
+      headers: { origin: base, cookie: ownerCookie },
     });
     expect(removed.status).toBe(200);
   });
   it("requires owner authority and the instance origin for passkey management", async () => {
-    const absent = await fetch(server.url + "/owner/passkeys", {
-      headers: { origin: server.url },
+    const absent = await fetch(base + "/owner/passkeys", {
+      headers: { origin: base },
     });
     expect(absent.status).toBe(401);
-    const foreign = await fetch(server.url + "/owner/passkeys/" + firstId, {
+    const foreign = await fetch(base + "/owner/passkeys/" + firstId, {
       method: "DELETE",
       headers: {
         origin: "https://foreign.example",
@@ -360,27 +436,27 @@ describe("owner passkeys", () => {
     const challenge = await options("authenticate");
     const response = first.authentication(
       challenge.body.challenge,
-      server.url,
+      base,
       3,
-      new URL(server.url).hostname,
+      HOST,
     );
     const forged = testAuthenticator().authentication(
       challenge.body.challenge,
-      server.url,
+      base,
       3,
-      new URL(server.url).hostname,
+      HOST,
     );
     forged.id = first.id;
     forged.rawId = first.id;
     const refused = await post(
-      "/auth/passkey/verify-authentication",
+      "/auth/passkeys/sign-in",
       { response: forged },
       challenge.cookie,
     );
     expect(refused.status).toBe(401);
-    expect(cookie(refused)).not.toContain("session_token");
+    expect(cookie(refused)).not.toContain("marfa_session");
     const replay = await post(
-      "/auth/passkey/verify-authentication",
+      "/auth/passkeys/sign-in",
       { response },
       challenge.cookie,
     );
@@ -389,28 +465,28 @@ describe("owner passkeys", () => {
     for (let i = 0; i < 11; i++) {
       const attempt = await options("authenticate");
       const rejected = await post(
-        "/auth/passkey/verify-authentication",
+        "/auth/passkeys/sign-in",
         {
           response: testAuthenticator().authentication(
             attempt.body.challenge,
-            server.url,
+            base,
             1,
-            new URL(server.url).hostname,
+            HOST,
           ),
         },
         attempt.cookie,
       );
       expect(rejected.status).toBe(401);
     }
-    expect((await post("/auth/sign-in/email", owner)).status).toBe(200);
+    expect((await post("/auth/sign-in", owner)).status).toBe(200);
     for (let i = 0; i < 11; i++)
-      await post("/auth/sign-in/email", {
+      await post("/auth/sign-in", {
         ...owner,
         password: "incorrect password",
       });
-    expect((await post("/auth/sign-in/email", owner)).status).toBe(429);
+    expect((await post("/auth/sign-in", owner)).status).toBe(429);
     expect((await signIn(first, 3)).status).toBe(200);
-    expect((await post("/auth/sign-in/email", owner)).status).toBe(429);
+    expect((await post("/auth/sign-in", owner)).status).toBe(429);
   });
   it("records the last use of only the passkey that signed in, and only when it signed in", async () => {
     const used = testAuthenticator(),
@@ -418,8 +494,8 @@ describe("owner passkeys", () => {
     const usedId = (await register(used, "Used")).id;
     const idleId = (await register(idle, "Idle")).id;
     const lastUsed = async () => {
-      const list = await fetch(server.url + "/owner/passkeys", {
-        headers: { origin: server.url, cookie: ownerCookie },
+      const list = await fetch(base + "/owner/passkeys", {
+        headers: { origin: base, cookie: ownerCookie },
       });
       expect(list.status).toBe(200);
       const { data } = (await list.json()) as {
@@ -439,13 +515,13 @@ describe("owner passkeys", () => {
     const challenge = await options("authenticate");
     const forged = testAuthenticator().authentication(
       challenge.body.challenge,
-      server.url,
+      base,
       1,
-      new URL(server.url).hostname,
+      HOST,
     );
     forged.id = forged.rawId = used.id;
     const refused = await post(
-      "/auth/passkey/verify-authentication",
+      "/auth/passkeys/sign-in",
       { response: forged },
       challenge.cookie,
     );
@@ -475,9 +551,9 @@ describe("owner passkeys", () => {
       expect((await signIn(second, 1)).status).toBe(200);
       expect(
         (
-          await fetch(server.url + "/owner/passkeys/" + firstId, {
+          await fetch(base + "/owner/passkeys/" + firstId, {
             method: "DELETE",
-            headers: { origin: server.url, cookie: ownerCookie },
+            headers: { origin: base, cookie: ownerCookie },
           })
         ).status,
       ).toBe(200);
@@ -491,9 +567,10 @@ describe("owner passkeys", () => {
           )
         ).status,
       ).toBe(200);
-      const port = Number(new URL(server.url).port);
+      const port = Number(new URL(base).port);
       await stopServer({ state });
       server = await bootUnclaimedServer({ state, port });
+      base = onLocalhost(server.url);
       expect((await signIn(first, 3)).status).toBe(401);
       expect((await signIn(second, 2)).status).toBe(200);
       const inventory = await controlRequest(
