@@ -5855,9 +5855,8 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
             [write],
         )?;
     }
-    let kind = kind.parse::<WriteKind>()?;
-    let rows = kind.rows();
-    if fresh_key_on_release(kind, verdict, reason.as_deref()) {
+    let rows = kind.parse::<WriteKind>()?.rows();
+    if fresh_key_on_release(verdict, reason.as_deref()) {
         crate::row_writes::spend_key(conn, &batch[0])?;
     }
     if rows {
@@ -5869,7 +5868,6 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
         return Ok(true);
     }
     let released = queued_write(conn, id)?.expect("released row exists");
-    readmit_attempt(conn, &released)?;
     let original_fields = edit_fields(conn, &released)?;
     let mut excluded_attempts = HashSet::new();
     for witness in queued_writes(conn)?
@@ -5918,10 +5916,8 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     Ok(true)
 }
 
-/// A dead write released before this one excluded this one's attempt from
-/// what could cover it; released, this one goes again after it, so an answer
-/// to it may cover it now, as one under a fresh key would.
-fn readmit_attempt(conn: &Connection, released: &QueuedWrite) -> Result<(), CoreError> {
+/// An answer to `attempt` the server did not replay was applied after every dead write's release.
+pub(crate) fn readmit_attempt(conn: &Connection, attempt: &str) -> Result<(), CoreError> {
     for key in meta_keys(conn, "dead_effect/")? {
         let Some(json) = meta_get(conn, &key)? else {
             continue;
@@ -5929,31 +5925,24 @@ fn readmit_attempt(conn: &Connection, released: &QueuedWrite) -> Result<(), Core
         let Ok(mut effect) = serde_json::from_str::<DeadEffect>(&json) else {
             continue;
         };
-        if effect.excluded_attempts.remove(&released.idempotency_key) {
+        if effect.excluded_attempts.remove(attempt) {
             meta_set(conn, &key, &serde_json::to_string(&effect)?)?;
         }
     }
     Ok(())
 }
 
-/// A write whose answer is unknown may be held applied under its key, and only
-/// that key keeps the server from applying it twice, undoing a change made
-/// since. A fresh key is safe only where the server holds an answer under the
-/// key that applied none of the write: `key_spent`, another request's answer,
-/// or, for a write of one operation, a `409` refusal the server keeps and
-/// would answer the key with again. A row batch's answer can apply some of
-/// its operations, so it keeps its key for anything but `key_spent`.
-fn fresh_key_on_release(kind: WriteKind, verdict: Option<Verdict>, reason: Option<&str>) -> bool {
-    if verdict != Some(Verdict::Blocked) {
-        return false;
-    }
-    match reason.and_then(|reason| reason.parse::<BlockedReason>().ok()) {
-        Some(BlockedReason::KeySpent) => true,
-        Some(BlockedReason::ConflictUnresolved | BlockedReason::AncestorUnavailable) => {
-            !kind.rows()
-        }
-        _ => false,
-    }
+/// Only where the server holds an answer under the key that applied none of the write.
+fn fresh_key_on_release(verdict: Option<Verdict>, reason: Option<&str>) -> bool {
+    verdict == Some(Verdict::Blocked)
+        && matches!(
+            reason.and_then(|reason| reason.parse::<BlockedReason>().ok()),
+            Some(
+                BlockedReason::KeySpent
+                    | BlockedReason::ConflictUnresolved
+                    | BlockedReason::AncestorUnavailable
+            )
+        )
 }
 
 /// Read from `depends_on`, never the reason, which is prose.
@@ -11007,10 +10996,11 @@ mod tests {
         )
         .unwrap();
         assert!(!current_item_writes(&conn, "held").unwrap().is_empty());
-        // A released witness has a new attempt key and may cover this work.
+        // A released witness the server answers without a replay covers it.
         conn.execute("UPDATE queue SET verdict='dead' WHERE id='inflight'", [])
             .unwrap();
         assert!(release(&conn, "inflight").unwrap());
+        readmit_attempt(&conn, "old-inflight").unwrap();
         record_verdict(
             &conn,
             "inflight",
@@ -11049,7 +11039,6 @@ mod tests {
                 .unwrap();
                 assert!(release(&conn, &id).unwrap(), "{id} was not released");
                 let after = queued_write(&conn, &id).unwrap().unwrap();
-                let fresh = fresh && !(kind.rows() && reason != Some(BlockedReason::KeySpent));
                 assert_eq!(after.verdict, None, "{id}");
                 assert_eq!(
                     after.idempotency_key != id,
@@ -11110,7 +11099,7 @@ mod tests {
     }
 
     #[test]
-    fn a_witness_released_under_its_key_may_cover_a_dead_write_released_before_it() {
+    fn a_witness_released_under_its_key_covers_a_dead_write_only_once_answered_without_a_replay() {
         let conn = effect_fixture();
         conn.execute("INSERT INTO queue (id,kind,item_id,idempotency_key,payload,sent,verdict,queued_at) VALUES ('witness','update_item','held','witness-key',?1,1,'dead','2026-01-01T00:00:01Z')", [r#"{"properties":{"title":"new","body":"new"},"properties_mode":"replace"}"#]).unwrap();
         assert!(release(&conn, "dead").unwrap());
@@ -11129,8 +11118,13 @@ mod tests {
             "witness-key"
         );
         assert!(
+            excluded("dead"),
+            "a release took the witness for one applied after the dead write, though the server may replay its first answer"
+        );
+        readmit_attempt(&conn, "witness-key").unwrap();
+        assert!(
             !excluded("dead"),
-            "a witness sent again after the dead write was still taken for one sent before it"
+            "a witness applied after the dead write was still taken for one sent before it"
         );
     }
 
