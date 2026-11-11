@@ -272,7 +272,7 @@ pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
         let (blob, to) = (hash.clone(), pair.store_id.clone());
         let recorded = app
             .write(&Caller::Server, "blob.copy_replicated", move |unit| {
-                if rows::record_copy(unit.tx(), &blob, &to, &object, &unit.at)? {
+                if rows::record_copy(unit.tx(), &blob, &to, &object, true, &unit.at)? {
                     unit.audit(
                         "blob",
                         blob.as_str(),
@@ -489,14 +489,26 @@ pub async fn integrity(app: Arc<App>, run: Run) -> Result<Report> {
     })))
 }
 
-/// Read from `tx`, since the live settings lag a committed change.
-fn purgeable(tx: &rusqlite::Transaction<'_>, app: &App) -> Result<Vec<Hash>> {
+/// Read from `tx`, since the live settings lag a committed change. Unless this instance's backups
+/// were `surveyed`, a file the object store holds a copy of stays, since a backup the database
+/// never recorded may name it.
+fn purgeable(tx: &rusqlite::Transaction<'_>, app: &App, surveyed: bool) -> Result<Vec<Hash>> {
     let mut found = past_grace(tx, app)?;
     if let Some(bucket) = app.blobs.s3()
         && !found.is_empty()
     {
         let held = crate::app::backups::held(tx, bucket.id(), &found)?;
         found.retain(|hash| !held.contains(hash));
+        if !surveyed {
+            let stored: HashSet<String> = rows::held_in(
+                tx,
+                bucket.id(),
+                found.iter().map(|hash| hash.as_str().to_string()),
+            )?
+            .into_iter()
+            .collect();
+            found.retain(|hash| !stored.contains(hash.as_str()));
+        }
     }
     Ok(found)
 }
@@ -526,12 +538,28 @@ pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
     let mut unreachable = BTreeSet::new();
     app.retry_deletions(&run, LEFTOVERS, true, &mut unreachable)
         .await?;
+    let looked = app.clone();
+    let due = app
+        .db
+        .read(move |tx| Ok(!past_grace(tx, &looked)?.is_empty()))
+        .await?;
+    let surveyed = if due {
+        match crate::app::backups::survey_folder(&app).await {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::warn!(%error, "Files the object store holds wait for a survey of the backups");
+                false
+            }
+        }
+    } else {
+        true
+    };
     let (live, at, job) = (app.clone(), app.clock.stamp(), run.job);
     let (candidates, kept) = app
         .db
         .write(Write::own(), move |tx| {
             // Chosen before this run reports, so only an earlier run's report is purged.
-            let candidates = purgeable(tx, &live)?;
+            let candidates = purgeable(tx, &live, surveyed)?;
             let kept = match grace_cutoff(tx, &live)? {
                 Some(_) => rows::UNREAD_ORPHANS.report(tx, job, [])?,
                 None => 0,
@@ -554,7 +582,7 @@ pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
         let gone = app
             .write(&Caller::Server, "blob.purge", move |unit| {
                 let tx = unit.tx();
-                let still: HashSet<Hash> = purgeable(tx, &live)?.into_iter().collect();
+                let still: HashSet<Hash> = purgeable(tx, &live, surveyed)?.into_iter().collect();
                 let chosen: Vec<Hash> = candidates
                     .into_iter()
                     .filter(|hash| still.contains(hash))

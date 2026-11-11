@@ -795,13 +795,16 @@ CREATE TABLE IF NOT EXISTS stores (
 ) STRICT, WITHOUT ROWID;
 
 -- A store holds the bytes of a blob only while a row here says so. `object`
--- names an object store's copy under its prefix, as the hash's hex and a name
--- of its own write, so no other write or deletion ever names it; it is empty
--- for a disk copy, whose file the hash names.
+-- names an object store's copy under its blobs' folder, as the hash's hex and
+-- a name of its own write, so no other write or deletion ever names it; it is
+-- empty for a disk copy, whose file the hash names. `written` is 0 for an
+-- object a restore found that this server did not write, which it never
+-- deletes.
 CREATE TABLE IF NOT EXISTS blob_copies (
     hash TEXT NOT NULL REFERENCES blobs (hash) ON DELETE CASCADE,
     store_id TEXT NOT NULL REFERENCES stores (id),
     object TEXT NOT NULL DEFAULT '',
+    written INTEGER NOT NULL CHECK (written IN (0, 1)),
     recorded_at TEXT NOT NULL,
     verified_at TEXT,
     PRIMARY KEY (hash, store_id)
@@ -1141,6 +1144,27 @@ CREATE TABLE IF NOT EXISTS backup_files (
     last_seq INTEGER,
     PRIMARY KEY (store_id, hash)
 ) STRICT, WITHOUT ROWID;
+
+-- Backups in this instance's folder that `backups` does not record, which the
+-- server never deletes. `files_read` is 1 once every file its manifest names
+-- is in `found_backup_files`.
+CREATE TABLE IF NOT EXISTS found_backups (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    files_read INTEGER NOT NULL DEFAULT 0 CHECK (files_read IN (0, 1)),
+    missing_since TEXT,
+    omissions INTEGER NOT NULL DEFAULT 0 CHECK (omissions >= 0),
+    UNIQUE (store_id, name)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS found_backup_files (
+    seq INTEGER NOT NULL REFERENCES found_backups (seq),
+    hash TEXT NOT NULL,
+    PRIMARY KEY (seq, hash)
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS found_backup_files_hash ON found_backup_files (hash);
 
 CREATE TRIGGER IF NOT EXISTS backup_items_inserted AFTER INSERT ON items BEGIN
     INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;

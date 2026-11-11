@@ -1221,6 +1221,9 @@ impl App {
             .store(store_id)
             .filter(|_| holders.iter().any(|held| held.store_id == store_id))
             .ok_or_else(copy_not_found)?;
+        if matches!(store, Store::S3(_)) {
+            crate::app::backups::survey_folder(self).await?;
+        }
         let (blob, kept_in) = (hash.clone(), store_id.to_string());
         self.db
             .read(move |tx| keep_held(tx, &blob, &kept_in))

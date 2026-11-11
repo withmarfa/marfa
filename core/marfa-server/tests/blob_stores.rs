@@ -719,7 +719,7 @@ const BUCKET: &str = "marfa";
 /// Where the keys of a blob's objects in the fake store, in `prefix`, start.
 fn objects_of(prefix: &str, hash: &str) -> String {
     format!(
-        "/{BUCKET}/{prefix}/{}",
+        "/{BUCKET}/{prefix}/blobs/{}",
         hash.strip_prefix("sha256:").unwrap()
     )
 }
@@ -732,7 +732,7 @@ fn object_key(s3: &FakeS3, prefix: &str, hash: &str) -> String {
 }
 
 fn marker_key(prefix: &str) -> String {
-    format!("/{BUCKET}/{prefix}/.marfa-store")
+    format!("/{BUCKET}/{prefix}/blobs/.marfa-store")
 }
 
 impl Instance {

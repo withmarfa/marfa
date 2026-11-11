@@ -305,7 +305,7 @@ pub fn record_upload(
         params![blob.hash.as_str(), blob.mime_type, size, at],
     )?;
     tx.execute(
-        "INSERT INTO blob_copies (hash, store_id, recorded_at) VALUES (?1, ?2, ?3) \
+        "INSERT INTO blob_copies (hash, store_id, written, recorded_at) VALUES (?1, ?2, 1, ?3) \
          ON CONFLICT (hash, store_id) DO NOTHING",
         params![blob.hash.as_str(), store_id, at],
     )?;
@@ -558,6 +558,7 @@ pub fn record_copy(
     hash: &Hash,
     store_id: &str,
     object: &str,
+    written: bool,
     at: &str,
 ) -> Result<bool> {
     if find(tx, hash)?.is_none() {
@@ -565,10 +566,10 @@ pub fn record_copy(
     }
     let recorded = tx
         .prepare_cached(
-            "INSERT INTO blob_copies (hash, store_id, object, recorded_at) \
-             VALUES (?1, ?2, ?3, ?4) ON CONFLICT (hash, store_id) DO NOTHING",
+            "INSERT INTO blob_copies (hash, store_id, object, written, recorded_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT (hash, store_id) DO NOTHING",
         )?
-        .execute(params![hash.as_str(), store_id, object, at])?;
+        .execute(params![hash.as_str(), store_id, object, written, at])?;
     tx.prepare_cached("DELETE FROM blob_copy_failures WHERE hash = ?1 AND store_id = ?2")?
         .execute(params![hash.as_str(), store_id])?;
     if recorded > 0 {
@@ -577,7 +578,8 @@ pub fn record_copy(
     Ok(true)
 }
 
-/// Takes a copy out of the copy record and queues the deletion of its bytes, in one step.
+/// Takes a copy out of the copy record and, where the server wrote its bytes, queues their
+/// deletion, in one step.
 pub fn remove_copy(
     tx: &Transaction<'_>,
     hash: &Hash,
@@ -585,16 +587,46 @@ pub fn remove_copy(
     object: &str,
     at: &str,
 ) -> Result<bool> {
-    let removed = tx
+    let removed: Option<bool> = tx
         .prepare_cached(
-            "DELETE FROM blob_copies WHERE hash = ?1 AND store_id = ?2 AND object = ?3",
+            "DELETE FROM blob_copies WHERE hash = ?1 AND store_id = ?2 AND object = ?3 \
+             RETURNING written",
         )?
-        .execute(params![hash.as_str(), store_id, object])?;
-    if removed == 0 {
-        return Ok(false);
+        .query_row(params![hash.as_str(), store_id, object], |row| row.get(0))
+        .optional()?;
+    match removed {
+        None => Ok(false),
+        Some(written) => {
+            if written {
+                queue_deletion(tx, hash, store_id, object, at)?;
+            }
+            Ok(true)
+        }
     }
-    queue_deletion(tx, hash, store_id, object, at)?;
-    Ok(true)
+}
+
+/// The objects in `store_id` for `hash` the server wrote and queued for deletion.
+pub fn queued_objects(
+    tx: &Transaction<'_>,
+    hash: &Hash,
+    store_id: &str,
+) -> Result<HashSet<String>> {
+    Ok(tx
+        .prepare_cached(
+            "SELECT object FROM blob_pending_deletions WHERE hash = ?1 AND store_id = ?2",
+        )?
+        .query_map(params![hash.as_str(), store_id], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+/// Whether the server queued `object` in `store_id` for deletion, which it does for each object
+/// before it writes one.
+pub fn queued(tx: &Transaction<'_>, hash: &Hash, store_id: &str, object: &str) -> Result<bool> {
+    Ok(tx
+        .prepare_cached(
+            "SELECT 1 FROM blob_pending_deletions WHERE hash = ?1 AND store_id = ?2 AND object = ?3",
+        )?
+        .exists(params![hash.as_str(), store_id, object])?)
 }
 
 /// A blob an attached store lacks while another attached store holds it.
@@ -868,13 +900,14 @@ fn may_name(raw: &[u8], names: &HashSet<&[u8]>) -> bool {
     false
 }
 
-/// Queues deletion of the blob's bytes in each store, including a file a failed write left.
+/// Queues deletion of the blob's bytes in each store, including a file a failed write left, but
+/// for an object the server did not write.
 pub fn purge(tx: &Transaction<'_>, hash: &Hash, at: &str) -> Result<()> {
     tx.prepare_cached(
         "INSERT INTO blob_pending_deletions (hash, store_id, object, queued_at) \
          SELECT c.hash, c.store_id, c.object, ?2 FROM blob_copies c \
          JOIN stores s ON s.id = c.store_id \
-         WHERE c.hash = ?1 AND s.kind = 's3' AND s.detached_at IS NULL \
+         WHERE c.hash = ?1 AND c.written = 1 AND s.kind = 's3' AND s.detached_at IS NULL \
          ON CONFLICT (hash, store_id, object) DO NOTHING",
     )?
     .execute(params![hash.as_str(), at])?;

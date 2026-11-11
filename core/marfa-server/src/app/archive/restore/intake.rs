@@ -19,7 +19,7 @@ use crate::app::{edge_types, sources, stored, types};
 
 /// The most a manifest, or one line of a line file, may hold.
 pub const TEXT_CAP: usize = 64 * 1024 * 1024;
-const MANIFEST: &str = "manifest.json";
+pub(super) const MANIFEST: &str = "manifest.json";
 const INSTANCE: &str = "instance.ndjson.gz";
 const ITEMS: &str = "items.ndjson.gz";
 const EDGES: &str = "edges.ndjson.gz";

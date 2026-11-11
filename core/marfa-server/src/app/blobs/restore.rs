@@ -99,7 +99,8 @@ pub struct Placed {
 }
 
 /// Records each copy and, for a blob the instance did not hold, the blob itself, ending the
-/// deletion its placing queued.
+/// deletion its placing queued. A found object counts as written only where this server queued
+/// it, which it does before each write.
 pub fn record(
     tx: &rusqlite::Transaction<'_>,
     copies: &[Copy],
@@ -118,7 +119,16 @@ pub fn record(
             if !held {
                 rows::record_found(tx, &copy.blob, at)?;
             }
-            rows::record_copy(tx, &copy.blob.hash, &copy.store_id, &copy.object, at)?;
+            let written = copy.object.is_empty()
+                || rows::queued(tx, &copy.blob.hash, &copy.store_id, &copy.object)?;
+            rows::record_copy(
+                tx,
+                &copy.blob.hash,
+                &copy.store_id,
+                &copy.object,
+                written,
+                at,
+            )?;
         }
         rows::deleted(tx, &copy.blob.hash, &copy.store_id, &copy.object)?;
     }
@@ -345,10 +355,16 @@ impl App {
             .await
             .unwrap_or_else(|_| Err(silent()));
         let mut found = None;
-        let candidates = listed.map_err(|error| {
+        let mut candidates = listed.map_err(|error| {
             tracing::warn!(%error, "The object store did not answer for a restored blob");
             unavailable()
         })?;
+        let (looked, store_id) = (named.hash.clone(), s3.id().to_string());
+        let own = self
+            .db
+            .read(move |tx| rows::queued_objects(tx, &looked, &store_id))
+            .await?;
+        candidates.sort_by_key(|(object, _)| !own.contains(object));
         for (object, size) in candidates {
             // The read may take as long as its bytes keep arriving; only its start is timed.
             let checked = async {
