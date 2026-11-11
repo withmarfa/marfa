@@ -648,9 +648,14 @@ pub(crate) fn take_server_row(
     }
 }
 
+/// A fill after this reads the batches taken before it, so none is waited for.
 pub(crate) fn forget_table(conn: &Connection, item: &str, table: &str) -> Result<()> {
     conn.execute(
         "DELETE FROM rows_beneath WHERE item_id = ?1 AND name = ?2",
+        params![item, table],
+    )?;
+    conn.execute(
+        "DELETE FROM rows_laid WHERE item_id = ?1 AND name = ?2 AND batch IS NOT NULL",
         params![item, table],
     )?;
     conn.execute(
@@ -662,12 +667,19 @@ pub(crate) fn forget_table(conn: &Connection, item: &str, table: &str) -> Result
 
 pub(crate) fn forget_item(conn: &Connection, item: &str) -> Result<()> {
     conn.execute("DELETE FROM rows_beneath WHERE item_id = ?1", [item])?;
+    conn.execute(
+        "DELETE FROM rows_laid WHERE item_id = ?1 AND batch IS NOT NULL",
+        [item],
+    )?;
     conn.execute("DELETE FROM rows_seen WHERE item_id = ?1", [item])?;
     Ok(())
 }
 
 pub(crate) fn forget_all(conn: &Connection) -> Result<()> {
-    conn.execute_batch("DELETE FROM rows_beneath; DELETE FROM rows_seen;")?;
+    conn.execute_batch(
+        "DELETE FROM rows_beneath; DELETE FROM rows_seen;
+         DELETE FROM rows_laid WHERE batch IS NOT NULL;",
+    )?;
     Ok(())
 }
 

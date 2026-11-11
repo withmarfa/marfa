@@ -55,22 +55,25 @@ pub(super) fn gather(
     let mut operations = operations_of(lead).len();
     let mut bytes = lead.body.to_string().len();
     let mut members = Vec::new();
+    let settled = |verdict: Option<Verdict>| {
+        matches!(
+            verdict,
+            Some(Verdict::Accepted | Verdict::Merged | Verdict::Conflicted | Verdict::Refused)
+        )
+    };
     for next in after {
-        if standing
-            .answers
-            .get(&next.id)
-            .and_then(Option::as_ref)
-            .is_some()
-        {
+        if settled(standing.answers.get(&next.id).copied().flatten()) {
             continue;
         }
         let Some(next) = store::queued_write(&conn, &next.id)? else {
             continue;
         };
-        if next.verdict.is_some() {
+        if settled(next.verdict) {
             continue;
         }
         let same = next.kind == WriteKind::WriteRows
+            && next.verdict.is_none()
+            && standing.answers.get(&next.id).copied().flatten().is_none()
             && next.item_id == lead.item_id
             && next.table == lead.table
             && next.batched_with.is_none()

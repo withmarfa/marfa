@@ -4528,9 +4528,11 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
         "UPDATE body_names SET other_id = ?2 WHERE other_id = ?1",
         "UPDATE folder_files SET item_id = ?2 WHERE item_id = ?1",
         "UPDATE folder_journal SET item_id = ?2 WHERE item_id = ?1",
+        "UPDATE rows_laid SET item_id = ?2 WHERE item_id = ?1",
     ] {
         conn.execute(statement, params![local, answered])?;
     }
+    crate::tables::drop_item(conn, local)?;
     // The names the create's body carries are the row's now; the landing
     // drops any its answered body does not carry.
     if conn.query_row(

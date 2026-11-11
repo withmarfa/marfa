@@ -1410,10 +1410,14 @@ fn send_queue(
             Readiness::Ready => {}
         }
 
+        let after = all
+            .iter()
+            .position(|queued| queued.id == row.id)
+            .map_or(&all[..0], |at| &all[at + 1..]);
         let batched = rows::gather(
             core,
             row,
-            all.get(cursor..).unwrap_or_default(),
+            after,
             &rows::Standing {
                 rows: &rows,
                 answers: &answers,

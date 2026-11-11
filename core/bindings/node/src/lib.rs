@@ -819,8 +819,30 @@ pub struct QueuedWrite {
     pub environmental_streak: i64,
     /// What the write last met when the failure was environmental.
     pub last_failure: Option<LastFailure>,
+    /// The table a row write or an undo names.
+    pub table: Option<String>,
+    /// The row write whose batch this one was sent in.
+    pub batched_with: Option<String>,
+    /// What a `conflicted` row write replaced unseen.
+    pub conflicts: Vec<RowConflict>,
     pub queued_at: String,
     pub answered_at: Option<String>,
+}
+
+#[napi(object)]
+pub struct RowConflict {
+    pub row: String,
+    pub column: String,
+}
+
+fn row_conflicts(conflicts: Vec<marfa_core::RowConflict>) -> Vec<RowConflict> {
+    conflicts
+        .into_iter()
+        .map(|conflict| RowConflict {
+            row: conflict.row,
+            column: conflict.column,
+        })
+        .collect()
 }
 
 /// What a write met that was no answer to it: the HTTP status, absent where
@@ -868,6 +890,8 @@ pub struct DrainVerdict {
     /// The server answered from its record of this idempotency key rather
     /// than writing again.
     pub replayed: bool,
+    /// What a `conflicted` row write replaced unseen.
+    pub conflicts: Vec<RowConflict>,
 }
 
 /// What a drain did.
@@ -1224,6 +1248,9 @@ pub(crate) fn queued(env: Env, write: marfa_core::QueuedWrite) -> Result<QueuedW
             status: failure.status.map(u32::from),
             text: failure.text,
         }),
+        table: write.table,
+        batched_with: write.batched_with,
+        conflicts: row_conflicts(write.conflicts),
         queued_at: write.queued_at,
         answered_at: write.answered_at,
     })
@@ -1246,6 +1273,7 @@ fn report_of(
             edge_id: entry.edge_id,
             refusals: entry.refusals,
             replayed: entry.replayed,
+            conflicts: row_conflicts(entry.conflicts),
         });
     }
     Ok(DrainReport {
