@@ -557,7 +557,7 @@ export interface ConflictSnapshot {
 
 /** The 409 a stale write gets when its base version's snapshot is retained. */
 export interface ConflictResponse {
-  error: { code: "version_conflict"; status: 409; message: string };
+  error: { code: "version_conflict"; message: string };
   current: ConflictSnapshot;
   ancestor: ConflictSnapshot;
   conflicting_fields: string[];
@@ -573,13 +573,13 @@ export interface ConflictResponse {
  * refusal.
  */
 export interface StaleVersionResponse {
-  error: { code: "version_conflict"; status: 409; message: string };
+  error: { code: "version_conflict"; message: string };
   current: ConflictSnapshot;
 }
 
 /** The 409 a write gets when no snapshot exists for the version it names. */
 export interface AncestorUnavailableResponse {
-  error: { code: "ancestor_unavailable"; status: 409; message: string };
+  error: { code: "ancestor_unavailable"; message: string };
   current: ConflictSnapshot;
   requested_version: number;
 }

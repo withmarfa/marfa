@@ -99,7 +99,6 @@ describe("error codes", () => {
       expect(updated.status).toBe(409);
       expect(updated.error?.error.code).toBe("ancestor_unavailable");
       const body = updated.error as unknown as AncestorUnavailableResponse;
-      expect(body.error).not.toHaveProperty("status");
       expect(body.requested_version).toBe(999);
       expect(body.current.version).toBe(1);
       expect(body).not.toHaveProperty("ancestor");
@@ -131,7 +130,6 @@ describe("error codes", () => {
       expect(stale.status).toBe(409);
       expect(stale.error?.error.code).toBe("version_conflict");
       const body = stale.error as unknown as ConflictResponse;
-      expect(body.error).not.toHaveProperty("status");
       expect(body.current.version).toBe(2);
       expect(body.ancestor.version).toBe(1);
       expect(body.ancestor.properties.title).toBe("first");

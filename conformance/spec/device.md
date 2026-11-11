@@ -5118,7 +5118,7 @@ If a write to an item, or to an edge or an item's extension, names a value, at a
 
 **Reason:** the server refuses the number, so a write kept would come back refused, or be stored changed.
 
-**Tests:** `device/property-validation-live.test.ts › refuses %s in a declared number, an undeclared property, an array and a nested object on both paths with one message`, `› keeps %s on both paths as the same stored number`, `› keeps a large number in the digits a float is served as inside an array and a nested object on both paths`, `› refuses %s in the properties of an edge and the data of an extension on both paths with one message`, `› keeps a number a float keeps in the properties of an edge and the data of an extension on both paths`.
+**Tests:** `device/property-validation-live.test.ts › refuses %s in a declared number, an undeclared property, an array and a nested object on both paths with one message`, `› keeps %s on both paths as the same stored number`, `› keeps a large number in the digits a float is served as inside an array and a nested object on both paths`, `› keeps a number a float keeps in the properties of an edge and the data of an extension on both paths`, `device/property-validation-edges.test.ts › refuses %s in the properties of an edge and the data of an extension on both paths with one message`.
 
 ### `device/number-exact-folder-flagged`
 
@@ -5158,7 +5158,7 @@ If a write names a `url` value of a special scheme whose host has a code point t
 
 **Reason:** the tables are those of the `idna` crate, which this repository does not own and does not copy, so `http://Ⴍ𿣍ꡨ֮.Ⴞ/` and `https://𾢬.ܩ.쯙5/` are taken by the server and refused by the device. The device refuses and does not change the text, so nothing is lost, and the server takes the same value written online.
 
-**Tests:** `device/property-validation-live.test.ts › refuses the url %j on the device where the server takes it`.
+**Tests:** `device/property-validation-edges.test.ts › refuses the url %j on the device where the server takes it`.
 
 ### `device/range-checked`
 

@@ -24,7 +24,7 @@ The server MUST NOT carry a `status` member in the `error` object of a refusal.
 
 **Reason:** the HTTP status is the answer's own, so the `error` object has the same members at every door: `code`, `message` and, where there is one, `details`.
 
-**Tests:** `compliance/instance.test.ts › answers 404 not_found in the standard envelope for a path it does not serve`, `compliance/unmatched-paths.test.ts › answers a GET to a path no door serves 404 not_found in the envelope, to a caller with a credential and to one without`, `compliance/internal-error.test.ts › answers 500 internal_error with the code and a fixed message and nothing else, and the instance answers again once it is gone`, `correctness/item-versioning.test.ts › a stale write answers version_conflict with a three-way envelope`, `› a version no client ever read answers ancestor_unavailable`, `compliance/error-codes.test.ts › rejects a stale write whose base version is retained`.
+**Tests:** `compliance/instance.test.ts › answers 404 not_found in the standard envelope for a path it does not serve`, `compliance/unmatched-paths.test.ts › answers a GET to a path no door serves 404 not_found in the envelope, to a caller with a credential and to one without`, `compliance/internal-error.test.ts › answers 500 internal_error with the code and a fixed message and nothing else, and the instance answers again once it is gone`, `correctness/item-versioning.test.ts › a stale write answers version_conflict with a three-way envelope`, `› a version no client ever read answers ancestor_unavailable`.
 
 ### `errors/code-closed`
 

@@ -411,77 +411,6 @@ async function linkedItems() {
   return linked;
 }
 
-it.each([
-  ["1500000000000000001"],
-  ["1152921504606846976"],
-  ["1000000000000000000000"],
-  ["-0"],
-])(
-  "refuses %s in the properties of an edge and the data of an extension on both paths with one message",
-  async (digits) => {
-    const { from, to, edge, version } = await linkedItems();
-    const nested = `{"weight":${digits},"list":[1,${digits}]}`;
-    const before = await device.queue();
-    const refusedOnBoth = async (
-      server: Awaited<ReturnType<typeof client.rawRequest>>,
-      local: { ok: boolean; refusal?: { raw: string } },
-      field: string,
-    ) => {
-      expect(server.ok).toBe(false);
-      expect((server.error as { error: { code: string } }).error.code).toBe(
-        "invalid_properties",
-      );
-      expect(
-        (
-          server.error as {
-            error: { details?: { errors?: unknown } };
-          }
-        ).error.details?.errors,
-      ).toEqual([{ field, message: message(digits) }]);
-      expect(local.ok).toBe(false);
-      expect(local.refusal?.raw).toContain(`${field}: ${message(digits)}`);
-    };
-    const json = { "Content-Type": "application/json" };
-    await refusedOnBoth(
-      await client.rawRequest("/edges", {
-        method: "POST",
-        headers: json,
-        body: `{"source_id":"${from}","target_id":"${to}","edge_type":"about","properties":${nested}}`,
-      }),
-      await device.createEdge({
-        source: from,
-        target: to,
-        type: "about",
-        propertiesText: nested,
-      }),
-      "weight",
-    );
-    await refusedOnBoth(
-      await client.rawRequest(`/edges/${edge}`, {
-        method: "PATCH",
-        headers: json,
-        body: `{"version":${version},"properties":${nested}}`,
-      }),
-      await device.updateEdge(edge, {
-        properties: {},
-        propertiesText: nested,
-        version,
-      }),
-      "weight",
-    );
-    await refusedOnBoth(
-      await client.rawRequest(`/items/${from}/extensions/fixture.digits`, {
-        method: "PUT",
-        headers: json,
-        body: nested,
-      }),
-      await device.writeExtensionText(from, "fixture.digits", nested),
-      "weight",
-    );
-    expect(await device.queue()).toEqual(before);
-  },
-);
-
 it("keeps a number a float keeps in the properties of an edge and the data of an extension on both paths", async () => {
   const { from, to, edge, version } = await linkedItems();
   const text = '{"weight":1152921504606847000,"digits":"1152921504606846976"}';
@@ -732,17 +661,3 @@ it.each([
   if (!local.ok)
     expect(local.refusal.raw).toContain("url: Must be a valid URL");
 });
-
-it.each([["http://Ⴍ𿣍ꡨ֮.Ⴞ/"], ["https://𾢬.ܩ.쯙5/"]])(
-  "refuses the url %j on the device where the server takes it",
-  async (written) => {
-    const properties = { title: "t", url: written };
-    const server = await client.createItem({ type: valuesType, properties });
-    expect(server.ok, JSON.stringify(server.error)).toBe(true);
-    if (server.ok) trackItem(ctx, server.data.item.id);
-    const local = await device.create({ type: valuesType, properties });
-    expect(local.ok).toBe(false);
-    if (!local.ok)
-      expect(local.refusal.raw).toContain("url: Must be a valid URL");
-  },
-);
