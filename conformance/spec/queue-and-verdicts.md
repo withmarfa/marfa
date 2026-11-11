@@ -128,7 +128,7 @@ When a caller queues a write, a device MUST give it an idempotency key at once a
 
 When a drain sends a write again that it sent before, a device MUST send it under the idempotency key it carried, unless a caller released it in between.
 
-**Reason:** an attempt whose answer the device never read may have taken effect, and only the same key lets the server answer the next attempt from its record. A release mints a fresh key for a write other than a row write (`queue-and-verdicts/release-fresh-key`), and for a row write only where the server holds another request under the key (`queue-and-verdicts/rows-release-key-spent`).
+**Reason:** an attempt whose answer the device never read may have taken effect, and only the same key lets the server answer the next attempt from its record. A release mints a fresh key for a write other than a row write or an undo (`queue-and-verdicts/release-fresh-key`), and for either only where the server holds another request under the key (`queue-and-verdicts/rows-release-key-spent`, `queue-and-verdicts/undo-release-key-spent`).
 
 **Tests:** `device/queue.test.ts › retries under the key it was queued with, and is answered from the record rather than written twice`, `device/contract.test.ts › ends a drain on an answer from another contract, and sends the write again under its key`, `device/grant-recovery.test.ts › keeps an edit blocked for $kind $level until its grant returns`, `device/versioned-deletes-live.test.ts › replays a lost delete answer without deleting a restored newer item`, `device/stop.test.ts › ends it without waiting on the write in flight, which the next drain sends again under its key`.
 
@@ -288,23 +288,23 @@ When a device gives a `write_rows` write the verdict `conflicted`, a device MUST
 
 ### `queue-and-verdicts/rows-refused-operation`
 
-If the server refuses a batch the device had not sent before naming in `details.operation` an operation of one of its writes, then a device MUST refuse that write with the server's code, naming in its refusal's `details.operation` the operation's place in that write.
+If the server refuses a batch the device had not sent before, or answers a batch with a refusal from its record, naming in `details.operation` an operation of one of its writes, then a device MUST refuse that write with the server's code, naming in its refusal's `details.operation` the operation's place in that write.
 
-**Tests:** `device/table-writes-live.test.ts › refuses only the write whose operation the server refuses, and sends the batch's other writes again in the same drain`.
+**Tests:** `device/table-writes-live.test.ts › refuses only the write whose operation the server refuses, and sends the batch's other writes again in the same drain`, `› refuses only the write whose operation the server refuses from its record for a batch it sent before, and sends the others again in the same drain`.
 
 ### `queue-and-verdicts/rows-refused-others`
 
-When the server refuses a batch the device had not sent before naming an operation of one of its writes, a device MUST send the batch's other writes again in the same drain, in a batch of their own under a fresh key.
+When the server refuses a batch the device had not sent before, or answers a batch with a refusal from its record, naming an operation of one of its writes, a device MUST send the batch's other writes again in the same drain, in a batch of their own under a fresh key.
 
-**Reason:** the server wrote none of the batch in the request it refused (`tables/rows-all-or-none`), and no earlier request carried the batch, so one write's refusal says nothing of the others, and an edit refused only for sharing a batch would be lost.
+**Reason:** the server wrote none of the batch in the request it refused (`tables/rows-all-or-none`). A refusal answered from the record (`items/idempotency-replay`) is the only answer the server kept under the key, and a success is kept in the transaction that writes it, so no attempt under the key wrote any of the batch. One write's refusal then says nothing of the others, and an edit refused only for sharing a batch would be lost.
 
-**Tests:** `device/table-writes-live.test.ts › refuses only the write whose operation the server refuses, and sends the batch's other writes again in the same drain`.
+**Tests:** `device/table-writes-live.test.ts › refuses only the write whose operation the server refuses, and sends the batch's other writes again in the same drain`, `› refuses only the write whose operation the server refuses from its record for a batch it sent before, and sends the others again in the same drain`.
 
 ### `queue-and-verdicts/rows-refused-resent`
 
-If the server refuses a batch the device sent before naming an operation of it, then a device MUST settle each write of the batch as that answer settles a write sent on its own.
+If the server refuses a batch the device sent before naming an operation of it, in an answer not from its record, then a device MUST settle each write of the batch as that answer settles a write sent on its own.
 
-**Reason:** the server answers a batch sent again under its key from its record, so such a refusal comes only once that record is gone, and says nothing of what an earlier attempt wrote. A write sent again apart, under a new key, could be written twice over a change made since.
+**Reason:** the server answers a batch sent again under its key from its record while it keeps one, so such a refusal comes only once that record is gone, and says nothing of what an earlier attempt wrote. A write sent again apart, under a new key, could be written twice over a change made since.
 
 **Tests:** `device/table-writes-live.test.ts › refuses every write of a batch it sent before that the server refuses naming an operation, sending none of it again`.
 
@@ -403,6 +403,22 @@ When the server answers a batch `409 instance_changed`, a device MUST take every
 When a drain sends an `undo_rows` write, a device MUST send it as `POST /items/{id}/tables/{table}/batches/{batch}/undo` under its idempotency key, in no batch with another write.
 
 **Tests:** `device/table-writes-live.test.ts › queues an undo, sends it under its key, and takes the rows it put back from its rows.changed`.
+
+### `queue-and-verdicts/undo-release-key`
+
+When a caller releases an `undo_rows` write that is not `blocked` `key_spent`, a device MUST keep its idempotency key.
+
+**Reason:** whatever stopped the undo, the server may have applied it under that key and answers it again from its record. Under a fresh key the server would apply the undo again, putting back a row deleted since, or refuse it `undo_conflict` although it landed.
+
+**Tests:** `device/table-writes-live.test.ts › sends a dead undo again under its key once a caller releases it, so the server answers it from its record and puts back no row deleted since`.
+
+### `queue-and-verdicts/undo-release-key-spent`
+
+When a caller releases an `undo_rows` write `blocked` `key_spent`, a device MUST send it again under a key no request has carried.
+
+**Reason:** the server holds another request under the key, so it holds nothing of this undo under it, and it would refuse the key again.
+
+**Tests:** `device/table-writes-live.test.ts › sends an undo blocked key_spent under a fresh key once a caller releases it`.
 
 ## The version a write carries
 
@@ -1606,9 +1622,9 @@ When a caller releases a write that is `dead`, or `blocked` for a reason other t
 
 ### `queue-and-verdicts/release-fresh-key`
 
-When a caller releases a write other than a `write_rows` write, a device MUST give it a fresh idempotency key.
+When a caller releases a write other than a `write_rows` or `undo_rows` write, a device MUST give it a fresh idempotency key.
 
-**Reason:** sent again under the spent key, the write would be answered from the server's record, which is the answer that stopped it. A row write keeps its batch's key (`queue-and-verdicts/rows-release-key`).
+**Reason:** sent again under the spent key, the write would be answered from the server's record, which is the answer that stopped it. A row write keeps its batch's key (`queue-and-verdicts/rows-release-key`) and an undo its own (`queue-and-verdicts/undo-release-key`), unless the server holds another request under the key.
 
 **Tests:** `device/classification.test.ts › sends a released write again under a fresh key`.
 
