@@ -191,6 +191,25 @@ describe("a write that waits behind a bulk page", () => {
     expect((await single.response).status).toBe(201);
   }, 120_000);
 
+  it("lands after a best-effort page that holds the lock longer than the write wait", async () => {
+    await seed("waiting-partial");
+    const page = await heldPage(() =>
+      send("POST", "/items/bulk", notes("waiting-partial", "after", false)),
+    );
+
+    const single = track(
+      send("POST", "/items", {
+        type: "core.note",
+        properties: { title: "behind the best-effort page", body: "waited" },
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 2 * BUDGET_MS));
+    expect(single.state.answered).toBe(false);
+
+    expect((await release(page)).status).toBe(200);
+    expect((await single.response).status).toBe(201);
+  }, 120_000);
+
   it("counts a sign-in attempt after an atomic page that holds the lock longer than the write wait", async () => {
     // A password attempt is counted before the password is checked, in a
     // write of its own outside any transaction.

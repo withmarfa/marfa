@@ -336,11 +336,11 @@ When a write meets a write lock that is released inside the instance's write wai
 
 ### `errors/contention-bulk-wait`
 
-While a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: true` holds the write lock and writes an entry within every write wait, the server MUST hold a write that waits for the lock until the page ends, rather than answer it `503 write_contention`.
+While a `POST /items/bulk` or `POST /edges/bulk` page holds the write lock and writes an entry within every write wait, whatever its `atomic` says, the server MUST hold a write that waits for the lock until the page ends, rather than answer it `503 write_contention`.
 
 **Reason:** the server answers other requests while a page is written (`items/bulk-answers-reads`), so a write can arrive behind a page that holds the lock for longer than the budget. The wait ends when the page does; a refusal would turn an ordinary wait into a retry. A holder that writes nothing for the budget still meets `errors/contention`.
 
-**Tests:** `compliance/bulk-page-answers-others.test.ts › lands after an atomic page that holds the lock longer than the write wait`, `compliance/bulk-page-answers-others.test.ts › counts a sign-in attempt after an atomic page that holds the lock longer than the write wait`.
+**Tests:** `compliance/bulk-page-answers-others.test.ts › lands after an atomic page that holds the lock longer than the write wait`, `compliance/bulk-page-answers-others.test.ts › lands after a best-effort page that holds the lock longer than the write wait`, `compliance/bulk-page-answers-others.test.ts › counts a sign-in attempt after an atomic page that holds the lock longer than the write wait`.
 
 ### `errors/contention-read`
 
