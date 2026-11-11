@@ -12,10 +12,11 @@ use super::{
     schema_refusal,
 };
 use crate::app::App;
-use crate::app::access::{Caller, Door, Level, Permission, SchemaKind};
+use crate::app::access::{Axis, Caller, Door, Level, Permission, SchemaKind};
 use crate::app::catalog::{self, Catalog, Provenance, Snapshot};
 use crate::app::instance;
 use crate::app::items;
+use crate::app::oauth::scope::Registries;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::tables;
 
@@ -54,12 +55,6 @@ fn store(tx: &Transaction<'_>, id: &str, schema: &Obj, at: &str) -> Result<()> {
     catalog::raise(tx)
 }
 
-/// The grant that reaches an identifier nothing has registered yet.
-fn namespace_wildcard(id: &str) -> Option<String> {
-    let (root, _) = id.split_once('.')?;
-    Some(format!("{root}.*:write"))
-}
-
 pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
     if !body.contains_key("fields") {
         return Err(missing_field("fields"));
@@ -85,11 +80,12 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
             let catalog = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
             if let Some(id) = &named {
                 caller.require_type(id, Level::Write).map_err(|refusal| {
-                    match namespace_wildcard(id) {
-                        Some(scope) if !catalog.holds(id) => {
-                            refusal.with_detail("required_scope", scope)
-                        }
-                        _ => refusal,
+                    let scope = (!catalog.holds(id))
+                        .then(|| Registries::of(&catalog).namespace_write(Axis::Type, id))
+                        .flatten();
+                    match scope {
+                        Some(scope) => refusal.with_detail("required_scope", scope),
+                        None => refusal,
                     }
                 })?;
             }

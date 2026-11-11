@@ -415,6 +415,21 @@ impl Registries {
         allowed
     }
 
+    /// The namespace wildcard that lets an app write a name nothing holds yet, named only when an
+    /// app can be granted it: a root no type sits under has none. `axis` is `Type` or `Edge`.
+    pub fn namespace_write(&self, axis: Axis, name: &str) -> Option<String> {
+        let (root, _) = name.split_once('.')?;
+        let pattern = format!("{root}.*");
+        let verb = Verb::Write;
+        let scope = match axis {
+            Axis::Type => Scope::Type { pattern, verb },
+            Axis::Edge => Scope::Edge { pattern, verb },
+            _ => return None,
+        };
+        let literal = scope.literal();
+        self.allowed().contains(&literal).then_some(literal)
+    }
+
     /// Discovery takes no credential, so a type or root the owner made here stays out of it, and
     /// is still in `allowed`.
     pub fn published(&self) -> ScopeSet {
@@ -648,6 +663,28 @@ mod tests {
             ],
             ["links_to", "core.depends_on"],
         )
+    }
+
+    #[test]
+    fn a_namespace_wildcard_is_named_only_where_an_app_can_be_granted_it() {
+        let held = registries();
+        // The witness: roots a type sits under, and the standing ones, have a wildcard.
+        assert_eq!(
+            held.namespace_write(Axis::Type, "acme.thing").as_deref(),
+            Some("acme.*:write")
+        );
+        assert_eq!(
+            held.namespace_write(Axis::Edge, "acme.relates").as_deref(),
+            Some("edge.acme.*:write")
+        );
+        assert_eq!(
+            held.namespace_write(Axis::Edge, "user.relates").as_deref(),
+            Some("edge.user.*:write")
+        );
+        assert_eq!(held.namespace_write(Axis::Type, "unheard.recipe"), None);
+        assert_eq!(held.namespace_write(Axis::Edge, "unheard.relates"), None);
+        assert_eq!(held.namespace_write(Axis::Edge, "relates"), None);
+        assert_eq!(held.namespace_write(Axis::Metadata, "acme.thing"), None);
     }
 
     fn level(granted: &str, axis: Axis, name: &str) -> Level {

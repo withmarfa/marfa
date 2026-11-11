@@ -1503,6 +1503,22 @@ If an authorization request is refused for a redirect URI the client registered 
 
 **Tests:** `compliance/oauth-authorize.test.ts › sends a refusal for a web app nobody approved to the error page, and to its redirect URI once the person approves it`.
 
+### `keys-and-oauth/authorize-response-issuer`
+
+When the server sends the browser to a redirect URI with an authorization response, a code or an error, the server MUST carry `iss` in it, equal to the `issuer` its authorization server metadata names.
+
+**Reason:** the metadata sets `authorization_response_iss_parameter_supported` to `true` (RFC 9207), and a client that relies on it, as an MCP host does, rejects a response without `iss`.
+
+**Tests:** `compliance/oauth-authorize.test.ts › sends its issuer with the code and with each error it sends to a redirect URI`.
+
+### `keys-and-oauth/authorize-error-description`
+
+When the server sends the browser to a redirect URI with an authorization error, the server MUST carry an `error_description` in it that says in words why the request was refused.
+
+**Reason:** the error code alone does not tell a person who reads the app's failure screen what to change.
+
+**Tests:** `compliance/oauth-authorize.test.ts › says why in an error_description with each error it sends to a redirect URI`.
+
 ### `keys-and-oauth/authorize-private-use`
 
 When a person accepts an authorization request that names a private-use redirect URI the client registered, the server MUST send the browser to that URI, with the scheme and path as registered, carrying the code and the request's `state`.

@@ -7,11 +7,12 @@ use rusqlite::params;
 use serde_json::Value;
 
 use super::App;
-use super::access::{Caller, Door, Level, Permission, SchemaKind};
+use super::access::{Axis, Caller, Door, Level, Permission, SchemaKind};
 use super::catalog::{self, Catalog, Snapshot};
 use super::edges;
 use super::instance;
 use super::items::reading;
+use super::oauth::scope::Registries;
 use super::refusal::{Code, Refusal, Result};
 use super::types::{issues_json, missing_field};
 use super::unit::Unit;
@@ -80,15 +81,16 @@ fn require_names(caller: &Caller, id: &str, reverse: Option<&str>) -> Result<()>
     Ok(())
 }
 
-/// The grant that reaches a `user.` name no edge type holds yet.
-const NAMESPACE_WILDCARD: &str = "edge.user.*:write";
-
 fn require_new_name(caller: &Caller, catalog: &Catalog, name: &str) -> Result<()> {
     caller.require_edge(name, Level::Write).map_err(|refusal| {
-        if name.starts_with("user.") && catalog.edge_kind(name).is_none() {
-            refusal.with_detail("required_scope", NAMESPACE_WILDCARD)
-        } else {
-            refusal
+        let scope = catalog
+            .edge_kind(name)
+            .is_none()
+            .then(|| Registries::of(catalog).namespace_write(Axis::Edge, name))
+            .flatten();
+        match scope {
+            Some(scope) => refusal.with_detail("required_scope", scope),
+            None => refusal,
         }
     })
 }
