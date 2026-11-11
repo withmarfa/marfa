@@ -1860,9 +1860,9 @@ When a type change, or an update to the `columns` of an item of `core.table` or 
 
 ### `tables/search-rebuilding`
 
-While `table-row-cleanup` has still to rebuild the index of a table after a type change, the server MUST NOT answer a row hit from that table.
+While `table-row-cleanup` has still to rebuild the index of a table after a change to its columns, the server MUST NOT answer a row hit from that table.
 
-**Reason:** until the rebuild ends, the index holds some rows by the old columns and some by the new, and neither answer is the type's.
+**Reason:** until the rebuild ends, the index holds some rows by the old columns and some by the new, and neither answer is what the columns now say.
 
 **Tests:** `compliance/table-rows-search.test.ts › rebuilds a large table's index through table-row-cleanup, matching nothing by a withdrawn column meanwhile`.
 

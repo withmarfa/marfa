@@ -201,7 +201,6 @@ CREATE TABLE IF NOT EXISTS row_search (
     seq INTEGER PRIMARY KEY,
     table_seq INTEGER NOT NULL,
     id TEXT NOT NULL,
-    -- The entry's length in tokens.
     tokens INTEGER NOT NULL DEFAULT 0 CHECK (tokens >= 0),
     UNIQUE (table_seq, id)
 ) STRICT;

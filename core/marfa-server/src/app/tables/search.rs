@@ -1,4 +1,4 @@
-//! `rows_fts`, the searchable text of each row: kept by every row write and rebuilt after a type change.
+//! `rows_fts`, the searchable text of each row: kept by every row write and rebuilt when the columns change.
 
 use marfa_rules::schema::{MAX_SEARCHABLE_COLUMNS, searchable_columns};
 use marfa_rules::search::{MARK_CLOSE, MARK_OPEN};
