@@ -1764,7 +1764,7 @@ The server MUST NOT match a row of an item in the bin on `GET /search`, whatever
 
 ### `tables/search-row-rank`
 
-When `GET /search` names no `sort`, or `sort=relevance`, the server MUST rank a row hit by BM25 over its table's searchable columns at equal weight, with the rows of the items the credential may read as the corpus, in one ranking with the item hits.
+When `GET /search` names no `sort`, or `sort=relevance`, the server MUST rank a row hit by BM25 over its table's searchable columns at equal weight, in one ranking with the item hits.
 
 **Reason:** a row and an item that match a query are answered in the order of how well each matches, so a page never puts every item before every row.
 

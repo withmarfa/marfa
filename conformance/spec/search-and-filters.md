@@ -1416,7 +1416,7 @@ When a type is registered, replaced, or deleted with `force`, the server MUST ma
 
 ### `search-and-filters/rank-bm25`
 
-When `GET /search` names no `sort`, or `sort=relevance`, the server MUST rank an item's own hit by BM25 over the `title`, `body`, `description`, `name`, extra properties and tags at equal weight, with the items not in the bin that the credential may read as the corpus.
+When `GET /search` names no `sort`, or `sort=relevance`, the server MUST rank an item's own hit by BM25 over the `title`, `body`, `description`, `name`, extra properties and tags at equal weight.
 
 **Reason:** a device ranks by the same measure over the items it holds (`device/rank-bm25`), so a device that holds what its key may read orders as the server orders for that key.
 
