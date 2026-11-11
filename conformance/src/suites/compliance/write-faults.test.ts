@@ -93,47 +93,53 @@ async function edgeEnds(tag: string): Promise<[string, string[]]> {
 
 const COMMIT_UNKNOWN_MESSAGE = /may have been written/;
 
-describe("an entry of a page under atomic: false whose commit cannot be confirmed", () => {
-  it("is reported errored with write_outcome unknown and the code internal_error, counted under errored alone, while the entries around it land", async () => {
+describe("a page under atomic: false whose commit cannot be confirmed", () => {
+  it("reports each entry it wrote errored with write_outcome unknown and the code internal_error, counted under errored alone, and a refused entry as refused", async () => {
     const tag = tagged("items-unknown");
-    await server.setFault("fail:commit=items.bulk@2");
+    const [first, last] = notes(2, tag);
+    await server.setFault("fail:commit=items.bulk");
     const page = await working.bulkItems({
       atomic: false,
-      items: notes(3, tag),
+      items: [
+        first!,
+        { type: "core.unregistered_type", properties: {} },
+        last!,
+      ],
     });
-    // The witness that the fault acted, on the second entry and no other.
     expect(await fired("fail:commit")).toBe(1);
 
     expect(page.status).toBe(200);
     const body: BulkResponse = page.data;
     expect(body.counts).toEqual({
-      created: 2,
+      created: 0,
       updated: 0,
       skipped: 0,
-      errored: 1,
+      errored: 3,
     });
-    expect(body.results.map((entry) => entry.outcome)).toEqual([
-      "created",
-      "errored",
-      "created",
-    ]);
-    const unknown = body.results[1]!;
-    expect(unknown.id).toBeUndefined();
-    expect(unknown.error?.code).toBe("internal_error");
-    expect(unknown.error?.details).toEqual({ write_outcome: "unknown" });
-    expect(unknown.error?.message).toMatch(COMMIT_UNKNOWN_MESSAGE);
+    for (const index of [0, 2]) {
+      const unknown = body.results[index]!;
+      expect(unknown.outcome).toBe("errored");
+      expect(unknown.error?.code).toBe("internal_error");
+      expect(unknown.error?.details).toEqual({ write_outcome: "unknown" });
+      expect(unknown.error?.message).toMatch(COMMIT_UNKNOWN_MESSAGE);
+    }
+    // The entry refused on its own merits keeps its own refusal.
+    expect(body.results[1]!.outcome).toBe("errored");
+    expect(body.results[1]!.error?.details).not.toEqual({
+      write_outcome: "unknown",
+    });
 
-    // The server went on to the next entry (items/bulk-outcome-unknown-continues),
-    // and the refused commit left nothing of the second behind.
-    expect((await stored(tag)).map((item) => item.properties.body)).toEqual(
-      expect.arrayContaining([`${tag}-0`, `${tag}-2`]),
-    );
-    expect(await stored(tag)).toHaveLength(2);
+    // The witness: with the fault gone the same page is written.
+    const again = await working.bulkItems({
+      atomic: false,
+      items: [first!, last!],
+    });
+    expect(again.data.counts.created).toBe(2);
   });
 
-  it("is reported the same way on an entry of an edge page, with the entries around it kept", async () => {
+  it("reports each entry of an edge page the same way", async () => {
     const [source, targets] = await edgeEnds(tagged("edges-unknown"));
-    await server.setFault("fail:commit=edges.bulk@2");
+    await server.setFault("fail:commit=edges.bulk");
     const page = await working.bulkEdges({
       atomic: false,
       edges: targets.map((target_id) => ({
@@ -147,47 +153,21 @@ describe("an entry of a page under atomic: false whose commit cannot be confirme
     expect(page.status).toBe(200);
     const body: BulkEdgeResponse = page.data;
     expect(body.counts).toEqual({
-      created: 2,
+      created: 0,
       updated: 0,
       skipped: 0,
-      errored: 1,
+      errored: 3,
     });
-    expect(body.results.map((entry) => entry.outcome)).toEqual([
-      "created",
-      "errored",
-      "created",
-    ]);
-    expect(body.results[1]!.error?.code).toBe("internal_error");
-    expect(body.results[1]!.error?.details).toEqual({
-      write_outcome: "unknown",
-    });
-
-    const held = await working.listItemEdges(source);
-    expect(held.status).toBe(200);
-    expect(held.data.data.map((edge) => edge.target_id).sort()).toEqual(
-      [targets[0]!, targets[2]!].sort(),
-    );
+    for (const entry of body.results) {
+      expect(entry.outcome).toBe("errored");
+      expect(entry.error?.code).toBe("internal_error");
+      expect(entry.error?.details).toEqual({ write_outcome: "unknown" });
+    }
   });
+});
 
-  it("is the first entry of the page as well as a later one, and the page still answers 200", async () => {
-    const tag = tagged("items-unknown-first");
-    await server.setFault("fail:commit=items.bulk");
-    const page = await working.bulkItems({
-      atomic: false,
-      items: notes(2, tag),
-    });
-    expect(page.status).toBe(200);
-    expect(page.data.results.map((entry) => entry.outcome)).toEqual([
-      "errored",
-      "created",
-    ]);
-    expect(page.data.results[0]!.error?.details).toEqual({
-      write_outcome: "unknown",
-    });
-    expect(await stored(tag)).toHaveLength(1);
-  });
-
-  it("on a single write answers 500 and stores nothing", async () => {
+describe("a single write whose commit cannot be confirmed", () => {
+  it("answers 500 and stores nothing", async () => {
     const tag = tagged("single-unknown");
     await server.setFault("fail:commit=item.create");
     const refused = await working.createItem({
@@ -243,9 +223,9 @@ describe("a change that has committed", () => {
     expect(await auditCount("item.create")).toBe(before + 1);
   });
 
-  it("is never answered with a 5xx: a page entry whose commit answer is lost is reported created, and the page answers 200", async () => {
+  it("is never answered with a 5xx: a page under atomic: false whose commit answer is lost reports its entries created, and answers 200", async () => {
     const tag = tagged("entry-lost");
-    await server.setFault("fail:commit-ack=items.bulk@2");
+    await server.setFault("fail:commit-ack=items.bulk");
     const page = await working.bulkItems({
       atomic: false,
       items: notes(3, tag),
@@ -258,13 +238,13 @@ describe("a change that has committed", () => {
       skipped: 0,
       errored: 0,
     });
-    // Each entry once: replaying the page would have written the second twice.
+    // Each entry once: replaying the page would have written them twice.
     expect(await stored(tag)).toHaveLength(3);
   });
 
-  it("is never answered with a 5xx: an edge entry whose commit answer is lost is reported created", async () => {
+  it("is never answered with a 5xx: an edge page under atomic: false whose commit answer is lost reports its entries created", async () => {
     const [source, targets] = await edgeEnds(tagged("edges-lost"));
-    await server.setFault("fail:commit-ack=edges.bulk@2");
+    await server.setFault("fail:commit-ack=edges.bulk");
     const page = await working.bulkEdges({
       atomic: false,
       edges: targets.map((target_id) => ({
@@ -292,60 +272,8 @@ describe("a change that has committed", () => {
   });
 });
 
-describe("an entry of a page under atomic: false that meets the write lock", () => {
-  it("after an earlier entry has committed is reported errored with write_contention in a 200 answer, and the entries around it land", async () => {
-    const tag = tagged("lock-entry");
-    await server.setFault("fail:lock=2");
-    const page = await working.bulkItems({
-      atomic: false,
-      items: notes(3, tag),
-    });
-    expect(await fired("fail:lock")).toBe(1);
-    expect(page.status).toBe(200);
-    expect(page.data.counts).toEqual({
-      created: 2,
-      updated: 0,
-      skipped: 0,
-      errored: 1,
-    });
-    expect(page.data.results.map((entry) => entry.outcome)).toEqual([
-      "created",
-      "errored",
-      "created",
-    ]);
-    expect(page.data.results[1]!.error?.code).toBe("write_contention");
-    // The lock was refused before the entry did any work: nothing of it is
-    // stored, so a retry of that entry alone writes it once.
-    expect(await stored(tag)).toHaveLength(2);
-    const retried = await working.bulkItems({
-      atomic: false,
-      items: [notes(3, tag)[1]!],
-    });
-    expect(retried.data.counts.created).toBe(1);
-  });
-
-  it("is reported the same way on an entry of an edge page", async () => {
-    const [source, targets] = await edgeEnds(tagged("edges-lock"));
-    await server.setFault("fail:lock=2");
-    const page = await working.bulkEdges({
-      atomic: false,
-      edges: targets.map((target_id) => ({
-        source_id: source,
-        target_id,
-        edge_type: "references",
-      })),
-    });
-    expect(await fired("fail:lock")).toBe(1);
-    expect(page.status).toBe(200);
-    expect(page.data.results.map((entry) => entry.outcome)).toEqual([
-      "created",
-      "errored",
-      "created",
-    ]);
-    expect(page.data.results[1]!.error?.code).toBe("write_contention");
-  });
-
-  it("before any entry has committed answers the page 503 write_contention, where the first entry meets it", async () => {
+describe("a page under atomic: false that meets the write lock", () => {
+  it("answers the page 503 write_contention", async () => {
     const tag = tagged("lock-page");
     await server.setFault("fail:lock=1");
     const refused = await working.bulkItems({

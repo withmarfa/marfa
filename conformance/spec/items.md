@@ -1016,23 +1016,17 @@ When a change to a key's grants that leaves it read but not write on a type an e
 
 ### `items/write-race-key-narrowed-entry`
 
-When a change to a key's grants that leaves it read but not write on a type an entry needs commits before an entry of a `POST /items/bulk` page under `atomic: false` begins to write, the server MUST report the entry `errored` with `error.code` `type_not_permitted`.
+When a change to a key's grants that leaves it read but not write on a type an entry needs commits before a `POST /items/bulk` page under `atomic: false` begins to write, the server MUST report the entry `errored` with `error.code` `type_not_permitted`.
 
-**Tests:** `compliance/item-write-live-key.test.ts › errors a best-effort bulk entry type_not_permitted when its key is narrowed to read after the write is held`, `› errors a later best-effort bulk entry type_not_permitted when its key is narrowed to read after an earlier entry is written`.
+**Tests:** `compliance/item-write-live-key.test.ts › errors a best-effort bulk entry type_not_permitted when its key is narrowed to read after the write is held`.
 
 ### `items/write-race-key-revoked`
 
-When the revocation of a key commits before an item write bearing that key begins to write, the server MUST refuse the write `401 unauthorized`, for a write through `POST /items`, `PATCH /items/{id}`, `DELETE /items/{id}`, `POST /items/{id}/restore`, `POST /items/{id}/transition`, `POST /items/{id}/purge`, a `POST /items/bulk` page under `atomic: true`, or a `POST /items/bulk` page under `atomic: false` before any of its entries has been written.
+When the revocation of a key commits before an item write bearing that key begins to write, the server MUST refuse the write `401 unauthorized`, for a write through `POST /items`, `PATCH /items/{id}`, `DELETE /items/{id}`, `POST /items/{id}/restore`, `POST /items/{id}/transition`, `POST /items/{id}/purge`, or a `POST /items/bulk` page under either `atomic`.
 
 **Reason:** `keys-and-oauth/revoke-immediate` holds for a request already admitted when the key is revoked.
 
-**Tests:** `compliance/item-write-live-key.test.ts › refuses a create 401 when its key is revoked after the write is held`, `› refuses an update 401 when its key is revoked after the write is held`, `› refuses a delete 401 when its key is revoked after the write is held`, `› refuses a purge 401 when its key is revoked after the write is held`, `› refuses a restore 401 when its key is revoked after the write is held`, `› refuses a transition 401 when its key is revoked after the write is held`, `› refuses an atomic bulk page 401 when its key is revoked after the write is held`, `› refuses a best-effort bulk page 401 when its key is revoked before its first entry is written`, `› refuses a best-effort bulk page 401 when its key is revoked after a refused first entry and before its second`.
-
-### `items/write-race-key-revoked-entry`
-
-When the revocation of a key commits after an earlier entry of a `POST /items/bulk` page under `atomic: false` has been written and before a later entry begins to write, the server MUST report the later entry `errored` with `error.code` `unauthorized`.
-
-**Tests:** `compliance/item-write-live-key.test.ts › errors a later best-effort bulk entry unauthorized when its key is revoked after an earlier entry is written`.
+**Tests:** `compliance/item-write-live-key.test.ts › refuses a create 401 when its key is revoked after the write is held`, `› refuses an update 401 when its key is revoked after the write is held`, `› refuses a delete 401 when its key is revoked after the write is held`, `› refuses a purge 401 when its key is revoked after the write is held`, `› refuses a restore 401 when its key is revoked after the write is held`, `› refuses a transition 401 when its key is revoked after the write is held`, `› refuses an atomic bulk page 401 when its key is revoked after the write is held`, `› refuses a best-effort bulk page 401 when its key is revoked before it is written`.
 
 ## Idempotency keys
 
@@ -1604,7 +1598,7 @@ If `POST /items/{id}/purge` names a query parameter it does not declare, then th
 
 ## Bulk writes
 
-`POST /items/bulk` writes a page of entries. Under `atomic: true`, the default, a refused entry rolls the whole page back; under `atomic: false` each entry stands alone. A refused entry is an entry `errored` on a best-effort page and the page's rollback on an atomic one.
+`POST /items/bulk` writes a page of entries. Under `atomic: true`, the default, a refused entry rolls the whole page back; under `atomic: false` a refused entry leaves the others. Either way the page is one transaction, which commits once. A refused entry is an entry `errored` on a best-effort page and the page's rollback on an atomic one.
 
 ### `items/bulk-no-type`
 
@@ -1766,13 +1760,21 @@ While a `POST /items/bulk` page is being written, the server MUST answer a read 
 
 **Reason:** a page may hold thousands of entries, and an instance that stops answering for its length looks down to every other caller.
 
-**Tests:** `compliance/bulk-page-answers-others.test.ts › answers a read of an item an atomic items page is updating, with the item as it was`, `› answers a read in the middle of an items page under atomic: false`.
+**Tests:** `compliance/bulk-page-answers-others.test.ts › answers a read of an item an atomic items page is updating, with the item as it was`, `› answers a read of an item an items page under atomic: false is updating, with the item as it was`.
 
 ### `items/bulk-atomic-unseen`
 
 While a `POST /items/bulk` page under `atomic: true` is being written, the server MUST answer a read of an item the page writes with the item as it stood before the page.
 
 **Tests:** `compliance/bulk-page-answers-others.test.ts › answers a read of an item an atomic items page is updating, with the item as it was`.
+
+### `items/bulk-best-effort-unseen`
+
+While a `POST /items/bulk` page under `atomic: false` is being written, the server MUST answer a read of an item the page writes with the item as it stood before the page.
+
+**Reason:** the page is durable only once it commits, so an entry another caller could read sooner might still be lost to a power cut after it was read.
+
+**Tests:** `compliance/bulk-page-answers-others.test.ts › answers a read of an item an items page under atomic: false is updating, with the item as it was`.
 
 ### `items/bulk-best-effort`
 
@@ -1794,17 +1796,11 @@ When the server reports a `POST /items/bulk` entry `errored` without `error.deta
 
 ### `items/bulk-outcome-unknown`
 
-If the server cannot confirm whether an entry of a page under `atomic: false` committed, then the server MUST report that entry `errored` with `error.details.write_outcome: "unknown"`, counted under `errored` alone, in a `200` answer.
+If the server cannot confirm whether a `POST /items/bulk` page under `atomic: false` committed, then the server MUST report each entry the page wrote `errored` with `error.details.write_outcome: "unknown"`, counted under `errored` alone, in a `200` answer.
 
-**Reason:** the caller reconciles that entry's stored state before retrying it, and does not replay the page.
+**Reason:** the caller reconciles each of those entries' stored state before retrying it, and does not replay the page.
 
-**Tests:** `compliance/write-faults.test.ts › is reported errored with write_outcome unknown and the code internal_error, counted under errored alone, while the entries around it land`, `compliance/write-faults.test.ts › is the first entry of the page as well as a later one, and the page still answers 200`.
-
-### `items/bulk-outcome-unknown-continues`
-
-When the server reports a `POST /items/bulk` entry with `write_outcome: "unknown"`, the server MUST go on to the page's next entry.
-
-**Tests:** `compliance/write-faults.test.ts › is reported errored with write_outcome unknown and the code internal_error, counted under errored alone, while the entries around it land`, `compliance/write-faults.test.ts › is the first entry of the page as well as a later one, and the page still answers 200`.
+**Tests:** `compliance/write-faults.test.ts › reports each entry it wrote errored with write_outcome unknown and the code internal_error, counted under errored alone, and a refused entry as refused`.
 
 ### `items/bulk-reason`
 

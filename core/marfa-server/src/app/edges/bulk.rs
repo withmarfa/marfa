@@ -12,7 +12,7 @@ use crate::app::access::{Caller, Level};
 use crate::app::catalog::{self, Snapshot as Reading};
 use crate::app::faults::{Faults, HOLD_BULK_PAGE};
 use crate::app::idempotency::Need;
-use crate::app::items::bulk::{Counts, Entered, refused_entry, rollback, unconfirm_unless_synced};
+use crate::app::items::bulk::{self, Counts, Entered, rollback};
 use crate::app::items::{self, Reader, reading};
 use crate::app::refusal::{Refusal, Result};
 use crate::db::Pulse;
@@ -211,52 +211,31 @@ pub async fn write(app: &App, caller: &Caller, asked: Asked) -> Result<String> {
             .await;
     }
     let total = entries.len();
-    let mut counts = Counts::default();
-    let mut results = Vec::with_capacity(total);
-    let mut landed = false;
-    for (index, entry) in entries.into_iter().enumerate() {
-        app.faults.hold(HOLD_BULK_PAGE, None).await;
-        let result = match entry {
-            Err(refusal) => refused_entry(index, &refusal, landed)?,
-            Ok(entry) => {
-                let cache = cache.clone();
-                let operation = operation.clone();
-                let written = app
-                    .write_deferred(caller, ACTION, move |unit| {
-                        unit.fanning(fanout, |unit| {
-                            let catalog = catalog::current(&cache, unit.tx(), Reading::Pending)?;
-                            let writing = Writing::page(unit, &catalog);
-                            let entered = writing.entry(entry, create_only)?;
-                            if let Entered::Created(id) | Entered::Updated(id) = &entered {
-                                unit.audit(
-                                    ACTION,
-                                    id,
-                                    Some(json!({
-                                        "operation_id": operation,
-                                        "mode": mode_word(create_only),
-                                        "atomic": false,
-                                        "total": total,
-                                        "index": index,
-                                        "outcome": entered.outcome(),
-                                    })),
-                                )?;
-                            }
-                            Ok(entered.answered(index))
-                        })
-                    })
-                    .await;
-                match written {
-                    Ok(answer) => answer,
-                    Err(refusal) => refused_entry(index, &refusal, landed)?,
+    let pulse = app.db.pulse();
+    let faults = app.faults.clone();
+    bulk::best_effort(app, caller, ACTION, move |unit| {
+        unit.fanning(fanout, |unit| {
+            let catalog = catalog::current(&cache, unit.tx(), Reading::Pending)?;
+            let writing = Writing::page(unit, &catalog);
+            bulk::each(unit, ACTION, &faults, &pulse, entries, |index, entry| {
+                let entered = writing.entry(entry, create_only)?;
+                if let Entered::Created(id) | Entered::Updated(id) = &entered {
+                    unit.audit(
+                        ACTION,
+                        id,
+                        Some(json!({
+                            "operation_id": operation,
+                            "mode": mode_word(create_only),
+                            "atomic": false,
+                            "total": total,
+                            "index": index,
+                            "outcome": entered.outcome(),
+                        })),
+                    )?;
                 }
-            }
-        };
-        let outcome = result["outcome"].as_str().unwrap_or_default();
-        counts.add(outcome);
-        landed |= matches!(outcome, "created" | "updated")
-            || result["error"]["details"]["write_outcome"] == "unknown";
-        results.push(result);
-    }
-    unconfirm_unless_synced(app, &mut counts, &mut results).await;
-    Ok(json!({ "counts": counts, "results": results }).to_string())
+                Ok(entered.answered(index))
+            })
+        })
+    })
+    .await
 }

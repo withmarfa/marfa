@@ -1,7 +1,7 @@
 //! An atomic page is one transaction, so a refused last entry undoes the first; a best-effort
-//! page is one transaction per entry.
+//! page is one transaction too, with a savepoint per entry.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -10,9 +10,10 @@ use uuid::Uuid;
 use super::write::{self, Change, Put};
 use crate::app::App;
 use crate::app::access::Caller;
-use crate::app::faults::{Faults, HOLD_BULK_PAGE};
+use crate::app::faults::{FAIL_AUDIT, Faults, HOLD_BULK_PAGE};
 use crate::app::refusal::{Code, Refusal, Result};
-use crate::db::Pulse;
+use crate::app::unit::Unit;
+use crate::db::{Pulse, io_refusal};
 use crate::settings::registry::MAX_BULK_REQUEST_BYTES;
 
 impl App {
@@ -26,6 +27,7 @@ const UNKNOWN_OUTCOME: &str = "The entry may have been written, but its commit c
                                confirmed. Read its current state before retrying this entry; do \
                                not resend the whole page.";
 const NOT_WRITTEN: &str = "The entry could not be written, and nothing of it was";
+const ACTION: &str = "items.bulk";
 
 #[derive(Debug)]
 pub struct Entry {
@@ -167,15 +169,7 @@ fn error_of(refusal: &Refusal) -> Value {
 }
 
 /// Before anything has landed, what is no verdict on the entry answers for the whole page.
-pub(crate) fn refused_entry(index: usize, refusal: &Refusal, landed: bool) -> Result<Value> {
-    if refusal.commit_failed {
-        let error = json!({
-            "code": Code::InternalError.wire(),
-            "message": UNKNOWN_OUTCOME,
-            "details": { "write_outcome": "unknown" },
-        });
-        return Ok(errored(index, None, error));
-    }
+fn refused_entry(index: usize, refusal: &Refusal, landed: bool) -> Result<Value> {
     let verdict = refusal.code.status() < 500 && refusal.code != Code::Unauthorized;
     if verdict {
         return Ok(errored(index, refusal.row.as_deref(), error_of(refusal)));
@@ -202,6 +196,8 @@ pub async fn write(app: &App, caller: &Caller, asked: Asked) -> Result<String> {
         return Ok(json!({ "counts": Counts::default(), "results": [] }).to_string());
     }
     let operation = Uuid::now_v7().to_string();
+    let pulse = app.db.pulse();
+    let faults = app.faults.clone();
     if atomic {
         let page = Page {
             entries,
@@ -209,69 +205,140 @@ pub async fn write(app: &App, caller: &Caller, asked: Asked) -> Result<String> {
             retype,
             fanout,
             operation,
-            pulse: app.db.pulse(),
-            faults: app.faults.clone(),
+            pulse,
+            faults,
         };
         let done = write::run(app, caller, None, Change::Page(Box::new(page))).await?;
         return Ok(done.body);
     }
+    let cache = app.catalog_handle();
     let total = entries.len();
-    let mut counts = Counts::default();
-    let mut results = Vec::with_capacity(total);
+    best_effort(app, caller, ACTION, move |unit| {
+        each(unit, ACTION, &faults, &pulse, entries, |index, entry| {
+            let note = Note {
+                index,
+                total,
+                mode,
+                retype,
+                fanout,
+                operation: operation.clone(),
+            };
+            let entry = Box::new(entry);
+            let done = write::apply(unit, &cache, None, Change::Entry { entry, note })?;
+            serde_json::from_str(&done.body)
+                .map_err(|_| Refusal::internal("an entry's answer did not read"))
+        })
+    })
+    .await
+}
+
+/// A best-effort page's answer, kept outside its transaction so that a failed commit can still
+/// answer for each entry.
+#[derive(Default)]
+pub(crate) struct Answer {
+    counts: Counts,
+    results: Vec<Value>,
+}
+
+impl Answer {
+    fn body(&self) -> String {
+        json!({ "counts": self.counts, "results": self.results }).to_string()
+    }
+
+    /// Each entry that landed may or may not have survived the commit.
+    fn unconfirmed(mut self) -> Answer {
+        let unknown = json!({
+            "code": Code::InternalError.wire(),
+            "message": UNKNOWN_OUTCOME,
+            "details": { "write_outcome": "unknown" },
+        });
+        for result in &mut self.results {
+            let outcome = result["outcome"].as_str().unwrap_or_default();
+            match outcome {
+                "created" => self.counts.created -= 1,
+                "updated" => self.counts.updated -= 1,
+                _ => continue,
+            }
+            self.counts.errored += 1;
+            result["outcome"] = json!("errored");
+            result["error"] = unknown.clone();
+        }
+        self
+    }
+}
+
+/// One transaction for the page, so nothing of it is read, streamed or sent before it is durable.
+pub(crate) async fn best_effort<F>(
+    app: &App,
+    caller: &Caller,
+    action: &'static str,
+    job: F,
+) -> Result<String>
+where
+    F: FnOnce(&Unit<'_, '_>) -> Result<Answer> + Send + 'static,
+{
+    let held: Arc<Mutex<Option<Answer>>> = Arc::default();
+    let kept = held.clone();
+    let written = app
+        .write(caller, action, move |unit| {
+            let answer = job(unit)?;
+            *kept.lock().unwrap_or_else(PoisonError::into_inner) = Some(answer);
+            Ok(())
+        })
+        .await;
+    let answer = held.lock().unwrap_or_else(PoisonError::into_inner).take();
+    match (written, answer) {
+        (Ok(()), Some(answer)) => Ok(answer.body()),
+        (Err(refusal), Some(answer)) if refusal.commit_failed => Ok(answer.unconfirmed().body()),
+        (Err(refusal), _) => Err(refusal),
+        (Ok(()), None) => Err(Refusal::internal("a page's answer was lost")),
+    }
+}
+
+/// Writes each entry under a savepoint of its own, so a refused entry leaves the others.
+pub(crate) fn each<E>(
+    unit: &Unit<'_, '_>,
+    action: &'static str,
+    faults: &Faults,
+    pulse: &Pulse,
+    entries: Vec<Result<E>>,
+    mut write: impl FnMut(usize, E) -> Result<Value>,
+) -> Result<Answer> {
+    let tx = unit.tx();
+    let mut answer = Answer::default();
     let mut landed = false;
     for (index, entry) in entries.into_iter().enumerate() {
-        app.faults.hold(HOLD_BULK_PAGE, None).await;
+        faults.hold_beating(HOLD_BULK_PAGE, pulse);
         let result = match entry {
             Err(refusal) => refused_entry(index, &refusal, landed)?,
             Ok(entry) => {
-                let note = Note {
-                    index,
-                    total,
-                    mode,
-                    retype,
-                    fanout,
-                    operation: operation.clone(),
-                };
-                let entry = Box::new(entry);
-                match write::run_deferred(app, caller, Change::Entry { entry, note }).await {
-                    Ok(done) => serde_json::from_str(&done.body)
-                        .map_err(|_| Refusal::internal("an entry's answer did not read"))?,
-                    Err(refusal) => refused_entry(index, &refusal, landed)?,
+                tx.execute_batch("SAVEPOINT entry")?;
+                let written = write(index, entry).and_then(|result| {
+                    if faults.fail(FAIL_AUDIT, Some(action)) {
+                        Err(io_refusal())
+                    } else {
+                        Ok(result)
+                    }
+                });
+                match written {
+                    Ok(result) => {
+                        tx.execute_batch("RELEASE entry")?;
+                        result
+                    }
+                    // SQLite rolled the whole page back, so no entry of it was written.
+                    Err(refusal) if tx.is_autocommit() => return Err(refusal),
+                    Err(refusal) => {
+                        tx.execute_batch("ROLLBACK TO entry; RELEASE entry")?;
+                        refused_entry(index, &refusal, landed)?
+                    }
                 }
             }
         };
+        pulse.tick();
         let outcome = result["outcome"].as_str().unwrap_or_default();
-        counts.add(outcome);
-        landed |= matches!(outcome, "created" | "updated")
-            || result["error"]["details"]["write_outcome"] == "unknown";
-        results.push(result);
+        answer.counts.add(outcome);
+        landed |= matches!(outcome, "created" | "updated");
+        answer.results.push(result);
     }
-    unconfirm_unless_synced(app, &mut counts, &mut results).await;
-    Ok(json!({ "counts": counts, "results": results }).to_string())
-}
-
-/// An entry that landed is confirmed only once the log is synced; if it cannot be, each of
-/// them may or may not survive, and answers so.
-pub(crate) async fn unconfirm_unless_synced(app: &App, counts: &mut Counts, results: &mut [Value]) {
-    if app.db.flush().await.is_ok() {
-        return;
-    }
-    let unknown = json!({
-        "code": Code::InternalError.wire(),
-        "message": UNKNOWN_OUTCOME,
-        "details": { "write_outcome": "unknown" },
-    });
-    for result in results.iter_mut() {
-        let outcome = result["outcome"].as_str().unwrap_or_default();
-        if !matches!(outcome, "created" | "updated") {
-            continue;
-        }
-        counts.add("errored");
-        match outcome {
-            "created" => counts.created -= 1,
-            _ => counts.updated -= 1,
-        }
-        result["outcome"] = json!("errored");
-        result["error"] = unknown.clone();
-    }
+    Ok(answer)
 }

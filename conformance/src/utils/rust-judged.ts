@@ -330,6 +330,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/webhooks-owner.test.ts",
   "src/suites/compliance/webhooks.test.ts",
   "src/suites/compliance/well-formed-text.test.ts",
+  "src/suites/compliance/write-faults.test.ts",
   "src/suites/correctness/blob-correctness.test.ts",
   "src/suites/correctness/clear-properties.test.ts",
   "src/suites/correctness/dedup.test.ts",

@@ -14,8 +14,8 @@ import { TEST_OWNER } from "../../utils/target.js";
  * **How a fixture knows the page is part way.** `hold:bulk-page=2` stops the
  * page at its second entry, so the first is done and the page has not yet
  * answered: the page is in flight for as long as the fixture says. An atomic
- * page holds its first entry uncommitted, and a page under `atomic: false`
- * has committed it.
+ * page and a page under `atomic: false` both hold their first entry
+ * uncommitted, since either commits once.
  *
  * **Its own server**, because one test sets the write wait and because the
  * limiter is on here: counting a request is a write, so a read that had to
@@ -129,18 +129,18 @@ describe("a bulk page leaves the server answering other requests", () => {
     expect(await bodyOf(ids[0]!)).toBe("after");
   }, 120_000);
 
-  it("answers a read in the middle of an items page under atomic: false", async () => {
+  it("answers a read of an item an items page under atomic: false is updating, with the item as it was", async () => {
     const ids = await seed("partial-read");
     const page = await heldPage(() =>
       send("POST", "/items/bulk", notes("partial-read", "after", false)),
     );
 
-    // The first entry is written and the last is not: answered mid-page.
-    expect(await bodyOf(ids[0]!)).toBe("after");
-    expect(await bodyOf(ids[PAGE - 1]!)).toBe("before");
+    // The first entry is written and the page has not committed it.
+    expect(await bodyOf(ids[0]!)).toBe("before");
     expect(page.state.answered).toBe(false);
 
     expect((await release(page)).status).toBe(200);
+    expect(await bodyOf(ids[0]!)).toBe("after");
     expect(await bodyOf(ids[PAGE - 1]!)).toBe("after");
   }, 120_000);
 

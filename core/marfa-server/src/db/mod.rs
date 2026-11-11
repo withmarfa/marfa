@@ -38,8 +38,8 @@ pub fn io_refusal() -> Refusal {
 pub struct Write {
     pub action: Option<&'static str>,
     pub for_caller: bool,
-    /// The commit is not synced until `Db::flush`, so a run of writes pays one sync.
-    pub deferred: bool,
+    /// Whether the commit reaches stable storage before it returns.
+    pub sync: bool,
 }
 
 impl Write {
@@ -47,7 +47,7 @@ impl Write {
         Write {
             action: Some(action),
             for_caller: true,
-            deferred: false,
+            sync: true,
         }
     }
 
@@ -55,7 +55,7 @@ impl Write {
         Write {
             action: Some(action),
             for_caller: false,
-            deferred: false,
+            sync: true,
         }
     }
 
@@ -63,14 +63,15 @@ impl Write {
         Write {
             action: None,
             for_caller: false,
-            deferred: false,
+            sync: true,
         }
     }
 
-    /// Nothing it commits may be confirmed to a client before `Db::flush` returns.
-    pub const fn deferred(self) -> Write {
+    /// For a commit that confirms nothing, and that a power cut can lose only with every synced
+    /// commit after it, since a sync covers every earlier frame of the log.
+    pub const fn unsynced(self) -> Write {
         Write {
-            deferred: true,
+            sync: false,
             ..self
         }
     }
@@ -232,15 +233,6 @@ impl Db {
         let writer = self.write(Write::own(), |tx| Ok(look(tx))).await?;
         let readers = self.readers.each(look).await?;
         Ok(serde_json::json!({ "writer": writer, "readers": readers }))
-    }
-
-    /// Syncs every commit a deferred write left unsynced; until it returns `Ok`, none of them
-    /// survives a power cut.
-    pub async fn flush(&self) -> Result<()> {
-        self.writer
-            .flush()
-            .await
-            .map_err(|refusal| self.answered(refusal))
     }
 
     pub fn commits(&self) -> watch::Receiver<u64> {

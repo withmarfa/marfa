@@ -922,34 +922,25 @@ async fn every_connection_syncs_each_commit_in_full() {
 }
 
 #[tokio::test]
-async fn a_deferred_write_waits_for_the_flush_and_a_durable_write_needs_none() {
+async fn only_an_unsynced_write_commits_unsynced() {
     let place = folder();
     let db = open(&place.file);
     let during = db
-        .write(WRITE.deferred(), |tx| {
+        .write(WRITE.unsynced(), |tx| {
             add(tx, 1)?;
             synchronous(tx)
         })
         .await
         .unwrap();
     assert_eq!(during, 1);
-    let log = std::fs::metadata(wal(&place.file)).unwrap().len();
-    db.flush().await.unwrap();
-    assert!(
-        std::fs::metadata(wal(&place.file)).unwrap().len() > log,
-        "the flush committed nothing"
-    );
-    let after = db.write(WRITE, synchronous).await.unwrap();
-    assert_eq!(after, 2);
+    assert_eq!(db.write(WRITE, synchronous).await.unwrap(), 2);
 
-    db.write(WRITE.deferred(), |tx| add(tx, 2)).await.unwrap();
-    db.write(WRITE, |tx| add(tx, 3)).await.unwrap();
-    let log = std::fs::metadata(wal(&place.file)).unwrap().len();
-    db.flush().await.unwrap();
-    assert_eq!(
-        std::fs::metadata(wal(&place.file)).unwrap().len(),
-        log,
-        "a durable commit left the flush work to do"
-    );
-    assert_eq!(ids(&db).await, [1, 2, 3]);
+    let refused = db
+        .write(WRITE.unsynced(), |_| -> Result<()> {
+            Err(Refusal::internal("refused"))
+        })
+        .await;
+    assert!(refused.is_err());
+    assert_eq!(db.write(WRITE, synchronous).await.unwrap(), 2);
+    assert_eq!(ids(&db).await, [1]);
 }

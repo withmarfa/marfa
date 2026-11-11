@@ -878,17 +878,11 @@ If an entry of a `POST /edges/bulk` page under `atomic: false` names an edge typ
 
 ### `edges/bulk-outcome-unknown`
 
-If the server cannot confirm whether an entry of a `POST /edges/bulk` page under `atomic: false` committed, then the server MUST report that entry `errored` with `error.details.write_outcome: "unknown"`, counted under `errored` alone, in a `200` answer.
+If the server cannot confirm whether a `POST /edges/bulk` page under `atomic: false` committed, then the server MUST report each entry the page wrote `errored` with `error.details.write_outcome: "unknown"`, counted under `errored` alone, in a `200` answer.
 
-**Reason:** the caller reconciles that entry's stored state before retrying it, and does not replay the page (`items/bulk-outcome-unknown`).
+**Reason:** the caller reconciles each of those entries' stored state before retrying it, and does not replay the page (`items/bulk-outcome-unknown`).
 
-**Tests:** `compliance/write-faults.test.ts › is reported the same way on an entry of an edge page, with the entries around it kept`.
-
-### `edges/bulk-outcome-unknown-continues`
-
-When the server reports a `POST /edges/bulk` entry with `write_outcome: "unknown"`, the server MUST go on to the page's next entry.
-
-**Tests:** `compliance/write-faults.test.ts › is reported the same way on an entry of an edge page, with the entries around it kept`.
+**Tests:** `compliance/write-faults.test.ts › reports each entry of an edge page the same way`.
 
 ## Edges written with an item
 

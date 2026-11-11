@@ -1258,15 +1258,23 @@ When the server completes an unfinished database, the server MUST leave it holdi
 
 ## Durability
 
-A write the server confirms is one a client may rely on. The database file is the only place the server keeps it.
+A write the server confirms is one a client may rely on.
 
 ### `instance/confirmed-write-durable`
 
 When the server answers a write with a success status, the server MUST have synced that write to stable storage, so that it is present after the machine loses power or the server's process is killed.
 
-**Reason:** a commit that waits for its data to reach the drive, not the operating system's cache, is the only one a power cut or a kernel panic cannot take back. On macOS a plain `fsync` leaves the data in the drive's cache, so the server asks for a full flush there. A best-effort page of `POST /items/bulk` or `POST /edges/bulk` answers only once every entry it kept is synced.
+**Reason:** a commit that waits for its data to reach the drive, not the operating system's cache, is the only one a power cut or a kernel panic cannot take back. On macOS a plain `fsync` leaves the data in the drive's cache, so the server asks for a full flush there. A page of `POST /items/bulk` or `POST /edges/bulk` is one transaction whatever its `atomic` says, so it pays for one sync.
 
 **Tests:** `compliance/durability.test.ts › syncs each commit in full on every connection`, `› keeps every write it confirmed through kills at random points, and leaves a file that checks out`.
+
+### `instance/announced-write-durable`
+
+The server MUST NOT announce a write, in an event on a stream or in a webhook delivery, before that write is synced to stable storage.
+
+**Reason:** a subscriber acts on what it is told, and a write lost to a power cut after it was announced is one the subscriber holds and the instance does not.
+
+**Tests:** `compliance/durability.test.ts › sends no event for an entry of a best-effort page until the page is answered`.
 
 ### `instance/damaged-file-reported`
 

@@ -27,37 +27,19 @@ const ABANDONED: u8 = 2;
 
 type Job = Box<dyn FnOnce(&mut Connection) + Send>;
 
-/// What the writer's connection is doing about syncing, shared with each job it runs.
+/// Whether the writer's connection is set to leave its next commit unsynced.
 #[derive(Default)]
-struct Syncing {
-    /// The connection syncs only at a checkpoint or a flush.
-    deferring: AtomicBool,
-    /// A commit has landed that no sync has reached.
-    unsynced: AtomicBool,
-}
+struct Unsynced(AtomicBool);
 
-impl Syncing {
-    fn mode(&self, conn: &Connection, deferred: bool) -> rusqlite::Result<()> {
-        if self.deferring.load(Ordering::Relaxed) != deferred {
-            conn.pragma_update(
-                None,
-                "synchronous",
-                if deferred { "NORMAL" } else { "FULL" },
-            )?;
-            self.deferring.store(deferred, Ordering::Relaxed);
+impl Unsynced {
+    /// Set before every transaction, so a synced write never inherits an unsynced one's setting.
+    fn set(&self, conn: &Connection, write: Write) -> rusqlite::Result<()> {
+        let unsynced = !write.sync;
+        if self.0.load(Ordering::Relaxed) != unsynced {
+            let level = if unsynced { "NORMAL" } else { "FULL" };
+            conn.pragma_update(None, "synchronous", level)?;
+            self.0.store(unsynced, Ordering::Relaxed);
         }
-        Ok(())
-    }
-
-    /// A synced commit covers every frame before it. Setting the application id rewrites the
-    /// header page and changes nothing the server reads.
-    fn flush(&self, conn: &Connection) -> rusqlite::Result<()> {
-        if !self.unsynced.load(Ordering::Relaxed) {
-            return Ok(());
-        }
-        self.mode(conn, false)?;
-        conn.execute_batch("BEGIN IMMEDIATE; PRAGMA application_id = 0; COMMIT")?;
-        self.unsynced.store(false, Ordering::Relaxed);
         Ok(())
     }
 }
@@ -94,7 +76,7 @@ impl Pulse {
 }
 
 pub struct Writer {
-    syncing: Arc<Syncing>,
+    unsynced: Arc<Unsynced>,
     queue: mpsc::Sender<Message>,
     faults: Arc<Faults>,
     pulse: Pulse,
@@ -162,18 +144,14 @@ fn run_transaction<T>(
     deadline: Instant,
     faults: &Faults,
     commits: &watch::Sender<u64>,
-    syncing: &Syncing,
+    unsynced: &Unsynced,
     job: impl FnOnce(&Transaction<'_>) -> Result<T>,
 ) -> Result<T> {
     conn.busy_timeout(deadline.saturating_duration_since(Instant::now()))?;
-    syncing.mode(conn, write.deferred)?;
+    unsynced.set(conn, write)?;
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     match catch_unwind(AssertUnwindSafe(|| job(&tx))) {
-        Ok(Ok(value)) => {
-            let value = finish(tx, value, write, faults, commits)?;
-            syncing.unsynced.store(write.deferred, Ordering::Relaxed);
-            Ok(value)
-        }
+        Ok(Ok(value)) => finish(tx, value, write, faults, commits),
         Ok(Err(refusal)) => Err(refusal),
         Err(_) => Err(Refusal::panicked("a write job panicked")),
     }
@@ -223,7 +201,7 @@ impl Writer {
             .name("marfa-writer".into())
             .spawn(move || run_thread(conn, receiver))?;
         Ok(Writer {
-            syncing: Arc::default(),
+            unsynced: Arc::default(),
             queue,
             faults,
             pulse: Pulse::new(),
@@ -253,7 +231,7 @@ impl Writer {
         let (answer, mut answered) = oneshot::channel();
         let faults = self.faults.clone();
         let commits = self.commits.clone();
-        let syncing = self.syncing.clone();
+        let unsynced = self.unsynced.clone();
         let claim = ticket.clone();
         let run: Job = Box::new(move |conn| {
             if claim
@@ -261,7 +239,7 @@ impl Writer {
                 .is_ok()
             {
                 let _ = answer.send(run_transaction(
-                    conn, write, deadline, &faults, &commits, &syncing, job,
+                    conn, write, deadline, &faults, &commits, &unsynced, job,
                 ));
             }
         });
@@ -326,21 +304,6 @@ impl Writer {
                 tracing::warn!(error = %error, "The database log was not moved into its file");
             }
         }
-    }
-
-    /// Syncs what deferred writes left unsynced, in the writer's turn.
-    pub async fn flush(&self) -> Result<()> {
-        let (done, flushed) = oneshot::channel();
-        let syncing = self.syncing.clone();
-        let job: Job = Box::new(move |conn| {
-            let _ = done.send(syncing.flush(conn));
-        });
-        let lost = || Refusal::internal("the writer has stopped");
-        self.queue
-            .send(Message::Run(job))
-            .await
-            .map_err(|_| lost())?;
-        flushed.await.map_err(|_| lost())?.map_err(commit_refused)
     }
 
     pub async fn stop(&self) {
