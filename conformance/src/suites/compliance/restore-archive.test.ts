@@ -27,6 +27,9 @@ import {
   readEntry,
   readLineFile,
   editLineFile,
+  cutAfter,
+  emptyManifest,
+  itemFields,
   itemsArchive,
   blobHash,
   type ArchiveFile,
@@ -346,6 +349,14 @@ describe("restore", () => {
       { reshape: (m) => without(m, "item_count"), path: "item_count" },
       { reshape: (m) => ({ ...m, edge_count: -1 }), path: "edge_count" },
       { reshape: (m) => ({ ...m, row_count: "0" }), path: "row_count" },
+      { reshape: (m) => without(m, "written_by"), path: "written_by" },
+      { reshape: (m) => ({ ...m, written_by: 1 }), path: "written_by" },
+      { reshape: (m) => without(m, "blob_count"), path: "blob_count" },
+      { reshape: (m) => ({ ...m, setting_count: 1.5 }), path: "setting_count" },
+      {
+        reshape: (m) => without(m, "connector_agreement_count"),
+        path: "connector_agreement_count",
+      },
     ];
 
     for (const { reshape, path } of cases) {
@@ -368,7 +379,19 @@ describe("restore", () => {
     expect((await client.downloadBlob(hash)).status).toBe(200);
   });
 
-  it.each(["item_count", "edge_count", "row_count"])(
+  it.each([
+    "item_count",
+    "edge_count",
+    "row_count",
+    "blob_count",
+    "type_count",
+    "edge_type_count",
+    "type_icon_count",
+    "source_count",
+    "setting_count",
+    "connector_state_count",
+    "connector_agreement_count",
+  ])(
     "refuses an archive whose %s is not the number of lines its file holds, and writes nothing",
     async (count) => {
       const id = uuidv7();
@@ -395,9 +418,90 @@ describe("restore", () => {
     },
   );
 
-  it("refuses an archive at another format version, saying it is read only by the build that wrote it", async () => {
-    // Every version inside Marfa is 0 until the first public release, so
-    // an archive naming any other is one no build of this contract wrote.
+  it("refuses an archive whose manifest counts more than the archive carries, however it was cut", async () => {
+    const id = uuidv7();
+    const data = new Uint8Array(randomBytes(40));
+    const whole = itemsArchive(
+      [{ id, type: "core.note", source: ctx.source, properties: {} }],
+      [{ data, mime_type: "text/plain" }],
+    );
+    const cuts: [string, Uint8Array][] = [
+      ["between the line files and the blob", cutAfter(whole, 5)],
+      ["inside the blob's entry", cutAfter(whole, 5, 512 + 8)],
+      ["between the manifest and the line files", cutAfter(whole, 1)],
+      ["between two line files", cutAfter(whole, 3)],
+      ["inside the middle of a line file", cutAfter(whole, 2, 512 + 20)],
+    ];
+    for (const [what, archive] of cuts) {
+      const refused = await owner.restoreArchive(archive);
+      expect(refused.status, what).toBe(400);
+      expect(refused.error?.error.code, what).toBe("validation_error");
+      expect((await client.getItem(id)).status, what).toBe(404);
+      expect((await owner.downloadBlob(blobHash(data))).status, what).toBe(404);
+    }
+    const afterLineFiles = await owner.restoreArchive(cuts[0]![1]);
+    expect(afterLineFiles.error?.error.details?.field).toBe("blob_count");
+
+    // The witness: the archive uncut restores its item and its blob.
+    const restored = await owner.restoreArchive(whole);
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, id);
+    expect(restored.data).toMatchObject({ imported: 1, blobs_imported: 1 });
+  });
+
+  it.each([
+    "id",
+    "version",
+    "created_at",
+    "updated_at",
+    "last_activity_at",
+    "occurred_at",
+    "state",
+    "properties",
+  ])(
+    "refuses an item line lacking %s, naming the line and the field, and writes nothing",
+    async (field) => {
+      const first = uuidv7();
+      const second = uuidv7();
+      const archive = itemsArchive(
+        [first, second].map((id) => ({
+          id,
+          type: "core.note",
+          source: ctx.source,
+          properties: {},
+        })),
+      );
+      const damaged = editLineFile(archive, "items", (text) =>
+        text
+          .split("\n")
+          .map((line, at) => {
+            if (at !== 1) return line;
+            const held = JSON.parse(line) as { item: Record<string, unknown> };
+            delete held.item[field];
+            return JSON.stringify(held);
+          })
+          .join("\n"),
+      );
+      const refused = await owner.restoreArchive(damaged);
+      expect(refused.status, JSON.stringify(refused.error)).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+      expect(refused.error?.error.details).toMatchObject({ line: 2, field });
+      expect(refused.error?.error.message).toContain("line 2");
+      expect((await client.getItem(first)).status).toBe(404);
+      expect((await client.getItem(second)).status).toBe(404);
+
+      // The witness: the same archive with the line whole restores.
+      const restored = await owner.restoreArchive(archive);
+      expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+      trackItem(ctx, first);
+      trackItem(ctx, second);
+      expect(restored.data.imported).toBe(2);
+    },
+  );
+
+  it("refuses an archive at another format version, naming the build that wrote it", async () => {
+    // A restore reads only the version its build writes, so an archive at
+    // any other is for the build its manifest names.
     const witness = uuidv7();
     const other = uuidv7();
     const archiveAt = (version: number, id: string): Uint8Array => {
@@ -420,7 +524,7 @@ describe("restore", () => {
           body: JSON.stringify({
             ...(JSON.parse(manifest) as Record<string, unknown>),
             version,
-            format: `marfa-archive-v${version}`,
+            written_by: "marfa-server 0.0.1",
           }),
         },
         lineFile("instance", ""),
@@ -430,20 +534,21 @@ describe("restore", () => {
       ]);
     };
 
-    // The witness: the same archive at version 0 restores, so what is
+    // The witness: the same archive at version 1 restores, so what is
     // refused below is the version and nothing else.
-    const restored = await owner.restoreArchive(archiveAt(0, witness));
+    const restored = await owner.restoreArchive(archiveAt(1, witness));
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     trackItem(ctx, witness);
     expect(restored.data.imported).toBe(1);
 
-    const refused = await owner.restoreArchive(archiveAt(1, other));
-    expect(refused.status).toBe(400);
-    expect(refused.error?.error.code).toBe("validation_error");
-    expect(refused.error?.error.message).toContain(
-      "read only by the build that wrote it",
-    );
-    expect((await client.getItem(other)).status).toBe(404);
+    for (const version of [0, 2]) {
+      const refused = await owner.restoreArchive(archiveAt(version, other));
+      expect(refused.status).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+      expect(refused.error?.error.message).toContain("marfa-server 0.0.1");
+      expect(refused.error?.error.message).toContain("restores only version 1");
+      expect((await client.getItem(other)).status).toBe(404);
+    }
   });
 
   /** One archived note of this file's source, as an `items.ndjson.gz` line. */
@@ -459,14 +564,7 @@ describe("restore", () => {
   };
   const manifest = {
     name: "manifest.json",
-    body: JSON.stringify({
-      version: 0,
-      format: "marfa-archive-v0",
-      item_count: 1,
-      edge_count: 0,
-      row_count: 0,
-      blobs: {},
-    }),
+    body: JSON.stringify(emptyManifest({ item_count: 1 })),
   };
   /** An archive of `items`, its other line files empty, then `rest`. */
   const around = (items: ArchiveFile[], rest: ArchiveFile[] = []): Uint8Array =>
@@ -653,14 +751,7 @@ describe("an archive that lacks a member", () => {
         { name: "notes.txt", body: "not an archive" },
         {
           name: "manifest.json",
-          body: JSON.stringify({
-            version: 0,
-            format: "marfa-archive-v0",
-            item_count: 0,
-            edge_count: 0,
-            row_count: 0,
-            blobs: {},
-          }),
+          body: JSON.stringify(emptyManifest()),
         },
         lineFile("instance", ""),
         lineFile("items", ""),
@@ -675,7 +766,7 @@ describe("an archive that lacks a member", () => {
 
 describe("an archived item that no instance wrote", () => {
   const line = (item: Record<string, unknown>): string =>
-    `${JSON.stringify({ item: { source: ctx.source, ...item }, metadata: { tags: [], extensions: {} } })}\n`;
+    `${JSON.stringify({ item: { ...itemFields(), source: ctx.source, ...item }, metadata: { tags: [], extensions: {} } })}\n`;
 
   it("refuses an item whose type is no identifier or whose properties are no object, and writes nothing", async () => {
     const witness = uuidv7();
@@ -1176,18 +1267,7 @@ describe("what a restore answers", () => {
     const archive = tar([
       {
         name: "manifest.json",
-        body: JSON.stringify({
-          version: 0,
-          format: "marfa-archive-v0",
-          created_at: new Date().toISOString(),
-          item_count: 0,
-          edge_count: 0,
-          row_count: 0,
-          blob_count: 0,
-          type_count: 0,
-          edge_type_count: 1,
-          blobs: {},
-        }),
+        body: JSON.stringify(emptyManifest({ edge_type_count: 1 })),
       },
       lineFile(
         "instance",
@@ -1555,7 +1635,7 @@ describe("a restore refused while its body is still arriving", () => {
     tar([
       {
         name: "manifest.json",
-        body: JSON.stringify({ version: 99, format: "marfa-archive-v0" }),
+        body: JSON.stringify({ version: 99, written_by: "marfa-server 0.0.1" }),
       },
       { name: "padding.bin", body: new Uint8Array(size) },
     ]);
@@ -1670,6 +1750,7 @@ describe("a restore refused while its body is still arriving", () => {
 
 describe("lines an archive holds that no instance writes", () => {
   const note = (id: string) => ({
+    ...itemFields(),
     id,
     type: "core.note",
     source: ctx.source,

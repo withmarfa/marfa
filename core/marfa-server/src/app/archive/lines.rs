@@ -16,8 +16,14 @@ use crate::app::query::{self, Ask};
 use crate::app::refusal::Result;
 use crate::db::io_refusal;
 
-/// Items per credential check; checked pages can remain queued for the socket.
+/// The most items one credential check selects.
 const PAGE: i64 = 100;
+
+/// A page takes items while their stored size is under this, and always at least one.
+const PAGE_BYTES: usize = 256 * 1024;
+
+/// What an item's line takes beyond its stored properties and extensions.
+const LINE_BYTES: usize = 1024;
 
 /// One page: its lines, where the next begins, and whether the credential now reads all of it.
 struct Page {
@@ -43,7 +49,19 @@ async fn item_page(
         }
         let admitted = admitted.unwrap_or_else(|| read.caller.clone());
         let selecting = read.as_caller(admitted.clone());
-        let seqs = query::selected(&selecting, &ask, after, PAGE)?;
+        let chosen = query::selected(&selecting, &ask, after, PAGE)?;
+        let mut held = 0;
+        let taken = chosen
+            .iter()
+            .position(|next| {
+                let full = held >= PAGE_BYTES;
+                held += next.stored + LINE_BYTES;
+                full
+            })
+            .unwrap_or(chosen.len());
+        let seqs: Vec<i64> = chosen[..taken].iter().map(|next| next.seq).collect();
+        let mut whole = true;
+        let mut text = String::new();
         let rows = items::archived(
             read.tx,
             &admitted,
@@ -52,13 +70,13 @@ async fn item_page(
             &seqs,
             false,
         )?;
-        let mut whole = true;
-        for row in &rows {
-            whole &= reads_row(read, row)?;
-        }
-        let mut text = String::new();
-        for row in &rows {
-            text.push_str(&row.line);
+        for row in rows {
+            whole &= reads_row(read, &row)?;
+            if text.is_empty() {
+                text = row.line;
+            } else {
+                text.push_str(&row.line);
+            }
             text.push('\n');
         }
         Ok((

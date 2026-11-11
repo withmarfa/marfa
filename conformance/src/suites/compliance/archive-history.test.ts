@@ -9,6 +9,7 @@ import type {
 import {
   archiveManifest,
   editLineFile,
+  itemFields,
   itemsArchive,
   listEntries,
   readLineFile,
@@ -447,6 +448,7 @@ function twoRows(edit: (rows: Rows) => void): {
   const second = uuidv7();
   const rows = {
     first: {
+      ...itemFields(),
       id: first,
       type: "core.note",
       source: ctx.source,
@@ -454,6 +456,7 @@ function twoRows(edit: (rows: Rows) => void): {
       properties: { body: "a valid item ahead of the other" },
     } as Record<string, unknown>,
     second: {
+      ...itemFields(),
       id: second,
       type: "core.note",
       source: ctx.source,

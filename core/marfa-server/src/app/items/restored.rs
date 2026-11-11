@@ -5,7 +5,6 @@ use std::collections::{BTreeSet, HashSet};
 use marfa_rules::{number, time};
 use rusqlite::Transaction;
 use serde_json::{Map, Value};
-use uuid::Uuid;
 
 use super::rows::{self, NewRow, Restoring};
 use super::{Writer, index, link_in, title_key};
@@ -51,6 +50,11 @@ fn instant(value: Option<&Value>, field: &str) -> Result<Option<String>> {
             .map(Some)
             .map_err(|_| Refusal::internal("a checked archive date does not read")),
     }
+}
+
+fn required_instant(item: &Map<String, Value>, field: &str) -> Result<String> {
+    instant(item.get(field), field)?
+        .ok_or_else(|| Refusal::internal(&format!("a checked item has no {field}")))
 }
 
 fn writer_of(value: Option<&Value>) -> Option<Writer> {
@@ -99,17 +103,15 @@ pub fn restore(
         .ok_or_else(|| Refusal::internal("a checked item line holds no item"))?;
     let type_id =
         text(item, "type").ok_or_else(|| Refusal::internal("a checked item has no type"))?;
-    let named = text(item, "id");
+    let id = text(item, "id").ok_or_else(|| Refusal::internal("a checked item has no id"))?;
     let source = restored_source(text(item, "source").unwrap_or(unit.caller.own_source()));
     let source_id = text(item, "source_id");
     let mut properties = item
         .get("properties")
         .and_then(Value::as_object)
         .cloned()
-        .unwrap_or_default();
-    if let Some(id) = named
-        && rows::by_id(tx, id)?.is_some()
-    {
+        .ok_or_else(|| Refusal::internal("a checked item has no properties"))?;
+    if rows::by_id(tx, id)?.is_some() {
         return Ok(Restored::Duplicate);
     }
     if let Some(source_id) = source_id
@@ -126,7 +128,7 @@ pub fn restore(
     {
         return Ok(Restored::Duplicate);
     }
-    refuse_undeclared(unit, catalog, type_id, &properties, named)?;
+    refuse_undeclared(unit, catalog, type_id, &properties, Some(id))?;
     if type_id == CONNECTION && text(&properties, "kind") == Some("app") {
         properties.insert("status".into(), "revoked".into());
     }
@@ -145,16 +147,16 @@ pub fn restore(
             None => properties.shift_remove(FILE_SIZE),
         };
     }
-    let created_at = instant(item.get("created_at"), "created_at")?.unwrap_or(unit.at.clone());
-    let updated_at = instant(item.get("updated_at"), "updated_at")?.unwrap_or(created_at.clone());
-    let last_activity_at = instant(item.get("last_activity_at"), "last_activity_at")?
+    let created_at = required_instant(item, "created_at")?;
+    let updated_at = required_instant(item, "updated_at")?;
+    let last_activity_at = Some(required_instant(item, "last_activity_at")?)
         .filter(|at| *at > updated_at)
         .unwrap_or_else(|| updated_at.clone());
-    let occurred_at =
-        instant(item.get("occurred_at"), "occurred_at")?.unwrap_or(created_at.clone());
+    let occurred_at = required_instant(item, "occurred_at")?;
     let trashed_at = instant(item.get("trashed_at"), "trashed_at")?;
     let restored_at = instant(line.get("restored_at"), "restored_at")?;
-    let state = text(item, "state").unwrap_or("active");
+    let state =
+        text(item, "state").ok_or_else(|| Refusal::internal("a checked item has no state"))?;
     let schema_version = item
         .get("schema_version")
         .and_then(Value::as_i64)
@@ -169,8 +171,6 @@ pub fn restore(
         });
     let writer = writer_of(line.get("writer"));
     let trashed_by = writer_of(line.get("trashed_by"));
-    let minted = Uuid::now_v7().to_string();
-    let id = named.unwrap_or(&minted);
     let key = title_key(&catalog.rules, type_id, &properties);
     let row = rows::insert_restored(
         tx,
@@ -194,7 +194,10 @@ pub fn restore(
             writer: writer.as_ref(),
         },
         &Restoring {
-            version: item.get("version").and_then(Value::as_i64).unwrap_or(1),
+            version: item
+                .get("version")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| Refusal::internal("a checked item has no version"))?,
             updated_at: &updated_at,
             last_activity_at: &last_activity_at,
             restored_at: restored_at.as_deref(),

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
-import { editLineFile, itemsArchive } from "../../utils/archive.js";
+import { editLineFile, itemFields, itemsArchive } from "../../utils/archive.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -142,6 +142,7 @@ describe("the size of an item or edge an archive carries", () => {
     const row = (id: string, extra: Record<string, unknown>) =>
       JSON.stringify({
         item: {
+          ...itemFields(),
           id,
           type: "core.note",
           source: SOURCE,

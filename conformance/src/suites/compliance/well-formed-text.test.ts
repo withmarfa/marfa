@@ -14,6 +14,7 @@ import {
   lineFile,
   readEntry,
   itemsArchive,
+  itemFields,
   blobHash,
 } from "../../utils/archive.js";
 import {
@@ -640,6 +641,7 @@ describe("a restore", () => {
           row_count: where === "row value" ? 1 : 0,
           ...(where === "manifest"
             ? {
+                blob_count: 1,
                 blobs: {
                   [hash]: {
                     mime_type: `text/${text}`,
@@ -657,7 +659,7 @@ describe("a restore", () => {
         [first, second]
           .map((row) =>
             JSON.stringify({
-              item: row,
+              item: { ...itemFields(), ...row },
               metadata: row === first ? metadata : { tags: [], extensions: {} },
             }),
           )

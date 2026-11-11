@@ -135,6 +135,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/export-entries-refused.test.ts",
   "src/suites/compliance/export-faults.test.ts",
   "src/suites/compliance/export-instance-lines.test.ts",
+  "src/suites/compliance/export-memory.test.ts",
   "src/suites/compliance/export-missing-blob.test.ts",
   "src/suites/compliance/export-reserve.test.ts",
   "src/suites/compliance/export-roundtrip.test.ts",
