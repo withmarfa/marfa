@@ -11,7 +11,7 @@
  */
 export const TUNING_SETTING = "MARFA_TEST_TUNING";
 
-/** An interval no clock a fixture reaches gets past. */
+/** An interval of a year, which a fixture that moves the clock further than that must exceed. */
 export const NEVER_MS = "31536000000";
 
 /** The longest the scheduler may go between looks for a job that is due. */
