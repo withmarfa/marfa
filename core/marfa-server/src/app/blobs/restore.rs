@@ -98,9 +98,8 @@ pub struct Placed {
     held: Vec<Held>,
 }
 
-/// Records each copy and, for a blob the instance did not hold, the blob itself, ending the
-/// deletion its placing queued once it is recorded. A found object counts as written only where
-/// this server queued it, which it does before each write.
+/// Records each copy, and each blob the instance did not hold. A found object is this server's
+/// own only where it queued that object, as it does before every write.
 pub fn record(
     tx: &rusqlite::Transaction<'_>,
     copies: &[Copy],

@@ -91,9 +91,8 @@ enum Copy {
     TargetSilent,
 }
 
-/// Places one blob in `target`, read from the first store that holds it and answers, which may
-/// be `target` itself where its copy is one this server did not write. An object store's copy
-/// goes to a new object, queued for deletion until its copy is recorded.
+/// Places one blob in `target` from the first holder that answers, `target`'s held copy included.
+/// An object store's copy goes to a new object, queued for deletion until it is recorded.
 async fn copy_to(
     app: &App,
     target: &Store,

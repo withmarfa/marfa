@@ -28,8 +28,7 @@ pub enum Lender {
     },
 }
 
-/// A recorded copy: the store, the object it is kept in there, which is empty for the disk
-/// store, whose file the hash names, and whether this server wrote that object.
+/// A recorded copy: its store, its object there (empty on disk) and whether this server wrote it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Held {
     pub store_id: String,
@@ -650,7 +649,7 @@ pub fn queued(tx: &Transaction<'_>, hash: &Hash, store_id: &str, object: &str) -
         .exists(params![hash.as_str(), store_id, object])?)
 }
 
-/// A blob an attached store holds no copy of this server wrote, while an attached store holds it.
+/// A blob of which an attached store holds no copy this server wrote, while some store holds one.
 #[derive(Debug)]
 pub struct Missing {
     pub blob: Blob,
