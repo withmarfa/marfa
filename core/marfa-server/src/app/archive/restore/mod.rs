@@ -355,7 +355,7 @@ impl App {
                     })
                 })
                 .await;
-            placed.release(&app, written.is_ok());
+            drop(placed);
             let (mut answer, staged) = written?;
             let emptying = app.clone();
             tokio::spawn(async move { emptying.db.empty_log().await });

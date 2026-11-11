@@ -184,7 +184,7 @@ impl Drop for Active {
 
 #[derive(Debug)]
 pub struct Housekeeping {
-    wake: Notify,
+    wake: Arc<Notify>,
     stopping: watch::Sender<bool>,
     cut: watch::Sender<bool>,
     running: watch::Sender<usize>,
@@ -193,7 +193,7 @@ pub struct Housekeeping {
 impl Default for Housekeeping {
     fn default() -> Housekeeping {
         Housekeeping {
-            wake: Notify::new(),
+            wake: Arc::new(Notify::new()),
             stopping: watch::Sender::new(false),
             cut: watch::Sender::new(false),
             running: watch::Sender::new(0),
@@ -231,7 +231,8 @@ pub fn bring_forward(tx: &rusqlite::Transaction<'_>, name: &str, at: &str) -> Re
     schedule::bring_forward(tx, name, at)
 }
 
-/// Lets the scheduler look again now, after a write brought a run forward.
+/// Lets the scheduler look again now, for a change in what it reads that no write to the job table
+/// shows: a published setting.
 pub fn wake(app: &App) {
     app.housekeeping.wake.notify_one();
 }

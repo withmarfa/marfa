@@ -9,6 +9,7 @@ const INTERVAL: &str = "interval.";
 
 #[derive(Clone, Debug)]
 pub struct Tuning {
+    /// The longest the scheduler goes between looks, whatever has not woken it.
     pub housekeeping_poll: Duration,
     pub write_wait: Duration,
     pub upload_idle: Duration,
@@ -27,7 +28,7 @@ pub struct Tuning {
 impl Default for Tuning {
     fn default() -> Tuning {
         Tuning {
-            housekeeping_poll: Duration::from_secs(1),
+            housekeeping_poll: Duration::from_secs(3600),
             write_wait: Duration::from_secs(5),
             upload_idle: Duration::from_secs(60),
             blob_read_idle: Duration::from_secs(30),

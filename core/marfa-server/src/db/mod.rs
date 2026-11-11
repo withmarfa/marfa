@@ -17,7 +17,7 @@ use rusqlite::Transaction;
 use tokio::sync::watch;
 
 pub use open::Options;
-pub use writer::Pulse;
+pub use writer::{Pulse, Watcher};
 
 use crate::app::faults::{
     FAIL_LOCK, Faults, HOLD_WRITE, REFUSE_READ, REFUSE_WRITE, REFUSE_WRITE_LOCK,
@@ -197,6 +197,12 @@ impl Db {
             }
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
+    }
+
+    /// Runs `watcher` on the writer's thread, with the connection, once now and after every write
+    /// job, whether or not it committed. It must be quick and must not panic.
+    pub async fn watch_writes(&self, watcher: Watcher) {
+        self.writer.watch(watcher).await;
     }
 
     pub fn commits(&self) -> watch::Receiver<u64> {
