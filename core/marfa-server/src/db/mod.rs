@@ -106,10 +106,7 @@ impl Db {
     }
 
     fn answered(&self, refusal: Refusal) -> Refusal {
-        if matches!(
-            refusal.database_code(),
-            Some("SQLITE_CORRUPT" | "SQLITE_NOTADB")
-        ) {
+        if refusal.is_damage() {
             self.damaged.store(true, Ordering::Relaxed);
         }
         if refusal.code == Code::WriteContention {

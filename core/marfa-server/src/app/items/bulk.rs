@@ -3,6 +3,7 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
+use rusqlite::Transaction;
 use serde::Serialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -214,20 +215,27 @@ pub async fn write(app: &App, caller: &Caller, asked: Asked) -> Result<String> {
     let cache = app.catalog_handle();
     let total = entries.len();
     best_effort(app, caller, ACTION, move |unit| {
-        each(unit, ACTION, &faults, &pulse, entries, |index, entry| {
-            let note = Note {
-                index,
-                total,
-                mode,
-                retype,
-                fanout,
-                operation: operation.clone(),
-            };
-            let entry = Box::new(entry);
-            let done = write::apply(unit, &cache, None, Change::Entry { entry, note })?;
-            serde_json::from_str(&done.body)
-                .map_err(|_| Refusal::internal("an entry's answer did not read"))
-        })
+        each(
+            unit.tx(),
+            ACTION,
+            &faults,
+            &pulse,
+            entries,
+            |index, entry| {
+                let note = Note {
+                    index,
+                    total,
+                    mode,
+                    retype,
+                    fanout,
+                    operation: operation.clone(),
+                };
+                let entry = Box::new(entry);
+                let done = write::apply(unit, &cache, None, Change::Entry { entry, note })?;
+                serde_json::from_str(&done.body)
+                    .map_err(|_| Refusal::internal("an entry's answer did not read"))
+            },
+        )
     })
     .await
 }
@@ -296,14 +304,13 @@ where
 
 /// Writes each entry under a savepoint of its own, so a refused entry leaves the others.
 pub(crate) fn each<E>(
-    unit: &Unit<'_, '_>,
+    tx: &Transaction<'_>,
     action: &'static str,
     faults: &Faults,
     pulse: &Pulse,
     entries: Vec<Result<E>>,
     mut write: impl FnMut(usize, E) -> Result<Value>,
 ) -> Result<Answer> {
-    let tx = unit.tx();
     let mut answer = Answer::default();
     let mut landed = false;
     for (index, entry) in entries.into_iter().enumerate() {
@@ -324,8 +331,10 @@ pub(crate) fn each<E>(
                         tx.execute_batch("RELEASE entry")?;
                         result
                     }
-                    // SQLite rolled the whole page back, so no entry of it was written.
-                    Err(refusal) if tx.is_autocommit() => return Err(refusal),
+                    // Rolled back whole, or a file that cannot be trusted with the rest of it.
+                    Err(refusal) if tx.is_autocommit() || refusal.is_damage() => {
+                        return Err(refusal);
+                    }
                     Err(refusal) => {
                         tx.execute_batch("ROLLBACK TO entry; RELEASE entry")?;
                         refused_entry(index, &refusal, landed)?

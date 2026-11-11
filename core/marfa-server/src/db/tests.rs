@@ -4,12 +4,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use rusqlite::{Connection, Transaction};
+use rusqlite::{Connection, Transaction, ffi};
 use tempfile::TempDir;
 
 use super::migrate::{MIGRATIONS, Migration};
 use super::{Db, Options, Write};
 use crate::app::faults::Faults;
+use crate::app::items::bulk::each;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::failure::Failure;
 use crate::settings::DatabasePath;
@@ -943,4 +944,41 @@ async fn only_an_unsynced_write_commits_unsynced() {
     assert!(refused.is_err());
     assert_eq!(db.write(WRITE, synchronous).await.unwrap(), 2);
     assert_eq!(ids(&db).await, [1]);
+}
+
+#[tokio::test]
+async fn a_damaged_page_met_after_an_entry_landed_ends_the_page_and_marks_the_file() {
+    let folder = folder();
+    let db = open(&folder.file);
+    let faults = Faults::default();
+    let pulse = db.pulse();
+
+    let refused = db
+        .write(WRITE, move |tx| {
+            each(
+                tx,
+                "items.bulk",
+                &faults,
+                &pulse,
+                vec![Ok(1), Ok(2)],
+                |index, id: i64| {
+                    if index == 1 {
+                        let corrupt = ffi::Error::new(ffi::SQLITE_CORRUPT);
+                        return Err(rusqlite::Error::SqliteFailure(corrupt, None).into());
+                    }
+                    tx.execute("INSERT INTO notes (id, body) VALUES (?1, 'kept')", [id])?;
+                    Ok(serde_json::json!({ "index": index, "outcome": "created" }))
+                },
+            )
+        })
+        .await
+        .map(drop);
+
+    assert_eq!(refused.unwrap_err().code, Code::InternalError);
+    assert!(db.damaged());
+    let notes: i64 = db
+        .read(|tx| Ok(tx.query_row("SELECT count(*) FROM notes", [], |row| row.get(0))?))
+        .await
+        .unwrap();
+    assert_eq!(notes, 0);
 }

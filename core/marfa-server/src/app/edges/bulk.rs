@@ -217,24 +217,31 @@ pub async fn write(app: &App, caller: &Caller, asked: Asked) -> Result<String> {
         unit.fanning(fanout, |unit| {
             let catalog = catalog::current(&cache, unit.tx(), Reading::Pending)?;
             let writing = Writing::page(unit, &catalog);
-            bulk::each(unit, ACTION, &faults, &pulse, entries, |index, entry| {
-                let entered = writing.entry(entry, create_only)?;
-                if let Entered::Created(id) | Entered::Updated(id) = &entered {
-                    unit.audit(
-                        ACTION,
-                        id,
-                        Some(json!({
-                            "operation_id": operation,
-                            "mode": mode_word(create_only),
-                            "atomic": false,
-                            "total": total,
-                            "index": index,
-                            "outcome": entered.outcome(),
-                        })),
-                    )?;
-                }
-                Ok(entered.answered(index))
-            })
+            bulk::each(
+                unit.tx(),
+                ACTION,
+                &faults,
+                &pulse,
+                entries,
+                |index, entry| {
+                    let entered = writing.entry(entry, create_only)?;
+                    if let Entered::Created(id) | Entered::Updated(id) = &entered {
+                        unit.audit(
+                            ACTION,
+                            id,
+                            Some(json!({
+                                "operation_id": operation,
+                                "mode": mode_word(create_only),
+                                "atomic": false,
+                                "total": total,
+                                "index": index,
+                                "outcome": entered.outcome(),
+                            })),
+                        )?;
+                    }
+                    Ok(entered.answered(index))
+                },
+            )
         })
     })
     .await
