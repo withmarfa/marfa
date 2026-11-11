@@ -86,19 +86,11 @@ export const SIGN_IN_ROUTE_STATUSES: Readonly<
   "GET /auth/sign-in": [200, 400],
   "POST /auth/sign-in": [200, 302, 400, 401, 403],
   "POST /auth/confirm": [200, 400, 401, 403, 409, 429],
-  "GET /auth/forgot-password": [200],
   "POST /auth/sign-out": [200, 500],
   "POST /auth/passkeys/registration/options": [200, 400, 401, 403],
   "POST /auth/passkeys/registration": [201, 400, 401, 403, 409, 500],
-  "POST /auth/passkeys/sign-in/options": [200, 403],
+  "POST /auth/passkeys/sign-in/options": [200, 403, 429],
   "POST /auth/passkeys/sign-in": [200, 400, 401, 403, 500],
-  // The sign-in doors of the server that judges every file
-  // `rust-judged.ts` does not list, which those files still draw.
-  "POST /auth/sign-in/email": [200, 400, 401, 403],
-  "GET /auth/passkey/generate-register-options": [200, 400, 401, 403],
-  "POST /auth/passkey/verify-registration": [200, 400, 401, 403, 409, 500],
-  "GET /auth/passkey/generate-authenticate-options": [200, 403],
-  "POST /auth/passkey/verify-authentication": [200, 400, 401, 403, 500],
   // Refuses owner-only email writes before redirecting:
   // instance-claim/profile-email-write-scope.
   "GET /auth/oauth2/authorize": [200, 302, 400],
@@ -107,13 +99,11 @@ export const SIGN_IN_ROUTE_STATUSES: Readonly<
   "GET /auth/error": [200],
   "POST /auth/oauth2/token": [200, 400, 401],
   "POST /auth/oauth2/revoke": [200, 400, 401],
-  "POST /auth/device/code": [200, 400, 401],
+  "POST /auth/device/code": [200, 400, 401, 429],
   "GET /auth/device": [200],
   "POST /auth/device": [302, 403],
   "GET /auth/device/consent": [200, 302, 400],
   "POST /auth/device/consent": [200, 302, 400, 403, 404],
-  "GET /auth/static/pages.css": [200],
-  "GET /auth/static/pages.js": [200],
   "GET /auth/owner/passkeys": [200, 302, 401, 403],
 };
 

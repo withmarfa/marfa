@@ -1035,16 +1035,16 @@ describe("the page system's lanes", () => {
   it("reach no fixture of the contract through the stylesheet, the script or their hashes", () => {
     const reader =
       /pages\.(css|js)|assets\.generated|PAGE_(CSS|JS|ASSETS)|auth\/static\/pages/;
-    // Witness: the declared statuses of the asset routes name the files, so
-    // the pattern finds a file that names them. Only a declaration of which
-    // statuses the route may answer does, and no fixture asks for the file.
-    const declaration = "conformance/src/utils/status-declarations.ts";
-    expect(reader.test(readFileSync(join(ROOT, declaration), "utf8"))).toBe(
-      true,
-    );
+    // Witness: the pattern finds each way a file names them.
+    for (const named of [
+      'fetch("/auth/static/pages.js")',
+      "PAGE_CSS",
+      "assets.generated.ts",
+    ]) {
+      expect(reader.test(named), named).toBe(true);
+    }
     const readers = [...walk("conformance/src"), ...walk("conformance/scripts")]
       .filter((file) => /\.[cm]?[jt]sx?$/.test(file))
-      .filter((file) => !file.includes("status-declarations"))
       .filter((file) => reader.test(readFileSync(join(ROOT, file), "utf8")));
     expect(readers).toEqual([]);
   });

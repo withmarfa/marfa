@@ -1007,7 +1007,7 @@ describe("the sign-in routes", () => {
     ["POST", "/auth/passkeys/registration", 409],
     ["POST", "/auth/passkeys/sign-in", 500],
     ["GET", "/auth/owner/passkeys", 403],
-    ["GET", "/auth/static/pages.js", 200],
+    ["POST", "/auth/device/code", 429],
   ])("recognises %s %s and its %i response", (method, path, status) => {
     const line = { method, transport: "http", route: "/auth/*", path };
     const report = reportStatuses(
