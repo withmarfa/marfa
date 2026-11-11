@@ -134,7 +134,7 @@ When a drain sends a write again that it sent before, a device MUST send it unde
 
 ### `queue-and-verdicts/sent-write-unchanged`
 
-A device MUST NOT change the body, the version or the idempotency key of a write once it has sent the write, short of a release or an answer of `409 instance_changed` to it (`queue-and-verdicts/instance-changed-afresh`).
+A device MUST NOT change the body, the version or the idempotency key of a write once it has sent the write, short of a release, an answer of `409 instance_changed` to it (`queue-and-verdicts/instance-changed-afresh`), or a refusal that sends its batch's other writes on in a batch of their own (`queue-and-verdicts/rows-refused-others`).
 
 **Reason:** a server that answers the key from its record would refuse a changed body as the key reused, and a delete moved onto a later version after its first attempt could remove an item the person never saw.
 
