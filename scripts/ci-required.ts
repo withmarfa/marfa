@@ -131,7 +131,7 @@ export const CONFORMANCE_GROUPS: readonly ConformanceGroup[] = [
   {
     job: "conformance-device",
     projects: ["device"],
-    shards: 6,
+    shards: 1,
     device: true,
   },
 ];
