@@ -1163,28 +1163,98 @@ struct Declared {
     changed: bool,
 }
 
-/// The rows ordered so that a type whose parent is also in them waits for it.
-/// Only parents that name each other leave none to go, and then the first goes
-/// and the server answers it.
-fn parents_first(mut rows: Vec<(String, String)>) -> Vec<(String, String)> {
-    let mut ordered = Vec::with_capacity(rows.len());
-    while !rows.is_empty() {
-        let next = rows
-            .iter()
-            .position(|(_, json)| {
-                let parent = serde_json::from_str::<serde_json::Value>(json)
-                    .ok()
-                    .and_then(|row| row.get("parent")?.as_str().map(str::to_string));
-                parent.is_none_or(|parent| !rows.iter().any(|(id, _)| *id == parent))
-            })
-            .unwrap_or(0);
-        ordered.push(rows.remove(next));
+/// What a type definition waits for to be registered: its parent, and each
+/// type a table column's `type_constraints` names, since the server takes
+/// neither until it holds the type. A type naming itself waits for nothing.
+fn registration_needs(id: &str, json: &str) -> Vec<String> {
+    let Ok(definition) = serde_json::from_str::<serde_json::Value>(json) else {
+        return Vec::new();
+    };
+    let parent = definition.get("parent").and_then(serde_json::Value::as_str);
+    let constraints = definition
+        .get("tables")
+        .and_then(serde_json::Value::as_object)
+        .into_iter()
+        .flat_map(|tables| tables.values())
+        .filter_map(|table| table.get("columns")?.as_object())
+        .flat_map(|columns| columns.values())
+        .filter_map(|column| column.get("type_constraints")?.as_array())
+        .flatten()
+        .filter_map(serde_json::Value::as_str);
+    let mut needs: Vec<String> = Vec::new();
+    for named in parent.into_iter().chain(constraints) {
+        if named != id && !needs.iter().any(|held| held == named) {
+            needs.push(named.to_string());
+        }
     }
-    ordered
+    needs
 }
 
-/// Brings the instance's types up to what the app declared, parents before
-/// their children: registers the ones it does not hold, then replaces each
+fn parent_need(_: &str, json: &str) -> Vec<String> {
+    serde_json::from_str::<serde_json::Value>(json)
+        .ok()
+        .and_then(|row| row.get("parent")?.as_str().map(str::to_string))
+        .into_iter()
+        .collect()
+}
+
+/// The rows ordered so that each waits for every row it `needs`, keeping the
+/// order they came in otherwise. Rows that wait for each other can never go,
+/// whatever the order, so they are refused by name before any is sent.
+fn in_order_of_need(
+    mut rows: Vec<(String, String)>,
+    needs: fn(&str, &str) -> Vec<String>,
+) -> Result<Vec<(String, String)>> {
+    let mut waits: Vec<Vec<String>> = rows.iter().map(|(id, json)| needs(id, json)).collect();
+    let mut ordered = Vec::with_capacity(rows.len());
+    while !rows.is_empty() {
+        let ready = |at: usize| {
+            !waits[at]
+                .iter()
+                .any(|need| rows.iter().any(|(id, _)| id == need))
+        };
+        match (0..rows.len()).find(|&at| ready(at)) {
+            Some(at) => {
+                waits.remove(at);
+                ordered.push(rows.remove(at));
+            }
+            None => return Err(waiting_on_each_other(&rows, &waits)),
+        }
+    }
+    Ok(ordered)
+}
+
+/// Every row left waits for another row left, so following the first need
+/// from any of them comes back round: the rows on that loop are the ones named.
+fn waiting_on_each_other(rows: &[(String, String)], waits: &[Vec<String>]) -> CoreError {
+    let mut path: Vec<usize> = Vec::new();
+    let mut at = 0;
+    let ring: Vec<&str> = loop {
+        if let Some(from) = path.iter().position(|&seen| seen == at) {
+            break path[from..]
+                .iter()
+                .chain(std::iter::once(&at))
+                .map(|&at| rows[at].0.as_str())
+                .collect();
+        }
+        path.push(at);
+        match waits[at]
+            .iter()
+            .find_map(|need| rows.iter().position(|(id, _)| id == need))
+        {
+            Some(next) => at = next,
+            None => break rows.iter().map(|(id, _)| id.as_str()).collect(),
+        }
+    };
+    CoreError::Invalid(format!(
+        "the declared types {} each need the next registered first, as a parent \
+         or in a table column's type_constraints, so none of them can be registered",
+        ring.join(" -> ")
+    ))
+}
+
+/// Brings the instance's types up to what the app declared, each after the
+/// types it needs: registers the ones it does not hold, then replaces each
 /// `app.*` type it holds in another definition. A key that may not register or
 /// replace is no reason to refuse the hydration: what it queued waits for the
 /// server's verdict like any write, and the type stays as the server holds it.
@@ -1207,8 +1277,11 @@ fn declare_on_instance(
     };
     let held = |id: &str| catalog.types.iter().any(|held| held.id == id);
     let (present, missing): (Vec<_>, Vec<_>) = declared.into_iter().partition(|(id, _)| held(id));
+    let missing = in_order_of_need(missing, registration_needs)?;
+    let own = present.into_iter().filter(|(id, _)| id.starts_with("app."));
+    let own = in_order_of_need(own.collect(), parent_need)?;
     let mut done = Declared::default();
-    for (id, json) in parents_first(missing) {
+    for (id, json) in missing {
         crate::catch_up::refuse_if_stopped(stop)?;
         match http.register_type(&json)? {
             Registration::Registered => {
@@ -1222,8 +1295,7 @@ fn declare_on_instance(
             }
         }
     }
-    let own = present.into_iter().filter(|(id, _)| id.starts_with("app."));
-    for (id, json) in parents_first(own.collect()) {
+    for (id, json) in own {
         crate::catch_up::refuse_if_stopped(stop)?;
         // A normalization the server refuses is no verdict that the type
         // matches: the replacement is asked for, and its refusal is the one
@@ -1738,6 +1810,100 @@ mod tests {
 
     use crate::scripted::{self, Answer, Scripted, Then};
     use crate::stop_tests::copy;
+
+    fn declared(id: &str, definition: Value) -> (String, String) {
+        let mut definition = definition;
+        definition["id"] = json!(id);
+        (id.to_string(), definition.to_string())
+    }
+
+    fn naming(types: &[&str]) -> Value {
+        json!({"tables": {"links": {"columns": {"to": {"type": "item", "type_constraints": types}}}}})
+    }
+
+    fn order(rows: Vec<(String, String)>) -> crate::Result<Vec<String>> {
+        Ok(super::in_order_of_need(rows, super::registration_needs)?
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect())
+    }
+
+    #[test]
+    fn a_type_is_registered_after_the_types_its_table_columns_name_and_its_parent() {
+        assert_eq!(
+            order(vec![
+                declared("app.r.areferring", naming(&["app.r.zreferenced"])),
+                declared("app.r.child", json!({"parent": "app.r.zreferenced"})),
+                declared("app.r.zreferenced", json!({})),
+                declared("app.r.outside", naming(&["core.note"])),
+            ])
+            .unwrap(),
+            [
+                "app.r.zreferenced",
+                "app.r.areferring",
+                "app.r.child",
+                "app.r.outside"
+            ]
+        );
+        // The witness: in the order they came, the first names the second.
+        assert_eq!(
+            super::registration_needs(
+                "app.r.areferring",
+                &naming(&["app.r.zreferenced"]).to_string()
+            ),
+            ["app.r.zreferenced"]
+        );
+    }
+
+    #[test]
+    fn a_type_whose_table_names_itself_waits_for_nothing() {
+        assert_eq!(
+            order(vec![
+                declared("app.r.tree", naming(&["app.r.tree", "app.r.leaf"])),
+                declared("app.r.leaf", json!({})),
+            ])
+            .unwrap(),
+            ["app.r.leaf", "app.r.tree"]
+        );
+    }
+
+    #[test]
+    fn types_that_need_each_other_are_refused_by_name_before_any_is_sent() {
+        for (rows, ring) in [
+            (
+                vec![
+                    declared("app.r.alone", json!({})),
+                    declared("app.r.a", naming(&["app.r.b"])),
+                    declared("app.r.b", naming(&["app.r.a"])),
+                ],
+                "app.r.a -> app.r.b -> app.r.a",
+            ),
+            (
+                vec![
+                    declared("app.r.a", json!({"parent": "app.r.b"})),
+                    declared("app.r.b", naming(&["app.r.c"])),
+                    declared("app.r.c", naming(&["app.r.a"])),
+                ],
+                "app.r.a -> app.r.b -> app.r.c -> app.r.a",
+            ),
+            (
+                vec![
+                    declared("app.r.waits", json!({"parent": "app.r.p"})),
+                    declared("app.r.p", json!({"parent": "app.r.q"})),
+                    declared("app.r.q", json!({"parent": "app.r.p"})),
+                ],
+                "app.r.p -> app.r.q -> app.r.p",
+            ),
+        ] {
+            match order(rows) {
+                Err(crate::CoreError::Invalid(message)) => {
+                    assert!(message.contains(ring), "{message} does not name {ring}")
+                }
+                other => panic!("a cycle was answered {other:?}"),
+            }
+        }
+    }
+
     use crate::{Core, CoreError, Hydration, SliceTier, store};
 
     /// A copy whose slice lists nothing, holding `count` pins, and a server
