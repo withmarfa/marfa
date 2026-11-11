@@ -28,12 +28,13 @@ pub enum Lender {
     },
 }
 
-/// A recorded copy: the store, and the object it is kept in there, which is empty for the
-/// disk store, whose file the hash names.
+/// A recorded copy: the store, the object it is kept in there, which is empty for the disk
+/// store, whose file the hash names, and whether this server wrote that object.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Held {
     pub store_id: String,
     pub object: String,
+    pub written: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -460,7 +461,8 @@ pub fn held_in(
 /// The copies the copy record names in attached stores.
 pub fn holders(tx: &Transaction<'_>, hash: &Hash) -> Result<Vec<Held>> {
     let mut statement = tx.prepare_cached(
-        "SELECT c.store_id, s.kind, c.object FROM blob_copies c JOIN stores s ON s.id = c.store_id \
+        "SELECT c.store_id, s.kind, c.object, c.written FROM blob_copies c \
+         JOIN stores s ON s.id = c.store_id \
          WHERE c.hash = ?1 AND s.detached_at IS NULL ORDER BY c.store_id",
     )?;
     let rows = statement.query_map([hash.as_str()], |row| {
@@ -468,13 +470,18 @@ pub fn holders(tx: &Transaction<'_>, hash: &Hash) -> Result<Vec<Held>> {
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
             row.get::<_, String>(2)?,
+            row.get::<_, bool>(3)?,
         ))
     })?;
     let mut found = Vec::new();
     for row in rows {
-        let (store_id, kind, object) = row?;
+        let (store_id, kind, object, written) = row?;
         let object = object_of(hash, &kind, object)?;
-        found.push(Held { store_id, object });
+        found.push(Held {
+            store_id,
+            object,
+            written,
+        });
     }
     Ok(found)
 }
@@ -551,8 +558,19 @@ pub fn copy_failed(tx: &Transaction<'_>, hash: &Hash, store_id: &str) -> Result<
     Ok(())
 }
 
-/// Records a copy a store now holds in `object`, unless the blob has left the registry since.
-/// An object that a copy recorded meanwhile makes surplus stays queued for deletion.
+/// What `record_copy` did with an object.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Recorded {
+    /// The object is the store's copy now.
+    Copy,
+    /// A copy recorded meanwhile makes the object surplus, and it stays queued for deletion.
+    Surplus,
+    /// The blob has left the registry.
+    Gone,
+}
+
+/// Records a copy a store now holds in `object`. An object this server wrote takes the place of
+/// a recorded copy it did not write.
 pub fn record_copy(
     tx: &Transaction<'_>,
     hash: &Hash,
@@ -560,22 +578,25 @@ pub fn record_copy(
     object: &str,
     written: bool,
     at: &str,
-) -> Result<bool> {
+) -> Result<Recorded> {
     if find(tx, hash)?.is_none() {
-        return Ok(false);
+        return Ok(Recorded::Gone);
     }
     let recorded = tx
         .prepare_cached(
             "INSERT INTO blob_copies (hash, store_id, object, written, recorded_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT (hash, store_id) DO NOTHING",
+             VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT (hash, store_id) DO UPDATE SET \
+             object = excluded.object, written = 1, recorded_at = excluded.recorded_at, \
+             verified_at = NULL WHERE blob_copies.written = 0 AND excluded.written = 1",
         )?
         .execute(params![hash.as_str(), store_id, object, written, at])?;
     tx.prepare_cached("DELETE FROM blob_copy_failures WHERE hash = ?1 AND store_id = ?2")?
         .execute(params![hash.as_str(), store_id])?;
-    if recorded > 0 {
-        deleted(tx, hash, store_id, object)?;
+    if recorded == 0 {
+        return Ok(Recorded::Surplus);
     }
-    Ok(true)
+    deleted(tx, hash, store_id, object)?;
+    Ok(Recorded::Copy)
 }
 
 /// Takes a copy out of the copy record and, where the server wrote its bytes, queues their
@@ -629,7 +650,7 @@ pub fn queued(tx: &Transaction<'_>, hash: &Hash, store_id: &str, object: &str) -
         .exists(params![hash.as_str(), store_id, object])?)
 }
 
-/// A blob an attached store lacks while another attached store holds it.
+/// A blob an attached store holds no copy of this server wrote, while an attached store holds it.
 #[derive(Debug)]
 pub struct Missing {
     pub blob: Blob,
@@ -638,7 +659,8 @@ pub struct Missing {
 
 const MISSING: &str = "FROM blobs b JOIN stores t ON t.detached_at IS NULL \
      LEFT JOIN blob_copy_failures f ON f.hash = b.hash AND f.store_id = t.id \
-     WHERE NOT EXISTS (SELECT 1 FROM blob_copies c WHERE c.hash = b.hash AND c.store_id = t.id) \
+     WHERE NOT EXISTS (SELECT 1 FROM blob_copies c \
+                       WHERE c.hash = b.hash AND c.store_id = t.id AND c.written = 1) \
      AND EXISTS (SELECT 1 FROM blob_copies c JOIN stores s ON s.id = c.store_id \
                  WHERE c.hash = b.hash AND s.detached_at IS NULL)";
 

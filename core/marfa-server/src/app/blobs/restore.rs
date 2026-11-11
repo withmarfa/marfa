@@ -99,8 +99,8 @@ pub struct Placed {
 }
 
 /// Records each copy and, for a blob the instance did not hold, the blob itself, ending the
-/// deletion its placing queued. A found object counts as written only where this server queued
-/// it, which it does before each write.
+/// deletion its placing queued once it is recorded. A found object counts as written only where
+/// this server queued it, which it does before each write.
 pub fn record(
     tx: &rusqlite::Transaction<'_>,
     copies: &[Copy],
@@ -115,22 +115,22 @@ pub fn record(
         let held = rows::find(tx, &copy.blob.hash)?.is_some();
         if !held && copy.object.is_empty() {
             rows::record_upload(tx, &copy.blob, &copy.store_id, Some(holder), at)?;
-        } else {
-            if !held {
-                rows::record_found(tx, &copy.blob, at)?;
-            }
-            let written = copy.object.is_empty()
-                || rows::queued(tx, &copy.blob.hash, &copy.store_id, &copy.object)?;
-            rows::record_copy(
-                tx,
-                &copy.blob.hash,
-                &copy.store_id,
-                &copy.object,
-                written,
-                at,
-            )?;
+            rows::deleted(tx, &copy.blob.hash, &copy.store_id, &copy.object)?;
+            continue;
         }
-        rows::deleted(tx, &copy.blob.hash, &copy.store_id, &copy.object)?;
+        if !held {
+            rows::record_found(tx, &copy.blob, at)?;
+        }
+        let written = copy.object.is_empty()
+            || rows::queued(tx, &copy.blob.hash, &copy.store_id, &copy.object)?;
+        rows::record_copy(
+            tx,
+            &copy.blob.hash,
+            &copy.store_id,
+            &copy.object,
+            written,
+            at,
+        )?;
     }
     Ok(())
 }
@@ -419,5 +419,56 @@ impl Placed {
         if committed && self.replicates && !self.copies.is_empty() {
             super::housekeeping::wake(app);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::Connection;
+
+    use super::*;
+    use crate::db::migrate::MIGRATIONS;
+
+    const AT: &str = "2026-01-01T00:00:00.000Z";
+
+    fn blob(letter: &str) -> Blob {
+        Blob {
+            hash: Hash::parse(&format!("sha256:{}", letter.repeat(64))).unwrap(),
+            mime_type: "text/plain".into(),
+            size_bytes: 4,
+        }
+    }
+
+    fn found(blob: &Blob, write: &str) -> Copy {
+        Copy {
+            blob: blob.clone(),
+            store_id: "bucket".into(),
+            object: format!("{}/{write}", blob.hash.hex()),
+        }
+    }
+
+    #[test]
+    fn a_found_object_this_server_wrote_stays_queued_unless_it_is_recorded() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        let tx = conn.transaction().unwrap();
+        rows::attach(&tx, "bucket", "s3", "s3://bucket/marfa", AT).unwrap();
+
+        let (kept, written) = (blob("a"), found(&blob("a"), "01"));
+        rows::record_found(&tx, &kept, AT).unwrap();
+        rows::record_copy(&tx, &kept.hash, "bucket", &written.object, true, AT).unwrap();
+        let surplus = found(&kept, "02");
+        rows::queue_deletion(&tx, &kept.hash, "bucket", &surplus.object, AT).unwrap();
+        record(&tx, std::slice::from_ref(&surplus), false, "holder", AT).unwrap();
+        assert!(rows::queued(&tx, &kept.hash, "bucket", &surplus.object).unwrap());
+
+        // The witness: with no copy recorded in the store, the found object is recorded.
+        let (fresh, own) = (blob("b"), found(&blob("b"), "03"));
+        rows::queue_deletion(&tx, &fresh.hash, "bucket", &own.object, AT).unwrap();
+        record(&tx, std::slice::from_ref(&own), false, "holder", AT).unwrap();
+        assert!(!rows::queued(&tx, &fresh.hash, "bucket", &own.object).unwrap());
+        let held = rows::holders(&tx, &fresh.hash).unwrap();
+        assert_eq!(held.len(), 1);
+        assert_eq!(held[0].object, own.object);
     }
 }

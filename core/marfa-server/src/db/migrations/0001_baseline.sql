@@ -799,7 +799,7 @@ CREATE TABLE IF NOT EXISTS stores (
 -- a name of its own write, so no other write or deletion ever names it; it is
 -- empty for a disk copy, whose file the hash names. `written` is 0 for an
 -- object a restore found that this server did not write, which it never
--- deletes.
+-- deletes and which does not count toward the minimum.
 CREATE TABLE IF NOT EXISTS blob_copies (
     hash TEXT NOT NULL REFERENCES blobs (hash) ON DELETE CASCADE,
     store_id TEXT NOT NULL REFERENCES stores (id),

@@ -91,8 +91,9 @@ enum Copy {
     TargetSilent,
 }
 
-/// Places one blob in `target`, read from the first other store that holds it and answers. An
-/// object store's copy goes to a new object, queued for deletion until its copy is recorded.
+/// Places one blob in `target`, read from the first store that holds it and answers, which may
+/// be `target` itself where its copy is one this server did not write. An object store's copy
+/// goes to a new object, queued for deletion until its copy is recorded.
 async fn copy_to(
     app: &App,
     target: &Store,
@@ -103,7 +104,7 @@ async fn copy_to(
     let blobs = &app.blobs;
     for source in blobs.attached() {
         let id = source.id().to_string();
-        if id == target.id() || unreachable.contains(&id) {
+        if unreachable.contains(&id) {
             continue;
         }
         let Some(held) = holders.iter().find(|held| held.store_id == id) else {
@@ -232,7 +233,10 @@ pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
         }
         let blob = hash.clone();
         let holders = app.db.read(move |tx| rows::holders(tx, &blob)).await?;
-        if holders.iter().any(|held| held.store_id == pair.store_id) {
+        if holders
+            .iter()
+            .any(|held| held.store_id == pair.store_id && held.written)
+        {
             continue;
         }
         let cleared = match app.finish_deletion(&target, &hash).await {
@@ -272,7 +276,8 @@ pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
         let (blob, to) = (hash.clone(), pair.store_id.clone());
         let recorded = app
             .write(&Caller::Server, "blob.copy_replicated", move |unit| {
-                if rows::record_copy(unit.tx(), &blob, &to, &object, true, &unit.at)? {
+                let recorded = rows::record_copy(unit.tx(), &blob, &to, &object, true, &unit.at)?;
+                if recorded == rows::Recorded::Copy {
                     unit.audit(
                         "blob",
                         blob.as_str(),
@@ -286,7 +291,7 @@ pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
             .await?;
         if !recorded {
             if let Err(failure) = app.finish_deletion(&target, &hash).await {
-                tracing::warn!(?failure, "The copy of a purged blob waits for a later run");
+                tracing::warn!(?failure, "A copy not recorded waits for a later run");
             }
             continue;
         }
@@ -551,7 +556,7 @@ pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
             }
         }
     } else {
-        true
+        false
     };
     let (live, at, job) = (app.clone(), app.clock.stamp(), run.job);
     let (candidates, kept) = app
