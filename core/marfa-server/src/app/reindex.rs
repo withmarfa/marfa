@@ -39,6 +39,7 @@ async fn page(app: &App) -> Result<bool> {
         .db
         .write(Write::own(), move |tx| {
             let catalog = catalog::current(&cache, tx, Snapshot::Pending)?;
+            items::sort_keys::drop_undeclared(tx, &catalog.rules)?;
             items::reindex_page(tx, &catalog.rules)
         })
         .await?;

@@ -58,6 +58,15 @@ fn kept(tx: &Transaction<'_>) -> Result<Vec<(String, String)>> {
         .collect::<rusqlite::Result<_>>()?)
 }
 
+/// Whether the pair's keys are still being removed, so it may not be added again yet.
+pub fn dropping(tx: &Transaction<'_>, type_id: &str, name: &str) -> Result<bool> {
+    Ok(tx
+        .prepare_cached(
+            "SELECT EXISTS (SELECT 1 FROM sort_indexes_dropping WHERE type = ?1 AND name = ?2)",
+        )?
+        .query_row([type_id, name], |row| row.get(0))?)
+}
+
 /// Whether another pair may be kept; a pair of a type or property no longer declared does not count.
 pub fn room(tx: &Transaction<'_>, rules: &Rules) -> Result<bool> {
     let live = kept(tx)?
@@ -72,12 +81,7 @@ pub fn add(tx: &Transaction<'_>, rules: &Rules, type_id: &str, name: &str) -> Re
     if !declares(rules, type_id, name) || standing(tx, type_id, name)? != Standing::Absent {
         return Ok(false);
     }
-    let dropping: bool = tx
-        .prepare_cached(
-            "SELECT EXISTS (SELECT 1 FROM sort_indexes_dropping WHERE type = ?1 AND name = ?2)",
-        )?
-        .query_row([type_id, name], |row| row.get(0))?;
-    if dropping || !room(tx, rules)? || !large(tx, type_id)? {
+    if dropping(tx, type_id, name)? || !room(tx, rules)? || !large(tx, type_id)? {
         return Ok(false);
     }
     tx.prepare_cached("INSERT INTO sort_indexes (type, name) VALUES (?1, ?2)")?
@@ -202,15 +206,24 @@ mod tests {
     }
 
     fn rules(types: &[(&str, &[&str])]) -> Rules {
+        inheriting(
+            &types
+                .iter()
+                .map(|(id, fields)| (*id, None, *fields))
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    fn inheriting(types: &[(&str, Option<&str>, &[&str])]) -> Rules {
         let entries: HashMap<String, CatalogEntry> = types
             .iter()
-            .map(|(id, fields)| {
+            .map(|(id, parent, fields)| {
                 let definitions: Map<String, Value> = fields
                     .iter()
                     .map(|name| (name.to_string(), json!({"type": "string"})))
                     .collect();
                 let entry = CatalogEntry {
-                    parent: None,
+                    parent: parent.map(str::to_string),
                     title_field: None,
                     thumbnail_field: None,
                     body_field: None,
@@ -257,6 +270,37 @@ mod tests {
         assert_eq!(pairs(&conn), 0);
         assert!(add(&tx, &rules, "core.note", "p").unwrap());
         assert_eq!(pairs(&conn), 1);
+    }
+
+    #[test]
+    fn a_pair_still_being_dropped_is_not_added_again() {
+        let conn = db();
+        items(&conn, "core.note", MIN_ITEMS);
+        let rules = rules(&[("core.note", &["p"])]);
+        conn.execute(
+            "INSERT INTO sort_indexes_dropping (type, name) VALUES ('core.note', 'p')",
+            [],
+        )
+        .unwrap();
+        let tx = conn.unchecked_transaction().unwrap();
+        assert!(dropping(&tx, "core.note", "p").unwrap());
+        assert!(!add(&tx, &rules, "core.note", "p").unwrap());
+        assert_eq!(pairs(&conn), 0);
+        tx.execute("DELETE FROM sort_indexes_dropping", []).unwrap();
+        assert!(!dropping(&tx, "core.note", "p").unwrap());
+        assert!(add(&tx, &rules, "core.note", "p").unwrap());
+    }
+
+    #[test]
+    fn a_property_declared_by_a_parent_type_counts_for_the_child() {
+        let rules = inheriting(&[
+            ("core.base", None, &["p"]),
+            ("core.note", Some("core.base"), &["q"]),
+        ]);
+        assert!(declares(&rules, "core.note", "p"));
+        assert!(declares(&rules, "core.note", "q"));
+        assert!(!declares(&rules, "core.base", "q"));
+        assert!(!declares(&rules, "core.note", "r"));
     }
 
     #[test]

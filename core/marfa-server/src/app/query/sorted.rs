@@ -76,6 +76,7 @@ pub(super) fn reading(
         let standing = sort_keys::standing(read.tx, type_id, name)?;
         let addable = standing == sort_keys::Standing::Absent
             && sort_keys::declares(rules, type_id, name)
+            && !sort_keys::dropping(read.tx, type_id, name)?
             && sort_keys::room(read.tx, rules)?
             && sort_keys::large(read.tx, type_id)?;
         Ok(Held { standing, addable })
