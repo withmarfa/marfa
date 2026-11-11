@@ -1163,9 +1163,7 @@ struct Declared {
     changed: bool,
 }
 
-/// What a type definition waits for to be registered: its parent, and each
-/// type a table column's `type_constraints` names, since the server takes
-/// neither until it holds the type. A type naming itself waits for nothing.
+/// The server takes a type only once it holds its parent and constraint types.
 fn registration_needs(id: &str, json: &str) -> Vec<String> {
     let Ok(definition) = serde_json::from_str::<serde_json::Value>(json) else {
         return Vec::new();
@@ -1198,9 +1196,7 @@ fn parent_need(_: &str, json: &str) -> Vec<String> {
         .collect()
 }
 
-/// The rows ordered so that each waits for every row it `needs`, keeping the
-/// order they came in otherwise. Rows that wait for each other can never go,
-/// whatever the order, so they are refused by name before any is sent.
+/// Stable: rows keep their order except where one needs another.
 fn in_order_of_need(
     mut rows: Vec<(String, String)>,
     needs: fn(&str, &str) -> Vec<String>,
@@ -1224,8 +1220,7 @@ fn in_order_of_need(
     Ok(ordered)
 }
 
-/// Every row left waits for another row left, so following the first need
-/// from any of them comes back round: the rows on that loop are the ones named.
+/// Names the rows on the loop that following each row's first need reaches.
 fn waiting_on_each_other(rows: &[(String, String)], waits: &[Vec<String>]) -> CoreError {
     let mut path: Vec<usize> = Vec::new();
     let mut at = 0;
