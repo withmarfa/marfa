@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use marfa_rules::search::{MARK_CLOSE, MARK_OPEN, fts_expression, snippet_html};
+use marfa_rules::search::{MARK_CLOSE, MARK_OPEN, fts_phrases, snippet_html};
 use serde_json::{Value as Json, json};
 
 use super::compile::{Ask, Sql, judge, selection};
@@ -15,7 +15,6 @@ use crate::app::catalog::Catalog;
 use crate::app::items::{self, Many, Reader, reading};
 use crate::app::refusal::Result;
 use crate::app::tables;
-use crate::db::rank::Corpus;
 use marfa_rules::query::SortDirection;
 
 const DEPTH: i64 = 10_000;
@@ -35,7 +34,10 @@ struct Source {
     fts: &'static str,
     from: &'static str,
     named: &'static str,
+    /// Every entry of an item `i`, for a reach to narrow.
     corpus: &'static str,
+    /// The count and length in tokens of the entries of `corpus`, for a reach to narrow.
+    totals: &'static str,
 }
 
 const SOURCES: [Source; 2] = [
@@ -43,7 +45,9 @@ const SOURCES: [Source; 2] = [
         fts: "items_fts",
         from: "items_fts CROSS JOIN items i ON i.seq = items_fts.rowid",
         named: "0 AS hit, i.seq AS seq, NULL AS tname, NULL AS rid, NULL AS entry, NULL AS columns",
-        corpus: "items_fts_docsize d JOIN items i ON i.seq = d.id",
+        corpus: "items_fts CROSS JOIN items i ON i.seq = items_fts.rowid",
+        totals: "SELECT coalesce(sum(i.entries), 0), coalesce(sum(i.tokens), 0) \
+             FROM items_fts_totals i",
     },
     Source {
         fts: "rows_fts",
@@ -51,57 +55,87 @@ const SOURCES: [Source; 2] = [
         named: "1 AS hit, i.seq AS seq, s.table_name AS tname, m.id AS rid, m.seq AS entry, \
              s.searched_by AS columns",
         corpus: tables::search::CORPUS_FROM,
+        totals: tables::search::CORPUS_TOTALS,
     },
 ];
 
-fn corpus_sql(source: &Source, reach: &Reach) -> Sql {
-    let mut sql = Sql::new(&format!("SELECT d.id, d.sz FROM {} WHERE ", source.corpus));
+fn totals_sql(source: &Source, reach: &Reach) -> Sql {
+    let mut sql = Sql::new(&format!("{} WHERE ", source.totals));
     reach.clause(&mut sql, "i", false);
     sql
 }
 
-/// Each index's corpus, for a test to read.
+fn hits_sql(source: &Source, reach: &Reach, phrase: &str) -> Sql {
+    let mut sql = Sql::new(&format!(
+        "SELECT count(*) FROM {} WHERE {} MATCH ",
+        source.corpus, source.fts
+    ));
+    sql.bind(phrase.to_string());
+    sql.push(" AND ");
+    reach.clause(&mut sql, "i", false);
+    sql
+}
+
+/// The statements that read each index's corpus, for a test to read.
 #[cfg(test)]
 pub(super) fn corpus_sqls(reach: &Reach) -> Vec<Sql> {
     SOURCES
         .iter()
-        .map(|source| corpus_sql(source, reach))
+        .flat_map(|source| {
+            [
+                totals_sql(source, reach),
+                hits_sql(source, reach, "\"word\""),
+            ]
+        })
         .collect()
+}
+
+fn counts(read: &Reader<'_, '_>, sql: &Sql, columns: usize) -> Result<Vec<i64>> {
+    let mut statement = read.tx.prepare_cached(&sql.text)?;
+    Ok(
+        statement.query_row(rusqlite::params_from_iter(&sql.values), |row| {
+            (0..columns).map(|at| row.get(at)).collect()
+        })?,
+    )
 }
 
 /// BM25's statistics, from the entries of each index whose item the caller may read.
 pub(super) enum Ranking {
     /// Every entry is within reach, so FTS5's own statistics are the caller's.
     Whole,
-    Within([Vec<u8>; 2]),
+    /// For each index, what `bm25_within` takes after the table.
+    Within([Vec<i64>; 2]),
 }
 
 impl Ranking {
-    fn of(read: &Reader<'_, '_>, reach: &Reach) -> Result<Ranking> {
+    fn of(read: &Reader<'_, '_>, reach: &Reach, phrases: &[String]) -> Result<Ranking> {
         if reach.is_whole() && !tables::search::purge_pending(read.tx)? {
             return Ok(Ranking::Whole);
         }
-        let mut corpora = [Vec::new(), Vec::new()];
-        for (source, corpus) in SOURCES.iter().zip(&mut corpora) {
-            let sql = corpus_sql(source, reach);
-            let mut statement = read.tx.prepare(&sql.text)?;
-            let mut found = statement.query(rusqlite::params_from_iter(&sql.values))?;
-            *corpus = Corpus::gather(&mut found)?.encoded();
-        }
-        Ok(Ranking::Within(corpora))
-    }
-
-    fn rank(&self, at: usize) -> Sql {
-        let fts = SOURCES[at].fts;
-        match self {
-            Ranking::Whole => Sql::new(&format!("bm25({fts})")),
-            Ranking::Within(corpora) => {
-                let mut sql = Sql::new(&format!("bm25_within({fts}, "));
-                sql.bind(corpora[at].clone());
-                sql.push(")");
-                sql
+        let mut within = [Vec::new(), Vec::new()];
+        for (source, arguments) in SOURCES.iter().zip(&mut within) {
+            arguments.extend(counts(read, &totals_sql(source, reach), 2)?);
+            for phrase in phrases {
+                let hits = counts(read, &hits_sql(source, reach, phrase), 1)?;
+                // FTS5 drops a phrase that holds no word, and one that matches nothing within
+                // reach leaves no hit to rank, so the counts kept are FTS5's phrases in order.
+                arguments.extend(hits.into_iter().filter(|hits| *hits > 0));
             }
         }
+        Ok(Ranking::Within(within))
+    }
+
+    fn rank(&self, source: &Source, at: usize) -> Sql {
+        let Ranking::Within(within) = self else {
+            return Sql::new(&format!("bm25({})", source.fts));
+        };
+        let mut sql = Sql::new(&format!("bm25_within({}", source.fts));
+        for argument in within.get(at).into_iter().flatten() {
+            sql.push(", ");
+            sql.bind(*argument);
+        }
+        sql.push(")");
+        sql
     }
 }
 
@@ -137,7 +171,7 @@ pub(super) fn search_sql(
         if at > 0 {
             sql.push(" UNION ALL ");
         }
-        let rank = ranking.rank(at);
+        let rank = ranking.rank(source, at);
         sql.push(&format!("SELECT {}, ", source.named));
         sql.append(&rank);
         sql.push(" AS rank, ");
@@ -167,7 +201,7 @@ fn best_rank(
             sql.push(" UNION ALL ");
         }
         sql.push("SELECT ");
-        sql.append(&ranking.rank(at));
+        sql.append(&ranking.rank(source, at));
         sql.push(" AS rank");
         matched(&mut sql, source, reach, ask, &read.catalog, expression)?;
     }
@@ -292,11 +326,12 @@ fn page(read: &Reader<'_, '_>, secret: &Secret, search: &Search) -> Result<Strin
     ])
     .to_string();
     let offset = offset_of(secret, &scope, search.cursor.as_deref())?;
-    let Some(expression) = fts_expression(&search.q) else {
+    let Some(phrases) = fts_phrases(&search.q) else {
         return Ok("{\"data\":[],\"next_cursor\":null}".to_string());
     };
+    let expression = phrases.join(" ");
     let take = (search.limit + 1).min(DEPTH - offset);
-    let ranking = Ranking::of(read, &reach)?;
+    let ranking = Ranking::of(read, &reach, &phrases)?;
     let sql = search_sql(
         &reach,
         &search.ask,

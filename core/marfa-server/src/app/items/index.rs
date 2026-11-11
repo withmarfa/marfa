@@ -8,6 +8,7 @@ use rusqlite::{OptionalExtension, Transaction, params};
 
 use super::{parsed, rows};
 use crate::app::refusal::Result;
+use crate::db::rank;
 
 const INDEXED_STATES: [&str; 3] = ["active", "archived", "revoked"];
 
@@ -30,6 +31,20 @@ impl Indexings<'_> {
 fn remove(tx: &Transaction<'_>, seq: i64) -> Result<()> {
     tx.prepare_cached("DELETE FROM items_fts WHERE rowid = ?1")?
         .execute([seq])?;
+    tx.prepare_cached("DELETE FROM items_fts_sizes WHERE seq = ?1")?
+        .execute([seq])?;
+    Ok(())
+}
+
+fn sized(tx: &Transaction<'_>, seq: i64) -> Result<()> {
+    let sizes: Vec<u8> = tx
+        .prepare_cached("SELECT sz FROM items_fts_docsize WHERE id = ?1")?
+        .query_row([seq], |row| row.get(0))?;
+    tx.prepare_cached(
+        "INSERT INTO items_fts_sizes (seq, type, source, tokens) \
+         SELECT seq, type, source, ?2 FROM items WHERE seq = ?1",
+    )?
+    .execute(params![seq, rank::tokens_of(&sizes)?])?;
     Ok(())
 }
 
@@ -82,7 +97,7 @@ fn refresh(tx: &Transaction<'_>, indexings: &mut Indexings<'_>, seq: i64) -> Res
         text.extra,
         tags
     ])?;
-    Ok(())
+    sized(tx, seq)
 }
 
 pub(super) fn settle(tx: &Transaction<'_>, rules: &Rules) -> Result<()> {

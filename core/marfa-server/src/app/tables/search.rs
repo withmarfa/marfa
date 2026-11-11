@@ -7,15 +7,21 @@ use serde_json::{Map, Value};
 
 use super::store;
 use crate::app::refusal::Result;
+use crate::db::rank;
 
 // Binned rows stay indexed but cannot match.
 pub(crate) const HITS_FROM: &str = "rows_fts CROSS JOIN row_search m ON m.seq = rows_fts.rowid \
      CROSS JOIN table_summaries s ON s.seq = m.table_seq AND s.searched_by IS NOT NULL \
      CROSS JOIN items i ON i.seq = s.item_seq AND i.state <> 'trashed'";
 
-/// Every entry whose item is `i`, for a reach clause to narrow.
-pub(crate) const CORPUS_FROM: &str = "rows_fts_docsize d JOIN row_search m ON m.seq = d.id \
-     JOIN table_summaries s ON s.seq = m.table_seq JOIN items i ON i.seq = s.item_seq";
+/// Every entry of an item `i`, whatever its state or its table's rebuild, for a reach to narrow.
+pub(crate) const CORPUS_FROM: &str = "rows_fts CROSS JOIN row_search m ON m.seq = rows_fts.rowid \
+     CROSS JOIN table_summaries s ON s.seq = m.table_seq \
+     CROSS JOIN items i ON i.seq = s.item_seq";
+
+/// The count and length of the entries of `CORPUS_FROM`, for a reach to narrow.
+pub(crate) const CORPUS_TOTALS: &str = "SELECT coalesce(sum(s.indexed), 0), \
+     coalesce(sum(s.indexed_tokens), 0) FROM table_summaries s JOIN items i ON i.seq = s.item_seq";
 
 /// Whether a purged item's entries are still indexed, which no reach covers.
 pub(crate) fn purge_pending(tx: &Transaction<'_>) -> Result<bool> {
@@ -132,6 +138,11 @@ pub(super) fn index(
             .map(|text| text.map_or(rusqlite::types::Value::Null, |text| text.to_string().into())),
     );
     statement.execute(params_from_iter(bound))?;
+    let sizes: Vec<u8> = tx
+        .prepare_cached("SELECT sz FROM rows_fts_docsize WHERE id = ?1")?
+        .query_row([seq], |row| row.get(0))?;
+    tx.prepare_cached("UPDATE row_search SET tokens = ?2 WHERE seq = ?1")?
+        .execute(params![seq, rank::tokens_of(&sizes)?])?;
     Ok(())
 }
 
