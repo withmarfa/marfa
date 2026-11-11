@@ -6884,6 +6884,28 @@ When a caller asks for the links in a text, a device MUST read each link's name 
 
 **Tests:** `device/link-parts.test.ts › splits a link into its name, heading and alias, placed in UTF-16 code units`, `› reads the alias as everything after a bar that comes before any hash`.
 
+### `device/link-parts-row`
+
+When a caller asks for the links in a text, a device MUST answer a heading that begins with `^` as the link's row, the text after the `^` trimmed, and answer no heading for that link.
+
+**Reason:** `[[item#^row]]` names a row of the item, as Obsidian names a block (`tables.md`, "Linking to a row"), so an editor can show the row a link points at.
+
+**Tests:** `device/link-parts.test.ts › reads a heading that begins with a caret as the row the link names`.
+
+### `device/body-link-row`
+
+When a body carries `[[name#^row]]`, a device MUST make the link's `references` edge to the item that `name` names, whatever row it names.
+
+**Reason:** a link to a row stays a link to its item; rows have no edges.
+
+**Tests:** `device/body-edges-live.test.ts › makes the edge of a link to a row to the row's item, and none for a link to a row alone`.
+
+### `device/body-link-row-only`
+
+When a body carries a link that names only a row, `[[#^row]]`, a device MUST NOT make an edge of it.
+
+**Tests:** `device/body-edges-live.test.ts › makes the edge of a link to a row to the row's item, and none for a link to a row alone`.
+
 ### `device/link-parts-text`
 
 When a caller asks for the links in a text, a device MUST NOT answer an embed, or a link in inline code, a code block or a comment.
@@ -7396,7 +7418,7 @@ The CLI MUST print, for `marfa types scaffold`, a definition that `marfa types r
 
 ## Search, matched as the server matches
 
-A local search matches, ranks and excerpts as the server's search does, so a query answers the same items online and offline. The server's halves are the `search-and-filters` rules of the same names.
+Local search covers items only. The rules below correspond to the `search-and-filters` rules of the same names. Table-row hits come from the server's search (`tables/search-row-hit`).
 
 ### `device/search-stem`
 

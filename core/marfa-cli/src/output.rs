@@ -663,6 +663,10 @@ fn lines(rows: &[Value], page: &serde_json::Map<String, Value>) -> Result<String
                 .into_iter()
                 .collect();
             cells.extend(record_cells(item));
+            if let Some(named) = row.get("row") {
+                let field = |name: &str| named.get(name).and_then(Value::as_str).unwrap_or("");
+                cells.push(format!("row {} in {}", field("id"), field("table")));
+            }
             out.push(Row::Cells(cells));
         } else {
             out.push(Row::Text(serde_json::to_string(row)?));
@@ -980,6 +984,9 @@ pub fn link_parts(parts: &[marfa_core::LinkParts]) -> String {
             if let Some(heading) = &link.heading {
                 line.push_str(&format!("\theading: {}", heading.text));
             }
+            if let Some(row) = &link.row {
+                line.push_str(&format!("\trow: {}", row.text));
+            }
             if let Some(alias) = &link.alias {
                 line.push_str(&format!("\talias: {}", alias.text));
             }
@@ -1249,6 +1256,19 @@ pub(crate) mod tests {
         }))
         .unwrap();
         assert_eq!(text, "  1.500  n1  core.note  Wombat");
+        let text = describe(&json!({
+            "data": [{
+                "item": {"id": "c1", "type": "core.conversation", "properties": {"title": "Chat"}},
+                "relevance_score": 1.0,
+                "row": {"table": "messages", "id": "r1", "column": "text"},
+            }],
+            "next_cursor": null,
+        }))
+        .unwrap();
+        assert_eq!(
+            text,
+            "  1.000  c1  core.conversation  Chat  row r1 in messages"
+        );
     }
 
     fn edge(id: &str, source: &str, target: &str) -> serde_json::Value {

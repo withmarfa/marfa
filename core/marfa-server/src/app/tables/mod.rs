@@ -5,6 +5,7 @@ mod events;
 mod lifecycle;
 mod order;
 mod read;
+pub(crate) mod search;
 mod store;
 mod undo;
 
@@ -23,12 +24,13 @@ use super::items::{self, Host};
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
 use order::Order;
+use search::Searched;
 use store::Held;
 
 pub use events::{ROWS_CHANGED, judged as judged_event};
 pub use lifecycle::{
     Shape, cleanup, constraining_columns, doom, held_in_use, judge_item_change, refuse_moving_type,
-    reorder_item, reorder_types, unkept_columns,
+    rekey_item, rekey_types, unkept_columns,
 };
 pub use read::{Page, batches, get, list, page, totals};
 pub use undo::undo;
@@ -182,6 +184,7 @@ pub(crate) struct Table {
     pub label: String,
     pub columns: Map<String, Value>,
     pub order: Option<Order>,
+    pub searched: Searched,
 }
 
 impl Table {
@@ -217,17 +220,19 @@ pub(crate) fn item_tables(
         .into_iter()
         .map(|(name, table)| {
             let table = table.as_object().ok_or_else(unread_tables)?;
+            let columns = table
+                .get("columns")
+                .and_then(Value::as_object)
+                .ok_or_else(unread_tables)?
+                .clone();
             Ok(Table {
                 label: table
                     .get("label")
                     .and_then(Value::as_str)
                     .ok_or_else(unread_tables)?
                     .to_string(),
-                columns: table
-                    .get("columns")
-                    .and_then(Value::as_object)
-                    .ok_or_else(unread_tables)?
-                    .clone(),
+                searched: Searched::of(&columns),
+                columns,
                 order: Order::of(table),
                 name,
             })
@@ -501,6 +506,7 @@ impl Batch<'_, '_> {
             self.host.seq,
             &self.table.name,
             self.table.order.as_ref(),
+            &self.table.searched,
             &self.batch_id,
             &self.unit.at,
         )?;
@@ -555,6 +561,7 @@ impl Batch<'_, '_> {
                 order: self.table.order.as_ref(),
             },
         )?;
+        search::index(unit.tx(), table, id, &self.table.searched, &values, &refs)?;
         let printed = store::printed_len(&values);
         match held {
             Some(bytes) => self.bytes += printed - bytes,
@@ -576,6 +583,7 @@ impl Batch<'_, '_> {
             return Ok(false);
         }
         self.begin(id, true, None)?;
+        search::forget(unit.tx(), table, id)?;
         let bytes = store::delete(unit.tx(), table, id)?
             .ok_or_else(|| Refusal::internal("a held row did not delete"))?;
         self.count -= 1;

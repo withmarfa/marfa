@@ -42,10 +42,15 @@ pub fn snippet_html(excerpt: &str) -> String {
 
 /// A query wholly inside double quotes is one phrase; otherwise each whitespace-separated word is quoted, so nothing a person types is FTS5 syntax, and the last word also matches as a prefix.
 pub fn fts_expression(query: &str) -> Option<String> {
+    fts_phrases(query).map(|phrases| phrases.join(" "))
+}
+
+/// The phrases of [`fts_expression`], in its order.
+pub fn fts_phrases(query: &str) -> Option<Vec<String>> {
     let query = query.trim();
     if query.chars().count() > 2 && query.starts_with('"') && query.ends_with('"') {
         let inner = &query[1..query.len() - 1];
-        return Some(format!("\"{}\"", inner.replace('"', "\"\"")));
+        return Some(vec![format!("\"{}\"", inner.replace('"', "\"\""))]);
     }
     let words: Vec<&str> = query
         .split(char::is_whitespace)
@@ -64,8 +69,7 @@ pub fn fts_expression(query: &str) -> Option<String> {
                     quoted
                 }
             })
-            .collect::<Vec<_>>()
-            .join(" "),
+            .collect(),
     )
 }
 

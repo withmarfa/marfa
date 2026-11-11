@@ -33,6 +33,9 @@ pub fn property_key(name: &str) -> Sql {
     sql
 }
 
+/// The relevance key of a search, which [`Order::ranked_by`] replaces with each index's rank.
+const RELEVANCE: &str = "bm25(items_fts)";
+
 fn column(name: &str) -> Sql {
     Sql::new(&format!("i.{name}"))
 }
@@ -110,7 +113,7 @@ impl Order {
         let Some(field) = &sort.field else {
             return Order {
                 keys: vec![Key {
-                    expression: Sql::new("bm25(items_fts)"),
+                    expression: Sql::new(RELEVANCE),
                     descending: ascending,
                     nullable: false,
                 }],
@@ -169,7 +172,22 @@ impl Order {
         sql.push("i.id");
     }
 
+    pub fn ranked_by(&self, rank: &Sql) -> Order {
+        let mut order = self.clone();
+        for key in &mut order.keys {
+            if key.expression.text == RELEVANCE {
+                key.expression = rank.clone();
+            }
+        }
+        order
+    }
+
     pub fn order_by(&self, sql: &mut Sql) {
+        self.order_by_named(sql, "i.id");
+    }
+
+    /// Orders the aliases emitted by [`Order::columns`].
+    pub fn order_by_named(&self, sql: &mut Sql, id: &str) {
         sql.push(" ORDER BY ");
         for (at, key) in self.keys.iter().enumerate() {
             let name = alias(at);
@@ -179,11 +197,8 @@ impl Order {
             sql.push(&name);
             sql.push(if key.descending { " DESC, " } else { " ASC, " });
         }
-        sql.push(if self.id_descending {
-            "i.id DESC"
-        } else {
-            "i.id ASC"
-        });
+        sql.push(id);
+        sql.push(if self.id_descending { " DESC" } else { " ASC" });
     }
 
     /// The condition for the rows after `position`. The position's values are

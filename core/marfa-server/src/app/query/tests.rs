@@ -6,7 +6,7 @@ use super::cursor::{Position, Secret};
 use super::listing::{By, page_sql, stats_sql};
 use super::order::{Order, Sort};
 use super::reach::Reach;
-use super::search::search_sql;
+use super::search::{Ranking, corpus_sqls, search_sql};
 use crate::app::catalog::Catalog;
 
 const OPEN: &str = "core.open";
@@ -117,9 +117,22 @@ fn every_compiled_read_carries_the_callers_reach() {
             assert_reached(&stats_sql(&reach, &ask, &catalog, by).unwrap(), &ask);
         }
 
+        for corpus in corpus_sqls(&reach) {
+            assert_reached(&corpus, &Ask::default());
+        }
+
         let order = Order::search(&Sort::default());
         assert_reached(
-            &search_sql(&reach, &ask, &catalog, "word", &order, 21, 0).unwrap(),
+            &search_sql(
+                &reach,
+                &ask,
+                &catalog,
+                "word",
+                &Ranking::Whole,
+                &order,
+                (21, 0),
+            )
+            .unwrap(),
             &ask,
         );
     }

@@ -561,6 +561,8 @@ export interface LinkParts {
   target: string;
   name: LinkPart;
   heading: LinkPart | null;
+  /** The row a `#^` names, in place of a heading. */
+  row: LinkPart | null;
   alias: LinkPart | null;
 }
 

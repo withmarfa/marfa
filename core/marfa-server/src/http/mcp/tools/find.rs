@@ -1,4 +1,4 @@
-//! `marfa_find`: short rows for the items a search or a listing names.
+//! `marfa_find`: short entries for the items, and the rows, a search or a listing names.
 
 use std::sync::Arc;
 
@@ -21,7 +21,7 @@ pub fn definition() -> Definition {
     Definition {
         name: NAME,
         title: "Find items",
-        description: "Use to find notes, tasks, records, files and other items: search by words, or list by type, tags, source or dates. Returns short rows (id, type, title, snippet); read the full items with marfa_get.",
+        description: "Use to find notes, tasks, records, files and other items: search by words, or list by type, tags, source or dates. Returns short entries (id, type, title, snippet, and the table row a search matched); read the full items with marfa_get and a row with marfa_read_rows.",
         input: json!({
             "type": "object",
             "properties": {
@@ -49,7 +49,7 @@ pub fn definition() -> Definition {
                     "description": "Order: `relevance` for a search (its default), otherwise `updated_at` by default." },
                 "direction": { "type": "string", "enum": ["asc", "desc"] },
                 "limit": { "type": "integer", "minimum": 1, "maximum": MAX_LIMIT,
-                    "description": format!("How many rows, {DEFAULT_LIMIT} when left out.") },
+                    "description": format!("How many entries, {DEFAULT_LIMIT} when left out.") },
                 "cursor": { "type": "string", "minLength": 1,
                     "description": "next_cursor from the previous answer, for the next page." },
             },
@@ -68,6 +68,16 @@ pub fn definition() -> Definition {
                         "state": { "type": "string" },
                         "updated_at": { "type": "string" },
                         "occurred_at": { "type": "string" },
+                        "row": {
+                            "type": "object",
+                            "description": "The row of the item's table that the search matched, and the column it matched in.",
+                            "properties": {
+                                "table": { "type": "string" },
+                                "id": { "type": "string" },
+                                "column": { "type": "string" },
+                            },
+                            "required": ["table", "id", "column"],
+                        },
                     },
                     "required": ["id", "type", "title", "updated_at"],
                 } },
@@ -151,9 +161,10 @@ fn preview(item: &Value, title: &str, caption: Option<&str>) -> String {
 struct Entry {
     item: Value,
     snippet_html: Option<String>,
+    row: Option<Value>,
 }
 
-fn row(entry: &Entry, caption: Option<&items::Caption>) -> Value {
+fn short(entry: &Entry, caption: Option<&items::Caption>) -> Value {
     let item = &entry.item;
     let field = |name: &str| item.get(name).and_then(Value::as_str);
     let title = caption.map_or("Untitled", |caption| caption.name.as_str());
@@ -181,6 +192,9 @@ fn row(entry: &Entry, caption: Option<&items::Caption>) -> Value {
     );
     if let Some(occurred) = field("occurred_at").filter(|at| Some(*at) != field("created_at")) {
         row.insert("occurred_at".into(), occurred.into());
+    }
+    if let Some(named) = &entry.row {
+        row.insert("row".into(), named.clone());
     }
     Value::Object(row)
 }
@@ -264,7 +278,7 @@ pub async fn run(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>)
                 .get("id")
                 .and_then(Value::as_str)
                 .and_then(|id| captions.get(id));
-            row(entry, caption)
+            short(entry, caption)
         })
         .collect();
     let mut answer = Map::new();
@@ -297,11 +311,13 @@ fn entries_of(page: &Value, search: bool) -> (Vec<Entry>, Option<String>) {
                                 .get("snippet_html")
                                 .and_then(Value::as_str)
                                 .map(str::to_string),
+                            row: entry.get("row").cloned(),
                         }
                     } else {
                         Entry {
                             item: entry.clone(),
                             snippet_html: None,
+                            row: None,
                         }
                     }
                 })

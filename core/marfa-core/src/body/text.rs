@@ -206,6 +206,8 @@ pub struct LinkParts {
     /// What the link names. Empty for a link to a heading of the same text.
     pub name: LinkPart,
     pub heading: Option<LinkPart>,
+    /// The row a `#^` names, in place of a heading: `[[item#^row]]`.
+    pub row: Option<LinkPart>,
     pub alias: Option<LinkPart>,
 }
 
@@ -243,8 +245,16 @@ pub fn link_parts(text: &str) -> Vec<LinkParts> {
             start: units.at(base + range.start),
             end: units.at(base + range.end),
         };
+        let (heading, row) = match parts.heading {
+            Some(range) if content[range.clone()].starts_with('^') => (
+                None,
+                Some(trimmed(content, range.start + 1..range.end)).filter(|row| !row.is_empty()),
+            ),
+            heading => (heading, None),
+        };
         let name = part(parts.name);
-        let heading = parts.heading.map(&mut part);
+        let heading = heading.map(&mut part);
+        let row = row.map(&mut part);
         let alias = parts.alias.map(&mut part);
         found.push(LinkParts {
             text: text[whole.clone()].to_string(),
@@ -253,6 +263,7 @@ pub fn link_parts(text: &str) -> Vec<LinkParts> {
             target: read_bars(&content[target], escaped).into_owned(),
             name,
             heading,
+            row,
             alias,
         });
     }
@@ -926,7 +937,7 @@ mod tests {
             (
                 "[[Plan#^block\\|Label]]",
                 "Plan#^block|Label",
-                ("Plan".to_string(), some("^block"), some("Label")),
+                ("Plan".to_string(), None, some("Label")),
             ),
             (
                 "[[ Plan \\| Label ]]",
@@ -941,6 +952,11 @@ mod tests {
                 assert_eq!(parts[0].text, cell, "the text is as written");
                 assert_eq!(parts[0].target, target);
                 assert_eq!(shown(&parts[0]), read, "{body}");
+                assert_eq!(
+                    parts[0].row.as_ref().map(|row| row.text.as_str()),
+                    target.contains('^').then_some("block"),
+                    "{body}"
+                );
                 assert_eq!(parts[0].name.text, Typed::new(&parts[0].target).name);
             }
         }

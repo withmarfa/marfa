@@ -1284,6 +1284,8 @@ pub struct LinkParts {
     /// What the link names. Empty for a link to a heading of the same text.
     pub name: LinkPart,
     pub heading: Option<LinkPart>,
+    /// The row a `#^` names, in place of a heading.
+    pub row: Option<LinkPart>,
     pub alias: Option<LinkPart>,
 }
 
@@ -1342,6 +1344,7 @@ pub fn link_parts(text: String) -> Vec<LinkParts> {
             target: link.target,
             name: link_part(link.name),
             heading: link.heading.map(link_part),
+            row: link.row.map(link_part),
             alias: link.alias.map(link_part),
         })
         .collect()

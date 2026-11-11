@@ -873,7 +873,7 @@ export interface paths {
         };
         /**
          * Search items
-         * @description Returns a page of the items you can read whose text properties or tags match `q`, best match first unless you give a `sort`. Items that tie come in ID order.
+         * @description Returns a page of the items you can read whose text or tags match `q`, and of their table rows whose searchable columns match it, best first unless you give a `sort`. A row result names the row in `row`. Ties come in item ID order.
          */
         get: operations["searchItems"];
         put?: never;
@@ -4726,14 +4726,26 @@ export interface components {
             /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
             next_cursor: string | null;
         };
-        /** @description A search result is an item that matches the query, with its metadata and how well it matches. */
+        /** @description A search result is an item that matches the query, or a row of an item's table that matches it, with the item's metadata and how well it matches. */
         SearchResult: {
             item: components["schemas"]["Item"] & unknown;
             metadata: components["schemas"]["Metadata"] & unknown;
-            /** @description How well the item matches `q`: the absolute value of its BM25 score, so higher is better. Scores depend on the items indexed, so compare them only within one search. */
+            /** @description How well the result matches `q`, from its BM25 score over the items and rows your key can read, so higher is better. Compare scores only within one search. */
             relevance_score: number;
             /** @description An excerpt of at most 32 words from the text that matches best, as escaped HTML with each matched word in `<mark>` tags and `...` where the text is cut. Absent if there is none. */
             snippet_html?: string;
+            /** @description The table row that matches, for a result that is a row. Absent for a result that matches the item's own text. */
+            row?: {
+                /** @description The table that holds the row. */
+                table: string;
+                /**
+                 * Format: uuid
+                 * @description The row's ID.
+                 */
+                id: string;
+                /** @description The searchable column `snippet_html` is drawn from. */
+                column: string;
+            };
         };
         /** @description The occurrences in a time window, with any rules Marfa couldn't apply. */
         OccurrencePage: {

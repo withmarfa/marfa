@@ -144,6 +144,41 @@ describe("a restore of an item that keeps a table", () => {
     expect(values(await rowsOf(target))).toEqual(values(sent));
   });
 
+  it("finds the rows a restore writes to an item of core.table by the columns the item marks searchable", async () => {
+    const source = working(origin);
+    const made = await source.createItem({
+      type: "core.table",
+      properties: {
+        title: "Notes",
+        columns: {
+          said: { type: "string", searchable: true },
+          aside: { type: "string" },
+        },
+      },
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    const id = made.data.item.id;
+    const written = await source.writeRows(id, "table", {
+      operations: [{ op: "put", values: { said: "heron", aside: "osprey" } }],
+    });
+    expect(written.status, JSON.stringify(written.error)).toBe(200);
+    const restored = await owner(destination).restoreArchive(
+      await archiveOf(source),
+    );
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+
+    const target = working(destination);
+    const found = async (q: string) => {
+      const res = await target.search(q);
+      expect(res.status, JSON.stringify(res.error)).toBe(200);
+      return res.data.data.flatMap((hit) => (hit.row ? [hit.row] : []));
+    };
+    expect(await found("heron")).toEqual([
+      { table: "table", id: written.data.results[0]!.id, column: "said" },
+    ]);
+    expect(await found("osprey")).toEqual([]);
+  });
+
   it("exports and restores an item of core.table whose column names a type deleted with force", async () => {
     const source = working(origin);
     const target = "user.gone";

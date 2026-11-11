@@ -12,6 +12,7 @@ use axum::body::{Body, to_bytes};
 use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use marfa_rules::conflict::copy_id;
 use marfa_server::app::App;
+use marfa_server::db::rank::tokens_of;
 use marfa_server::http::listening::{PUBLIC_HEADER_READ_TIMEOUT, Tcp};
 use marfa_server::http::{control, public, serve};
 use marfa_server::settings::{Environment, Settings};
@@ -1356,4 +1357,219 @@ async fn a_search_score_says_nothing_of_rows_the_key_cannot_read() {
     assert_eq!(worst_first.status, StatusCode::OK, "{}", worst_first.text);
     let shown = worst_first.json()["data"][0]["relevance_score"].clone();
     assert_eq!(shown, before[1]);
+}
+
+type Totals = BTreeMap<String, (i64, i64)>;
+
+/// What the kept totals say, and what counting the index itself says.
+fn search_totals(instance: &Instance) -> [(Totals, Totals); 2] {
+    let file = instance.dir.path().join("marfa.db");
+    let db = Connection::open_with_flags(file, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let read = |sql: &str| -> Totals {
+        let mut totals = Totals::new();
+        let mut statement = db.prepare(sql).unwrap();
+        let mut found = statement.query([]).unwrap();
+        while let Some(row) = found.next().unwrap() {
+            let held = totals.entry(row.get::<_, String>(0).unwrap()).or_default();
+            held.0 += row.get::<_, i64>(1).unwrap();
+            held.1 += match row.get_ref(2).unwrap() {
+                rusqlite::types::ValueRef::Blob(sizes) => tokens_of(sizes).unwrap(),
+                value => value.as_i64().unwrap(),
+            };
+        }
+        totals.retain(|_, (entries, tokens)| (*entries, *tokens) != (0, 0));
+        totals
+    };
+    [
+        (
+            read("SELECT type || ' ' || source, entries, tokens FROM items_fts_totals"),
+            read(
+                "SELECT i.type || ' ' || i.source, 1, d.sz FROM items_fts_docsize d \
+                 JOIN items i ON i.seq = d.id",
+            ),
+        ),
+        (
+            read("SELECT CAST(seq AS TEXT), indexed, indexed_tokens FROM table_summaries"),
+            read(
+                "SELECT CAST(m.table_seq AS TEXT), 1, d.sz FROM rows_fts_docsize d \
+                 JOIN row_search m ON m.seq = d.id \
+                 JOIN table_summaries s ON s.seq = m.table_seq",
+            ),
+        ),
+    ]
+}
+
+fn assert_totals_hold(instance: &Instance, step: &str) {
+    for (kept, counted) in search_totals(instance) {
+        assert_eq!(kept, counted, "after {step}");
+    }
+}
+
+#[tokio::test]
+async fn the_search_totals_follow_every_write_to_either_index() {
+    let marfa = Instance::start().await;
+    let purging = json!({ "type_permissions": { "*": "write" }, "permissions": ["items.purge"] });
+    let (_, owner) = marfa.key_with("owner", purging.clone()).await;
+    let (_, other) = marfa.key_with("other", purging).await;
+    let chat = json!({
+        "id": "user.chat",
+        "version": 1,
+        "fields": { "title": { "type": "string" } },
+        "tables": { "messages": { "columns": {
+            "text": { "type": "string", "searchable": true },
+            "aside": { "type": "string", "searchable": true },
+        } } },
+    });
+    let registered = marfa.local(Method::POST, "/types", chat.clone()).await;
+    assert_eq!(
+        registered.status,
+        StatusCode::CREATED,
+        "{}",
+        registered.text
+    );
+    let made = |token: &str, body: Value| {
+        let token = token.to_string();
+        let marfa = &marfa;
+        async move {
+            let made = marfa.call(&token, Method::POST, "/items", body).await;
+            assert_eq!(made.status, StatusCode::CREATED, "{}", made.text);
+            made.json()["item"]["id"].as_str().unwrap().to_string()
+        }
+    };
+    let note = made(
+        &owner,
+        json!({ "type": "core.note", "properties": { "body": "one two" } }),
+    )
+    .await;
+    let gone = made(
+        &other,
+        json!({ "type": "core.note", "properties": { "body": "three" } }),
+    )
+    .await;
+    let room = made(
+        &owner,
+        json!({ "type": "user.chat", "properties": { "title": "Room" } }),
+    )
+    .await;
+    assert_totals_hold(&marfa, "creates");
+
+    let path = format!("/items/{note}");
+    let edited = json!({ "properties": { "body": "one two three four" }, "version": 1 });
+    let edited = marfa.call(&owner, Method::PATCH, &path, edited).await;
+    assert_eq!(edited.status, StatusCode::OK, "{}", edited.text);
+    let tagged = json!({ "tags": ["alpha", "beta"] });
+    let tagged = marfa
+        .call(&owner, Method::POST, &format!("{path}/tags"), tagged)
+        .await;
+    assert!(tagged.status.is_success(), "{}", tagged.text);
+    let plain =
+        json!({ "id": "user.plain", "version": 1, "fields": { "body": { "type": "string" } } });
+    let plain = marfa.local(Method::POST, "/types", plain).await;
+    assert_eq!(plain.status, StatusCode::CREATED, "{}", plain.text);
+    let version = marfa.get(&owner, &path).await.json()["item"]["version"].clone();
+    let moved = json!({ "type": "user.plain", "retype": true, "version": version });
+    let moved = marfa.call(&owner, Method::PATCH, &path, moved).await;
+    assert_eq!(moved.status, StatusCode::OK, "{}", moved.text);
+    assert_totals_hold(&marfa, "an edit, tags and a retype");
+
+    let rows = format!("/items/{room}/tables/messages/rows");
+    let [a, b, c] = [(); 3].map(|()| uuid::Uuid::now_v7().to_string());
+    let put = json!({ "operations": [
+        { "op": "put", "id": a, "values": { "text": "hello there", "aside": "x" } },
+        { "op": "put", "id": b, "values": { "text": "a much longer message than the first" } },
+        { "op": "put", "id": c, "values": { "aside": "only aside" } },
+    ] });
+    let put = marfa.call(&owner, Method::POST, &rows, put).await;
+    assert_eq!(put.status, StatusCode::OK, "{}", put.text);
+    let changed = json!({ "operations": [
+        { "op": "patch", "id": a, "values": { "text": "hello" } },
+        { "op": "delete", "id": c },
+    ] });
+    let changed = marfa.call(&owner, Method::POST, &rows, changed).await;
+    assert_eq!(changed.status, StatusCode::OK, "{}", changed.text);
+    assert_totals_hold(&marfa, "row writes");
+
+    let mut narrowed = chat.clone();
+    narrowed["tables"]["messages"]["columns"]["aside"] = json!({ "type": "string" });
+    let narrowed = marfa
+        .local(Method::PUT, "/types/user.chat?force=true", narrowed)
+        .await;
+    assert_eq!(narrowed.status, StatusCode::OK, "{}", narrowed.text);
+    assert_totals_hold(&marfa, "a column taken out of search");
+
+    for (token, id) in [(&owner, &room), (&other, &gone)] {
+        let trashed = marfa
+            .call(token, Method::DELETE, &format!("/items/{id}"), json!({}))
+            .await;
+        assert_eq!(trashed.status, StatusCode::OK, "{}", trashed.text);
+    }
+    assert_totals_hold(&marfa, "trashing");
+    let restored = marfa
+        .call(
+            &owner,
+            Method::POST,
+            &format!("/items/{room}/restore"),
+            json!({}),
+        )
+        .await;
+    assert_eq!(restored.status, StatusCode::OK, "{}", restored.text);
+    let purged = marfa
+        .call(
+            &other,
+            Method::POST,
+            &format!("/items/{gone}/purge"),
+            json!({}),
+        )
+        .await;
+    assert_eq!(purged.status, StatusCode::OK, "{}", purged.text);
+    assert_totals_hold(&marfa, "a restore and a purge");
+    let [(items, _), (tables, _)] = search_totals(&marfa);
+    assert!(
+        items.keys().any(|key| key.starts_with("user.plain ")),
+        "{items:?}"
+    );
+    assert!(!tables.is_empty());
+
+    let path = format!("/items/{room}");
+    let trashed = marfa.call(&owner, Method::DELETE, &path, json!({})).await;
+    assert_eq!(trashed.status, StatusCode::OK, "{}", trashed.text);
+    let purged = marfa
+        .call(&owner, Method::POST, &format!("{path}/purge"), json!({}))
+        .await;
+    assert_eq!(purged.status, StatusCode::OK, "{}", purged.text);
+    assert_totals_hold(&marfa, "purging an item with rows");
+}
+
+#[tokio::test]
+async fn a_key_reading_part_of_the_instance_searches_words_that_hold_no_letters() {
+    let marfa = Instance::start().await;
+    let (_, reader) = marfa.key("notes", json!({ "core.note": "write" })).await;
+    let (_, other) = marfa.key("tasks", json!({ "core.task": "write" })).await;
+    for (token, body) in [(&reader, "plain words here"), (&other, "plain words there")] {
+        let kind = if *token == reader {
+            "core.note"
+        } else {
+            "core.task"
+        };
+        let made = json!({ "type": kind, "properties": { "title": body, "body": body } });
+        let made = marfa.call(token, Method::POST, "/items", made).await;
+        assert_eq!(made.status, StatusCode::CREATED, "{}", made.text);
+    }
+    for q in [
+        "plain",
+        "plain - words",
+        "- plain",
+        "plain words ---",
+        "\u{1F600} plain",
+    ] {
+        let path = format!("/search?q={}", urlencoding(q));
+        let found = marfa.get(&reader, &path).await;
+        assert_eq!(found.status, StatusCode::OK, "{q}: {}", found.text);
+        let hits = found.json()["data"].as_array().unwrap().len();
+        assert_eq!(hits, 1, "{q}: {}", found.text);
+    }
+}
+
+fn urlencoding(text: &str) -> String {
+    form_urlencoded::byte_serialize(text.as_bytes()).collect()
 }

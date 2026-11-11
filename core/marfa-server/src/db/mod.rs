@@ -2,6 +2,7 @@
 
 pub mod migrate;
 mod open;
+pub mod rank;
 mod reader;
 mod schema;
 #[cfg(test)]

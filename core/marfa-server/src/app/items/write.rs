@@ -8,6 +8,7 @@ use marfa_rules::conflict::{
     self, Detection, ItemFields, MergePolicy, Precondition, Stale, Strategy,
 };
 use marfa_rules::error::RuleError;
+use marfa_rules::schema::keeps_own_table;
 use marfa_rules::{number, validation};
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
@@ -1344,13 +1345,6 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             edges::judge_retype(&self.edge_writing(), row, resulting, replaced)?;
             instance::raise_reach(self.unit.tx())?;
             rows::retype_marks(self.unit.tx(), &row.id, resulting)?;
-            crate::app::tables::reorder_item(
-                self.unit.tx(),
-                &self.catalog,
-                row.seq,
-                resulting,
-                &self.unit.at,
-            )?;
         }
         let decided = self.referenced(
             Some(Referencing::Item(row.seq)),
@@ -1361,6 +1355,16 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 ..Naming::default()
             },
         )?;
+        if resulting != row.type_id || keeps_own_table(&self.catalog.types, resulting) {
+            crate::app::tables::rekey_item(
+                self.unit.tx(),
+                &self.catalog,
+                row.seq,
+                resulting,
+                &settled.properties,
+                &self.unit.at,
+            )?;
+        }
         let item = self.land(row, resulting, &settled)?;
         decided.apply(self.unit.tx(), Referencing::Item(item.seq))?;
         if let Some(tags) = &writing.tags {

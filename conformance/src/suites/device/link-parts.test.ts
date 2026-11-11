@@ -72,7 +72,7 @@ describe("a link's parts", () => {
     ]);
     for (const link of found) {
       expect(text.slice(link.start, link.end)).toBe(link.text);
-      for (const part of [link.name, link.heading, link.alias]) {
+      for (const part of [link.name, link.heading, link.row, link.alias]) {
         if (part !== null)
           expect(text.slice(part.start, part.end)).toBe(part.text);
       }
@@ -104,6 +104,34 @@ describe("a link's parts", () => {
       heading: null,
       alias: { text: "C# notes" },
     });
+  });
+
+  it("reads a heading that begins with a caret as the row the link names", async () => {
+    harness = await startHarness("link-parts-row");
+    const row = "019a6f3e-7b1c-7d2e-8f00-0123456789ab";
+    const text = `[[Chat#^${row}]] [[Chat# ^ ${row} |the message]] [[#^${row}]] [[Chat#Goals]] [[Chat#^]]`;
+    const found = await parts(harness.device, text);
+    expect(found[0]).toMatchObject({
+      name: { text: "Chat" },
+      heading: null,
+      row: { text: row },
+      alias: null,
+    });
+    expect(found[1]).toMatchObject({
+      name: { text: "Chat" },
+      heading: null,
+      row: { text: row },
+      alias: { text: "the message" },
+    });
+    expect(text.slice(found[1].row!.start, found[1].row!.end)).toBe(row);
+    expect(found[2]).toMatchObject({
+      name: { text: "" },
+      heading: null,
+      row: { text: row },
+    });
+    // The witness: a heading without the caret stays a heading.
+    expect(found[3]).toMatchObject({ heading: { text: "Goals" }, row: null });
+    expect(found[4]).toMatchObject({ heading: null, row: null });
   });
 
   it("reads a link in code, a comment or an embed as text", async () => {
@@ -203,7 +231,7 @@ describe("a link's parts", () => {
       ]);
       for (const link of found) {
         expect(text.slice(link.start, link.end)).toBe(link.text);
-        for (const part of [link.name, link.heading, link.alias]) {
+        for (const part of [link.name, link.heading, link.row, link.alias]) {
           if (part) expect(text.slice(part.start, part.end)).toBe(part.text);
         }
       }

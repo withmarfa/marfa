@@ -160,6 +160,11 @@ CREATE TABLE IF NOT EXISTS table_summaries (
     changed_at TEXT NOT NULL,
     -- The `<kind>:<column>` every row's `ord` is the key of; NULL while none or while it is rebuilt.
     ordered_by TEXT,
+    -- The searchable columns `rows_fts` holds every row by, joined by commas; NULL while rebuilt.
+    searched_by TEXT,
+    -- The table's `rows_fts` entries and their length in tokens, kept by `row_search`'s triggers.
+    indexed INTEGER NOT NULL DEFAULT 0 CHECK (indexed >= 0),
+    indexed_tokens INTEGER NOT NULL DEFAULT 0 CHECK (indexed_tokens >= 0),
     UNIQUE (item_seq, table_name)
 ) STRICT;
 
@@ -183,6 +188,40 @@ CREATE INDEX IF NOT EXISTS table_rows_ordered ON table_rows (table_seq, ord) WHE
 CREATE TABLE IF NOT EXISTS table_rows_reordering (
     table_seq INTEGER PRIMARY KEY,
     target TEXT,
+    after_id TEXT
+) STRICT;
+
+-- Column c<n> holds the nth searchable column in name order; rowid is row_search.seq.
+CREATE VIRTUAL TABLE IF NOT EXISTS rows_fts USING fts5(
+    c0, c1, c2, c3, c4, c5, c6, c7,
+    tokenize = 'porter unicode61'
+);
+
+CREATE TABLE IF NOT EXISTS row_search (
+    seq INTEGER PRIMARY KEY,
+    table_seq INTEGER NOT NULL,
+    id TEXT NOT NULL,
+    tokens INTEGER NOT NULL DEFAULT 0 CHECK (tokens >= 0),
+    UNIQUE (table_seq, id)
+) STRICT;
+
+CREATE TRIGGER IF NOT EXISTS row_search_added AFTER INSERT ON row_search BEGIN
+    UPDATE table_summaries SET indexed = indexed + 1, indexed_tokens = indexed_tokens + NEW.tokens
+    WHERE seq = NEW.table_seq;
+END;
+CREATE TRIGGER IF NOT EXISTS row_search_removed AFTER DELETE ON row_search BEGIN
+    UPDATE table_summaries SET indexed = indexed - 1, indexed_tokens = indexed_tokens - OLD.tokens
+    WHERE seq = OLD.table_seq;
+END;
+CREATE TRIGGER IF NOT EXISTS row_search_resized AFTER UPDATE OF tokens ON row_search BEGIN
+    UPDATE table_summaries SET indexed_tokens = indexed_tokens - OLD.tokens + NEW.tokens
+    WHERE seq = NEW.table_seq;
+END;
+
+-- Tables whose `rows_fts` entries `table-row-cleanup` brings to `target`, a page at a time.
+CREATE TABLE IF NOT EXISTS table_rows_reindexing (
+    table_seq INTEGER PRIMARY KEY,
+    target TEXT NOT NULL,
     after_id TEXT
 ) STRICT;
 
@@ -374,6 +413,46 @@ CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
     title, body, description, name, extra, tags,
     tokenize = 'porter unicode61'
 );
+
+-- Each `items_fts` entry's length in tokens, summed by type and source in `items_fts_totals`.
+CREATE TABLE IF NOT EXISTS items_fts_sizes (
+    seq INTEGER PRIMARY KEY,
+    type TEXT NOT NULL,
+    source TEXT NOT NULL,
+    tokens INTEGER NOT NULL CHECK (tokens >= 0)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS items_fts_totals (
+    type TEXT NOT NULL,
+    source TEXT NOT NULL,
+    entries INTEGER NOT NULL CHECK (entries >= 0),
+    tokens INTEGER NOT NULL CHECK (tokens >= 0),
+    PRIMARY KEY (type, source)
+) STRICT, WITHOUT ROWID;
+
+CREATE TRIGGER IF NOT EXISTS items_fts_sized AFTER INSERT ON items_fts_sizes BEGIN
+    INSERT INTO items_fts_totals (type, source, entries, tokens)
+    VALUES (NEW.type, NEW.source, 1, NEW.tokens)
+    ON CONFLICT (type, source) DO UPDATE
+    SET entries = entries + 1, tokens = tokens + excluded.tokens;
+END;
+CREATE TRIGGER IF NOT EXISTS items_fts_unsized AFTER DELETE ON items_fts_sizes BEGIN
+    UPDATE items_fts_totals SET entries = entries - 1, tokens = tokens - OLD.tokens
+    WHERE type = OLD.type AND source = OLD.source;
+END;
+CREATE TRIGGER IF NOT EXISTS items_fts_resized AFTER UPDATE ON items_fts_sizes BEGIN
+    UPDATE items_fts_totals SET entries = entries - 1, tokens = tokens - OLD.tokens
+    WHERE type = OLD.type AND source = OLD.source;
+    INSERT INTO items_fts_totals (type, source, entries, tokens)
+    VALUES (NEW.type, NEW.source, 1, NEW.tokens)
+    ON CONFLICT (type, source) DO UPDATE
+    SET entries = entries + 1, tokens = tokens + excluded.tokens;
+END;
+CREATE TRIGGER IF NOT EXISTS items_fts_moved AFTER UPDATE OF type, source ON items
+WHEN NEW.type IS NOT OLD.type OR NEW.source IS NOT OLD.source
+BEGIN
+    UPDATE items_fts_sizes SET type = NEW.type, source = NEW.source WHERE seq = NEW.seq;
+END;
 
 -- The rows whose indexed text a write may have changed. The item write function
 -- empties this as its last step, in the same transaction, so a write cannot
