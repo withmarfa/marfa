@@ -2619,7 +2619,7 @@ If a request carries a live browser session's token under a cookie name other th
 
 If `POST /auth/sign-in` or `POST /auth/passkeys/sign-in` carries neither `Origin` nor `Referer`, then the server MUST answer `403 forbidden`.
 
-**Reason:** Sign-in form posts must say where they came from, because a door that opens a browser session takes a post only from a page of this instance.
+**Reason:** A door that opens a browser session takes a post, as a form or as JSON, only from a page it trusts, so a post that does not say where it came from is refused.
 
 **Tests:** `compliance/sign-in-surface.test.ts › refuses a sign-in that says neither Origin nor Referer, as a form or as JSON, and sets no cookie`, `compliance/passkeys.test.ts › refuses a passkey sign-in that says neither Origin nor Referer, and opens no session`.
 

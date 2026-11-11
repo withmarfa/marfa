@@ -35,7 +35,7 @@ pub(super) fn refuse_elsewhere(source: Source) -> Result<(), Refusal> {
     }
 }
 
-/// A door that opens a browser session needs `Origin` or `Referer` to name this instance.
+/// A door that opens a browser session needs `Origin` or `Referer` to name a form origin.
 pub(super) fn require_own_page(app: &App, headers: &HeaderMap) -> Result<(), Refusal> {
     match origin::said_by_form(headers, &form_origins(app)) {
         Source::Own => Ok(()),
