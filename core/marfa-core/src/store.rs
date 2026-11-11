@@ -5799,7 +5799,8 @@ const SELF_CLEARING: [&str; 2] = [
 
 /// The released row goes out under a fresh key; the spent one is kept so a
 /// late answer under it is not taken for an answer to the new attempt. A row
-/// write instead releases every write of its batch, to go again as it went.
+/// write or an undo keeps its key unless blocked `key_spent`, and a row write
+/// releases every write of its batch, to go again as it went.
 pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     let Some((verdict, reason, kind, sent)) = conn
         .query_row(
@@ -5854,10 +5855,10 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
             [write],
         )?;
     }
-    // A row batch whose answer is unknown may be held under its key, and only
-    // that key keeps the server from writing it twice. `key_spent` says the
-    // server holds another request under it, so none of this one.
-    let rows = kind == WriteKind::WriteRows.as_str();
+    // A row batch or an undo whose answer is unknown may be held under its key,
+    // and only that key keeps the server from applying it twice. `key_spent`
+    // says the server holds another request under it, so none of this one.
+    let rows = kind.parse::<WriteKind>()?.rows();
     if !rows || reason.as_deref() == Some(BlockedReason::KeySpent.as_str()) {
         crate::row_writes::spend_key(conn, &batch[0])?;
     }

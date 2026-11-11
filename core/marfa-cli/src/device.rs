@@ -293,7 +293,8 @@ pub enum DeviceCommand {
     /// A write blocked `awaiting_dependency` is released only by the answer
     /// to the write it waits behind, never by this command. A row write goes
     /// again with every write sent in its batch, as they went, under the
-    /// batch's key unless it was blocked `key_spent`.
+    /// batch's key, and an undo under its own key, unless it was blocked
+    /// `key_spent`.
     Release {
         /// The queued write to release.
         #[arg(
@@ -2016,7 +2017,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     "nothing to release: a write is released only where it is blocked, dead or refused unsent, and never while it waits behind another write"
                         .into()
                 } else {
-                    format!("released {released} write(s), each under a fresh key")
+                    format!("released {released} write(s)")
                 }
             })
         }
