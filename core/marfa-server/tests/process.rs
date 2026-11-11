@@ -142,7 +142,7 @@ fn a_refused_start_names_each_setting_and_leaves_nothing_behind() {
     let secret = "a-secret-with-spaces-around-it";
     let output = program(dir.path())
         .env("MARFA_PORT", "not-a-port")
-        .env("MARFA_WRITE_WAIT_MS", "soon")
+        .env("MARFA_MAX_CONNECTIONS", "soon")
         .env("MARFA_AUTH_SECRET", format!(" {secret} "))
         .stderr(Stdio::piped())
         .output()
@@ -153,7 +153,7 @@ fn a_refused_start_names_each_setting_and_leaves_nothing_behind() {
     let record: serde_json::Value = serde_json::from_str(printed.trim()).unwrap();
     let said = record["error"].as_str().unwrap();
     let line_of = |name: &str| said.lines().position(|line| line.contains(name));
-    let (port, budget) = (line_of("MARFA_PORT"), line_of("MARFA_WRITE_WAIT_MS"));
+    let (port, budget) = (line_of("MARFA_PORT"), line_of("MARFA_MAX_CONNECTIONS"));
     assert!(
         port.is_some() && budget.is_some() && port != budget,
         "{said}"

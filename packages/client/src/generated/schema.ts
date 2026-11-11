@@ -3117,7 +3117,7 @@ export interface components {
                  */
                 status: "ok" | "failing" | "off";
                 /**
-                 * @description Why backups are `off`: `no_bucket` when the instance has no object store, `turned_off` when `backup_interval_ms` is 0.
+                 * @description Why backups are `off`: `no_bucket` when the instance has no object store, `turned_off` when `backup_interval_seconds` is 0.
                  * @enum {string}
                  */
                 reason?: "no_bucket" | "turned_off";
@@ -17762,7 +17762,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description - `request_timeout`: no bytes arrived for 60 seconds, or for the time `MARFA_UPLOAD_IDLE_TIMEOUT_MS` sets. Marfa stores nothing. An upload has no other time limit while bytes keep arriving. */
+            /** @description - `request_timeout`: no bytes arrived for 60 seconds. Marfa stores nothing. An upload has no other time limit while bytes keep arriving. */
             408: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -29868,6 +29868,8 @@ export interface operations {
                         settings_added: number;
                         /** @description How many settings Marfa skipped because the instance already stores them. */
                         settings_skipped: number;
+                        /** @description The names of the settings the archive carried that this instance does not have. Marfa left them out and stored nothing for them. */
+                        settings_dropped: string[];
                         /** @description How many connector state documents Marfa stored, for sources the instance held none for. */
                         connector_states_added: number;
                         /** @description How many connector state documents Marfa skipped because the instance already holds one for the source. */
@@ -29925,7 +29927,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description - `request_timeout`: no bytes of the archive arrived for 60 seconds, or for the time `MARFA_UPLOAD_IDLE_TIMEOUT_MS` sets. Nothing was written. An upload has no other time limit while bytes keep arriving. */
+            /** @description - `request_timeout`: no bytes of the archive arrived for 60 seconds. Nothing was written. An upload has no other time limit while bytes keep arriving. */
             408: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -30343,6 +30345,8 @@ export interface operations {
                         settings_added: number;
                         /** @description How many settings Marfa skipped because the instance already stores them. */
                         settings_skipped: number;
+                        /** @description The names of the settings the archive carried that this instance does not have. Marfa left them out and stored nothing for them. */
+                        settings_dropped: string[];
                         /** @description How many connector state documents Marfa stored, for sources the instance held none for. */
                         connector_states_added: number;
                         /** @description How many connector state documents Marfa skipped because the instance already holds one for the source. */

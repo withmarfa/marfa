@@ -19,7 +19,7 @@ let server: FreshServer | undefined;
 beforeAll(async () => {
   server = await bootFreshServer("audit-server-writes", {
     ...QUIET_SCHEDULE,
-    MARFA_BLOB_CLEANUP_GRACE_MS: "0",
+    MARFA_BLOB_CLEANUP_GRACE_SECONDS: "0",
   });
 }, FRESH_SERVER_TIMEOUT_MS);
 

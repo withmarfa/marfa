@@ -16,7 +16,6 @@ use crate::settings::Snapshot;
 use crate::settings::registry::{
     INBOUND_BACKLOG_BYTES, INBOUND_BACKLOG_DELIVERIES, INBOUND_MAX_BYTES, INBOUND_RETAINED_BYTES,
     INBOUND_RETAINED_DELIVERIES, RATE_LIMIT_ENABLED, RATE_LIMIT_INBOUND_REQUESTS,
-    RATE_LIMIT_WINDOW_MS,
 };
 
 const RETRY_AFTER_SECONDS: i64 = 60;
@@ -171,7 +170,7 @@ fn spend_window(app: &App, endpoint_id: &str, live: &Snapshot) -> Result<()> {
         INBOUND_DELIVERIES,
         endpoint_id,
         live.get(RATE_LIMIT_INBOUND_REQUESTS),
-        live.get(RATE_LIMIT_WINDOW_MS),
+        live.rate_limit_window_ms(),
     );
     match app.limiter.admit(app.clock.now_ms(), &[lane]) {
         None => Ok(()),

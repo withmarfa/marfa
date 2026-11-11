@@ -53,10 +53,6 @@ pub const DECLARED: &[Declared] = &[
     ),
     plain("MARFA_DATABASE_PATH", "Where the database is."),
     plain(
-        "MARFA_WRITE_WAIT_MS",
-        "How long a write waits for the one writer before it fails, in milliseconds.",
-    ),
-    plain(
         "MARFA_MAX_CONNECTIONS",
         "The most connections the public listener holds open at once.",
     ),
@@ -104,10 +100,6 @@ pub const DECLARED: &[Declared] = &[
     secret(
         "MARFA_ERROR_WEBHOOK_URL",
         "Where a notice of a server error is sent.",
-    ),
-    plain(
-        "MARFA_ERROR_WEBHOOK_TIMEOUT_MS",
-        "How long a notice of a server error may take to send, in milliseconds.",
     ),
     secret("MARFA_HEARTBEAT_URL", "Where the heartbeat is sent."),
     plain(
@@ -158,6 +150,10 @@ pub const DECLARED: &[Declared] = &[
     hook(
         "MARFA_TEST_CONTRACT_VERSION",
         "Sets the contract version the server reports.",
+    ),
+    hook(
+        "MARFA_TEST_TUNING",
+        "Shortens timings and batches the server otherwise fixes, as comma-separated name=value pairs.",
     ),
 ];
 

@@ -20,10 +20,15 @@ use super::clock::Stamp;
 use super::refusal::{Code, Refusal, Result};
 use super::{App, config, stored};
 use crate::db::Write;
-use crate::settings::registry::{Setting, Snapshot};
+use crate::settings::registry::Setting;
 
 pub use cleanups::{drain, report_kept};
 use jobs::JOBS;
+
+/// The names of the jobs the server runs.
+pub fn job_names() -> Vec<&'static str> {
+    JOBS.iter().map(|job| job.name).collect()
+}
 
 pub const HOUR_MS: i64 = 3_600_000;
 pub const DAY_MS: i64 = 86_400_000;
@@ -35,15 +40,16 @@ type Body = fn(Arc<App>, Run) -> Pin<Box<dyn Future<Output = Result<Report>> + S
 
 #[derive(Clone, Copy)]
 enum Interval {
+    /// A setting the owner changes, in seconds.
     Stored(Setting<u64>),
     Fixed(u64),
 }
 
 impl Interval {
-    fn ms(self, live: &Snapshot) -> u64 {
+    fn ms(self, name: &str, app: &App) -> u64 {
         match self {
-            Interval::Stored(setting) => live.get(setting),
-            Interval::Fixed(ms) => ms,
+            Interval::Stored(setting) => app.settings.live().get(setting).saturating_mul(1_000),
+            Interval::Fixed(ms) => app.settings.start.tuning.interval_ms(name, ms),
         }
     }
 }
@@ -60,7 +66,7 @@ pub struct Job {
 }
 
 impl Job {
-    const fn new(
+    const fn stored(
         name: &'static str,
         interval: Setting<u64>,
         first_run_ms: u64,
@@ -76,7 +82,7 @@ impl Job {
         )
     }
 
-    const fn fixed(
+    const fn new(
         name: &'static str,
         interval_ms: u64,
         first_run_ms: u64,
@@ -289,7 +295,7 @@ pub fn start(app: &Arc<App>) {
 fn listed(app: &App, job: &Job, row: &schedule::Row) -> Value {
     json!({
         "name": job.name,
-        "interval_ms": job.interval.ms(&app.settings.live()),
+        "interval_ms": job.interval.ms(job.name, app),
         "next_run_at": schedule::readable(&row.next_run_at).then_some(&row.next_run_at),
         "running_since": row.running_since,
         "last_started_at": row.last_started_at,

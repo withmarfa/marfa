@@ -31,14 +31,14 @@ impl Instance {
         let database = dir.path().join("marfa.db");
         let blobs = dir.path().join("blobs");
         let socket = dir.path().join("s.sock");
-        let idle = IDLE_MS.to_string();
+        let idle = format!("blob_read_idle_ms={IDLE_MS}");
         let pairs = [
             ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
             ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
             ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
             ("MARFA_TEST_HOOKS", "true"),
             ("MARFA_RATE_LIMIT_ENABLED", "false"),
-            ("MARFA_BLOB_READ_IDLE_TIMEOUT_MS", idle.as_str()),
+            ("MARFA_TEST_TUNING", idle.as_str()),
         ];
         let settings = Settings::read(Environment::from_pairs(&pairs)).unwrap();
         let app = App::start(settings).await.unwrap();

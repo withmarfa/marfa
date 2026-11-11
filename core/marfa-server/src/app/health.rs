@@ -14,7 +14,7 @@ use super::refusal::{Code, Refusal};
 use super::stored;
 use crate::db::{Write, volume};
 
-const PROBE_KEY: &str = "health_probe";
+pub(super) const PROBE_KEY: &str = "health_probe";
 const PROBE_WAIT: Duration = Duration::from_secs(2);
 const WRITE_REUSE: Duration = Duration::from_secs(10);
 const DISK_DOWN_BELOW: u64 = 1024 * 1024;

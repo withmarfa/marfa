@@ -4,116 +4,73 @@ use super::super::backups;
 use super::super::blobs::upkeep;
 use super::super::{enrichment, inbound, items, jobs, tables};
 use super::{Job, cleanups, heartbeat};
-use crate::settings::registry::{
-    AUDIT_CLEANUP_INTERVAL_MS, BACKUP_INTERVAL_MS, BLOB_CLEANUP_INTERVAL_MS,
-    BLOB_INTEGRITY_INTERVAL_MS, BLOB_REPLICATE_INTERVAL_MS, CREDENTIAL_CLEANUP_INTERVAL_MS,
-    ENRICHMENT_INTERVAL_MS, EVENT_LOG_CLEANUP_INTERVAL_MS, FEED_EXPIRY_INTERVAL_MS,
-    HEARTBEAT_INTERVAL_MS, INBOUND_CLEANUP_INTERVAL_MS, TRASH_PURGE_INTERVAL_MS,
-    VERSION_THINNING_INTERVAL_MS,
-};
+use crate::settings::registry::BACKUP_INTERVAL_SECONDS;
 
 const HOUR: Duration = Duration::from_secs(3_600);
-const HOUR_MS: u64 = 3_600_000;
 const SIX_HOURS: Duration = Duration::from_secs(6 * 3_600);
 const HEARTBEAT_DEADLINE: Duration = Duration::from_secs(30);
 
+const MINUTE_MS: u64 = 60_000;
+const HOUR_MS: u64 = 3_600_000;
+const DAY_MS: u64 = 86_400_000;
+
 pub(super) const JOBS: &[Job] = &[
-    Job::new(
-        "heartbeat",
-        HEARTBEAT_INTERVAL_MS,
-        0,
-        HEARTBEAT_DEADLINE,
-        |app, run| Box::pin(heartbeat::beat(app, run)),
-    )
+    Job::new("heartbeat", MINUTE_MS, 0, HEARTBEAT_DEADLINE, |app, run| {
+        Box::pin(heartbeat::beat(app, run))
+    })
     .switched_by(heartbeat::configured)
     .without_statements(),
-    Job::new(
-        "enrichment-sweep",
-        ENRICHMENT_INTERVAL_MS,
-        30_000,
-        HOUR,
-        |app, run| Box::pin(enrichment::sweep(app, run)),
-    ),
-    Job::new(
-        "audit-cleanup",
-        AUDIT_CLEANUP_INTERVAL_MS,
-        5_000,
-        HOUR,
-        |app, run| Box::pin(cleanups::audit(app, run)),
-    ),
-    Job::new(
-        "trash-purge",
-        TRASH_PURGE_INTERVAL_MS,
-        5_000,
-        HOUR,
-        |app, run| Box::pin(items::sweep::trash_purge(app, run)),
-    ),
-    Job::new(
-        "version-thinning",
-        VERSION_THINNING_INTERVAL_MS,
-        5_000,
-        SIX_HOURS,
-        |app, run| Box::pin(items::thinning::version_thinning(app, run)),
-    ),
-    Job::new(
-        "feed-expiry",
-        FEED_EXPIRY_INTERVAL_MS,
-        5_000,
-        SIX_HOURS,
-        |app, run| Box::pin(items::expiry::feed_expiry(app, run)),
-    ),
-    Job::new(
-        "event-log-cleanup",
-        EVENT_LOG_CLEANUP_INTERVAL_MS,
-        10_000,
-        HOUR,
-        |app, run| Box::pin(cleanups::event_log(app, run)),
-    ),
+    Job::new("enrichment-sweep", 30_000, 30_000, HOUR, |app, run| {
+        Box::pin(enrichment::sweep(app, run))
+    }),
+    Job::new("audit-cleanup", DAY_MS, 5_000, HOUR, |app, run| {
+        Box::pin(cleanups::audit(app, run))
+    }),
+    Job::new("trash-purge", DAY_MS, 5_000, HOUR, |app, run| {
+        Box::pin(items::sweep::trash_purge(app, run))
+    }),
+    Job::new("version-thinning", HOUR_MS, 5_000, SIX_HOURS, |app, run| {
+        Box::pin(items::thinning::version_thinning(app, run))
+    }),
+    Job::new("feed-expiry", HOUR_MS, 5_000, SIX_HOURS, |app, run| {
+        Box::pin(items::expiry::feed_expiry(app, run))
+    }),
+    Job::new("event-log-cleanup", HOUR_MS, 10_000, HOUR, |app, run| {
+        Box::pin(cleanups::event_log(app, run))
+    }),
     Job::new(
         "inbound-delivery-cleanup",
-        INBOUND_CLEANUP_INTERVAL_MS,
+        MINUTE_MS,
         15_000,
         HOUR,
         |app, run| Box::pin(inbound::delivery_cleanup(app, run)),
     ),
-    Job::fixed("bulk-action-gc", HOUR_MS, 30_000, HOUR, |app, run| {
+    Job::new("bulk-action-gc", HOUR_MS, 30_000, HOUR, |app, run| {
         Box::pin(jobs::gc(app, run))
     }),
-    Job::fixed("table-row-cleanup", HOUR_MS, 30_000, HOUR, |app, run| {
+    Job::new("table-row-cleanup", HOUR_MS, 30_000, HOUR, |app, run| {
         Box::pin(tables::cleanup(app, run))
     }),
-    Job::new(
-        "credential-cleanup",
-        CREDENTIAL_CLEANUP_INTERVAL_MS,
-        20_000,
-        HOUR,
-        |app, run| Box::pin(cleanups::credentials(app, run)),
-    ),
-    Job::new(
-        "blob-replicate",
-        BLOB_REPLICATE_INTERVAL_MS,
+    Job::new("credential-cleanup", HOUR_MS, 20_000, HOUR, |app, run| {
+        Box::pin(cleanups::credentials(app, run))
+    }),
+    Job::new("blob-replicate", MINUTE_MS, 5_000, HOUR, |app, run| {
+        Box::pin(upkeep::replicate(app, run))
+    }),
+    Job::new("blob-orphans", DAY_MS, 30_000, HOUR, |app, run| {
+        Box::pin(upkeep::orphans(app, run))
+    })
+    .switched_by(upkeep::sweeps),
+    Job::new("blob-integrity", HOUR_MS, 60_000, HOUR, |app, run| {
+        Box::pin(upkeep::integrity(app, run))
+    }),
+    Job::stored(
+        "backup",
+        BACKUP_INTERVAL_SECONDS,
         5_000,
         HOUR,
-        |app, run| Box::pin(upkeep::replicate(app, run)),
-    ),
-    Job::new(
-        "blob-orphans",
-        BLOB_CLEANUP_INTERVAL_MS,
-        30_000,
-        HOUR,
-        |app, run| Box::pin(upkeep::orphans(app, run)),
+        |app, run| Box::pin(backups::job(app, run)),
     )
-    .switched_by(upkeep::sweeps),
-    Job::new(
-        "blob-integrity",
-        BLOB_INTEGRITY_INTERVAL_MS,
-        60_000,
-        HOUR,
-        |app, run| Box::pin(upkeep::integrity(app, run)),
-    ),
-    Job::new("backup", BACKUP_INTERVAL_MS, 5_000, HOUR, |app, run| {
-        Box::pin(backups::job(app, run))
-    })
     .switched_by(backups::scheduled),
 ];
 

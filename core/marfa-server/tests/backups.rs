@@ -41,8 +41,8 @@ impl Instance {
     async fn backing_up_to(store: &FakeS3) -> Instance {
         let mut more = store.settings("marfa", "backups-test");
         more.push((
-            "MARFA_BACKUP_INTERVAL_MS".to_string(),
-            "31536000000".to_string(),
+            "MARFA_BACKUP_INTERVAL_SECONDS".to_string(),
+            "31536000".to_string(),
         ));
         let more: Vec<(&str, &str)> = more
             .iter()
@@ -312,7 +312,7 @@ async fn a_row_or_a_setting_moves_the_change_count_and_the_health_probe_does_not
         .local(
             Method::PATCH,
             "/config",
-            Some(json!({ "backup_interval_ms": 7_200_000 })),
+            Some(json!({ "backup_interval_seconds": 7_200 })),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");

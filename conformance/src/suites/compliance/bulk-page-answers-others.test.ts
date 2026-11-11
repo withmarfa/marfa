@@ -31,8 +31,7 @@ let server: FreshServer;
 
 beforeAll(async () => {
   server = await bootFreshServer("bulk-page-answers-others", {
-    MARFA_WRITE_WAIT_MS: String(BUDGET_MS),
-    MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: SCHEDULER_NEVER_POLLS_MS,
+    MARFA_TEST_TUNING: `write_wait_ms=${String(BUDGET_MS)},housekeeping_poll_ms=${SCHEDULER_NEVER_POLLS_MS}`,
     MARFA_RATE_LIMIT_ENABLED: "true",
     MARFA_RATE_LIMIT_REQUESTS: "1000000",
     MARFA_RATE_LIMIT_KEYS_REQUESTS: "1000",

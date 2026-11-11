@@ -7,6 +7,7 @@ mod secrets;
 pub mod start;
 pub mod start_only;
 pub mod together;
+pub mod tuning;
 
 use std::fmt;
 use std::sync::Arc;
@@ -392,10 +393,10 @@ mod tests {
     #[test]
     fn names_every_bad_setting_on_its_own_line() {
         assert_eq!(
-            refused(&[("MARFA_PORT", "70000"), ("MARFA_WRITE_WAIT_MS", "soon")]),
+            refused(&[("MARFA_PORT", "70000"), ("MARFA_MAX_CONNECTIONS", "soon")]),
             [
                 r#"MARFA_PORT must be a whole number, from 0 to 65535 (got "70000")"#,
-                r#"MARFA_WRITE_WAIT_MS must be a whole number, from 0 to 86400000 (got "soon")"#,
+                r#"MARFA_MAX_CONNECTIONS must be a whole number, from 1 to 1000000 (got "soon")"#,
             ]
         );
     }
@@ -504,5 +505,21 @@ mod tests {
             refused(&[("MARFA_TEST_CLOCK_OFFSET_MS", "3600000")]),
             [r#"MARFA_TEST_CLOCK_OFFSET_MS needs MARFA_TEST_HOOKS to be true (got "3600000")"#]
         );
+        assert_eq!(
+            refused(&[("MARFA_TEST_TUNING", "upload_idle_ms=200")]),
+            [r#"MARFA_TEST_TUNING needs MARFA_TEST_HOOKS to be true (got "upload_idle_ms=200")"#]
+        );
+    }
+
+    #[test]
+    fn under_hooks_the_tuning_shortens_a_fixed_timing_and_refuses_one_the_server_lacks() {
+        let tuned = opened(&[HOOKS, ("MARFA_TEST_TUNING", "upload_idle_ms=200")]);
+        assert_eq!(
+            tuned.start.tuning.upload_idle,
+            std::time::Duration::from_millis(200)
+        );
+        let lines = refused(&[HOOKS, ("MARFA_TEST_TUNING", "interval.nothing=5")]);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].starts_with("MARFA_TEST_TUNING "), "{lines:?}");
     }
 }

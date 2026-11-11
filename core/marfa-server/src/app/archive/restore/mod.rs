@@ -331,6 +331,7 @@ impl App {
                             "sources_skipped_reasons": named.reasons,
                             "settings_added": settings_added,
                             "settings_skipped": settings_skipped,
+                            "settings_dropped": registrations.dropped_settings,
                             "connector_states_added": states.added,
                             "connector_states_skipped": states.skipped,
                             "connector_agreements_added": agreements.added,

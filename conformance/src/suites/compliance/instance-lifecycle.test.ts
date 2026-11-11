@@ -458,12 +458,6 @@ describe("starting with a setting outside its rule", () => {
   // One step outside each rule, for a kind of rule apiece.
   const OUTSIDE: [string, string, string, string][] = [
     [
-      "MARFA_CONNECTOR_HOLD_MS",
-      "a count below its minimum",
-      "999",
-      'MARFA_CONNECTOR_HOLD_MS must be a whole number, from 1000 to 3600000 (got "999")',
-    ],
-    [
       "MARFA_AUDIT_RETENTION_DAYS",
       "a count above its maximum",
       "36501",
@@ -502,7 +496,6 @@ describe("starting with a setting outside its rule", () => {
     "starts with each of those settings one step inside its rule and each cross-field rule at its edge",
     async () => {
       const server = await bootFreshServer("lifecycle-settings-edge", {
-        MARFA_CONNECTOR_HOLD_MS: "1000",
         MARFA_AUDIT_RETENTION_DAYS: "36500",
         MARFA_EVENT_LOG_RETENTION_HOURS: "0",
         MARFA_ENRICHMENT_ENABLED: "OFF",
@@ -555,12 +548,12 @@ describe("starting with a setting outside its rule", () => {
 
       const lines = await refusedOverSettings({
         S3_SECRET_ACCESS_KEY: ` ${secret} `,
-        MARFA_CONNECTOR_HOLD_MS: "999",
+        MARFA_AUDIT_RETENTION_DAYS: "36501",
       });
 
       expect([...lines].sort()).toEqual(
         [
-          'MARFA_CONNECTOR_HOLD_MS must be a whole number, from 1000 to 3600000 (got "999")',
+          'MARFA_AUDIT_RETENTION_DAYS must be a whole number, from 0 to 36500 (got "36501")',
           "S3_SECRET_ACCESS_KEY has whitespace around it, which would be part of the secret; remove it",
         ].sort(),
       );

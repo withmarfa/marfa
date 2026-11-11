@@ -135,11 +135,11 @@ describe("a stored setting that decides a deletion and does not read", () => {
   );
 
   it(
-    "ends a blob-orphans run in error and purges nothing while blob_cleanup_grace_ms does not read, and purges on the seeded grace once the row is gone",
+    "ends a blob-orphans run in error and purges nothing while blob_cleanup_grace_seconds does not read, and purges on the seeded grace once the row is gone",
     async () => {
       const { server, operator, working } = await boot(
         "blob-store-unreadable-grace",
-        { ...DISK_ONLY, MARFA_BLOB_CLEANUP_GRACE_MS: "0" },
+        { ...DISK_ONLY, MARFA_BLOB_CLEANUP_GRACE_SECONDS: "0" },
       );
       const upload = await working.uploadBlob(
         bytesOf("nothing names these bytes, and the grace does not read", 100),
@@ -150,13 +150,13 @@ describe("a stored setting that decides a deletion and does not read", () => {
       const first = await runJob(operator, "blob-orphans");
       expect(first.result).toEqual({ reported: 1, purged: 0 });
 
-      storeSettingRow(server.sqlitePath, "blob_cleanup_grace_ms", "soon");
+      storeSettingRow(server.sqlitePath, "blob_cleanup_grace_seconds", "soon");
       const refused = await operator.runHousekeeping("blob-orphans");
       expect(refused.status, JSON.stringify(refused.error)).toBe(200);
       expect(refused.data.outcome).toBe("error");
       expect((await operator.downloadBlob(hash)).status).toBe(200);
 
-      storeSettingRow(server.sqlitePath, "blob_cleanup_grace_ms", null);
+      storeSettingRow(server.sqlitePath, "blob_cleanup_grace_seconds", null);
       const purged = await runJob(operator, "blob-orphans");
       expect(purged.result).toEqual({ reported: 0, purged: 1 });
       expect((await operator.downloadBlob(hash)).status).toBe(404);
@@ -173,7 +173,7 @@ describe("a positive grace on the orphan sweep", () => {
     async () => {
       const { operator, working } = await boot("blob-store-grace", {
         ...DISK_ONLY,
-        MARFA_BLOB_CLEANUP_GRACE_MS: String(graceMs),
+        MARFA_BLOB_CLEANUP_GRACE_SECONDS: String(graceMs / 1000),
       });
       const upload = await working.uploadBlob(
         bytesOf("nothing names these bytes", 100),
@@ -231,7 +231,7 @@ describe("an orphan report that holds blobs from more than one run", () => {
       // none purges.
       const { operator, working } = await boot("blob-store-orphan-order", {
         ...DISK_ONLY,
-        MARFA_BLOB_CLEANUP_GRACE_MS: "600000",
+        MARFA_BLOB_CLEANUP_GRACE_SECONDS: "600",
       });
       // The three blobs with the highest hashes are reported first, so an
       // order by hash alone would list the later ones ahead of them.

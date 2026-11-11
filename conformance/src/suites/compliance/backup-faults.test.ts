@@ -28,7 +28,7 @@ import {
  * prefix of its own. The backup interval is a year, so `backup` is listed,
  * and once the first scheduled run has ended no other comes during a test.
  */
-const YEAR_MS = "31536000000";
+const YEAR_SECONDS = "31536000";
 const UNREACHABLE = "http://127.0.0.1:9";
 const PART_BYTES = 8 * 1024 * 1024;
 
@@ -54,7 +54,7 @@ describe("a backup the object store does not take", () => {
   beforeAll(async () => {
     server = await bootFreshServer("backup-unreachable", {
       ...store,
-      MARFA_BACKUP_INTERVAL_MS: YEAR_MS,
+      MARFA_BACKUP_INTERVAL_SECONDS: YEAR_SECONDS,
     });
     await afterFirstScheduledBackup(server);
   }, FRESH_SERVER_TIMEOUT_MS);
@@ -133,7 +133,8 @@ describe("a backup cut short", () => {
   beforeAll(async () => {
     server = await bootFreshServer("backup-cut-short", {
       ...store,
-      MARFA_BACKUP_INTERVAL_MS: YEAR_MS,
+      MARFA_BACKUP_INTERVAL_SECONDS: YEAR_SECONDS,
+      MARFA_TEST_TUNING: "blob_read_idle_ms=1000",
     });
     await afterFirstScheduledBackup(server);
   }, FRESH_SERVER_TIMEOUT_MS);
@@ -206,7 +207,7 @@ describe("a backup cut short", () => {
     const owner = ownerOf(server);
     // The archive is the previous test's, more than two parts.
     const changed = await owner.patchConfig({
-      blob_read_idle_timeout_ms: 1000,
+      mcp_fetch_max_bytes: 40_000_000,
     });
     expect(changed.status, JSON.stringify(changed.error)).toBe(200);
     const before = await bucket.backupKeys();

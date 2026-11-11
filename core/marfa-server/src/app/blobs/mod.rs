@@ -37,9 +37,7 @@ use super::unit::Unit;
 use super::{housekeeping, stored};
 use crate::db::{Db, Write, volume};
 use crate::failure::Failure;
-use crate::settings::registry::{
-    BLOB_MIN_COPIES, BLOB_READ_IDLE_TIMEOUT_MS, DISK_RESERVE_BYTES, UPLOAD_IDLE_TIMEOUT_MS,
-};
+use crate::settings::registry::{BLOB_MIN_COPIES, DISK_RESERVE_BYTES};
 use crate::settings::start::ObjectStoreSettings;
 use disk::{Disk, Staged};
 pub use disk::{MARKER, Scratch};
@@ -784,7 +782,7 @@ impl App {
     }
 
     pub fn upload_idle(&self) -> Duration {
-        Duration::from_millis(self.settings.live().get(UPLOAD_IDLE_TIMEOUT_MS))
+        self.settings.start.tuning.upload_idle
     }
 
     pub fn room(&self) -> Room {
@@ -796,7 +794,7 @@ impl App {
     }
 
     pub fn blob_read_idle(&self) -> Duration {
-        Duration::from_millis(self.settings.live().get(BLOB_READ_IDLE_TIMEOUT_MS))
+        self.settings.start.tuning.blob_read_idle
     }
 
     /// A refusal is answered only once the staged file is gone.

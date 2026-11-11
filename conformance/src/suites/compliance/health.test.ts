@@ -30,7 +30,9 @@ import { withInstanceDatabase } from "../../utils/instance-database.js";
 let server: FreshServer | undefined;
 
 beforeAll(async () => {
-  server = await bootFreshServer("health", { MARFA_WRITE_WAIT_MS: "0" });
+  server = await bootFreshServer("health", {
+    MARFA_TEST_TUNING: "write_wait_ms=0",
+  });
 }, FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(stopFreshServers, FRESH_SERVER_TIMEOUT_MS);
@@ -346,7 +348,7 @@ describe("GET /health while the write outlasts its two seconds", () => {
 
   beforeAll(async () => {
     patient = await bootFreshServer("health-patient", {
-      MARFA_WRITE_WAIT_MS: String(BUSY_BUDGET_MS),
+      MARFA_TEST_TUNING: `write_wait_ms=${String(BUSY_BUDGET_MS)}`,
     });
   }, FRESH_SERVER_TIMEOUT_MS);
 

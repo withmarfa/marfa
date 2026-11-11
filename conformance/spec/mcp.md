@@ -360,7 +360,7 @@ If the address `marfa_create` names answers with a redirect, then the server MUS
 
 ### `mcp/fetch-settings`
 
-When an authorized caller replaces or updates the configuration, the server MUST accept `mcp_fetch_enabled` as true or false, `mcp_fetch_max_bytes` as a whole number of bytes of 1 or more, and `mcp_fetch_timeout_ms` as a whole number of milliseconds from 1 to 3600000.
+When an authorized caller replaces or updates the configuration, the server MUST accept `mcp_fetch_enabled` as true or false, `mcp_fetch_max_bytes` as a whole number of bytes of 1 or more, and `mcp_fetch_timeout_seconds` as a whole number of seconds from 1 to 3600.
 
 **Reason:** the owner decides whether agents may make the server fetch files, how large a file it fetches and how long it waits for one. Raising the largest file also needs a longer wait for it, so the time is a setting beside the size. They are stored in the instance and have no environment setting.
 
@@ -368,7 +368,7 @@ When an authorized caller replaces or updates the configuration, the server MUST
 
 ### `mcp/fetch-settings-live`
 
-When a stored `mcp_fetch_enabled`, `mcp_fetch_max_bytes` or `mcp_fetch_timeout_ms` changes, the server MUST apply the stored value to the next fetch without a restart.
+When a stored `mcp_fetch_enabled`, `mcp_fetch_max_bytes` or `mcp_fetch_timeout_seconds` changes, the server MUST apply the stored value to the next fetch without a restart.
 
 **Reason:** a fetch already running keeps the limits it started with, and the next one follows the owner's change.
 
@@ -430,7 +430,7 @@ If `marfa_create` is asked to fetch a file while the server is fetching four fil
 
 ### `mcp/file-rate-limited`
 
-Where rate limiting is on, if one credential's tool calls ask to fetch more than 30 files within `rate_limit_window_ms`, then the server MUST answer each further request in that window with a tool error with code `file_not_fetched`, reason `rate_limited` and `retry_after_seconds`, without connecting to the address.
+Where rate limiting is on, if one credential's tool calls ask to fetch more than 30 files within `rate_limit_window_seconds`, then the server MUST answer each further request in that window with a tool error with code `file_not_fetched`, reason `rate_limited` and `retry_after_seconds`, without connecting to the address.
 
 **Tests:** `compliance/mcp-scripted.test.ts › refuses a credential's 31st fetch in a window with reason rate_limited, and not another credential's`.
 

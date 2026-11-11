@@ -2040,6 +2040,14 @@ If the `instance.ndjson.gz` of an archive carries more than one `setting` line f
 
 **Tests:** `compliance/export-instance-lines.test.ts › refuses an archive that carries one setting twice, and stores neither value`.
 
+### `search-and-filters/restore-setting-unknown`
+
+When `POST /restore` reads a `setting` line that names a setting this instance does not have, the server MUST leave the line out and name its key in `settings_dropped`.
+
+**Reason:** an archive from before a setting was removed or renamed still restores, and the owner is told what it did not carry over instead of finding a setting silently reset.
+
+**Tests:** `compliance/export-instance-lines.test.ts › leaves out a setting the instance does not have, names it, and restores the rest`.
+
 ### `search-and-filters/archive-connector-state`
 
 When the credential requesting `GET /export?format=archive` holds `connectors.manage`, the server MUST carry in `instance.ndjson.gz` one `connector_state` line, holding the `source` and its `state` document, for each source with a connector state document.
@@ -2264,7 +2272,7 @@ When local authority sends `POST /restore` with an archive that `GET /export?for
 
 ### `search-and-filters/restore-counts`
 
-When `POST /restore` succeeds, the server MUST carry the counts `imported`, `duplicates`, `edges_imported`, `edges_skipped`, `edges_skipped_reasons`, `blobs_imported`, `types_registered`, `types_skipped`, `edge_types_registered`, `edge_types_skipped`, `type_icons_added`, `type_icons_skipped`, `type_icons_skipped_reasons`, `sources_added`, `sources_skipped`, `sources_skipped_reasons`, `settings_added`, `settings_skipped`, `connector_states_added`, `connector_states_skipped`, `connector_agreements_added`, `connector_agreements_skipped`, `rows_imported` and `rows_skipped`, each for the kind of thing it counts.
+When `POST /restore` succeeds, the server MUST carry the counts `imported`, `duplicates`, `edges_imported`, `edges_skipped`, `edges_skipped_reasons`, `blobs_imported`, `types_registered`, `types_skipped`, `edge_types_registered`, `edge_types_skipped`, `type_icons_added`, `type_icons_skipped`, `type_icons_skipped_reasons`, `sources_added`, `sources_skipped`, `sources_skipped_reasons`, `settings_added`, `settings_skipped`, `settings_dropped`, `connector_states_added`, `connector_states_skipped`, `connector_agreements_added`, `connector_agreements_skipped`, `rows_imported` and `rows_skipped`, each for the kind of thing it counts.
 
 **Tests:** `compliance/restore-archive.test.ts › answers the restore result fields on the first restore and on a repeat`.
 
@@ -2832,7 +2840,7 @@ Where the volume has room for an archive beside the instance's reserve (`blobs/r
 
 ### `search-and-filters/restore-duration`
 
-While a part of the body of `POST /restore` arrives at least once in every `upload_idle_timeout_ms`, the server MUST NOT end the request for the time the body takes.
+While a part of the body of `POST /restore` arrives at least once in every 60 seconds, the server MUST NOT end the request for the time the body takes.
 
 **Reason:** an archive has no size cap (`search-and-filters/restore-blob-size`), so a large one over a slow link outlasts any fixed request deadline. The limit on a body that stops arriving is `search-and-filters/restore-idle`.
 
@@ -2840,7 +2848,7 @@ While a part of the body of `POST /restore` arrives at least once in every `uplo
 
 ### `search-and-filters/restore-idle`
 
-If no byte of the body of `POST /restore` arrives for `upload_idle_timeout_ms`, 60000 milliseconds unless named, then the server MUST answer `408 request_timeout`.
+If no byte of the body of `POST /restore` arrives for 60 seconds, then the server MUST answer `408 request_timeout`.
 
 **Reason:** a sender that has gone quiet would otherwise hold its request and the bytes it has sent for ever. The time counts the server's wait for the sender, not the time it takes to write what has arrived.
 
@@ -2848,7 +2856,7 @@ If no byte of the body of `POST /restore` arrives for `upload_idle_timeout_ms`, 
 
 ### `search-and-filters/restore-refused-read`
 
-When the server refuses `POST /restore` after it has started to read the body, the server MUST read the rest of the body, until it ends or no byte arrives for `MARFA_UPLOAD_IDLE_TIMEOUT_MS`, before it answers.
+When the server refuses `POST /restore` after it has started to read the body, the server MUST read the rest of the body, until it ends or no byte arrives for 60 seconds, before it answers.
 
 **Reason:** a client that is still sending reads no answer until its body is sent, so a server that stopped reading would leave it with a broken connection in place of the refusal.
 

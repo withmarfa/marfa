@@ -215,7 +215,7 @@ stays because that thing is what it checks.
 - `compliance/unreadable-deletion-settings.test.ts` and
   `compliance/blob-store-settings.test.ts` write and remove rows of the
   `settings` table (`trash_retention_days`, the version maximum,
-  `blob_min_copies`, `blob_cleanup_grace_ms`) with a value outside the
+  `blob_min_copies`, `blob_cleanup_grace_seconds`) with a value outside the
   setting's bounds. `PUT /config` and the start-up settings refuse such a
   value, and no fault damages a stored setting, so only a hand edit, or a
   release that narrows a bound, leaves one.

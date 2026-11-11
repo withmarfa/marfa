@@ -45,8 +45,7 @@ let patient: FreshServer | undefined;
 
 beforeAll(async () => {
   impatient = await bootFreshServer("contention-impatient", {
-    MARFA_WRITE_WAIT_MS: "0",
-    MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: SCHEDULER_NEVER_POLLS_MS,
+    MARFA_TEST_TUNING: `write_wait_ms=0,housekeeping_poll_ms=${SCHEDULER_NEVER_POLLS_MS}`,
   });
   patient = await bootFreshServer("contention-patient");
 }, 4 * FRESH_SERVER_TIMEOUT_MS);
@@ -144,7 +143,7 @@ describe("contention on the write lock", () => {
   }, 120_000);
 
   it("names the budget it spent, so the setting is observable", async () => {
-    // The wiring from `MARFA_WRITE_WAIT_MS` through config to the
+    // The wiring from the write wait through config to the
     // retry is otherwise invisible: a server that ignored the variable
     // would answer the same `503` five seconds later, and a fixture
     // asserting the status alone would pass either way.
@@ -484,7 +483,7 @@ describe("contention on the write lock", () => {
 
 it("serves a session read without waiting for renewal and keeps its durable idle expiry", async () => {
   const server = await bootFreshServer("session-use-contention", {
-    MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: SCHEDULER_NEVER_POLLS_MS,
+    MARFA_TEST_TUNING: `housekeeping_poll_ms=${SCHEDULER_NEVER_POLLS_MS}`,
   });
   // A use of the session: the passkey page's list, the one door it counts on.
   const read = () =>

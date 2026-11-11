@@ -40,7 +40,7 @@ beforeAll(async () => {
     MARFA_RATE_LIMIT_ENABLED: "false",
     MARFA_INBOUND_BACKLOG_DELIVERIES: "1",
     MARFA_INBOUND_MAX_BYTES: String(MAX_BYTES),
-    MARFA_INBOUND_READ_TIMEOUT_MS: "1000",
+    MARFA_TEST_TUNING: "inbound_read_ms=1000",
   });
   minter = new MarfaClient({
     baseUrl: server.apiUrl,

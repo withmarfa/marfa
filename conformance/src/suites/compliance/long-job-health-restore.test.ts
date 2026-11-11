@@ -31,7 +31,7 @@ const TAG = "long-job-health-restore";
 beforeAll(async () => {
   server = await bootFreshServer("long-job-health-restore", {
     ...DISK_ONLY,
-    MARFA_WRITE_WAIT_MS: "500",
+    MARFA_TEST_TUNING: "write_wait_ms=500",
   });
 }, FRESH_SERVER_TIMEOUT_MS);
 

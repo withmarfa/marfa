@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::body::Body;
 use axum::extract::{Path, Request, State};
@@ -18,9 +17,7 @@ use crate::app::connectors::Window;
 use crate::app::faults::HOLD_INBOUND_RESERVED;
 use crate::app::inbound::{self, Arrival, Full, Listing, Mark, NewEndpoint, Reservation, Sent};
 use crate::app::refusal::{Code, Refusal};
-use crate::settings::registry::{
-    INBOUND_IN_FLIGHT_BYTES, INBOUND_MAX_BYTES, INBOUND_READ_TIMEOUT_MS,
-};
+use crate::settings::registry::{INBOUND_IN_FLIGHT_BYTES, INBOUND_MAX_BYTES};
 
 const PAGE: i64 = 50;
 const MOST: i64 = 200;
@@ -285,7 +282,7 @@ pub async fn receive(
     app.faults.hold(HOLD_INBOUND_RESERVED, None).await;
     let query = request.uri().query().unwrap_or("").to_string();
     let headers = headers_of(&request);
-    let deadline = tokio::time::sleep(Duration::from_millis(live.get(INBOUND_READ_TIMEOUT_MS)));
+    let deadline = tokio::time::sleep(app.settings.start.tuning.inbound_read);
     tokio::pin!(deadline);
     let mut body = request.into_body();
     let mut bytes = Gathered::new(declared);

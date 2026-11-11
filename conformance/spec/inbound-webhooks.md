@@ -342,17 +342,9 @@ If a body sent without a `Content-Length` passes the limit across its chunks, th
 
 ### `inbound-webhooks/body-timeout`
 
-If a body has not arrived whole within `inbound_read_timeout_ms`, 30000 milliseconds unless named, then the server MUST answer `408 request_timeout`.
+If a body has not arrived whole within 30 seconds, then the server MUST answer `408 request_timeout`.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › answers request_timeout to a body that does not arrive in time, and stores nothing`, `compliance/inbound-check-order.test.ts › answers a declared length over the limit 413 before the body's 408`.
-
-### `inbound-webhooks/body-timeout-ceiling`
-
-If `MARFA_INBOUND_READ_TIMEOUT_MS` is set to more than 300000, then the server MUST refuse to start and name the setting.
-
-**Reason:** a sender slower than five minutes holds a connection and its bytes in flight, and a webhook sender sends the delivery again.
-
-**Tests:** `compliance/inbound-webhooks.test.ts › is five minutes: a longer time is refused at start, naming the setting, and five minutes is taken`.
 
 ### `inbound-webhooks/body-timeout-stores-nothing`
 
@@ -370,7 +362,7 @@ Each endpoint has a window of its own, so a busy sender of one endpoint does not
 
 While the limiter is on, if an endpoint's address receives more requests in one window than `rate_limit_inbound_requests`, 600 unless named, then the server MUST answer the request past the count `429 rate_limited`.
 
-**Tests:** `compliance/inbound-rate-limit.test.ts › holds each endpoint to its own rate window`, `compliance/inbound-rate-limit.test.ts › counts every request to a live address in its window, whatever answer it got`, `› ends a window after MARFA_RATE_LIMIT_WINDOW_MS, and tells a refused sender how long is left`.
+**Tests:** `compliance/inbound-rate-limit.test.ts › holds each endpoint to its own rate window`, `compliance/inbound-rate-limit.test.ts › counts every request to a live address in its window, whatever answer it got`, `› ends a window after rate_limit_window_seconds, and tells a refused sender how long is left`.
 
 ### `inbound-webhooks/rate-counts-every-request`
 
@@ -386,15 +378,15 @@ While the limiter is on, the server MUST NOT count a request to an address no li
 
 ### `inbound-webhooks/rate-window-length`
 
-While the limiter is on, the server MUST end an endpoint's window after `rate_limit_window_ms`, 60000 milliseconds unless named, and take the full count again in the next.
+While the limiter is on, the server MUST end an endpoint's window after `rate_limit_window_seconds`, 60 seconds unless named, and take the full count again in the next.
 
-**Tests:** `compliance/inbound-rate-limit.test.ts › ends a window after MARFA_RATE_LIMIT_WINDOW_MS, and tells a refused sender how long is left`.
+**Tests:** `compliance/inbound-rate-limit.test.ts › ends a window after rate_limit_window_seconds, and tells a refused sender how long is left`.
 
 ### `inbound-webhooks/rate-retry-after`
 
 When the server answers `429 rate_limited` to a request to an inbound address, the server MUST carry a `Retry-After` of the seconds left in the endpoint's window.
 
-**Tests:** `compliance/inbound-rate-limit.test.ts › ends a window after MARFA_RATE_LIMIT_WINDOW_MS, and tells a refused sender how long is left`, `compliance/inbound-rate-limit.test.ts › holds each endpoint to its own rate window`.
+**Tests:** `compliance/inbound-rate-limit.test.ts › ends a window after rate_limit_window_seconds, and tells a refused sender how long is left`, `compliance/inbound-rate-limit.test.ts › holds each endpoint to its own rate window`.
 
 ### `inbound-webhooks/rate-own-window`
 
@@ -924,9 +916,9 @@ If a run of `inbound-delivery-cleanup` fails while it removes deliveries, then t
 
 ### `inbound-webhooks/cleanup-interval`
 
-The server MUST list `inbound-delivery-cleanup` with an `interval_ms` of 60000 unless `inbound_cleanup_interval_ms` names another.
+The server MUST list `inbound-delivery-cleanup` with an `interval_ms` of 60000.
 
-**Tests:** `compliance/inbound-retention.test.ts › lists inbound-delivery-cleanup every 60000 milliseconds, or at the interval the instance names`.
+**Tests:** `compliance/inbound-retention.test.ts › lists inbound-delivery-cleanup every 60000 milliseconds`.
 
 ## What the server writes to its log
 

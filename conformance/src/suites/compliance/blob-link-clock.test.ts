@@ -24,7 +24,7 @@ let writer: MarfaClient;
 beforeAll(async () => {
   server = await bootFreshServer("blob-link-clock", {
     ...DISK_ONLY,
-    MARFA_BLOB_CLEANUP_INTERVAL_MS: "0",
+    MARFA_BLOB_CLEANUP_ENABLED: "false",
   });
   operator = operatorOf(server);
   writer = writerOf(server);

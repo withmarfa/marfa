@@ -28,7 +28,7 @@ it("expires store-signed links on real time with a boot offset and later clock m
   const server = await bootFreshServer("blob-s3-clock", {
     ...ownObjectStore(),
     MARFA_TEST_CLOCK_OFFSET_MS: String(DAY_MS),
-    MARFA_BLOB_CLEANUP_INTERVAL_MS: "0",
+    MARFA_BLOB_CLEANUP_ENABLED: "false",
   });
   try {
     const { operator, working } = clientsFor(server);

@@ -814,6 +814,7 @@ export interface RestoreArchiveResponse {
   sources_skipped_reasons: Record<string, number>;
   settings_added: number;
   settings_skipped: number;
+  settings_dropped: string[];
   connector_states_added: number;
   connector_states_skipped: number;
   connector_agreements_added: number;

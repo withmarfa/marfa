@@ -19,8 +19,7 @@ use crate::app::outbound::{self, Pinned, Reach};
 use crate::app::provenance;
 use crate::app::refusal::Refusal;
 use crate::settings::registry::{
-    MCP_FETCH_ENABLED, MCP_FETCH_MAX_BYTES, MCP_FETCH_TIMEOUT_MS, RATE_LIMIT_ENABLED,
-    RATE_LIMIT_WINDOW_MS,
+    MCP_FETCH_ENABLED, MCP_FETCH_MAX_BYTES, MCP_FETCH_TIMEOUT_SECONDS, RATE_LIMIT_ENABLED,
 };
 
 /// How many files the instance fetches for tools at once.
@@ -308,7 +307,7 @@ async fn attempt(
             FILE_FETCHES,
             &caller.credential_handle(),
             PER_WINDOW,
-            live.get(RATE_LIMIT_WINDOW_MS),
+            live.rate_limit_window_ms(),
         );
         if let Some(wait) = app.limiter.admit(app.clock.now_ms(), &[lane]) {
             return Err(Failed::Not(Reason::RateLimited(retry_seconds(wait))));
@@ -323,7 +322,7 @@ async fn attempt(
     app.check_upload(caller).await?;
     let limits = Limits {
         max_bytes: live.get(MCP_FETCH_MAX_BYTES),
-        time: Duration::from_millis(live.get(MCP_FETCH_TIMEOUT_MS)),
+        time: Duration::from_secs(live.get(MCP_FETCH_TIMEOUT_SECONDS)),
     };
     let (app, caller, url) = (app.clone(), caller.clone(), url.clone());
     let handle = Handle::current();

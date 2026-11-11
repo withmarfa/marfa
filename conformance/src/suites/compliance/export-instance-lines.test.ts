@@ -344,5 +344,40 @@ describe("the instance lines of an archive", () => {
     const restored = await owner.restoreArchive(withValues(40));
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
     expect(restored.data.settings_added).toBe(1);
+    expect(restored.data.settings_dropped).toEqual([]);
+  });
+
+  it("leaves out a setting the instance does not have, names it, and restores the rest", async () => {
+    const owner = new MarfaClient({
+      baseUrl: server.apiUrl,
+      controlSocket: server.controlSocket,
+    });
+    const known = "grant_inactivity_days";
+    const gone = ["audit_cleanup_interval_ms", "no_such_setting"];
+    const before = (await operator.getConfig()).data as unknown as Record<
+      string,
+      unknown
+    >;
+    // The witness: the instance holds no value of its own for the known one.
+    expect(before[known]).toBeUndefined();
+    const archive = editLineFile(itemsArchive([]), "instance", (text) =>
+      [
+        ...gone.map((key) => ({ setting: { key, value: 3_600_000 } })),
+        { setting: { key: known, value: 200 } },
+      ].reduce((lines, line) => `${lines}${JSON.stringify(line)}\n`, text),
+    );
+
+    const restored = await owner.restoreArchive(archive);
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    expect(restored.data.settings_added).toBe(1);
+    expect([...restored.data.settings_dropped].sort()).toEqual(
+      [...gone].sort(),
+    );
+    const after = (await operator.getConfig()).data as unknown as Record<
+      string,
+      unknown
+    >;
+    expect(after[known]).toBe(200);
+    for (const key of gone) expect(after[key]).toBeUndefined();
   });
 });

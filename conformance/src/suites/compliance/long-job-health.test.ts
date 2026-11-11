@@ -9,13 +9,13 @@ import {
 } from "../../utils/fresh-server.js";
 import {
   operatorOf,
-  QUIET_SCHEDULE,
   quiet,
   runJob,
   writerOf,
 } from "../../utils/moved-clock.js";
 import { DISK_ONLY } from "../../utils/own-blob-server.js";
 import { heldWhenHealthAnswered } from "../../utils/held-when-answered.js";
+import { NEVER_MS, QUIET_TUNING, tuning } from "../../utils/tuning.js";
 
 /**
  * `GET /health` answered while each long job runs, between two of its steps
@@ -29,15 +29,13 @@ let server: FreshServer;
 /** Notes enough that each job has dozens of steps between its two holds. */
 const ROWS = 4_000;
 const TAG = "long-job-health";
-const NEVER_MS = "31536000000";
 
 const working = (): MarfaClient => writerOf(server);
 
 beforeAll(async () => {
   server = await bootFreshServer("long-job-health", {
     ...DISK_ONLY,
-    ...QUIET_SCHEDULE,
-    MARFA_BLOB_CLEANUP_INTERVAL_MS: NEVER_MS,
+    ...tuning(...QUIET_TUNING, `interval.blob-orphans=${NEVER_MS}`),
   });
   await quiet(server, ["version-thinning", "blob-orphans"]);
   await seed(working(), TAG, ROWS);

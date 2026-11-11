@@ -308,9 +308,9 @@ When a `GET` that names a path no operation serves carries `X-Marfa-Reach`, the 
 
 ### `errors/contention`
 
-If a write cannot get the store's write lock within the instance's write wait (`MARFA_WRITE_WAIT_MS`), and the lock is not held by a bulk page that `errors/contention-bulk-wait` describes, then the server MUST answer `503 write_contention`.
+If a write cannot get the store's write lock within the instance's write wait of five seconds, and the lock is not held by a bulk page that `errors/contention-bulk-wait` describes, then the server MUST answer `503 write_contention`.
 
-**Reason:** a device retries a `5xx` without counting it against the write (`queue-and-verdicts/environmental-uncounted`), and contention is the case that retry exists for. A `500` would name the wrong cause, and a `409` would stop a write that the next attempt would land. The budget is the instance's `MARFA_WRITE_WAIT_MS`.
+**Reason:** a device retries a `5xx` without counting it against the write (`queue-and-verdicts/environmental-uncounted`), and contention is the case that retry exists for. A `500` would name the wrong cause, and a `409` would stop a write that the next attempt would land. The budget is the instance's write wait.
 
 **Tests:** `compliance/write-contention.test.ts › answers 503 write_contention, never 500`, `compliance/bulk-page-answers-others.test.ts › is still refused 503 write_contention behind a lock held for longer than the budget`.
 

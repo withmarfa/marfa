@@ -20,11 +20,9 @@ import { createNote } from "../../generators/items.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
 import {
   bootFreshServer,
-  bootRefused,
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { listened, settingLines } from "../../utils/refused-boot.js";
 import { HOUR_MS, movedClock } from "../../utils/moved-clock.js";
 
 let ctx: TestContext;
@@ -666,7 +664,7 @@ describe("the receiving door on an instance that names its limits", () => {
       MARFA_INBOUND_BACKLOG_BYTES: "6",
       MARFA_INBOUND_MAX_BYTES: "64",
       MARFA_INBOUND_IN_FLIGHT_BYTES: "65536",
-      MARFA_INBOUND_READ_TIMEOUT_MS: "1000",
+      MARFA_TEST_TUNING: "inbound_read_ms=1000",
     });
   }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
@@ -1415,34 +1413,4 @@ describe("retained inbound capacity", () => {
     expect(cleared.data).not.toHaveProperty("inbound_handled_retention_days");
     expect(cleared.data).not.toHaveProperty("inbound_pending_retention_days");
   });
-});
-
-describe("the longest a body may take to arrive", () => {
-  it(
-    "is five minutes: a longer time is refused at start, naming the setting, and five minutes is taken",
-    async () => {
-      const name = "MARFA_INBOUND_READ_TIMEOUT_MS";
-      const refused = await bootRefused("inbound-read-timeout", {
-        extraEnv: { [name]: "300001" },
-      });
-      try {
-        expect(refused).toMatchObject({ code: 1, signal: null });
-        expect(listened(refused)).toBe(false);
-        const lines = settingLines(refused);
-        expect(lines).toHaveLength(1);
-        expect(lines[0]).toContain(
-          `${name} must be a whole number, from 1 to 300000`,
-        );
-      } finally {
-        await refused.stop();
-      }
-
-      // The witness: the same setting at the limit starts a server.
-      const accepted = await bootFreshServer("inbound-read-timeout-limit", {
-        [name]: "300000",
-      });
-      await accepted.stop();
-    },
-    2 * FRESH_SERVER_TIMEOUT_MS,
-  );
 });

@@ -14,7 +14,7 @@ use super::jobs::JOBS;
 use super::schedule::{self, Finish, Wanted};
 use super::{Active, Ended, Job, Report, Run};
 use crate::db::Write;
-use crate::settings::registry::{ERROR_REPORTING_ENABLED, HOUSEKEEPING_POLL_INTERVAL_MS};
+use crate::settings::registry::ERROR_REPORTING_ENABLED;
 use crate::telemetry::{Fault, Finished};
 
 const SLICE: Duration = Duration::from_secs(1);
@@ -22,12 +22,11 @@ const RECORD_RETRY_FIRST: Duration = Duration::from_millis(100);
 const RECORD_RETRY_MOST: Duration = Duration::from_secs(5);
 
 pub fn wanted(app: &App) -> Vec<Wanted> {
-    let live = app.settings.live();
     JOBS.iter()
         .filter(|job| job.runs_here(app))
         .map(|job| Wanted {
             name: job.name,
-            interval_ms: i64::try_from(job.interval.ms(&live)).unwrap_or(i64::MAX),
+            interval_ms: i64::try_from(job.interval.ms(job.name, app)).unwrap_or(i64::MAX),
             first_run_ms: i64::try_from(job.first_run_ms).unwrap_or(i64::MAX),
         })
         .collect()
@@ -58,8 +57,8 @@ async fn pass(app: &Arc<App>) -> Result<()> {
 
 async fn rest(app: &App, stopping: &mut watch::Receiver<bool>) {
     let began = Instant::now();
+    let poll = app.settings.start.tuning.housekeeping_poll;
     loop {
-        let poll = Duration::from_millis(app.settings.live().get(HOUSEKEEPING_POLL_INTERVAL_MS));
         let left = poll.saturating_sub(began.elapsed());
         if left.is_zero() {
             return;
@@ -198,7 +197,7 @@ async fn record(app: &Arc<App>, job: &Job, ended: &Ended, again: bool) {
         let written = app
             .db
             .write(Write::own(), move |tx| {
-                let interval_ms = interval.ms(&live.settings.live());
+                let interval_ms = interval.ms(name, &live);
                 schedule::finish(
                     tx,
                     &Finish {

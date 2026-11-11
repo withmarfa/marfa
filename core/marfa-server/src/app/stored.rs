@@ -184,23 +184,44 @@ pub async fn change(app: &Arc<App>, write: Write, changes: Vec<Change>) -> Resul
     .await
 }
 
-/// A line naming either address is a damaged archive, since a move changes them.
-pub fn archived(line: &serde_json::Value) -> Result<(String, String)> {
+/// Rows of the `settings` table that are no setting: the server's own notes.
+const NOTES: [&str; 2] = [super::config::ENFORCEMENT_ROW, super::health::PROBE_KEY];
+
+/// Says plainly that a stored setting this server does not have is left alone, never read.
+pub fn report_unknown(rows: &[(String, String)]) {
+    let unknown: Vec<&str> = rows
+        .iter()
+        .map(|(key, _)| key.as_str())
+        .filter(|key| registry::entry(key).is_none() && !NOTES.contains(key))
+        .collect();
+    if !unknown.is_empty() {
+        tracing::warn!(
+            settings = unknown.join(", "),
+            "Stored settings this server does not have are ignored; their rows stay in the database"
+        );
+    }
+}
+
+/// A line naming either address is a damaged archive, since a move changes them. A line naming
+/// a setting this instance does not have gives no text: the restore leaves it out and says so.
+pub fn archived(line: &serde_json::Value) -> Result<(String, Option<String>)> {
     let key = line
         .get("key")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
     let refused =
         |why: String| Refusal::validation(format!("The archive carries a setting {why}."));
-    let entry = registry::entry(key)
-        .filter(|entry| {
-            ![
-                registry::ADDRESSES.entry.key,
-                registry::SIGN_IN_ADDRESS.entry.key,
-            ]
-            .contains(&entry.key)
-        })
-        .ok_or_else(|| refused(format!("this instance does not take: {key}")))?;
+    let Some(entry) = registry::entry(key) else {
+        return Ok((key.to_string(), None));
+    };
+    if [
+        registry::ADDRESSES.entry.key,
+        registry::SIGN_IN_ADDRESS.entry.key,
+    ]
+    .contains(&entry.key)
+    {
+        return Err(refused(format!("this instance does not take: {key}")));
+    }
     let value = line
         .get("value")
         .ok_or_else(|| refused(format!("with no value: {key}")))?;
@@ -208,7 +229,7 @@ pub fn archived(line: &serde_json::Value) -> Result<(String, String)> {
         .row_text_of_json(value)
         .and_then(|text| entry.row_text(&text))
         .map_err(|rule| refused(format!("{key} whose value {rule}")))?;
-    Ok((key.to_string(), text))
+    Ok((key.to_string(), Some(text)))
 }
 
 /// Stores each archived setting the instance has none stored for, judged together with the
@@ -239,7 +260,9 @@ mod tests {
 
     use super::*;
     use crate::app::refusal::Code;
-    use crate::settings::registry::{CONNECTOR_HOLD_MS, ENTRIES, RATE_LIMIT_ENABLED, Value};
+    use crate::settings::registry::{
+        ENTRIES, MCP_FETCH_TIMEOUT_SECONDS, RATE_LIMIT_ENABLED, Value,
+    };
 
     fn table() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -253,13 +276,13 @@ mod tests {
         let mut conn = table();
         let tx = conn.transaction().unwrap();
         let none = Seeds::new();
-        let seeded = Seeds::from([(CONNECTOR_HOLD_MS.entry.key, Value::Whole(5_000))]);
-        assert_eq!(setting(&tx, &none, CONNECTOR_HOLD_MS).unwrap(), 180_000);
-        assert_eq!(setting(&tx, &seeded, CONNECTOR_HOLD_MS).unwrap(), 5_000);
-        write_row(&tx, "connector_hold_ms", "9000").unwrap();
-        assert_eq!(setting(&tx, &seeded, CONNECTOR_HOLD_MS).unwrap(), 9_000);
-        write_row(&tx, "connector_hold_ms", "").unwrap();
-        assert_eq!(setting(&tx, &seeded, CONNECTOR_HOLD_MS).unwrap(), 5_000);
+        let seeded = Seeds::from([(MCP_FETCH_TIMEOUT_SECONDS.entry.key, Value::Whole(5))]);
+        assert_eq!(setting(&tx, &none, MCP_FETCH_TIMEOUT_SECONDS).unwrap(), 60);
+        assert_eq!(setting(&tx, &seeded, MCP_FETCH_TIMEOUT_SECONDS).unwrap(), 5);
+        write_row(&tx, "mcp_fetch_timeout_seconds", "9").unwrap();
+        assert_eq!(setting(&tx, &seeded, MCP_FETCH_TIMEOUT_SECONDS).unwrap(), 9);
+        write_row(&tx, "mcp_fetch_timeout_seconds", "").unwrap();
+        assert_eq!(setting(&tx, &seeded, MCP_FETCH_TIMEOUT_SECONDS).unwrap(), 5);
         assert!(setting(&tx, &seeded, RATE_LIMIT_ENABLED).unwrap());
     }
 
@@ -267,18 +290,18 @@ mod tests {
     fn a_row_that_does_not_read_falls_back_as_the_live_settings_do() {
         let mut conn = table();
         let tx = conn.transaction().unwrap();
-        let seeded = Seeds::from([(CONNECTOR_HOLD_MS.entry.key, Value::Whole(5_000))]);
-        for broken in ["soon", "-1", "999", "99999999999"] {
-            write_row(&tx, "connector_hold_ms", broken).unwrap();
+        let seeded = Seeds::from([(MCP_FETCH_TIMEOUT_SECONDS.entry.key, Value::Whole(5))]);
+        for broken in ["soon", "-1", "0", "3601"] {
+            write_row(&tx, "mcp_fetch_timeout_seconds", broken).unwrap();
             let rows = rows(&tx).unwrap();
             let live = registry::Snapshot::resolve(&seeded, &rows, 0);
-            assert_eq!(live.unreadable(), ["connector_hold_ms"], "{broken}");
+            assert_eq!(live.unreadable(), ["mcp_fetch_timeout_seconds"], "{broken}");
             assert_eq!(
-                setting(&tx, &seeded, CONNECTOR_HOLD_MS).unwrap(),
-                live.get(CONNECTOR_HOLD_MS),
+                setting(&tx, &seeded, MCP_FETCH_TIMEOUT_SECONDS).unwrap(),
+                live.get(MCP_FETCH_TIMEOUT_SECONDS),
                 "{broken}"
             );
-            assert_eq!(live.get(CONNECTOR_HOLD_MS), 5_000);
+            assert_eq!(live.get(MCP_FETCH_TIMEOUT_SECONDS), 5);
         }
     }
 
@@ -286,15 +309,39 @@ mod tests {
     fn a_deciding_row_that_does_not_read_refuses_and_an_absent_one_takes_its_seed() {
         let mut conn = table();
         let tx = conn.transaction().unwrap();
-        let seeded = Seeds::from([(CONNECTOR_HOLD_MS.entry.key, Value::Whole(5_000))]);
-        assert_eq!(deciding(&tx, &seeded, CONNECTOR_HOLD_MS).unwrap(), 5_000);
-        write_row(&tx, "connector_hold_ms", "").unwrap();
-        assert_eq!(deciding(&tx, &seeded, CONNECTOR_HOLD_MS).unwrap(), 5_000);
-        for broken in ["soon", "-1", "999", "99999999999"] {
-            write_row(&tx, "connector_hold_ms", broken).unwrap();
-            let refused = deciding(&tx, &seeded, CONNECTOR_HOLD_MS).unwrap_err();
+        let seeded = Seeds::from([(MCP_FETCH_TIMEOUT_SECONDS.entry.key, Value::Whole(5))]);
+        assert_eq!(
+            deciding(&tx, &seeded, MCP_FETCH_TIMEOUT_SECONDS).unwrap(),
+            5
+        );
+        write_row(&tx, "mcp_fetch_timeout_seconds", "").unwrap();
+        assert_eq!(
+            deciding(&tx, &seeded, MCP_FETCH_TIMEOUT_SECONDS).unwrap(),
+            5
+        );
+        for broken in ["soon", "-1", "0", "3601"] {
+            write_row(&tx, "mcp_fetch_timeout_seconds", broken).unwrap();
+            let refused = deciding(&tx, &seeded, MCP_FETCH_TIMEOUT_SECONDS).unwrap_err();
             assert_eq!(refused.code, Code::InternalError, "{broken}");
         }
+    }
+
+    #[test]
+    fn an_archived_line_for_a_setting_the_server_lacks_gives_no_text_and_one_for_an_address_is_refused()
+     {
+        let line = |key: &str| serde_json::json!({ "key": key, "value": 3_600_000 });
+        assert_eq!(
+            archived(&line("audit_cleanup_interval_ms")).unwrap(),
+            ("audit_cleanup_interval_ms".to_string(), None)
+        );
+        assert_eq!(
+            archived(&serde_json::json!({ "key": "trash_retention_days", "value": 7 })).unwrap(),
+            ("trash_retention_days".to_string(), Some("7".to_string()))
+        );
+        for address in ["addresses", "sign_in_address"] {
+            assert!(archived(&line(address)).is_err(), "{address}");
+        }
+        assert!(archived(&serde_json::json!({ "key": "trash_retention_days" })).is_err());
     }
 
     #[test]

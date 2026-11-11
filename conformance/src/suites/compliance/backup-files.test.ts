@@ -22,7 +22,7 @@ let fresh: FreshServer | undefined;
 beforeAll(async () => {
   origin = await bootFreshServer("backup-files", {
     ...store,
-    MARFA_BACKUP_INTERVAL_MS: "0",
+    MARFA_BACKUP_INTERVAL_SECONDS: "0",
   });
   originId = await instanceIdOf(origin);
 }, FRESH_SERVER_TIMEOUT_MS);
@@ -98,7 +98,7 @@ describe("the files a backup names", () => {
 
     fresh = await bootFreshServer("backup-files-fresh", {
       ...store,
-      MARFA_BACKUP_INTERVAL_MS: "0",
+      MARFA_BACKUP_INTERVAL_SECONDS: "0",
     });
     const restored = await ownerOf(fresh).restoreBackup(originId, backupName);
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
